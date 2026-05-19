@@ -1,24 +1,24 @@
 # `feat/tensor-challenges` vs `main` — Deep §5 conformance audit
 
 **Date**: 2026-05-19
-**HEAD**: `7c846fb6cb5f2cf5483d7b6554dfe3720efaf48d`
+**HEAD**: `81cceecf6206123170eab38d388768a320b16f00` (audited code HEAD before this audit-doc iteration commit)
 **Merge base**: `4b0b86a946dca5124ddc1c0197bda7b73284a137`
-**Commits on top of main**: 151 total (`148` non-merge + `3` merge commits)
-**Diff stat**: `131 files changed, 148135 insertions(+), 5562 deletions(-)`
+**Commits on top of main**: 153 total (`150` non-merge + `3` merge commits)
+**Diff stat**: `133 files changed, 149559 insertions(+), 5562 deletions(-)`
 **Book ref**: `/home/giuseppe/lattice-jolt/sections/akita/5_fourth_root_verifier.tex`
 **Scope**: every meaningful change on top of main, classified against book §5 / Figure 12.
 **Methodology**: commit-by-commit walkthrough + file-by-file diff + book line cross-reference.
 
-> Iteration status: this is the iteration-1 scaffold plus first-pass evidence.
+> Iteration status: this is the iteration-2 scaffold plus first-pass evidence.
 > Anything marked `ITERATION-TODO` is intentionally not yet accepted as audited.
 > The completion promise is false until all TODO markers are removed and every
 > commit row has a final class.
 
 ## Executive summary
 
-- **Audit inventory established**: branch HEAD is `7c846fb6`, merge-base is `4b0b86a9`, with `151` commits and `131` changed files on top of `origin/main`.
-- **Diff shape is heavily audit/spec/generated skewed**: `scripts/` accounts for `108,492` net LOC, `specs/` for `5,830` net LOC, and generated schedule/security data are a major part of the raw insertion count. These need classification but should not be mistaken for protocol code.
-- **Primary protocol crates touched**: `akita-prover` (`+5,653` net), `akita-verifier` (`+4,267` net), `akita-types` (`+4,591` net), `akita-pcs` tests (`+5,993` net), `akita-config` (`+1,784` net), `akita-planner` (`+1,044` net), `akita-challenges` (`+1,406` net), and `akita-algebra` (`+2,053` net).
+- **Audit inventory updated**: audited code HEAD is `81cceecf`, merge-base is `4b0b86a9`, with `153` commits and `133` changed files on top of `origin/main`.
+- **Diff shape is heavily audit/spec/generated skewed**: `scripts/` accounts for `108,492` net LOC, `specs/` for `6,100` net LOC, and generated schedule/security data are a major part of the raw insertion count. These need classification but should not be mistaken for protocol code.
+- **Primary protocol crates touched**: `akita-prover` (`+5,562` net), `akita-verifier` (`+4,742` net), `akita-types` (`+4,588` net), `akita-pcs` tests/benches (`+6,174` net), `akita-config` (`+1,799` net), `akita-planner` (`+1,043` net), `akita-challenges` (`+1,406` net), and `akita-algebra` (`+2,053` net).
 - **Initial aligned evidence found**: tensor challenge left/right sampling and transcript digesting match §5.2 / Figure 12 rounds 2-4; setup claim-reduction uses a degree-2 sumcheck with the dedicated transcript label; `MRowLayout` documents the book's 10 tier groups plus the §5.6 joint-W extension.
 - **Initial gap candidate confirmed for revalidation**: the implementation has an offset-slice carry-DP evaluator, but no general sliced tensor transducer API matching §5.3 Definition/Algorithm. This is likely a non-blocking gap if all production calls use offset slices only.
 - **Initial drift register is not final**: prior drift closures in `specs/section5_protocol_drift_audit.md` must be rechecked against HEAD and commit history, especially cascade natural discovery, force-route retirement, chunk aggregation transcript binding, and `setup_verifier` prepopulation timing.
@@ -30,19 +30,20 @@
 |---|---:|---:|---:|---:|---|
 | `crates/akita-algebra` | 2,053 | 0 | 2,053 | 4 | §5.3 offset-slice tensor contraction; NTT/cache support for verifier setup material |
 | `crates/akita-challenges` | 1,412 | 6 | 1,406 | 5 | §5.2 tensor stage-1 challenge sampling and challenge-family security support |
-| `crates/akita-config` | 1,987 | 203 | 1,784 | 7 | §5.5 / §5.8 preset routing, cascade configs, production claim-reduction enablement |
+| `crates/akita-config` | 2,002 | 203 | 1,799 | 7 | §5.5 / §5.8 preset routing, cascade configs, production claim-reduction enablement |
 | `crates/akita-field` | 224 | 0 | 224 | 6 | §5.8 measurement support; opt-in verifier op counter |
-| `crates/akita-pcs` | 6,040 | 47 | 5,993 | 13 | E2E tests and benches for §5.2, §5.4, §5.5, §5.8 |
-| `crates/akita-planner` | 1,178 | 134 | 1,044 | 4 | §5.5 / §5.8 cascade schedule search and cost objective |
-| `crates/akita-prover` | 6,505 | 852 | 5,653 | 21 | Figure 12 prover flow, recursive S routing, tiered setup material, claim-reduction prover |
+| `crates/akita-pcs` | 6,219 | 45 | 6,174 | 13 | E2E tests and benches for §5.2, §5.4, §5.5, §5.8 |
+| `crates/akita-planner` | 1,177 | 134 | 1,043 | 4 | §5.5 / §5.8 cascade schedule search and cost objective |
+| `crates/akita-prover` | 6,417 | 855 | 5,562 | 21 | Figure 12 prover flow, recursive S routing, tiered setup material, claim-reduction prover |
 | `crates/akita-scheme` | 59 | 23 | 36 | 2 | Setup/verifier orchestration and cache prepopulation |
 | `crates/akita-setup` | 2 | 6 | -4 | 1 | Setup API integration; likely incidental |
 | `crates/akita-sumcheck` | 464 | 50 | 414 | 4 | §5.4 / §5.6 sumcheck helpers and test-gated eq table support |
 | `crates/akita-transcript` | 43 | 0 | 43 | 1 | Figure 12 transcript label delta |
-| `crates/akita-types` | 8,547 | 3,956 | 4,591 | 21 | Public proof/layout/schedule/type-shape deltas for §5.4-§5.6 |
-| `crates/akita-verifier` | 4,542 | 275 | 4,267 | 9 | Figure 12 verifier replay, setup claim-reduction, grouped M-eval, caches |
+| `crates/akita-types` | 8,544 | 3,956 | 4,588 | 21 | Public proof/layout/schedule/type-shape deltas for §5.4-§5.6 |
+| `crates/akita-verifier` | 5,016 | 274 | 4,742 | 9 | Figure 12 verifier replay, setup claim-reduction, grouped M-eval, caches |
 | `scripts` | 108,493 | 1 | 108,492 | 18 | Security analysis and planner audit tooling; mostly §5.7 / §5.8 support |
-| `specs` | 5,839 | 9 | 5,830 | 13 | Prior audits, designs, and handoff docs to revalidate |
+| `.cursor` | 578 | 0 | 578 | 1 | Ralph scratchpad state for audit-loop reproducibility |
+| `specs` | 6,109 | 9 | 6,100 | 14 | Prior audits, designs, and handoff docs to revalidate |
 | root / other | 747 | 0 | 747 | 2 | `audit.md`, lockfile |
 
 ## Change classification
@@ -140,36 +141,163 @@
 
 ## Commit-by-commit walkthrough (chronological)
 
-The branch has `151` commits on top of the merge-base: `148` non-merge commits plus `3` merge commits (`ebb7c93`, `e94edeb`, `6bbaaec`). This table is seeded by chronology but not final.
+The branch has `153` commits on top of the merge-base: `150` non-merge commits plus `3` merge commits (`ebb7c93`, `e94edeb`, `6bbaaec`). Iteration 2 expanded the complete spine below. Rows marked `PRELIMINARY` are not accepted final classifications until the relevant slice audit has attached file:line + book-line evidence.
 
 | # | Hash | Date | Title | §5 subsection | Class | Notes |
 |---:|---|---|---|---|---|---|
-| 1 | `d7dd31e` | 2026-05-04 | Implemented bounded challenges | §5.2 / §5.7 candidate | UNREVIEWED | Requires sparse challenge family audit against book challenge-space and security assumptions. |
-| 2 | `e44fe69` | 2026-05-04 | chore(challenges): clean up unused sampler scaffolding | n/a candidate | UNREVIEWED | Likely SCAFFOLDING cleanup; verify diff. |
-| 3 | `657c864` | 2026-05-04 | test(challenges): move sparse-challenge integration tests to akita-challenges | §5.2 / test candidate | UNREVIEWED | Test-only candidate. |
-| 4 | `5052abb` | 2026-05-04 | refactor(challenges): own SparseChallenge / SparseChallengeConfig | §5.2 public API candidate | UNREVIEWED | Public API delta likely; verify symbols. |
-| 5 | `d6acaa3` | 2026-05-05 | Remove unused code | n/a candidate | UNREVIEWED | Cleanup; verify no protocol removal. |
-| 6 | `9c8e1ac` | 2026-05-05 | refactor(challenges): retire SplitRing, switch fp128 D=64 to ExactShell | §5.7 / §5.8 candidate | UNREVIEWED | Security-sensitive challenge-family cutover; compare to book L233-L240 and L1045-L1057. |
-| 7 | `fd9cc9d` | 2026-05-05 | refactor(challenges): drop dead public API, shrink akita-challenges surface | n/a candidate | UNREVIEWED | Public API removal; classify for API delta. |
-| 8 | `44398ee` | 2026-05-05 | Fix clippy warning | n/a | UNREVIEWED | likely TEST/SCAFFOLDING or mechanical. |
-| 9 | `e6f3c6a` | 2026-05-05 | refactor(challenges): split akita-challenges by audience (type / config / sampler) | §5.2 API candidate | UNREVIEWED | Public API/module shape delta. |
-| 10 | `cb80a65` | 2026-05-05 | refactor(challenges): hard-code BoundedL1Ball sampler to (D=32, M=8, B=121) | §5.7 candidate | UNREVIEWED | Challenge entropy / norm assumptions. |
-| 11 | `8325bce` | 2026-05-05 | refactor(challenges): drop Wide, store WAYS as u128 with one fewer row | §5.2 support candidate | UNREVIEWED | Sparse sampler implementation detail. |
-| 12 | `e1f0c0a` | 2026-05-05 | refactor(challenges): use i8 for SparseChallenge coefficients and flatten unrank scan | §5.2 support candidate | UNREVIEWED | Sparse challenge representation and API delta. |
-| 13 | `75a9abc` | 2026-05-05 | refactor(challenges): clean up bounded-L1 sampler internals | n/a candidate | UNREVIEWED | likely scaffolding cleanup. |
-| 14 | `daefb21` | 2026-05-05 | docs(challenges): fix rustdoc intra-doc link warnings | docs | UNREVIEWED | likely DOCS. |
-| 15 | `f292c65` | 2026-05-05 | refactor(challenges): rename samplers to `_challenge` and tighten bounded-L1 docs | §5.2 API/docs candidate | UNREVIEWED | Public API/name delta. |
-| 16 | `6f6e211` | 2026-05-05 | test(challenges): pin bounded-L1 DP recurrence and decode-rank injectivity | §5.2 / test candidate | UNREVIEWED | Test coverage delta. |
-| 17 | `69cad1f` | 2026-05-05 | perf(challenges): optimize bounded-L1 sparse sampling | §5.2 support candidate | UNREVIEWED | Performance-only if semantically equivalent. |
-| 18 | `e3af552` | 2026-05-05 | refactor(challenges): make bounded-L1 config a fixed preset | §5.2 / §5.7 candidate | UNREVIEWED | Challenge-space config shape. |
-| 19 | `3d77a42` | 2026-05-05 | refactor(challenges): tighten bounded-L1 preset API | §5.2 API candidate | UNREVIEWED | Public API delta. |
-| 20 | `1ade67b` | 2026-05-05 | Update spec | docs | UNREVIEWED | Prior spec update; read and classify. |
-| 21 | `d3321d9` | 2026-05-05 | fix(config): cover grouped setup envelopes | §5.4 / §5.5 candidate | UNREVIEWED | Setup envelope sizing; type-shape impact. |
-| 22 | `dd5889b` | 2026-05-05 | refactor(transcript): cut over akita byte domains | Figure 12 transcript candidate | UNREVIEWED | Transcript label/domain delta. |
-| 23 | `5303938` | 2026-05-05 | perf(transcript): reduce label absorb overhead | transcript support candidate | UNREVIEWED | Verify no byte-boundary drift. |
-| 24 | `1ef0042` | 2026-05-05 | test(challenges): refresh bounded l1 vector | §5.2 / test candidate | UNREVIEWED | Test vector delta. |
-| 25 | `2dee391` | 2026-05-06 | perf(prover): use rotated path for dense fold challenges | §5.2 support candidate | UNREVIEWED | Verify challenge semantics unchanged. |
-| 26-151 | `ITERATION-TODO` | 2026-05-06..2026-05-19 | Remaining 126 commits | mixed | UNREVIEWED | Next iterations must expand this into one row per commit. |
+| 1 | `d7dd31e` | 2026-05-04 | Implemented bounded challenges | §5.2 / §5.7 | SCAFFOLDING | PRELIMINARY: sparse challenge-family support for challenge space `C`; needs entropy/norm evidence. |
+| 2 | `e44fe69` | 2026-05-04 | chore(challenges): clean up unused sampler scaffolding | n/a | SCAFFOLDING | PRELIMINARY cleanup. |
+| 3 | `657c864` | 2026-05-04 | test(challenges): move sparse-challenge integration tests to akita-challenges | §5.2 / §5.7 | TEST | PRELIMINARY test relocation. |
+| 4 | `5052abb` | 2026-05-04 | refactor(challenges): own SparseChallenge / SparseChallengeConfig | §5.2 public API | SCAFFOLDING | PRELIMINARY API foundation; verify public surface. |
+| 5 | `d6acaa3` | 2026-05-05 | Remove unused code | n/a | SCAFFOLDING | PRELIMINARY cleanup. |
+| 6 | `ebb7c93` | 2026-05-05 | Merge remote-tracking branch 'origin/main' into feat/l1-bound-challenges | n/a | MERGE | Merge commit; no independent §5 classification. |
+| 7 | `9c8e1ac` | 2026-05-05 | refactor(challenges): retire SplitRing, switch fp128 D=64 to ExactShell | §5.7 / §5.8 | SCAFFOLDING | PRELIMINARY security-sensitive challenge-family cutover; compare book lines 233-240 and 1045-1057. |
+| 8 | `fd9cc9d` | 2026-05-05 | refactor(challenges): drop dead public API, shrink akita-challenges surface | n/a | SCAFFOLDING | PRELIMINARY API cleanup. |
+| 9 | `44398ee` | 2026-05-05 | Fix clippy warning | n/a | SCAFFOLDING | Mechanical. |
+| 10 | `e6f3c6a` | 2026-05-05 | refactor(challenges): split akita-challenges by audience (type / config / sampler) | §5.2 API | SCAFFOLDING | PRELIMINARY module/API shape. |
+| 11 | `cb80a65` | 2026-05-05 | refactor(challenges): hard-code BoundedL1Ball sampler to (D=32, M=8, B=121) | §5.7 | SCAFFOLDING | PRELIMINARY challenge-family preset support. |
+| 12 | `8325bce` | 2026-05-05 | refactor(challenges): drop Wide, store WAYS as u128 with one fewer row | §5.2 support | SCAFFOLDING | PRELIMINARY sampler implementation detail. |
+| 13 | `e1f0c0a` | 2026-05-05 | refactor(challenges): use i8 for SparseChallenge coefficients and flatten unrank scan | §5.2 support | SCAFFOLDING | PRELIMINARY sparse-challenge representation/API delta. |
+| 14 | `75a9abc` | 2026-05-05 | refactor(challenges): clean up bounded-L1 sampler internals | n/a | SCAFFOLDING | PRELIMINARY cleanup. |
+| 15 | `daefb21` | 2026-05-05 | docs(challenges): fix rustdoc intra-doc link warnings | n/a | DOCS | Rustdoc cleanup. |
+| 16 | `f292c65` | 2026-05-05 | refactor(challenges): rename samplers to `_challenge` and tighten bounded-L1 docs | §5.2 API/docs | SCAFFOLDING | PRELIMINARY public API/name delta. |
+| 17 | `6f6e211` | 2026-05-05 | test(challenges): pin bounded-L1 DP recurrence and decode-rank injectivity | §5.2 / §5.7 | TEST | PRELIMINARY sampler invariant coverage. |
+| 18 | `69cad1f` | 2026-05-05 | perf(challenges): optimize bounded-L1 sparse sampling | §5.2 support | SCAFFOLDING | PRELIMINARY performance-only if semantically equivalent. |
+| 19 | `e3af552` | 2026-05-05 | refactor(challenges): make bounded-L1 config a fixed preset | §5.2 / §5.7 | SCAFFOLDING | PRELIMINARY challenge-space config shape. |
+| 20 | `3d77a42` | 2026-05-05 | refactor(challenges): tighten bounded-L1 preset API | §5.2 API | SCAFFOLDING | PRELIMINARY public API delta. |
+| 21 | `1ade67b` | 2026-05-05 | Update spec | n/a | DOCS | Prior spec update; content still to classify. |
+| 22 | `d3321d9` | 2026-05-05 | fix(config): cover grouped setup envelopes | §5.4 / §5.5 | GAP-CLOSING | PRELIMINARY setup envelope sizing/type-shape impact. |
+| 23 | `dd5889b` | 2026-05-05 | refactor(transcript): cut over akita byte domains | Figure 12 transcript | SCAFFOLDING | PRELIMINARY transcript domain delta; verify byte-boundary order. |
+| 24 | `5303938` | 2026-05-05 | perf(transcript): reduce label absorb overhead | transcript support | SCAFFOLDING | PRELIMINARY performance-only if transcript bytes unchanged. |
+| 25 | `1ef0042` | 2026-05-05 | test(challenges): refresh bounded l1 vector | §5.2 / §5.7 | TEST | PRELIMINARY test vector delta. |
+| 26 | `2dee391` | 2026-05-06 | perf(prover): use rotated path for dense fold challenges | §5.2 support | SCAFFOLDING | PRELIMINARY; verify challenge semantics unchanged. |
+| 27 | `6dca0c8` | 2026-05-06 | fix(protocol): harden challenge label and sparse eval handling | §5.2 / transcript | GAP-CLOSING | PRELIMINARY challenge-label hardening. |
+| 28 | `d346d38` | 2026-05-06 | feat(protocol): add tensor challenge plumbing | §5.2 / Fig. 12 R2-R4 | ALIGNED | PRELIMINARY; seeded evidence in `sample_stage1_challenges`, lines 522-552. |
+| 29 | `8fffbb1` | 2026-05-06 | docs(spec): plan tensor aggregate evaluator | §5.2 | DOCS | Planning doc; scope outside runtime. |
+| 30 | `09bd2b4` | 2026-05-06 | feat(challenges): add exact tensor aggregate eval | §5.2 / §5.3 | ALIGNED | PRELIMINARY; exact aggregate evaluator for tensor challenge summaries. |
+| 31 | `247af39` | 2026-05-06 | feat(verifier): store tensor challenge evals compactly | §5.2 | ALIGNED | PRELIMINARY verifier compact tensor eval storage. |
+| 32 | `34b7198` | 2026-05-06 | feat(verifier): decompose tensor challenge summaries | §5.2 | ALIGNED | PRELIMINARY tensor-summary decomposition. |
+| 33 | `bfc7597` | 2026-05-06 | feat(verifier): use tensor aggregate summaries in m-eval | §5.2 / §5.3 | ALIGNED | PRELIMINARY M-eval use of tensor summaries. |
+| 34 | `1529152` | 2026-05-06 | test(pcs): cover tensor stage1 e2e | §5.2 / Fig. 12 R2-R4 | TEST | Tensor stage-1 E2E coverage candidate. |
+| 35 | `41eb5a9` | 2026-05-06 | fix(schedule): use effective challenge mass for batched roots | §5.7 | GAP-CLOSING | PRELIMINARY tensor extraction/norm scheduling. |
+| 36 | `bba4da6` | 2026-05-06 | bench(challenges): compare tensor aggregate evaluators | §5.2 | SCOPE-OUTSIDE | Bench-only evidence. |
+| 37 | `c052fc1` | 2026-05-06 | docs(spec): record tensor aggregate validation | §5.2 | DOCS | Validation notes. |
+| 38 | `7b91d8f` | 2026-05-06 | fix(protocol): harden tensor stage1 gating | §5.2 | GAP-CLOSING | PRELIMINARY gate/hardening. |
+| 39 | `de81b3c` | 2026-05-06 | fix(types): account for tensor extraction margins | §5.7 | GAP-CLOSING | PRELIMINARY MSIS norm margin support. |
+| 40 | `e94edeb` | 2026-05-06 | Merge origin/main into feat/tensor-challenges | n/a | MERGE | Merge commit; no independent §5 classification. |
+| 41 | `6ae3fbb` | 2026-05-07 | fix(protocol): harden tensor stage1 production gates | §5.2 / §5.8 | GAP-CLOSING | PRELIMINARY production gating. |
+| 42 | `6195c76` | 2026-05-07 | chore(planner): report tensor extraction buckets | §5.7 | SCAFFOLDING | Planner/security reporting support. |
+| 43 | `51a875c` | 2026-05-07 | fix(config): gate generated tensor schedules | §5.8 | GAP-CLOSING | PRELIMINARY generated schedule gating. |
+| 44 | `0e44b61` | 2026-05-07 | test(protocol): cover dense tensor stage1 e2e | §5.2 | TEST | Dense tensor E2E coverage. |
+| 45 | `5efaa5d` | 2026-05-07 | test(protocol): reject tampered tensor stage1 claim | §5.2 / §5.7 | TEST | Tamper rejection coverage. |
+| 46 | `b6b777c` | 2026-05-07 | fix(prover): remove redundant headroom check | n/a | SCAFFOLDING | Cleanup. |
+| 47 | `5ca5692` | 2026-05-07 | perf(challenges): stack allocate tensor aggregate buffers | §5.2 | SCAFFOLDING | Perf-only if equivalent. |
+| 48 | `3578242` | 2026-05-07 | perf(verifier): reuse tensor carry weight buffers | §5.3 | SCAFFOLDING | Perf support for tensor carry evaluation. |
+| 49 | `6340658` | 2026-05-07 | perf(verifier): share tensor carry summaries across claims | §5.3 | SCAFFOLDING | Perf support for tensor carry evaluation. |
+| 50 | `6bbaaec` | 2026-05-07 | Merge origin/main into feat/tensor-challenges | n/a | MERGE | Merge commit; no independent §5 classification. |
+| 51 | `7d267bc` | 2026-05-07 | test(pcs): forward tensor config field roles | §5.2 / §5.8 | TEST | Config/test coverage. |
+| 52 | `b4dbbd5` | 2026-05-07 | bench(pcs): compare flat and tensor verifier replay | §5.8 | SCOPE-OUTSIDE | Bench-only. |
+| 53 | `0cbd944` | 2026-05-07 | bench(pcs): expand stage1 verifier matrix | §5.8 | SCOPE-OUTSIDE | Bench-only. |
+| 54 | `dca90e8` | 2026-05-07 | bench(pcs): add larger tensor verifier cases | §5.8 | SCOPE-OUTSIDE | Bench-only. |
+| 55 | `17495f5` | 2026-05-07 | bench(pcs): retime tensor stage1 schedules | §5.8 | SCOPE-OUTSIDE | Bench-only. |
+| 56 | `1168e74` | 2026-05-07 | bench(pcs): print verifier proof metadata | §5.8 | SCOPE-OUTSIDE | Bench-only. |
+| 57 | `e3f4ade` | 2026-05-07 | docs(spec): add fourth-root verifier audit reports | n/a | DOCS | Prior audits; revalidated separately. |
+| 58 | `1251424` | 2026-05-07 | feat(verifier): split prepared M eval by setup dependency | §5.4 | ALIGNED | PRELIMINARY M-table decomposition. |
+| 59 | `997f5ab` | 2026-05-07 | feat(types): expose setup matrix polynomial view | §5.4 | ALIGNED | PRELIMINARY enveloping/setup polynomial view. |
+| 60 | `2a4df12` | 2026-05-07 | feat(sumcheck): add setup claim reduction prototype | §5.4 / Fig. 12 R8 | ALIGNED | PRELIMINARY degree-2 setup claim sumcheck. |
+| 61 | `cc552d5` | 2026-05-07 | test(verifier): bridge M eval split to setup claim proof | §5.4 | TEST | Unit bridge coverage. |
+| 62 | `fdff19c` | 2026-05-07 | feat(types): add optional setup claim proof payload | §5.4 / wire type | ALIGNED | PRELIMINARY proof type-shape delta. |
+| 63 | `162747f` | 2026-05-07 | feat(config): add setup claim reduction opt-in | §5.4 / §5.8 | ALIGNED | PRELIMINARY config opt-in. |
+| 64 | `6132284` | 2026-05-07 | feat(prover): widen centered fold accumulators | n/a | SCOPE-OUTSIDE | Arithmetic robustness; not directly §5 unless needed by tiered rows. |
+| 65 | `0d2c294` | 2026-05-07 | feat(config): cut generated schedules to tensor stage1 | §5.2 / §5.8 | ALIGNED | PRELIMINARY generated schedule update. |
+| 66 | `692cc8f` | 2026-05-07 | feat(verifier): reduce setup claims over setup coordinates | §5.4 | ALIGNED | PRELIMINARY setup-coordinate reduction. |
+| 67 | `d2735ec` | 2026-05-07 | fix(config): validate tensor schedules across setup capacities | §5.8 | GAP-CLOSING | PRELIMINARY schedule-capacity validation. |
+| 68 | `49e11c8` | 2026-05-08 | Tune tensor stage1 schedules for prover cost | §5.8 | SCOPE-OUTSIDE | Cost tuning; verify no protocol drift. |
+| 69 | `9451f22` | 2026-05-12 | feat(prover,verifier): scaffold setup claim-reduction sumcheck | §5.4 / Fig. 12 R8 | ALIGNED | PRELIMINARY setup-claim scaffold. |
+| 70 | `aa01e37` | 2026-05-12 | feat(prover,verifier): wire setup claim-reduction into stage-2 | §5.4 / Fig. 12 R7-R8 | ALIGNED | PRELIMINARY stage-2 integration. |
+| 71 | `b1726ad` | 2026-05-12 | test(pcs): cover claim reduction at recursive fold levels | §5.4 / §5.6 | TEST | Recursive CR coverage. |
+| 72 | `11ce32e` | 2026-05-12 | test(types): initialize `use_setup_claim_reduction` in unit-test fixtures | §5.4 | TEST | Fixture maintenance. |
+| 73 | `8560faa` | 2026-05-12 | perf(verifier): algebraic-only m(r_x) path + claim-reduction benches | §5.4 | ALIGNED | PRELIMINARY algebraic/setup decomposition. |
+| 74 | `655990a` | 2026-05-12 | docs(specs): tensor-everywhere implementation plan | n/a | DOCS | Planning doc. |
+| 75 | `75a221a` | 2026-05-12 | perf(verifier): cache batched_verify schedules on AkitaVerifierSetup | §5.8 support | SCAFFOLDING | Perf/cache support; cache-key audit needed. |
+| 76 | `c836302` | 2026-05-12 | perf(verifier): structured w_setup evaluator for claim-reduction sumcheck | §5.4 | ALIGNED | PRELIMINARY structured evaluator. |
+| 77 | `d60f17f` | 2026-05-12 | perf(types): cache eq tables and bound by live prefix in setup MLE | §5.4 support | SCAFFOLDING | Perf support. |
+| 78 | `bb80bd8` | 2026-05-12 | docs(specs): record Phase A/C/D-light verifier bench results | n/a | DOCS | Bench notes. |
+| 79 | `3c03822` | 2026-05-12 | docs(specs): record prover/verifier comparison vs main baseline | n/a | DOCS | Bench notes. |
+| 80 | `ab41530` | 2026-05-12 | docs(specs): add recursive-S opening plan for fourth-root verifier | §5.6 | DOCS | Design plan for book lines 940-953. |
+| 81 | `52fd7f3` | 2026-05-12 | docs(specs): pivot recursive-S plan to batched-MLE evaluation | §5.6 | DOCS | Design pivot. |
+| 82 | `c02bef4` | 2026-05-12 | docs(specs): Phase G.0 negative result — naive batched MLE is slower | §5.8 | DOCS | Negative benchmark/design record. |
+| 83 | `85efcaa` | 2026-05-12 | docs(specs): pivot to Phase K hybrid per-level stage-1 shape | §5.8 | DOCS | Design pivot. |
+| 84 | `6579d33` | 2026-05-12 | feat(types,pcs): Phase K.0 — hand-built mixed-shape stage-1 schedule works E2E | §5.2 / §5.8 | SCAFFOLDING | PRELIMINARY hybrid schedule experiment. |
+| 85 | `9bd2d0c` | 2026-05-12 | feat(planner): Phase K.1 — per-level stage-1 shape search | §5.8 | SCAFFOLDING | Planner search experiment; likely outside final §5 path. |
+| 86 | `9ddb939` | 2026-05-12 | feat(pcs): Phase K.4 — hybrid planner-search bench + cascade-bug docs | §5.8 | SCOPE-OUTSIDE | Bench/docs. |
+| 87 | `acb5dad` | 2026-05-13 | fix(planner,config): Phase K.1 fix-up — shape-aware recursive layout | §5.8 | GAP-CLOSING | PRELIMINARY schedule correctness. |
+| 88 | `9f332e5` | 2026-05-13 | feat(planner): Phase K.7 — HACHI_PLANNER_S1_WEIGHT env-var knob for tuning | n/a | SCAFFOLDING | Prior audit S-7; verify current status/staleness. |
+| 89 | `47a5385` | 2026-05-13 | docs(specs),test(pcs): Phase K.5 — Fiat-Shamir audit for mixed shapes | §5.7 | DOCS | Security/test support. |
+| 90 | `b8bf437` | 2026-05-13 | docs(specs): Phase K.6 — apples-to-apples vs main baseline | §5.8 | DOCS | Bench notes. |
+| 91 | `9089d66` | 2026-05-13 | fix(planner,config,types): restore 128-bit security baseline | §5.7 | GAP-CLOSING | Security baseline restoration; verify against `security_analysis.md` §§1-9. |
+| 92 | `95e79c5` | 2026-05-13 | docs(specs): Phase D-full design — recursive S opening + tiered commitments | §5.4-§5.6 | DOCS | Design doc. |
+| 93 | `ccbbb8e` | 2026-05-13 | Phase D-full v2 foundations (slices A through C.2.c partial) | §5.4-§5.6 | ALIGNED | PRELIMINARY tiered/setup/multiclaim foundation. |
+| 94 | `a669f8b` | 2026-05-13 | Slice D: multi-group batched Hachi commit kernel + LP shape | §5.4-§5.6 | ALIGNED | PRELIMINARY split/joint commitment support. |
+| 95 | `454409f` | 2026-05-13 | Slice E: per-handle / per-claim LevelParams plumbing | §5.6 | ALIGNED | PRELIMINARY mixed next-level witness plumbing. |
+| 96 | `ce8ecf0` | 2026-05-13 | Slice F.1: routes_recursively flag on verify_setup_claim_reduction | §5.6 output | ALIGNED | PRELIMINARY recursive S routing control. |
+| 97 | `2091fee` | 2026-05-13 | docs(phase-d-full): handoff status after slices D + E + F.1 | n/a | DOCS | Handoff doc. |
+| 98 | `c6a5524` | 2026-05-14 | Slice F.2-F.5 + Slice G infrastructure on feat/tensor-challenges | §5.4-§5.6 | ALIGNED | PRELIMINARY infrastructure; broad diff needs decomposition. |
+| 99 | `64af8ab` | 2026-05-14 | Slice G unit tests: tier-aware proof_size helpers | §5.5 / §5.8 | TEST | Proof-size helper tests. |
+| 100 | `1d85169` | 2026-05-14 | Slice G rustdoc: tiered helper examples on the public surface | §5.5 | DOCS | Public surface docs. |
+| 101 | `05f79bb` | 2026-05-14 | Slice G prep: PreparedMEval tier_setup_params + FlatMatrix chunk view | §5.4 / §5.5 | ALIGNED | PRELIMINARY type/view support. |
+| 102 | `5ccde2a` | 2026-05-15 | Slice H staging: tiered routed-S architecture (Phases 1-4 + 6, partial 5) | §5.5 / §5.6 | ALIGNED | PRELIMINARY routed-S architecture; partial status important. |
+| 103 | `22bf830` | 2026-05-15 | Task A: block-diagonal D_chunk/B_chunk MLE collapse in verifier eval | §5.5 | GAP-CLOSING | PRELIMINARY shared per-chunk MLE collapse. |
+| 104 | `e84298f` | 2026-05-15 | Task B+C: remove phantom meta_* rows; the meta tier is a regular group | §5.5 | GAP-CLOSING | PRELIMINARY 10-group cleanup. |
+| 105 | `896694c` | 2026-05-15 | verifier: align num_eval_rows with prover's per-GROUP y_ring count | §5.5 / §5.6 | GAP-CLOSING | PRELIMINARY prover/verifier row-shape alignment. |
+| 106 | `bf3d84c` | 2026-05-15 | verifier: per-chunk MLE openings, w_ring count fix, invariant tests | §5.5 / §5.6 | GAP-CLOSING | PRELIMINARY invariant/test support. |
+| 107 | `cb36143` | 2026-05-15 | prover: tier-aware D-row quotient + cross-check tests | §5.5 | GAP-CLOSING | PRELIMINARY D-row quotient alignment. |
+| 108 | `d8de222` | 2026-05-18 | WIP: surgical cleanup of bloat/scaffolding outside 4th-root scope | n/a | SCAFFOLDING | Cleanup; cross-reference `audit.md` C-items. |
+| 109 | `586d763` | 2026-05-18 | verifier: structured grouped m_setup eval + per-level cascade tier | §5.4 / §5.5 | ALIGNED | PRELIMINARY grouped setup evaluator. |
+| 110 | `831ccfc` | 2026-05-19 | verifier: cache + NTT-accelerate preprocessed C_S per book Fig. 12 | §5.6 / §5.8 | ALIGNED | PRELIMINARY C_S preprocessed input/perf. |
+| 111 | `d436922` | 2026-05-19 | planner: force-route cascade L1 per book §5.8 line 1170 | §5.8 | DRIFT | PRELIMINARY cost-model/schedule-selection drift candidate; later commits may close. |
+| 112 | `0d8b44e` | 2026-05-19 | planner: model tiered M-table 3-group layout in setup field length | §5.5 / §5.8 | GAP-CLOSING | PRELIMINARY cost model alignment. |
+| 113 | `e7c66d6` | 2026-05-19 | test housekeeping: fix pre-existing clippy/build errors for --all-targets | n/a | SCAFFOLDING | Test/build housekeeping. |
+| 114 | `877e145` | 2026-05-19 | test: measure cascade verifier speedup at NV=22 dense (book Table 1141-1158) | §5.8 | TEST | Performance measurement. |
+| 115 | `48cd8e9` | 2026-05-19 | verifier: share NttSlotCache across cascade derivations (5.2x verify speedup) | §5.8 | SCAFFOLDING | Perf/cache support. |
+| 116 | `7c2bef8` | 2026-05-19 | test: measure amortized verify per book Fig. 12 (cold + cache-hit split) | §5.8 | TEST | Performance measurement. |
+| 117 | `4a4c40b` | 2026-05-19 | verifier: pre-populate NTT slot cache at setup_verifier per book Fig. 12 | §5.6 / §5.8 | ALIGNED | PRELIMINARY preprocessed verifier input timing. |
+| 118 | `0c47316` | 2026-05-19 | test: onehot cascade speedup measurement (D=64) at NV=28 | §5.8 | TEST | Performance measurement. |
+| 119 | `8e87160` | 2026-05-19 | verifier: pre-populate tiered_s_cache at setup time (final Fig. 12 alignment) | §5.6 | GAP-CLOSING | Prior DRIFT-3 closure candidate. |
+| 120 | `0639189` | 2026-05-19 | prover: remove diagnostic level==1 harness + stale rejection doc (C-1, C-11) | n/a | SCAFFOLDING | Bloat cleanup. |
+| 121 | `f17b0dc` | 2026-05-19 | verifier: schedule-vs-proof + routes-recursively defense-in-depth (S-1, S-5, C-14) | §5.6 / §5.7 | GAP-CLOSING | Defense-in-depth closure candidate. |
+| 122 | `f9d87e6` | 2026-05-19 | test-helpers: gate eq_weighted_table siblings + split_eval_table (C-5, C-7) | n/a | SCAFFOLDING | Bloat/test-helper cleanup. |
+| 123 | `30ed738` | 2026-05-19 | test: add tiered_rejects_tampered_next_w_commitment (B-3 / S-3) | §5.5 / §5.7 | TEST | Tamper rejection coverage. |
+| 124 | `defe58f` | 2026-05-19 | prover: document tiered handle material's shared structure (C-2) | §5.5 | DOCS | Source docs for tiered material structure. |
+| 125 | `c9d9904` | 2026-05-19 | config: flip production fp128 presets to claim-reduction on (B-1) | §5.4 / §5.8 | ALIGNED | PRELIMINARY production cutover; security/perf audit required. |
+| 126 | `d7820f6` | 2026-05-19 | docs: refresh security analysis with §5 post-Phase-D-full v2 re-audit | §5.7 | DOCS | Security analysis §10. |
+| 127 | `13812f8` | 2026-05-19 | test: extend tiered_grouped_m_rows to cover A-rows per book §5.4 (C-13) | §5.5 | TEST | A-row coverage. |
+| 128 | `f2c7b9b` | 2026-05-19 | planner: widen level_proof_bytes to shape-aware CR + tiered cost model (S-8) | §5.5 / §5.8 | GAP-CLOSING | Cost model proof-size alignment. |
+| 129 | `5cb0e47` | 2026-05-19 | docs: book §5 vs implementation protocol drift audit | n/a | DOCS | Prior structural audit. |
+| 130 | `920086f` | 2026-05-19 | types: top-level MRowLayout 10-vs-15 group doc (DRIFT-2) | §5.5 / §5.6 | GAP-CLOSING | Prior DRIFT-2 closure candidate. |
+| 131 | `d0ea827` | 2026-05-19 | config: document tier-shape policy default f=2 (DRIFT-4 / SCOPE-5) | §5.5 / §5.8 | DRIFT | PRELIMINARY intentional production-default drift vs book f=8; documented. |
+| 132 | `f18418f` | 2026-05-19 | stage2: sample two batching coefficients γ_range, γ_rel (DRIFT-1) | §5.6 R8 | GAP-CLOSING | Book Round 8 two-coefficient form. |
+| 133 | `ce01879` | 2026-05-19 | field: opt-in verifier op-counter (audit GAP-2 / SCOPE-4) | §5.8 | SCOPE-OUTSIDE | Measurement instrumentation, not protocol. |
+| 134 | `b4b02c7` | 2026-05-19 | phase5/item1: shared per-chunk matrix collapse in setup col envelope | §5.5 | GAP-CLOSING | PRELIMINARY shared matrix collapse support. |
+| 135 | `0cf214d` | 2026-05-19 | phase5/(a): chunk_lp + meta_lp B-role SIS rank shrink (release-mode gated) | §5.5 / §5.7 | GAP-CLOSING | PRELIMINARY SIS/rank/cascade alignment. |
+| 136 | `012d172` | 2026-05-19 | phase5: document Item (b) and Item (c) scope blockers post-Item-(a) | §5.5 | DOCS | Scope blockers documented. |
+| 137 | `6c9c38f` | 2026-05-19 | phase5/(b): chunk-axis amortised W+T blocks via eval_offset_eq_tensor | §5.3 / §5.5 | GAP-CLOSING | PRELIMINARY automaton/cascade amortisation. |
+| 138 | `693a649` | 2026-05-19 | phase5/drift1: shallow batched chunk mat-vec (one A-step over k blocks) | §5.5 / §5.8 | GAP-CLOSING | PRELIMINARY chunk mat-vec perf/cost alignment. |
+| 139 | `f90a056` | 2026-05-19 | phase5/drift3: add CHALLENGE_TIERED_CHUNK_AGGREGATION transcript label | §5.5 / transcript | ALIGNED | PRELIMINARY extension; verify ordering. |
+| 140 | `f5e3ee3` | 2026-05-19 | phase5/drift3: γ-fold k chunks claims to ONE aggregated chunks claim | §5.5 / §5.7 | GAP-CLOSING | PRELIMINARY shared chunk claim aggregation; security §11. |
+| 141 | `883993d` | 2026-05-19 | phase5/drift4: investigate force-routing retirement; defer to wire-cost gap closure | §5.8 | DRIFT | Documents cost-model drift; superseded by later objective commits. |
+| 142 | `2866076` | 2026-05-19 | specs: close SCOPE-3 + update GAP-3 for Drift 3 + Drift 4 | n/a | DOCS | Prior audit update. |
+| 143 | `5d0d1b0` | 2026-05-19 | specs/drift4: expand GAP-3 analysis with cleartext-cost asymmetry finding | n/a | DOCS | Prior audit update. |
+| 144 | `9ddf99b` | 2026-05-19 | phase5/drift4-step1: add setup storage objective | §5.8 | GAP-CLOSING | PRELIMINARY natural cascade discovery cost-model closure. |
+| 145 | `9d33e27` | 2026-05-19 | phase5/drift4-step2: charge cleartext setup discharge | §5.8 | GAP-CLOSING | PRELIMINARY symmetric cleartext cost. |
+| 146 | `fd0ddb3` | 2026-05-19 | phase5/drift4-step4: retire force-routing gates | §5.8 | GAP-CLOSING | PRELIMINARY closes force-route drift if tests/probe confirm. |
+| 147 | `4f90979` | 2026-05-19 | phase5/drift4-step3: allow objective-driven batched root params | §5.8 | GAP-CLOSING | PRELIMINARY objective-driven root scheduling. |
+| 148 | `71d7eef` | 2026-05-19 | phase5/drift4-step5: fix batched root verification | §5.8 | GAP-CLOSING | PRELIMINARY schedule/proof alignment. |
+| 149 | `26df279` | 2026-05-19 | phase5/polish-drift1: stage2 module doc + test naming follow γ_range/γ_rel form | §5.6 R8 | DOCS | DRIFT-1 polish. |
+| 150 | `e2fc865` | 2026-05-19 | specs/audit: mark DRIFT-1/2/4 + GAP-2 + SCOPE-4/5 CLOSED with closure register | n/a | DOCS | Prior audit closure register. |
+| 151 | `7c846fb` | 2026-05-19 | specs/audit: close DRIFT-3 via option (b) + document option (a) upgrade path | n/a | DOCS | Prior audit closure register. |
+| 152 | `5106c35` | 2026-05-19 | specs/audit: seed full §5 diff audit loop | n/a | DOCS | Creates this audit doc/scratchpad; not protocol code. |
+| 153 | `81cceec` | 2026-05-19 | phase5/setup-claim: align reducer with book shape | §5.4 / Fig. 12 R8 | GAP-CLOSING | NEW in iteration 2; must audit against book lines 599-626 and setup reducer code. |
 
 ## Public API surface delta
 

@@ -1,5 +1,5 @@
 ---
-iteration: 1
+iteration: 2
 max_iterations: 8
 completion_promise: "Deep §5 conformance audit completed on `feat/tensor-challenges`. `specs/section5_full_diff_audit.md` exists at HEAD and contains: (1) commit-by-commit walkthrough of every commit between `git merge-base origin/main HEAD` and HEAD, each classified as ALIGNED / DRIFT / GAP-CLOSING / SCOPE-OUTSIDE / SCAFFOLDING / TEST / DOCS / REVERT with §5 subsection cross-reference; (2) DRIFT register with file:line + exact book line citation + soundness-impact + production-blocker status for every drift; (3) GAP register with same fidelity for every §5 element absent from the implementation; (4) per-Figure-12-round implementation map (rounds 1-8) with commit hashes + prover/verifier file:line + transcript labels; (5) per-§5-subsection completeness matrix showing ALIGNED/DRIFT/GAP counts per subsection; (6) public API surface delta (every new pub symbol vs main); (7) transcript label delta (every new label cross-referenced to a Figure 12 round); (8) type-shape delta covering LevelParams / MRowLayout / proof shapes / cache types / tiered types / claim-reduction types; (9) test coverage delta listing every new test + gaps; (10) security delta vs security_analysis.md §10; (11) cascade discovery walkthrough; (12) three-tier production-readiness verdict. Every ALIGNED claim has a file:line + book line citation; every DRIFT has a fix recommendation; every GAP has a next-step. The drift register cross-references and either CONFIRMS or REFINES every entry in the prior `specs/section5_protocol_drift_audit.md`. No source code changed (audit doc + scratchpad only). No commits other than the audit doc + scratchpad. No push. cargo state unchanged from loop start."
 ---
@@ -270,6 +270,33 @@ Do NOT try to do everything in one pass. The branch has 100+ commits; budget 4-6
 3. Audit the first chronological slice in depth: commits `d7dd31e` through `1ef0042` (challenge-family / transcript domain setup), including public API deltas in `akita-challenges` and `akita-transcript`.
 4. Start the Public API surface delta from `lib.rs` / `mod.rs` diffs and verify actual symbol definitions.
 5. Preserve read-only discipline: edit only `specs/section5_full_diff_audit.md` and this scratchpad; commit only those files; do not push.
+
+# Iteration 2 handoff state
+
+- Audited code HEAD advanced to `81cceecf6206123170eab38d388768a320b16f00`; merge-base remains `4b0b86a946dca5124ddc1c0197bda7b73284a137`.
+- Updated `specs/section5_full_diff_audit.md` metadata to `153` commits total (`150` non-merge + `3` merge commits) and diff stat `133 files changed, 149559 insertions(+), 5562 deletions(-)`.
+- Refreshed the diff overview by crate/area from current `git diff --numstat`.
+- Expanded the commit-by-commit walkthrough spine to one row for every commit `d7dd31e` through `81cceec`, including merge commits. Classifications are explicitly `PRELIMINARY` in notes and must not be treated as final until a slice audit attaches file:line + book-line evidence.
+- Re-read current source evidence for:
+  - `crates/akita-challenges/src/stage1.rs:522-552` tensor left/right sampling and left digest absorb.
+  - `crates/akita-algebra/src/offset_eq.rs:20-200` offset-slice carry DP and aligned fast path.
+  - `crates/akita-verifier/src/protocol/setup_claim_reduction.rs:108-188` setup claim-reduction rounds + degree-2 verifier check.
+  - `crates/akita-types/src/layout/params.rs:273-347` `MRowLayout` 10-vs-15 documentation and fields.
+  - `crates/akita-transcript/src/labels.rs:42-140` transcript labels and `all_labels()`.
+- Spawned four read-only `best-of-n-runner` subagents for independent slices:
+  - §5.2 + §5.3 tensor/automaton.
+  - §5.4 + §5.5 claim-reduction/tiered.
+  - §5.6 Figure 12 transcript ordering.
+  - API/type/test/security/commit-classification support.
+- No source files were edited. Only `specs/section5_full_diff_audit.md` and this scratchpad changed.
+
+# Iteration 3 recommended slice
+
+1. Wait for and incorporate subagent evidence, rejecting any ALIGNED claim without exact book lines and file:line evidence.
+2. Replace PRELIMINARY commit classes for at least commits `d7dd31e..de81b3c` with final classifications.
+3. Complete the transcript label delta: verify every new label's consumption order in prover and verifier, especially `CHALLENGE_TIERED_CHUNK_AGGREGATION`.
+4. Begin type-shape delta for `LevelParams`, `MRowLayout`, `SetupClaimReductionPayload`, and `TieredSetup*`.
+5. Commit only the audit doc + scratchpad again; do not push.
 ---
 iteration: 1
 max_iterations: 25
