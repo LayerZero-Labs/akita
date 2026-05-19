@@ -87,6 +87,21 @@ pub const CHALLENGE_TAU1: &[u8] = b"ak/c/t1";
 /// Challenge label for the setup-side claim-reduction sumcheck rounds.
 pub const CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND: &[u8] = b"ak/c/scrr";
 
+/// Challenge label for γ-folding the k per-chunk routed-S claims into
+/// a SINGLE aggregated chunks claim at L+1 (book §5.4 lines 686-754,
+/// §5.5 line 752 "Growth ≈ 1.0-3.0×"). Sampled after the meta-tier
+/// commit absorption inside `prove_recursive_multi_fold_with_params`
+/// (verifier mirror in `verify_one_level`) so the γ values commit to
+/// the k chunk u_j and the meta u_meta jointly.
+///
+/// Sampled as k independent F-scalars (one γ_j per chunk), matching
+/// the existing `CHALLENGE_EVAL_BATCH` form. Soundness: for two
+/// k-tuples (u_j) ≠ (v_j) over F, the aggregated equality
+/// `Σ_j γ_j (u_j - v_j) = 0` holds with probability `1/|F|`; the
+/// composed knowledge error over the L levels of the cascade is
+/// absorbed into the protocol's existing γ-batching budget.
+pub const CHALLENGE_TIERED_CHUNK_AGGREGATION: &[u8] = b"ak/c/tca";
+
 /// Return all Akita-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
     &[
@@ -120,5 +135,6 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         CHALLENGE_TAU0,
         CHALLENGE_TAU1,
         CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND,
+        CHALLENGE_TIERED_CHUNK_AGGREGATION,
     ]
 }
