@@ -420,6 +420,61 @@ fn probe_cascade_schedules() {
     });
 }
 
+/// Book §5.8 cascade discovery probe: extended NV scan to find the
+/// smallest NV at which the planner emits ≥ 2 routing folds for each
+/// of the four cascade configs of interest. Used to align headline
+/// (`f_{L0}=8, f_{L1}=4`) measurement points with book Table 1141–1158
+/// at NV ∈ {32, 38, 44}.
+///
+/// Each row logs `routing_count + per-level tiers` if the schedule
+/// resolves, `layout_err` if `commitment_layout` itself rejects, or
+/// `sched_err` if the planner rejects. Single failures never abort
+/// the scan; the test is purely diagnostic.
+#[test]
+#[ignore = "diagnostic probe; run explicitly with --ignored"]
+fn probe_cascade_schedules_extended() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        let nvs = [19usize, 22, 25, 28, 32, 35, 38, 41, 44, 47, 50];
+        for nv in nvs {
+            probe_one::<DenseCascadeSmallCfg>(nv, "dense_small(2,2)  ");
+            probe_one::<OneHotCascadeSmallCfg>(nv, "onehot_small(2,2) ");
+            probe_one::<DenseCascadeCfg>(nv, "dense_headline(8,4)");
+            probe_one::<OneHotCascadeCfg>(nv, "onehot_headline(8,4)");
+        }
+
+        fn probe_one<Cfg: CommitmentConfig + akita_planner::PlannerConfig>(
+            nv: usize,
+            cfg_label: &str,
+        ) {
+            match Cfg::commitment_layout(nv) {
+                Ok(_layout) => {}
+                Err(e) => {
+                    eprintln!("NV={nv:<3} cfg={cfg_label}  layout=ERR err={e:?}");
+                    return;
+                }
+            }
+            match Cfg::get_params_for_prove(
+                nv,
+                nv,
+                1,
+                akita_types::AkitaRootBatchSummary::singleton(),
+            ) {
+                Ok(schedule) => {
+                    let (count, tiers) = inspect_cascade_schedule(&schedule);
+                    eprintln!(
+                        "NV={nv:<3} cfg={cfg_label}  sched=OK routing={count} tiers={tiers:?}"
+                    );
+                }
+                Err(e) => {
+                    eprintln!("NV={nv:<3} cfg={cfg_label}  sched=ERR err={e:?}");
+                }
+            }
+        }
+    });
+}
+
 /// Inspect a cascade schedule and report the per-level routing tier.
 /// Returns `(routing_fold_count, tiers_per_routing_fold)` where the
 /// second is the list of `shrink_factor` values across routing folds
@@ -554,25 +609,93 @@ fn tiered_dense_cascade_l0_l1_small() {
     });
 }
 
+/// Book §5.8 line 1170 headline cascade SCHEDULE assertion at the
+/// smallest variable count where the planner emits both routing folds.
+///
+/// Uses `f_{L0} = 8`, `f_{L1} = 4`, `f_{Lk} = 1` for `k ≥ 2` — exactly
+/// the configuration the book Table at 1141–1158 measures as
+/// "T1+T2 @ L0+L1" (16× / 35× / 265× speedup at NV=32 / 38 / 44).
+///
+/// The matched-tier planner sizing rejects NV ≤ 21 because the L1
+/// receive shape needs `r_S, m_S ≥ log₂(f_{L0}) = 3` on both axes, so
+/// the smallest viable NV is `22`. E2E prove + verify at this scale
+/// still hits the same ceiling as
+/// [`tiered_dense_cascade_l0_l1_headline_small`] (audit B-5), so this
+/// sentinel asserts schedule-side correctness only — the planner is no
+/// longer dead-code at L1. The per-level cascade plumbing under E2E
+/// remains validated by [`tiered_dense_cascade_l0_l1_small`].
+#[test]
+fn tiered_dense_cascade_l0_l1_fires() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 22;
+
+        use akita_planner::PlannerConfig;
+        assert_eq!(
+            DenseCascadeCfg::planner_setup_shrink_factor_at_level(0),
+            8,
+            "headline cascade L0 tier must be 8 (book §5.8 line 1170)"
+        );
+        assert_eq!(
+            DenseCascadeCfg::planner_setup_shrink_factor_at_level(1),
+            4,
+            "headline cascade L1 tier must be 4 (book §5.8 line 1170)"
+        );
+        assert_eq!(
+            DenseCascadeCfg::planner_setup_shrink_factor_at_level(2),
+            1,
+            "headline cascade L2+ must fall back to un-tiered (book §5.8)"
+        );
+
+        let schedule = DenseCascadeCfg::get_params_for_prove(
+            NV,
+            NV,
+            1,
+            akita_types::AkitaRootBatchSummary::singleton(),
+        )
+        .expect("dense headline cascade schedule");
+        let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
+        eprintln!(
+            "[dense_cascade_l0_l1_fires] NV={NV}, routing folds={routing_count}, \
+             per-level tiers={tiers:?}"
+        );
+        assert!(
+            routing_count >= 2,
+            "headline cascade must emit at least 2 routing folds (L0 + L1); \
+             got routing_count={routing_count} tiers={tiers:?}"
+        );
+        assert_eq!(
+            tiers,
+            vec![8, 4],
+            "headline cascade must use book §5.8 line 1170 per-level tiers \
+             [F_L0=8, F_L1=4]; got {tiers:?}"
+        );
+    });
+}
+
 /// Book §5.8 line 1170 headline cascade end-to-end at the smallest
 /// schedulable NV. Uses `f_{L0} = 8`, `f_{L1} = 4`, `f_{Lk} = 1` for
 /// `k ≥ 2`. This is exactly the configuration the book Table at
 /// 1141–1158 measures as "T1+T2 @ L0+L1" (16× / 35× / 265× speedup at
 /// NV=32 / 38 / 44).
 ///
-/// Currently ignored: at NV=19 the planner only emits one routing
-/// fold (L0 with `f = 8`), and the prover hits the same scale ceiling
-/// as `tiered_production_prove_verify` (audit B-5). Will be un-ignored
-/// once B-5 is profiled and the OOM / CRT-overflow path at production
-/// `f = 8` is unblocked. The per-level cascade plumbing itself is
-/// validated by [`tiered_dense_cascade_l0_l1_small`].
+/// Currently ignored: the prover hits the same scale ceiling as
+/// `tiered_production_prove_verify` (audit B-5) at the smallest NV the
+/// planner accepts (`NV=22`, lifted from `NV=19` after the per-level
+/// cascade routing fix exposed the latent incoming-tier mismatch).
+/// Will be un-ignored once B-5 is profiled and the OOM / CRT-overflow
+/// path at production `f = 8` is unblocked. The per-level cascade
+/// plumbing itself is validated by [`tiered_dense_cascade_l0_l1_small`];
+/// the schedule firing for the headline `(8, 4)` is asserted by
+/// [`tiered_dense_cascade_l0_l1_fires`].
 #[test]
 #[ignore = "headline cascade hits scale ceiling — gated on audit B-5"]
 fn tiered_dense_cascade_l0_l1_headline_small() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 19;
+        const NV: usize = 22;
         const D: usize = DENSE_D;
         type Scheme = AkitaCommitmentScheme<D, DenseCascadeCfg>;
 

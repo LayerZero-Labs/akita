@@ -110,36 +110,52 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
     let fb = Cfg::planner_field_bits();
     // Phase D-full Slice G tier shape selected by the config (book §5.4).
     //
-    // The planner uses real tiered sizing when `tier.is_tiered()`. The
-    // routed S group expands at the next level into `k + 1` separate
-    // commitment groups (k chunks at `chunk_lp` shape + 1 meta at
-    // `meta_lp` shape) per Phase 3 of the fourth-root verifier
-    // implementation. Sizing matches the runtime exactly via the
-    // heterogeneous-aware `w_ring_element_count_with_claim_groups`
-    // (`schedule.rs`).
+    // Two tiers participate at every level beyond the root:
+    //
+    // * `incoming_tier` is the tier the *previous* level used to emit
+    //   `S`. It dictates how the runtime structures the routed
+    //   handle at this level's input, and therefore the per-chunk LP
+    //   used by the joint `(W, S)` opening sizing here. The DP only
+    //   reaches `s_field_len_in > 0` through a chain whose immediate
+    //   predecessor routed with `_at_level(level - 1)`, so we can
+    //   recover the incoming tier from the configured per-level
+    //   policy without threading extra state through the memo key.
+    //
+    // * `outgoing_tier` is the tier *this* level uses when it emits
+    //   `S` to the next level (`_at_level(level)`). Carried on the
+    //   `FoldStep::tier_setup_params` so the runtime/cascade matrix
+    //   sizing know how to chunk the emitted handle.
+    //
     // Book §5.8 line 1170 prescribes per-level tier `f_{L0} = 8`,
     // `f_{L1} = 4`. Configs that want a single uniform `f` get it via
-    // the default impl of `planner_setup_shrink_factor_at_level` (which
-    // delegates to `planner_setup_shrink_factor`); cascade configs
-    // override the per-level hook to return different `f` per recursion
-    // level.
-    let tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor_at_level(level).max(1))
-        .unwrap_or_else(|_| TieredSetupParams::un_tiered());
+    // the default impl of `planner_setup_shrink_factor_at_level`
+    // (which delegates to `planner_setup_shrink_factor`); cascade
+    // configs override the per-level hook to return different `f`
+    // per recursion level.
+    let outgoing_tier =
+        TieredSetupParams::new(Cfg::planner_setup_shrink_factor_at_level(level).max(1))
+            .unwrap_or_else(|_| TieredSetupParams::un_tiered());
+    let incoming_tier = if level == 0 {
+        TieredSetupParams::un_tiered()
+    } else {
+        TieredSetupParams::new(Cfg::planner_setup_shrink_factor_at_level(level - 1).max(1))
+            .unwrap_or_else(|_| TieredSetupParams::un_tiered())
+    };
     // Phase D-full v2 cascade: when the previous level routed `S`
     // (`s_field_len_in > 0`), this level joint-opens `(W, S)` as
     // multi-group. Under un-tiered (`f = 1`, book §5.3 lines 627-660)
     // it is 2 groups; under tiered (`f > 1`, book §5.4 lines 709-754)
     // it is `k + 2` groups (W + k chunks + meta). The `S`-group LP
-    // is derived from the incoming `S` size and the outer LP via
-    // `tiered_setup_group_lp` (degenerates to the un-tiered helper
-    // when `f = 1`).
+    // is derived from the incoming `S` size, the outer LP, and the
+    // *incoming* tier via `tiered_setup_group_lp` (degenerates to
+    // the un-tiered helper when `f = 1`).
     let s_lp_in = if s_field_len_in > 0 {
-        tiered_setup_group_lp(&level_lp, s_field_len_in, tier).ok()
+        tiered_setup_group_lp(&level_lp, s_field_len_in, incoming_tier).ok()
     } else {
         None
     };
     let (w_ring, natural_next_w_len) = if let Some(s_lp) = &s_lp_in {
-        let num_eval_rows = if tier.is_tiered() {
+        let num_eval_rows = if incoming_tier.is_tiered() {
             // Phase 5 grouping merges k chunks into ONE commitment
             // group (sharing chunk_lp + tier marker) so the next-level
             // multi-claim infra sees three opening points: W, the
@@ -149,12 +165,12 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
         } else {
             2
         };
-        let joint_field = if tier.is_tiered() {
+        let joint_field = if incoming_tier.is_tiered() {
             planned_joint_next_w_len_with_setup_group_tiered(
                 fb,
                 &level_lp,
                 s_lp,
-                tier,
+                incoming_tier,
                 num_eval_rows,
             )
         } else {
@@ -184,11 +200,12 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
     } else {
         0
     };
-    // Carry the tier shape only when this level actually routes the S
-    // group recursively. Otherwise the FoldStep is the un-tiered
-    // baseline and the runtime keeps the existing single-claim path.
+    // Carry the OUTGOING tier shape only when this level actually
+    // routes the S group recursively. Otherwise the FoldStep is the
+    // un-tiered baseline and the runtime keeps the existing
+    // single-claim path.
     let tier_setup_params = if s_field_len_emitted > 0 {
-        tier
+        outgoing_tier
     } else {
         TieredSetupParams::un_tiered()
     };
@@ -385,28 +402,50 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
         }
     }
 
+    // Per-level cascade gate: configs that prescribe a tiered shrink
+    // at this level (book §5.8 line 1170 `f_{L0}=8`, `f_{L1}=4`) make
+    // routing mandatory here, so the cascade chain materialises across
+    // the prescribed prefix instead of being silently dropped by the
+    // cost-minimising DP. Non-cascade levels are free to either route
+    // un-tiered or discharge `S` via the cleartext mle check; the DP
+    // picks whichever is cheaper. The same gate is applied at the root
+    // in `find_optimal_schedule_with_max`.
+    let level_tier =
+        TieredSetupParams::new(Cfg::planner_setup_shrink_factor_at_level(level).max(1))
+            .unwrap_or_else(|_| TieredSetupParams::un_tiered());
+    let route_choices: &[bool] = if level_tier.is_tiered() {
+        &[true]
+    } else {
+        &[false, true]
+    };
+
     // Baseline: send the witness directly without folding. The cascade
     // chain terminates here: any pending `S` at the direct step is
     // discharged via the cleartext mle check in
     // `verify_setup_claim_reduction`, not via further routing.
+    // Levels that prescribe a tiered shrink (`level_tier.is_tiered()`)
+    // forbid the direct shortcut, mirroring the root.
     let fb = Cfg::planner_field_bits();
     let direct_bytes = direct_witness_bytes(
         fb,
         &DirectWitnessShape::PackedDigits((current_w_len, current_lb)),
     );
-    let mut best = PlannedSuffix {
-        objective_cost: direct_bytes,
-        proof_bytes: direct_bytes,
-        steps: vec![to_direct_step(current_w_len, current_lb)],
+    let mut best = if level_tier.is_tiered() {
+        PlannedSuffix {
+            objective_cost: usize::MAX,
+            proof_bytes: usize::MAX,
+            steps: Vec::new(),
+        }
+    } else {
+        PlannedSuffix {
+            objective_cost: direct_bytes,
+            proof_bytes: direct_bytes,
+            steps: vec![to_direct_step(current_w_len, current_lb)],
+        }
     };
 
     // Try each feasible basis for one more fold level.
     if depth <= MAX_RECURSION_DEPTH {
-        // Tiered configs (book §5.4) require the ROOT level to route
-        // tiered S, but suffix levels can either route forward OR
-        // discharge via the cleartext mle check at this level. The
-        // root-level gating is in `find_optimal_schedule_with_max`.
-        let route_choices: &[bool] = &[false, true];
         for lb in basis_range::<Cfg>(max_num_vars, level, current_w_len) {
             if lb < current_lb {
                 continue;
@@ -435,11 +474,16 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
                     candidate.s_field_len_emitted,
                     depth + 1,
                 );
+                // The suffix DP returns empty steps when a force-routed
+                // sub-level had no viable fold candidate; in that case
+                // the current candidate has no valid continuation.
+                let Some(first_step) = suffix.steps.first() else {
+                    continue;
+                };
                 // When this level claims to route `S` recursively,
                 // the next step must actually be a fold (cleartext
                 // mle handles the terminal-direct case instead).
-                if routes_setup_recursively && !matches!(suffix.steps.first(), Some(Step::Fold(_)))
-                {
+                if routes_setup_recursively && !matches!(first_step, Step::Fold(_)) {
                     continue;
                 }
 
@@ -828,7 +872,10 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
                 root_s_field_len_emitted,
                 0,
             );
-            if routes_setup_recursively && !matches!(suffix.steps.first(), Some(Step::Fold(_))) {
+            let Some(first_step) = suffix.steps.first() else {
+                continue;
+            };
+            if routes_setup_recursively && !matches!(first_step, Step::Fold(_)) {
                 continue;
             }
 

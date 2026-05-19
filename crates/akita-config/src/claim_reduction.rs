@@ -331,6 +331,20 @@ where
     fn planner_setup_shrink_factor() -> usize {
         SHRINK
     }
+
+    /// Uniform-tier wrapper: the cascade lives at the root only. The
+    /// planner force-routes wherever `_at_level > 1`, so reporting
+    /// `SHRINK` at every level would request an infinite cascade. The
+    /// book §5.4 single-tier sweet spot tiers `S` once at L0 and lets
+    /// the recursive levels run un-tiered (or skip routing entirely);
+    /// cascade configs that want a second tiered level use
+    /// [`ClaimReductionCascadeCfg`].
+    fn planner_setup_shrink_factor_at_level(level: usize) -> usize {
+        match level {
+            0 => SHRINK,
+            _ => 1,
+        }
+    }
 }
 
 impl<Base, const SHRINK: usize> CommitmentConfig for ClaimReductionCfg<Base, SHRINK>
