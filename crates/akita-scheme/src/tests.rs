@@ -162,7 +162,8 @@ fn expected_same_point_batched_shape(
             OneHotCfg::decomposition(),
         )
         .expect("recursive layout");
-        let next_w_len = w_ring_element_count::<OneHotF>(&current_lp) * current_lp.ring_dimension;
+        let next_w_len =
+            w_ring_element_count::<OneHotF>(&current_lp).unwrap() * current_lp.ring_dimension;
         let rounds = batched_shape_rounds(current_lp.ring_dimension, next_w_len);
         step_shapes.push(AkitaProofStepShape::Fold(LevelProofShape {
             y_ring_coeffs: current_lp.ring_dimension,
@@ -226,7 +227,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))
         .collect();
-    let lw = lagrange_weights(&opening_point);
+    let lw = lagrange_weights(&opening_point).unwrap();
     let opening: F = evals
         .iter()
         .zip(lw.iter())
@@ -263,7 +264,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 }
 
 fn dense_opening(evals: &[F], point: &[F]) -> F {
-    let lw = lagrange_weights(point);
+    let lw = lagrange_weights(point).unwrap();
     evals
         .iter()
         .zip(lw.iter())
@@ -573,7 +574,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
             &quad_eq.v,
             &batch_commitment_rows,
             &batched_y_rings,
-        );
+        )
+        .unwrap();
         let relation_sum = debug_relation_sum_from_tables(
             &rs.w_evals_compact,
             rs.live_x_cols,
@@ -602,8 +604,10 @@ fn debug_batched_root_relation_claim_matches_tables() {
             * BATCH_SIZE;
         let z_pre_len = batched_root_lp.inner_width() * batched_root_lp.num_digits_fold;
         let num_points = 1usize;
-        let num_public_eval_rows = 1usize;
-        let m_rows = batch_root_params.m_row_count(num_points, num_public_eval_rows);
+        let num_public_rows = 1usize;
+        let m_rows = batch_root_params
+            .m_row_count(num_points, num_public_rows)
+            .unwrap();
         let r_tail_len = m_rows * r_decomp_levels::<OneHotF>(batched_root_lp.log_basis);
         let w_hat_relation_sum = debug_relation_sum_from_tables(
             &rs.w_evals_compact,
@@ -637,7 +641,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             w_hat_len + t_hat_len + z_pre_len,
             w_hat_len + t_hat_len + z_pre_len + r_tail_len,
         );
-        let eq_tau1 = akita_algebra::eq_poly::EqPolynomial::evals(&rs.tau1);
+        let eq_tau1 = akita_algebra::eq_poly::EqPolynomial::evals(&rs.tau1).unwrap();
         // Row layout: consistency (1) | public (1) | D (n_d) |
         //             B (n_b * num_points) | A (n_a)
         let consistency_weight = eq_tau1[0];
@@ -684,15 +688,18 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let d_view = batch_setup
             .expanded
             .shared_matrix
-            .ring_view::<ONEHOT_D>(batch_root_params.d_key.row_len(), debug_stride);
+            .ring_view::<ONEHOT_D>(batch_root_params.d_key.row_len(), debug_stride)
+            .unwrap();
         let b_view = batch_setup
             .expanded
             .shared_matrix
-            .ring_view::<ONEHOT_D>(batch_root_params.b_key.row_len(), debug_stride);
+            .ring_view::<ONEHOT_D>(batch_root_params.b_key.row_len(), debug_stride)
+            .unwrap();
         let a_view = batch_setup
             .expanded
             .shared_matrix
-            .ring_view::<ONEHOT_D>(batch_root_params.a_key.row_len(), debug_stride);
+            .ring_view::<ONEHOT_D>(batch_root_params.a_key.row_len(), debug_stride)
+            .unwrap();
         let denom = alpha_pows[ONEHOT_D - 1] * rs.alpha + OneHotF::one();
         let expected_d_sum = quad_eq
             .v
@@ -876,7 +883,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let reduced_a_z = debug_z.z_pre.iter().enumerate().fold(
             CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
             |mut acc, (k, z_ring)| {
-                a_view.row(0)[k].mul_accumulate_into(z_ring, &mut acc);
+                a_view.row(0).unwrap()[k].mul_accumulate_into(z_ring, &mut acc);
                 acc
             },
         );
@@ -893,7 +900,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 .iter()
                 .enumerate()
                 .fold(OneHotF::zero(), |acc, (k, z_ring)| {
-                    acc - eval_ring_at_pows_local(&a_view.row(0)[k], alpha_pows)
+                    acc - eval_ring_at_pows_local(&a_view.row(0).unwrap()[k], alpha_pows)
                         * akita_algebra::ring::eval_ring_at(z_ring, &rs.alpha)
                 });
         let direct_raw_a_r =
@@ -906,7 +913,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                     inner
                         + eq_tau1[d_start + di]
                             * eval_ring_at_pows_local(
-                                &d_view.row(di)[x % d_matrix_width],
+                                &d_view.row(di).unwrap()[x % d_matrix_width],
                                 alpha_pows,
                             )
                 });
@@ -927,7 +934,10 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 (0..batch_root_params.b_key.row_len()).fold(OneHotF::zero(), |inner, bi| {
                     inner
                         + eq_tau1[b_start + bi]
-                            * eval_ring_at_pows_local(&b_view.row(bi)[x % outer_width], alpha_pows)
+                            * eval_ring_at_pows_local(
+                                &b_view.row(bi).unwrap()[x % outer_width],
+                                alpha_pows,
+                            )
                 });
             acc + w_alpha_evals[w_hat_len + x] * coeff
         });
@@ -1019,7 +1029,12 @@ fn debug_batched_root_relation_claim_matches_tables() {
                     .iter()
                     .enumerate()
                     .fold(OneHotF::zero(), |inner, (a_idx, eq_i)| {
-                        inner + *eq_i * eval_ring_at_pows_local(&a_view.row(a_idx)[k], alpha_pows)
+                        inner
+                            + *eq_i
+                                * eval_ring_at_pows_local(
+                                    &a_view.row(a_idx).unwrap()[k],
+                                    alpha_pows,
+                                )
                     });
             let _ = block_idx;
             acc + w_alpha_evals[w_hat_len + t_hat_len + idx] * (-(coeff * fold_gadget[fold_idx]))
@@ -1119,14 +1134,15 @@ fn debug_onehot_batched_profile_compare() {
             OneHotCfg::log_basis_at_level(_batch_root_inputs),
         );
 
-        let single_root_w_ring = w_ring_element_count::<OneHotF>(&single_root_params);
+        let single_root_w_ring = w_ring_element_count::<OneHotF>(&single_root_params).unwrap();
         let batched_root_w_ring = w_ring_element_count_with_counts::<OneHotF>(
             &batched_root_lp,
             BATCH_COMMITMENT_GROUPS,
             BATCH_SIZE,
             BATCH_SIZE,
             1,
-        );
+        )
+        .unwrap();
 
         tracing::info!(
             ?single_layout,
@@ -1345,7 +1361,7 @@ fn batched_root_direct_fast_path_round_trip() {
                 }
                 evals[base..base + take].copy_from_slice(&ring.coefficients()[..take]);
             }
-            let lw = lagrange_weights(&opening_point);
+            let lw = lagrange_weights(&opening_point).unwrap();
             evals
                 .iter()
                 .zip(lw.iter())
@@ -1805,7 +1821,7 @@ fn verify_passes_for_consistent_opening() {
         <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup).unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
-    let lw = lagrange_weights(&opening_point);
+    let lw = lagrange_weights(&opening_point).unwrap();
     let opening: F = evals
         .iter()
         .zip(lw.iter())
@@ -1865,7 +1881,7 @@ fn verify_rejects_wrong_opening() {
         <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup).unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
-    let lw = lagrange_weights(&opening_point);
+    let lw = lagrange_weights(&opening_point).unwrap();
     let opening: F = evals
         .iter()
         .zip(lw.iter())
@@ -2073,7 +2089,7 @@ fn monomial_basis_prove_verify_round_trip() {
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
 
-    let mw = monomial_weights(&opening_point);
+    let mw = monomial_weights(&opening_point).unwrap();
     let opening: F = coeffs
         .iter()
         .zip(mw.iter())
@@ -2374,10 +2390,10 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         max_num_batched_polys: usize,
         max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError> {
-        let lp = Self::root_lp();
         let max_num_claims = max_num_batched_polys
             .checked_mul(max_num_points)
             .ok_or_else(|| AkitaError::InvalidSetup("claim count overflow".to_string()))?;
+        let lp = Self::root_lp();
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
@@ -2422,14 +2438,19 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = Self::root_lp();
+        let lp = akita_types::scale_batched_root_layout(
+            &Self::root_lp(),
+            incidence.num_claims(),
+            Self::stage1_challenge_config(Self::D).l1_norm(),
+            Self::decomposition().field_bits(),
+        )?;
         let w_ring = w_ring_element_count_with_counts::<Self::Field>(
             &lp,
             incidence.num_points(),
             incidence.num_polynomials(),
             incidence.num_claims(),
             incidence.num_public_rows(),
-        );
+        )?;
         let compact_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
             steps: vec![
@@ -2593,10 +2614,10 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         max_num_batched_polys: usize,
         max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError> {
-        let lp = Self::root_lp();
         let max_num_claims = max_num_batched_polys
             .checked_mul(max_num_points)
             .ok_or_else(|| AkitaError::InvalidSetup("claim count overflow".to_string()))?;
+        let lp = Self::root_lp();
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
@@ -2641,14 +2662,19 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = Self::root_lp();
+        let lp = akita_types::scale_batched_root_layout(
+            &Self::root_lp(),
+            incidence.num_claims(),
+            Self::stage1_challenge_config(Self::D).l1_norm(),
+            Self::decomposition().field_bits(),
+        )?;
         let w_ring = w_ring_element_count_with_counts::<Self::Field>(
             &lp,
             incidence.num_points(),
             incidence.num_polynomials(),
             incidence.num_claims(),
             incidence.num_public_rows(),
-        );
+        )?;
         let next_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
             steps: vec![
@@ -2695,7 +2721,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
             ])
         })
         .collect::<Vec<_>>();
-    let weights = lagrange_weights(&point);
+    let weights = lagrange_weights(&point).unwrap();
     let opening = evals
         .iter()
         .zip(weights.iter())
@@ -2824,7 +2850,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
             ])
         })
         .collect::<Vec<_>>();
-    let weights = lagrange_weights(&point);
+    let weights = lagrange_weights(&point).unwrap();
     let opening_a = evals_a
         .iter()
         .zip(weights.iter())
@@ -2939,7 +2965,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
         })
         .collect::<Vec<_>>();
     let opening_at = |point: &[SmallE]| {
-        let weights = lagrange_weights(point);
+        let weights = lagrange_weights(point).unwrap();
         evals
             .iter()
             .zip(weights.iter())

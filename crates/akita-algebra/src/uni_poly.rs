@@ -276,7 +276,10 @@ impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
         validate: Validate,
         degree: &usize,
     ) -> Result<Self, SerializationError> {
-        let mut coeffs = Vec::with_capacity(*degree);
+        let mut coeffs = Vec::new();
+        coeffs.try_reserve_exact(*degree).map_err(|_| {
+            SerializationError::InvalidData("compressed polynomial allocation failed".to_string())
+        })?;
         for _ in 0..*degree {
             coeffs.push(E::deserialize_with_mode(
                 &mut reader,

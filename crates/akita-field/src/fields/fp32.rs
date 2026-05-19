@@ -66,7 +66,7 @@ impl<const P: u32> Fp32<P> {
     /// Multiplicative identity.
     #[inline]
     pub fn one() -> Self {
-        Self(if P > 1 { 1 } else { 0 })
+        Self(u32::from(P > 1))
     }
 
     /// Check whether this element is zero.

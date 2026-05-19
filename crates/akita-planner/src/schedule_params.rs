@@ -76,7 +76,7 @@ fn derive_candidate_level_params<Cfg>(
     level: usize,
     current_w_len: usize,
     log_basis: u32,
-) -> Option<CandidateLevelParams>
+) -> Result<Option<CandidateLevelParams>, AkitaError>
 where
     Cfg: PlannerConfig,
 {
@@ -86,25 +86,28 @@ where
         current_w_len,
     };
 
-    let level_lp = if level == 0 {
-        Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?
+    let level_lp = match if level == 0 {
+        Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis)
     } else {
-        Cfg::planner_current_level_layout_with_log_basis(inputs, log_basis).ok()?
+        Cfg::planner_current_level_layout_with_log_basis(inputs, log_basis)
+    } {
+        Ok(level_lp) => level_lp,
+        Err(_) => return Ok(None),
     };
 
     let fb = Cfg::planner_field_bits();
     let recursive_rows = Cfg::planner_recursive_public_rows();
-    let next_w_len = w_ring_element_count_with_counts::<Cfg::PlannerField>(
+    let w_ring_elements = w_ring_element_count_with_counts::<Cfg::PlannerField>(
         &level_lp,
         1,
         1,
         recursive_rows,
         recursive_rows,
-    )
-    .checked_mul(level_lp.ring_dimension)
-    .expect("recursive witness length overflow")
-    .checked_mul(Cfg::planner_recursive_witness_expansion())
-    .expect("recursive witness expansion overflow");
+    )?;
+    let next_w_len = w_ring_elements
+        .checked_mul(level_lp.ring_dimension)
+        .and_then(|len| len.checked_mul(Cfg::planner_recursive_witness_expansion()))
+        .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
     let w_ring = next_w_len / level_lp.ring_dimension;
 
     let input_elem_bits = if level == 0 {
@@ -112,16 +115,22 @@ where
     } else {
         log_basis as usize
     };
-    if next_w_len * (log_basis as usize) >= current_w_len * input_elem_bits {
-        return None;
+    let next_bits = next_w_len
+        .checked_mul(log_basis as usize)
+        .ok_or_else(|| AkitaError::InvalidSetup("next witness bit length overflow".into()))?;
+    let current_bits = current_w_len
+        .checked_mul(input_elem_bits)
+        .ok_or_else(|| AkitaError::InvalidSetup("current witness bit length overflow".into()))?;
+    if next_bits >= current_bits {
+        return Ok(None);
     }
 
-    Some(CandidateLevelParams {
+    Ok(Some(CandidateLevelParams {
         proof_lp: level_lp.clone(),
         lp: level_lp,
         next_w_len,
         w_ring,
-    })
+    }))
 }
 
 /// Compute the proof bytes for this fold level against a concrete successor.
@@ -292,14 +301,14 @@ fn derive_optimal_suffix_schedule<Cfg>(
     current_w_len: usize,
     current_lb: u32,
     depth: usize,
-) -> (usize, Vec<Step>)
+) -> Result<(usize, Vec<Step>), AkitaError>
 where
     Cfg: PlannerConfig,
 {
     let key = (level, current_w_len, current_lb);
     if depth <= MAX_RECURSION_DEPTH {
         if let Some(cached) = memo.get(&key) {
-            return cached.clone();
+            return Ok(cached.clone());
         }
     }
 
@@ -335,7 +344,7 @@ where
                 continue;
             }
             let Some(candidate) =
-                derive_candidate_level_params::<Cfg>(num_vars, level, current_w_len, lb)
+                derive_candidate_level_params::<Cfg>(num_vars, level, current_w_len, lb)?
             else {
                 continue;
             };
@@ -347,7 +356,7 @@ where
                 candidate.next_w_len,
                 lb,
                 depth + 1,
-            );
+            )?;
             if suffix_steps.is_empty() {
                 continue;
             }
@@ -390,7 +399,7 @@ where
         memo.insert(key, (best_cost, best_schedule.clone()));
     }
 
-    (best_cost, best_schedule)
+    Ok((best_cost, best_schedule))
 }
 
 // -----------------------------------------------------------------------
@@ -423,7 +432,7 @@ where
     let w_hat = w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat = t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre = z_vectors * lp.inner_width() * lp.num_digits_fold;
-    let r_rows = lp.m_row_count(num_points, z_vectors);
+    let r_rows = lp.m_row_count(num_points, z_vectors)?;
     let r = r_rows * r_decomp;
 
     #[cfg(feature = "zk")]
@@ -583,10 +592,18 @@ where
         let next_w_len = raw_w_ring
             .checked_mul(level_lp.ring_dimension)
             .and_then(|len| len.checked_mul(Cfg::planner_recursive_witness_expansion()))
-            .expect("root recursive witness expansion overflow");
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("root recursive witness length overflow".into())
+            })?;
         let w_ring = next_w_len / level_lp.ring_dimension;
 
-        if next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
+        let next_bits = next_w_len.checked_mul(log_basis as usize).ok_or_else(|| {
+            AkitaError::InvalidSetup("root next witness bit length overflow".into())
+        })?;
+        let root_bits = root_w_len
+            .checked_mul(fb as usize)
+            .ok_or_else(|| AkitaError::InvalidSetup("root witness bit length overflow".into()))?;
+        if next_bits >= root_bits {
             continue;
         }
 
@@ -687,7 +704,7 @@ where
             candidate.next_w_len,
             root_lb,
             0,
-        );
+        )?;
         if suffix_steps.is_empty() {
             continue;
         }

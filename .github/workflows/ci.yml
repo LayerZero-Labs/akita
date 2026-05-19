@@ -29,6 +29,18 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+  taplo:
+    name: TOML format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install taplo
+        uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # taplo-cli
+        with:
+          tool: taplo-cli
+      - name: Check TOML formatting
+        run: taplo fmt --check
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -48,6 +60,18 @@ jobs:
           scripts/check-crate-deps.sh akita-config
           scripts/check-crate-deps.sh akita-setup
           scripts/check-crate-deps.sh akita-scheme
+
+  machete:
+    name: Unused dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # cargo-machete
+        with:
+          tool: cargo-machete
+      - name: Check unused dependencies
+        run: cargo machete --with-metadata
 
   doc:
     name: Documentation
@@ -74,3 +98,13 @@ jobs:
         run: cargo nextest run --all-features
       - name: Planner validation
         run: cargo run -p akita-planner --bin akita-planner -- --validate
+
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check spelling
+        uses: crate-ci/typos@6ac2ebd1b93eade61faf7e12688ad87a073fea59 # v1.46.0
+        with:
+          files: .
