@@ -165,10 +165,14 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
                 // both the per-tail cost and the recorded witness length
                 // so the suffix `sb` reflects the terminal payload.
                 let is_terminal = sl.is_empty();
-                let (effective_sb, recorded_nw) = if is_terminal {
-                    (baseline_packed_digits_bytes(nw_terminal, nlb), nw_terminal)
+                let (effective_sb, recorded_nw, recorded_rounds) = if is_terminal {
+                    (
+                        baseline_packed_digits_bytes(nw_terminal, nlb),
+                        nw_terminal,
+                        rnds_terminal,
+                    )
                 } else {
-                    (sb, nw)
+                    (sb, nw, rnds)
                 };
                 let lbytes = if is_terminal {
                     terminal_level_bytes(bp, rnds_terminal)
@@ -178,7 +182,7 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
                 let cand = lbytes + effective_sb;
                 if cand < best.0 {
                     let mut levels = Vec::with_capacity(1 + sl.len());
-                    levels.push((lb, lbytes, recorded_nw, rnds));
+                    levels.push((lb, lbytes, recorded_nw, recorded_rounds));
                     levels.extend(sl);
                     best = (cand, levels, stlb);
                 }
@@ -206,10 +210,14 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
             // terminal tail size and record `nw_terminal` as the final
             // witness length.
             let is_terminal = sl.is_empty();
-            let (effective_sb, recorded_nw) = if is_terminal {
-                (baseline_packed_digits_bytes(nw_terminal, nlb), nw_terminal)
+            let (effective_sb, recorded_nw, recorded_rounds) = if is_terminal {
+                (
+                    baseline_packed_digits_bytes(nw_terminal, nlb),
+                    nw_terminal,
+                    rnds_terminal,
+                )
             } else {
-                (sb, nw)
+                (sb, nw, rnds)
             };
             let rb = if is_terminal {
                 terminal_level_bytes(bp, rnds_terminal)
@@ -220,7 +228,7 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
             let is_better = overall.as_ref().is_none_or(|(best, _, _)| total < *best);
             if is_better {
                 let mut levels = Vec::with_capacity(1 + sl.len());
-                levels.push((rlb, rb, recorded_nw, rnds));
+                levels.push((rlb, rb, recorded_nw, recorded_rounds));
                 levels.extend(sl);
                 overall = Some((total, levels, stlb));
             }
