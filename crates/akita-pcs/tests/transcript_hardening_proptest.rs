@@ -9,21 +9,13 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_transcript::{AkitaTranscript, LoggingTranscript, TranscriptEvent};
+use akita_transcript::{AkitaTranscript, LoggingTranscript};
 use akita_types::ClaimIncidenceSummary;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use proptest::prelude::*;
 
 type Scheme = AkitaCommitmentScheme<DENSE_D, DenseCfg>;
-
-fn public_transcript_events(events: &[TranscriptEvent]) -> Vec<TranscriptEvent> {
-    events
-        .iter()
-        .filter(|event| !matches!(event, TranscriptEvent::Wire { .. }))
-        .cloned()
-        .collect()
-}
 
 fn batch_shape(index: usize) -> Vec<usize> {
     match index {

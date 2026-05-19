@@ -11,14 +11,6 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 
-fn public_transcript_events(events: &[TranscriptEvent]) -> Vec<TranscriptEvent> {
-    events
-        .iter()
-        .filter(|event| !matches!(event, TranscriptEvent::Wire { .. }))
-        .cloned()
-        .collect()
-}
-
 #[test]
 fn preamble_separation_changes_first_challenge() {
     let mut left = AkitaTranscript::<F>::prover(labels::DOMAIN_AKITA_PROTOCOL, b"descriptor-a");

@@ -183,3 +183,14 @@ pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F, DENSE_D> {
         .collect();
     DensePoly::<F, DENSE_D>::from_field_evals(nv, &evals).expect("dense poly")
 }
+
+#[cfg(feature = "logging-transcript")]
+pub(super) fn public_transcript_events(
+    events: &[akita_transcript::TranscriptEvent],
+) -> Vec<akita_transcript::TranscriptEvent> {
+    events
+        .iter()
+        .filter(|event| !matches!(event, akita_transcript::TranscriptEvent::Wire { .. }))
+        .cloned()
+        .collect()
+}
