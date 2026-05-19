@@ -1357,7 +1357,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let gamma = &self.gamma;
 
         let w_len = depth_open * total_blocks;
-        let t_len = depth_open * num_claims * self.n_a * total_blocks;
+        let t_len = depth_open * self.n_a * total_blocks;
         let z_total_blocks = num_points * block_len;
         let z_len = depth_fold * depth_commit * z_total_blocks;
         let r_tail_len = rows * levels;

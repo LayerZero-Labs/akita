@@ -1165,7 +1165,20 @@ impl<F: FieldCore> AkitaLevelProof<F> {
 
     /// Ring dimension of y_ring and v (current level).
     pub fn level_d(&self) -> usize {
-        self.y_ring.coeff_len()
+        fn gcd(mut a: usize, mut b: usize) -> usize {
+            while b != 0 {
+                let r = a % b;
+                a = b;
+                b = r;
+            }
+            a
+        }
+
+        let common = gcd(self.y_ring.coeff_len(), self.v.coeff_len());
+        if common == 0 {
+            return self.y_ring.coeff_len();
+        }
+        1usize << common.trailing_zeros()
     }
 
     /// Reconstruct typed `y_ring`.

@@ -645,6 +645,36 @@ fn root_w_ring_element_count<Cfg: PlannerConfig>(lp: &LevelParams, shape: &Witne
     w_hat + t_hat + z_pre + r
 }
 
+fn root_claim_group_sizes(shape: &WitnessShape) -> Option<Vec<usize>> {
+    if shape.num_commitment_groups == 0 || shape.num_claims < shape.num_commitment_groups {
+        return None;
+    }
+    let base = shape.num_claims / shape.num_commitment_groups;
+    let extra = shape.num_claims - base * shape.num_commitment_groups;
+    let mut sizes = vec![base; shape.num_commitment_groups];
+    if let Some(first) = sizes.first_mut() {
+        *first += extra;
+    }
+    Some(sizes)
+}
+
+fn root_setup_field_len_and_rounds(
+    lp: &LevelParams,
+    shape: &WitnessShape,
+) -> Option<(usize, usize)> {
+    let claim_group_sizes = root_claim_group_sizes(shape)?;
+    let (row_count, col_count_padded) = lp
+        .setup_polynomial_padded_dims(&claim_group_sizes, shape.num_points, shape.num_points)
+        .ok()?;
+    let field_len = row_count
+        .saturating_mul(col_count_padded)
+        .saturating_mul(lp.ring_dimension);
+    let rounds = row_count.next_power_of_two().trailing_zeros() as usize
+        + col_count_padded.trailing_zeros() as usize
+        + lp.ring_dimension.trailing_zeros() as usize;
+    Some((field_len, rounds))
+}
+
 // -----------------------------------------------------------------------
 // Shape-agnostic root candidate + entry point
 // -----------------------------------------------------------------------
@@ -928,17 +958,14 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             // Root's M-table never carries an incoming `S` group: any
             // tier shape applies at the next level when chunks expand.
             // Pass `un_tiered()` for the incoming tier and use the
-            // root's `(num_commitment_groups, num_points)` shape.
-            let root_num_eval_rows = shape.num_points;
-            let root_num_commitment_groups = shape.num_commitment_groups;
+            // root's full claim-group shape.
             let root_setup_field_len = if candidate.lp.use_setup_claim_reduction {
-                planned_setup_field_len(
-                    &candidate.lp,
-                    None,
-                    TieredSetupParams::un_tiered(),
-                    root_num_eval_rows,
-                    root_num_commitment_groups,
-                )
+                let Some((field_len, _rounds)) =
+                    root_setup_field_len_and_rounds(&candidate.lp, &shape)
+                else {
+                    continue;
+                };
+                field_len
             } else {
                 0
             };
@@ -983,13 +1010,12 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             // batched root's `(num_eval_rows, num_commitment_groups)`
             // taken straight from the input shape.
             let root_cr_rounds = if candidate.lp.use_setup_claim_reduction {
-                Some(planned_setup_claim_reduction_rounds(
-                    &candidate.lp,
-                    None,
-                    TieredSetupParams::un_tiered(),
-                    shape.num_points,
-                    shape.num_commitment_groups,
-                ))
+                let Some((_field_len, rounds)) =
+                    root_setup_field_len_and_rounds(&candidate.lp, &shape)
+                else {
+                    continue;
+                };
+                Some(rounds)
             } else {
                 None
             };

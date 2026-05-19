@@ -361,7 +361,10 @@ mod tests {
         }
     }
 
-    fn assert_prepared_m_eval_matches_materialized(level_params: akita_types::LevelParams) {
+    fn assert_prepared_m_eval_matches_materialized(
+        level_params: akita_types::LevelParams,
+        num_claims: usize,
+    ) {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
@@ -372,22 +375,30 @@ mod tests {
         const D: usize = fp128::D128Full::D;
         const NV: usize = 12;
 
+        assert!(num_claims > 0);
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
-        let evals: Vec<F> = (0..(1usize << NV))
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        let polys: Vec<DensePoly<F, D>> = (0..num_claims)
+            .map(|claim_idx| {
+                let evals: Vec<F> = (0..(1usize << NV))
+                    .map(|_| {
+                        let raw = rng.gen::<u128>() ^ ((claim_idx as u128) << 96);
+                        F::from_canonical_u128_reduced(raw)
+                    })
+                    .collect();
+                DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly")
+            })
             .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
         let point: Vec<F> = (0..NV)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
-        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            F,
-            D,
-        >>::commit(&[poly.clone()], &setup)
-        .expect("commitment");
+        let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+            NV, num_claims, 1,
+        );
+        let (commitment, batched_hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_refs, &setup)
+                .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -399,32 +410,43 @@ mod tests {
             BlockOrder::RowMajor,
         )
         .expect("ring opening point");
-        let (y_ring, w_folded) = poly.evaluate_and_fold(
-            &ring_opening_point.b,
-            &ring_opening_point.a,
-            level_params.block_len,
-        );
+        let gamma: Vec<F> = (0..num_claims)
+            .map(|idx| F::from_u64(11 + 7 * idx as u64))
+            .collect();
+        let mut combined_y = CyclotomicRing::<F, D>::zero();
+        let mut w_folded_by_poly = Vec::with_capacity(num_claims);
+        for (poly, &gamma_i) in polys.iter().zip(gamma.iter()) {
+            let (y_ring, w_folded) = poly.evaluate_and_fold(
+                &ring_opening_point.b,
+                &ring_opening_point.a,
+                level_params.block_len,
+            );
+            combined_y += y_ring.scale(&gamma_i);
+            w_folded_by_poly.push(w_folded);
+        }
+        let claim_to_point = vec![0usize; num_claims];
+        let claim_group_sizes = [num_claims];
 
         let mut transcript = Blake2bTranscript::<F>::new(b"prepared-m-eval-test");
         commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
         for pt in &point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &combined_y);
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
             vec![ring_opening_point.clone()],
-            vec![0usize],
-            &[&poly],
-            vec![w_folded],
-            &[1usize],
+            claim_to_point.clone(),
+            &poly_refs,
+            w_folded_by_poly,
+            &claim_group_sizes,
             level_params.clone(),
             vec![batched_hint],
             &mut transcript,
             std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
-            vec![F::one()],
+            std::slice::from_ref(&combined_y),
+            gamma.clone(),
             setup.expanded.seed.max_stride,
         )
         .expect("quadratic equation");
@@ -448,14 +470,14 @@ mod tests {
         let m_evals_x = compute_m_evals_x::<F, D>(
             &setup.expanded,
             &[ring_opening_point.clone()],
-            &[0usize],
+            &claim_to_point,
             &quad_eq.challenges,
             alpha,
             &alpha_evals_y,
             &level_params,
             &tau1,
-            &[1usize],
-            &[F::one()],
+            &claim_group_sizes,
+            &gamma,
             1,
         )
         .expect("m evals (materialized)");
@@ -471,11 +493,11 @@ mod tests {
             alpha,
             &level_params,
             &tau1,
-            &[1usize],
-            &[F::one()],
+            &claim_group_sizes,
+            &gamma,
             1,
             1,
-            &[],
+            &claim_to_point,
         )
         .expect("prepare_m_eval");
 
@@ -626,7 +648,17 @@ mod tests {
         type Cfg = BareCfg<fp128::D128Full>;
         const NV: usize = 12;
         let level_params = Cfg::commitment_layout(NV).expect("commitment layout");
-        assert_prepared_m_eval_matches_materialized(level_params);
+        assert_prepared_m_eval_matches_materialized(level_params, 1);
+    }
+
+    #[test]
+    fn prepared_m_eval_batched_same_point_matches_materialized() {
+        type Cfg = BareCfg<fp128::D128Full>;
+        const NV: usize = 12;
+        const NUM_CLAIMS: usize = 4;
+        let level_params =
+            Cfg::get_params_for_commitment(NV, NUM_CLAIMS).expect("batched commitment layout");
+        assert_prepared_m_eval_matches_materialized(level_params, NUM_CLAIMS);
     }
 
     #[test]
@@ -636,7 +668,7 @@ mod tests {
         let level_params = Cfg::commitment_layout(NV)
             .expect("commitment layout")
             .with_tensor_stage1_challenges();
-        assert_prepared_m_eval_matches_materialized(level_params);
+        assert_prepared_m_eval_matches_materialized(level_params, 1);
     }
 
     fn assert_setup_claim_reduction_roundtrip(level_params: akita_types::LevelParams) {
