@@ -890,7 +890,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
     // `specs/section5_protocol_drift_audit.md`; Drift 3 alone is not
     // sufficient because the planner's objective does not yet price
     // the verifier-side cleartext MLE discharge at a direct-terminating
-    // L+1.
+    // L+1 symmetrically with the root's CR sumcheck discharge.
     let mut best = if tier_shrink > 1 {
         PlannedSuffix {
             objective_cost: usize::MAX,
