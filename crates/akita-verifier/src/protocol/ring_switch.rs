@@ -2160,6 +2160,18 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         alpha: F,
         r_setup: &[F],
     ) -> Result<F, AkitaError> {
+        akita_field::op_counter::with_category(akita_field::op_counter::OpCategory::Setup, || {
+            self.eval_setup_weight_at_point_inner::<D>(x_challenges, setup, alpha, r_setup)
+        })
+    }
+
+    fn eval_setup_weight_at_point_inner<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        setup: &AkitaExpandedSetup<F>,
+        alpha: F,
+        r_setup: &[F],
+    ) -> Result<F, AkitaError> {
         let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
         let max_stride = setup.seed.max_stride.max(1);
         let (row_bits, col_bits, coeff_bits) = self.setup_polynomial_padded_dims(max_stride);

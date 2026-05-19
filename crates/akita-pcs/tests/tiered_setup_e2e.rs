@@ -1621,6 +1621,455 @@ fn parse_nvs_env(var: &str, default: &[usize]) -> Vec<usize> {
     }
 }
 
+// ---------------------------------------------------------------------
+// Verifier op-counter measurement (audit GAP-2 / SCOPE-4).
+// ---------------------------------------------------------------------
+
+/// Per-config verifier op-count record captured by the op-counter
+/// measurement tests (`tiered_dense_cascade_verifier_op_count` /
+/// `tiered_onehot_cascade_verifier_op_count`).
+#[cfg(feature = "op-counter")]
+#[derive(Clone, Debug)]
+struct OpCountMeasurement {
+    label: String,
+    routing_count: usize,
+    tiers: Vec<usize>,
+    op_count: akita_field::op_counter::OpCount,
+}
+
+/// Drive one prove + one verify of dense `Cfg` at NV and return the
+/// verifier-only op-counter snapshot. Pre-commits, pre-derives the
+/// verifier setup, and triggers one cold cache warmup verify before
+/// the measured verify so the snapshot reflects steady-state
+/// amortized verifier work (book Figure 12 line 817 model: `C_S` is
+/// preprocessed once per setup).
+#[cfg(feature = "op-counter")]
+fn measure_dense_op_count_config<Cfg>(
+    nv: usize,
+    label: &str,
+    poly_seed: u64,
+    point_seed: u64,
+    transcript_label: &[u8],
+) -> Option<OpCountMeasurement>
+where
+    Cfg: CommitmentConfig<Field = F> + akita_planner::PlannerConfig,
+{
+    let layout = match Cfg::commitment_layout(nv) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("    skip {label} at NV={nv}: layout err={e:?}");
+            return None;
+        }
+    };
+
+    let schedule =
+        Cfg::get_params_for_prove(nv, nv, 1, akita_types::AkitaRootBatchSummary::singleton())
+            .expect("schedule must resolve when layout succeeds");
+    let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
+
+    let poly = make_dense_poly(nv, poly_seed);
+    let pt = random_point(nv, point_seed);
+    let opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
+    let setup = <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
+        nv, 1, 1,
+    );
+    let verifier_setup =
+        <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<F, DENSE_D>>::setup_verifier(
+            &setup,
+        );
+
+    let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<
+        F,
+        DENSE_D,
+    >>::commit(std::slice::from_ref(&poly), &setup)
+    .expect("commit");
+    let poly_refs = [&poly];
+    let commitments = [commitment];
+    let openings = [opening];
+
+    let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
+    let proof =
+        <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
+            &setup,
+            prove_input(&pt, &poly_refs, &commitments[0], hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
+
+    // Cold warmup verify to populate the verifier's NTT slot cache +
+    // tiered_s_cache; the measured verify below then reflects the
+    // book Figure 12 line 817 amortized verifier op count.
+    {
+        let mut warmup_transcript = Blake2bTranscript::<F>::new(transcript_label);
+        <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut warmup_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect("warmup verify");
+    }
+
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_label);
+    akita_field::op_counter::reset();
+    akita_field::op_counter::set_enabled(true);
+    let res =
+        <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        );
+    akita_field::op_counter::set_enabled(false);
+    res.expect("measured verify");
+    let op_count = akita_field::op_counter::snapshot();
+
+    Some(OpCountMeasurement {
+        label: label.to_string(),
+        routing_count,
+        tiers,
+        op_count,
+    })
+}
+
+/// Onehot counterpart of [`measure_dense_op_count_config`]; same
+/// contract.
+#[cfg(feature = "op-counter")]
+fn measure_onehot_op_count_config<Cfg>(
+    nv: usize,
+    label: &str,
+    poly_seed: u64,
+    point_seed: u64,
+    transcript_label: &[u8],
+) -> Option<OpCountMeasurement>
+where
+    Cfg: CommitmentConfig<Field = F> + akita_planner::PlannerConfig,
+{
+    let layout = match Cfg::commitment_layout(nv) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("    skip {label} at NV={nv}: layout err={e:?}");
+            return None;
+        }
+    };
+
+    let schedule =
+        Cfg::get_params_for_prove(nv, nv, 1, akita_types::AkitaRootBatchSummary::singleton())
+            .expect("schedule must resolve when layout succeeds");
+    let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
+
+    let poly = make_onehot_poly(&layout, poly_seed);
+    let pt = random_point(nv, point_seed);
+    let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
+    let setup =
+        <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
+            nv, 1, 1,
+        );
+    let verifier_setup =
+        <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<F, ONEHOT_D>>::setup_verifier(
+            &setup,
+        );
+    let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<
+        F,
+        ONEHOT_D,
+    >>::commit(std::slice::from_ref(&poly), &setup)
+    .expect("commit");
+    let poly_refs = [&poly];
+    let commitments = [commitment];
+    let openings = [opening];
+
+    let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
+    let proof =
+        <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+            &setup,
+            prove_input(&pt, &poly_refs, &commitments[0], hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
+
+    {
+        let mut warmup_transcript = Blake2bTranscript::<F>::new(transcript_label);
+        <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut warmup_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect("warmup verify");
+    }
+
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_label);
+    akita_field::op_counter::reset();
+    akita_field::op_counter::set_enabled(true);
+    let res =
+        <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        );
+    akita_field::op_counter::set_enabled(false);
+    res.expect("measured verify");
+    let op_count = akita_field::op_counter::snapshot();
+
+    Some(OpCountMeasurement {
+        label: label.to_string(),
+        routing_count,
+        tiers,
+        op_count,
+    })
+}
+
+/// Book §5.8 Table 1141–1158 predicted cascade-vs-baseline ratios.
+///
+/// These are the headline numbers the audit asks us to compare
+/// against (`(NV, predicted_ratio)`): 16× at NV=32, 35× at NV=38,
+/// 265× at NV=44.
+#[cfg(feature = "op-counter")]
+const BOOK_TABLE_1141_RATIOS: &[(usize, f64)] = &[(32, 16.0), (38, 35.0), (44, 265.0)];
+
+/// Print a per-config op-count table + a cascade-vs-baseline
+/// extrapolation table comparing the measured ratio (at `nv_measured`)
+/// to the book Table 1141–1158 ratios at NV ∈ {32, 38, 44}.
+///
+/// Extrapolation model (per audit GAP-2 / SCOPE-4): baseline verifier
+/// ops scale as `~2^NV` (touches every witness coefficient), cascade
+/// verifier ops scale as `~NV · const + small` (per-level + meta
+/// constants dominate). Concrete projection: `baseline(NV) ≈
+/// baseline(nv_measured) · 2^(NV - nv_measured)`, `cascade(NV) ≈
+/// cascade(nv_measured) · (NV / nv_measured)`. The projected ratio is
+/// `baseline(NV) / cascade(NV)`.
+///
+/// Documented tolerance: order-of-magnitude. Absolute book ratios are
+/// at `D = 128` with the book's reference field width; our
+/// measurements are at the same `D` but a different challenge family
+/// (production fp128 vs the book's `q ≈ 2^128 + 159`), so absolute
+/// values won't match. The asymptotic SHAPE of the ratio curve (slow
+/// rise NV=32→44 from 16× → 35× → 265×, dominated by the `2^NV`
+/// baseline) should match within an order of magnitude.
+#[cfg(feature = "op-counter")]
+fn report_op_count_table(
+    family: &str,
+    nv_measured: usize,
+    measurements: &[Option<OpCountMeasurement>],
+) {
+    eprintln!();
+    eprintln!(
+        "    {:<34}  {:>14}  {:>14}  {:>14}  {:>14}  {:>14}  routing  tiers",
+        "config", "challenge", "setup", "sumcheck", "other", "total",
+    );
+    for m in measurements.iter().flatten() {
+        let c = m.op_count;
+        eprintln!(
+            "    {:<34}  {:>14}  {:>14}  {:>14}  {:>14}  {:>14}  {:>4}     {:?}",
+            m.label,
+            c.challenge_ops,
+            c.setup_ops,
+            c.sumcheck_ops,
+            c.other_ops,
+            c.total,
+            m.routing_count,
+            m.tiers,
+        );
+    }
+
+    let baseline = measurements.first().and_then(|m| m.as_ref());
+    let cascade = measurements.last().and_then(|m| m.as_ref());
+    let (Some(baseline), Some(cascade)) = (baseline, cascade) else {
+        eprintln!("    (baseline or cascade missing; extrapolation skipped)");
+        return;
+    };
+    let b0 = baseline.op_count.total() as f64;
+    let c0 = cascade.op_count.total() as f64;
+    if b0 == 0.0 || c0 == 0.0 {
+        eprintln!(
+            "    (one or both totals are zero — op-counter likely disabled at compile time; skipping extrapolation)"
+        );
+        return;
+    }
+    let measured_ratio = b0 / c0;
+    eprintln!();
+    eprintln!(
+        "    {family} cascade-vs-baseline verifier op-count ratio @ NV={nv_measured}: {measured_ratio:>7.2}x"
+    );
+    eprintln!();
+    eprintln!("    Extrapolation to book Table 1141-1158 (baseline ~ 2^NV, cascade ~ NV * const):");
+    eprintln!(
+        "    {:>4}  {:>14}  {:>14}  {:>10}  {:>10}  {:>12}",
+        "NV", "baseline(proj)", "cascade(proj)", "ratio(proj)", "ratio(book)", "agreement",
+    );
+    for &(nv, book_ratio) in BOOK_TABLE_1141_RATIOS {
+        let scale_baseline = 2f64.powi((nv as i32) - (nv_measured as i32));
+        let baseline_proj = b0 * scale_baseline;
+        let cascade_proj = c0 * (nv as f64 / nv_measured as f64);
+        let ratio_proj = baseline_proj / cascade_proj;
+        let agreement = ratio_proj / book_ratio;
+        let label = if (0.5..=2.0).contains(&agreement) {
+            "AGREE(~2x)"
+        } else if (0.1..=10.0).contains(&agreement) {
+            "AGREE(OOM)"
+        } else {
+            "DIVERGE"
+        };
+        eprintln!(
+            "    {nv:>4}  {baseline_proj:>14.3e}  {cascade_proj:>14.3e}  {ratio_proj:>10.2}x  {book_ratio:>10.2}x  {label:>12}",
+        );
+    }
+    eprintln!(
+        "    (AGREE(~2x): projected within 2x of book; AGREE(OOM): within order of magnitude; \
+         DIVERGE: > 10x apart. Absolute counts won't match the book — different challenge family — \
+         but the RATIO trend should.)"
+    );
+}
+
+/// Book §5.8 Table 1141-1158 verifier op-count measurement at NV=22
+/// dense (the dense ceiling on this 123 GiB host), extrapolated to
+/// the book's measurement points NV ∈ {32, 38, 44}.
+///
+/// Audit GAP-2 + SCOPE-4 disposition (option a from audit DRIFT/GAP
+/// register): instrument an opt-in field-mult counter (paying zero
+/// cost in production builds, gated behind the `op-counter` Cargo
+/// feature) and report book-comparable verifier op counts at the
+/// largest NV that fits this host. The book's wall-clock crossover
+/// NV is ~32 (out of reach on 123 GiB dense), so direct empirical
+/// validation requires extrapolation; the test prints both the
+/// measured counts at NV=22 and the projected ratios at NV ∈
+/// {32, 38, 44} against the book's predicted 16x / 35x / 265x.
+///
+/// Requires the `op-counter` feature (default off): run as
+///
+/// ```text
+/// cargo test --release -p akita-pcs --features op-counter \
+///   --test tiered_setup_e2e -- --ignored --nocapture \
+///   tiered_dense_cascade_verifier_op_count
+/// ```
+///
+/// Override the NV via `AKITA_OPCOUNT_NV_DENSE=22` (default 22).
+/// Marked `#[ignore]` because the run is slow (~5 min at NV=22 across
+/// the 4 configs).
+#[cfg(feature = "op-counter")]
+#[test]
+#[ignore = "measurement-only; run with --features op-counter --ignored"]
+fn tiered_dense_cascade_verifier_op_count() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        let nvs = parse_nvs_env("AKITA_OPCOUNT_NV_DENSE", &[22]);
+
+        for nv in nvs {
+            eprintln!();
+            eprintln!(
+                "=== cascade verifier op-count measurement: NV={nv}, D={DENSE_D} (dense) ==="
+            );
+
+            type UntieredDenseClaimCfg = ClaimReductionCfg<DenseCfg, 1>;
+            type T2OnlyDenseCfg = ClaimReductionCfg<DenseCfg, 8>;
+
+            let baseline = measure_dense_op_count_config::<BareCfg<DenseCfg>>(
+                nv,
+                "baseline (BareCfg<DenseCfg>, no CR)",
+                0x715e_0c01,
+                0x715e_0c02,
+                b"tiered_setup_e2e/opcount/dense/baseline",
+            );
+            let untiered = measure_dense_op_count_config::<UntieredDenseClaimCfg>(
+                nv,
+                "claim-reduction untiered (f=1)",
+                0x715e_0c03,
+                0x715e_0c04,
+                b"tiered_setup_e2e/opcount/dense/untiered",
+            );
+            let t2_only = measure_dense_op_count_config::<T2OnlyDenseCfg>(
+                nv,
+                "T2 @ L0 (f=8)",
+                0x715e_0c05,
+                0x715e_0c06,
+                b"tiered_setup_e2e/opcount/dense/t2_only",
+            );
+            let cascade = measure_dense_op_count_config::<DenseCascadeCfg>(
+                nv,
+                "T1+T2 @ L0+L1 (f=8,4)",
+                0x715e_0c07,
+                0x715e_0c08,
+                b"tiered_setup_e2e/opcount/dense/cascade",
+            );
+
+            report_op_count_table("dense", nv, &[baseline, untiered, t2_only, cascade]);
+        }
+    });
+}
+
+/// Onehot counterpart of [`tiered_dense_cascade_verifier_op_count`]:
+/// runs at NV=28 (the onehot D=64 ceiling on this 123 GiB host) and
+/// reports the same extrapolation table to book Table 1141-1158.
+///
+/// Requires the `op-counter` feature (default off):
+///
+/// ```text
+/// cargo test --release -p akita-pcs --features op-counter \
+///   --test tiered_setup_e2e -- --ignored --nocapture \
+///   tiered_onehot_cascade_verifier_op_count
+/// ```
+///
+/// Override the NV via `AKITA_OPCOUNT_NV_ONEHOT=28` (default 28).
+#[cfg(feature = "op-counter")]
+#[test]
+#[ignore = "measurement-only; run with --features op-counter --ignored"]
+fn tiered_onehot_cascade_verifier_op_count() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        let nvs = parse_nvs_env("AKITA_OPCOUNT_NV_ONEHOT", &[28]);
+
+        for nv in nvs {
+            eprintln!();
+            eprintln!(
+                "=== cascade verifier op-count measurement: NV={nv}, D={ONEHOT_D} (onehot) ==="
+            );
+
+            type UntieredOneHotClaimCfg = ClaimReductionCfg<OneHotCfg, 1>;
+            type T2OnlyOneHotCfg = ClaimReductionCfg<OneHotCfg, 4>;
+
+            let baseline = measure_onehot_op_count_config::<BareCfg<OneHotCfg>>(
+                nv,
+                "baseline (BareCfg<OneHotCfg>, no CR)",
+                0x715e_0c11,
+                0x715e_0c12,
+                b"tiered_setup_e2e/opcount/onehot/baseline",
+            );
+            let untiered = measure_onehot_op_count_config::<UntieredOneHotClaimCfg>(
+                nv,
+                "claim-reduction untiered (f=1)",
+                0x715e_0c13,
+                0x715e_0c14,
+                b"tiered_setup_e2e/opcount/onehot/untiered",
+            );
+            let t2_only = measure_onehot_op_count_config::<T2OnlyOneHotCfg>(
+                nv,
+                "T2 @ L0 (f=4)",
+                0x715e_0c15,
+                0x715e_0c16,
+                b"tiered_setup_e2e/opcount/onehot/t2_only",
+            );
+            let cascade = measure_onehot_op_count_config::<OneHotCascadeCfg>(
+                nv,
+                "T1+T2 @ L0+L1 (f=8,4)",
+                0x715e_0c17,
+                0x715e_0c18,
+                b"tiered_setup_e2e/opcount/onehot/cascade",
+            );
+
+            report_op_count_table("onehot", nv, &[baseline, untiered, t2_only, cascade]);
+        }
+    });
+}
+
 #[test]
 fn tiered_production_prove_verify() {
     init_rayon_pool();

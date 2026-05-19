@@ -289,60 +289,62 @@ where
     A: FnMut(usize, &mut T) -> Result<(), AkitaError>,
     P: FnMut(usize, E, &[E]) -> CompressedUniPoly<E>,
 {
-    let num_rounds = verifier.num_rounds();
-    if prefix_rounds > num_rounds {
-        return Err(AkitaError::InvalidInput(format!(
-            "sumcheck prefix_rounds {prefix_rounds} exceeds num_rounds {num_rounds}"
-        )));
-    }
-    let expected_suffix_rounds = num_rounds - prefix_rounds;
-    if proof.round_polys.len() != expected_suffix_rounds {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_suffix_rounds,
-            actual: proof.round_polys.len(),
-        });
-    }
-
-    let mut claim = verifier.input_claim();
-    tracing::debug!(
-        is_zero = claim.is_zero(),
-        num_rounds,
-        prefix_rounds,
-        "verify_sumcheck input_claim"
-    );
-    transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
-
-    let degree_bound = verifier.degree_bound();
-    let mut challenges = Vec::with_capacity(num_rounds);
-    let mut suffix_iter = proof.round_polys.iter();
-
-    for round in 0..num_rounds {
-        absorb_before_round(round, transcript)?;
-        let poly = if round < prefix_rounds {
-            prefix_round_poly(round, claim, &challenges)
-        } else {
-            suffix_iter.next().cloned().ok_or(AkitaError::InvalidSize {
-                expected: expected_suffix_rounds,
-                actual: proof.round_polys.len(),
-            })?
-        };
-        if poly.degree() > degree_bound {
+    akita_field::op_counter::with_category(akita_field::op_counter::OpCategory::Sumcheck, || {
+        let num_rounds = verifier.num_rounds();
+        if prefix_rounds > num_rounds {
             return Err(AkitaError::InvalidInput(format!(
-                "sumcheck round poly degree {} exceeds bound {}",
-                poly.degree(),
-                degree_bound
+                "sumcheck prefix_rounds {prefix_rounds} exceeds num_rounds {num_rounds}"
             )));
         }
+        let expected_suffix_rounds = num_rounds - prefix_rounds;
+        if proof.round_polys.len() != expected_suffix_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_suffix_rounds,
+                actual: proof.round_polys.len(),
+            });
+        }
 
-        transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &poly);
-        let r_i = sample_challenge(transcript);
-        challenges.push(r_i);
-        claim = poly.eval_from_hint(&claim, &r_i);
-    }
-    debug_assert!(suffix_iter.next().is_none());
+        let mut claim = verifier.input_claim();
+        tracing::debug!(
+            is_zero = claim.is_zero(),
+            num_rounds,
+            prefix_rounds,
+            "verify_sumcheck input_claim"
+        );
+        transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
 
-    check_sumcheck_output_claim(claim, verifier, &challenges)?;
-    Ok(challenges)
+        let degree_bound = verifier.degree_bound();
+        let mut challenges = Vec::with_capacity(num_rounds);
+        let mut suffix_iter = proof.round_polys.iter();
+
+        for round in 0..num_rounds {
+            absorb_before_round(round, transcript)?;
+            let poly = if round < prefix_rounds {
+                prefix_round_poly(round, claim, &challenges)
+            } else {
+                suffix_iter.next().cloned().ok_or(AkitaError::InvalidSize {
+                    expected: expected_suffix_rounds,
+                    actual: proof.round_polys.len(),
+                })?
+            };
+            if poly.degree() > degree_bound {
+                return Err(AkitaError::InvalidInput(format!(
+                    "sumcheck round poly degree {} exceeds bound {}",
+                    poly.degree(),
+                    degree_bound
+                )));
+            }
+
+            transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &poly);
+            let r_i = sample_challenge(transcript);
+            challenges.push(r_i);
+            claim = poly.eval_from_hint(&claim, &r_i);
+        }
+        debug_assert!(suffix_iter.next().is_none());
+
+        check_sumcheck_output_claim(claim, verifier, &challenges)?;
+        Ok(challenges)
+    })
 }
 
 /// Enforce the final sumcheck oracle equality for the provided challenge point.
@@ -480,30 +482,32 @@ where
     E: FieldCore + AkitaSerialize,
     S: FnMut(&mut T) -> E,
 {
-    if proof.round_polys.len() != num_rounds {
-        return Err(AkitaError::InvalidSize {
-            expected: num_rounds,
-            actual: proof.round_polys.len(),
-        });
-    }
-
-    let mut claim = input_claim;
-    transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
-
-    let mut challenges = Vec::with_capacity(num_rounds);
-    for poly in proof.round_polys.iter() {
-        if poly.degree() > degree_bound {
-            return Err(AkitaError::InvalidInput(format!(
-                "sumcheck round poly degree {} exceeds bound {}",
-                poly.degree(),
-                degree_bound
-            )));
+    akita_field::op_counter::with_category(akita_field::op_counter::OpCategory::Sumcheck, || {
+        if proof.round_polys.len() != num_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: num_rounds,
+                actual: proof.round_polys.len(),
+            });
         }
-        transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
-        let r_i = sample_challenge(transcript);
-        challenges.push(r_i);
-        claim = poly.eval_from_hint(&claim, &r_i);
-    }
 
-    Ok((challenges, claim))
+        let mut claim = input_claim;
+        transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+
+        let mut challenges = Vec::with_capacity(num_rounds);
+        for poly in proof.round_polys.iter() {
+            if poly.degree() > degree_bound {
+                return Err(AkitaError::InvalidInput(format!(
+                    "sumcheck round poly degree {} exceeds bound {}",
+                    poly.degree(),
+                    degree_bound
+                )));
+            }
+            transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
+            let r_i = sample_challenge(transcript);
+            challenges.push(r_i);
+            claim = poly.eval_from_hint(&claim, &r_i);
+        }
+
+        Ok((challenges, claim))
+    })
 }

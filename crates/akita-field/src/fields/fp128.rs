@@ -1427,6 +1427,7 @@ impl<const P: u128> Mul for Fp128<P> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self::Output {
+        crate::op_counter::bump();
         Self(Self::mul_raw(self.0, rhs.0))
     }
 }
@@ -1459,6 +1460,9 @@ impl<const P: u128> MulAssign for Fp128<P> {
         *self = *self * rhs;
     }
 }
+
+// NOTE: `Mul<&Self>` delegates to `Mul`, which already bumps the
+// counter — no additional bump here.
 
 impl<'a, const P: u128> Add<&'a Self> for Fp128<P> {
     type Output = Self;

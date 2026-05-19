@@ -11,6 +11,8 @@ pub mod error;
 pub mod fields;
 /// Implementations of Jolt's slim field hierarchy for Akita types.
 mod jolt_traits;
+/// Verifier field-multiplication op-counter (book §5.8 lines 1104–1126).
+pub mod op_counter;
 /// Conditional parallelism utilities.
 pub mod parallel;
 

@@ -30,6 +30,10 @@ rand = "0.8"
 [features]
 default = []
 parallel = ["dep:rayon"]
+# Verifier op-counter instrumentation per book §5.8 line 1104–1126.
+# When disabled, every counter call compiles to a no-op (zero overhead).
+# See [`crate::op_counter`] for the API contract.
+op-counter = []
 
 [lints.rust]
 missing_docs = "warn"

@@ -355,6 +355,7 @@ impl<const P: u64> Mul for Fp64<P> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self::Output {
+        crate::op_counter::bump();
         Self(Self::mul_raw(self.0, rhs.0))
     }
 }
