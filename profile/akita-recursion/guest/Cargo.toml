@@ -7,6 +7,9 @@ authors = ["Omid Bodaghi <omibo@layerzero.foundation>"]
 license = "Apache-2.0 OR MIT"
 publish = false
 
+[package.metadata.cargo-machete]
+ignored = ["akita-field"]
+
 [features]
 # `--features guest` is the flag the `jolt` build CLI passes when building
 # the guest for RISC-V; it activates `guest-std` so std becomes available to

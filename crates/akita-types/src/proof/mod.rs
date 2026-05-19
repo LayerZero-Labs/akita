@@ -39,7 +39,7 @@ pub use stage1::{
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
 use akita_sumcheck::{
@@ -49,6 +49,22 @@ use akita_sumcheck::{
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
+
+fn checked_shape_len(len: usize) -> Result<(), SerializationError> {
+    if len > DEFAULT_MAX_SEQUENCE_LEN {
+        return Err(SerializationError::LengthLimitExceeded {
+            len: u64::try_from(len).unwrap_or(u64::MAX),
+            max: DEFAULT_MAX_SEQUENCE_LEN,
+        });
+    }
+    Ok(())
+}
+
+fn reserve_shape_len<T>(vec: &mut Vec<T>, len: usize) -> Result<(), SerializationError> {
+    checked_shape_len(len)?;
+    vec.try_reserve_exact(len)
+        .map_err(|_| SerializationError::InvalidData("shape-backed allocation failed".to_string()))
+}
 
 /// Bit-packed balanced digits for the final-level witness vector.
 ///
@@ -190,27 +206,23 @@ impl PackedDigits {
     }
 
     /// Decode a single packed signed digit.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the packed byte buffer is malformed relative to
-    /// `num_elems`/`bits_per_elem`. Valid instances produced by
-    /// [`PackedDigits::from_i8_digits`] or checked during deserialization are
-    /// well-formed.
     pub fn digit_at(&self, idx: usize) -> Option<i8> {
         if idx >= self.num_elems {
             return None;
         }
 
         let bits = self.bits_per_elem as usize;
+        if bits == 0 || bits > 6 {
+            return None;
+        }
         let mask = (1u8 << bits) - 1;
         let sign_bit = 1u8 << (bits - 1);
-        let bit_offset = idx * bits;
+        let bit_offset = idx.checked_mul(bits)?;
         let byte_idx = bit_offset / 8;
         let bit_idx = bit_offset % 8;
-        let mut raw = (self.data[byte_idx] >> bit_idx) & mask;
+        let mut raw = (self.data.get(byte_idx)? >> bit_idx) & mask;
         if bit_idx + bits > 8 {
-            raw |= (self.data[byte_idx + 1] << (8 - bit_idx)) & mask;
+            raw |= (self.data.get(byte_idx + 1)? << (8 - bit_idx)) & mask;
         }
 
         Some(if raw & sign_bit != 0 {
@@ -222,21 +234,17 @@ impl PackedDigits {
 
     /// Unpack to field elements.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the packed byte buffer is malformed relative to
-    /// `num_elems`/`bits_per_elem`. Valid instances produced by
-    /// [`PackedDigits::from_i8_digits`] or checked during deserialization are
-    /// well-formed.
-    pub fn to_field_elems<F: FieldCore + FromPrimitiveInt>(&self) -> Vec<F> {
+    /// Returns [`AkitaError::InvalidProof`] if the packed byte buffer is
+    /// malformed relative to `num_elems`/`bits_per_elem`.
+    pub fn to_field_elems<F: FieldCore + FromPrimitiveInt>(&self) -> Result<Vec<F>, AkitaError> {
         let mut out = Vec::with_capacity(self.num_elems);
         for i in 0..self.num_elems {
-            let signed = self
-                .digit_at(i)
-                .expect("PackedDigits::to_field_elems index in bounds");
+            let signed = self.digit_at(i).ok_or(AkitaError::InvalidProof)?;
             out.push(F::from_i64(signed as i64));
         }
-        out
+        Ok(out)
     }
 
     /// Number of packed data bytes.
@@ -267,7 +275,14 @@ impl Valid for PackedDigits {
                 "bits_per_elem out of range".to_string(),
             ));
         }
-        let expected_bytes = (self.num_elems * self.bits_per_elem as usize).div_ceil(8);
+        let expected_bits = self
+            .num_elems
+            .checked_mul(self.bits_per_elem as usize)
+            .ok_or(SerializationError::LengthLimitExceeded {
+                len: u64::MAX,
+                max: DEFAULT_MAX_SEQUENCE_LEN,
+            })?;
+        let expected_bytes = expected_bits.div_ceil(8);
         if self.data.len() != expected_bytes {
             return Err(SerializationError::InvalidData(
                 "packed data length mismatch".to_string(),
@@ -287,7 +302,16 @@ impl AkitaDeserialize for PackedDigits {
         ctx: &(usize, u32),
     ) -> Result<Self, SerializationError> {
         let (num_elems, bits_per_elem) = *ctx;
-        let num_bytes = (num_elems * bits_per_elem as usize).div_ceil(8);
+        if matches!(_validate, Validate::Yes) {
+            DirectWitnessShape::PackedDigits(*ctx).check()?;
+        }
+        let num_bits = num_elems.checked_mul(bits_per_elem as usize).ok_or(
+            SerializationError::LengthLimitExceeded {
+                len: u64::MAX,
+                max: DEFAULT_MAX_SEQUENCE_LEN,
+            },
+        )?;
+        let num_bytes = num_bits.div_ceil(8);
         let mut data = vec![0u8; num_bytes];
         reader.read_exact(&mut data)?;
         let out = Self {
@@ -625,7 +649,8 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
         validate: Validate,
         num_coeffs: &usize,
     ) -> Result<Self, SerializationError> {
-        let mut coeffs = Vec::with_capacity(*num_coeffs);
+        let mut coeffs = Vec::new();
+        reserve_shape_len(&mut coeffs, *num_coeffs)?;
         for _ in 0..*num_coeffs {
             coeffs.push(F::deserialize_with_mode(
                 &mut reader,
@@ -1165,6 +1190,21 @@ impl ExtensionOpeningReductionShape {
             partials,
             sumcheck: (num_rounds, EXTENSION_OPENING_REDUCTION_DEGREE),
         }
+    }
+}
+
+impl Valid for ExtensionOpeningReductionShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.partials)?;
+        checked_shape_len(self.sumcheck.0)?;
+        checked_shape_len(self.sumcheck.1)?;
+        if self.sumcheck.1 != EXTENSION_OPENING_REDUCTION_DEGREE {
+            return Err(SerializationError::InvalidData(format!(
+                "extension opening reduction degree {} does not match expected degree {}",
+                self.sumcheck.1, EXTENSION_OPENING_REDUCTION_DEGREE
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -1859,7 +1899,9 @@ where
     let Some(shape) = shape else {
         return Ok(None);
     };
-    let mut partials = Vec::with_capacity(shape.partials);
+    shape.check()?;
+    let mut partials = Vec::new();
+    reserve_shape_len(&mut partials, shape.partials)?;
     for _ in 0..shape.partials {
         partials.push(L::deserialize_with_mode(
             &mut reader,
@@ -1970,6 +2012,7 @@ impl<
         validate: Validate,
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
+        ctx.check()?;
         let y_ring = FlatRingVec::deserialize_with_mode(
             &mut reader,
             compress,
@@ -1983,7 +2026,8 @@ impl<
             ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
+        let mut stage1_stages = Vec::new();
+        reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
                 &mut reader,
@@ -1991,7 +2035,8 @@ impl<
                 validate,
                 &stage_shape.sumcheck,
             )?;
-            let mut child_claims = Vec::with_capacity(stage_shape.child_claims);
+            let mut child_claims = Vec::new();
+            reserve_shape_len(&mut child_claims, stage_shape.child_claims)?;
             for _ in 0..stage_shape.child_claims {
                 child_claims.push(L::deserialize_with_mode(
                     &mut reader,
@@ -2250,6 +2295,7 @@ impl<
         validate: Validate,
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
+        ctx.check()?;
         let y_rings = FlatRingVec::deserialize_with_mode(
             &mut reader,
             compress,
@@ -2263,7 +2309,8 @@ impl<
             ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
+        let mut stage1_stages = Vec::new();
+        reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
                 &mut reader,
@@ -2271,7 +2318,8 @@ impl<
                 validate,
                 &stage_shape.sumcheck,
             )?;
-            let mut child_claims = Vec::with_capacity(stage_shape.child_claims);
+            let mut child_claims = Vec::new();
+            reserve_shape_len(&mut child_claims, stage_shape.child_claims)?;
             for _ in 0..stage_shape.child_claims {
                 child_claims.push(L::deserialize_with_mode(
                     &mut reader,
@@ -2465,6 +2513,7 @@ impl<
         validate: Validate,
         ctx: &AkitaBatchedProofShape,
     ) -> Result<Self, SerializationError> {
+        ctx.check()?;
         let out = match ctx {
             AkitaBatchedProofShape::Fold {
                 root_shape,
@@ -2476,7 +2525,8 @@ impl<
                     validate,
                     root_shape,
                 )?;
-                let mut steps = Vec::with_capacity(step_shapes.len());
+                let mut steps = Vec::new();
+                reserve_shape_len(&mut steps, step_shapes.len())?;
                 for shape in step_shapes {
                     steps.push(AkitaProofStep::deserialize_with_mode(
                         &mut reader,
@@ -2491,7 +2541,8 @@ impl<
                 }
             }
             AkitaBatchedProofShape::Direct { witness_shapes } => {
-                let mut witnesses = Vec::with_capacity(witness_shapes.len());
+                let mut witnesses = Vec::new();
+                reserve_shape_len(&mut witnesses, witness_shapes.len())?;
                 for shape in witness_shapes {
                     witnesses.push(DirectWitnessProof::deserialize_with_mode(
                         &mut reader,
@@ -2528,6 +2579,9 @@ impl<
 
 impl Valid for AkitaStage1StageShape {
     fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.sumcheck.0)?;
+        checked_shape_len(self.sumcheck.1)?;
+        checked_shape_len(self.child_claims)?;
         Ok(())
     }
 }
@@ -2565,15 +2619,29 @@ impl AkitaDeserialize for AkitaStage1StageShape {
         let rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let child_claims = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        Ok(Self {
+        let out = Self {
             sumcheck: (rounds, degree),
             child_claims,
-        })
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
     }
 }
 
 impl Valid for LevelProofShape {
     fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.y_ring_coeffs)?;
+        if let Some(reduction) = &self.extension_opening_reduction {
+            reduction.check()?;
+        }
+        checked_shape_len(self.v_coeffs)?;
+        checked_shape_len(self.stage1_stages.len())?;
+        self.stage1_stages.check()?;
+        checked_shape_len(self.stage2_sumcheck.0)?;
+        checked_shape_len(self.stage2_sumcheck.1)?;
+        checked_shape_len(self.next_commit_coeffs)?;
         Ok(())
     }
 }
@@ -2663,19 +2731,34 @@ impl AkitaDeserialize for LevelProofShape {
         let s2_degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let next_commit_coeffs =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        Ok(Self {
+        let out = Self {
             y_ring_coeffs,
             extension_opening_reduction,
             v_coeffs,
             stage1_stages,
             stage2_sumcheck: (s2_rounds, s2_degree),
             next_commit_coeffs,
-        })
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
     }
 }
 
 impl Valid for DirectWitnessShape {
     fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            Self::PackedDigits((num_elems, bits_per_elem)) => {
+                if *bits_per_elem == 0 || *bits_per_elem > 6 {
+                    return Err(SerializationError::InvalidData(
+                        "bits_per_elem out of range".to_string(),
+                    ));
+                }
+                checked_shape_len(*num_elems)?;
+            }
+            Self::FieldElements(coeff_len) => checked_shape_len(*coeff_len)?,
+        }
         Ok(())
     }
 }
@@ -2720,26 +2803,36 @@ impl AkitaDeserialize for DirectWitnessShape {
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        match tag {
+        let out = match tag {
             0 => {
                 let num_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
                 let bits_per_elem =
                     u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                Ok(Self::PackedDigits((num_elems, bits_per_elem)))
+                Self::PackedDigits((num_elems, bits_per_elem))
             }
             1 => {
                 let coeff_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                Ok(Self::FieldElements(coeff_len))
+                Self::FieldElements(coeff_len)
             }
-            other => Err(SerializationError::InvalidData(format!(
-                "unknown DirectWitnessShape tag {other}"
-            ))),
+            other => {
+                return Err(SerializationError::InvalidData(format!(
+                    "unknown DirectWitnessShape tag {other}"
+                )))
+            }
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
         }
+        Ok(out)
     }
 }
 
 impl Valid for AkitaProofStepShape {
     fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            Self::Fold(level) => level.check()?,
+            Self::Direct(direct) => direct.check()?,
+        }
         Ok(())
     }
 }
@@ -2780,28 +2873,48 @@ impl AkitaDeserialize for AkitaProofStepShape {
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        match tag {
-            0 => Ok(Self::Fold(LevelProofShape::deserialize_with_mode(
+        let out = match tag {
+            0 => Self::Fold(LevelProofShape::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
                 &(),
-            )?)),
-            1 => Ok(Self::Direct(DirectWitnessShape::deserialize_with_mode(
+            )?),
+            1 => Self::Direct(DirectWitnessShape::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
                 &(),
-            )?)),
-            other => Err(SerializationError::InvalidData(format!(
-                "unknown AkitaProofStepShape tag {other}"
-            ))),
+            )?),
+            other => {
+                return Err(SerializationError::InvalidData(format!(
+                    "unknown AkitaProofStepShape tag {other}"
+                )))
+            }
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
         }
+        Ok(out)
     }
 }
 
 impl Valid for AkitaBatchedProofShape {
     fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            Self::Fold {
+                root_shape,
+                step_shapes,
+            } => {
+                root_shape.check()?;
+                checked_shape_len(step_shapes.len())?;
+                step_shapes.check()?;
+            }
+            Self::Direct { witness_shapes } => {
+                checked_shape_len(witness_shapes.len())?;
+                witness_shapes.check()?;
+            }
+        }
         Ok(())
     }
 }
@@ -2859,10 +2972,14 @@ impl AkitaDeserialize for AkitaBatchedProofShape {
                     validate,
                     &(),
                 )?;
-                Ok(Self::Fold {
+                let out = Self::Fold {
                     root_shape,
                     step_shapes,
-                })
+                };
+                if matches!(validate, Validate::Yes) {
+                    out.check()?;
+                }
+                Ok(out)
             }
             1 => {
                 let witness_shapes = Vec::<DirectWitnessShape>::deserialize_with_mode(
@@ -2871,7 +2988,11 @@ impl AkitaDeserialize for AkitaBatchedProofShape {
                     validate,
                     &(),
                 )?;
-                Ok(Self::Direct { witness_shapes })
+                let out = Self::Direct { witness_shapes };
+                if matches!(validate, Validate::Yes) {
+                    out.check()?;
+                }
+                Ok(out)
             }
             other => Err(SerializationError::InvalidData(format!(
                 "unknown AkitaBatchedProofShape tag {other}"
@@ -2904,7 +3025,10 @@ mod tests {
             .iter()
             .map(|&digit| Prime128Offset275::from_i64(digit as i64))
             .collect();
-        assert_eq!(packed.to_field_elems::<Prime128Offset275>(), expected_field);
+        assert_eq!(
+            packed.to_field_elems::<Prime128Offset275>().unwrap(),
+            expected_field
+        );
     }
 
     #[test]
@@ -2916,6 +3040,103 @@ mod tests {
         };
 
         assert!(packed.check().is_err());
+        assert_eq!(packed.digit_at(0), None);
+        assert!(packed.to_field_elems::<Prime128Offset275>().is_err());
+    }
+
+    #[test]
+    fn packed_digits_malformed_buffer_returns_error() {
+        let packed = PackedDigits {
+            num_elems: 4,
+            bits_per_elem: 6,
+            data: vec![0],
+        };
+
+        assert!(packed.check().is_err());
+        assert_eq!(packed.digit_at(3), None);
+        assert!(packed.to_field_elems::<Prime128Offset275>().is_err());
+    }
+
+    #[test]
+    fn direct_witness_shape_rejects_oversized_allocations() {
+        let err = DirectWitnessShape::FieldElements(DEFAULT_MAX_SEQUENCE_LEN + 1)
+            .check()
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SerializationError::LengthLimitExceeded { .. }
+        ));
+    }
+
+    #[test]
+    fn packed_digits_deserialization_rejects_shape_before_allocation() {
+        let ctx = (DEFAULT_MAX_SEQUENCE_LEN + 1, 6);
+
+        let err =
+            PackedDigits::deserialize_compressed(&[][..], &ctx).expect_err("shape exceeds cap");
+        assert!(matches!(
+            err,
+            SerializationError::LengthLimitExceeded { .. }
+        ));
+    }
+
+    #[test]
+    fn flat_ring_vec_deserialization_rejects_shape_before_allocation() {
+        let coeffs = DEFAULT_MAX_SEQUENCE_LEN + 1;
+
+        let err = FlatRingVec::<Prime128Offset275>::deserialize_compressed(&[][..], &coeffs)
+            .expect_err("shape exceeds cap");
+        assert!(matches!(
+            err,
+            SerializationError::LengthLimitExceeded { .. }
+        ));
+    }
+
+    #[test]
+    fn batched_proof_shape_validation_recurses_into_witness_shapes() {
+        let shape = AkitaBatchedProofShape::Direct {
+            witness_shapes: vec![DirectWitnessShape::FieldElements(
+                DEFAULT_MAX_SEQUENCE_LEN + 1,
+            )],
+        };
+
+        let err = shape.check().unwrap_err();
+        assert!(matches!(
+            err,
+            SerializationError::LengthLimitExceeded { .. }
+        ));
+    }
+
+    #[test]
+    fn level_shape_validation_checks_extension_opening_reduction() {
+        let oversized = LevelProofShape {
+            y_ring_coeffs: 1,
+            extension_opening_reduction: Some(ExtensionOpeningReductionShape::standard(
+                DEFAULT_MAX_SEQUENCE_LEN + 1,
+                1,
+            )),
+            v_coeffs: 1,
+            stage1_stages: Vec::new(),
+            stage2_sumcheck: (0, 0),
+            next_commit_coeffs: 1,
+        };
+
+        let err = oversized.check().unwrap_err();
+        assert!(matches!(
+            err,
+            SerializationError::LengthLimitExceeded { .. }
+        ));
+
+        let wrong_degree = LevelProofShape {
+            extension_opening_reduction: Some(ExtensionOpeningReductionShape {
+                partials: 1,
+                sumcheck: (1, EXTENSION_OPENING_REDUCTION_DEGREE + 1),
+            }),
+            ..oversized
+        };
+
+        let err = wrong_degree.check().unwrap_err();
+        assert!(matches!(err, SerializationError::InvalidData(_)));
     }
 
     fn tiny_stage1() -> AkitaStage1Proof<F> {

@@ -43,6 +43,18 @@ Workspace members under `crates/`:
 - `AkitaTranscript`, `Transcript` — spongefish-backed Fiat-Shamir layer
 - `AkitaInstanceDescriptor` — canonical transcript preamble binding algebra, setup, plan, and call shape
 
+## Verifier No-Panic Contract
+
+Verifier-reachable execution is a no-panic boundary.
+Any malformed verifier-facing proof, setup, schedule, public claim, opening point, commitment, direct witness, or transcript input must be rejected with `AkitaError` or `SerializationError`, not by panicking.
+
+This applies to `akita-verifier` and any verifier-reachable code in `akita-types`, `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, and verifier-used `akita-field` paths.
+Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing/slicing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier verifier boundary has clearly validated the invariant.
+
+Prefer strengthening existing validation at deserialization, setup construction, schedule selection, `LevelParams` construction, and verifier API entry points.
+Keep hot verifier arithmetic paths fast: do not add slow fallback evaluators, compatibility shims, or repeated defensive checks inside tight loops when the invariant can be enforced once at the boundary.
+Prover-only panics are acceptable for now if they are not reachable from verifier paths.
+
 ## Feature Flags
 
 - `parallel` — Rayon parallelization (default)

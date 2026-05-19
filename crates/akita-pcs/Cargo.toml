@@ -4,56 +4,62 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 authors = [
-    "Markos Georghiades <mgeorghiades@a16z.com>",
-    "Quang Dao <qvd@andrew.cmu.edu>",
-    "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-    "Omid Bodaghi <omibo@layerzero.foundation>",
-    "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+  "Markos Georghiades <mgeorghiades@a16z.com>",
+  "Quang Dao <qvd@andrew.cmu.edu>",
+  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+  "Omid Bodaghi <omibo@layerzero.foundation>",
+  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
 ]
 license = "Apache-2.0 OR MIT"
 description = "A high performance and modular implementation of the Akita polynomial commitment scheme."
 repository = "https://github.com/LayerZero-Labs/akita"
 documentation = "https://docs.rs/akita-pcs"
 readme = "../../README.md"
-keywords = ["cryptography", "zkp", "commitment", "polynomial", "pcs", "lattice", "post-quantum"]
-categories = ["cryptography", "algorithms"]
-include = [
-    "src/**",
-    "examples/**",
-    "benches/**",
-    "Cargo.toml",
+keywords = [
+  "cryptography",
+  "zkp",
+  "commitment",
+  "polynomial",
+  "pcs",
+  "lattice",
+  "post-quantum",
 ]
+categories = ["cryptography", "algorithms"]
+include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 
 [package.metadata.docs.rs]
 all-features = true
 
+[package.metadata.cargo-machete]
+ignored = ["akita-setup", "blake2", "thiserror"]
+
 [features]
 default = ["parallel", "planner"]
 parallel = [
-    "dep:rayon",
-    "akita-algebra/parallel",
-    "akita-config/parallel",
-    "akita-field/parallel",
-    "akita-prover/parallel",
-    "akita-scheme/parallel",
-    "akita-setup/parallel",
-    "akita-sumcheck/parallel",
-    "akita-verifier/parallel",
+  "dep:rayon",
+  "akita-algebra/parallel",
+  "akita-config/parallel",
+  "akita-field/parallel",
+  "akita-prover/parallel",
+  "akita-scheme/parallel",
+  "akita-setup/parallel",
+  "akita-sumcheck/parallel",
+  "akita-verifier/parallel",
 ]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 planner = [
-    "akita-config/planner",
-    "akita-scheme/planner",
-    "akita-setup/planner",
+  "akita-config/planner",
+  "akita-scheme/planner",
+  "akita-setup/planner",
 ]
 zk = [
-    "akita-config/zk",
-    "akita-prover/zk",
-    "akita-scheme/zk",
-    "akita-setup/zk",
-    "akita-types/zk",
-    "akita-verifier/zk",
+  "akita-config/zk",
+  "akita-prover/zk",
+  "akita-scheme/zk",
+  "akita-setup/zk",
+  "akita-types/zk",
+  "akita-verifier/zk",
 ]
 
 [dependencies]
@@ -81,8 +87,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 num-bigint = "0.4.6"
 proptest = "1.6"
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", features = ["scalar_field"] }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/arkworks-rs/algebra", rev = "3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9", features = [
+  "scalar_field",
+] }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra", rev = "3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9" }
 tracing-chrome = "0.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 
@@ -126,10 +134,5 @@ harness = false
 name = "fft_smooth"
 harness = false
 
-[lints.rust]
-missing_docs = "warn"
-unreachable_pub = "warn"
-
-[lints.clippy]
-missing_errors_doc = "warn"
-missing_panics_doc = "warn"
+[lints]
+workspace = true

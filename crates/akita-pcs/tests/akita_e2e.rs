@@ -82,7 +82,7 @@ where
     FField: FieldCore,
     E: ExtField<FField>,
 {
-    let weights = lagrange_weights(point);
+    let weights = lagrange_weights(point).expect("valid opening point");
     evals
         .iter()
         .zip(weights.iter())
@@ -1135,7 +1135,11 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         }
 
         let envelope = Cfg::envelope(nv);
-        let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
+        let total = setup
+            .expanded
+            .shared_matrix
+            .total_ring_elements_at::<D>()
+            .unwrap();
         assert!(total >= envelope.max_n_a * max_inner);
         assert!(total >= envelope.max_n_b * max_outer);
         assert!(total >= envelope.max_n_d * max_d_width);

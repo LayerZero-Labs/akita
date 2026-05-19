@@ -3,6 +3,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
 use akita_field::FieldCore;
+use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 
 /// Polynomial basis mode for the evaluation relation.
 ///
@@ -43,11 +44,16 @@ pub struct RingOpeningPoint<F: FieldCore> {
 }
 
 /// Multilinear Lagrange weights: `⊗ᵢ (1 − xᵢ, xᵢ)`.
-pub fn lagrange_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
-    let len = 1usize << point.len();
+///
+/// # Errors
+///
+/// Returns an error if the implied weight table would overflow or exceed the
+/// verifier sequence bound.
+pub fn lagrange_weights<F: FieldCore>(point: &[F]) -> Result<Vec<F>, AkitaError> {
+    let len = basis_weight_len(point.len())?;
     let mut weights = vec![F::zero(); len];
     if weights.is_empty() {
-        return weights;
+        return Ok(weights);
     }
     weights[0] = F::one();
     for (level, &p) in point.iter().enumerate() {
@@ -59,14 +65,19 @@ pub fn lagrange_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
             weights[i + k] = value * p;
         }
     }
-    weights
+    Ok(weights)
 }
 
 /// Multilinear monomial weights: `⊗ᵢ (1, xᵢ)`.
 ///
 /// The j-th entry is `∏_{i ∈ bits(j)} point[i]`.
-pub fn monomial_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
-    let len = 1usize << point.len();
+///
+/// # Errors
+///
+/// Returns an error if the implied weight table would overflow or exceed the
+/// verifier sequence bound.
+pub fn monomial_weights<F: FieldCore>(point: &[F]) -> Result<Vec<F>, AkitaError> {
+    let len = basis_weight_len(point.len())?;
     let mut weights = vec![F::zero(); len];
     weights[0] = F::one();
     for (level, &p) in point.iter().enumerate() {
@@ -75,15 +86,32 @@ pub fn monomial_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
             weights[i + k] = weights[i] * p;
         }
     }
-    weights
+    Ok(weights)
 }
 
 /// Return tensor-product weights for one opening point under the chosen basis.
-pub fn basis_weights<F: FieldCore>(point: &[F], basis: BasisMode) -> Vec<F> {
+pub fn basis_weights<F: FieldCore>(point: &[F], basis: BasisMode) -> Result<Vec<F>, AkitaError> {
     match basis {
         BasisMode::Lagrange => lagrange_weights(point),
         BasisMode::Monomial => monomial_weights(point),
     }
+}
+
+fn basis_weight_len(num_vars: usize) -> Result<usize, AkitaError> {
+    let shift = u32::try_from(num_vars).map_err(|_| AkitaError::InvalidSize {
+        expected: usize::BITS as usize,
+        actual: num_vars,
+    })?;
+    let len = 1usize
+        .checked_shl(shift)
+        .ok_or_else(|| AkitaError::InvalidInput("basis weight dimension overflow".to_string()))?;
+    if len > DEFAULT_MAX_SEQUENCE_LEN {
+        return Err(AkitaError::InvalidSize {
+            expected: DEFAULT_MAX_SEQUENCE_LEN,
+            actual: len,
+        });
+    }
+    Ok(len)
 }
 
 /// Block-order convention used when splitting outer opening coordinates into
@@ -135,13 +163,13 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
 
     let (a, b) = match block_order {
         BlockOrder::ColumnMajor => {
-            let b = basis_weights(&opening_point[..r_vars], basis);
-            let a = basis_weights(&opening_point[r_vars..], basis);
+            let b = basis_weights(&opening_point[..r_vars], basis)?;
+            let a = basis_weights(&opening_point[r_vars..], basis)?;
             (a, b)
         }
         BlockOrder::RowMajor => {
-            let a = basis_weights(&opening_point[..m_vars], basis);
-            let b = basis_weights(&opening_point[m_vars..], basis);
+            let a = basis_weights(&opening_point[..m_vars], basis)?;
+            let b = basis_weights(&opening_point[m_vars..], basis)?;
             (a, b)
         }
     };
@@ -158,7 +186,7 @@ pub fn reduce_inner_opening_to_ring_element<F: FieldCore, const D: usize>(
     inner_point: &[F],
     basis: BasisMode,
 ) -> Result<CyclotomicRing<F, D>, AkitaError> {
-    let weights = basis_weights(inner_point, basis);
+    let weights = basis_weights(inner_point, basis)?;
     if weights.len() != D {
         return Err(AkitaError::InvalidInput(format!(
             "inner basis length {} does not match D={D}",

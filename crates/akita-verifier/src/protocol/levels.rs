@@ -4,6 +4,7 @@
 //! root or fold level. Schedule/config dispatch stays with the scheme crate
 //! until the verifier-facing config boundary is extracted.
 
+use super::validate_level_dispatch;
 use crate::protocol::ring_switch::ring_switch_verifier;
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
@@ -90,6 +91,7 @@ where
     C: RingSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    validate_level_dispatch::<D>(root_lp)?;
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
     let num_claims = incidence_summary.num_claims();
@@ -130,7 +132,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript);
+    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
@@ -329,8 +331,13 @@ where
             incidence_summary.num_polys_per_point().iter().sum(),
             num_claims,
             incidence_summary.num_public_rows(),
-        ) * D
+        )?
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
     };
+    if is_last && final_w.is_none_or(|witness| witness.num_elems() != w_len) {
+        return Err(AkitaError::InvalidProof);
+    }
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = incidence_summary
         .public_rows()
@@ -367,7 +374,7 @@ where
         v_typed,
         commitment_rows,
         y_rings,
-    );
+    )?;
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
@@ -399,7 +406,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
-        )
+        )?
     } else {
         AkitaStage2Verifier::new_with_claimed_w_eval(
             batching_coeff,
@@ -419,7 +426,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
-        )
+        )?
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
@@ -463,11 +470,15 @@ where
     L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let y_rings = level_proof.try_y_rings_typed::<D>()?;
     let v_typed = level_proof.v.as_ring_slice::<D>()?;
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
-
-    let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
+    if current_state.opening_point.len() < alpha_bits {
+        return Err(AkitaError::InvalidSetup(
+            "opening point length underflow".to_string(),
+        ));
+    }
     current_state
         .commitment
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
@@ -574,8 +585,14 @@ where
     let w_len = if is_last {
         final_w_len.ok_or(AkitaError::InvalidProof)?
     } else {
-        w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims) * D
+        w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
+            .checked_mul(D)
+            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
     };
+    if is_last && final_w.is_none_or(|witness| witness.num_elems() != w_len) {
+        return Err(AkitaError::InvalidProof);
+    }
+    tracing::debug!(w_len, is_last, "verify ring_switch");
     let claim_to_point = (0..num_claims).collect::<Vec<_>>();
     let claim_to_group = vec![0usize; num_claims];
     let claim_poly_indices = vec![0usize; num_claims];
@@ -602,7 +619,7 @@ where
         v_typed,
         commitment_u,
         &y_rings,
-    );
+    )?;
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
@@ -637,7 +654,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
-        )
+        )?
     } else {
         AkitaStage2Verifier::new_with_claimed_w_eval(
             batching_coeff,
@@ -657,7 +674,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
-        )
+        )?
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
@@ -870,7 +887,9 @@ where
                 1,
                 y_ring_count,
                 y_ring_count,
-            ) * level_d;
+            )?
+            .checked_mul(level_d)
+            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?;
             if computed_next_w_len != next_w_len {
                 return Err(AkitaError::InvalidProof);
             }
