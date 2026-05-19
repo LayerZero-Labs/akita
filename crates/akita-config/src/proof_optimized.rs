@@ -880,27 +880,56 @@ macro_rules! impl_fp128_preset {
             }
 
             fn planner_setup_shrink_factor() -> usize {
-                // CR-on production presets default to `f = 2` (the
-                // smallest tiered shape per book §5.4). With `f = 1`
-                // (un-tiered) the planner's `level_proof_bytes` cost
-                // model does not yet account for the cleartext-mle
-                // discharge cost (audit S-8), so the DP unwinds the
-                // cascade as "more expensive" even though the actual
-                // proof bytes shrink. `f = 2` engages the
-                // `level_tier.is_tiered()` force-routing gate in
-                // `derive_optimal_suffix_schedule`, guaranteeing
-                // `routing >= 1` for every CR-on preset / NV that
-                // schedules.
+                // CR-on production presets default to `f = 2`.
                 //
-                // Users that explicitly want the un-tiered §5.3 split
-                // commitment can still wrap a CR-off base via
+                // The book §5.4 line 793 sweet spot is `f = 8`, and
+                // the headline cascade is `(f_{L0}=8, f_{L1}=4)` per
+                // §5.8 line 1170. The reason this default is `f = 2`
+                // rather than `8` is feasibility, not preference:
+                //
+                //   - `f = 8` requires the setup polynomial's
+                //     `(m_S, r_S)` to be `>= log_2(8) = 3` on each
+                //     axis, which only kicks in around NV >= 22 at
+                //     `D = 128` (lower at `D = 64`). The
+                //     `setup_claim_reduction_e2e` regression suite
+                //     runs at NV ∈ {12, 15} where `f = 8` does not
+                //     schedule at all.
+                //   - `f = 1` (un-tiered) does not pass the
+                //     force-routing gate yet (audit S-8: the
+                //     `level_proof_bytes` cost model does not credit
+                //     the shared-per-chunk-matrix MLE collapse the
+                //     book promises in §5.5 lines 751–754, so the DP
+                //     unwinds the cascade as "more expensive" even
+                //     though the actual proof bytes shrink). The
+                //     force-routing gate fires only on tiered shapes
+                //     (`level_tier.is_tiered()`), so `f = 1` would
+                //     silently disable the cascade for the production
+                //     default.
+                //
+                // `f = 2` is the smallest tiered shape that:
+                //   - schedules at every NV the regression suite
+                //     touches (smallest = NV 12 at `setup_claim_*`),
+                //   - engages the force-routing gate so cascade fires
+                //     by default for users of `DenseCfg` /
+                //     `OneHotCfg`.
+                //
+                // Audit DRIFT-4 / SCOPE-5 disposition (option a):
+                // keep `f = 2` as the production default until either
+                //   (a) audit S-8's shared-matrix collapse lands and
+                //       the planner discovers the cascade
+                //       unprompted, OR
+                //   (b) Jolt's smallest production NV is confirmed
+                //       to be `>= 22`, at which point flipping to
+                //       `f = 8` is a one-line change here.
+                //
+                // Users that want the book sweet spot `f = 8` opt in
+                // via [`TieredClaimReductionCfg`](crate::TieredClaimReductionCfg);
+                // users that want the headline cascade
+                // `(f_{L0}=8, f_{L1}=4)` opt in via
+                // [`TieredCascadeCfg`](crate::TieredCascadeCfg);
+                // users that want the un-tiered §5.3 split commitment
+                // opt in via
                 // [`UntieredClaimReductionCfg`](crate::UntieredClaimReductionCfg).
-                // Users that want the headline `f_{L0}=8, f_{L1}=4`
-                // cascade still opt in via
-                // [`TieredCascadeCfg`](crate::TieredCascadeCfg).
-                //
-                // Once audit S-8 widens the cost model to discover the
-                // un-tiered cascade naturally, this can drop to `1`.
                 if <Self as $crate::CommitmentConfig>::use_setup_claim_reduction() {
                     2
                 } else {
