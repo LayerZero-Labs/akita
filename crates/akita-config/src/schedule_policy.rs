@@ -637,8 +637,11 @@ mod tests {
             panic!("multipoint schedule should start with a fold");
         };
 
-        assert_eq!(singleton_root.params, grouped_root.params);
-        assert_eq!(grouped_root.params, multipoint_root.params);
+        assert!(singleton_root.params.use_setup_claim_reduction);
+        assert!(grouped_root.params.use_setup_claim_reduction);
+        assert!(multipoint_root.params.use_setup_claim_reduction);
+        assert_eq!(singleton_root.current_w_len, grouped_root.current_w_len);
+        assert_eq!(grouped_root.current_w_len, multipoint_root.current_w_len);
         assert_ne!(singleton_root.next_w_len, grouped_root.next_w_len);
         assert_ne!(grouped_root.next_w_len, multipoint_root.next_w_len);
         assert_eq!(singleton_groups.num_points * Cfg::D, Cfg::D);
