@@ -3,7 +3,8 @@
 use crate::{labels, Transcript};
 use akita_field::{CanonicalBytes, CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
-use blake2::{Blake2b512, Digest};
+use blake2::digest::consts::U32;
+use blake2::{Blake2b, Digest};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
@@ -166,7 +167,7 @@ impl<T> LoggingTranscript<T> {
                 | TranscriptEvent::Wire { label, .. } => label,
                 TranscriptEvent::Preamble { .. } => continue,
             };
-            if !known.contains(label.as_slice()) {
+            if !is_known_or_extension_limb_label(label, &known) {
                 errors.push(format!("unknown transcript label `{}`", label_text(label)));
             }
         }
@@ -319,10 +320,28 @@ pub fn thread_events() -> Vec<TranscriptEvent> {
 }
 
 fn digest32(bytes: &[u8]) -> [u8; 32] {
-    let digest = Blake2b512::digest(bytes);
+    type Blake2b256 = Blake2b<U32>;
+    let digest = Blake2b256::digest(bytes);
     let mut out = [0u8; 32];
-    out.copy_from_slice(&digest[..32]);
+    out.copy_from_slice(&digest);
     out
+}
+
+fn is_known_or_extension_limb_label(label: &[u8], known: &BTreeSet<&[u8]>) -> bool {
+    if known.contains(label) {
+        return true;
+    }
+    let Some((&marker, rest)) = label
+        .len()
+        .checked_sub(12)
+        .and_then(|offset| label[offset..].split_first())
+    else {
+        return false;
+    };
+    marker == 0xff
+        && rest.len() == 11
+        && rest[8..] == *b"ext"
+        && known.contains(&label[..label.len() - 12])
 }
 
 fn label_text(label: &[u8]) -> String {
@@ -344,10 +363,12 @@ fn hex_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
-    use crate::{labels, AkitaTranscript, Transcript};
-    use akita_field::Fp64;
+    use crate::{append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript};
+    use akita_field::{Fp2, Fp32, Fp64, NegOneNr};
 
     type F = Fp64<4294967197>;
+    type Base = Fp32<251>;
+    type BaseFp2 = Fp2<Base, NegOneNr>;
 
     #[test]
     fn logs_absorbs_and_squeezes() {
@@ -413,5 +434,16 @@ mod tests {
 
         assert_eq!(a.events(), b.events());
         assert!(matches!(a.events()[0], TranscriptEvent::Preamble { .. }));
+    }
+
+    #[test]
+    fn known_label_check_accepts_extension_limb_labels() {
+        let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<Base>::new(b"logging-test"));
+        transcript.bind_instance_bytes(b"descriptor");
+        let x = BaseFp2::new(Base::from_u64(1), Base::from_u64(2));
+        append_ext_field::<Base, BaseFp2, _>(&mut transcript, labels::ABSORB_EVALUATION_CLAIMS, &x);
+        let _ = sample_ext_challenge::<Base, BaseFp2, _>(&mut transcript, labels::CHALLENGE_TAU0);
+
+        transcript.assert_smell_checks();
     }
 }

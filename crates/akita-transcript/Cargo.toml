@@ -24,6 +24,9 @@ spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b
 [features]
 default = ["transcript-blake2b"]
 logging-transcript = []
+# spongefish 0.7 imports StdHash from its prover/verifier/domain modules
+# even when Akita selects Blake2b or Keccak explicitly, so sha3 is required
+# for the crate to compile with default-features disabled.
 transcript-blake2b = ["spongefish/blake2", "spongefish/sha3"]
 transcript-keccak = ["spongefish/keccak", "spongefish/sha3"]
 zk = ["akita-field/zk"]

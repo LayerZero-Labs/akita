@@ -9,18 +9,19 @@ use spongefish::{
 };
 use std::marker::PhantomData;
 
-#[cfg(all(feature = "transcript-blake2b", feature = "transcript-keccak"))]
-compile_error!("enable exactly one transcript backend: transcript-blake2b or transcript-keccak");
-
 #[cfg(not(any(feature = "transcript-blake2b", feature = "transcript-keccak")))]
-compile_error!("enable exactly one transcript backend: transcript-blake2b or transcript-keccak");
+compile_error!("enable at least one transcript backend: transcript-blake2b or transcript-keccak");
 
 /// Sponge backend selected by the active transcript feature.
+///
+/// Cargo feature unification means `--all-features` enables both backends. In
+/// that case Akita selects the default Blake2b backend; use
+/// `--no-default-features --features transcript-keccak` to select Keccak.
 #[cfg(feature = "transcript-blake2b")]
 pub type TranscriptSponge = spongefish::instantiations::Blake2b512;
 
 /// Sponge backend selected by the active transcript feature.
-#[cfg(feature = "transcript-keccak")]
+#[cfg(all(not(feature = "transcript-blake2b"), feature = "transcript-keccak"))]
 pub type TranscriptSponge = spongefish::instantiations::Keccak;
 
 /// Backend-specific 64-byte protocol tag for spongefish domain separation.
@@ -29,7 +30,7 @@ pub const PROTOCOL_TAG: &[u8; 64] =
     b"akita-pcs/transcript/v1/blake2b\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 
 /// Backend-specific 64-byte protocol tag for spongefish domain separation.
-#[cfg(feature = "transcript-keccak")]
+#[cfg(all(not(feature = "transcript-blake2b"), feature = "transcript-keccak"))]
 pub const PROTOCOL_TAG: &[u8; 64] =
     b"akita-pcs/transcript/v1/keccak\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 

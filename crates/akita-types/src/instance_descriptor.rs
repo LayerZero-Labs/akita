@@ -14,7 +14,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use blake2::{Blake2b512, Digest};
+use blake2::digest::consts::U32;
+use blake2::{Blake2b, Digest};
 use std::io::{Read, Write};
 
 /// Descriptor schema version for transcript-hardening v1.
@@ -649,9 +650,10 @@ fn usize_to_u8(value: usize, name: &'static str) -> Result<u8, AkitaError> {
 }
 
 fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
-    let digest = Blake2b512::digest(bytes);
+    type Blake2b256 = Blake2b<U32>;
+    let digest = Blake2b256::digest(bytes);
     let mut out = [0u8; 32];
-    out.copy_from_slice(&digest[..32]);
+    out.copy_from_slice(&digest);
     out
 }
 
@@ -975,6 +977,18 @@ mod tests {
         let right = ClaimIncidenceSummary::from_point_polys(4, vec![1, 2]).expect("right");
 
         assert_ne!(digest_incidence(&left), digest_incidence(&right));
+    }
+
+    #[test]
+    fn descriptor_digest_uses_standard_blake2b_256() {
+        assert_eq!(
+            blake2b_256(b"akita"),
+            [
+                0x38, 0x68, 0x5d, 0xd7, 0x90, 0xe7, 0xb2, 0x82, 0xd5, 0xeb, 0x4f, 0xa7, 0x00, 0x37,
+                0xde, 0x42, 0x71, 0x42, 0xc4, 0x8e, 0x44, 0x1b, 0x96, 0x0f, 0x2e, 0x09, 0xde, 0x98,
+                0xbb, 0x8f, 0x69, 0x54,
+            ]
+        );
     }
 
     #[test]
