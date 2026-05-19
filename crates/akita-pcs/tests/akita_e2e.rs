@@ -854,7 +854,7 @@ fn batched_onehot_same_point_round_trip() {
     });
 }
 
-#[cfg(feature = "planner")]
+#[cfg(all(feature = "planner", not(feature = "zk")))]
 #[test]
 fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
     init_rayon_pool();

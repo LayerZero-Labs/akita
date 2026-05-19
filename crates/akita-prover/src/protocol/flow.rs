@@ -1,8 +1,14 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
 use crate::kernels::crt_ntt::NttSlotCache;
+#[cfg(feature = "zk")]
+use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
+#[cfg(feature = "zk")]
+use crate::protocol::masking::{sample_blinding_digits, sample_sumcheck_pad_pool};
 use crate::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize, RingSwitchOutput};
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
+#[cfg(feature = "zk")]
+use crate::DensePoly;
 use crate::{
     AkitaPolyOps, MultiDNttCaches, ProverClaims, ProverCommitmentGroupOccurrence,
     QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
@@ -11,12 +17,28 @@ use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, HalvingField, RandomSampling};
-use akita_sumcheck::{prove_sumcheck, SumcheckProof};
+#[cfg(not(feature = "zk"))]
+use akita_sumcheck::prove_sumcheck;
+#[cfg(not(feature = "zk"))]
+use akita_sumcheck::SumcheckProof;
+#[cfg(feature = "zk")]
+use akita_sumcheck::{
+    EqFactoredUniPoly, FullUniPoly, SumcheckProofMasked, ZkSumcheckInstanceProverExt,
+};
+#[cfg(feature = "zk")]
+use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
+    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::Transcript;
+#[cfg(feature = "zk")]
+use akita_types::stage1_tree_stage_shapes;
+#[cfg(feature = "zk")]
+use akita_types::sumcheck_rounds;
+#[cfg(feature = "zk")]
+use akita_types::ZkHidingProof;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript, claim_points_to_base,
@@ -29,7 +51,10 @@ use akita_types::{
     IncidenceClaim, LevelParams, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule,
     Step,
 };
-
+#[cfg(feature = "zk")]
+use rand_core::OsRng;
+#[cfg(feature = "zk")]
+use std::array::from_fn;
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore> {
     /// Current recursive witness.
@@ -42,6 +67,108 @@ pub struct RecursiveProverState<F: FieldCore> {
     pub log_basis: u32,
     /// Sumcheck challenges that become the next recursive opening point.
     pub sumcheck_challenges: Vec<F>,
+    /// Proof-level ZK hiding material fixed at batched-prove startup.
+    #[cfg(feature = "zk")]
+    pub zk_hiding: ZkHidingProverState<F>,
+}
+
+/// Cursor into the proof-level hiding witness allocated at batched-prove start.
+#[cfg(feature = "zk")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZkHidingProverState<F: FieldCore> {
+    hiding_witness: Vec<F>,
+    cursor: usize,
+}
+
+#[cfg(feature = "zk")]
+impl<F: FieldCore> ZkHidingProverState<F> {
+    fn new(hiding_witness: Vec<F>) -> Self {
+        Self {
+            hiding_witness,
+            cursor: 0,
+        }
+    }
+
+    fn take_values(&mut self, len: usize) -> Result<Vec<F>, AkitaError> {
+        let end = self
+            .cursor
+            .checked_add(len)
+            .ok_or(AkitaError::InvalidProof)?;
+        let values = self
+            .hiding_witness
+            .get(self.cursor..end)
+            .ok_or(AkitaError::InvalidProof)?
+            .to_vec();
+        self.cursor = end;
+        Ok(values)
+    }
+
+    fn take_scalar(&mut self) -> Result<F, AkitaError> {
+        self.take_values(1)?
+            .into_iter()
+            .next()
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    fn take_ring<const D: usize>(&mut self) -> Result<(usize, CyclotomicRing<F, D>), AkitaError> {
+        let start = self.cursor;
+        let coeffs = self.take_values(D)?;
+        let ring = CyclotomicRing::from_coefficients(from_fn(|idx| coeffs[idx]));
+        Ok((start, ring))
+    }
+
+    fn take_next_w_eval_mask(&mut self) -> Result<F, AkitaError> {
+        self.take_scalar()
+    }
+
+    fn take_eq_factored_rounds(
+        &mut self,
+        rounds: usize,
+        degree: usize,
+    ) -> Result<Vec<EqFactoredUniPoly<F>>, AkitaError> {
+        let stored_coeffs = EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree);
+        (0..rounds)
+            .map(|_| {
+                Ok(EqFactoredUniPoly {
+                    coeffs_except_linear_term: self.take_values(stored_coeffs)?,
+                })
+            })
+            .collect()
+    }
+
+    fn take_full_rounds(
+        &mut self,
+        rounds: usize,
+        degree: usize,
+    ) -> Result<Vec<FullUniPoly<F>>, AkitaError> {
+        let coeffs = degree.saturating_add(1);
+        (0..rounds)
+            .map(|_| Ok(FullUniPoly::from_coeffs(self.take_values(coeffs)?)))
+            .collect()
+    }
+
+    fn take_current_level_pads(
+        &mut self,
+        rounds: usize,
+        b: usize,
+    ) -> Result<ZkLevelRoundPads<F>, AkitaError> {
+        let mut stage1_round_pads = Vec::new();
+        let mut stage1_child_claim_masks = Vec::new();
+        for shape in stage1_tree_stage_shapes(rounds, b) {
+            stage1_round_pads.push(
+                self.take_eq_factored_rounds(shape.sumcheck_proof.0, shape.sumcheck_proof.1)?,
+            );
+            if shape.child_claims != 0 {
+                stage1_child_claim_masks.push(self.take_values(shape.child_claims)?);
+            }
+        }
+        let stage2_round_pads = self.take_full_rounds(rounds, 3)?;
+        Ok((
+            stage1_round_pads,
+            stage1_child_claim_masks,
+            stage2_round_pads,
+        ))
+    }
 }
 
 /// Output from a single prove level, used to extend proof wire data and state.
@@ -57,6 +184,9 @@ pub struct ProveLevelOutput<F: FieldCore> {
 /// Callers assemble either a singleton or batched root proof from these
 /// components while sharing the same inner prover flow.
 pub struct RootLevelRawOutput<F: FieldCore, const D: usize> {
+    /// Proof-level ZK hiding commitment fixed before root challenges.
+    #[cfg(feature = "zk")]
+    pub zk_hiding: ZkHidingProof<F>,
     /// Gamma-combined public y-rings, one per opening point.
     pub y_rings: Vec<CyclotomicRing<F, D>>,
     /// Public v rows for the root relation.
@@ -64,7 +194,11 @@ pub struct RootLevelRawOutput<F: FieldCore, const D: usize> {
     /// Stage-1 sumcheck proof.
     pub stage1: AkitaStage1Proof<F>,
     /// Stage-2 sumcheck proof.
-    pub stage2_sumcheck: SumcheckProof<F>,
+    #[cfg(not(feature = "zk"))]
+    pub stage2_sumcheck_proof: SumcheckProof<F>,
+    /// ZK plain-opening round masks for the stage-2 sumcheck.
+    #[cfg(feature = "zk")]
+    pub stage2_sumcheck_proof_masked: SumcheckProofMasked<F>,
     /// Recursive witness commitment carried in the proof.
     pub w_commitment_proof: FlatRingVec<F>,
     /// Claimed terminal evaluation of the recursive witness at this level.
@@ -149,6 +283,171 @@ where
         final_w,
     )));
     steps
+}
+
+#[cfg(feature = "zk")]
+fn flattened_zk_blinding_digits<const D: usize>(
+    digits: &akita_types::FlatDigitBlocks<D>,
+) -> Vec<i8> {
+    let mut out = Vec::with_capacity(digits.flat_digits().len() * D);
+    for plane in digits.flat_digits() {
+        out.extend_from_slice(plane);
+    }
+    out
+}
+
+#[cfg(feature = "zk")]
+type ZkLevelRoundPads<F> = (
+    Vec<Vec<akita_sumcheck::EqFactoredUniPoly<F>>>,
+    Vec<Vec<F>>,
+    Vec<akita_sumcheck::FullUniPoly<F>>,
+);
+
+#[cfg(feature = "zk")]
+fn commit_zk_hiding_witness<F, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    root_params: &LevelParams,
+    hiding_witness: &[F],
+) -> Result<(Vec<F>, Vec<i8>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+{
+    let num_ring = hiding_witness.len().div_ceil(D).max(1).next_power_of_two();
+    let eval_len = num_ring
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK hiding witness length overflow".to_string()))?;
+    let mut evals = vec![F::zero(); eval_len];
+    evals[..hiding_witness.len()].copy_from_slice(hiding_witness);
+    let num_vars = eval_len.trailing_zeros() as usize;
+    let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals)?;
+    let hiding_params = root_params.with_decomp(
+        num_ring.trailing_zeros() as usize,
+        0,
+        root_params.num_digits_commit,
+        root_params.num_digits_open,
+        root_params.num_digits_fold,
+        num_ring,
+    )?;
+    let inner = poly.commit_inner_witness(
+        &expanded.shared_matrix,
+        ntt_shared,
+        hiding_params.a_key.row_len(),
+        hiding_params.block_len,
+        hiding_params.num_digits_commit,
+        hiding_params.num_digits_open,
+        hiding_params.log_basis,
+        expanded.seed.max_stride,
+    )?;
+    let mut b_input_digits = inner.decomposed_inner_rows.flat_digits().to_vec();
+    let b_blinding_digits =
+        sample_blinding_digits::<F, D>(hiding_params.b_key.row_len(), hiding_params.log_basis)?;
+    b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
+    let u_blind_rings: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+        ntt_shared,
+        hiding_params.b_key.row_len(),
+        expanded.seed.max_stride,
+        &b_input_digits,
+    );
+    let u_blind = u_blind_rings
+        .iter()
+        .flat_map(|ring| ring.coeffs.iter().copied())
+        .collect();
+    Ok((u_blind, flattened_zk_blinding_digits(&b_blinding_digits)))
+}
+
+#[cfg(feature = "zk")]
+fn build_zk_hiding_context<F, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    schedule: &Schedule,
+    root_commit_params: &LevelParams,
+    num_root_points: usize,
+) -> Result<(ZkHidingProof<F>, ZkHidingProverState<F>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+{
+    let mut rng = OsRng;
+    let fold_steps = schedule
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            Step::Fold(fold) => Some(fold),
+            Step::Direct(_) => None,
+        })
+        .collect::<Vec<_>>();
+    // Layout for the per-fold-level part of `hiding_witness`. The prover-state
+    // cursor later consumes these pads before constructing each level proof.
+    let append_level_pads =
+        |params: &LevelParams, next_w_len: usize, out: &mut Vec<F>, rng: &mut OsRng| {
+            let rounds = sumcheck_rounds(params.ring_dimension, next_w_len);
+            let b = 1usize << params.log_basis;
+            let (eq_factored_round_pads, full_round_pads) =
+                sample_sumcheck_pad_pool::<F>(rounds, b);
+            let mut stage1_pad_iter = eq_factored_round_pads.iter();
+            for shape in stage1_tree_stage_shapes(rounds, b) {
+                // Pads for Stage 1 tree sumcheck round polynomials; these mask
+                // the range-check proof messages at this level.
+                for _ in 0..shape.sumcheck_proof.0 {
+                    if let Some(pad) = stage1_pad_iter.next() {
+                        out.extend_from_slice(&pad.coeffs_except_linear_term);
+                    }
+                }
+                // Pads for Stage 1 tree child claims; these mask the claim
+                // values passed between adjacent Stage 1 tree layers.
+                for _ in 0..shape.child_claims {
+                    out.push(F::random(rng));
+                }
+            }
+            // Pads for Stage 2 full round polynomials; these mask the relation
+            // sumcheck proof messages at this level.
+            for pad in full_round_pads {
+                out.extend_from_slice(pad.coeffs());
+            }
+        };
+    let mut hiding_witness = Vec::new();
+
+    // Root-level ring masks: one D-coefficient ring per requested opening point.
+    // Later added to `y_rings` before the root ring-switch / sumcheck flow.
+    hiding_witness.extend((0..num_root_points * D).map(|_| F::random(&mut rng)));
+    if let Some(root_step) = fold_steps.first() {
+        // Root fold pads: mask the root Stage 1 range-check tree and Stage 2
+        // relation sumcheck proofs.
+        append_level_pads(
+            &root_step.params,
+            root_step.next_w_len,
+            &mut hiding_witness,
+            &mut rng,
+        );
+        // Root fold scalar: added to the root level's final next-witness
+        // evaluation claim (`w_eval`) after Stage 2.
+        hiding_witness.push(F::random(&mut rng));
+        for step in fold_steps.iter().skip(1) {
+            // Recursive-level ring mask: added to that level's `y_ring` before
+            // ring-switching so the current quadratic-equation value is hidden.
+            hiding_witness.extend((0..D).map(|_| F::random(&mut rng)));
+            // Recursive fold pads: mask that level's Stage 1 and Stage 2
+            // sumcheck proof messages.
+            append_level_pads(&step.params, step.next_w_len, &mut hiding_witness, &mut rng);
+            // Recursive fold scalar: added to that level's final next-witness
+            // evaluation claim (`w_eval`) after Stage 2.
+            hiding_witness.push(F::random(&mut rng));
+        }
+    }
+    let (u_blind, b_blinding_digits) = commit_zk_hiding_witness::<F, D>(
+        expanded,
+        ntt_shared,
+        root_commit_params,
+        &hiding_witness,
+    )?;
+    Ok((
+        ZkHidingProof {
+            u_blind,
+            hiding_witness: hiding_witness.clone(),
+            b_blinding_digits,
+        },
+        ZkHidingProverState::new(hiding_witness),
+    ))
 }
 
 struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
@@ -289,6 +588,7 @@ where
             })
             .collect();
         Ok(AkitaBatchedProof {
+            zk_hiding: ZkHidingProof::default(),
             root: AkitaBatchedRootProof::new_direct(witnesses, b_blinding_digits),
             steps: Vec::new(),
         })
@@ -404,10 +704,15 @@ where
     BuildSuffix: FnOnce(RecursiveProverState<F>) -> Result<RecursiveSuffixOutcome<F>, AkitaError>,
 {
     let RootLevelRawOutput {
+        #[cfg(feature = "zk")]
+        zk_hiding,
         y_rings,
         v,
         stage1,
-        stage2_sumcheck,
+        #[cfg(not(feature = "zk"))]
+        stage2_sumcheck_proof,
+        #[cfg(feature = "zk")]
+        stage2_sumcheck_proof_masked,
         w_commitment_proof,
         w_eval,
         next_state,
@@ -423,12 +728,23 @@ where
         y_rings,
         v,
         stage1,
-        stage2_sumcheck,
+        #[cfg(not(feature = "zk"))]
+        stage2_sumcheck_proof,
+        #[cfg(feature = "zk")]
+        stage2_sumcheck_proof_masked,
         w_commitment_proof,
         w_eval,
     );
     let steps = build_final_proof_steps(levels, &final_state, final_log_basis);
-    Ok((AkitaBatchedProof { root, steps }, num_levels))
+    Ok((
+        AkitaBatchedProof {
+            #[cfg(feature = "zk")]
+            zk_hiding,
+            root,
+            steps,
+        },
+        num_levels,
+    ))
 }
 
 /// Prove a folded batched root and assemble the recursive suffix.
@@ -493,6 +809,16 @@ where
 
     let mut ntt_cache = MultiDNttCaches::new();
     let mut commit_ntt_cache = MultiDNttCaches::new();
+    #[cfg(feature = "zk")]
+    let (zk_hiding_proof, zk_hiding_state) = build_zk_hiding_context::<F, D>(
+        expanded,
+        ntt_shared,
+        schedule,
+        &root_step.params,
+        prepared_claims.incidence_summary.num_points,
+    )?;
+    #[cfg(feature = "zk")]
+    transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &zk_hiding_proof.u_blind);
     let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
     let base_opening_points = claim_points_to_base::<F, _>(
         &prepared_claims.opening_points,
@@ -534,6 +860,10 @@ where
         &root_step.params,
         root_step.next_w_len,
         root_next_params.log_basis,
+        #[cfg(feature = "zk")]
+        zk_hiding_proof,
+        #[cfg(feature = "zk")]
+        zk_hiding_state,
         |w| commit_root_next(&mut commit_ntt_cache, w),
     )?;
 
@@ -637,6 +967,8 @@ pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
     next_log_basis: u32,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_ring: CyclotomicRing<F, D>,
+    #[cfg(feature = "zk")] y_ring_masked: CyclotomicRing<F, D>,
+    #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
@@ -689,7 +1021,13 @@ where
     let w_commitment = w_commitment.ok_or_else(|| {
         AkitaError::InvalidSetup("prover ring switch dropped w commitment".to_string())
     })?;
+    let w_hint = w_hint.ok_or_else(|| {
+        AkitaError::InvalidSetup("prover ring switch dropped recursive hint cache".to_string())
+    })?;
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
+    #[cfg(feature = "zk")]
+    let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
+        zk_hiding.take_current_level_pads(col_bits + ring_bits, b)?;
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = AkitaStage1Prover::new(
@@ -700,14 +1038,61 @@ where
             col_bits,
             ring_bits,
         )?;
-        let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
-        let s_claim = stage1_proof.s_claim;
-        (stage1_proof, r_stage1, s_claim)
+        #[cfg(feature = "zk")]
+        {
+            stage1_prover.prove(transcript, stage1_round_pads, stage1_child_claim_masks)?
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+            let s_claim = stage1_proof.s_claim;
+            (stage1_proof, r_stage1, s_claim)
+        }
     };
 
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
+    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-    let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
+    #[cfg(feature = "zk")]
+    let relation_claim_masked = relation_claim_from_rows::<F, D>(
+        &rs.tau1,
+        rs.alpha,
+        &quad_eq.v,
+        commitment_u,
+        std::slice::from_ref(&y_ring_masked),
+    );
+    #[cfg(feature = "zk")]
+    let (stage2_sumcheck_proof_masked, sumcheck_challenges, w_eval) = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        let mut stage2_prover = AkitaStage2Prover::new(
+            batching_coeff,
+            w_evals_compact,
+            &r_stage1,
+            s_claim,
+            b,
+            alpha_evals_y,
+            m_evals_x,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            relation_claim,
+        )
+        .with_input_claim(batching_coeff * stage1_proof.s_claim + relation_claim_masked);
+        let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
+            .prove_zk::<F, _, _>(
+                transcript,
+                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+                stage2_round_pads,
+            )?;
+
+        let w_eval = {
+            let _span = tracing::info_span!("multilinear_eval", level).entered();
+            stage2_prover.final_w_eval()
+        };
+        let w_eval = w_eval + zk_hiding.take_next_w_eval_mask()?;
+        (stage2_sumcheck_proof_masked, sumcheck_challenges, w_eval)
+    };
+    #[cfg(not(feature = "zk"))]
+    let (stage2_sumcheck_proof, sumcheck_challenges, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
             batching_coeff,
@@ -722,7 +1107,7 @@ where
             ring_bits,
             relation_claim,
         );
-        let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
+        let (stage2_sumcheck_proof, sumcheck_challenges, _) =
             prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
@@ -731,20 +1116,22 @@ where
             let _span = tracing::info_span!("multilinear_eval", level).entered();
             stage2_prover.final_w_eval()
         };
-        (
-            stage2_sumcheck,
-            sumcheck_challenges,
-            stage2_final_claim,
-            w_eval,
-        )
+        (stage2_sumcheck_proof, sumcheck_challenges, w_eval)
     };
+    transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &w_eval);
 
     let (level_proof, sumcheck_challenges) = (
         AkitaLevelProof::new_two_stage::<D>(
+            #[cfg(not(feature = "zk"))]
             y_ring,
+            #[cfg(feature = "zk")]
+            y_ring_masked,
             quad_eq.v,
             stage1_proof,
-            stage2_sumcheck,
+            #[cfg(not(feature = "zk"))]
+            stage2_sumcheck_proof,
+            #[cfg(feature = "zk")]
+            stage2_sumcheck_proof_masked,
             w_commitment_proof,
             w_eval,
         ),
@@ -756,13 +1143,11 @@ where
         next_state: RecursiveProverState {
             w,
             commitment: w_commitment,
-            hint: w_hint.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "prover ring switch dropped recursive hint cache".to_string(),
-                )
-            })?,
+            hint: w_hint,
             log_basis: next_log_basis,
             sumcheck_challenges,
+            #[cfg(feature = "zk")]
+            zk_hiding,
         },
     })
 }
@@ -793,6 +1178,7 @@ pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW>(
     level: usize,
     level_params: &LevelParams,
     next_log_basis: u32,
+    #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
@@ -850,12 +1236,20 @@ where
             level_params.num_blocks,
         )
     };
+    #[cfg(feature = "zk")]
+    let y_ring_masked = {
+        let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
+        y_ring + y_garbage
+    };
 
     commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
     for pt in &padded_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
+    #[cfg(not(feature = "zk"))]
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+    #[cfg(feature = "zk")]
+    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring_masked);
     let commitment_u = commitment.as_ring_slice::<D>()?;
 
     let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_recursive_prover(
@@ -881,6 +1275,10 @@ where
         next_log_basis,
         quad_eq,
         y_ring,
+        #[cfg(feature = "zk")]
+        y_ring_masked,
+        #[cfg(feature = "zk")]
+        zk_hiding,
         commit_w_for_next,
     )
 }
@@ -938,6 +1336,8 @@ where
         level,
         &w_lp,
         next_log_basis,
+        #[cfg(feature = "zk")]
+        current_state.zk_hiding.clone(),
         commit_w_for_next,
     )
 }
@@ -970,6 +1370,8 @@ pub fn prove_root_fold_with_params<F, E, C, T, const D: usize, P, CommitW>(
     root_params: &LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
+    #[cfg(feature = "zk")] zk_hiding_proof: ZkHidingProof<F>,
+    #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, D>, AkitaError>
 where
@@ -1071,7 +1473,21 @@ where
         let point_idx = claim_to_point[claim_idx];
         y_rings[point_idx] += y_ring.scale(&gamma[claim_idx]);
     }
+    #[cfg(feature = "zk")]
+    let y_rings_masked = {
+        let mut y_rings_masked = y_rings.clone();
+        for y_ring in &mut y_rings_masked {
+            let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
+            *y_ring += y_garbage;
+        }
+        y_rings_masked
+    };
+    #[cfg(not(feature = "zk"))]
     for y_ring in &y_rings {
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+    }
+    #[cfg(feature = "zk")]
+    for y_ring in &y_rings_masked {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
 
@@ -1114,8 +1530,14 @@ where
         root_params,
         expected_w_len,
         next_log_basis,
+        #[cfg(feature = "zk")]
+        zk_hiding_proof,
+        #[cfg(feature = "zk")]
+        zk_hiding,
         quad_eq,
         y_rings,
+        #[cfg(feature = "zk")]
+        y_rings_masked,
         commit_w_for_next,
     )
 }
@@ -1145,8 +1567,11 @@ pub fn prove_root_fold_from_quadratic<F, C, T, const D: usize, CommitW>(
     lp: &akita_types::LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
+    #[cfg(feature = "zk")] zk_hiding_proof: ZkHidingProof<F>,
+    #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
+    #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, D>, AkitaError>
 where
@@ -1201,7 +1626,13 @@ where
     let w_commitment = w_commitment.ok_or_else(|| {
         AkitaError::InvalidSetup("prover ring switch dropped w commitment".to_string())
     })?;
+    let w_hint = w_hint.ok_or_else(|| {
+        AkitaError::InvalidSetup("prover ring switch dropped recursive hint cache".to_string())
+    })?;
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
+    #[cfg(feature = "zk")]
+    let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
+        zk_hiding.take_current_level_pads(col_bits + ring_bits, b)?;
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = AkitaStage1Prover::new(
@@ -1212,14 +1643,61 @@ where
             col_bits,
             ring_bits,
         )?;
-        let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
-        let s_claim = stage1_proof.s_claim;
-        (stage1_proof, r_stage1, s_claim)
+        #[cfg(feature = "zk")]
+        {
+            stage1_prover.prove(transcript, stage1_round_pads, stage1_child_claim_masks)?
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+            let s_claim = stage1_proof.s_claim;
+            (stage1_proof, r_stage1, s_claim)
+        }
     };
 
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
+    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
     let batching_coeff: F = challenge_sampler.sample(transcript, CHALLENGE_SUMCHECK_BATCH);
-    let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
+    #[cfg(feature = "zk")]
+    let relation_claim_masked = relation_claim_from_rows::<F, D>(
+        &rs.tau1,
+        rs.alpha,
+        &quad_eq.v,
+        commitment_rows,
+        &y_rings_masked,
+    );
+    #[cfg(feature = "zk")]
+    let (stage2_sumcheck_proof_masked, sumcheck_challenges, w_eval) = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        let mut stage2_prover = AkitaStage2Prover::new(
+            batching_coeff,
+            w_evals_compact,
+            &r_stage1,
+            s_claim,
+            b,
+            alpha_evals_y,
+            m_evals_x,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            relation_claim,
+        )
+        .with_input_claim(batching_coeff * stage1_proof.s_claim + relation_claim_masked);
+        let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
+            .prove_zk::<F, _, _>(
+                transcript,
+                |tr| challenge_sampler.sample(tr, CHALLENGE_SUMCHECK_ROUND),
+                stage2_round_pads,
+            )?;
+
+        let w_eval = {
+            let _span = tracing::info_span!("multilinear_eval", level = 0usize).entered();
+            stage2_prover.final_w_eval()
+        };
+        let w_eval = w_eval + zk_hiding.take_next_w_eval_mask()?;
+        (stage2_sumcheck_proof_masked, sumcheck_challenges, w_eval)
+    };
+    #[cfg(not(feature = "zk"))]
+    let (stage2_sumcheck_proof, sumcheck_challenges, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
             batching_coeff,
@@ -1234,7 +1712,7 @@ where
             ring_bits,
             relation_claim,
         );
-        let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
+        let (stage2_sumcheck_proof, sumcheck_challenges, _) =
             prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
                 challenge_sampler.sample(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
@@ -1243,31 +1721,33 @@ where
             let _span = tracing::info_span!("multilinear_eval", level = 0usize).entered();
             stage2_prover.final_w_eval()
         };
-        (
-            stage2_sumcheck,
-            sumcheck_challenges,
-            stage2_final_claim,
-            w_eval,
-        )
+        (stage2_sumcheck_proof, sumcheck_challenges, w_eval)
     };
+    transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &w_eval);
 
     Ok(RootLevelRawOutput {
+        #[cfg(feature = "zk")]
+        zk_hiding: zk_hiding_proof,
+        #[cfg(not(feature = "zk"))]
         y_rings,
+        #[cfg(feature = "zk")]
+        y_rings: y_rings_masked,
         v: quad_eq.v,
         stage1: stage1_proof,
-        stage2_sumcheck,
+        #[cfg(not(feature = "zk"))]
+        stage2_sumcheck_proof,
+        #[cfg(feature = "zk")]
+        stage2_sumcheck_proof_masked,
         w_commitment_proof,
         w_eval,
         next_state: RecursiveProverState {
             w,
             commitment: w_commitment,
-            hint: w_hint.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "prover ring switch dropped recursive hint cache".to_string(),
-                )
-            })?,
+            hint: w_hint,
             log_basis: next_log_basis,
             sumcheck_challenges,
+            #[cfg(feature = "zk")]
+            zk_hiding,
         },
     })
 }

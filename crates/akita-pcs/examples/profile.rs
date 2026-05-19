@@ -167,6 +167,7 @@ fn run_prove<
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "prove");
     print_batched_proof_summary::<D>(label, &proof);
     if let Some(plan) = plan {
+        #[cfg(not(feature = "zk"))]
         debug_assert_eq!(
             proof.size(),
             plan.exact_proof_bytes,
@@ -265,10 +266,17 @@ fn print_akita_level_breakdown(label: &str, level_idx: usize, level: &AkitaLevel
     );
     let stage1 = &level.stage1;
     let stage2 = &level.stage2;
+    #[cfg(not(feature = "zk"))]
     let stage1_sumcheck_size = stage1
         .stages
         .iter()
-        .map(|stage| stage.sumcheck.serialized_size(Compress::No))
+        .map(|stage| stage.sumcheck_proof.serialized_size(Compress::No))
+        .sum::<usize>();
+    #[cfg(feature = "zk")]
+    let stage1_sumcheck_size = stage1
+        .stages
+        .iter()
+        .map(|stage| stage.sumcheck_proof_masked.serialized_size(Compress::No))
         .sum::<usize>();
     let stage1_interstage_claims_size = stage1
         .stages
@@ -277,9 +285,12 @@ fn print_akita_level_breakdown(label: &str, level_idx: usize, level: &AkitaLevel
         .map(|claim| claim.serialized_size(Compress::No))
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
-    let stage2_sumcheck_size = stage2.sumcheck.serialized_size(Compress::No);
+    #[cfg(not(feature = "zk"))]
+    let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
+    #[cfg(feature = "zk")]
+    let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
-    let next_w_eval_size = stage2.next_w_eval.serialized_size(Compress::No);
+    let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
     tracing::info!(
         label,
         level = level_idx,
@@ -348,10 +359,17 @@ fn print_batched_root_breakdown<const D: usize>(
     let total = fold.serialized_size(Compress::No);
     let stage1 = &fold.stage1;
     let stage2 = &fold.stage2;
+    #[cfg(not(feature = "zk"))]
     let stage1_sumcheck_size = stage1
         .stages
         .iter()
-        .map(|stage| stage.sumcheck.serialized_size(Compress::No))
+        .map(|stage| stage.sumcheck_proof.serialized_size(Compress::No))
+        .sum::<usize>();
+    #[cfg(feature = "zk")]
+    let stage1_sumcheck_size = stage1
+        .stages
+        .iter()
+        .map(|stage| stage.sumcheck_proof_masked.serialized_size(Compress::No))
         .sum::<usize>();
     let stage1_interstage_claims_size = stage1
         .stages
@@ -360,9 +378,12 @@ fn print_batched_root_breakdown<const D: usize>(
         .map(|claim| claim.serialized_size(Compress::No))
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
-    let stage2_sumcheck_size = stage2.sumcheck.serialized_size(Compress::No);
+    #[cfg(not(feature = "zk"))]
+    let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
+    #[cfg(feature = "zk")]
+    let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
-    let next_w_eval_size = stage2.next_w_eval.serialized_size(Compress::No);
+    let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
 
     tracing::info!(
         label,
@@ -422,9 +443,13 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &AkitaBatched
         .fold_levels()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
+    #[cfg(feature = "zk")]
+    let zk_hiding_total = proof.zk_hiding.serialized_size(Compress::No);
+    #[cfg(not(feature = "zk"))]
+    let zk_hiding_total = 0;
     let akita_levels_total = root_total + recursive_levels_total;
     let tail_total = proof.final_witness().serialized_size(Compress::No);
-    let accounted_total = akita_levels_total + tail_total;
+    let accounted_total = zk_hiding_total + akita_levels_total + tail_total;
     let framing_total = proof.size() - accounted_total;
 
     tracing::info!(
@@ -432,6 +457,7 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &AkitaBatched
         levels = proof.num_fold_levels() + 1,
         proof_size_bytes = proof.size(),
         accounted_bytes = accounted_total,
+        zk_hiding_bytes = zk_hiding_total,
         akita_fold_bytes = akita_levels_total,
         tail_bytes = tail_total,
         proof_framing_bytes = framing_total,

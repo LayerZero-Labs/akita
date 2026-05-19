@@ -364,6 +364,29 @@ where
             BasisMode::Lagrange,
         )
         .expect("zk verify");
+
+        assert!(
+            !decoded.zk_hiding.hiding_witness.is_empty(),
+            "fixture should carry deferred ZK hiding witness material"
+        );
+
+        let mut trailing_hiding_witness = decoded.clone();
+        trailing_hiding_witness
+            .zk_hiding
+            .hiding_witness
+            .push(F::one());
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(label);
+        assert!(
+            <Scheme<D, Cfg<BaseCfg>> as CommitmentVerifier<F, D>>::batched_verify(
+                &trailing_hiding_witness,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input(&point, &openings, &commitments[0]),
+                BasisMode::Lagrange,
+            )
+            .is_err(),
+            "zk verifier should reject unreferenced trailing hiding witness slots"
+        );
     });
 }
 
@@ -456,6 +479,17 @@ where
         )
         .expect("deserialize zk proof");
 
+        let mut second_serialized = Vec::new();
+        let second_proof_shape = second_proof.shape();
+        second_proof
+            .serialize_compressed(&mut second_serialized)
+            .expect("serialize second zk proof");
+        let second_decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+            &mut std::io::Cursor::new(second_serialized),
+            &second_proof_shape,
+        )
+        .expect("deserialize second zk proof");
+
         let mut verifier_transcript = Blake2bTranscript::<F>::new(label);
         <Scheme<D, Cfg<BaseCfg>> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
@@ -465,6 +499,15 @@ where
             BasisMode::Lagrange,
         )
         .expect("zk verify");
+        let mut second_verifier_transcript = Blake2bTranscript::<F>::new(label);
+        <Scheme<D, Cfg<BaseCfg>> as CommitmentVerifier<F, D>>::batched_verify(
+            &second_decoded,
+            &verifier_setup,
+            &mut second_verifier_transcript,
+            verify_input(&point, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect("second zk verify");
     });
 }
 

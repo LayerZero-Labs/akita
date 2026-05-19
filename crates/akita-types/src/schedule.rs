@@ -1099,12 +1099,15 @@ mod tests {
     use akita_field::FieldCore;
     use akita_field::Prime128OffsetA7F7;
     use akita_serialization::{AkitaSerialize, Compress};
-    use akita_sumcheck::{
-        CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
-    };
+    use akita_sumcheck::EqFactoredUniPoly;
+    #[cfg(not(feature = "zk"))]
+    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
+    #[cfg(feature = "zk")]
+    use akita_sumcheck::{EqFactoredSumcheckProofMasked, FullUniPoly, SumcheckProofMasked};
 
     type F = Prime128OffsetA7F7;
 
+    #[cfg(not(feature = "zk"))]
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
             round_polys: (0..rounds)
@@ -1115,6 +1118,22 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "zk")]
+    fn dummy_sumcheck_proof_masked<F: FieldCore>(
+        rounds: usize,
+        degree: usize,
+    ) -> SumcheckProofMasked<F> {
+        let full_rounds = || {
+            (0..rounds)
+                .map(|_| FullUniPoly::from_coeffs(vec![F::zero(); degree + 1]))
+                .collect()
+        };
+        SumcheckProofMasked {
+            masked_round_polys: full_rounds(),
+        }
+    }
+
+    #[cfg(not(feature = "zk"))]
     fn dummy_eq_factored_sumcheck<F: FieldCore>(
         rounds: usize,
         degree: usize,
@@ -1131,12 +1150,38 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "zk")]
+    fn dummy_eq_factored_sumcheck_proof_masked<F: FieldCore>(
+        rounds: usize,
+        degree: usize,
+    ) -> EqFactoredSumcheckProofMasked<F> {
+        let rounds_for = || {
+            (0..rounds)
+                .map(|_| EqFactoredUniPoly {
+                    coeffs_except_linear_term: vec![
+                        F::zero();
+                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
+                    ],
+                })
+                .collect()
+        };
+        EqFactoredSumcheckProofMasked {
+            masked_round_polys: rounds_for(),
+        }
+    }
+
     fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
         AkitaStage1Proof {
             stages: stage1_tree_stage_shapes(rounds, b)
                 .into_iter()
                 .map(|shape| AkitaStage1StageProof {
-                    sumcheck: dummy_eq_factored_sumcheck(rounds, shape.sumcheck.1),
+                    #[cfg(not(feature = "zk"))]
+                    sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
+                    #[cfg(feature = "zk")]
+                    sumcheck_proof_masked: dummy_eq_factored_sumcheck_proof_masked(
+                        rounds,
+                        shape.sumcheck_proof.1,
+                    ),
                     child_claims: vec![F::zero(); shape.child_claims],
                 })
                 .collect(),
@@ -1171,9 +1216,15 @@ mod tests {
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
-                sumcheck: dummy_sumcheck(rounds, 3),
+                #[cfg(not(feature = "zk"))]
+                sumcheck_proof: dummy_sumcheck(rounds, 3),
+                #[cfg(feature = "zk")]
+                sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
                 next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
+                #[cfg(not(feature = "zk"))]
                 next_w_eval: F::zero(),
+                #[cfg(feature = "zk")]
+                next_w_eval_masked: F::zero(),
             },
         };
         Ok(proof.serialized_size(Compress::No))
@@ -1239,7 +1290,10 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::zero(); num_points],
                 vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
                 dummy_stage1_proof(rounds, b),
+                #[cfg(not(feature = "zk"))]
                 dummy_sumcheck(rounds, 3),
+                #[cfg(feature = "zk")]
+                dummy_sumcheck_proof_masked(rounds, 3),
                 next_commitment,
                 F::zero(),
             );

@@ -15,6 +15,8 @@ pub const DOMAIN_AKITA_PROTOCOL: &[u8] = b"ak/p";
 
 /// Absorb commitment object(s) (paper §4.1).
 pub const ABSORB_COMMITMENT: &[u8] = b"ak/a/cm";
+/// Absorb the ZK hiding-factor commitment before masked opening challenges.
+pub const ABSORB_ZK_HIDING_COMMITMENT: &[u8] = b"ak/a/zhc";
 /// Absorb claimed openings/evaluations before relation reduction (paper §4.2).
 pub const ABSORB_EVALUATION_CLAIMS: &[u8] = b"ak/a/ec";
 /// Absorb the public batch nesting shape for grouped/multipoint batching.
@@ -37,6 +39,8 @@ pub const ABSORB_SUMCHECK_ROUND: &[u8] = b"ak/a/scr";
 pub const CHALLENGE_SUMCHECK_ROUND: &[u8] = b"ak/c/scr";
 /// Absorb the stage-1 final `s_claim` before the batching challenge.
 pub const ABSORB_SUMCHECK_S_CLAIM: &[u8] = b"ak/a/scs";
+/// Absorb the stage-2 next-witness evaluation handoff before recursion continues.
+pub const ABSORB_STAGE2_NEXT_W_EVAL: &[u8] = b"ak/a/s2w";
 /// Absorb stage-1 inter-stage claims before batching them into the next stage.
 pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"ak/a/sci";
 /// Challenge for batched sumcheck coefficient sampling.
@@ -70,6 +74,7 @@ pub fn all_labels() -> &'static [&'static [u8]] {
     &[
         DOMAIN_AKITA_PROTOCOL,
         ABSORB_COMMITMENT,
+        ABSORB_ZK_HIDING_COMMITMENT,
         ABSORB_EVALUATION_CLAIMS,
         ABSORB_BATCH_SHAPE,
         CHALLENGE_LINEAR_RELATION,
@@ -81,6 +86,7 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_SUMCHECK_ROUND,
         CHALLENGE_SUMCHECK_ROUND,
         ABSORB_SUMCHECK_S_CLAIM,
+        ABSORB_STAGE2_NEXT_W_EVAL,
         ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
         CHALLENGE_SUMCHECK_BATCH,
         CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,

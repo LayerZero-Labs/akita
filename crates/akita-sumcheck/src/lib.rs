@@ -25,13 +25,19 @@ pub use compact_fold::CompactPairFoldLut;
 pub use drivers::{
     advance_eq_factored_claim, check_sumcheck_output_claim, prove_eq_factored_sumcheck,
     prove_sumcheck, prove_sumcheck_with_omitted_prefix_rounds, verify_eq_factored_sumcheck,
-    verify_sumcheck, verify_sumcheck_with_prefix_rounds,
+    verify_sumcheck, verify_sumcheck_with_prefix_rounds, EqFactoredMaskedProveOutput,
+    MaskedProveOutput, ZkEqFactoredFinalRelation, ZkR1csLinearCombination, ZkR1csTerm,
+    ZkR1csVariable, ZkRelationAccumulator, ZkSumcheckFinalRelation,
+};
+pub use drivers::{
+    ZkEqFactoredSumcheckInstanceProverExt, ZkEqFactoredSumcheckInstanceVerifierExt,
+    ZkSumcheckInstanceProverExt, ZkSumcheckInstanceVerifierExt,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
 };
 pub use types::{
-    EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, EqFactoredUniPoly, SumcheckProof,
-    SumcheckProofShape,
+    EqFactoredSumcheckProof, EqFactoredSumcheckProofMasked, EqFactoredSumcheckProofShape,
+    EqFactoredUniPoly, FullUniPoly, SumcheckProof, SumcheckProofMasked, SumcheckProofShape,
 };

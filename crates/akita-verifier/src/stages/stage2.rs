@@ -5,6 +5,10 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
+#[cfg(feature = "zk")]
+use akita_sumcheck::{
+    ZkR1csLinearCombination, ZkR1csVariable, ZkRelationAccumulator, ZkSumcheckFinalRelation,
+};
 use akita_types::{
     relation_claim_from_rows_extension, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
     RingOpeningPoint,
@@ -116,7 +120,11 @@ where
 
 enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
     Direct(&'a DirectWitnessProof<F>),
-    ClaimedEval(E),
+    ClaimedEval {
+        eval: E,
+        #[cfg(feature = "zk")]
+        mask_variable: ZkR1csVariable,
+    },
 }
 
 /// Source of deferred ring-switch row evaluations used by the stage-2 verifier.
@@ -135,6 +143,10 @@ impl<F: FieldCore> Stage2RowEvalSource<F> {
 pub struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
     batching_coeff: E,
     s_claim: E,
+    #[cfg(feature = "zk")]
+    s_claim_mask: ZkR1csLinearCombination<E>,
+    #[cfg(feature = "zk")]
+    relation_claim_mask: ZkR1csLinearCombination<E>,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     r_stage1: Vec<E>,
     alpha_evals_y: Vec<E>,
@@ -157,6 +169,8 @@ where
     fn new(
         batching_coeff: E,
         s_claim: E,
+        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         r_stage1: Vec<E>,
         alpha_evals_y: Vec<E>,
@@ -176,6 +190,10 @@ where
         Self {
             batching_coeff,
             s_claim,
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+            #[cfg(feature = "zk")]
+            relation_claim_mask,
             witness_oracle,
             r_stage1,
             alpha_evals_y,
@@ -196,6 +214,8 @@ where
     pub fn new_with_direct_witness(
         batching_coeff: E,
         s_claim: E,
+        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
         direct_witness: &'a DirectWitnessProof<F>,
         r_stage1: Vec<E>,
         alpha_evals_y: Vec<E>,
@@ -213,6 +233,10 @@ where
         Self::new(
             batching_coeff,
             s_claim,
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+            #[cfg(feature = "zk")]
+            relation_claim_mask,
             Stage2WitnessOracle::Direct(direct_witness),
             r_stage1,
             alpha_evals_y,
@@ -235,7 +259,10 @@ where
     pub fn new_with_claimed_w_eval(
         batching_coeff: E,
         s_claim: E,
+        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
         w_eval: E,
+        #[cfg(feature = "zk")] w_eval_mask_variable: ZkR1csVariable,
         r_stage1: Vec<E>,
         alpha_evals_y: Vec<E>,
         row_eval_source: Stage2RowEvalSource<E>,
@@ -252,7 +279,15 @@ where
         Self::new(
             batching_coeff,
             s_claim,
-            Stage2WitnessOracle::ClaimedEval(w_eval),
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+            #[cfg(feature = "zk")]
+            relation_claim_mask,
+            Stage2WitnessOracle::ClaimedEval {
+                eval: w_eval,
+                #[cfg(feature = "zk")]
+                mask_variable: w_eval_mask_variable,
+            },
             r_stage1,
             alpha_evals_y,
             row_eval_source,
@@ -276,7 +311,7 @@ where
                 self.col_bits,
                 self.ring_bits,
             ),
-            Stage2WitnessOracle::ClaimedEval(w_eval) => Ok(*w_eval),
+            Stage2WitnessOracle::ClaimedEval { eval, .. } => Ok(*eval),
         }
     }
 
@@ -324,6 +359,108 @@ where
         };
         let relation_oracle = w_eval * alpha_val * row_val;
         Ok(self.batching_coeff * virtual_oracle + relation_oracle)
+    }
+}
+
+#[cfg(feature = "zk")]
+impl<'a, F, E, const D: usize> ZkSumcheckFinalRelation<E> for AkitaStage2Verifier<'a, F, E, D>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    /// Record the deferred relation tying the stage-2 masked input to the
+    /// stage-1 masked `s_claim` handoff.
+    fn initial_claim_mask(
+        &self,
+        relations: &mut ZkRelationAccumulator<E>,
+    ) -> Result<ZkR1csLinearCombination<E>, AkitaError> {
+        // Stage 2's public input claim is masked as
+        //
+        //   input_claim_masked =
+        //     gamma * s_claim_masked + relation_claim_masked.
+        //
+        // The hidden mask carried into the masked sumcheck is therefore
+        //
+        //   input_mask = gamma * s_claim_mask + relation_claim_mask.
+        //
+        // This row also records the semantic handoff:
+        //
+        //   input_claim_true = gamma * s_claim_true + relation_claim_true,
+        //
+        // where each true value is represented by unmasking its public masked
+        // value with the symbolic LC over hidden witness slots.
+        let true_s_claim_lc = ZkRelationAccumulator::unmask_lc(self.s_claim, &self.s_claim_mask);
+        let true_s_claim = relations.new_auxilary(
+            "stage-1 true s_claim handoff",
+            true_s_claim_lc,
+            ZkR1csLinearCombination::one(),
+        )?;
+        let scaled_s_claim_mask = relations.new_auxilary(
+            "stage-2 input mask scaling",
+            self.s_claim_mask.clone(),
+            ZkR1csLinearCombination::constant(self.batching_coeff),
+        )?;
+        let mut input_mask = scaled_s_claim_mask;
+        input_mask.add_scaled(E::one(), &self.relation_claim_mask);
+
+        let mut residual = ZkRelationAccumulator::unmask_lc(self.input_claim(), &input_mask);
+        residual.constant -= self.relation_claim;
+        residual.add_scaled(E::one(), &self.relation_claim_mask);
+        residual.add_scaled(-self.batching_coeff, &true_s_claim);
+        relations.push_r1cs(
+            "stage-1 to stage-2 input handoff",
+            residual,
+            ZkR1csLinearCombination::one(),
+            ZkR1csLinearCombination::zero(),
+        );
+        Ok(input_mask)
+    }
+
+    fn record_final_relation(
+        &self,
+        challenges: &[E],
+        final_claim: ZkR1csLinearCombination<E>,
+        relations: &mut ZkRelationAccumulator<E>,
+    ) -> Result<(), AkitaError> {
+        let eq_val = EqPolynomial::mle(&self.r_stage1, challenges);
+        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
+        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
+        let row_val = self.row_eval(x_challenges)?;
+
+        // At the sampled point r = (r_y, r_x), the fused Stage-2 oracle is
+        //
+        //   gamma * eq(r_stage1, r) * w(r) * (w(r) + 1)
+        //     + w(r) * alpha(r_y) * row(r_x).
+        //
+        // `final_claim` is already the unmasked final sumcheck claim as an LC.
+        // If the next witness evaluation was public-masked, `w_lc` is
+        // eval_masked - eval_mask; otherwise it is a constant direct witness
+        // evaluation. The R1CS row below rearranges the oracle equality as
+        //
+        //   w(r) * [gamma * eq(r_stage1, r) * (w(r) + 1)]
+        //     = final_claim - w(r) * alpha(r_y) * row(r_x).
+        let w_lc = match &self.witness_oracle {
+            Stage2WitnessOracle::Direct(_) => {
+                ZkR1csLinearCombination::constant(self.witness_eval(challenges)?)
+            }
+            Stage2WitnessOracle::ClaimedEval {
+                eval,
+                mask_variable,
+            } => {
+                let mask_lc = ZkR1csLinearCombination::variable(*mask_variable, E::one());
+                ZkRelationAccumulator::unmask_lc(*eval, &mask_lc)
+            }
+        };
+        let w_plus_one = ZkR1csLinearCombination {
+            constant: w_lc.constant + E::one(),
+            terms: w_lc.terms.clone(),
+        };
+        let mut scaled_virtual = ZkR1csLinearCombination::zero();
+        scaled_virtual.add_scaled(self.batching_coeff * eq_val, &w_plus_one);
+        let mut expected_claim = final_claim;
+        expected_claim.add_scaled(-(alpha_val * row_val), &w_lc);
+        relations.push_r1cs("stage-2 final oracle", w_lc, scaled_virtual, expected_claim);
+        Ok(())
     }
 }
 

@@ -41,11 +41,30 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
+#[cfg(feature = "zk")]
+fn eq_factored_round_mask_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
+    sumcheck_bytes(rounds, degree, elem_bytes)
+}
+
+#[cfg(feature = "zk")]
+fn full_round_mask_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
+    rounds * (degree + 1) * elem_bytes
+}
+
 fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
     stage1_tree_stage_shapes(rounds, b)
         .into_iter()
         .map(|stage| {
-            sumcheck_bytes(rounds, stage.sumcheck.1, elem_bytes) + stage.child_claims * elem_bytes
+            ({
+                #[cfg(feature = "zk")]
+                {
+                    eq_factored_round_mask_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
+                }
+            }) + stage.child_claims * elem_bytes
         })
         .sum::<usize>()
         + elem_bytes
@@ -116,7 +135,16 @@ pub fn level_proof_bytes(
     y_bytes
         + v_bytes
         + stage1_bytes
-        + sumcheck_bytes(rounds, 3, elem_bytes)
+        + {
+            #[cfg(feature = "zk")]
+            {
+                full_round_mask_bytes(rounds, 3, elem_bytes)
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                sumcheck_bytes(rounds, 3, elem_bytes)
+            }
+        }
         + next_commit_bytes
         + next_eval_bytes
 }

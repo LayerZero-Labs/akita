@@ -194,6 +194,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     b: usize,
     batching_coeff: E,
     s_claim: E,
+    input_claim: E,
     split_eq: GruenSplitEq<E>,
 
     alpha_compact: Vec<E>,
@@ -247,6 +248,7 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
             b,
             batching_coeff,
             s_claim,
+            input_claim: batching_coeff * s_claim + relation_claim,
             split_eq: GruenSplitEq::with_initial_scalar(r_stage1, batching_coeff),
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
@@ -264,6 +266,14 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
             fold_time_total: 0.0,
             rounds_completed: 0,
         }
+    }
+
+    /// Override the transcript-visible input claim while retaining the true
+    /// stage-1 claim for prover-local witness polynomial construction.
+    #[cfg(feature = "zk")]
+    pub fn with_input_claim(mut self, input_claim: E) -> Self {
+        self.input_claim = input_claim;
+        self
     }
 
     /// Return the fully folded witness evaluation after the final round.
@@ -2285,7 +2295,7 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> Sumchec
     }
 
     fn input_claim(&self) -> E {
-        self.batching_coeff * self.s_claim + self.relation_claim
+        self.input_claim
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
