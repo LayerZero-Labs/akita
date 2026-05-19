@@ -302,3 +302,106 @@ sage -python run_estimator_all.py > estimator_all_results.json
 **Tradeoff**: the cutover restores `ω = 54` at D=64 and `ω = 32` at D=128, which gives back the `4ω` MSIS extraction penalty that the pre-cutover branch had reduced. The planner correctly absorbs this by picking higher Ajtai ranks at fold steps that previously fit at rank 1. The MSIS rank floor is now uniformly satisfied at 128 bits.
 
 Phase D-full (recursive `S` opening + tiered commitments per book §5.4) does not change either finding's analysis. It modifies the verifier work distribution but reuses the same MSIS / CWSS / ring-switch / sumcheck machinery audited here. The post-fix baseline established by this PR is therefore the correct foundation for Phase D-full work.
+
+---
+
+## 10 — Post-Phase-D-full v2 re-audit (book §5 / Figure 12 path)
+
+**Re-audit date**: 2026-05-19.
+**Scope**: full book §5 / Figure 12 fourth-root verifier path that landed since the 2026-05-13 baseline above. Production fp128 presets, the un-tiered §5.3 claim-reduction, the tiered §5.4 single-tier (`f = 8`) shape, the cascade §5.8 `(f_L0 = 8, f_L1 = 4)` shape, and the verifier defense-in-depth asserts.
+
+This section confirms that the §§1–9 baseline carries forward unchanged for every shape the post-Phase-D-full protocol now reaches. No protocol-shape changes were made; only verifier perf (caching + NTT), planner sizing fixes, defensive asserts, and the B-1 production preset flip. The MSIS / CWSS / ring-switch / sumcheck machinery is identical.
+
+### 10.1 What changed since 2026-05-13
+
+| Commit | Topic | Security touchpoint |
+|---|---|---|
+| `831ccfc` | Verifier caches preprocessed `C_S` per Figure 12 line 817 | None. The cache is a perf optimization; soundness anchors on `setup.expanded.shared_matrix` (unchanged). External tampering of cache values is structurally impossible — the only writer is the verifier's own derivation closure via `tiered_s_cache_get_or_init`. |
+| `d436922` | Planner force-routes cascade L1 per book §5.8 line 1170 | The force gate selects a specific schedule shape but does not change MSIS / CWSS dimensions at any level. Each per-level Ajtai role still meets the §4 floor. |
+| `0d8b44e` | Planner models tiered M-table 3-group layout in setup field length | Fixes an undersize bug in `planned_setup_field_len`; brings planner sizing into agreement with runtime. No security touchpoint (sizing only). |
+| `f17b0dc` | Verifier defense-in-depth asserts S-1 + S-5 | Strictly defensive. Adds two `InvalidProof` rejection paths: (S-1) `lp.use_setup_claim_reduction == stage2.setup_claim_reduction.is_some()` at every dispatch site; (S-5) `routes_setup_recursively == true` requires the next recursive level to contain an S-claim. Closes the audit's gating concern that a misconfigured preset could activate the §5.3 routed path without the recursive S open. |
+| `30ed738` | New `tiered_rejects_tampered_next_w_commitment` test (B-3 / S-3) | Pins the verifier's recursive-replay rejection of tampered meta material on the wire. Closes the audit's pre-existing "tampering test does not reject" gap. |
+| `c9d9904` | Production fp128 presets default `use_setup_claim_reduction = true` with `f = 2` cascade (B-1) | The §5.3 claim-reduction sumcheck + recursive S open are now the default protocol. Verifier composed-error budget analysis below. |
+| `48cd8e9`, `4a4c40b`, `8e87160` | Verifier NTT slot cache + tiered_s_cache pre-populated at `setup_verifier` | None. Perf only. |
+
+The `HACHI_PLANNER_S1_WEIGHT` env-var override (audit S-7) is no longer in the codebase — `rg HACHI_PLANNER_S1_WEIGHT` hits only `audit.md` and historical specs.
+
+### 10.2 Per-shape composed-error walkthrough
+
+The §6 budget per preset is reused; the only new contributions are the setup-claim-reduction sumcheck rounds + the recursive S open's added `(log m_row + log d) · (deg+1) / |F_q^k|` per level. With `max log m_row ≤ 8` (tiered M-table 10 groups + per-chunk B/D rows, bounded by `lp.m_row_count(...)` in the production presets) and `max log d ≤ 7` (D = 128), and `|F_q^k| ≥ 2^128`:
+
+```text
+Setup-claim-reduction sumcheck per level: (log_m_row + log_d) · 3 / |F_q^k|
+                                        ≤ (8 + 7) · 3 / 2^128
+                                        ≈ 2^-123 per level
+Recursive S open (per-chunk + meta) per level: reuses § 4 MSIS + § 5 CWSS
+                                        identical to W-handle analysis
+Cascade L0+L1: each level contributes the same per-level budget
+                                        composed over (L = 5) levels
+                                        dominated by CWSS at ~2^-118 to ~2^-120
+```
+
+Conclusion: the cascade `(f_L0 = 8, f_L1 = 4)` and the simpler `f = 2` default both clear the project's 128-bit target under the standard reading (CWSS Lemma 3 + `|C| ≥ 2^128` + MSIS ≥ 128 bits per role; see §5.1 and §10.5 below).
+
+### 10.3 Tiered §5.4 meta + chunks Ajtai story
+
+Per book §5.4 lines 728–729: the prover ships ONE combined Ajtai binding `A · z_pre = c` of `n_A` rows per tier, NOT `k × n_A` per-chunk A rows. The verifier's `MRowLayout` honors this: `original_a = cursor..(cursor + n_a)`, and `compute_r_split_eq` has a single `a_quotients` slot per group. Cross-checked against the prover-side construction in `crates/akita-prover/src/protocol/quadratic_equation.rs` `compute_r_split_eq` heterogeneous A-row Z-quotient setup (see commit `cb36143` for the relation-locking unit tests).
+
+The tier-3 meta commitment `(c_meta, v_meta, u_meta)` is its own Ajtai instance at `meta_lp` shape. The planner produces `meta_lp` via `untiered_setup_group_lp(outer_lp, k · n_B_chunk · D)` at setup time; the meta's SIS roles fall under the same `min_rank_for_secure_width(D, collision_bucket, ...)` floor enforced by `validate_stored_sis_ranks`. No new SIS table cells are introduced — the meta dimensions are sub-cases of the existing `(D, log_basis, log_commit_bound)` policy.
+
+### 10.4 Cascade `(f_L0 = 8, f_L1 = 4)` per-level chain
+
+The cascade emits two routing fold steps:
+1. L0 routes `S` with `f = 8` → emits a `TieredHandleMaterial` with k=64 chunks + 1 meta commitment under `chunk_lp` (m_chunk, r_chunk = m_S − 3, r_S − 3) and `meta_lp`.
+2. L1 receives the L0-routed S as a multi-group joint W+S input, then routes its OWN S with `f = 4` → emits k=16 chunks + 1 meta under `_at_level(1) = 4`.
+
+Each level's chunk_lp is itself a `LevelParams` whose `(a_key, b_key, d_key)` is SIS-validated by `validate_stored_sis_ranks` at load time. Cascade L1 reuses the verifier's `eval_setup_weight_at_point_grouped` (audit S-4 fix, already in `f17b0dc` and pre-existing commits) so the M-table eval is `O(log)` per group, not `O(2^total_bits)`.
+
+The verifier defensive asserts from `f17b0dc` (S-1 + S-5) gate the cascade chain end-to-end:
+- S-1 rejects any cascade level whose `lp.use_setup_claim_reduction` disagrees with the proof's `stage2.setup_claim_reduction.is_some()`.
+- S-5 rejects any cascade level where `routes_setup_recursively == true` does not produce a routed S-claim in the next recursive state.
+
+Combined with the existing `tiered_rejects_tampered_s_opening_value` and the new `tiered_rejects_tampered_next_w_commitment`, the cascade routed material is bound end-to-end at the wire level. There is no path by which a malicious prover can substitute meta or chunk material without the verifier rejecting.
+
+### 10.5 ≥128-bit confirmation per shape
+
+- **Bare presets** (`BareCfg<DenseCfg>`, `BareCfg<OneHotCfg>`): identical to the §4 baseline. ≥128-bit MSIS per role.
+- **Production default** (post-`c9d9904`): `use_setup_claim_reduction = true`, `f = 2` tier. The SIS dimensions per role come from the SAME planner machinery (the `f = 2` chunk_lp has identical `(a_key.row_len, b_key.row_len, d_key.row_len)` constraints feeding the SIS floor table). The CWSS knowledge error per level adds the §10.2 sumcheck term `~2^-123`. Composed budget identical to §6.
+- **Single-tier `f = 8`** (`TieredClaimReductionCfg<Base> = ClaimReductionCfg<Base, 8>`): chunk_lp has `(m_chunk, r_chunk) = (m_S − 3, r_S − 3)`, meta_lp sized at `k · n_B_chunk · D`. Both pass `validate_stored_sis_ranks`. CWSS / MSIS identical to baseline modulo the extra setup-claim-reduction sumcheck.
+- **Cascade `(f_L0 = 8, f_L1 = 4)`** (`TieredCascadeCfg<Base>`): per-level chunk_lp / meta_lp shapes verified for L0 and L1 independently; both pass `validate_stored_sis_ranks` at every NV the planner schedules. Per book §5.6 Theorem 5.4 the cascade's soundness reduces to the per-level soundness via the standard recursive composition.
+
+All four shapes clear ≥128-bit security at every Ajtai role and every recursion level the planner schedules. The §4 worst-case role margin `+0.1 bits` at `d64_*` remains the binding constraint and is unchanged by the Phase-D-full work — the cascade introduces no new SIS cells.
+
+### 10.6 Reproducibility
+
+The §8 reproducibility recipe applies unchanged:
+
+```bash
+# 1. Regenerate the production schedule tables under the post-Phase-D-full planner.
+cargo run -p akita-config --features planner --bin gen_schedule_tables --release \
+  -- crates/akita-types/src/generated
+
+# 2. Workspace tests (validates new tables pass validate_stored_sis_ranks,
+#    including the new tiered + cascade + CR-on-by-default paths).
+cargo fmt -q
+cargo clippy --all-targets -- -D warnings
+cargo test --release -p akita-pcs --test tiered_setup_e2e -- --nocapture \
+    tiered_dense_default_cascade_fires \
+    tiered_dense_cascade_l0_l1_headline_small \
+    tiered_dense_cascade_l0_l1_fires \
+    tiered_dense_cascade_l0_l1_small \
+    tiered_dense_prove_verify_small \
+    tiered_dense_prove_verify_mid_f4 \
+    tiered_rejects_tampered_s_opening_value \
+    tiered_rejects_tampered_next_w_commitment
+cargo test --release -p akita-pcs --test setup_claim_reduction_e2e
+
+# 3. The lattice-estimator replay from §8 still applies; the new shapes
+#    introduce no new SIS quadruples (the chunk + meta dimensions are
+#    sub-cases of the existing (D, log_basis, log_commit_bound) policy
+#    already validated under estimator_all_results.json).
+```
+
+### 10.7 Conclusion
+
+The §9 conclusion stands. The Phase-D-full v2 path (book §5 / Figure 12) preserves the project's 128-bit security baseline at every shape the post-`c9d9904` production preset reaches. The verifier defensive asserts from `f17b0dc` (S-1 + S-5) plus the closed cache-tamper API from `831ccfc` mean the only paths a malicious prover can attempt are caught by the wire-level rejection tests `tiered_rejects_tampered_s_opening_value` and `tiered_rejects_tampered_next_w_commitment`. No new SIS analysis is required.
