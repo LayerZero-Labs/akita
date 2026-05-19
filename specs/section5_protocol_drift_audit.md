@@ -287,3 +287,21 @@ Ranked, with the drift/gap/scope IDs each step closes.
 1. **Bit-for-bit transcript trace comparison**: capture the exact byte sequence absorbed/sampled by the prover and verifier at Figure 12 round granularity, then assert it matches a hand-computed reference for a smallest-possible test case. This would catch any subtle transcript-ordering drift that grep + manual cross-reference might miss.
 2. **Algorithm 1 reference implementation in Python** + black-box test against the Rust `eval_offset_eq_tensor`. Would close any silent algorithmic drift in the offset-slice specialization.
 3. **Formal model of Figure 12 in Cryptol or F\***, machine-checked against the implementation's per-round invariants. Out of scope for any normal audit but the right tool for production-grade soundness.
+
+---
+
+## Phase 5 progress (ralph-loop, 2026-05-19)
+
+Goal: close SCOPE-3 + GAP-3 by realising the shared per-chunk matrix collapse end-to-end so the planner DP discovers the headline cascade naturally.
+
+### Iteration log
+
+- Iter 1 (start): baseline `cargo build --all-targets` is clean at HEAD `ce01879`. Scoping investigation completed.
+  - **Item 1 insight**: For tier-marked groups, the prover's materialise writes ALL `k` chunks' contributions to chunk-INDEPENDENT `(row, col, coeff)` cells — i.e. the chunks already accumulate into the SAME setup-polynomial col slots `[0..num_blocks_chunk · num_digits_open)` via the column formula `d_col = block_idx · num_digits_open + dig` (see `setup_weight_table_at_point_grouped` line 1938). The verifier's structured eval also reads from the same chunk-independent col indices.
+  - The col_count_padded that `setup_polynomial_padded_dims_inner` computes for tier-marked groups INCLUDES a `claim_count = k` factor (line 432-444 of `params.rs`'s heterogeneous branch). The high cols are reserved but never written — pure over-allocation.
+  - Realising the book's `O(|D_chunk|) + O(log k)` per-chunk amortisation therefore reduces to **removing the k-factor over-allocation** in both `setup_polynomial_padded_dims_inner` and `planned_setup_padded_dims`. The verifier's existing structured eval and the prover's materialise already operate at chunk-shared col indices.
+- Iter 2: Item 1 implemented as a targeted col-envelope fix.
+  - `setup_polynomial_padded_dims_inner` heterogeneous branch now takes `max` over groups of per-group col extent, with tier-marked groups contributing as `effective_claims = 1` (k chunks share cols). Un-tiered groups with `claim_count > 1` keep the full `claim_count` multiplier on their B col extent (per the `claim_within * num_blocks * n_a * num_digits_open` offset in the grouped structured eval's `local_col`).
+  - `planned_setup_padded_dims` mirrored: tiered cascade incoming and un-tiered cascade incoming now both compute `col_count = max(W_max, [chunks_max or S_max], [meta_max if tiered])` instead of `sum + k*chunks + meta`.
+  - New invariant test in `crates/akita-types/src/layout/proof_size.rs`: `planned_setup_padded_dims_tiered_drops_k_multiplier_from_chunks` checks `col_padded` strictly shrinks versus the pre-Phase-5 `k`-multiplied formula. Existing `tiered_eval_setup_weight_at_point_matches_materialized` in `crates/akita-pcs/tests/multi_group_commit.rs` still passes (structured == materialised at the smaller shape).
+  - All 58 `akita-types` lib tests pass; `clippy --package akita-types` clean. Pre-existing lint errors in `akita-sumcheck/src/eq_weighted_table.rs` and `akita-verifier/src/protocol/ring_switch.rs::padded_x_bits`/`boolean_point` were already present at HEAD `ce01879` and are not introduced by this change.

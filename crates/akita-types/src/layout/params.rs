@@ -428,28 +428,48 @@ pub fn setup_polynomial_padded_dims_inner(
         let a_cols = num_points * block_len * num_digits_commit;
         d_cols.max(b_cols).max(a_cols).max(1)
     } else {
-        let w_len = group_layouts
-            .last()
-            .map(|layout| {
-                layout.w_hat_start
-                    + layout.claim_count * layout.spec.num_blocks * layout.spec.num_digits_open
-            })
-            .unwrap_or(0);
-        let max_b_cols = group_layouts
+        // Book §5.5 line 752 "MLE evaluation cost O(|D_chunk|) + O(log k),
+        // independent of k": tier-marked groups' k chunks share the same
+        // per-chunk `D_chunk / B_chunk` matrices, so the prover's
+        // materialise and the verifier's structured eval both index col
+        // chunk-INDEPENDENTLY for tier-marked groups (`d_col = block_idx
+        // * num_digits_open + dig`, `local_col = block_idx * n_a *
+        // num_digits_open + compound`, both without `claim_within`
+        // offset — see `setup_weight_table_at_point_grouped`). The
+        // setup-polynomial col envelope is therefore the MAX over groups
+        // of each group's per-group col extent (chunks share rather
+        // than stack), and tier-marked groups contribute as if
+        // `claim_count = 1`.
+        //
+        // Un-tiered groups with `claim_count > 1` (batched W) keep the
+        // full `claim_count` multiplier on their B col extent — their
+        // per-claim B columns are stacked via the `claim_within *
+        // num_blocks * n_a * num_digits_open` offset in the structured
+        // eval's `local_col`.
+        let group_max_col = |layout: &GroupLayout| -> usize {
+            let effective_claims = if layout.spec.tier.is_some_and(|t| t.is_tiered()) {
+                1
+            } else {
+                layout.claim_count
+            };
+            let d_cols = effective_claims
+                .saturating_mul(layout.spec.num_blocks)
+                .saturating_mul(layout.spec.num_digits_open);
+            let b_cols = effective_claims
+                .saturating_mul(layout.spec.num_blocks)
+                .saturating_mul(n_a)
+                .saturating_mul(layout.spec.num_digits_open);
+            let a_cols = num_eval_rows
+                .saturating_mul(layout.spec.block_len)
+                .saturating_mul(layout.spec.num_digits_commit);
+            d_cols.max(b_cols).max(a_cols)
+        };
+        group_layouts
             .iter()
-            .map(|layout| {
-                layout.claim_count * layout.spec.num_blocks * n_a * layout.spec.num_digits_open
-            })
+            .map(group_max_col)
             .max()
-            .unwrap_or(0);
-        let a_cols = group_layouts
-            .last()
-            .map(|layout| {
-                layout.z_base_start
-                    + num_eval_rows * layout.spec.block_len * layout.spec.num_digits_commit
-            })
-            .unwrap_or(0);
-        w_len.max(max_b_cols).max(a_cols).max(1)
+            .unwrap_or(0)
+            .max(1)
     };
 
     (row_count, col_count.next_power_of_two())

@@ -192,30 +192,56 @@ pub fn planned_setup_padded_dims(
                 .max(lp.ring_dimension);
             let meta_lp =
                 untiered_setup_group_lp(lp, meta_field_len).unwrap_or_else(|_| s_lp.clone());
-            let w_len = lp.num_blocks * lp.num_digits_open
-                + k * s_lp.num_blocks * s_lp.num_digits_open
-                + meta_lp.num_blocks * meta_lp.num_digits_open;
-            let b_w = lp.num_blocks * n_a * lp.num_digits_open;
-            let b_s = k * s_lp.num_blocks * n_a * s_lp.num_digits_open;
-            let b_meta = meta_lp.num_blocks * n_a * meta_lp.num_digits_open;
-            let max_b_cols = b_w.max(b_s).max(b_meta);
-            let a_cols =
-                num_eval_rows * (lp.inner_width() + s_lp.inner_width() + meta_lp.inner_width());
-            let col_count = w_len.max(max_b_cols).max(a_cols).max(1);
+            // Book §5.5 line 752: the k chunks share `D_chunk / B_chunk`,
+            // so the setup-polynomial col envelope is the MAX across the
+            // three (W, chunks, meta) groups — each group writes to its
+            // own per-group col range that overlaps with the others, and
+            // the chunks group does NOT pick up a `k` multiplier (the
+            // chunks accumulate into the SAME col slots via the
+            // chunk-independent `d_col / local_col / phys_k` formulas
+            // in `setup_weight_table_at_point_grouped`). Mirrors the
+            // runtime envelope from `setup_polynomial_padded_dims_inner`.
+            let group_max_col = |group_lp: &LevelParams, effective_claims: usize| -> usize {
+                let d_cols = effective_claims
+                    .saturating_mul(group_lp.num_blocks)
+                    .saturating_mul(group_lp.num_digits_open);
+                let b_cols = effective_claims
+                    .saturating_mul(group_lp.num_blocks)
+                    .saturating_mul(n_a)
+                    .saturating_mul(group_lp.num_digits_open);
+                let a_cols = num_eval_rows
+                    .saturating_mul(group_lp.block_len)
+                    .saturating_mul(group_lp.num_digits_commit);
+                d_cols.max(b_cols).max(a_cols)
+            };
+            let w_max = group_max_col(lp, 1);
+            let chunks_max = group_max_col(s_lp, 1); // tiered: shared chunks
+            let meta_max = group_max_col(&meta_lp, 1);
+            let col_count = w_max.max(chunks_max).max(meta_max).max(1);
             let max_b = n_b_outer
                 .max(s_lp.b_key.row_len())
                 .max(meta_lp.b_key.row_len());
             let row_count = n_a.max(n_d).max(max_b).max(1);
             (col_count, row_count)
         } else {
-            let w_len = lp.num_blocks * lp.num_digits_open + s_lp.num_blocks * s_lp.num_digits_open;
-            let b_w = lp.num_blocks * n_a * lp.num_digits_open;
-            let b_s = s_lp.num_blocks * n_a * s_lp.num_digits_open;
-            let max_b_cols = b_w.max(b_s);
-            let a_cols_w = num_eval_rows * lp.inner_width();
-            let a_cols_s = num_eval_rows * s_lp.inner_width();
-            let a_cols = a_cols_w.saturating_add(a_cols_s);
-            let col_count = w_len.max(max_b_cols).max(a_cols).max(1);
+            // Un-tiered (W, S) cascade: each group writes to its own
+            // per-group col range that overlaps with the other. Take the
+            // MAX (not sum) across the two groups — the col envelope is
+            // structurally `max(W's max_col, S's max_col)`.
+            let group_max_col = |group_lp: &LevelParams, effective_claims: usize| -> usize {
+                let d_cols = effective_claims
+                    .saturating_mul(group_lp.num_blocks)
+                    .saturating_mul(group_lp.num_digits_open);
+                let b_cols = effective_claims
+                    .saturating_mul(group_lp.num_blocks)
+                    .saturating_mul(n_a)
+                    .saturating_mul(group_lp.num_digits_open);
+                let a_cols = num_eval_rows
+                    .saturating_mul(group_lp.block_len)
+                    .saturating_mul(group_lp.num_digits_commit);
+                d_cols.max(b_cols).max(a_cols)
+            };
+            let col_count = group_max_col(lp, 1).max(group_max_col(s_lp, 1)).max(1);
             let max_b = n_b_outer.max(s_lp.b_key.row_len());
             let row_count = n_a.max(n_d).max(max_b).max(1);
             (col_count, row_count)
@@ -940,6 +966,108 @@ mod tests {
         assert!(
             rounds_tiered >= rounds_single,
             "tiered CR rounds ({rounds_tiered}) must be at least single-group ({rounds_single})"
+        );
+    }
+
+    /// Phase 5 / book §5.5 line 752 invariant: the planner's
+    /// setup-polynomial col envelope for tier-marked cascade incoming
+    /// shapes treats the `k` chunks under SHARED `D_chunk / B_chunk`
+    /// matrices — the chunks-group contribution to `col_count` is
+    /// fixed at the per-chunk extent (no `k` multiplier), and only
+    /// the MAX over `(W, chunks, meta)` group contributions sets the
+    /// envelope.
+    ///
+    /// Regression for the prior over-allocation: previously
+    /// `planned_setup_padded_dims` computed `col_count` as
+    /// `lp.num_blocks * lp.num_digits_open + k * s_lp.num_blocks *
+    /// s_lp.num_digits_open + meta.num_blocks * meta.num_digits_open`
+    /// (sum of all groups WITH `k` multiplier), making CR rounds
+    /// scale as `log2(k)` per cascade level. Book §5.5 line 752's
+    /// "O(|D_chunk|) + O(log k), independent of k" demands the chunks
+    /// contribution be k-independent. Meta still scales with k (its
+    /// length is `k · n_B_chunk · D`), but the per-chunk write
+    /// pattern shares col slots across chunks.
+    #[test]
+    fn planned_setup_padded_dims_tiered_drops_k_multiplier_from_chunks() {
+        let base = lp_for_chunk_test();
+        let tier = TieredSetupParams::new(2).expect("f=2");
+        let k = tier.num_chunks; // 4
+        let big_field_len = 16 * 16 * base.ring_dimension;
+        let chunk_lp = tiered_setup_group_lp(&base, big_field_len, tier).expect("chunk_lp");
+
+        let n_a = base.a_key.row_len();
+        let chunks_per_group_max_col = (chunk_lp.num_blocks * n_a * chunk_lp.num_digits_open)
+            .max(chunk_lp.num_blocks * chunk_lp.num_digits_open)
+            .max(3 * chunk_lp.block_len * chunk_lp.num_digits_commit);
+        let w_per_group_max_col = (base.num_blocks * n_a * base.num_digits_open)
+            .max(base.num_blocks * base.num_digits_open)
+            .max(3 * base.block_len * base.num_digits_commit);
+        // Pre-Phase-5: chunks contribution would be `k * chunk_lp.num_blocks
+        // * n_a * chunk_lp.num_digits_open`. Post-Phase-5: it's the per-chunk
+        // extent WITHOUT `k`.
+        let pre_phase5_chunks_b_cols = k * chunk_lp.num_blocks * n_a * chunk_lp.num_digits_open;
+        assert!(
+            pre_phase5_chunks_b_cols > chunks_per_group_max_col,
+            "test setup must distinguish pre-vs-post Phase 5 chunks contribution \
+             (k={k}, chunk_b_cols_with_k={pre_phase5_chunks_b_cols}, \
+             chunks_per_group_max_col={chunks_per_group_max_col})"
+        );
+
+        let (_, col_padded) = planned_setup_padded_dims(&base, Some(&chunk_lp), tier, 3, 3);
+
+        // The post-Phase-5 envelope is the MAX over the (W, chunks,
+        // meta) groups' per-group col extents (rounded up to next pow2).
+        // We don't assert exact value here (depends on the derived meta_lp);
+        // we assert the chunks contribution alone does NOT carry the
+        // `k` multiplier — col_padded must be ≤ `next_pow2(max(W_max,
+        // chunks_max, k · n_B_chunk · D_meta_max))` where the chunks
+        // term is k-INDEPENDENT.
+        let upper_bound_without_k_in_chunks = {
+            let meta_field_len = (k * chunk_lp.b_key.row_len() * base.ring_dimension)
+                .next_power_of_two()
+                .max(base.ring_dimension);
+            let meta_lp = untiered_setup_group_lp(&base, meta_field_len).expect("meta_lp");
+            let meta_per_group_max_col = (meta_lp.num_blocks * n_a * meta_lp.num_digits_open)
+                .max(meta_lp.num_blocks * meta_lp.num_digits_open)
+                .max(3 * meta_lp.block_len * meta_lp.num_digits_commit);
+            w_per_group_max_col
+                .max(chunks_per_group_max_col)
+                .max(meta_per_group_max_col)
+                .next_power_of_two()
+        };
+        assert!(
+            col_padded <= upper_bound_without_k_in_chunks,
+            "col_padded {col_padded} exceeds the post-Phase-5 envelope \
+             upper bound {upper_bound_without_k_in_chunks} (suggests the \
+             chunks contribution still carries the `k` multiplier)"
+        );
+
+        // Strong invariant: the envelope must NOT include the pre-Phase-5
+        // `k * chunk_b_cols` term verbatim. We require strict shrinkage
+        // versus the pre-Phase-5 expression to lock in the k-drop.
+        let pre_phase5_col_count = (base.num_blocks * base.num_digits_open
+            + k * chunk_lp.num_blocks * chunk_lp.num_digits_open
+            + {
+                let meta_field_len = (k * chunk_lp.b_key.row_len() * base.ring_dimension)
+                    .next_power_of_two()
+                    .max(base.ring_dimension);
+                let meta_lp = untiered_setup_group_lp(&base, meta_field_len).expect("meta_lp");
+                meta_lp.num_blocks * meta_lp.num_digits_open
+            })
+        .max(base.num_blocks * n_a * base.num_digits_open)
+        .max(k * chunk_lp.num_blocks * n_a * chunk_lp.num_digits_open);
+        let pre_phase5_padded = pre_phase5_col_count.next_power_of_two();
+        assert!(
+            col_padded <= pre_phase5_padded,
+            "post-Phase-5 col_padded {col_padded} must be ≤ pre-Phase-5 \
+             upper bound {pre_phase5_padded}"
+        );
+        // For this configuration the pre-Phase-5 value is strictly larger.
+        // The exact shrink ratio depends on which group dominates.
+        assert!(
+            col_padded < pre_phase5_padded,
+            "expected strict col_padded shrinkage versus pre-Phase-5 \
+             k-multiplied formula ({col_padded} vs {pre_phase5_padded})"
         );
     }
 
