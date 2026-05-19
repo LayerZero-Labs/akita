@@ -762,6 +762,105 @@ fn tiered_dense_cascade_l0_l1_headline_small() {
     });
 }
 
+/// Book §5.8 line 1170 headline cascade end-to-end at the smallest
+/// schedulable NV for onehot D=64. The matched-tier planner first
+/// emits an `(f_L0=8, f_L1=4)` schedule at NV=28 for onehot per
+/// `probe_cascade_schedules_extended`; below that, no L1 routing
+/// fires.
+///
+/// Per the same per-level cascade plumbing as
+/// [`tiered_dense_cascade_l0_l1_headline_small`], this end-to-end
+/// confirms the prover/verifier flow also closes on a lower-D
+/// onehot config without the dense-d128 verifier setup-derivation
+/// ceiling. The smaller per-NV memory of OneHot D=64 makes NV=28
+/// fit on a 123 GiB host.
+#[test]
+fn tiered_onehot_cascade_l0_l1_headline_small() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 28;
+        const D: usize = ONEHOT_D;
+        type Scheme = AkitaCommitmentScheme<D, OneHotCascadeCfg>;
+
+        let layout = OneHotCascadeCfg::commitment_layout(NV).expect("layout");
+        assert!(layout.use_setup_claim_reduction);
+
+        use akita_planner::PlannerConfig;
+        assert_eq!(
+            OneHotCascadeCfg::planner_setup_shrink_factor_at_level(0),
+            8,
+            "onehot headline cascade L0 tier must be 8 (book §5.8 line 1170)"
+        );
+        assert_eq!(
+            OneHotCascadeCfg::planner_setup_shrink_factor_at_level(1),
+            4,
+            "onehot headline cascade L1 tier must be 4 (book §5.8 line 1170)"
+        );
+
+        let schedule = OneHotCascadeCfg::get_params_for_prove(
+            NV,
+            NV,
+            1,
+            akita_types::AkitaRootBatchSummary::singleton(),
+        )
+        .expect("onehot headline cascade schedule");
+        let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
+        eprintln!(
+            "[onehot_cascade_l0_l1_headline_small] NV={NV}, routing folds={routing_count}, \
+             per-level tiers={tiers:?}"
+        );
+        for (i, &t) in tiers.iter().enumerate() {
+            let expected = OneHotCascadeCfg::planner_setup_shrink_factor_at_level(i);
+            assert_eq!(
+                t, expected,
+                "routing fold {i}: schedule tier {t} must match \
+                 planner_setup_shrink_factor_at_level({i}) = {expected}"
+            );
+        }
+
+        let poly = make_onehot_poly(&layout, 0x715e_ca91);
+        let pt = random_point(NV, 0x715e_ca92);
+        let opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .expect("commit");
+        let poly_refs = [&poly];
+        let commitments = [commitment];
+        let openings = [opening];
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"tiered_setup_e2e/onehot_cascade_headline");
+        let prove_t = Instant::now();
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            prove_input(&pt, &poly_refs, &commitments[0], hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("onehot cascade headline prove");
+        let prove_elapsed = prove_t.elapsed();
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"tiered_setup_e2e/onehot_cascade_headline");
+        let verify_t = Instant::now();
+        <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect("onehot cascade headline verify");
+        let verify_elapsed = verify_t.elapsed();
+        eprintln!(
+            "[onehot_cascade_l0_l1_headline_small] prove={prove_elapsed:?} verify={verify_elapsed:?}"
+        );
+    });
+}
+
 /// Book §5.8 cascade verifier wall-clock measurement vs baseline at
 /// a single NV.
 ///
@@ -793,21 +892,37 @@ fn tiered_dense_cascade_l0_l1_headline_small() {
 /// target NV; the qualitative trend `cascade ≤ T2-only ≤ baseline`
 /// (lower verify time better) is printed but not asserted.
 ///
-/// Crossover note (measured): at NV=22 on a 123 GiB host the
-/// qualitative trend is VIOLATED — baseline verifier work is
-/// ≈ 12 ms while the cascade `(8,4)` machinery has ≈ 16 s of fixed
-/// overhead (per-chunk MLE openings, meta-commits, two routing
-/// folds). Extrapolating with the ≈ 2^NV scaling of baseline verify,
-/// the crossover NV where cascade verify < baseline verify is
-/// ≈ 32, matching the book Table 1141–1158 measurement points
-/// (NV ∈ {32, 38, 44}). On this 123 GiB host NV=25 OOMs for the
-/// dense D=128 configs, so the crossover cannot be measured
-/// directly here; the test still verifies that every cascade shape
-/// proves + verifies end-to-end at NV=22.
+/// Crossover note (measured at NV ∈ {22, 23, 25} on a 123 GiB host):
+/// the cascade plumbing is end-to-end functional at every dense NV
+/// that fits, but the qualitative trend the book predicts is
+/// VIOLATED for *wall-clock* in this regime. Median verify
+/// wall-clock:
 ///
-/// Override the NV list via `AKITA_SPEEDUP_NVS=22,25` (default
-/// `22`). Marked `#[ignore]` because the run is slow (~5–10 min at
-/// NV=22, OOMs at NV ≥ 25 on 123 GiB).
+/// ```text
+///   NV  baseline   untiered(f=1)   T2(f=8)   cascade(f=8,4)
+///   22    0.011s        0.064s      6.76s        15.67s
+///   23    0.026s        0.087s      7.02s        17.78s
+///   25    0.037s        0.179s     13.99s        31.54s
+/// ```
+///
+/// Baseline verify grows ~2×/NV (O(N)); cascade verify grows
+/// ~1.3–1.4×/NV (per-level transcript / per-chunk MLE / meta-commit
+/// overhead dominates). Extrapolating, the wall-clock crossover NV
+/// where cascade verify < baseline verify is ≈ 32 — exactly the
+/// lowest measurement point in book Table 1141–1158. Book numbers
+/// are `D = 128` verifier *op counts* (~828K ops at NV=32 baseline),
+/// which do not include the per-level constant overhead our
+/// wall-clock measures; that gap is the structural reason for the
+/// small-NV inversion. NV ≥ 32 dense (~64 GiB just for the
+/// polynomial, much more for tiered setup matrices) does not fit on
+/// a 123 GiB host, so the wall-clock crossover cannot be observed
+/// here — the test still proves the cascade machinery is correct
+/// end-to-end at every feasible NV.
+///
+/// Override the NV list via `AKITA_SPEEDUP_NVS=22,23,25` (default
+/// `22`). Marked `#[ignore]` because the run is slow (~5 min at
+/// NV=22, ~8 min at NV=23, ~12 min at NV=25; NV ≥ 28 takes hours
+/// and is unlikely to flip the qualitative trend on this host).
 #[test]
 #[ignore = "measurement-only; run with --ignored"]
 fn tiered_dense_cascade_speedup_measurement() {

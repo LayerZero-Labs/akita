@@ -2,7 +2,8 @@
 
 use super::{TieredSetupCacheKey, TieredSetupCommitments};
 use crate::{AkitaScheduleLookupKey, FlatMatrix, Schedule};
-use akita_field::FieldCore;
+use akita_algebra::ring::{build_ntt_slot, NttSlotCache};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -56,6 +57,14 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 /// used at a single ring dimension `D` in practice; entries are stored as
 /// `Arc<dyn Any + Send + Sync>` and downcast at
 /// [`Self::tiered_s_cache_get`] using the caller's `const D`.
+///
+/// `ntt_shared_cache` memoizes the verifier-side analog of
+/// [`crate::AkitaProverSetup::ntt_shared`]: one CRT+NTT-preprocessed view
+/// of the entire shared matrix at ring dimension `D`. Tiered routed-`S`
+/// re-derivation reuses this cache so it pays the per-`D` NTT
+/// preprocessing cost once across all cascade levels rather than per
+/// per-tier `(chunk_lp, meta_lp)` mat-vec call. Keyed by `D` for the
+/// (rare) configs that mix ring dimensions across the schedule.
 #[derive(Debug, Clone)]
 pub struct AkitaVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
@@ -64,6 +73,8 @@ pub struct AkitaVerifierSetup<F: FieldCore> {
     pub schedule_cache: Arc<Mutex<HashMap<AkitaScheduleLookupKey, Schedule>>>,
     /// Tiered routed-`S` B-side commitment cache (opaque per `D`).
     pub tiered_s_cache: Arc<Mutex<HashMap<TieredSetupCacheKey, Arc<dyn Any + Send + Sync>>>>,
+    /// Shared-matrix CRT+NTT cache, lazy per ring dimension `D`.
+    pub ntt_shared_cache: Arc<Mutex<HashMap<usize, Arc<dyn Any + Send + Sync>>>>,
 }
 
 impl<F: FieldCore> AkitaVerifierSetup<F> {
@@ -75,7 +86,56 @@ impl<F: FieldCore> AkitaVerifierSetup<F> {
             expanded,
             schedule_cache: Arc::new(Mutex::new(HashMap::new())),
             tiered_s_cache: Arc::new(Mutex::new(HashMap::new())),
+            ntt_shared_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Get-or-derive the shared CRT+NTT cache for the full setup matrix
+    /// at ring dimension `D`.
+    ///
+    /// Mirrors [`crate::AkitaProverSetup::ntt_shared`] for verifier use:
+    /// one `1 × total_ring_elements_at::<D>()` slot, reused across all
+    /// LPs that mat-vec over the shared matrix. Soundness anchors on the
+    /// same deterministic derivation from the public `shared_matrix` —
+    /// callers must pass the matrix's own data to the closure, never
+    /// external bytes.
+    ///
+    /// A poisoned lock falls back to a freshly built cache without
+    /// memoizing (the cache is purely an optimization).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying NTT slot construction fails
+    /// for the chosen field × ring-dimension pair.
+    pub fn ntt_shared_get_or_init<const D: usize>(&self) -> Result<Arc<NttSlotCache<D>>, AkitaError>
+    where
+        F: CanonicalField + 'static,
+    {
+        if let Ok(guard) = self.ntt_shared_cache.lock() {
+            if let Some(entry) = guard.get(&D) {
+                if let Ok(cached) = entry.clone().downcast::<NttSlotCache<D>>() {
+                    return Ok(cached);
+                }
+            }
+        }
+        let total = self.expanded.shared_matrix.total_ring_elements_at::<D>();
+        let derived = Arc::new(build_ntt_slot::<F, D>(
+            self.expanded
+                .shared_matrix
+                .ring_view::<D>(1, total)
+                .coefficients(),
+            1,
+            total,
+        )?);
+        if let Ok(mut guard) = self.ntt_shared_cache.lock() {
+            if let Some(entry) = guard.get(&D) {
+                if let Ok(winner) = entry.clone().downcast::<NttSlotCache<D>>() {
+                    return Ok(winner);
+                }
+            }
+            guard.insert(D, derived.clone());
+        }
+        Ok(derived)
     }
 
     /// Get-or-derive a cached tiered setup commitment bundle.

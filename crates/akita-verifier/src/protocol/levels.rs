@@ -10,9 +10,7 @@ use crate::{
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::trace;
-use akita_algebra::ring::{
-    build_ntt_slot, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_single_i8, NttSlotCache,
-};
+use akita_algebra::ring::{mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_single_i8, NttSlotCache};
 use akita_algebra::{CyclotomicRing, EqPolynomial};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
@@ -220,33 +218,18 @@ where
 /// inputs from per-chunk slices of the shared matrix and the
 /// concatenated chunk-commits for the meta tier). Both must use this
 /// helper so the verifier's material is bit-identical to the prover's.
-fn lp_ntt_slots<F, const D: usize>(
-    setup: &AkitaVerifierSetup<F>,
-    s_lp: &LevelParams,
-) -> Result<(NttSlotCache<D>, NttSlotCache<D>), AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-{
-    let stride = setup.expanded.seed.max_stride.max(1);
-    let a_view = setup
-        .expanded
-        .shared_matrix
-        .ring_view::<D>(s_lp.a_key.row_len(), stride);
-    let b_view = setup
-        .expanded
-        .shared_matrix
-        .ring_view::<D>(s_lp.b_key.row_len(), stride);
-    let ntt_a = build_ntt_slot(a_view.coefficients(), a_view.num_rows(), a_view.num_cols())?;
-    let ntt_b = build_ntt_slot(b_view.coefficients(), b_view.num_rows(), b_view.num_cols())?;
-    Ok((ntt_a, ntt_b))
-}
-
+///
+/// `ntt_shared` is the full setup-matrix CRT+NTT cache (mirrors the
+/// prover's [`AkitaProverSetup::ntt_shared`]). The mat-vec dispatcher
+/// reinterprets the flat slot as `num_rows × max_stride` per call, so
+/// both the inner `A · digits` and outer `B · t̂` accesses share one
+/// cache and we pay the NTT preprocessing cost once across the whole
+/// verify.
 fn derive_commitment_for_ring_slice<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     rings: &[CyclotomicRing<F, D>],
     s_lp: &LevelParams,
-    ntt_a: &NttSlotCache<D>,
-    ntt_b: &NttSlotCache<D>,
+    ntt_shared: &NttSlotCache<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
@@ -264,7 +247,7 @@ where
         })
         .collect();
     let t_rows = mat_vec_mul_ntt_i8_dense(
-        ntt_a,
+        ntt_shared,
         s_lp.a_key.row_len(),
         stride,
         &block_slices,
@@ -284,7 +267,7 @@ where
         }
     }
     Ok(mat_vec_mul_ntt_single_i8(
-        ntt_b,
+        ntt_shared,
         s_lp.b_key.row_len(),
         stride,
         &flat_digits,
@@ -587,7 +570,7 @@ fn derive_tiered_setup_material_for_verifier_uncached<F, const D: usize>(
     tier: TieredSetupParams,
 ) -> Result<TieredSetupCommitments<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + 'static,
 {
     let live_n_s = row_count * col_count;
     let n_s = live_n_s.next_power_of_two();
@@ -625,18 +608,13 @@ where
     }
     s_rings.resize(n_s, CyclotomicRing::<F, D>::zero());
 
-    let (chunk_ntt_a, chunk_ntt_b) = lp_ntt_slots::<F, D>(setup, chunk_lp)?;
+    let ntt_shared = setup.ntt_shared_get_or_init::<D>()?;
     let mut chunk_b_commitments: Vec<Vec<CyclotomicRing<F, D>>> =
         Vec::with_capacity(tier.num_chunks);
     for indices in &chunk_indices {
         let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
-        let u = derive_commitment_for_ring_slice::<F, D>(
-            setup,
-            &chunk_slice,
-            chunk_lp,
-            &chunk_ntt_a,
-            &chunk_ntt_b,
-        )?;
+        let u =
+            derive_commitment_for_ring_slice::<F, D>(setup, &chunk_slice, chunk_lp, &ntt_shared)?;
         chunk_b_commitments.push(u);
     }
 
@@ -652,14 +630,8 @@ where
         meta_input.extend_from_slice(chunk);
     }
     meta_input.resize(next_pow2, CyclotomicRing::<F, D>::zero());
-    let (meta_ntt_a, meta_ntt_b) = lp_ntt_slots::<F, D>(setup, meta_lp)?;
-    let meta_b_commitment = derive_commitment_for_ring_slice::<F, D>(
-        setup,
-        &meta_input,
-        meta_lp,
-        &meta_ntt_a,
-        &meta_ntt_b,
-    )?;
+    let meta_b_commitment =
+        derive_commitment_for_ring_slice::<F, D>(setup, &meta_input, meta_lp, &ntt_shared)?;
 
     let commitments = TieredSetupCommitments {
         chunk_b_commitments,
