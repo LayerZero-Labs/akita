@@ -680,17 +680,10 @@ fn tiered_dense_cascade_l0_l1_fires() {
 /// 1141–1158 measures as "T1+T2 @ L0+L1" (16× / 35× / 265× speedup at
 /// NV=32 / 38 / 44).
 ///
-/// Currently ignored: the prover hits the same scale ceiling as
-/// `tiered_production_prove_verify` (audit B-5) at the smallest NV the
-/// planner accepts (`NV=22`, lifted from `NV=19` after the per-level
-/// cascade routing fix exposed the latent incoming-tier mismatch).
-/// Will be un-ignored once B-5 is profiled and the OOM / CRT-overflow
-/// path at production `f = 8` is unblocked. The per-level cascade
-/// plumbing itself is validated by [`tiered_dense_cascade_l0_l1_small`];
-/// the schedule firing for the headline `(8, 4)` is asserted by
-/// [`tiered_dense_cascade_l0_l1_fires`].
+/// The per-level cascade plumbing itself is validated by
+/// [`tiered_dense_cascade_l0_l1_small`]; the schedule firing for the
+/// headline `(8, 4)` is asserted by [`tiered_dense_cascade_l0_l1_fires`].
 #[test]
-#[ignore = "headline cascade hits scale ceiling — gated on audit B-5"]
 fn tiered_dense_cascade_l0_l1_headline_small() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();

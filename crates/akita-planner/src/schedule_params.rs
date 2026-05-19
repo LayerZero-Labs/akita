@@ -184,16 +184,30 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
     };
 
     // `s_field_len_emitted` is the `S` polynomial size this level pushes
-    // to the next as the second commitment-group handle. It is set by
-    // THIS level's M-table dims: when cascade is active here, the
-    // M-table sees two groups (W's + S's); otherwise just one. The
-    // next-level fold consumes this as `s_field_len_in`.
+    // to the next as a separate commitment-group handle. It is set by
+    // THIS level's M-table dims. When cascade is active here the
+    // M-table groups depend on the incoming tier:
+    //
+    // * un-tiered cascade (`incoming_tier.shrink_factor == 1`, book
+    //   §5.3): 2 groups `(W, S)` and 2 distinct opening points;
+    // * tiered cascade (`incoming_tier.is_tiered()`, book §5.4): 3
+    //   groups `(W, chunks, meta)` and 3 distinct opening points,
+    //   because the tiered chunks expand into a `claim_count = k`
+    //   group and the meta commit (concatenated chunk B-commitments)
+    //   sits alongside them as a third opening point.
+    //
+    // Otherwise the M-table is single-group (only `W`).
     let s_field_len_emitted = if level_lp.use_setup_claim_reduction && routes_setup_recursively {
-        let num_eval_rows = if s_lp_in.is_some() { 2 } else { 1 };
-        let num_commitment_groups = if s_lp_in.is_some() { 2 } else { 1 };
+        let (num_eval_rows, num_commitment_groups) =
+            match (s_lp_in.is_some(), incoming_tier.is_tiered()) {
+                (true, true) => (3, 3),
+                (true, false) => (2, 2),
+                _ => (1, 1),
+            };
         planned_setup_field_len(
             &level_lp,
             s_lp_in.as_ref(),
+            incoming_tier,
             num_eval_rows,
             num_commitment_groups,
         )
@@ -850,15 +864,24 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             &[false, true]
         };
         for &routes_setup_recursively in route_choices {
-            let root_s_field_len_emitted = if candidate.lp.use_setup_claim_reduction
-                && routes_setup_recursively
-            {
-                let num_eval_rows = shape.num_points;
-                let num_commitment_groups = shape.num_commitment_groups;
-                planned_setup_field_len(&candidate.lp, None, num_eval_rows, num_commitment_groups)
-            } else {
-                0
-            };
+            let root_s_field_len_emitted =
+                if candidate.lp.use_setup_claim_reduction && routes_setup_recursively {
+                    // Root's M-table never carries an incoming `S` group:
+                    // any tier shape is applied at the next level when the
+                    // chunks expand. Pass `un_tiered()` so the formula uses
+                    // the root's `(num_commitment_groups, num_points)` shape.
+                    let num_eval_rows = shape.num_points;
+                    let num_commitment_groups = shape.num_commitment_groups;
+                    planned_setup_field_len(
+                        &candidate.lp,
+                        None,
+                        TieredSetupParams::un_tiered(),
+                        num_eval_rows,
+                        num_commitment_groups,
+                    )
+                } else {
+                    0
+                };
             if routes_setup_recursively && root_s_field_len_emitted == 0 {
                 continue;
             }

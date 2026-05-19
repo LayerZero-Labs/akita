@@ -150,12 +150,18 @@ pub fn untiered_setup_group_lp(
 
 /// Planned setup-polynomial field-element length emitted by level `lp`'s
 /// M-table when the level's setup-claim reduction routes `S` to the next
-/// fold (book §5.3 lines 627-642).
+/// fold (book §5.3 lines 627-642, book §5.4 lines 686-754).
 ///
-/// `s_lp_in` is the `S`-group LP carried in from the previous level when
-/// the cascade is already active (so the current level's M-table sees
-/// 2 groups under multi-group batched Hachi); pass `None` when the level
-/// runs single-group (only `W`).
+/// `s_lp_in` is the chunk-shaped `S`-group LP carried in from the
+/// previous level when the cascade is already active. `incoming_tier`
+/// carries the tier shape the previous level used to emit `S`:
+/// `un_tiered()` is the book §5.3 un-tiered 2-group `(W, S)` cascade;
+/// `is_tiered()` is the book §5.4 tiered 3-group `(W, chunks, meta)`
+/// cascade where the chunks group has `claim_count = k` and the meta
+/// group commits the concatenated chunk B-commitments.
+///
+/// Pass `None` for `s_lp_in` and `un_tiered()` for `incoming_tier` when
+/// the level runs single-group (only `W`).
 ///
 /// Mirrors `PreparedMEval::setup_polynomial_row_count *
 /// setup_polynomial_col_count_padded() * D` so the planner can reason
@@ -163,33 +169,61 @@ pub fn untiered_setup_group_lp(
 pub fn planned_setup_field_len(
     lp: &LevelParams,
     s_lp_in: Option<&LevelParams>,
+    incoming_tier: TieredSetupParams,
     num_eval_rows: usize,
     num_commitment_groups: usize,
 ) -> usize {
     let n_a = lp.a_key.row_len();
     let n_b_outer = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
-    let row_count = if let Some(s_lp) = s_lp_in {
-        let max_b = n_b_outer.max(s_lp.b_key.row_len());
-        n_a.max(n_d).max(max_b).max(1)
-    } else {
-        n_a.max(n_b_outer).max(n_d).max(1)
-    };
-    let col_count = if let Some(s_lp) = s_lp_in {
-        let w_len = lp.num_blocks * lp.num_digits_open + s_lp.num_blocks * s_lp.num_digits_open;
-        let b_w = lp.num_blocks * n_a * lp.num_digits_open;
-        let b_s = s_lp.num_blocks * n_a * s_lp.num_digits_open;
-        let max_b_cols = b_w.max(b_s);
-        let a_cols_w = num_eval_rows * lp.inner_width();
-        let a_cols_s = num_eval_rows * s_lp.inner_width();
-        let a_cols = a_cols_w.saturating_add(a_cols_s);
-        w_len.max(max_b_cols).max(a_cols).max(1)
+    let (col_count, row_count) = if let Some(s_lp) = s_lp_in {
+        if incoming_tier.is_tiered() {
+            let k = incoming_tier.num_chunks;
+            // Meta-tier LP derived as in
+            // `planned_joint_w_ring_with_setup_group_tiered`: the
+            // concatenated chunk B-commitments padded to the next
+            // power of two ring elements.
+            let meta_field_len = (k * s_lp.b_key.row_len() * lp.ring_dimension)
+                .next_power_of_two()
+                .max(lp.ring_dimension);
+            let meta_lp =
+                untiered_setup_group_lp(lp, meta_field_len).unwrap_or_else(|_| s_lp.clone());
+            let w_len = lp.num_blocks * lp.num_digits_open
+                + k * s_lp.num_blocks * s_lp.num_digits_open
+                + meta_lp.num_blocks * meta_lp.num_digits_open;
+            let b_w = lp.num_blocks * n_a * lp.num_digits_open;
+            let b_s = k * s_lp.num_blocks * n_a * s_lp.num_digits_open;
+            let b_meta = meta_lp.num_blocks * n_a * meta_lp.num_digits_open;
+            let max_b_cols = b_w.max(b_s).max(b_meta);
+            let a_cols =
+                num_eval_rows * (lp.inner_width() + s_lp.inner_width() + meta_lp.inner_width());
+            let col_count = w_len.max(max_b_cols).max(a_cols).max(1);
+            let max_b = n_b_outer
+                .max(s_lp.b_key.row_len())
+                .max(meta_lp.b_key.row_len());
+            let row_count = n_a.max(n_d).max(max_b).max(1);
+            (col_count, row_count)
+        } else {
+            let w_len = lp.num_blocks * lp.num_digits_open + s_lp.num_blocks * s_lp.num_digits_open;
+            let b_w = lp.num_blocks * n_a * lp.num_digits_open;
+            let b_s = s_lp.num_blocks * n_a * s_lp.num_digits_open;
+            let max_b_cols = b_w.max(b_s);
+            let a_cols_w = num_eval_rows * lp.inner_width();
+            let a_cols_s = num_eval_rows * s_lp.inner_width();
+            let a_cols = a_cols_w.saturating_add(a_cols_s);
+            let col_count = w_len.max(max_b_cols).max(a_cols).max(1);
+            let max_b = n_b_outer.max(s_lp.b_key.row_len());
+            let row_count = n_a.max(n_d).max(max_b).max(1);
+            (col_count, row_count)
+        }
     } else {
         let total_blocks = num_commitment_groups * lp.num_blocks;
         let d_cols = lp.num_digits_open * total_blocks;
         let b_cols = lp.num_digits_open * n_a * total_blocks.max(lp.num_blocks);
         let a_cols = num_eval_rows * lp.inner_width();
-        d_cols.max(b_cols).max(a_cols).max(1)
+        let col_count = d_cols.max(b_cols).max(a_cols).max(1);
+        let row_count = n_a.max(n_b_outer).max(n_d).max(1);
+        (col_count, row_count)
     };
     let col_count_padded = col_count.next_power_of_two();
     row_count
