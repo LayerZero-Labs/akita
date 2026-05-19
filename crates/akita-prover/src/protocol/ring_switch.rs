@@ -1312,8 +1312,7 @@ mod tests {
         const D: usize = 128;
 
         let centered = from_fn(|i| i64::from(((37 * i as i32 + 11) % 95) - 47));
-        let ring =
-            CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| F::from_i64(centered[i] as i64)));
+        let ring = CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| F::from_i64(centered[i])));
 
         for (num_digits, log_basis) in [
             (7usize, 3u32),

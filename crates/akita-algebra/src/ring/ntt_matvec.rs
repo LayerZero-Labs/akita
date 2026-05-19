@@ -11,11 +11,6 @@ use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore};
 use std::mem::size_of;
 
-#[cfg(test)]
-use crate::ring::crt_ntt_cache::{select_crt_ntt_params, ProtocolCrtNttParams};
-#[cfg(test)]
-use akita_field::AkitaError;
-
 #[inline]
 fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usize>(
     acc: &mut CyclotomicCrtNtt<W, K, D>,
