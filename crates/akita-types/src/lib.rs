@@ -15,8 +15,9 @@ pub mod transcript;
 pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
 pub use field_reduction::{psi_pack, trace_h, SubfieldParams};
 pub use layout::{
-    basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
-    field_bytes, gadget_row_scalars, lagrange_weights, level_layout_from_params, level_proof_bytes,
+    basis_weights, decomp_depths, derive_chunk_sis_ranks_from_widths,
+    derived_root_commitment_layout_from_params, direct_witness_bytes, field_bytes,
+    gadget_row_scalars, lagrange_weights, level_layout_from_params, level_proof_bytes,
     monomial_weights, packed_digits_bytes, planned_joint_next_w_len_with_setup_group,
     planned_joint_next_w_len_with_setup_group_tiered, planned_joint_w_ring_with_setup_group,
     planned_joint_w_ring_with_setup_group_tiered, planned_next_w_len,

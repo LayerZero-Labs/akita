@@ -542,7 +542,8 @@ fn meta_lp_from_chunks(
 ) -> Result<LevelParams, AkitaError> {
     let meta_field_len = tier.num_chunks * chunk_lp.b_key.row_len() * next_level.ring_dimension;
     let next_pow2 = meta_field_len.next_power_of_two();
-    untiered_setup_group_lp(next_level, next_pow2)
+    let inherited = untiered_setup_group_lp(next_level, next_pow2)?;
+    akita_types::derive_chunk_sis_ranks_from_widths(inherited)
 }
 
 #[allow(clippy::too_many_arguments)]

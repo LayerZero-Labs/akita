@@ -2,11 +2,99 @@
 
 use akita_field::AkitaError;
 
+use crate::generated::sis_floor::min_rank_for_secure_width;
 use crate::layout::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field,
 };
 use crate::stage1_tree_stage_shapes;
-use crate::{DirectWitnessShape, LevelParams, TieredSetupParams};
+use crate::{AjtaiKeyParams, DirectWitnessShape, LevelParams, TieredSetupParams};
+
+/// Re-derive the **B-role** Ajtai rank for a per-tier `LevelParams` from
+/// its concrete `outer_width` via the 128-bit SIS floor table — SHRINK
+/// ONLY.
+///
+/// Book §5.4 line 798-799 example: at `f = 8`, `D = 32`, `n_v = 32` the
+/// per-chunk SIS-secure ranks drop because each chunk's widths are
+/// `1/f` of the un-tiered baseline. Phase 5 / Item (a) wires this drop
+/// in for the B-role only, because the per-tier `GroupSpec` carries
+/// only `b_key` (the A-role and D-role at the next level are read from
+/// the OUTER LP, not from the per-tier LP, per the multi-group commit
+/// kernel's per-`GroupSpec` partitioning). Touching `a_key` or `d_key`
+/// here would cause the L0 commit (which uses the per-tier LP's full
+/// `(a_key, b_key, d_key)`) and the L+1 M-relation (which uses outer's
+/// `a_key`/`d_key` for tier-marked groups) to disagree and produce
+/// `AkitaError::InvalidProof` at verify.
+///
+/// Returns the LP unchanged when:
+///   - `collision_inf == 0` on the B-role (planner hasn't pinned the
+///     SIS bucket yet, e.g. during early-construction stages).
+///   - The derived rank would GROW the inherited rank: that would
+///     indicate the outer base LP was insecure for the chunk widths,
+///     a different bug that this helper does not silently paper over.
+///     The runtime keeps the inherited (outer-derived) rank in that
+///     case; `validate_stored_sis_ranks` will surface the issue.
+///
+/// # Errors
+///
+/// Returns an error when the B-role's width / collision-bucket pair has
+/// no entry in `sis_floor`, or when `AjtaiKeyParams::try_new` rejects
+/// the shrunken rank.
+pub fn derive_chunk_sis_ranks_from_widths(lp: LevelParams) -> Result<LevelParams, AkitaError> {
+    let d = lp.ring_dimension as u32;
+    let b_collision = lp.b_key.collision_inf();
+    if b_collision == 0 {
+        return Ok(lp);
+    }
+    let outer_width = lp.b_key.col_len();
+    let Some(secure_n_b) = min_rank_for_secure_width(d, b_collision, outer_width as u64) else {
+        return Err(AkitaError::InvalidSetup(format!(
+            "SIS floor lookup for chunk B role missing: D={d} \
+             collision={b_collision} width={outer_width}"
+        )));
+    };
+    let current_n_b = lp.b_key.row_len();
+    let new_n_b = secure_n_b.max(1).min(current_n_b);
+    if new_n_b == current_n_b {
+        return Ok(lp);
+    }
+    let new_b_key = AjtaiKeyParams::try_new(new_n_b, outer_width, b_collision, lp.ring_dimension)?;
+    let LevelParams {
+        ring_dimension,
+        log_basis,
+        a_key,
+        b_key: _,
+        d_key,
+        num_blocks,
+        block_len,
+        m_vars,
+        r_vars,
+        stage1_config,
+        stage1_challenge_shape,
+        use_setup_claim_reduction,
+        num_digits_commit,
+        num_digits_open,
+        num_digits_fold,
+        groups,
+    } = lp;
+    Ok(LevelParams {
+        ring_dimension,
+        log_basis,
+        a_key,
+        b_key: new_b_key,
+        d_key,
+        num_blocks,
+        block_len,
+        m_vars,
+        r_vars,
+        stage1_config,
+        stage1_challenge_shape,
+        use_setup_claim_reduction,
+        num_digits_commit,
+        num_digits_open,
+        num_digits_fold,
+        groups,
+    })
+}
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {
@@ -437,14 +525,15 @@ pub fn tiered_setup_group_lp(
         tier.num_chunks,
         128,
     );
-    base.with_decomp(
+    let inherited = base.with_decomp(
         m_vars_chunk,
         r_vars_chunk,
         full_digits,
         full_digits,
         fold_digits,
         chunk_num_ring,
-    )
+    )?;
+    derive_chunk_sis_ranks_from_widths(inherited)
 }
 
 /// Derive per-chunk setup LP from the actual setup-polynomial matrix shape.
@@ -496,14 +585,15 @@ pub fn tiered_setup_group_lp_from_dims(
         tier.num_chunks,
         128,
     );
-    base.with_decomp(
+    let inherited = base.with_decomp(
         m_vars_chunk,
         r_vars_chunk,
         full_digits,
         full_digits,
         fold_digits,
         chunk_num_ring,
-    )
+    )?;
+    derive_chunk_sis_ranks_from_widths(inherited)
 }
 
 /// Dense-coefficient source indices for the book §5.4 two-axis tier split.
@@ -904,6 +994,94 @@ mod tests {
                 "CR-on overhead must equal degree-2 sumcheck + 2 scalars at rounds={rounds}"
             );
         }
+    }
+
+    /// Phase 5 fix-loop Item (a) lock-in: the helper must NEVER touch
+    /// `a_key` or `d_key` and must NEVER grow `b_key.row_len`. The
+    /// `GroupSpec` abstraction only carries `b_key`; the A-role and
+    /// D-role at L+1 are read from the OUTER LP. Touching `a_key` or
+    /// `d_key` here would silently desync the L0 commit (which uses
+    /// the per-tier LP's full `(a_key, b_key, d_key)`) from the L+1
+    /// M-relation (which uses outer's `a_key`/`d_key` for tier-marked
+    /// groups), producing `AkitaError::InvalidProof` at verify.
+    /// Growing `b_key.row_len` would similarly indicate the OUTER LP
+    /// is insecure for chunk widths — a separate bug we surface via
+    /// `validate_stored_sis_ranks` rather than silently fix.
+    #[test]
+    fn derive_chunk_sis_ranks_only_touches_b_role_and_shrinks() {
+        let d = 64usize;
+        let collision = 63u32;
+        let inner_width = 128usize;
+        let d_matrix_width = 16usize;
+        let base_n_a = 3usize;
+        let base_n_b = 4usize;
+        let base_n_d = 4usize;
+        let outer_width = base_n_a * 1 * 16;
+        let inherited = LevelParams {
+            ring_dimension: d,
+            log_basis: 6,
+            a_key: AjtaiKeyParams::new_unchecked(base_n_a, inner_width, collision, d),
+            b_key: AjtaiKeyParams::new_unchecked(base_n_b, outer_width, collision, d),
+            d_key: AjtaiKeyParams::new_unchecked(base_n_d, d_matrix_width, collision, d),
+            num_blocks: 16,
+            block_len: 8,
+            m_vars: 3,
+            r_vars: 4,
+            stage1_config: SparseChallengeConfig::ExactShell {
+                count_mag1: 1,
+                count_mag2: 0,
+            },
+            stage1_challenge_shape: Stage1ChallengeShape::Flat,
+            use_setup_claim_reduction: false,
+            num_digits_commit: 1,
+            num_digits_open: 1,
+            num_digits_fold: 1,
+            groups: None,
+        };
+        let shrunken = derive_chunk_sis_ranks_from_widths(inherited.clone()).expect("shrink");
+        assert_eq!(
+            shrunken.a_key, inherited.a_key,
+            "Phase 5 fix-loop: a_key must NOT change (chunks A-binding at \
+             L+1 reads from outer LP via GroupSpec lacking a_key)"
+        );
+        assert_eq!(
+            shrunken.d_key, inherited.d_key,
+            "Phase 5 fix-loop: d_key must NOT change (chunks D-binding at \
+             L+1 reads from outer LP via GroupSpec lacking d_key)"
+        );
+        assert!(
+            shrunken.b_key.row_len() <= inherited.b_key.row_len(),
+            "B-role rank may shrink but never grow ({} -> {})",
+            inherited.b_key.row_len(),
+            shrunken.b_key.row_len()
+        );
+        assert_eq!(
+            shrunken.b_key.col_len(),
+            inherited.b_key.col_len(),
+            "Phase 5 fix-loop: b_key.col_len must NOT change (cols derived \
+             from outer.a_key.row_len * num_digits_open * num_blocks)"
+        );
+        // The helper preserves all non-key shape fields.
+        assert_eq!(shrunken.num_blocks, inherited.num_blocks);
+        assert_eq!(shrunken.block_len, inherited.block_len);
+        assert_eq!(shrunken.m_vars, inherited.m_vars);
+        assert_eq!(shrunken.r_vars, inherited.r_vars);
+        assert_eq!(shrunken.num_digits_open, inherited.num_digits_open);
+        assert_eq!(shrunken.num_digits_commit, inherited.num_digits_commit);
+        assert_eq!(shrunken.num_digits_fold, inherited.num_digits_fold);
+    }
+
+    /// `collision_inf == 0` on the B-role means the planner hasn't pinned
+    /// the SIS bucket yet; the helper must return the LP unchanged in
+    /// that case (early-construction path; the caller will pin the
+    /// bucket later via a separate SIS-derivation pass).
+    #[test]
+    fn derive_chunk_sis_ranks_returns_unchanged_when_b_collision_unpinned() {
+        let lp = lp_for_chunk_test();
+        let shrunken = derive_chunk_sis_ranks_from_widths(lp.clone()).expect("unchanged");
+        assert_eq!(shrunken.a_key, lp.a_key);
+        assert_eq!(shrunken.b_key, lp.b_key);
+        assert_eq!(shrunken.d_key, lp.d_key);
     }
 
     #[test]

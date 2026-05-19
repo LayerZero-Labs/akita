@@ -10,8 +10,12 @@
 //! the verifier can reduce a weighted setup-table claim to a final point claim
 //! on the committed setup polynomial.
 
-use crate::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
-use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
+#[cfg(any(test, feature = "test-helpers"))]
+use crate::SumcheckInstanceVerifier;
+use crate::{SumcheckInstanceProver, UniPoly};
+use akita_algebra::poly::fold_evals_in_place;
+#[cfg(any(test, feature = "test-helpers"))]
+use akita_algebra::poly::multilinear_eval;
 use akita_field::{AkitaError, FieldCore};
 
 /// Prover instance for `scale * sum_z eq(target, z) * table(z)`.

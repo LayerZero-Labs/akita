@@ -2047,6 +2047,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         Ok(weights)
     }
 
+    #[cfg(any(test, feature = "test-helpers"))]
     fn padded_x_bits(&self) -> usize {
         let levels = r_decomp_levels::<F>(self.log_basis);
         let w_len = self.depth_open * self.total_blocks;
@@ -2579,6 +2580,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     }
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 fn boolean_point<F: FieldCore>(index: usize, bits: usize) -> Vec<F> {
     (0..bits)
         .map(|bit| {

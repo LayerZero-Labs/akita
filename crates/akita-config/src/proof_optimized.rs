@@ -549,6 +549,7 @@ fn cr_on_max_setup_matrix_size<Cfg: CommitmentConfig>(
     _max_num_batched_polys: usize,
     _max_num_points: usize,
 ) -> Result<(usize, usize), AkitaError> {
+    let _ = core::marker::PhantomData::<Cfg>;
     Err(AkitaError::InvalidSetup(
         "CR-on configs require the akita-config `planner` feature for setup matrix sizing"
             .to_string(),

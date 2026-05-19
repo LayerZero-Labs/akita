@@ -305,3 +305,48 @@ Goal: close SCOPE-3 + GAP-3 by realising the shared per-chunk matrix collapse en
   - `planned_setup_padded_dims` mirrored: tiered cascade incoming and un-tiered cascade incoming now both compute `col_count = max(W_max, [chunks_max or S_max], [meta_max if tiered])` instead of `sum + k*chunks + meta`.
   - New invariant test in `crates/akita-types/src/layout/proof_size.rs`: `planned_setup_padded_dims_tiered_drops_k_multiplier_from_chunks` checks `col_padded` strictly shrinks versus the pre-Phase-5 `k`-multiplied formula. Existing `tiered_eval_setup_weight_at_point_matches_materialized` in `crates/akita-pcs/tests/multi_group_commit.rs` still passes (structured == materialised at the smaller shape).
   - All 58 `akita-types` lib tests pass; `clippy --package akita-types` clean. Pre-existing lint errors in `akita-sumcheck/src/eq_weighted_table.rs` and `akita-verifier/src/protocol/ring_switch.rs::padded_x_bits`/`boolean_point` were already present at HEAD `ce01879` and are not introduced by this change.
+
+- Iter 6 (CORRECTION): Items 2-4 reverted via `git reset --hard b4b02c7` after release-mode E2E surfaced two real bugs the narrow unit tests missed.
+  - **Item 2 (`a4955e9`) bug**: `tiered_dense_prove_verify_small` (NV=19 dense, release) fails with `InvalidProof` at the verifier. Root cause: the SIS-rank shrink only landed at `tiered_setup_group_lp` + `meta_lp_from_chunks` call sites; other chunk_lp construction paths still inherit un-tiered base ranks, so prover commits at one rank and verifier expects another.
+  - **Item 3 (`04b8947`) bug**: same test fails with `InvalidSetup("scheduled recursive level did not match runtime state: step.current_w_len=5065856, inputs.current_w_len=5724800")`. Root cause: planner cost model dropped the `k` multiplier from chunks' `w_hat + t_hat`, but the runtime cascade L+1 commit STILL produces k× per-chunk witness material (k separate B-commitments, not shared). Planner under-counts → schedule diverges from runtime layout.
+  - Baseline at Item 1 (`b4b02c7`): `tiered_dense_prove_verify_small` passes in 5.58s release. Item 1's col-envelope k-drop is verifier-eval-amortisation only (no runtime-witness change), so it doesn't have the planner/runtime mismatch.
+
+---
+
+## Phase 5 fix loop (post-revert, new start)
+
+Goal: deliver the rest of Phase 5 correctly per book §5.5 line 752 "MLE evaluation cost `O(|D_chunk|) + O(log k)`, independent of k", with **release-mode E2E gated after every step**. The three deliverables the prior loop under-scoped:
+
+- **(a)** Sweep all chunk_lp + meta_lp construction sites to consistently use `derive_chunk_sis_ranks_from_widths` so prover and verifier agree on the chunk Ajtai ranks. (Was attempted as Item 2; only covered two sites out of ~6-10.)
+- **(b)** Restructure `eval_setup_weight_at_point_grouped` so the per-chunk sum is expressed as a chunk-axis eq factor times a shared inner sum, realising the book's `O(|D_chunk|) + O(log k)` per-cascade-level verifier cost. (Was missing entirely — the prior Iter 2 only shrunk col_count_padded, not the per-chunk eval loop.)
+- **(c)** Change the L+1 prover so the k chunks commit under one logical shared matrix (single B-commitment with k structured columns) instead of k separate B-commitments. Only after this does the planner's `k`-drop in `planned_joint_w_ring_with_setup_group_tiered` align with runtime reality.
+
+### Discipline rules (NON-NEGOTIABLE)
+
+- **EVERY commit gated by release-mode E2E**:
+  ```bash
+  cargo test --release --package akita-pcs --test tiered_setup_e2e tiered_dense_prove_verify_small
+  ```
+  (NV=19 dense cascade, ~6s in release; exercises the full prover+verifier cascade chain end-to-end.)
+- Smaller-NV release E2E tests for finer signals when needed:
+  - `setup_claim_reduction_dense_prove_verify` (NV=15, ~0.5s release) — non-cascade CR baseline.
+  - `setup_claim_reduction_dense_recursive_prove_verify` (NV=20, ~2s release) — recursive CR baseline.
+- **Debug-build `cargo test` is BANNED for E2E** (10-50× slower; the prior loop wasted ~30 min on stuck debug tests).
+- Iteration log appended below as work proceeds.
+
+### Fix loop iteration log
+
+- Iter F-1 (start): clean revert to Item 1 baseline (`b4b02c7`). Release-mode `tiered_dense_prove_verify_small` confirmed passing in 5.58s. Loop scratchpad established.
+
+- Iter F-2: Item (a) — chunk_lp + meta_lp B-role SIS rank shrink.
+  - **Root cause of prior Item-2 failure surfaced**: `derive_chunk_sis_ranks_from_widths` modified `chunk_lp.a_key` (raising row_len from 1 to 2 for chunk widths that demanded it), but `GroupSpec` only carries `b_key`. The L0 commit used `chunk_lp.a_key.row_len=2` while the L+1 M-relation read `outer.a_key.row_len=1` for tier-marked groups — they disagreed and verify rejected with `InvalidProof@stage2-closing`. Pinpointed by instrumenting `prepare_m_eval` to dump LP shapes on both sides + per-check-site error tracing in `verify_setup_claim_reduction`.
+  - **Fix**: Restrict `derive_chunk_sis_ranks_from_widths` to SHRINK-ONLY on B-role; never touch `a_key`, `d_key`, or `b_key.col_len`. Helper is now structurally incapable of desyncing the L0-commit / L+1-M-relation abstraction:
+    - A-role and D-role at L+1 read from OUTER LP via the `GroupSpec` abstraction (which lacks `a_key`/`d_key`). Touching them would silently desync.
+    - B-role is the only key carried per-`GroupSpec`, so shrinking it propagates consistently.
+    - Growth is rejected: would indicate the OUTER LP is insecure for chunk widths (a different bug surfaced via `validate_stored_sis_ranks` rather than papered over here).
+  - 4 call sites wired: `tiered_setup_group_lp`, `tiered_setup_group_lp_from_dims` (both in `akita-types::layout::proof_size`), `meta_lp_from_chunks` (prover `flow.rs`), `meta_lp_from_chunks` (verifier `levels.rs`).
+  - 2 new lock-in tests in `akita-types::layout::proof_size`:
+    - `derive_chunk_sis_ranks_only_touches_b_role_and_shrinks`: asserts `a_key`/`d_key`/`b_key.col_len` unchanged, `b_key.row_len` may shrink but never grows.
+    - `derive_chunk_sis_ranks_returns_unchanged_when_b_collision_unpinned`: early-return contract for un-pinned collision buckets.
+  - Pre-existing lint cleanups so workspace clippy is green: gated `SumcheckInstanceVerifier` / `multilinear_eval` in `akita-sumcheck/src/eq_weighted_table.rs` behind `cfg(any(test, feature = "test-helpers"))`; gated `padded_x_bits` / `boolean_point` in `akita-verifier/src/protocol/ring_switch.rs` likewise; added `PhantomData<Cfg>` placeholder in `akita-config::proof_optimized::cr_on_max_setup_matrix_size` (no-planner branch).
+  - **E2E gate (release mode)**: `tiered_dense_prove_verify_small` (NV=19 dense cascade, 6.7s), `tiered_dense_prove_verify_mid_f4` (f=4 cascade, 6.9s), `tiered_dense_cascade_l0_l1_small` (NV=19 (2,2) cascade, 8.1s), `tiered_dense_cascade_l0_l1_fires`, `tiered_dense_default_cascade_fires`, `tiered_rejects_tampered_s_opening_value`, `tiered_rejects_tampered_next_w_commitment` ALL pass. Also `setup_claim_reduction_e2e` (5 tests, 2.6s), `multi_group_commit` (7 tests, 7.6s), and `akita-config::current_d*_*_schedule_stays_within_audited_sis_widths` (5 tests, instant) pass. `cargo clippy --workspace --lib -- -D warnings` clean.
