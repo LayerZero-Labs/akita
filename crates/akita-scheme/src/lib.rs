@@ -225,7 +225,8 @@ where
         + HasWide
         + HasUnreducedOps
         + HalvingField
-        + Valid,
+        + Valid
+        + 'static,
     Cfg: CommitmentConfig<Field = F>,
 {
     type ProverSetup = AkitaProverSetup<F, D>;

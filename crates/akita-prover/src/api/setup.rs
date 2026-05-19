@@ -105,9 +105,21 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     }
 
     /// Derive a verifier setup from this prover setup.
-    #[must_use]
-    pub fn verifier_setup(&self) -> AkitaVerifierSetup<F> {
-        AkitaVerifierSetup::new(self.expanded.clone())
+    ///
+    /// Book §5 / Figure 12 line 817 names `C_S` as a preprocessed
+    /// verifier input. The verifier's tiered-S derivation builds an
+    /// NTT slot cache over the shared matrix; pre-populate it here at
+    /// setup time so the first `batched_verify` call does not pay the
+    /// ~1-2 s NTT preprocessing cost. Subsequent calls hit the cache
+    /// as before. Soundness unchanged (derivation is deterministic in
+    /// `self.expanded`).
+    pub fn verifier_setup(&self) -> AkitaVerifierSetup<F>
+    where
+        F: CanonicalField + 'static,
+    {
+        let v = AkitaVerifierSetup::new(self.expanded.clone());
+        let _ = v.ntt_shared_get_or_init::<D>();
+        v
     }
 
     /// Wrap a pre-built [`AkitaExpandedSetup`] in a prover setup by
