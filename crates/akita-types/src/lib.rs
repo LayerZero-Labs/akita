@@ -25,7 +25,7 @@ pub use field_reduction::{
 pub use instance_descriptor::{
     digest_effective_schedule, digest_incidence, digest_level_params, digest_serializable,
     AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet,
-    SetupSection,
+    SetupArtifactDigests, SetupSection,
 };
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,

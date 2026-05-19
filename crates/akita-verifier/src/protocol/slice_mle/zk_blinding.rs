@@ -201,16 +201,17 @@ mod tests {
                 }))
             })
             .collect();
-        let setup = AkitaExpandedSetup {
-            seed: AkitaSetupSeed {
+        let setup = AkitaExpandedSetup::from_parts(
+            AkitaSetupSeed {
                 max_num_vars: 32,
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
                 max_stride,
                 public_matrix_seed: [9u8; 32],
             },
-            shared_matrix: FlatMatrix::from_ring_slice::<D>(&matrix_entries),
-        };
+            FlatMatrix::from_ring_slice::<D>(&matrix_entries),
+        )
+        .unwrap();
         let prepared = RingSwitchDeferredRowEval {
             c_alphas: (0..total_blocks)
                 .map(|idx| f(2_000 + idx as u128))

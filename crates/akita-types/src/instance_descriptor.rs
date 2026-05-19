@@ -24,6 +24,64 @@ pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
 
+/// Cached digest identities for setup artifacts.
+///
+/// These digests are setup-derived metadata, not proof-time work. Computing
+/// `shared_matrix_digest` serializes the full expanded matrix, so callers on
+/// prove/verify hot paths should reuse this cached value rather than calling
+/// [`SetupSection::from_parts`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetupArtifactDigests {
+    /// Digest of the canonical `AkitaSetupSeed` bytes.
+    pub setup_seed_digest: DescriptorDigest,
+    /// Digest of the canonical expanded shared-matrix artifact bytes.
+    pub shared_matrix_digest: DescriptorDigest,
+}
+
+impl SetupArtifactDigests {
+    /// Compute setup artifact digests from the concrete setup data.
+    ///
+    /// # Errors
+    ///
+    /// Returns a serialization error if either artifact cannot be canonically
+    /// serialized.
+    pub fn from_parts<F>(
+        setup_seed: &AkitaSetupSeed,
+        shared_matrix: &FlatMatrix<F>,
+    ) -> Result<Self, SerializationError>
+    where
+        F: FieldCore + AkitaSerialize,
+    {
+        Ok(Self {
+            setup_seed_digest: digest_serializable(setup_seed)?,
+            shared_matrix_digest: digest_serializable(shared_matrix)?,
+        })
+    }
+
+    /// Recompute and compare against the provided concrete setup data.
+    ///
+    /// # Errors
+    ///
+    /// Returns a serialization error if canonical serialization fails or if the
+    /// cached digest pair is stale.
+    pub fn check_parts<F>(
+        &self,
+        setup_seed: &AkitaSetupSeed,
+        shared_matrix: &FlatMatrix<F>,
+    ) -> Result<(), SerializationError>
+    where
+        F: FieldCore + AkitaSerialize,
+    {
+        let expected = Self::from_parts(setup_seed, shared_matrix)?;
+        if *self != expected {
+            return Err(SerializationError::InvalidData(
+                "cached setup descriptor digests do not match setup artifacts".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Canonical transcript preamble for one Akita proof instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaInstanceDescriptor {
@@ -159,14 +217,35 @@ impl SetupSection {
     where
         F: FieldCore + AkitaSerialize,
     {
-        Ok(Self {
+        let artifact_digests = SetupArtifactDigests::from_parts(setup_seed, shared_matrix)?;
+        Ok(Self::from_artifact_digests(
             decomposition,
             sis_modulus_family,
-            setup_seed_digest: digest_serializable(setup_seed)?,
-            shared_matrix_digest: digest_serializable(shared_matrix)?,
+            artifact_digests,
+            level_params,
+        ))
+    }
+
+    /// Build setup fields from precomputed setup artifact digests.
+    ///
+    /// Use this on prove/verify hot paths. The expensive shared-matrix digest
+    /// should already have been computed and checked when the setup artifact
+    /// was generated or loaded.
+    #[must_use]
+    pub fn from_artifact_digests(
+        decomposition: DecompositionParams,
+        sis_modulus_family: SisModulusFamily,
+        artifact_digests: SetupArtifactDigests,
+        level_params: &[LevelParams],
+    ) -> Self {
+        Self {
+            decomposition,
+            sis_modulus_family,
+            setup_seed_digest: artifact_digests.setup_seed_digest,
+            shared_matrix_digest: artifact_digests.shared_matrix_digest,
             protocol_features: ProtocolFeatureSet::current(),
             level_params_digest: digest_level_params(level_params),
-        })
+        }
     }
 }
 
@@ -989,6 +1068,56 @@ mod tests {
                 0xbb, 0x8f, 0x69, 0x54,
             ]
         );
+    }
+
+    #[test]
+    fn cached_setup_artifact_digests_match_direct_setup_section() {
+        let seed = AkitaSetupSeed {
+            max_num_vars: 5,
+            max_num_batched_polys: 2,
+            max_num_points: 1,
+            max_stride: 2,
+            public_matrix_seed: [7; 32],
+        };
+        let matrix = FlatMatrix::from_flat_data(
+            vec![Prime32Offset99::from_u64(3), Prime32Offset99::from_u64(9)],
+            2,
+        );
+        let level_params = [sample_level_params()];
+        let artifact_digests =
+            SetupArtifactDigests::from_parts(&seed, &matrix).expect("artifact digests");
+
+        let cached = SetupSection::from_artifact_digests(
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 32,
+                log_open_bound: Some(32),
+            },
+            SisModulusFamily::Q32,
+            artifact_digests,
+            &level_params,
+        );
+        let direct = SetupSection::from_parts(
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 32,
+                log_open_bound: Some(32),
+            },
+            SisModulusFamily::Q32,
+            &seed,
+            &matrix,
+            &level_params,
+        )
+        .expect("direct setup section");
+
+        assert_eq!(cached, direct);
+        artifact_digests
+            .check_parts(&seed, &matrix)
+            .expect("fresh digest matches");
+
+        let mut stale = artifact_digests;
+        stale.shared_matrix_digest[0] ^= 1;
+        assert!(stale.check_parts(&seed, &matrix).is_err());
     }
 
     #[test]
