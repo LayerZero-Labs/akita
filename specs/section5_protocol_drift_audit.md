@@ -124,20 +124,14 @@ Narrative subsection; no protocol contracts. **N/A**.
 ## Drift register
 
 ### DRIFT-1 — Round 8 batching coefficient naming
+- **Status**: **CLOSED** post-`f18412f` (two-coefficient cutover) + `952a067` (module-doc + test-helper polish on `feat/phase5-polish`).
 - **Book**: §5.6 Figure 12 Round 8 line 912–919 specifies `γ_range · s_claim + γ_rel · (λ · m̃_alg(r_x) + y_setup) = (batched sumcheck output)`. Two named coefficients.
-- **Implementation**: `crates/akita-verifier/src/stages/stage2.rs:318–333` `expected_output_claim_with_m_setup` computes `batching_coeff * virtual_oracle + relation_oracle` (one named coefficient).
-- **Why it's drift**: notational. Algebraically the two forms are isomorphic under the normalization `γ_rel = 1` and `γ_range = batching_coeff`. The implementation uses one challenge with the relation side having coefficient 1; the book uses two challenges, one for each batch. Either form is correct under the standard sumcheck-batching reduction.
-- **Soundness impact**: NONE. The single-coefficient form is a strict special case of the two-coefficient form (set `γ_rel = 1` in book's expression). Both forms have the same per-round knowledge error.
-- **Production blocker**: NO. Functional code is correct.
-- **Recommended fix**: rename `batching_coeff` to `gamma_range_over_gamma_rel` (with a doc comment citing book line 912–919) OR refactor to sample two challenges and use both. The first option is one-line.
+- **Resolution**: the prover and verifier both sample two transcript challenges (`CHALLENGE_SUMCHECK_BATCH` → `gamma_range`, `CHALLENGE_SUMCHECK_BATCH_REL` → `gamma_rel`), and `AkitaStage2Prover::new` takes them as separate parameters. The `crates/akita-prover/src/protocol/sumcheck/akita_stage2.rs` module doc reflects the two-coefficient algebra; the test-helper parameter is `gamma_range` (with `gamma_rel = 1` for the test fixture). No remaining `batching_coeff` naming drift in the stage-2 path.
 
 ### DRIFT-2 — `MRowLayout` adds an additional W-tier row family vs the book's 10
-- **Book**: §5.5 lines 709–754 enumerates 10 check groups: 5 for the original polynomial (per-chunk D, per-chunk B, eval, fold, Ajtai) + 5 for the tier-3 meta commitment (D_meta, B_meta, eval-like, fold, A_meta).
-- **Implementation**: `crates/akita-types/src/layout/params.rs:282–325` `MRowLayout` has 15 fields: the 10 book-enumerated `original_*` + `meta_*` plus an additional 5 `w_*` (`w_d`, `w_b`, `w_eval`, `w_fold`, `w_a`) for the joint W+S cascade case.
-- **Why it's drift**: the book §5.5 describes the 10-group layout for the original polynomial + meta tier in isolation. When the cascade applies (book §5.6 lines 940–953: "the next-level witness consists of (1) the standard folded witness w; (2) the shared-matrix polynomial S̃, entering unfolded"), the M-relation at level L+1 must bind BOTH W (the folded recursive witness) AND S (the routed setup polynomial chunks + meta). The implementation extends the 10-group layout to 15 by adding a W-tier alongside the original (chunks) and meta tiers.
-- **Soundness impact**: NONE. The W-tier rows enforce the same Ajtai binding contract as the book's per-tier rows; they're a faithful extension of the §5.5 schema to the joint W+S case the book §5.6 mandates.
-- **Production blocker**: NO.
-- **Recommended fix**: document the extension explicitly. The current `MRowLayout` field doc comments already say "Book §5.4 original polynomial D rows" / "Book §5.4 meta D rows" / "Ordinary recursive-W D rows for production tiered batches" — clear enough. Could add a top-level comment on `MRowLayout` calling out the book-vs-impl row-family count.
+- **Status**: **CLOSED** post-`920086f` (top-level `MRowLayout` doc).
+- **Book**: §5.5 lines 709–754 enumerates 10 check groups (5 original + 5 meta).
+- **Resolution**: `crates/akita-types/src/layout/params.rs::MRowLayout` carries a top-level doc comment explicitly enumerating the 15 tiered row-family fields as `{w_*, original_*, meta_*}` and citing book §5.6 lines 940–953 (joint W+S cascade extension) as the reason the book's 10 grow to 15 in the cascade case. The doc spells out the three populations (tiered-no-W / cascade-merged / non-tiered) and which row families are non-empty in each.
 
 ### DRIFT-3 — Verifier `tiered_s_cache` pre-population happens at `setup_verifier` time, not at setup-table generation
 - **Book**: §5.3 line 952 + Figure 12 line 817 specify `C_S` as a preprocessed verifier input, derived during setup.
@@ -148,14 +142,9 @@ Narrative subsection; no protocol contracts. **N/A**.
 - **Recommended fix**: thread the verifier-known shape (which subset of `(num_vars, batch)` cases will be verified) into `setup_verifier` so non-singleton pre-pop can also happen at setup. Or, accept the lazy-first-use behavior as the production design and document.
 
 ### DRIFT-4 — Production presets default `f = 2` tier instead of `f = 1` un-tiered
-- **Book**: §5.4 line 793–796 says "the sweet spot is f = 8". The un-tiered (f = 1) case is the §5.3 baseline. The book does not say `f = 2` is the production default; it says `f = 8` should be the cascade default.
-- **Implementation**: After audit B-1 (commit `c9d9904`), the production fp128 presets (`D128Full`, `D64OneHot`, …) default to `use_setup_claim_reduction = true` with `planner_setup_shrink_factor() = 2`. This is because at NV=15 (small NV used by the `setup_claim_reduction_e2e` tests) f=8 doesn't schedule, and f=1 doesn't pass the force-routing gate (audit S-8), so f=2 is the smallest tier shape that fires the cascade default while still being feasible at low NV.
-- **Why it's drift**: the production preset's tier-shape default is `f=2`, not the book's recommended sweet spot `f=8`. Users opting into `f=8` use `TieredClaimReductionCfg<DenseCfg>`; users opting into the headline cascade `(f_L0=8, f_L1=4)` use `TieredCascadeCfg<DenseCfg>`. The bare default produces `routing=1 tiers=[2]` at NV=19.
-- **Soundness impact**: NONE. Both `f=2` and `f=8` are sound tier shapes; the choice affects only proof-size and verifier-perf trade-offs.
-- **Production blocker**: PARTIAL — the production default isn't the book's recommended `f=8` sweet spot. Whether this matters depends on intended use:
-  - If the production preset will only be used at NV ≥ 32 (the book's measurement range), flip default to `f=8` (or even `(8, 4)`).
-  - If the production preset must also work at NV < 32 (e.g., for small Jolt instances), the `f=2` default is the right trade-off.
-- **Recommended fix**: either (a) keep `f=2` default and document why (book's `f=8` sweet spot fires only at NV ≥ ~22, smaller NVs need `f=2`), or (b) split the production presets into two tiers: `D128FullProduction` defaults to `f=8` (NV ≥ 22); `D128FullSmall` defaults to `f=2` (NV ≥ 19). Pick based on Jolt's actual NV range.
+- **Status**: **CLOSED** post-`d0ea827` (option (a): document `f = 2` rationale + future-flip trigger).
+- **Book**: §5.4 line 793–796 says "the sweet spot is f = 8". The book does not say `f = 2` is the production default; it says `f = 8` should be the cascade default.
+- **Resolution**: `crates/akita-config/src/proof_optimized.rs::planner_setup_shrink_factor` carries an explicit disposition doc covering the four-option trade-off: `f = 8` (book sweet spot) does not schedule below ~NV=22 at D=128 so the `setup_claim_reduction_e2e` regression suite at NV ∈ {12, 15} would break; `f = 1` (un-tiered) does not pass the force-routing gate today (GAP-3); `f = 2` is the smallest tiered shape that schedules at every NV the regression suite touches AND engages the force-routing gate. The doc names two future-flip triggers — (a) GAP-3 closes so the planner discovers the cascade unprompted, OR (b) Jolt's smallest production NV is confirmed `≥ 22`. Users that want the book sweet spot opt in via `TieredClaimReductionCfg` (f=8) or `TieredCascadeCfg` (headline (8, 4)); users that want the un-tiered §5.3 split commitment opt in via `UntieredClaimReductionCfg`. **No soundness impact** — `f=2` and `f=8` are both sound shapes, only verifier-perf differs.
 
 ---
 
@@ -170,12 +159,9 @@ Narrative subsection; no protocol contracts. **N/A**.
 - **Recommended fix**: refactor `eval_offset_eq_tensor` into a generic `eval_sliced_tensor_via_transducer<T: SlicedTensorTransducer<F>>` and provide `OffsetSlice` as the first implementation. ~200 LOC + tests against the existing offset-slice case for behaviour equivalence.
 
 ### GAP-2 — No production test for the cascade firing at NV ≥ 32 (book's measurement range)
+- **Status**: **CLOSED** post-`ce01879` (op-counter option (a)).
 - **Book**: §5.8 Table 1141–1158 measures verifier op counts at NV ∈ {32, 38, 44} for the headline `(f_L0=8, f_L1=4)` cascade.
-- **Implementation**: `tiered_dense_cascade_l0_l1_headline_small` runs at NV=22 (smallest schedulable on this 123 GiB host for dense `(8, 4)`); `tiered_onehot_cascade_l0_l1_headline_small` runs at NV=28 (smallest schedulable for onehot).
-- **Why the gap**: hardware budget. Dense `(8, 4)` at NV ≥ 25 OOMs on 123 GiB; onehot `(8, 4)` at NV ≥ 30 likely OOMs. The protocol code is correct (schedules for NV ∈ {32, 38, 44} resolve cleanly via `Cfg::get_params_for_prove`); only the E2E prove + verify cannot complete in our hardware envelope.
-- **Impact**: ASYMPTOTIC measurement gap. The implementation passes the cascade firing-and-correctness checks at our hardware-feasible NVs; the cascade speedup the book promises (16× / 35× / 265× at NV=32 / 38 / 44) cannot be empirically witnessed here.
-- **Production readiness**: BLOCKER FOR EMPIRICAL VALIDATION; NOT FOR CORRECTNESS. The protocol-shape pipe is intact; just the speedup demonstration requires bigger hardware.
-- **Recommended fix**: either (a) instrument an op-counter in the verifier (count field-mult invocations during each phase; report counts independent of wall-clock) and re-run measurements at our feasible NVs to verify the predicted scaling; or (b) acquire a host with ≥256 GB RAM and run the headline cascade at NV=32. Option (a) is cheap (~100 LOC instrumentation + 1 measurement test) and would let us extrapolate book-comparable op counts at NV ∈ {32, 38, 44} from our NV=22 / NV=28 measurements.
+- **Resolution**: opt-in field-multiplication op-counter on `akita-field` (`op-counter` Cargo feature, zero overhead when disabled). Measurement tests `tiered_dense_cascade_verifier_op_count` (NV=22 default, overridable via `AKITA_OPCOUNT_NV_DENSE`) and `tiered_onehot_cascade_verifier_op_count` (NV=28 default) in `crates/akita-pcs/tests/tiered_setup_e2e.rs` produce book-comparable op counts across `baseline / claim-reduction untiered / T2-only (f=8) / cascade (f=8, f=4)` and extrapolate to NV ∈ {32, 38, 44} via the known scaling laws. Run via `cargo test --release -p akita-pcs --features op-counter --test tiered_setup_e2e -- --ignored --nocapture tiered_dense_cascade_verifier_op_count`.
 
 ### GAP-3 — Cascade-discovery cost model still under-credits cascade savings (Drift 4 partially closed post-`f5e3ee3`)
 - **Status post-`f5e3ee3`**: PARTIAL. The runtime cost model now accurately scores the chunks group at `claim_count = 1` (Drift 3 γ-aggregation drops the k multiplier from `planned_joint_w_ring_with_setup_group_tiered`, `m_row_layout`, `total_b_row_count`, `total_d_row_count`). However the planner's objective (`level_proof_bytes`) only counts ON-WIRE proof bytes; it does NOT price the verifier-side cleartext MLE discharge cost of a direct-terminating L+1 (which is free on-wire because the setup material is verifier-derivable from the public shared matrix).
@@ -207,36 +193,34 @@ Narrative subsection; no protocol contracts. **N/A**.
 - **What's still open**: the planner DP does NOT yet naturally discover the headline `(f_L0=8, f_L1=4)` cascade unprompted at NV ≥ 32 — see **GAP-3**.
 
 ### SCOPE-4 — Verifier op count measurement at book-comparable NVs
-- **Book**: §5.8 Table 1141–1158 measures verifier op counts at NV ∈ {32, 38, 44}.
-- **Current state**: speedup measurement test reports verifier wall-clock at NV=22 dense / NV=28 onehot. The dense ceiling on this 123 GiB host is NV=22; onehot ceiling NV=28.
-- **Why deferred**: hardware budget. See **GAP-2**.
-- **Suggested next slice**: option (a) from **GAP-2**: instrument an op-counter, run at NV=22, extrapolate to NV=32 via the known scaling laws. Cheap (~100 LOC).
+- **Status**: **CLOSED** post-`ce01879`. See **GAP-2** resolution above for the op-counter feature + measurement tests.
 
 ### SCOPE-5 — Production preset tier-shape choice
-- **Book**: §5.4 line 793 "the sweet spot is f = 8".
-- **Current state**: production presets default `f = 2` (see **DRIFT-4**).
-- **Why deferred**: small-NV use cases (`setup_claim_reduction_e2e` tests at NV=12, 15) don't schedule under f=8.
-- **Suggested next slice**: decide on Jolt's intended NV range. If Jolt's smallest NV is ≥ 22 in production, flip default to f=8.
+- **Status**: **CLOSED** post-`d0ea827` (jointly with **DRIFT-4**). See DRIFT-4 resolution above: option (a) — `f = 2` documented as the small-NV-feasible production default; future-flip triggers (GAP-3 closure OR Jolt-min-NV ≥ 22) named in the disposition doc on `planner_setup_shrink_factor`.
 
 ---
 
 ## Recommended production refactor priorities
 
-Ranked, with the drift/gap/scope IDs each step closes.
+Ranked, with the drift/gap/scope IDs each step closes. CLOSED items moved to the closure register at the bottom.
 
-1. **Op-counter instrumentation + book-comparable measurement at NV=22**: closes **GAP-2** + **SCOPE-4**. The cheapest item with the highest production payoff — gives concrete evidence that the cascade matches the book's predicted asymptotic at the smallest NV where the planner schedules, without requiring bigger hardware. ~100 LOC + 1 measurement test.
+1. **Phase 5 Drift 4 — planner natural cascade discovery**: closes **GAP-3** (the surviving cost-model gap). Requires extending the planner objective with per-level setup-precompute storage cost + symmetric cleartext-discharge cost, then retiring the force-routing gates. Estimated ~200-300 LOC + test rework + production schedule-table regeneration. See **GAP-3** for the design path.
 
-2. **Tier-shape production-default policy decision**: closes **DRIFT-4** + **SCOPE-5**. Either flip `D128Full` / `D64OneHot` to default `f = 8`, or document why `f = 2` is the right small-NV default. One-line code change once decided. Optionally split into `*Production` vs `*Small` preset aliases.
+2. **Non-singleton verifier setup pre-population**: closes **DRIFT-3**. Thread the verifier shape into `setup_verifier` so the first verify at non-singleton shape doesn't pay the cache-derivation cost. ~50 LOC.
 
-3. **Round 8 batching coefficient naming**: closes **DRIFT-1**. Rename `batching_coeff` to `gamma_range_over_gamma_rel` (or refactor to two challenges). Defense-in-depth doc improvement.
+3. **General sliced-tensor transducer**: closes **GAP-1**. Only if a future protocol variant needs non-offset slices; otherwise defer indefinitely.
 
-4. **`MRowLayout` doc comment**: closes **DRIFT-2**. Add a top-level comment on the struct calling out the 10-vs-15 group extension for the joint W+S case.
+### Closure register (alphabetical by audit ID)
 
-5. **Phase 5: shared per-chunk matrix collapse**: closes **SCOPE-3** + **GAP-3**. Significant refactor (~500–1000 LOC + tests), but unlocks the cascade-discovery property the planner can't currently express, AND realises the book §5.4 line 798–799 setup-storage reduction (32.5 GB → 4.3 GB at NV=44).
-
-6. **Non-singleton verifier setup pre-population**: closes **DRIFT-3**. Thread the verifier shape into `setup_verifier` so the first verify at non-singleton shape doesn't pay the cache-derivation cost.
-
-7. **General sliced-tensor transducer**: closes **GAP-1**. Only if a future protocol variant needs non-offset slices; otherwise defer indefinitely.
+| ID | Closure commit(s) | Disposition |
+|---|---|---|
+| DRIFT-1 | `f18412f` + `952a067` | Two-coefficient cutover + module/test-helper polish |
+| DRIFT-2 | `920086f` | `MRowLayout` top-level doc enumerates 15-vs-10 extension |
+| DRIFT-4 | `d0ea827` | `planner_setup_shrink_factor` disposition doc; option (a) |
+| GAP-2 | `ce01879` | Opt-in `op-counter` field-mult counter + measurement tests |
+| SCOPE-3 | `6c9c38f` + `f5e3ee3` | Chunk-axis amortised verifier eval + γ-folding aggregation |
+| SCOPE-4 | `ce01879` | (with GAP-2) |
+| SCOPE-5 | `d0ea827` | (with DRIFT-4) |
 
 ---
 
