@@ -493,29 +493,10 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
         }
     }
 
-    // Per-level cascade gate: configs that prescribe a tiered shrink at
-    // this level (book §5.8 line 1170 `f_{L0}=8`, `f_{L1}=4`) make
-    // routing mandatory here. After Drift 3 γ-aggregation the runtime
-    // cost model is honest per claim_count = 1 chunks group, but the
-    // verifier-side cleartext MLE discharge at a direct-terminating
-    // L+1 is not yet priced into the planner's objective. Until that
-    // wire-cost gap closes, the cascade still requires the explicit
-    // tier policy to materialise — keep the gate. The Drift 4 audit
-    // closure is tracked in specs/section5_protocol_drift_audit.md.
-    let level_tier =
-        TieredSetupParams::new(Cfg::planner_setup_shrink_factor_at_level(level).max(1))
-            .unwrap_or_else(|_| TieredSetupParams::un_tiered());
-    let route_choices: &[bool] = if level_tier.is_tiered() {
-        &[true]
-    } else {
-        &[false, true]
-    };
-
     // Baseline: send the witness directly without folding. The cascade
     // chain terminates here; any pending `S` at the direct step is
     // discharged via the cleartext mle check in
-    // `verify_setup_claim_reduction`. Levels that prescribe a tiered
-    // shrink forbid the direct shortcut so the cascade can materialise.
+    // `verify_setup_claim_reduction`.
     let fb = Cfg::planner_field_bits();
     let direct_bytes = direct_witness_bytes(
         fb,
@@ -523,19 +504,12 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
     );
     let direct_objective_cost =
         direct_bytes.saturating_add(cleartext_discharge_objective_cost::<Cfg>(s_field_len_in));
-    let mut best = if level_tier.is_tiered() {
-        PlannedSuffix {
-            objective_cost: usize::MAX,
-            proof_bytes: usize::MAX,
-            steps: Vec::new(),
-        }
-    } else {
-        PlannedSuffix {
-            objective_cost: direct_objective_cost,
-            proof_bytes: direct_bytes,
-            steps: vec![to_direct_step(current_w_len, current_lb)],
-        }
+    let mut best = PlannedSuffix {
+        objective_cost: direct_objective_cost,
+        proof_bytes: direct_bytes,
+        steps: vec![to_direct_step(current_w_len, current_lb)],
     };
+    let route_choices: &[bool] = &[false, true];
 
     // Try each feasible basis for one more fold level.
     if depth <= MAX_RECURSION_DEPTH {
@@ -924,27 +898,10 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
 
     let fb = Cfg::planner_field_bits();
     let direct_bytes = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
-    let tier_shrink = Cfg::planner_setup_shrink_factor_at_level(0).max(1);
-    // Tiered configs (book §5.4) cannot use the root-direct shortcut:
-    // they require a routed fold schedule so the per-chunk + meta
-    // material is bound recursively. The Drift 4 audit closure to
-    // retire this gate is tracked in
-    // `specs/section5_protocol_drift_audit.md`; Drift 3 alone is not
-    // sufficient because the planner's objective does not yet price
-    // the verifier-side cleartext MLE discharge at a direct-terminating
-    // L+1 symmetrically with the root's CR sumcheck discharge.
-    let mut best = if tier_shrink > 1 {
-        PlannedSuffix {
-            objective_cost: usize::MAX,
-            proof_bytes: usize::MAX,
-            steps: Vec::new(),
-        }
-    } else {
-        PlannedSuffix {
-            objective_cost: direct_bytes,
-            proof_bytes: direct_bytes,
-            steps: vec![to_direct_step(root_w_len, fb)],
-        }
+    let mut best = PlannedSuffix {
+        objective_cost: direct_bytes,
+        proof_bytes: direct_bytes,
+        steps: vec![to_direct_step(root_w_len, fb)],
     };
     let mut memo = ScheduleMemo::new();
 
@@ -966,15 +923,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         // alongside `s_field_len_emitted` on the FoldStep.
         let root_tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor_at_level(0).max(1))
             .unwrap_or_else(|_| TieredSetupParams::un_tiered());
-        // Tiered configs (book §5.4) require routed root schedules so
-        // the per-chunk + meta tiered material is bound recursively;
-        // see Drift 4 audit closure in
-        // `specs/section5_protocol_drift_audit.md`.
-        let route_choices: &[bool] = if root_tier.is_tiered() {
-            &[true]
-        } else {
-            &[false, true]
-        };
+        let route_choices: &[bool] = &[false, true];
         for &routes_setup_recursively in route_choices {
             // Root's M-table never carries an incoming `S` group: any
             // tier shape applies at the next level when chunks expand.
@@ -1122,16 +1071,9 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
     }
 
     if best.steps.is_empty() {
-        // Tiered configs that could not find any routed fold schedule
-        // (the only feasible shape under `f > 1` per book §5.4) fail
-        // loudly here. Common causes: NV too small for the cascade
-        // sizing, SIS-floor rejection at chunk_lp/meta_lp shape, or
-        // tier shape incompatible with the level's `(m, r)` axes.
         return Err(AkitaError::InvalidSetup(format!(
-            "tiered claim-reduction planner could not find a routed fold schedule \
-             for max_num_vars={max_num_vars}, num_vars={num_vars}, shape={shape:?}, \
-             tier_shrink={tier_shrink}; try a smaller `f`, larger `num_vars`, or \
-             a config that supports the required SIS rank"
+            "schedule planner could not find a viable schedule for \
+             max_num_vars={max_num_vars}, num_vars={num_vars}, shape={shape:?}"
         )));
     }
     let num_folds = best
@@ -1139,20 +1081,6 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         .iter()
         .filter(|s| matches!(s, Step::Fold(_)))
         .count();
-    if tier_shrink > 1
-        && !best
-            .steps
-            .iter()
-            .any(|s| matches!(s, Step::Fold(f) if f.tier_setup_params.is_tiered() && f.s_field_len_emitted > 0))
-    {
-        return Err(AkitaError::InvalidSetup(format!(
-            "tiered claim-reduction planner produced a schedule without a routed \
-             tiered fold step for max_num_vars={max_num_vars}, num_vars={num_vars}, \
-             shape={shape:?}, tier_shrink={tier_shrink}: the runtime requires at \
-             least one fold step with tier_setup_params.is_tiered() && \
-             s_field_len_emitted > 0 to bind the per-chunk + meta material"
-        )));
-    }
     tracing::info!(
         max_num_vars,
         num_vars,
