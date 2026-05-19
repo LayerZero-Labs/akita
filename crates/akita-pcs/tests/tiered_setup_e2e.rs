@@ -29,7 +29,7 @@ use akita_transcript::Blake2bTranscript;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -557,8 +557,7 @@ fn tiered_dense_cascade_l0_l1_small() {
         let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
         eprintln!(
             "[cascade_l0_l1_small] NV={NV}, routing folds={routing_count}, \
-             per-level tiers={:?}",
-            tiers
+             per-level tiers={tiers:?}"
         );
         for (i, &t) in tiers.iter().enumerate() {
             let expected = DenseCascadeSmallCfg::planner_setup_shrink_factor_at_level(i);
@@ -717,8 +716,7 @@ fn tiered_dense_cascade_l0_l1_headline_small() {
         let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
         eprintln!(
             "[cascade_l0_l1_headline_small] NV={NV}, routing folds={routing_count}, \
-             per-level tiers={:?}",
-            tiers
+             per-level tiers={tiers:?}"
         );
         for (i, &t) in tiers.iter().enumerate() {
             let expected = DenseCascadeCfg::planner_setup_shrink_factor_at_level(i);
@@ -762,6 +760,338 @@ fn tiered_dense_cascade_l0_l1_headline_small() {
         )
         .expect("dense cascade headline verify");
     });
+}
+
+/// Book §5.8 cascade verifier wall-clock measurement vs baseline at
+/// a single NV.
+///
+/// Compares verify wall-clock (prove wall-clock printed for context)
+/// across four claim-reduction shapes at the SAME NV:
+///   - baseline: bare [`DenseCfg`] (no claim reduction).
+///   - claim-reduction untiered: [`ClaimReductionCfg<DenseCfg, 1>`]
+///     per book §5.3 (the pre-Slice-G shape, midway between baseline
+///     and tiered T2).
+///   - T2 @ L0 only: [`TieredClaimReductionCfg<DenseCfg>`] (= `f = 8`
+///     at L0, uniform; book §5.4 single-tier sweet spot).
+///   - T1+T2 @ L0+L1: [`DenseCascadeCfg`] (the headline `f_L0 = 8`,
+///     `f_L1 = 4` cascade from book §5.8 line 1170).
+///
+/// Configs whose [`CommitmentConfig::commitment_layout`] rejects the
+/// chosen NV are skipped silently. The chosen NV must accept at least
+/// `baseline + T2-only + cascade` for the speedup ratio to be defined.
+///
+/// Each working config runs `iterations = 3` (1 warmup + 2 measured)
+/// with a fresh transcript and fresh setup per iteration; verify and
+/// prove medians are reported plus the verify-time ratio against
+/// baseline.
+///
+/// This is a measurement, not a correctness assertion: absolute
+/// speedup numbers vary run-to-run with thread scheduling and won't
+/// match book Table 1141–1158 at NV=22 (the book measures at NV ≥ 32
+/// with `D = 128` op count, a different shape). The test passes if
+/// every selected config successfully proves and verifies at the
+/// target NV; the qualitative trend `cascade ≤ T2-only ≤ baseline`
+/// (lower verify time better) is printed but not asserted.
+///
+/// Crossover note (measured): at NV=22 on a 123 GiB host the
+/// qualitative trend is VIOLATED — baseline verifier work is
+/// ≈ 12 ms while the cascade `(8,4)` machinery has ≈ 16 s of fixed
+/// overhead (per-chunk MLE openings, meta-commits, two routing
+/// folds). Extrapolating with the ≈ 2^NV scaling of baseline verify,
+/// the crossover NV where cascade verify < baseline verify is
+/// ≈ 32, matching the book Table 1141–1158 measurement points
+/// (NV ∈ {32, 38, 44}). On this 123 GiB host NV=25 OOMs for the
+/// dense D=128 configs, so the crossover cannot be measured
+/// directly here; the test still verifies that every cascade shape
+/// proves + verifies end-to-end at NV=22.
+///
+/// Override the NV list via `AKITA_SPEEDUP_NVS=22,25` (default
+/// `22`). Marked `#[ignore]` because the run is slow (~5–10 min at
+/// NV=22, OOMs at NV ≥ 25 on 123 GiB).
+#[test]
+#[ignore = "measurement-only; run with --ignored"]
+fn tiered_dense_cascade_speedup_measurement() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const ITERS: usize = 3;
+        let nvs = parse_nvs_env("AKITA_SPEEDUP_NVS", &[22]);
+
+        for nv in nvs {
+            eprintln!();
+            eprintln!("=== cascade speedup measurement: NV={nv}, D={DENSE_D} ===");
+
+            type UntieredDenseClaimCfg = ClaimReductionCfg<DenseCfg, 1>;
+            type T2OnlyDenseCfg = ClaimReductionCfg<DenseCfg, 8>;
+
+            let baseline = measure_dense_speedup_config::<DenseCfg>(
+                nv,
+                "baseline (DenseCfg)",
+                ITERS,
+                0x715e_5b01,
+                0x715e_5b02,
+                b"tiered_setup_e2e/speedup/baseline",
+            );
+            let untiered = measure_dense_speedup_config::<UntieredDenseClaimCfg>(
+                nv,
+                "claim-reduction untiered (f=1)",
+                ITERS,
+                0x715e_5b03,
+                0x715e_5b04,
+                b"tiered_setup_e2e/speedup/untiered",
+            );
+            let t2_only = measure_dense_speedup_config::<T2OnlyDenseCfg>(
+                nv,
+                "T2 @ L0 (f=8)",
+                ITERS,
+                0x715e_5b05,
+                0x715e_5b06,
+                b"tiered_setup_e2e/speedup/t2_only",
+            );
+            let cascade = measure_dense_speedup_config::<DenseCascadeCfg>(
+                nv,
+                "T1+T2 @ L0+L1 (f=8,4)",
+                ITERS,
+                0x715e_5b07,
+                0x715e_5b08,
+                b"tiered_setup_e2e/speedup/cascade",
+            );
+
+            let baseline_verify_s = baseline
+                .as_ref()
+                .and_then(|m| median_measured(&m.verify_times))
+                .map(|d| d.as_secs_f64());
+
+            eprintln!(
+                "    {:<34}  {:>9}  {:>9}  {:>12}  routing  tiers",
+                "config", "prove(s)", "verify(s)", "vs_baseline",
+            );
+            for m in [&baseline, &untiered, &t2_only, &cascade]
+                .into_iter()
+                .flatten()
+            {
+                let prove_med = median_measured(&m.prove_times).unwrap_or(Duration::ZERO);
+                let verify_med = median_measured(&m.verify_times).unwrap_or(Duration::ZERO);
+                let verify_s = verify_med.as_secs_f64();
+                let ratio = match (baseline_verify_s, verify_s) {
+                    (Some(bv), v) if v > 0.0 => format!("{:>11.2}×", bv / v),
+                    _ => format!("{:>12}", "n/a"),
+                };
+                eprintln!(
+                    "    {:<34}  {:>9.3}  {:>9.3}  {}  {:>4}     {:?}",
+                    m.label,
+                    prove_med.as_secs_f64(),
+                    verify_med.as_secs_f64(),
+                    ratio,
+                    m.routing_count,
+                    m.tiers,
+                );
+            }
+
+            eprintln!();
+            eprintln!(
+                "Book Table 1141–1158 (at NV=32, D=128 verifier op count; \
+                 different scale, qualitative only):"
+            );
+            eprintln!(
+                "    {:<34}  {:>9}  {:>9}  {:>12}",
+                "baseline", "—", "—", "       1.00×",
+            );
+            eprintln!(
+                "    {:<34}  {:>9}  {:>9}  {:>12}",
+                "T2 @ L0 (f=8)", "—", "—", "       3.80×",
+            );
+            eprintln!(
+                "    {:<34}  {:>9}  {:>9}  {:>12}",
+                "T1+T2 @ L0+L1 (f=8,4)", "—", "—", "      16.00×",
+            );
+
+            // Qualitative trend hint (not asserted; reported only).
+            if let (Some(bv), Some(tv), Some(cv)) = (
+                baseline_verify_s,
+                t2_only
+                    .as_ref()
+                    .and_then(|m| median_measured(&m.verify_times))
+                    .map(|d| d.as_secs_f64()),
+                cascade
+                    .as_ref()
+                    .and_then(|m| median_measured(&m.verify_times))
+                    .map(|d| d.as_secs_f64()),
+            ) {
+                let monotonic = cv < tv && tv < bv;
+                eprintln!();
+                eprintln!(
+                    "Qualitative trend cascade < T2-only < baseline (verify): {} \
+                     (cascade={cv:.3}s, t2_only={tv:.3}s, baseline={bv:.3}s)",
+                    if monotonic { "HOLDS" } else { "VIOLATED" },
+                );
+            }
+        }
+    });
+}
+
+/// Per-config measurement record for
+/// [`tiered_dense_cascade_speedup_measurement`].
+#[derive(Clone, Debug)]
+struct SpeedupMeasurement {
+    label: String,
+    routing_count: usize,
+    tiers: Vec<usize>,
+    prove_times: Vec<Duration>,
+    verify_times: Vec<Duration>,
+}
+
+/// Run a fresh `iterations`-pass prove/verify of a single dense-D
+/// `Cfg` and record per-iteration wall-clock.
+///
+/// Returns `None` when `Cfg::commitment_layout(nv)` rejects (the
+/// caller skips the config silently); panics on any subsequent
+/// `commit`/`prove`/`verify` failure since those would indicate a
+/// real regression, not a planner skip.
+fn measure_dense_speedup_config<Cfg>(
+    nv: usize,
+    label: &str,
+    iterations: usize,
+    poly_seed: u64,
+    point_seed: u64,
+    transcript_label: &[u8],
+) -> Option<SpeedupMeasurement>
+where
+    Cfg: CommitmentConfig<Field = F> + akita_planner::PlannerConfig,
+{
+    let layout = match Cfg::commitment_layout(nv) {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::info!(
+                target: "speedup",
+                "skip {label} at NV={nv}: layout err={e:?}"
+            );
+            return None;
+        }
+    };
+
+    let schedule =
+        Cfg::get_params_for_prove(nv, nv, 1, akita_types::AkitaRootBatchSummary::singleton())
+            .expect("schedule must resolve when layout succeeds");
+    let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
+    tracing::info!(
+        target: "speedup",
+        nv,
+        label = %label,
+        routing_count,
+        ?tiers,
+        "speedup config schedule",
+    );
+
+    let poly = make_dense_poly(nv, poly_seed);
+    let pt = random_point(nv, point_seed);
+    let opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
+
+    let mut prove_times = Vec::with_capacity(iterations);
+    let mut verify_times = Vec::with_capacity(iterations);
+
+    for iter in 0..iterations {
+        let setup =
+            <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
+                nv, 1, 1,
+            );
+        let verifier_setup = <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_verifier(&setup);
+        let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::commit(std::slice::from_ref(&poly), &setup)
+        .expect("commit");
+        let poly_refs = [&poly];
+        let commitments = [commitment];
+        let openings = [opening];
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
+        let t0 = Instant::now();
+        let proof =
+            <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
+                &setup,
+                prove_input(&pt, &poly_refs, &commitments[0], hint),
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
+        let prove_elapsed = t0.elapsed();
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_label);
+        let t0 = Instant::now();
+        <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect("verify");
+        let verify_elapsed = t0.elapsed();
+
+        let warmup = iter == 0;
+        tracing::info!(
+            target: "speedup",
+            nv,
+            label = %label,
+            iter,
+            warmup,
+            prove_s = prove_elapsed.as_secs_f64(),
+            verify_s = verify_elapsed.as_secs_f64(),
+            "speedup iter",
+        );
+
+        prove_times.push(prove_elapsed);
+        verify_times.push(verify_elapsed);
+    }
+
+    Some(SpeedupMeasurement {
+        label: label.to_string(),
+        routing_count,
+        tiers,
+        prove_times,
+        verify_times,
+    })
+}
+
+/// Drop the first (warmup) iteration and return the median of the
+/// rest. Returns `None` if fewer than two iterations were recorded.
+fn median_measured(times: &[Duration]) -> Option<Duration> {
+    let measured = times.get(1..)?;
+    if measured.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<Duration> = measured.to_vec();
+    sorted.sort();
+    let mid = sorted.len() / 2;
+    if sorted.len() % 2 == 1 {
+        Some(sorted[mid])
+    } else {
+        let lo = sorted[mid - 1].as_nanos();
+        let hi = sorted[mid].as_nanos();
+        // u128 avg of two Duration nanos fits trivially in u64 for
+        // wall-clock measurements bounded well below 2^64 ns ≈ 584 yr.
+        Some(Duration::from_nanos(((lo + hi) / 2) as u64))
+    }
+}
+
+/// Parse a comma-separated list of NVs from `var`, falling back to
+/// `default` on unset or empty.
+fn parse_nvs_env(var: &str, default: &[usize]) -> Vec<usize> {
+    match std::env::var(var) {
+        Ok(s) => {
+            let parsed: Vec<usize> = s.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+            if parsed.is_empty() {
+                default.to_vec()
+            } else {
+                parsed
+            }
+        }
+        Err(_) => default.to_vec(),
+    }
 }
 
 #[test]
