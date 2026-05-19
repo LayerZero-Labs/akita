@@ -688,9 +688,6 @@ fn tiered_dense_default_cascade_fires() {
             "audit B-1: default DenseCfg cascade must emit at least one routing fold; \
              got routing_count={routing_count} tiers={tiers:?}"
         );
-        // Default tier = `f = 2`: every routed level uses `f = 2` until
-        // S-8 widens the cost model and drops the production default
-        // back to un-tiered.
         for (i, &t) in tiers.iter().enumerate() {
             assert_eq!(
                 t, 2,

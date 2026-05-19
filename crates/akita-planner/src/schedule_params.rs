@@ -464,14 +464,15 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
         }
     }
 
-    // Per-level cascade gate: configs that prescribe a tiered shrink
-    // at this level (book §5.8 line 1170 `f_{L0}=8`, `f_{L1}=4`) make
-    // routing mandatory here, so the cascade chain materialises across
-    // the prescribed prefix instead of being silently dropped by the
-    // cost-minimising DP. Non-cascade levels are free to either route
-    // un-tiered or discharge `S` via the cleartext mle check; the DP
-    // picks whichever is cheaper. The same gate is applied at the root
-    // in `find_optimal_schedule_with_max`.
+    // Per-level cascade gate: configs that prescribe a tiered shrink at
+    // this level (book §5.8 line 1170 `f_{L0}=8`, `f_{L1}=4`) make
+    // routing mandatory here. After Drift 3 γ-aggregation the runtime
+    // cost model is honest per claim_count = 1 chunks group, but the
+    // verifier-side cleartext MLE discharge at a direct-terminating
+    // L+1 is not yet priced into the planner's objective. Until that
+    // wire-cost gap closes, the cascade still requires the explicit
+    // tier policy to materialise — keep the gate. The Drift 4 audit
+    // closure is tracked in specs/section5_protocol_drift_audit.md.
     let level_tier =
         TieredSetupParams::new(Cfg::planner_setup_shrink_factor_at_level(level).max(1))
             .unwrap_or_else(|_| TieredSetupParams::un_tiered());
@@ -482,11 +483,10 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
     };
 
     // Baseline: send the witness directly without folding. The cascade
-    // chain terminates here: any pending `S` at the direct step is
+    // chain terminates here; any pending `S` at the direct step is
     // discharged via the cleartext mle check in
-    // `verify_setup_claim_reduction`, not via further routing.
-    // Levels that prescribe a tiered shrink (`level_tier.is_tiered()`)
-    // forbid the direct shortcut, mirroring the root.
+    // `verify_setup_claim_reduction`. Levels that prescribe a tiered
+    // shrink forbid the direct shortcut so the cascade can materialise.
     let fb = Cfg::planner_field_bits();
     let direct_bytes = direct_witness_bytes(
         fb,
@@ -885,7 +885,12 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
     let tier_shrink = Cfg::planner_setup_shrink_factor_at_level(0).max(1);
     // Tiered configs (book §5.4) cannot use the root-direct shortcut:
     // they require a routed fold schedule so the per-chunk + meta
-    // material is bound recursively.
+    // material is bound recursively. The Drift 4 audit closure to
+    // retire this gate is tracked in
+    // `specs/section5_protocol_drift_audit.md`; Drift 3 alone is not
+    // sufficient because the planner's objective does not yet price
+    // the verifier-side cleartext MLE discharge at a direct-terminating
+    // L+1.
     let mut best = if tier_shrink > 1 {
         PlannedSuffix {
             objective_cost: usize::MAX,
@@ -919,8 +924,10 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         // alongside `s_field_len_emitted` on the FoldStep.
         let root_tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor_at_level(0).max(1))
             .unwrap_or_else(|_| TieredSetupParams::un_tiered());
-        // Tiered configs (book §5.4) require routed schedules so the
-        // per-chunk + meta tiered material is bound recursively.
+        // Tiered configs (book §5.4) require routed root schedules so
+        // the per-chunk + meta tiered material is bound recursively;
+        // see Drift 4 audit closure in
+        // `specs/section5_protocol_drift_audit.md`.
         let route_choices: &[bool] = if root_tier.is_tiered() {
             &[true]
         } else {
