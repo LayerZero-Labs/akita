@@ -148,6 +148,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-r1cs"
+version = "0.1.0"
+dependencies = [
+ "akita-field",
+ "tracing",
+]
+
+[[package]]
 name = "akita-scheme"
 version = "0.1.0"
 dependencies = [
@@ -193,6 +201,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-field",
+ "akita-r1cs",
  "akita-serialization",
  "akita-transcript",
  "tracing",
@@ -228,6 +237,7 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-field",
+ "akita-r1cs",
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",

@@ -12,8 +12,8 @@
 
 This branch implements a plain-opening version of Akita's sumcheck-hiding ZK
 path. The proof carries a separate hiding-factor commitment `u_blind`, reveals
-the committed `hiding_witness`, and verifies deferred R1CS rows directly against
-that revealed witness.
+the committed `hiding_witness`, and verifies deferred R1CS rows from the
+`akita-r1cs` crate directly against that revealed witness.
 
 This is not the final zero-knowledge protocol. It fixes the transcript shape and
 the relation inventory, but the hiding material remains public until a later
@@ -281,7 +281,8 @@ eq-factored pad.
 
 The verifier records exact R1CS rows for the stage-1 final oracle. For product
 stages and polynomial/range evaluation, it allocates verifier-local auxiliary
-variables in `ZkRelationAccumulator` and checks them during `verify_all`.
+variables in `akita_r1cs::ZkRelationAccumulator` and checks them during
+`verify_all`.
 
 ## Stage-2 Flow
 
@@ -376,6 +377,7 @@ verifier from the final packed witness payload. In that case, the serialized
 
 ## Relation Accumulator
 
+`akita-r1cs` owns the deferred plain-opening relation system. Its
 `ZkRelationAccumulator` stores ordinary R1CS rows and auxiliary-generation rows:
 
 ```text
@@ -394,7 +396,9 @@ zk_relations.verify_all(&proof.zk_hiding.hiding_witness)
 
 The current plain verifier checks every accumulated row it records. It does not
 skip R1CS rows with auxiliary variables; those auxiliaries are synthesized during
-`verify_all`. Future work is to prove this same row inventory without revealing
+`verify_all`. The sumcheck crates use the accumulator only behind
+`feature = "zk"`; transparent sumcheck drivers do not depend on the R1CS API.
+Future work is to prove this same row inventory without revealing
 `hiding_witness`.
 
 ## Transcript Rules
@@ -445,6 +449,31 @@ not absorbed before the masked messages they support are fixed.
 - `AkitaLevelProof::y_ring` remains the proof field name; in ZK builds it
   carries the masked wire value.
 
+### `akita-r1cs`
+
+- Owns the plain-opening R1CS building blocks:
+  `ZkR1csVariable`, `ZkR1csTerm`, `ZkR1csLinearCombination`, and
+  `ZkRelationAccumulator`.
+- Provides the masked standard-sumcheck and masked eq-factored round relation
+  helpers consumed by the ZK sumcheck verifier drivers.
+- Keeps verifier-local auxiliary wires inside the accumulator. `verify_all`
+  synthesizes those auxiliaries while checking rows against the revealed
+  `hiding_witness`.
+
+### `akita-sumcheck`
+
+- `src/drivers.rs` is now only the driver module/export surface.
+- `src/drivers/standard.rs` contains the transparent standard sumcheck
+  `prove`/`verify` extension traits and, behind `feature = "zk"`, the masked
+  standard sumcheck `prove_zk`/`verify_zk` extensions plus
+  `ZkSumcheckFinalRelation`.
+- `src/drivers/eq_factored.rs` contains the transparent eq-factored sumcheck
+  `prove`/`verify` extension traits and, behind `feature = "zk"`, the masked
+  eq-factored `prove_zk`/`verify_zk` extensions plus
+  `ZkEqFactoredFinalRelation`.
+- ZK-only proof payload types and driver extension exports are feature-gated.
+  Transparent builds expose only the transparent proof types and driver traits.
+
 ### `akita-prover`
 
 - `build_zk_hiding_context` samples root y-ring masks, per-level stage-1 pads,
@@ -468,7 +497,7 @@ not absorbed before the masked messages they support are fixed.
 ### `akita-verifier`
 
 - Folded verification rejects empty `u_blind` / `hiding_witness`, absorbs
-  `u_blind`, and creates a `ZkRelationAccumulator`.
+  `u_blind`, and creates an `akita_r1cs::ZkRelationAccumulator`.
 - The root verifier unpacks root y-ring masks and records root trace-pin R1CS
   rows.
 - The recursive verifier unpacks both the current opening mask and current

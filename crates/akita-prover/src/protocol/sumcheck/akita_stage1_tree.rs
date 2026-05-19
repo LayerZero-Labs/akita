@@ -19,7 +19,7 @@ use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 #[cfg(not(feature = "zk"))]
-use akita_sumcheck::prove_eq_factored_sumcheck;
+use akita_sumcheck::EqFactoredSumcheckInstanceProverExt;
 #[cfg(feature = "zk")]
 use akita_sumcheck::ZkEqFactoredSumcheckInstanceProverExt;
 use akita_sumcheck::{fold_evals_in_place, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
@@ -502,11 +502,10 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
                     (sumcheck_proof_masked, challenges, handoff_mask)
                 };
                 #[cfg(not(feature = "zk"))]
-                let (sumcheck, r_stage1, _final_claim) = prove_eq_factored_sumcheck::<E, _, E, _, _>(
-                    &mut leaf_stage,
-                    transcript,
-                    |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
-                )?;
+                let (sumcheck, r_stage1, _final_claim) = leaf_stage
+                    .prove::<E, _, _>(transcript, |tr| {
+                        tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+                    })?;
                 let true_s_claim = leaf_stage.final_s_claim();
                 let proof = AkitaStage1Proof {
                     stages: vec![AkitaStage1StageProof {
@@ -564,11 +563,10 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
                 (sumcheck_proof_masked, next_tau)
             };
             #[cfg(not(feature = "zk"))]
-            let (sumcheck, next_tau, _final_claim) = prove_eq_factored_sumcheck::<E, _, E, _, _>(
-                &mut product_stage,
-                transcript,
-                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
-            )?;
+            let (sumcheck, next_tau, _final_claim) = product_stage
+                .prove::<E, _, _>(transcript, |tr| {
+                    tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+                })?;
             let child_claims = product_stage.final_child_claims();
             #[cfg(feature = "zk")]
             let child_claims = {
@@ -627,8 +625,8 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
             (sumcheck_proof_masked, challenges, handoff_mask)
         };
         #[cfg(not(feature = "zk"))]
-        let (leaf_sumcheck, r_stage1, _leaf_final_claim) =
-            prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
+        let (leaf_sumcheck, r_stage1, _leaf_final_claim) = leaf_stage
+            .prove::<E, _, _>(transcript, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
             })?;
         stage_proofs.push(AkitaStage1StageProof {

@@ -13,13 +13,13 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, RandomSampling};
-#[cfg(not(feature = "zk"))]
-use akita_sumcheck::verify_sumcheck;
+#[cfg(feature = "zk")]
+use akita_r1cs::{ZkR1csLinearCombination, ZkR1csTerm, ZkR1csVariable, ZkRelationAccumulator};
 use akita_sumcheck::SumcheckInstanceVerifier;
+#[cfg(not(feature = "zk"))]
+use akita_sumcheck::SumcheckInstanceVerifierExt;
 #[cfg(feature = "zk")]
 use akita_sumcheck::ZkSumcheckInstanceVerifierExt;
-#[cfg(feature = "zk")]
-use akita_sumcheck::{ZkR1csLinearCombination, ZkR1csVariable, ZkRelationAccumulator};
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
@@ -47,16 +47,12 @@ fn zk_add_scaled_lc<F: FieldCore>(
     source: &ZkR1csLinearCombination<F>,
 ) {
     target.constant += scale * source.constant;
-    target.terms.extend(
-        source
-            .terms
-            .iter()
-            .cloned()
-            .map(|term| akita_sumcheck::ZkR1csTerm {
-                variable: term.variable,
-                coeff: scale * term.coeff,
-            }),
-    );
+    target
+        .terms
+        .extend(source.terms.iter().cloned().map(|term| ZkR1csTerm {
+            variable: term.variable,
+            coeff: scale * term.coeff,
+        }));
 }
 
 #[cfg(feature = "zk")]
@@ -387,12 +383,9 @@ where
         }
         #[cfg(not(feature = "zk"))]
         {
-            verify_sumcheck::<F, _, F, _, _>(
-                &stage2.sumcheck_proof,
-                &stage2_verifier,
-                transcript,
-                |tr| challenge_sampler.sample(tr, CHALLENGE_SUMCHECK_ROUND),
-            )?
+            stage2_verifier.verify::<F, _, _>(&stage2.sumcheck_proof, transcript, |tr| {
+                challenge_sampler.sample(tr, CHALLENGE_SUMCHECK_ROUND)
+            })?
         }
     };
     #[cfg(feature = "zk")]
@@ -648,12 +641,9 @@ where
         }
         #[cfg(not(feature = "zk"))]
         {
-            verify_sumcheck::<F, _, F, _, _>(
-                &stage2.sumcheck_proof,
-                &stage2_verifier,
-                transcript,
-                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-            )?
+            stage2_verifier.verify::<F, _, _>(&stage2.sumcheck_proof, transcript, |tr| {
+                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            })?
         }
     };
     #[cfg(feature = "zk")]

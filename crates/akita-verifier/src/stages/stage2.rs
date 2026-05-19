@@ -4,11 +4,11 @@ use crate::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 #[cfg(feature = "zk")]
-use akita_sumcheck::{
-    ZkR1csLinearCombination, ZkR1csVariable, ZkRelationAccumulator, ZkSumcheckFinalRelation,
-};
+use akita_r1cs::{ZkR1csLinearCombination, ZkR1csVariable, ZkRelationAccumulator};
+#[cfg(feature = "zk")]
+use akita_sumcheck::ZkSumcheckFinalRelation;
+use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     relation_claim_from_rows_extension, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
     RingOpeningPoint,

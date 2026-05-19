@@ -18,7 +18,7 @@ use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, HalvingField, RandomSampling};
 #[cfg(not(feature = "zk"))]
-use akita_sumcheck::prove_sumcheck;
+use akita_sumcheck::SumcheckInstanceProverExt;
 #[cfg(not(feature = "zk"))]
 use akita_sumcheck::SumcheckProof;
 #[cfg(feature = "zk")]
@@ -1107,8 +1107,8 @@ where
             ring_bits,
             relation_claim,
         );
-        let (stage2_sumcheck_proof, sumcheck_challenges, _) =
-            prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
+        let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
+            .prove::<F, _, _>(transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
 
@@ -1712,8 +1712,8 @@ where
             ring_bits,
             relation_claim,
         );
-        let (stage2_sumcheck_proof, sumcheck_challenges, _) =
-            prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
+        let (stage2_sumcheck_proof, sumcheck_challenges, _) = stage2_prover
+            .prove::<F, _, _>(transcript, |tr| {
                 challenge_sampler.sample(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
 

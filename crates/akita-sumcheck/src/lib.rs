@@ -23,21 +23,22 @@ pub use batched_sumcheck::{
 };
 pub use compact_fold::CompactPairFoldLut;
 pub use drivers::{
-    advance_eq_factored_claim, check_sumcheck_output_claim, prove_eq_factored_sumcheck,
-    prove_sumcheck, prove_sumcheck_with_omitted_prefix_rounds, verify_eq_factored_sumcheck,
-    verify_sumcheck, verify_sumcheck_with_prefix_rounds, EqFactoredMaskedProveOutput,
-    MaskedProveOutput, ZkEqFactoredFinalRelation, ZkR1csLinearCombination, ZkR1csTerm,
-    ZkR1csVariable, ZkRelationAccumulator, ZkSumcheckFinalRelation,
+    advance_eq_factored_claim, check_sumcheck_output_claim, EqFactoredSumcheckInstanceProverExt,
+    EqFactoredSumcheckInstanceVerifierExt, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };
+#[cfg(feature = "zk")]
 pub use drivers::{
+    EqFactoredMaskedProveOutput, MaskedProveOutput, ZkEqFactoredFinalRelation,
     ZkEqFactoredSumcheckInstanceProverExt, ZkEqFactoredSumcheckInstanceVerifierExt,
-    ZkSumcheckInstanceProverExt, ZkSumcheckInstanceVerifierExt,
+    ZkSumcheckFinalRelation, ZkSumcheckInstanceProverExt, ZkSumcheckInstanceVerifierExt,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
 };
 pub use types::{
-    EqFactoredSumcheckProof, EqFactoredSumcheckProofMasked, EqFactoredSumcheckProofShape,
-    EqFactoredUniPoly, FullUniPoly, SumcheckProof, SumcheckProofMasked, SumcheckProofShape,
+    EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, EqFactoredUniPoly, SumcheckProof,
+    SumcheckProofShape,
 };
+#[cfg(feature = "zk")]
+pub use types::{EqFactoredSumcheckProofMasked, FullUniPoly, SumcheckProofMasked};

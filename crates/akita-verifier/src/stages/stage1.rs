@@ -10,18 +10,15 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::sample_sparse_challenges;
 use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-#[cfg(not(feature = "zk"))]
-use akita_sumcheck::verify_eq_factored_sumcheck;
+#[cfg(feature = "zk")]
+use akita_r1cs::{ZkR1csLinearCombination, ZkR1csTerm, ZkR1csVariable, ZkRelationAccumulator};
 use akita_sumcheck::EqFactoredSumcheckInstanceVerifier;
+#[cfg(not(feature = "zk"))]
+use akita_sumcheck::EqFactoredSumcheckInstanceVerifierExt;
 #[cfg(feature = "zk")]
 use akita_sumcheck::EqFactoredUniPoly;
 #[cfg(feature = "zk")]
-use akita_sumcheck::ZkRelationAccumulator;
-#[cfg(feature = "zk")]
-use akita_sumcheck::{
-    ZkEqFactoredFinalRelation, ZkEqFactoredSumcheckInstanceVerifierExt, ZkR1csLinearCombination,
-    ZkR1csVariable,
-};
+use akita_sumcheck::{ZkEqFactoredFinalRelation, ZkEqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
 use akita_types::{
@@ -466,9 +463,8 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
                 |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
             );
             #[cfg(not(feature = "zk"))]
-            return verify_eq_factored_sumcheck::<E, _, E, _, _>(
+            return leaf_verifier.verify::<E, _, _>(
                 &proof.stages[0].sumcheck_proof,
-                &leaf_verifier,
                 transcript,
                 |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
             );
@@ -543,9 +539,8 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
             }
             #[cfg(not(feature = "zk"))]
             {
-                current_tau = verify_eq_factored_sumcheck::<E, _, E, _, _>(
+                current_tau = product_verifier.verify::<E, _, _>(
                     &stage_proof.sumcheck_proof,
-                    &product_verifier,
                     transcript,
                     |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
                 )?;
@@ -563,11 +558,9 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
                     current_claim_mask.constant += weight * mask.constant;
                     current_claim_mask
                         .terms
-                        .extend(mask.terms.iter().cloned().map(|term| {
-                            akita_sumcheck::ZkR1csTerm {
-                                variable: term.variable,
-                                coeff: weight * term.coeff,
-                            }
+                        .extend(mask.terms.iter().cloned().map(|term| ZkR1csTerm {
+                            variable: term.variable,
+                            coeff: weight * term.coeff,
                         }));
                 }
             }
@@ -594,12 +587,9 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
         }
         #[cfg(not(feature = "zk"))]
         {
-            verify_eq_factored_sumcheck::<E, _, E, _, _>(
-                &leaf_stage_proof.sumcheck_proof,
-                &leaf_verifier,
-                transcript,
-                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
-            )
+            leaf_verifier.verify::<E, _, _>(&leaf_stage_proof.sumcheck_proof, transcript, |tr| {
+                tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            })
         }
     }
 }

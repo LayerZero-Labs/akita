@@ -36,7 +36,7 @@ rand = "0.8"
 [features]
 default = []
 parallel = ["dep:rayon", "akita-field/parallel"]
-zk = ["akita-types/zk", "rand_core/getrandom"]
+zk = ["akita-sumcheck/zk", "akita-types/zk", "rand_core/getrandom"]
 
 [lints.rust]
 missing_docs = "warn"

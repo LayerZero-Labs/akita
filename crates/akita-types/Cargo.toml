@@ -26,7 +26,7 @@ tracing = "0.1"
 
 [features]
 default = []
-zk = []
+zk = ["akita-sumcheck/zk"]
 
 [dev-dependencies]
 rand = "0.8"

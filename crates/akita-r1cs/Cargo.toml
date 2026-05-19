@@ -1,5 +1,5 @@
 [package]
-name = "akita-verifier"
+name = "akita-r1cs"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
@@ -11,24 +11,17 @@ authors = [
     "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
 ]
 license = "Apache-2.0 OR MIT"
-description = "Verifier-facing API surface for the Akita polynomial commitment scheme"
+description = "Deferred R1CS relation helpers for Akita ZK verification"
 repository = "https://github.com/LayerZero-Labs/hachi"
 readme = "../../README.md"
 
 [dependencies]
-akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
-akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
-akita-r1cs = { version = "0.1.0", path = "../akita-r1cs", optional = true }
-akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
-akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
-akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
 
 [features]
 default = []
-parallel = ["akita-algebra/parallel", "akita-field/parallel"]
-zk = ["dep:akita-r1cs", "akita-r1cs/zk", "akita-sumcheck/zk", "akita-types/zk"]
+zk = ["akita-field/zk"]
 
 [lints.rust]
 missing_docs = "warn"

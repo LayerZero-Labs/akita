@@ -3,7 +3,7 @@
 
 use akita_field::Fp64;
 use akita_field::RandomSampling;
-use akita_sumcheck::{prove_sumcheck, SumcheckInstanceProver, UniPoly};
+use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, UniPoly};
 use akita_transcript::labels;
 use akita_transcript::{Blake2bTranscript, Transcript};
 use rand::rngs::StdRng;
@@ -72,8 +72,8 @@ fn prover_driver_produces_proof_that_verifier_replays() {
     let table: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
     let mut prover_inst = DenseTableSumcheck::new(table.clone());
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let (proof, r_vec, final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut prover_inst, &mut prover_t, |tr| {
+    let (proof, r_vec, final_claim) = prover_inst
+        .prove::<F, _, _>(&mut prover_t, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
         })
         .unwrap();

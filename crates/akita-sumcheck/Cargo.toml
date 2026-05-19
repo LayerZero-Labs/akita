@@ -18,13 +18,20 @@ readme = "../../README.md"
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-r1cs = { version = "0.1.0", path = "../akita-r1cs", optional = true }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 tracing = "0.1"
 
 [features]
 default = []
-zk = ["akita-algebra/zk", "akita-field/zk", "akita-transcript/zk"]
+zk = [
+    "dep:akita-r1cs",
+    "akita-algebra/zk",
+    "akita-field/zk",
+    "akita-r1cs/zk",
+    "akita-transcript/zk",
+]
 
 [lints.rust]
 missing_docs = "warn"
