@@ -12,6 +12,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::trace;
 use akita_algebra::ring::{mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_single_i8, NttSlotCache};
 use akita_algebra::{CyclotomicRing, EqPolynomial};
+use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
 use akita_transcript::labels::{
@@ -225,6 +226,77 @@ where
 /// both the inner `A · digits` and outer `B · t̂` accesses share one
 /// cache and we pay the NTT preprocessing cost once across the whole
 /// verify.
+/// Batched mirror of `derive_commitment_for_ring_slice` for the
+/// k chunks under the SHARED `chunk_lp` of a tiered routed-S level.
+///
+/// Runs ONE A-step over `k * num_blocks_chunk` blocks via
+/// [`mat_vec_mul_ntt_i8_dense`], then the per-chunk B-step in parallel
+/// across chunks. Mirrors the prover's `build_tiered_handle_material`
+/// chunk commit kernel exactly (book §5.4 lines 686-700 + §5.5 line 752:
+/// chunks share `(D, A, B)`; the per-chunk u-vectors are k separate
+/// outputs of the SAME B matrix applied to k separate digit columns).
+fn derive_batched_chunk_commitments<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    chunk_inputs: &[Vec<CyclotomicRing<F, D>>],
+    chunk_lp: &LevelParams,
+    ntt_shared: &NttSlotCache<D>,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+{
+    let num_chunks = chunk_inputs.len();
+    if num_chunks == 0 {
+        return Ok(Vec::new());
+    }
+    let stride = setup.expanded.seed.max_stride.max(1);
+    let n_a = chunk_lp.a_key.row_len();
+    let n_b = chunk_lp.b_key.row_len();
+
+    let mut block_slices: Vec<&[CyclotomicRing<F, D>]> =
+        Vec::with_capacity(num_chunks * chunk_lp.num_blocks);
+    for chunk in chunk_inputs {
+        for block_idx in 0..chunk_lp.num_blocks {
+            let start = block_idx * chunk_lp.block_len;
+            let slice: &[CyclotomicRing<F, D>] = if start >= chunk.len() {
+                &[]
+            } else {
+                let end = (start + chunk_lp.block_len).min(chunk.len());
+                &chunk[start..end]
+            };
+            block_slices.push(slice);
+        }
+    }
+    let t_rows_all = mat_vec_mul_ntt_i8_dense(
+        ntt_shared,
+        n_a,
+        stride,
+        &block_slices,
+        chunk_lp.num_digits_commit,
+        chunk_lp.log_basis,
+    );
+
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let open_params =
+        BalancedDecomposePow2I8Params::new(chunk_lp.num_digits_open, chunk_lp.log_basis, q);
+    let outputs: Vec<Vec<CyclotomicRing<F, D>>> = cfg_into_iter!(0..num_chunks)
+        .map(|chunk_idx| {
+            let t_start = chunk_idx * chunk_lp.num_blocks;
+            let t_for_chunk = &t_rows_all[t_start..t_start + chunk_lp.num_blocks];
+            let mut flat_digits =
+                Vec::with_capacity(chunk_lp.num_blocks * n_a * chunk_lp.num_digits_open);
+            for t_for_block in t_for_chunk {
+                for t in t_for_block {
+                    let mut digits = vec![[0i8; D]; chunk_lp.num_digits_open];
+                    t.balanced_decompose_pow2_i8_into_with_params(&mut digits, &open_params);
+                    flat_digits.extend_from_slice(&digits);
+                }
+            }
+            mat_vec_mul_ntt_single_i8(ntt_shared, n_b, stride, &flat_digits)
+        })
+        .collect();
+    Ok(outputs)
+}
+
 fn derive_commitment_for_ring_slice<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     rings: &[CyclotomicRing<F, D>],
@@ -610,14 +682,16 @@ where
     s_rings.resize(n_s, CyclotomicRing::<F, D>::zero());
 
     let ntt_shared = setup.ntt_shared_get_or_init::<D>()?;
-    let mut chunk_b_commitments: Vec<Vec<CyclotomicRing<F, D>>> =
-        Vec::with_capacity(tier.num_chunks);
-    for indices in &chunk_indices {
-        let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
-        let u =
-            derive_commitment_for_ring_slice::<F, D>(setup, &chunk_slice, chunk_lp, &ntt_shared)?;
-        chunk_b_commitments.push(u);
-    }
+
+    // Mirror the prover's `build_tiered_handle_material`: commit the
+    // k chunks under the SHARED `chunk_lp` via a single batched A-step
+    // over `k * num_blocks_chunk` blocks (book §5.4 lines 686-700).
+    let chunk_ring_inputs: Vec<Vec<CyclotomicRing<F, D>>> = chunk_indices
+        .iter()
+        .map(|indices| indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>())
+        .collect();
+    let chunk_b_commitments =
+        derive_batched_chunk_commitments::<F, D>(setup, &chunk_ring_inputs, chunk_lp, &ntt_shared)?;
 
     let meta_len = chunk_b_commitments.iter().map(Vec::len).sum::<usize>();
     if meta_len == 0 {

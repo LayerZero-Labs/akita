@@ -1,7 +1,7 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
 use crate::kernels::crt_ntt::NttSlotCache;
-use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
+use crate::kernels::linear::{mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_single_i8};
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
     RingSwitchOutput,
@@ -388,7 +388,7 @@ where
 /// lockstep (book §5.4 lines 686-754).
 fn build_tiered_handle_material<F, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
-    _ntt_shared: &NttSlotCache<D>,
+    ntt_shared: &NttSlotCache<D>,
     row_count: usize,
     col_count: usize,
     chunk_lp: &LevelParams,
@@ -454,37 +454,94 @@ where
     }
     s_rings.resize(s_total_rings, CyclotomicRing::<F, D>::zero());
 
-    let mut chunk_polys: Vec<FlatRingVec<F>> = Vec::with_capacity(tier.num_chunks);
+    // Materialize the k chunk inputs once, then commit them under the
+    // SHARED `chunk_lp` via a single batched A-step over
+    // `k * num_blocks_chunk` blocks (book §5.4 lines 686-700: chunks
+    // share the per-chunk `(D, A, B)` matrices). The per-chunk
+    // sequential `commit_dense_s_handle_direct` loop would otherwise
+    // pay k× the NTT-cache load and column-tile reduce overhead.
+    let chunk_ring_inputs: Vec<Vec<CyclotomicRing<F, D>>> = chunk_indices
+        .iter()
+        .map(|indices| indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>())
+        .collect();
+    let chunk_polys: Vec<FlatRingVec<F>> = chunk_ring_inputs
+        .iter()
+        .map(|chunk| FlatRingVec::from_ring_elems::<D>(chunk))
+        .collect();
+
+    let n_a = chunk_lp.a_key.row_len();
+    let n_b = chunk_lp.b_key.row_len();
+    let mut block_slices: Vec<&[CyclotomicRing<F, D>]> =
+        Vec::with_capacity(tier.num_chunks * chunk_lp.num_blocks);
+    for chunk_input in &chunk_ring_inputs {
+        for block_idx in 0..chunk_lp.num_blocks {
+            let start = block_idx * chunk_lp.block_len;
+            let slice: &[CyclotomicRing<F, D>] = if start >= chunk_input.len() {
+                &[]
+            } else {
+                let end = (start + chunk_lp.block_len).min(chunk_input.len());
+                &chunk_input[start..end]
+            };
+            block_slices.push(slice);
+        }
+    }
+    let a_step_t = Instant::now();
+    let t_rows_all = mat_vec_mul_ntt_i8_dense(
+        ntt_shared,
+        n_a,
+        stride,
+        &block_slices,
+        chunk_lp.num_digits_commit,
+        chunk_lp.log_basis,
+    );
+    tracing::debug!(
+        "[tiered_material] batched A-step over {} blocks done after {:?}",
+        block_slices.len(),
+        a_step_t.elapsed()
+    );
+
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let open_params =
+        BalancedDecomposePow2I8Params::new(chunk_lp.num_digits_open, chunk_lp.log_basis, q);
+    let b_step_t = Instant::now();
+    let chunk_outputs: Vec<(Vec<CyclotomicRing<F, D>>, RecursiveCommitmentHintCache<F>)> =
+        cfg_into_iter!(0..tier.num_chunks)
+            .map(|chunk_idx| -> Result<_, AkitaError> {
+                let t_start = chunk_idx * chunk_lp.num_blocks;
+                let t_for_chunk = &t_rows_all[t_start..t_start + chunk_lp.num_blocks];
+                let mut t_hat_blocks: Vec<Vec<[i8; D]>> = Vec::with_capacity(chunk_lp.num_blocks);
+                let mut flat_digits =
+                    Vec::with_capacity(chunk_lp.num_blocks * n_a * chunk_lp.num_digits_open);
+                for t_for_block in t_for_chunk {
+                    let mut block_digits = vec![[0i8; D]; n_a * chunk_lp.num_digits_open];
+                    for (a_idx, t) in t_for_block.iter().enumerate() {
+                        let dst = &mut block_digits[a_idx * chunk_lp.num_digits_open
+                            ..(a_idx + 1) * chunk_lp.num_digits_open];
+                        t.balanced_decompose_pow2_i8_into_with_params(dst, &open_params);
+                    }
+                    flat_digits.extend_from_slice(&block_digits);
+                    t_hat_blocks.push(block_digits);
+                }
+                let u = mat_vec_mul_ntt_single_i8(ntt_shared, n_b, stride, &flat_digits);
+                let t_hat = FlatDigitBlocks::from_blocks(t_hat_blocks);
+                let hint = AkitaCommitmentHint::singleton_with_t(t_hat, t_for_chunk.to_vec());
+                let cache = RecursiveCommitmentHintCache::from_typed(hint)?;
+                Ok((u, cache))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+    tracing::debug!(
+        "[tiered_material] per-chunk B-step (×{}) done after {:?}",
+        tier.num_chunks,
+        b_step_t.elapsed()
+    );
+
     let mut chunk_commitments: Vec<FlatRingVec<F>> = Vec::with_capacity(tier.num_chunks);
-    let mut chunk_hints: Vec<RecursiveCommitmentHintCache<F>> = Vec::with_capacity(tier.num_chunks);
     let mut chunk_commitments_typed: Vec<Vec<CyclotomicRing<F, D>>> =
         Vec::with_capacity(tier.num_chunks);
-    for (chunk_idx, indices) in chunk_indices.iter().enumerate() {
-        let t = Instant::now();
-        tracing::debug!(
-            "[tiered_material] chunk {}/{} build start (chunk_len={})",
-            chunk_idx + 1,
-            tier.num_chunks,
-            indices.len()
-        );
-        let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
-        tracing::debug!(
-            "[tiered_material] chunk {}/{} sliced after {:?}",
-            chunk_idx + 1,
-            tier.num_chunks,
-            t.elapsed()
-        );
-        let (u_flat, hint) =
-            commit_dense_s_handle_direct::<F, D>(expanded, &chunk_slice, chunk_lp)?;
-        tracing::debug!(
-            "[tiered_material] chunk {}/{} committed after {:?}",
-            chunk_idx + 1,
-            tier.num_chunks,
-            t.elapsed()
-        );
-        chunk_polys.push(FlatRingVec::from_ring_elems::<D>(&chunk_slice));
-        chunk_commitments_typed.push(u_flat.as_ring_slice::<D>()?.to_vec());
-        chunk_commitments.push(u_flat);
+    let mut chunk_hints: Vec<RecursiveCommitmentHintCache<F>> = Vec::with_capacity(tier.num_chunks);
+    for (u, hint) in chunk_outputs {
+        chunk_commitments.push(FlatRingVec::from_ring_elems::<D>(&u));
+        chunk_commitments_typed.push(u);
         chunk_hints.push(hint);
     }
 
