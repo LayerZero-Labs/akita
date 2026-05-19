@@ -367,6 +367,12 @@ impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
         self.num_cols
     }
 
+    /// Underlying flat field coefficients (`num_rows * num_cols * D` elements).
+    #[inline]
+    pub fn coefficients(&self) -> &[F] {
+        self.data
+    }
+
     /// Borrow a single row as a slice of ring elements (zero-copy).
     ///
     /// # Panics

@@ -1,10 +1,12 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
+use super::{TieredSetupCacheKey, TieredSetupCommitments};
 use crate::{AkitaScheduleLookupKey, FlatMatrix, Schedule};
 use akita_field::FieldCore;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use std::any::Any;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -48,12 +50,20 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 /// [`AkitaScheduleLookupKey`] so that repeated `batched_verify` calls don't
 /// each re-run the planner DP search. The cache is shared via an inner
 /// `Arc` and excluded from serialization, `Valid` checks, and equality.
+///
+/// `tiered_s_cache` memoizes [`TieredSetupCommitments`] derived from the
+/// public shared matrix for tiered setup-claim reduction. Each setup is
+/// used at a single ring dimension `D` in practice; entries are stored as
+/// `Arc<dyn Any + Send + Sync>` and downcast at
+/// [`Self::tiered_s_cache_get`] using the caller's `const D`.
 #[derive(Debug, Clone)]
 pub struct AkitaVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Schedule cache shared across `batched_verify` calls.
     pub schedule_cache: Arc<Mutex<HashMap<AkitaScheduleLookupKey, Schedule>>>,
+    /// Tiered routed-`S` B-side commitment cache (opaque per `D`).
+    pub tiered_s_cache: Arc<Mutex<HashMap<TieredSetupCacheKey, Arc<dyn Any + Send + Sync>>>>,
 }
 
 impl<F: FieldCore> AkitaVerifierSetup<F> {
@@ -64,7 +74,57 @@ impl<F: FieldCore> AkitaVerifierSetup<F> {
         Self {
             expanded,
             schedule_cache: Arc::new(Mutex::new(HashMap::new())),
+            tiered_s_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Get-or-derive a cached tiered setup commitment bundle.
+    ///
+    /// Soundness contract (book §5.4 "preprocessed shared-matrix commitment
+    /// $C_S$"): the only way to populate the cache is to supply a derivation
+    /// closure that reads from `setup.expanded.shared_matrix`. There is no
+    /// public setter for cache entries, so external callers cannot inject
+    /// arbitrary commitments that the verifier would later treat as the
+    /// preprocessed $C_S$. Mirrors
+    /// [`crate::AkitaProverSetup::tiered_s_cache_get_or_init`] but is
+    /// per-`(tier, layout)`-keyed because the verifier may see multiple
+    /// tier shapes within one schedule cascade.
+    ///
+    /// A poisoned lock falls back to the freshly-derived value without
+    /// caching it; the cache is purely an optimization.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever `derive` returns on a cache miss.
+    pub fn tiered_s_cache_get_or_init<E, const D: usize>(
+        &self,
+        key: TieredSetupCacheKey,
+        derive: impl FnOnce() -> Result<TieredSetupCommitments<F, D>, E>,
+    ) -> Result<Arc<TieredSetupCommitments<F, D>>, E>
+    where
+        F: 'static,
+    {
+        if let Ok(guard) = self.tiered_s_cache.lock() {
+            if let Some(entry) = guard.get(&key) {
+                if let Ok(cached) = entry.clone().downcast::<TieredSetupCommitments<F, D>>() {
+                    return Ok(cached);
+                }
+            }
+        }
+        let derived = Arc::new(derive()?);
+        if let Ok(mut guard) = self.tiered_s_cache.lock() {
+            // Concurrent race: another caller may have populated the slot
+            // between the get above and the lock below. Prefer their value
+            // if the downcast succeeds, otherwise overwrite (different `D`
+            // under the same key is a programming error but recover safely).
+            if let Some(entry) = guard.get(&key) {
+                if let Ok(winner) = entry.clone().downcast::<TieredSetupCommitments<F, D>>() {
+                    return Ok(winner);
+                }
+            }
+            guard.insert(key, derived.clone());
+        }
+        Ok(derived)
     }
 
     /// Look up a cached schedule for `key`. Returns a clone of the stored

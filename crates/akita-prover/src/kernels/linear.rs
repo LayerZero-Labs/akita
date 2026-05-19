@@ -13,10 +13,10 @@ use akita_field::{CanonicalField, FieldCore, HalvingField};
 use std::array::from_fn;
 use std::mem::size_of;
 
-use crate::kernels::crt_ntt::NttSlotCache;
-#[cfg(test)]
-use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 use crate::{CenteredCoeff, CenteredInfNorm};
+use akita_algebra::ring::NttSlotCache;
+#[cfg(test)]
+use akita_algebra::ring::{select_crt_ntt_params, ProtocolCrtNttParams};
 #[cfg(test)]
 use akita_field::AkitaError;
 

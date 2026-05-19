@@ -27,6 +27,7 @@ pub(super) type DenseCfg = fp128::D128Full;
 pub(super) const DENSE_D: usize = DenseCfg::D;
 
 static INIT_RAYON: Once = Once::new();
+static INIT_TRACING: Once = Once::new();
 
 pub(super) fn init_rayon_pool() {
     INIT_RAYON.call_once(|| {
@@ -35,6 +36,24 @@ pub(super) fn init_rayon_pool() {
             .stack_size(STACK_SIZE)
             .build_global()
             .ok();
+    });
+    init_tracing_from_env();
+}
+
+/// Initialise a stderr tracing subscriber if `AKITA_TEST_LOG` is set
+/// (e.g. `AKITA_TEST_LOG=akita_verifier=debug`). Idempotent.
+fn init_tracing_from_env() {
+    if std::env::var_os("AKITA_TEST_LOG").is_none() {
+        return;
+    }
+    INIT_TRACING.call_once(|| {
+        use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+        let filter =
+            EnvFilter::try_from_env("AKITA_TEST_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+        let _ = tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt::layer().with_writer(std::io::stderr).with_target(true))
+            .try_init();
     });
 }
 

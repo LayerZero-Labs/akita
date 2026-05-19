@@ -30,7 +30,9 @@ pub use stage1::{
     stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
 };
-pub use tiered_setup::{TieredSetupCommitments, TieredSetupParams, TieredSetupProverExtras};
+pub use tiered_setup::{
+    TieredSetupCacheKey, TieredSetupCommitments, TieredSetupParams, TieredSetupProverExtras,
+};
 
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;

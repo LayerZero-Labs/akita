@@ -20,7 +20,7 @@
 //! Derivation lives in `akita-prover::api::tiered_setup`; this module
 //! defines the types and their basic invariants only.
 
-use crate::{AkitaCommitmentHint, FlatRingVec};
+use crate::{AkitaCommitmentHint, FlatRingVec, LevelParams};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
 
@@ -118,6 +118,85 @@ impl TieredSetupParams {
 impl Default for TieredSetupParams {
     fn default() -> Self {
         Self::PRODUCTION
+    }
+}
+
+/// Cache key for verifier-side tiered `S` B-commitment material.
+///
+/// Captures the tier shape and both per-chunk and meta [`LevelParams`]
+/// layouts without hashing `LevelParams` itself (some fields are not
+/// `Hash`). Values must match the arguments passed to
+/// [`crate::AkitaVerifierSetup::tiered_s_cache_get_or_init`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TieredSetupCacheKey {
+    /// Tiered commitment parameters (`f`, `k`).
+    pub tier: TieredSetupParams,
+    /// Shared setup matrix row count.
+    pub row_count: usize,
+    /// Shared setup matrix column count.
+    pub col_count: usize,
+    /// Ring dimension `D` at derivation time.
+    pub ring_dimension: usize,
+    /// Chunk-tier gadget base-2 log.
+    pub chunk_log_basis: u32,
+    /// Chunk-tier commit digit depth.
+    pub chunk_num_digits_commit: usize,
+    /// Chunk-tier open digit depth.
+    pub chunk_num_digits_open: usize,
+    /// Chunk-tier block count.
+    pub chunk_num_blocks: usize,
+    /// Chunk-tier elements per block.
+    pub chunk_block_len: usize,
+    /// Chunk-tier `B` row count.
+    pub chunk_b_row_len: usize,
+    /// Chunk-tier `A` row count.
+    pub chunk_a_row_len: usize,
+    /// Meta-tier gadget base-2 log.
+    pub meta_log_basis: u32,
+    /// Meta-tier commit digit depth.
+    pub meta_num_digits_commit: usize,
+    /// Meta-tier open digit depth.
+    pub meta_num_digits_open: usize,
+    /// Meta-tier block count.
+    pub meta_num_blocks: usize,
+    /// Meta-tier elements per block.
+    pub meta_block_len: usize,
+    /// Meta-tier `B` row count.
+    pub meta_b_row_len: usize,
+    /// Meta-tier `A` row count.
+    pub meta_a_row_len: usize,
+}
+
+impl TieredSetupCacheKey {
+    /// Build a cache key from tier metadata and chunk/meta level params.
+    #[must_use]
+    pub fn from_lp(
+        tier: TieredSetupParams,
+        row_count: usize,
+        col_count: usize,
+        chunk_lp: &LevelParams,
+        meta_lp: &LevelParams,
+    ) -> Self {
+        Self {
+            tier,
+            row_count,
+            col_count,
+            ring_dimension: chunk_lp.ring_dimension,
+            chunk_log_basis: chunk_lp.log_basis,
+            chunk_num_digits_commit: chunk_lp.num_digits_commit,
+            chunk_num_digits_open: chunk_lp.num_digits_open,
+            chunk_num_blocks: chunk_lp.num_blocks,
+            chunk_block_len: chunk_lp.block_len,
+            chunk_b_row_len: chunk_lp.b_key.row_len(),
+            chunk_a_row_len: chunk_lp.a_key.row_len(),
+            meta_log_basis: meta_lp.log_basis,
+            meta_num_digits_commit: meta_lp.num_digits_commit,
+            meta_num_digits_open: meta_lp.num_digits_open,
+            meta_num_blocks: meta_lp.num_blocks,
+            meta_block_len: meta_lp.block_len,
+            meta_b_row_len: meta_lp.b_key.row_len(),
+            meta_a_row_len: meta_lp.a_key.row_len(),
+        }
     }
 }
 

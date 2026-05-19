@@ -50,8 +50,8 @@ pub use proof::{
     CommittedOpenings, DirectWitnessProof, DirectWitnessShape, DummyProof, FlatDigitBlockIter,
     FlatDigitBlocks, FlatRingVec, LevelProofShape, MultiPointBatchShape, OpeningPoints,
     PackedDigits, PreparedRootOpeningPoint, PublicMatrixSeed, RecursiveOpeningClaim,
-    RingCommitment, RingSliceSerializer, SetupClaimReductionPayload, TieredSetupCommitments,
-    TieredSetupParams, TieredSetupProverExtras, VerifierClaims,
+    RingCommitment, RingSliceSerializer, SetupClaimReductionPayload, TieredSetupCacheKey,
+    TieredSetupCommitments, TieredSetupParams, TieredSetupProverExtras, VerifierClaims,
 };
 pub use schedule::{
     checked_num_claims_from_group_sizes, detect_field_modulus, exact_planned_level_execution,

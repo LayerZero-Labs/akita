@@ -10,6 +10,9 @@ use crate::{
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::trace;
+use akita_algebra::ring::{
+    build_ntt_slot, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_single_i8, NttSlotCache,
+};
 use akita_algebra::{CyclotomicRing, EqPolynomial};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
@@ -61,8 +64,10 @@ use akita_types::{
     AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof,
     AkitaVerifierSetup, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, GroupSpec,
     LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint, RecursiveOpeningClaim,
-    RingCommitment, RingOpeningPoint, Schedule, Step, TieredSetupCommitments, TieredSetupParams,
+    RingCommitment, RingOpeningPoint, Schedule, Step, TieredSetupCacheKey, TieredSetupCommitments,
+    TieredSetupParams,
 };
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Verifier state carried between recursive fold levels.
@@ -206,7 +211,8 @@ where
 /// Mirrors the prover's `commit_dense_s_handle` in
 /// `akita-prover/src/protocol/flow.rs`: digit-decompose the input ring
 /// elements, recompose `t_rows` via the inner Ajtai matrix `A`, then
-/// digit-decompose `t_rows` and form `u = B · t̂`.
+/// digit-decompose `t_rows` and form `u = B · t̂`, using the shared
+/// CRT+NTT mat-vec kernels instead of naive ring multiplication.
 ///
 /// Used by both [`derive_setup_commitment_flat`] (which builds its
 /// input from a shared-matrix sub-view) and
@@ -214,11 +220,10 @@ where
 /// inputs from per-chunk slices of the shared matrix and the
 /// concatenated chunk-commits for the meta tier). Both must use this
 /// helper so the verifier's material is bit-identical to the prover's.
-fn derive_commitment_for_ring_slice<F, const D: usize>(
+fn lp_ntt_slots<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
-    rings: &[CyclotomicRing<F, D>],
     s_lp: &LevelParams,
-) -> Vec<CyclotomicRing<F, D>>
+) -> Result<(NttSlotCache<D>, NttSlotCache<D>), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
@@ -231,46 +236,59 @@ where
         .expanded
         .shared_matrix
         .ring_view::<D>(s_lp.b_key.row_len(), stride);
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let commit_params =
-        BalancedDecomposePow2I8Params::new(s_lp.num_digits_commit, s_lp.log_basis, q);
-    let open_params = BalancedDecomposePow2I8Params::new(s_lp.num_digits_open, s_lp.log_basis, q);
-    let mut t_rows =
-        vec![vec![CyclotomicRing::<F, D>::zero(); s_lp.a_key.row_len()]; s_lp.num_blocks];
-    for (block_idx, t_for_block) in t_rows.iter_mut().enumerate() {
-        for elem_idx in 0..s_lp.block_len {
-            let global = block_idx * s_lp.block_len + elem_idx;
-            let Some(value) = rings.get(global) else {
-                continue;
-            };
-            let mut digits = vec![[0i8; D]; s_lp.num_digits_commit];
-            value.balanced_decompose_pow2_i8_into_with_params(&mut digits, &commit_params);
-            for (digit_idx, digit) in digits.iter().enumerate() {
-                let digit_ring = CyclotomicRing::from_coefficients(digit.map(F::from_i8));
-                let matrix_col = elem_idx * s_lp.num_digits_commit + digit_idx;
-                for (a_idx, acc) in t_for_block.iter_mut().enumerate() {
-                    *acc += a_view.row(a_idx)[matrix_col] * digit_ring;
-                }
+    let ntt_a = build_ntt_slot(a_view.coefficients(), a_view.num_rows(), a_view.num_cols())?;
+    let ntt_b = build_ntt_slot(b_view.coefficients(), b_view.num_rows(), b_view.num_cols())?;
+    Ok((ntt_a, ntt_b))
+}
+
+fn derive_commitment_for_ring_slice<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    rings: &[CyclotomicRing<F, D>],
+    s_lp: &LevelParams,
+    ntt_a: &NttSlotCache<D>,
+    ntt_b: &NttSlotCache<D>,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+{
+    let stride = setup.expanded.seed.max_stride.max(1);
+
+    let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..s_lp.num_blocks)
+        .map(|block_idx| {
+            let start = block_idx * s_lp.block_len;
+            if start >= rings.len() {
+                &[] as &[CyclotomicRing<F, D>]
+            } else {
+                &rings[start..(start + s_lp.block_len).min(rings.len())]
             }
-        }
-    }
-    let mut u = vec![CyclotomicRing::<F, D>::zero(); s_lp.b_key.row_len()];
-    for (block_idx, t_for_block) in t_rows.iter().enumerate() {
-        for (a_idx, t) in t_for_block.iter().enumerate() {
+        })
+        .collect();
+    let t_rows = mat_vec_mul_ntt_i8_dense(
+        ntt_a,
+        s_lp.a_key.row_len(),
+        stride,
+        &block_slices,
+        s_lp.num_digits_commit,
+        s_lp.log_basis,
+    );
+
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let open_params = BalancedDecomposePow2I8Params::new(s_lp.num_digits_open, s_lp.log_basis, q);
+    let mut flat_digits =
+        Vec::with_capacity(s_lp.num_blocks * s_lp.a_key.row_len() * s_lp.num_digits_open);
+    for t_for_block in &t_rows {
+        for t in t_for_block {
             let mut digits = vec![[0i8; D]; s_lp.num_digits_open];
             t.balanced_decompose_pow2_i8_into_with_params(&mut digits, &open_params);
-            for (digit_idx, digit) in digits.iter().enumerate() {
-                let digit_ring = CyclotomicRing::from_coefficients(digit.map(F::from_i8));
-                let matrix_col = block_idx * s_lp.a_key.row_len() * s_lp.num_digits_open
-                    + a_idx * s_lp.num_digits_open
-                    + digit_idx;
-                for (b_idx, acc) in u.iter_mut().enumerate() {
-                    *acc += b_view.row(b_idx)[matrix_col] * digit_ring;
-                }
-            }
+            flat_digits.extend_from_slice(&digits);
         }
     }
-    u
+    Ok(mat_vec_mul_ntt_single_i8(
+        ntt_b,
+        s_lp.b_key.row_len(),
+        stride,
+        &flat_digits,
+    ))
 }
 
 /// Compute the meta-tier `LevelParams` from the per-chunk LP and tier
@@ -403,7 +421,7 @@ where
         setup_opening_point_from_r_setup(r_setup, row_bits, col_bits, coeff_bits, &full_s_lp)?;
     let chunk_lp = tiered_setup_group_lp(next_level_params, setup_field_len, tier)?;
     let meta_lp = meta_lp_from_chunks(next_level_params, &chunk_lp, tier)?;
-    let material = derive_tiered_setup_material_for_verifier::<F, D>(
+    let material = tiered_setup_material_for_verifier::<F, D>(
         setup, row_count, col_count, &chunk_lp, &meta_lp, tier,
     )?;
     let chunk_w_len = chunk_lp.num_blocks * chunk_lp.block_len * D;
@@ -514,9 +532,9 @@ where
 /// then commit the concatenated chunk-commits (padded to next pow2)
 /// under `meta_lp`.
 ///
-/// Re-derived from `setup.expanded.shared_matrix` on every call;
-/// soundness anchors on the deterministic derivation from the public
-/// matrix, not on any cached state.
+/// Derive tiered setup commitments, consulting [`AkitaVerifierSetup::tiered_s_cache`]
+/// first. Soundness anchors on deterministic derivation from the public
+/// shared matrix bound in `setup.expanded`.
 ///
 /// # Errors
 ///
@@ -525,6 +543,42 @@ where
 /// returns an error if a previously-cached entry was populated under
 /// a different ring dimension `D`.
 pub fn derive_tiered_setup_material_for_verifier<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    row_count: usize,
+    col_count: usize,
+    chunk_lp: &LevelParams,
+    meta_lp: &LevelParams,
+    tier: TieredSetupParams,
+) -> Result<TieredSetupCommitments<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + 'static,
+{
+    Ok((*tiered_setup_material_for_verifier::<F, D>(
+        setup, row_count, col_count, chunk_lp, meta_lp, tier,
+    )?)
+    .clone())
+}
+
+fn tiered_setup_material_for_verifier<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    row_count: usize,
+    col_count: usize,
+    chunk_lp: &LevelParams,
+    meta_lp: &LevelParams,
+    tier: TieredSetupParams,
+) -> Result<Arc<TieredSetupCommitments<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + 'static,
+{
+    let key = TieredSetupCacheKey::from_lp(tier, row_count, col_count, chunk_lp, meta_lp);
+    setup.tiered_s_cache_get_or_init::<AkitaError, D>(key, || {
+        derive_tiered_setup_material_for_verifier_uncached::<F, D>(
+            setup, row_count, col_count, chunk_lp, meta_lp, tier,
+        )
+    })
+}
+
+fn derive_tiered_setup_material_for_verifier_uncached<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     row_count: usize,
     col_count: usize,
@@ -571,11 +625,18 @@ where
     }
     s_rings.resize(n_s, CyclotomicRing::<F, D>::zero());
 
+    let (chunk_ntt_a, chunk_ntt_b) = lp_ntt_slots::<F, D>(setup, chunk_lp)?;
     let mut chunk_b_commitments: Vec<Vec<CyclotomicRing<F, D>>> =
         Vec::with_capacity(tier.num_chunks);
     for indices in &chunk_indices {
         let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
-        let u = derive_commitment_for_ring_slice::<F, D>(setup, &chunk_slice, chunk_lp);
+        let u = derive_commitment_for_ring_slice::<F, D>(
+            setup,
+            &chunk_slice,
+            chunk_lp,
+            &chunk_ntt_a,
+            &chunk_ntt_b,
+        )?;
         chunk_b_commitments.push(u);
     }
 
@@ -591,7 +652,14 @@ where
         meta_input.extend_from_slice(chunk);
     }
     meta_input.resize(next_pow2, CyclotomicRing::<F, D>::zero());
-    let meta_b_commitment = derive_commitment_for_ring_slice::<F, D>(setup, &meta_input, meta_lp);
+    let (meta_ntt_a, meta_ntt_b) = lp_ntt_slots::<F, D>(setup, meta_lp)?;
+    let meta_b_commitment = derive_commitment_for_ring_slice::<F, D>(
+        setup,
+        &meta_input,
+        meta_lp,
+        &meta_ntt_a,
+        &meta_ntt_b,
+    )?;
 
     let commitments = TieredSetupCommitments {
         chunk_b_commitments,
