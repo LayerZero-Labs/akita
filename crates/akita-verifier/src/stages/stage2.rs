@@ -166,7 +166,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
 
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + akita_field::RandomSampling,
     E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
 {
     #[allow(clippy::too_many_arguments)]
@@ -329,7 +329,7 @@ where
 
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + akita_field::RandomSampling,
     E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
 {
     fn num_rounds(&self) -> usize {

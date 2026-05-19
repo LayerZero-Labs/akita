@@ -84,6 +84,23 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) num_public_rows: usize,
     pub(crate) gamma: Vec<F>,
     pub(crate) claim_to_point: Vec<usize>,
+    // Tiered root-commit fields (`specs/tiered_commit.md` §3 + §9).
+    // For legacy LevelParams (`split_factor == 1`), `is_tiered` is
+    // false and the rest of these fields are zero / empty.
+    /// `true` iff `lp.is_tiered_root()` (i.e. `split_factor > 1`).
+    pub(crate) is_tiered: bool,
+    /// Tiering factor `f`. `1` for legacy.
+    pub(crate) split_factor: usize,
+    /// Outer gadget log-basis (`2..=6`). `0` for legacy.
+    pub(crate) outer_log_basis: u32,
+    /// `δ_outer`. `0` for legacy.
+    pub(crate) num_digits_outer: usize,
+    /// SIS rank of `F`. `0` for legacy.
+    pub(crate) n_f: usize,
+    /// Per-chunk `B'` width = `lp.b_prime_width()`. Equals
+    /// `n_a · depth_open · num_blocks / split_factor` in the
+    /// max-group-polys=1 case the planner currently emits.
+    pub(crate) b_prime_width: usize,
 }
 
 /// Replay the verifier half of ring switching.
@@ -297,6 +314,7 @@ where
         .map(|(&point_idx, &poly_idx)| (point_idx, poly_idx))
         .collect();
 
+    let is_tiered = lp.is_tiered_root();
     Ok(RingSwitchDeferredRowEval {
         c_alphas,
         eq_tau1,
@@ -327,6 +345,12 @@ where
         num_public_rows,
         gamma: gamma.to_vec(),
         claim_to_point: claim_to_point.to_vec(),
+        is_tiered,
+        split_factor: if is_tiered { lp.split_factor } else { 1 },
+        outer_log_basis: if is_tiered { lp.outer_log_basis } else { 0 },
+        num_digits_outer: if is_tiered { lp.num_digits_outer } else { 0 },
+        n_f: if is_tiered { lp.f_key.row_len() } else { 0 },
+        b_prime_width: if is_tiered { lp.b_prime_width() } else { 0 },
     })
 }
 
@@ -353,7 +377,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         alpha: E,
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: FieldCore + CanonicalField + akita_field::RandomSampling,
         E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     {
         if ring_multiplier_points.len() != opening_points.len() {
@@ -364,6 +388,15 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let t_total_blocks = self.num_blocks * self.num_t_vectors;
         let t_len = self.depth_open * self.n_a * t_total_blocks;
         let z_len = self.depth_fold * self.depth_commit * self.num_points * self.block_len;
+        // Tiered uhat segment: present only when `is_tiered`, sized
+        // `num_points · n_b' · split_factor · num_digits_outer`. Placed
+        // immediately after `t_hat` per spec §9, before any blinding
+        // segments and before `z_hat` in the `z_first=false` ordering.
+        let uhat_len = if self.is_tiered {
+            self.num_points * self.n_b * self.split_factor * self.num_digits_outer
+        } else {
+            0usize
+        };
         #[cfg(feature = "zk")]
         let b_blinding_segment_len = self.b_blinding_segment_len;
         #[cfg(not(feature = "zk"))]
@@ -376,11 +409,13 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let offset_z = if self.z_first {
             0
         } else {
-            w_len + t_len + b_blinding_segment_len + d_blinding_segment_len
+            w_len + t_len + uhat_len + b_blinding_segment_len + d_blinding_segment_len
         };
         let offset_w = if self.z_first { z_len } else { 0 };
         let offset_t = if self.z_first { z_len + w_len } else { w_len };
-        let offset_r = w_len + d_blinding_segment_len + t_len + b_blinding_segment_len + z_len;
+        let offset_uhat = offset_t + t_len;
+        let offset_r =
+            w_len + d_blinding_segment_len + t_len + uhat_len + b_blinding_segment_len + z_len;
 
         // ----- Shared precomputes --------------------------------------------
         let alpha_pows = scalar_powers(alpha, D);
@@ -591,6 +626,89 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             + z_structured_contribution
             + setup_contribution
             + r_contribution;
+
+        // Tiered tier-1 + F contribution. `compute_setup_contribution`
+        // above skips the legacy T-half when `prepared.is_tiered`, so
+        // we add the replacement contribution here. Per spec §3, this
+        // contribution covers the `(tier1 + F) × num_points` row block
+        // of M.
+        if self.is_tiered {
+            use super::slice_mle::tier1_reference::{
+                compute_tier1_and_f_contribution_reference, BPhysicalLayout, Tier1AndFInputs,
+            };
+            use crate::protocol::tier1_f_matrix::derive_tier1_f_matrix_flat;
+
+            let n_b_prime = self.n_b;
+            let chunk_width = self.b_prime_width;
+            let n_f = self.n_f;
+            let f_width = n_b_prime * self.split_factor * self.num_digits_outer;
+
+            // B' view: leading `chunk_width` columns of the shared B
+            // matrix, with `n_b_prime` rows.
+            let b_prime_view = setup.shared_matrix.ring_view::<D>(n_b_prime, chunk_width);
+
+            // F is derived deterministically from the same public
+            // matrix seed using the domain-separated label
+            // `b"tier1-f"`. Mirrors the prover-side derivation in
+            // `crates/akita-prover/src/kernels/matrix.rs` and commit
+            // `f39615bf`. We rebuild the F matrix here on every
+            // evaluation; future revisions can cache it on the
+            // verifier setup once `AkitaVerifierSetup` carries
+            // tiering metadata.
+            let f_flat =
+                derive_tier1_f_matrix_flat::<F, D>(n_f * f_width, &setup.seed.public_matrix_seed);
+            let f_view = f_flat.ring_view::<D>(n_f, f_width);
+
+            // Row weight slices from eq_tau1. Tiered row layout from
+            // spec §3:
+            //   consistency (1) | public | D (n_d) | tier1 (f·n_b'·num_points)
+            //     | F (n_F·num_points) | A (n_a)
+            let d_start = 1 + self.num_public_rows;
+            let tier1_start = d_start + self.n_d;
+            let tier1_end = tier1_start + self.split_factor * n_b_prime * self.num_points;
+            let f_start = tier1_end;
+            let f_end = f_start + n_f * self.num_points;
+            let tier1_row_weights = self.eq_tau1[tier1_start..tier1_end].to_vec();
+            let f_row_weights = self.eq_tau1[f_start..f_end].to_vec();
+
+            // Outer gadget vector G = (1, 2^b, 2^{2b}, …). Computed in
+            // the field so we avoid the `1u64 << k` overflow when
+            // `outer_log_basis · num_digits_outer ≥ 64` (always the
+            // case for full-field Q128 with `outer_log_basis ≤ 6`).
+            let two_to_b = F::from_u64(1u64 << self.outer_log_basis);
+            let mut outer_gadget = Vec::with_capacity(self.num_digits_outer);
+            let mut step = F::one();
+            for _ in 0..self.num_digits_outer {
+                outer_gadget.push(step);
+                step *= two_to_b;
+            }
+
+            let inputs = Tier1AndFInputs::<F, E, D> {
+                b_prime_view,
+                f_view,
+                tier1_row_weights: &tier1_row_weights,
+                f_row_weights: &f_row_weights,
+                alpha_pows: &alpha_pows,
+                full_vec_randomness: x_challenges,
+                outer_gadget: &outer_gadget,
+                offset_t,
+                offset_uhat,
+                split_factor: self.split_factor,
+                num_digits_outer: self.num_digits_outer,
+                b_physical: BPhysicalLayout {
+                    n_a: self.n_a,
+                    num_blocks: self.num_blocks,
+                    depth_open: self.depth_open,
+                    num_t_vectors: self.num_t_vectors,
+                },
+                num_points: self.num_points,
+            };
+            let tier1_and_f = compute_tier1_and_f_contribution_reference::<F, E, D>(
+                &inputs,
+                &self.num_polys_per_point,
+            );
+            total += tier1_and_f;
+        }
 
         #[cfg(feature = "zk")]
         {

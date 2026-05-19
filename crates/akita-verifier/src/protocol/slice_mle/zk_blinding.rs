@@ -242,6 +242,12 @@ mod tests {
             num_public_rows,
             gamma: vec![F::one(); num_claims],
             claim_to_point: vec![1, 0, 1],
+            is_tiered: false,
+            split_factor: 1,
+            outer_log_basis: 0,
+            num_digits_outer: 0,
+            n_f: 0,
+            b_prime_width: 0,
         };
         ZkFixture {
             prepared,

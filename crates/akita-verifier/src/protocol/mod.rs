@@ -4,6 +4,7 @@ pub(crate) mod batched;
 pub(crate) mod levels;
 pub(crate) mod ring_switch;
 pub(crate) mod slice_mle;
+pub(crate) mod tier1_f_matrix;
 
 pub use batched::{
     verify_batched_with_policy, verify_root_direct_commitments_with_params,

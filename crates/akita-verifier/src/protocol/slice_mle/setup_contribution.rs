@@ -381,7 +381,17 @@ where
             let row_slice = shared_view.row(row);
 
             let e_w = if row < prepared.n_d { n_cols_w } else { 0 };
-            let e_t = if row < prepared.n_b { n_cols_t } else { 0 };
+            // Tiered path replaces the legacy B-row block with the
+            // tier-1 + F rows from `specs/tiered_commit.md` §3, which
+            // are evaluated separately by
+            // `compute_tier1_and_f_contribution_reference` from
+            // `eval_at_point`. Skip the legacy T-half α-eval rectangle
+            // entirely so the verifier does not double-count.
+            let e_t = if row < prepared.n_b && !prepared.is_tiered {
+                n_cols_t
+            } else {
+                0
+            };
             let e_z = if row < prepared.n_a && z_used {
                 z_range
             } else {
@@ -616,6 +626,12 @@ mod tests {
             num_public_rows,
             gamma: vec![F::one(); num_claims],
             claim_to_point: vec![1, 0, 1],
+            is_tiered: false,
+            split_factor: 1,
+            outer_log_basis: 0,
+            num_digits_outer: 0,
+            n_f: 0,
+            b_prime_width: 0,
         };
 
         let full_vec_randomness: Vec<F> = (0..bits).map(|idx| f(101 + idx as u128)).collect();

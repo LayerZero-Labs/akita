@@ -234,6 +234,8 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
+ "rand_core",
+ "sha3 0.10.8",
  "tracing",
 ]
 

@@ -476,6 +476,12 @@ mod tests {
             num_public_rows,
             gamma: (0..num_claims).map(|idx| f(5_000 + idx as u128)).collect(),
             claim_to_point: vec![1, 0, 1],
+            is_tiered: false,
+            split_factor: 1,
+            outer_log_basis: 0,
+            num_digits_outer: 0,
+            n_f: 0,
+            b_prime_width: 0,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
         let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
