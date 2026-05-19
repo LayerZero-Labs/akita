@@ -9,13 +9,21 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_transcript::{AkitaTranscript, LoggingTranscript};
+use akita_transcript::{AkitaTranscript, LoggingTranscript, TranscriptEvent};
 use akita_types::ClaimIncidenceSummary;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use proptest::prelude::*;
 
 type Scheme = AkitaCommitmentScheme<DENSE_D, DenseCfg>;
+
+fn public_transcript_events(events: &[TranscriptEvent]) -> Vec<TranscriptEvent> {
+    events
+        .iter()
+        .filter(|event| !matches!(event, TranscriptEvent::Wire { .. }))
+        .cloned()
+        .collect()
+}
 
 fn batch_shape(index: usize) -> Vec<usize> {
     match index {
@@ -106,7 +114,10 @@ fn logged_dense_round_trip(shape_index: usize, seed: u64) {
 
     prover_transcript.assert_smell_checks();
     verifier_transcript.assert_smell_checks();
-    assert_eq!(prover_transcript.events(), verifier_transcript.events());
+    assert_eq!(
+        public_transcript_events(prover_transcript.events()),
+        public_transcript_events(verifier_transcript.events())
+    );
 }
 
 proptest! {

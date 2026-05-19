@@ -121,6 +121,7 @@ where
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
+    transcript.record_wire_serde(ABSORB_SUMCHECK_W, w_commitment);
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);

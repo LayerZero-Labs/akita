@@ -252,6 +252,14 @@ where
         self.inner.bind_instance_bytes(instance_bytes);
     }
 
+    fn record_wire_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
+        let mut bytes = Vec::new();
+        s.serialize_compressed(&mut bytes)
+            .expect("AkitaSerialize should not fail for transcript wire logging");
+        self.record_wire_use(label, &bytes);
+        self.inner.record_wire_serde(label, s);
+    }
+
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
         self.record(TranscriptEvent::Absorb {
             label: label.to_vec(),

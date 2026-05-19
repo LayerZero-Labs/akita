@@ -34,6 +34,9 @@ where
     /// Bind canonical instance-descriptor bytes before replaying a proof.
     fn bind_instance_bytes(&mut self, _instance_bytes: &[u8]) {}
 
+    /// Record a verifier-side structured proof-field use for logging checks.
+    fn record_wire_serde<S: AkitaSerialize>(&mut self, _label: &[u8], _s: &S) {}
+
     /// Append labeled raw bytes.
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]);
 
