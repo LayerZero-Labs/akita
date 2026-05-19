@@ -8,9 +8,10 @@ use akita_sumcheck::{
 };
 use akita_transcript::{labels, sample_ext_challenge, Blake2bTranscript, Transcript};
 use criterion::measurement::WallTime;
-use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
+use criterion::{criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 const DEFAULT_NUM_VARS: usize = 26;

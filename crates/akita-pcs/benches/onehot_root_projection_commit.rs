@@ -12,9 +12,10 @@ use akita_prover::{commit_with_params, AkitaPolyOps, CommitmentProver, OneHotPol
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::RingSubfieldEncoding;
 use criterion::measurement::WallTime;
-use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
+use criterion::{criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 const DEFAULT_NUM_VARS: usize = 26;
