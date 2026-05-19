@@ -40,7 +40,7 @@ pub use extension_opening_reduction::{
     ExtensionOpeningFactorTerm, ExtensionOpeningReductionFactor, ExtensionOpeningReductionProver,
     ExtensionOpeningReductionRoundResult, ExtensionOpeningReductionVerifier,
     ExtensionOpeningTensorPartials, SparseExtensionOpeningWitness,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    EXTENSION_OPENING_REDUCTION_DEGREE, SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
