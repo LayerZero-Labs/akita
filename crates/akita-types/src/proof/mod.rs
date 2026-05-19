@@ -407,6 +407,15 @@ impl<F: FieldCore> FlatRingVec<F> {
         &self.coeffs
     }
 
+    /// Mutable raw coefficient slice. Used by adversarial / negative
+    /// tests that need to perturb a single coefficient of a proof
+    /// payload (e.g. tampering a chunk/meta B-commitment) without
+    /// reconstructing the entire commitment. Mutating coefficients
+    /// does not violate the type invariant (`ring_dim` is unchanged).
+    pub fn coeffs_mut(&mut self) -> &mut [F] {
+        &mut self.coeffs
+    }
+
     /// Number of stored field coefficients.
     pub fn coeff_len(&self) -> usize {
         self.coeffs.len()

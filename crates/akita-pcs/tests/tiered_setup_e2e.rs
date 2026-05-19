@@ -1621,6 +1621,93 @@ fn tiered_rejects_tampered_s_opening_value() {
     });
 }
 
+/// Audit B-3 / S-3: tamper the proof-payload meta material on the wire
+/// (specifically `proof.root.stage2.next_w_commitment`, which in the
+/// cascade case binds the routed S chunks + meta into the joint L+1
+/// witness commitment per book §5.4 lines 692-699). The verifier must
+/// reject with `InvalidProof` because the recursive opening replay at
+/// L+1 will catch any perturbation of the committed routed material.
+///
+/// Replaces the prior `tiered_rejects_tampered_meta_material` test
+/// (deleted before this commit), which poisoned `tiered_s_cache` —
+/// material the verifier did not read at the time. The cache is now
+/// read by the verifier hot path (commits `831ccfc`, `4a4c40b`,
+/// `8e87160`), but external tampering of cache values is now
+/// structurally impossible because `tiered_s_cache_get_or_init`
+/// accepts only a derivation closure that reads from
+/// `setup.expanded.shared_matrix` — no public setter, no way to
+/// inject arbitrary bytes. So the only tamper-relevant artifact is
+/// the proof payload itself; this test exercises that path.
+///
+/// Uses `DenseCascadeSmallCfg` (cascade `(2, 2)`) at NV=19, the
+/// smallest configuration where the cascade actually fires E2E
+/// (routing_count = 2, tiers = [2, 2]).
+#[test]
+fn tiered_rejects_tampered_next_w_commitment() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 19;
+        const D: usize = DENSE_D;
+        type Scheme = AkitaCommitmentScheme<D, DenseCascadeSmallCfg>;
+
+        let layout = DenseCascadeSmallCfg::commitment_layout(NV).expect("layout");
+        assert!(layout.use_setup_claim_reduction);
+        let poly = make_dense_poly(NV, 0x715e_b101);
+        let pt = random_point(NV, 0x715e_b102);
+        let opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .expect("commit");
+        let poly_refs = [&poly];
+        let commitments = [commitment];
+        let openings = [opening];
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"tiered_setup_e2e/tamper_next_w");
+        let mut proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            prove_input(&pt, &poly_refs, &commitments[0], hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("cascade prove");
+
+        // Tamper a coefficient in the L+1 witness commitment. In the
+        // cascade case this commitment binds the routed S chunks +
+        // meta material as part of the joint W+S witness for L+1
+        // (book §5.5 Round 5). Perturbing one field element here
+        // either breaks the recursive trace check or the recursive
+        // opening replay at L+1 — both reject paths exit with
+        // `AkitaError::InvalidProof`.
+        let fold_root = proof
+            .root
+            .as_fold_mut()
+            .expect("cascade proof must carry a fold root");
+        let coeffs = fold_root.stage2.next_w_commitment.coeffs_mut();
+        assert!(
+            !coeffs.is_empty(),
+            "cascade next_w_commitment must carry routed material"
+        );
+        coeffs[0] += F::from_u64(1);
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"tiered_setup_e2e/tamper_next_w");
+        let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        );
+        assert!(
+            result.is_err(),
+            "tampered next_w_commitment (routed meta material binding) must reject"
+        );
+    });
+}
+
 #[test]
 #[ignore = "diagnostic probe; run explicitly to find the smallest viable NV"]
 fn probe_min_viable_nv_for_tier_f2() {
