@@ -8,6 +8,7 @@ pub mod prg;
 pub mod quadratic_equation;
 pub mod ring_switch;
 pub mod sumcheck;
+pub mod tier1_rows_reference;
 pub mod tiered_commit;
 
 pub use flow::{
