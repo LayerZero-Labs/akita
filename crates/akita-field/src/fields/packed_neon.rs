@@ -745,14 +745,13 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
         let b0 = b0.to_vec();
         let b1 = b1.to_vec();
 
-        let a0b0 = Self::mul_vec(a0, b0);
-        let a1b1 = Self::mul_vec(a1, b1);
-        let a0b1 = Self::mul_vec(a0, b1);
-        let a1b0 = Self::mul_vec(a1, b0);
+        let v0 = Self::mul_vec(a0, b0);
+        let v1 = Self::mul_vec(a1, b1);
+        let cross = Self::mul_vec(Self::add_vec(a0, a1), Self::add_vec(b0, b1));
 
         (
-            Self::from_vec(Self::add_vec(a0b0, Self::mul_nr_vec::<C>(a1b1))),
-            Self::from_vec(Self::add_vec(a0b1, a1b0)),
+            Self::from_vec(Self::add_vec(v0, Self::mul_nr_vec::<C>(v1))),
+            Self::from_vec(Self::sub_vec(Self::sub_vec(cross, v0), v1)),
         )
     }
 
