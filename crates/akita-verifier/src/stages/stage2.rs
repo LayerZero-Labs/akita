@@ -120,8 +120,14 @@ impl<F: FieldCore> Stage2MEvalSource<F> {
 }
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
+///
+/// Holds both batching coefficients per book §5.6 Figure 12 Round 8
+/// line 912–919: `γ_range` scales the range-check / virtual-claim side
+/// (`s_claim`, `eq(r_stage1) * w * (w+1)`) and `γ_rel` scales the
+/// relation side (`relation_claim`, `w * α̃(r_y) * m̃(r_x)`).
 pub struct AkitaStage2Verifier<'a, F: FieldCore, const D: usize> {
-    batching_coeff: F,
+    gamma_range: F,
+    gamma_rel: F,
     s_claim: F,
     witness_oracle: Stage2WitnessOracle<'a, F>,
     r_stage1: Vec<F>,
@@ -141,7 +147,8 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
 {
     #[allow(clippy::too_many_arguments)]
     fn new(
-        batching_coeff: F,
+        gamma_range: F,
+        gamma_rel: F,
         s_claim: F,
         witness_oracle: Stage2WitnessOracle<'a, F>,
         r_stage1: Vec<F>,
@@ -159,7 +166,8 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     ) -> Self {
         let relation_claim = relation_claim_from_rows::<F, D>(tau1, alpha, v, u, y_rings);
         Self {
-            batching_coeff,
+            gamma_range,
+            gamma_rel,
             s_claim,
             witness_oracle,
             r_stage1,
@@ -179,7 +187,8 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_direct_witness")]
     pub fn new_with_direct_witness(
-        batching_coeff: F,
+        gamma_range: F,
+        gamma_rel: F,
         s_claim: F,
         direct_witness: &'a DirectWitnessProof<F>,
         r_stage1: Vec<F>,
@@ -196,7 +205,8 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
         ring_bits: usize,
     ) -> Self {
         Self::new(
-            batching_coeff,
+            gamma_range,
+            gamma_rel,
             s_claim,
             Stage2WitnessOracle::Direct(direct_witness),
             r_stage1,
@@ -218,7 +228,8 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_claimed_w_eval")]
     pub fn new_with_claimed_w_eval(
-        batching_coeff: F,
+        gamma_range: F,
+        gamma_rel: F,
         s_claim: F,
         w_eval: F,
         r_stage1: Vec<F>,
@@ -235,7 +246,8 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
         ring_bits: usize,
     ) -> Self {
         Self::new(
-            batching_coeff,
+            gamma_range,
+            gamma_rel,
             s_claim,
             Stage2WitnessOracle::ClaimedEval(w_eval),
             r_stage1,
@@ -329,7 +341,7 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
         let m_alg = self.m_alg_eval(x_challenges)?;
         let m_val = m_alg + m_setup_eval;
         let relation_oracle = w_eval * alpha_val * m_val;
-        Ok(self.batching_coeff * virtual_oracle + relation_oracle)
+        Ok(self.gamma_range * virtual_oracle + self.gamma_rel * relation_oracle)
     }
 
     /// Expose the ring-coordinate variable count needed to split sumcheck
@@ -370,7 +382,7 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     }
 
     fn input_claim(&self) -> F {
-        self.batching_coeff * self.s_claim + self.relation_claim
+        self.gamma_range * self.s_claim + self.gamma_rel * self.relation_claim
     }
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
@@ -389,7 +401,7 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
             self.m_eval(x_challenges)?
         };
         let relation_oracle = w_eval * alpha_val * m_val;
-        Ok(self.batching_coeff * virtual_oracle + relation_oracle)
+        Ok(self.gamma_range * virtual_oracle + self.gamma_rel * relation_oracle)
     }
 }
 

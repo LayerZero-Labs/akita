@@ -17,7 +17,7 @@ use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_SUMCHECK_BATCH_REL, CHALLENGE_SUMCHECK_ROUND,
 };
 
 /// Mirror the prover's `prove_recursive_multi_fold_with_params`
@@ -960,13 +960,15 @@ where
         out
     };
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-    let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+    let gamma_range: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let gamma_rel: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH_REL);
+    let stage2_input_claim = gamma_range * stage1.s_claim + gamma_rel * relation_claim;
     let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
     let stage2_verifier = (if is_last {
         let fw = final_w.ok_or(AkitaError::InvalidProof)?;
         AkitaStage2Verifier::new_with_direct_witness(
-            batching_coeff,
+            gamma_range,
+            gamma_rel,
             stage1.s_claim,
             fw,
             r_stage1.clone(),
@@ -984,7 +986,8 @@ where
         )
     } else {
         AkitaStage2Verifier::new_with_claimed_w_eval(
-            batching_coeff,
+            gamma_range,
+            gamma_rel,
             stage1.s_claim,
             stage2.next_w_eval,
             r_stage1.clone(),
@@ -1420,14 +1423,16 @@ where
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-    let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+    let gamma_range: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let gamma_rel: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH_REL);
+    let stage2_input_claim = gamma_range * stage1.s_claim + gamma_rel * relation_claim;
     let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
 
     let stage2_verifier = (if is_last {
         let fw = final_w.ok_or(AkitaError::InvalidProof)?;
         AkitaStage2Verifier::new_with_direct_witness(
-            batching_coeff,
+            gamma_range,
+            gamma_rel,
             stage1.s_claim,
             fw,
             r_stage1.clone(),
@@ -1445,7 +1450,8 @@ where
         )
     } else {
         AkitaStage2Verifier::new_with_claimed_w_eval(
-            batching_coeff,
+            gamma_range,
+            gamma_rel,
             stage1.s_claim,
             stage2.next_w_eval,
             r_stage1.clone(),

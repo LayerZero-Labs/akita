@@ -1668,13 +1668,20 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
 
 /// State needed to reconstruct the first two ordinary stage-2 round messages
 /// from the internal bivariate-skip payload.
+///
+/// `gamma_range` pre-weights the returned norm/virtual polynomial
+/// (book §5.6 Figure 12 Round 8 line 912 `γ_range`). The returned
+/// relation polynomial is left un-scaled; the caller applies `γ_rel`
+/// (book line 912 `γ_rel`) in its additive `combine_polys` step. This
+/// keeps the bivariate-skip path and the general per-round path on
+/// the same `γ_range · norm + γ_rel · relation` calling convention.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage2BivariateSkipState<E: FieldCore> {
     norm_x_row_coeffs: [[E; 3]; 3],
     relation_x_row_coeffs: [[E; 3]; 3],
     tau0: E,
     tau1: E,
-    batching_coeff: E,
+    gamma_range: E,
 }
 
 impl<E: FieldCore> Stage2BivariateSkipState<E> {
@@ -1683,7 +1690,7 @@ impl<E: FieldCore> Stage2BivariateSkipState<E> {
         r_stage1: &[E],
         s_claim: E,
         relation_claim: E,
-        batching_coeff: E,
+        gamma_range: E,
     ) -> Option<Self> {
         if r_stage1.len() < 2 {
             return None;
@@ -1716,7 +1723,7 @@ impl<E: FieldCore> Stage2BivariateSkipState<E> {
             relation_x_row_coeffs,
             tau0,
             tau1,
-            batching_coeff,
+            gamma_range,
         })
     }
 }
@@ -1730,7 +1737,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage2BivariateSkipState<E> {
         );
         let mut norm_coeffs = mul_linear_by_quadratic_coeffs(self.tau0, norm_q);
         for coeff in &mut norm_coeffs {
-            *coeff = self.batching_coeff * *coeff;
+            *coeff = self.gamma_range * *coeff;
         }
         let relation_coeffs =
             add_quadratic_coeffs(self.relation_x_row_coeffs[0], self.relation_x_row_coeffs[1]);
@@ -1750,7 +1757,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage2BivariateSkipState<E> {
         let round0_eq = linear_eq_eval(self.tau0, r0);
         let mut norm_coeffs = mul_linear_by_quadratic_coeffs(self.tau1, norm_q);
         for coeff in &mut norm_coeffs {
-            *coeff = self.batching_coeff * round0_eq * *coeff;
+            *coeff = self.gamma_range * round0_eq * *coeff;
         }
         let relation_y_values: [E; 3] = std::array::from_fn(|y_idx| {
             eval_quadratic_from_coeffs(self.relation_x_row_coeffs[y_idx], r0)

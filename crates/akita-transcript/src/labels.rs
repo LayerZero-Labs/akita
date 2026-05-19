@@ -40,7 +40,19 @@ pub const ABSORB_SUMCHECK_S_CLAIM: &[u8] = b"ak/a/scs";
 /// Absorb stage-1 inter-stage claims before batching them into the next stage.
 pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"ak/a/sci";
 /// Challenge for batched sumcheck coefficient sampling.
+///
+/// In the stage-2 batched sumcheck this samples the `γ_range`
+/// coefficient on the range-check / virtual-claim side. See book §5.6
+/// Figure 12 Round 8 line 912–919; the companion `γ_rel` for the
+/// relation side is sampled immediately after via
+/// [`CHALLENGE_SUMCHECK_BATCH_REL`].
 pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"ak/c/scb";
+/// Challenge for the relation-side coefficient `γ_rel` in the
+/// stage-2 batched range + relation sumcheck. Book §5.6 Figure 12
+/// Round 8 line 912–919: the deferred output equality is
+/// `γ_range · s_claim + γ_rel · (λ · m̃_alg(r_x) + y_setup) = ...`.
+/// Sampled immediately after [`CHALLENGE_SUMCHECK_BATCH`].
+pub const CHALLENGE_SUMCHECK_BATCH_REL: &[u8] = b"ak/c/scbr";
 /// Challenge for batching stage-1 inter-stage claims into the next tree stage.
 pub const CHALLENGE_SUMCHECK_INTERSTAGE_BATCH: &[u8] = b"ak/c/scib";
 /// Absorb recursion/stop-condition message payloads (paper §4.5).
@@ -93,6 +105,7 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_SUMCHECK_S_CLAIM,
         ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
         CHALLENGE_SUMCHECK_BATCH,
+        CHALLENGE_SUMCHECK_BATCH_REL,
         CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
         ABSORB_STOP_CONDITION,
         CHALLENGE_STOP_CONDITION,

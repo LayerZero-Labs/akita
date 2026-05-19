@@ -22,7 +22,7 @@ use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_SUMCHECK_BATCH_REL, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::Transcript;
 use akita_types::{
@@ -1271,7 +1271,8 @@ where
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let gamma_range: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let gamma_rel: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH_REL);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let t = Instant::now();
         tracing::debug!(
@@ -1279,7 +1280,8 @@ where
         );
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
-            batching_coeff,
+            gamma_range,
+            gamma_rel,
             w_evals_compact,
             &r_stage1,
             s_claim,
@@ -2377,7 +2379,8 @@ where
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let gamma_range: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let gamma_rel: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH_REL);
     let claim_to_point = quad_eq.claim_to_point().to_vec();
     let claim_group_sizes = quad_eq.claim_group_sizes().to_vec();
     let gamma_for_prepare = quad_eq.gamma().to_vec();
@@ -2387,7 +2390,8 @@ where
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
-            batching_coeff,
+            gamma_range,
+            gamma_rel,
             w_evals_compact,
             &r_stage1,
             s_claim,

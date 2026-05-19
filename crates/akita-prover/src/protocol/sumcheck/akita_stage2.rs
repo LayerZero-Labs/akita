@@ -184,14 +184,16 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
 
 /// Stage-2 fused virtual-claim + relation sumcheck prover.
 ///
-/// Holds a single `w_table` shared by both halves of stage 2. The virtual half
-/// is pre-weighted by `batching_coeff` through `split_eq`, so the round
-/// polynomial is:
-/// `batching_coeff * virtual_round(t) + relation_round(t)`.
+/// Holds a single `w_table` shared by both halves of stage 2. The
+/// virtual half is pre-weighted by `gamma_range` through `split_eq`,
+/// so the round polynomial is:
+/// `gamma_range * virtual_round(t) + gamma_rel * relation_round(t)`,
+/// matching book §5.6 Figure 12 Round 8 line 912–919 verbatim.
 pub struct AkitaStage2Prover<E: FieldCore> {
     w_table: WTable<E>,
     b: usize,
-    batching_coeff: E,
+    gamma_range: E,
+    gamma_rel: E,
     s_claim: E,
     split_eq: GruenSplitEq<E>,
 
@@ -217,7 +219,8 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Prover::new")]
     pub fn new(
-        batching_coeff: E,
+        gamma_range: E,
+        gamma_rel: E,
         w_evals_compact: Vec<i8>,
         r_stage1: &[E],
         s_claim: E,
@@ -258,16 +261,17 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
         Self {
             w_table,
             b,
-            batching_coeff,
+            gamma_range,
+            gamma_rel,
             s_claim,
-            split_eq: GruenSplitEq::with_initial_scalar(r_stage1, batching_coeff),
+            split_eq: GruenSplitEq::with_initial_scalar(r_stage1, gamma_range),
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
             live_x_cols,
             col_bits,
             num_vars,
             relation_claim,
-            prev_norm_claim: batching_coeff * s_claim,
+            prev_norm_claim: gamma_range * s_claim,
             prev_norm_poly: None,
             prefix_r_stage1: None,
             two_round_prefix: None,
@@ -395,7 +399,7 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
             combined[i] += *c;
         }
         for (i, c) in relation_poly.coeffs.iter().enumerate() {
-            combined[i] += *c;
+            combined[i] += self.gamma_rel * *c;
         }
         UniPoly::from_coeffs(combined)
     }
@@ -435,7 +439,7 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
                 &r_stage1,
                 self.s_claim,
                 self.relation_claim,
-                self.batching_coeff,
+                self.gamma_range,
             )
             .expect("valid bivariate-skip state");
             self.two_round_prefix = Some(Stage2TwoRoundPrefix {
@@ -2297,7 +2301,7 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> Sumchec
     }
 
     fn input_claim(&self) -> E {
-        self.batching_coeff * self.s_claim + self.relation_claim
+        self.gamma_range * self.s_claim + self.gamma_rel * self.relation_claim
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
@@ -2532,6 +2536,7 @@ mod tests {
             relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
         AkitaStage2Prover::new(
             batching_coeff,
+            F::one(),
             w_compact,
             params.r_stage1,
             s_claim,

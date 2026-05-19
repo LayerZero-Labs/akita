@@ -323,6 +323,7 @@ This section confirms that the §§1–9 baseline carries forward unchanged for 
 | `30ed738` | New `tiered_rejects_tampered_next_w_commitment` test (B-3 / S-3) | Pins the verifier's recursive-replay rejection of tampered meta material on the wire. Closes the audit's pre-existing "tampering test does not reject" gap. |
 | `c9d9904` | Production fp128 presets default `use_setup_claim_reduction = true` with `f = 2` cascade (B-1) | The §5.3 claim-reduction sumcheck + recursive S open are now the default protocol. Verifier composed-error budget analysis below. |
 | `48cd8e9`, `4a4c40b`, `8e87160` | Verifier NTT slot cache + tiered_s_cache pre-populated at `setup_verifier` | None. Perf only. |
+| (this audit, DRIFT-1) | Stage-2 batching sumcheck samples two challenges `γ_range`, `γ_rel` (new `CHALLENGE_SUMCHECK_BATCH_REL` label after `CHALLENGE_SUMCHECK_BATCH`) per book §5.6 Figure 12 Round 8 line 912–919 verbatim | None. Algebraically the two-coefficient form is the book's literal form; the prior single-coefficient form was its `γ_rel = 1` normalization. Per-round knowledge error and CWSS error are unchanged. The new transcript label is appended in lockstep on prover and verifier; misalignment fails the `verify_root_level` / `verify_one_level` `stage2_input_claim` equality check on the first deterministic invocation. |
 
 The `HACHI_PLANNER_S1_WEIGHT` env-var override (audit S-7) is no longer in the codebase — `rg HACHI_PLANNER_S1_WEIGHT` hits only `audit.md` and historical specs.
 
