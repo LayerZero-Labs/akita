@@ -231,6 +231,57 @@ jobs:
           run-id: ${{ steps.bench-baselines.outputs.previous-run-id }}
           github-token: ${{ github.token }}
 
+      - name: Enforce proof-size regression threshold
+        if: github.event_name == 'pull_request' && steps.bench-baselines.outputs.main-run-id != ''
+        env:
+          AKITA_BENCH_MAX_PROOF_SIZE_REGRESSION: "1.05"
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          current_path = pathlib.Path(os.environ["AKITA_BENCH_ARTIFACT_DIR"]) / "summary.json"
+          baseline_path = pathlib.Path(os.environ["AKITA_BENCH_MAIN_BASELINE_DIR"]) / "summary.json"
+          threshold = float(os.environ["AKITA_BENCH_MAX_PROOF_SIZE_REGRESSION"])
+
+          if not current_path.exists() or not baseline_path.exists():
+              print("Benchmark summary or baseline missing; skipping proof-size threshold.")
+              sys.exit(0)
+
+          def cases_by_id(summary):
+              cases = summary.get("cases")
+              if isinstance(cases, list):
+                  return {str(case.get("case_id")): case for case in cases}
+              return {str(summary.get("case_id")): summary}
+
+          current = cases_by_id(json.loads(current_path.read_text()))
+          baseline = cases_by_id(json.loads(baseline_path.read_text()))
+          failures = []
+
+          for case_id, current_case in current.items():
+              baseline_case = baseline.get(case_id)
+              if not baseline_case:
+                  continue
+              current_size = current_case.get("proof_size_bytes")
+              baseline_size = baseline_case.get("proof_size_bytes")
+              if current_size is None or baseline_size in (None, 0):
+                  continue
+              ratio = float(current_size) / float(baseline_size)
+              if ratio > threshold:
+                  failures.append(
+                      f"{case_id}: proof_size_bytes {current_size} exceeds baseline "
+                      f"{baseline_size} by {ratio - 1:.2%}"
+                  )
+
+          if failures:
+              print("Proof-size regression threshold exceeded:")
+              for failure in failures:
+                  print(f"- {failure}")
+              sys.exit(1)
+          PY
+
       - name: Render benchmark report
         if: always()
         env:

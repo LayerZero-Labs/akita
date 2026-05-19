@@ -163,7 +163,7 @@ where
     let mut point =
         inner_opening_point[..inner_opening_point.len().min(packed_inner_bits)].to_vec();
     point.resize(packed_inner_bits, E::zero());
-    let weights = basis_weights(&point, basis);
+    let weights = basis_weights(&point, basis)?;
     let inner_reduction = embed_ring_subfield_vector::<F, E, D>(
         &weights,
         AkitaError::InvalidInput(
@@ -1015,7 +1015,7 @@ where
         &quad_eq.v,
         commitment_u,
         &y_rings,
-    );
+    )?;
     let RingSwitchOutput {
         w_evals_compact,
         live_x_cols,
@@ -1047,7 +1047,7 @@ where
     let batching_coeff: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        let mut stage2_prover = AkitaStage2Prover::new(
+        let stage2_prover_result = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
             &r_stage1,
@@ -1060,6 +1060,7 @@ where
             ring_bits,
             relation_claim,
         );
+        let mut stage2_prover = stage2_prover_result?;
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
             prove_sumcheck::<F, _, L, _, _>(&mut stage2_prover, transcript, |tr| {
                 sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
@@ -1181,7 +1182,7 @@ where
         &[],
         commitment_u,
         &y_rings,
-    );
+    )?;
     let RingSwitchOutput {
         w_evals_compact,
         live_x_cols,
@@ -1213,7 +1214,7 @@ where
             col_bits,
             ring_bits,
             relation_claim,
-        );
+        )?;
         let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) =
             prove_sumcheck::<F, _, L, _, _>(&mut stage2_prover, transcript, |tr| {
                 sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
@@ -2419,7 +2420,7 @@ where
         );
     }
 
-    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript);
+    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
 
@@ -2731,7 +2732,7 @@ where
         );
     }
 
-    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript);
+    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
 
@@ -3133,7 +3134,7 @@ where
         &quad_eq.v,
         commitment_rows,
         &y_rings,
-    );
+    )?;
 
     let RingSwitchOutput {
         w_evals_compact,
@@ -3167,7 +3168,7 @@ where
     let batching_coeff: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        let mut stage2_prover = AkitaStage2Prover::new(
+        let stage2_prover_result = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
             &r_stage1,
@@ -3180,6 +3181,7 @@ where
             ring_bits,
             relation_claim,
         );
+        let mut stage2_prover = stage2_prover_result?;
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
             prove_sumcheck::<F, _, C, _, _>(&mut stage2_prover, transcript, |tr| {
                 sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
@@ -3284,7 +3286,7 @@ where
         &[],
         commitment_rows,
         &y_rings,
-    );
+    )?;
 
     let RingSwitchOutput {
         w_evals_compact,
@@ -3314,7 +3316,7 @@ where
             col_bits,
             ring_bits,
             relation_claim,
-        );
+        )?;
         let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) =
             prove_sumcheck::<F, _, C, _, _>(&mut stage2_prover, transcript, |tr| {
                 sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)

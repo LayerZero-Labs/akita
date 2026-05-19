@@ -1310,7 +1310,7 @@ where
     let commitment_row_count = n_b
         .checked_mul(num_points)
         .ok_or(AkitaError::InvalidProof)?;
-    let num_rows = lp.m_row_count_for(num_points, num_public_outputs, m_row_layout);
+    let num_rows = lp.m_row_count_for(num_points, num_public_outputs, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }

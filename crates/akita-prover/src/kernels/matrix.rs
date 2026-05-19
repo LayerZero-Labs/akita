@@ -118,10 +118,10 @@ mod tests {
         let seed = [7u8; 32];
         let small = derive_public_matrix_flat::<F, D>(6, &seed);
         let large = derive_public_matrix_flat::<F, D>(24, &seed);
-        let small_view = small.ring_view::<D>(1, 6);
-        let large_view = large.ring_view::<D>(1, 6);
+        let small_view = small.ring_view::<D>(1, 6).unwrap();
+        let large_view = large.ring_view::<D>(1, 6).unwrap();
         for c in 0..6 {
-            assert_eq!(small_view.row(0)[c], large_view.row(0)[c]);
+            assert_eq!(small_view.row(0).unwrap()[c], large_view.row(0).unwrap()[c]);
         }
     }
 
@@ -129,11 +129,11 @@ mod tests {
     fn different_shapes_from_same_flat() {
         let seed = [13u8; 32];
         let flat = derive_public_matrix_flat::<F, D>(12, &seed);
-        let view_3x4 = flat.ring_view::<D>(3, 4);
-        let view_2x6 = flat.ring_view::<D>(2, 6);
+        let view_3x4 = flat.ring_view::<D>(3, 4).unwrap();
+        let view_2x6 = flat.ring_view::<D>(2, 6).unwrap();
 
-        assert_eq!(view_3x4.row(0)[0], view_2x6.row(0)[0]);
-        assert_eq!(view_3x4.row(0)[3], view_2x6.row(0)[3]);
-        assert_ne!(view_3x4.row(1)[0], view_2x6.row(1)[0]);
+        assert_eq!(view_3x4.row(0).unwrap()[0], view_2x6.row(0).unwrap()[0]);
+        assert_eq!(view_3x4.row(0).unwrap()[3], view_2x6.row(0).unwrap()[3]);
+        assert_ne!(view_3x4.row(1).unwrap()[0], view_2x6.row(1).unwrap()[0]);
     }
 }

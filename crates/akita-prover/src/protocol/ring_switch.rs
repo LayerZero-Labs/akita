@@ -378,11 +378,17 @@ where
 
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
-    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let col_bits = num_ring_elems
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
+        .trailing_zeros() as usize;
     let ring_bits = D.trailing_zeros() as usize;
-    let m_rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout);
+    let m_rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
-    let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
+    let num_i = m_rows
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
+        .trailing_zeros() as usize;
 
     let tau0: Vec<E> = (0..num_sc_vars)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
@@ -872,7 +878,7 @@ where
     let z_len = depth_fold
         .checked_mul(z_base_len)
         .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
-    let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout);
+    let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
     #[cfg(feature = "zk")]
     let total_cols = w_len
@@ -889,7 +895,7 @@ where
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
         .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
 
-    let eq_tau1 = EqPolynomial::evals(tau1);
+    let eq_tau1 = EqPolynomial::evals(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
             expected: rows,
@@ -922,9 +928,12 @@ where
         .collect::<Result<_, _>>()?;
 
     let stride = setup.seed.max_stride;
-    let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride);
-    let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
-    let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
+    let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride)?;
+    let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride)?;
+    let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride)?;
+    let d_rows: Vec<_> = d_view.rows().collect();
+    let b_rows: Vec<_> = b_view.rows().collect();
+    let a_rows: Vec<_> = a_view.rows().collect();
 
     // Row layout: consistency (1) | public (num_public_rows) | D (n_d_active)
     //             | B (n_b * num_points) | A (n_a). At terminal layout
@@ -995,7 +1004,7 @@ where
             // the D-block contribution is omitted.
             for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&d_view.row(di)[d_phys_col], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&d_rows[di][d_phys_col], alpha_pows);
                 }
             }
             acc
@@ -1013,8 +1022,7 @@ where
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in d_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        acc +=
-                            *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[local_col], alpha_pows);
+                        acc += *eq_i * eval_ring_at_pows(&d_rows[row_idx][local_col], alpha_pows);
                     }
                 }
                 acc
@@ -1048,7 +1056,7 @@ where
             let mut acc = a_weights[a_idx] * challenge_sums_by_t_block[blk] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
                 }
             }
             acc
@@ -1074,8 +1082,7 @@ where
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        acc +=
-                            *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
+                        acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
                     }
                 }
                 acc
@@ -1094,7 +1101,7 @@ where
             let mut acc = consistency_weight * a_eval * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], alpha_pows);
+                    acc += *eq_i * eval_ring_at_pows(&a_rows[a_idx][local_k], alpha_pows);
                 }
             }
             Ok(acc)

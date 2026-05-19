@@ -1,0 +1,55 @@
+name: Fuzz
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+  pull_request:
+    branches: ["**", main]
+    paths:
+      - "crates/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    - cron: "43 9 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_DURATION: 60
+  FUZZ_TARGET: x86_64-unknown-linux-gnu
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Fuzz Akita targets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # cargo-fuzz
+        with:
+          tool: cargo-fuzz
+      - name: Fuzz all targets
+        run: |
+          set -euo pipefail
+          targets=$(cargo +nightly fuzz list)
+          if [ -z "$targets" ]; then
+            echo "No fuzz targets found"
+            exit 1
+          fi
+          for target in $targets; do
+            echo "--- Fuzzing $target for ${FUZZ_DURATION}s ---"
+            cargo +nightly fuzz run --target "${FUZZ_TARGET}" "$target" -- -max_total_time="${FUZZ_DURATION}"
+          done

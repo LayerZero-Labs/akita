@@ -333,7 +333,11 @@ impl LevelParams {
     /// B (n_b · num_commitments) | A (n_a).  The batched CWSS protocol
     /// uses one public y-row per distinct opening point.
     #[inline]
-    pub fn m_row_count(&self, num_commitments: usize, num_public_outputs: usize) -> usize {
+    pub fn m_row_count(
+        &self,
+        num_commitments: usize,
+        num_public_outputs: usize,
+    ) -> Result<usize, AkitaError> {
         self.m_row_count_for(
             num_commitments,
             num_public_outputs,
@@ -342,22 +346,31 @@ impl LevelParams {
     }
 
     /// Row count for an explicit M-row layout.
+    ///
+    /// At the terminal fold the cleartext witness is shipped on the wire and
+    /// the D-block is dropped from the M-matrix; see [`MRowLayout`].
     #[inline]
     pub fn m_row_count_for(
         &self,
         num_commitments: usize,
         num_public_outputs: usize,
         layout: MRowLayout,
-    ) -> usize {
+    ) -> Result<usize, AkitaError> {
         let n_d_active = match layout {
             MRowLayout::Intermediate => self.d_key.row_len(),
             MRowLayout::Terminal => 0,
         };
         n_d_active
-            + self.b_key.row_len() * num_commitments
-            + num_public_outputs
-            + 1
-            + self.a_key.row_len()
+            .checked_add(
+                self.b_key
+                    .row_len()
+                    .checked_mul(num_commitments)
+                    .ok_or_else(|| AkitaError::InvalidSetup("M-row count overflow".to_string()))?,
+            )
+            .and_then(|rows| rows.checked_add(num_public_outputs))
+            .and_then(|rows| rows.checked_add(1))
+            .and_then(|rows| rows.checked_add(self.a_key.row_len()))
+            .ok_or_else(|| AkitaError::InvalidSetup("M-row count overflow".to_string()))
     }
 
     /// Fill in the layout-derived fields from explicit decomposition parameters.
@@ -545,11 +558,11 @@ mod tests {
     fn m_row_count_values() {
         let lp = sample_params_only().with_layout(&sample_layout_lp());
 
-        assert_eq!(lp.m_row_count(1, 1), 3 + 4 + 1 + 1 + 2);
-        assert_eq!(lp.m_row_count(2, 5), 3 + 4 * 2 + 5 + 1 + 2);
-        assert_eq!(lp.m_row_count(4, 4), 3 + 4 * 4 + 4 + 1 + 2);
+        assert_eq!(lp.m_row_count(1, 1).unwrap(), 3 + 4 + 1 + 1 + 2);
+        assert_eq!(lp.m_row_count(2, 5).unwrap(), 3 + 4 * 2 + 5 + 1 + 2);
+        assert_eq!(lp.m_row_count(4, 4).unwrap(), 3 + 4 * 4 + 4 + 1 + 2);
         assert_eq!(
-            lp.m_row_count_for(2, 5, MRowLayout::Terminal),
+            lp.m_row_count_for(2, 5, MRowLayout::Terminal).unwrap(),
             4 * 2 + 5 + 1 + 2
         );
     }

@@ -316,6 +316,7 @@ mod tests {
             let runtime_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<
                 Cfg::Field,
             >(&level.lp, 1, 1, 1, 1, layout)
+            .expect("valid planned witness")
                 * level.lp.ring_dimension;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,
@@ -601,11 +602,13 @@ mod tests {
         let w_12_7 = planned_w_ring_element_count::<<Cfg as CommitmentConfig>::Field>(
             Cfg::decomposition().field_bits(),
             &lp_12_7,
-        );
+        )
+        .unwrap();
         let w_11_8 = planned_w_ring_element_count::<<Cfg as CommitmentConfig>::Field>(
             Cfg::decomposition().field_bits(),
             &lp_11_8,
-        );
+        )
+        .unwrap();
         let reduced_vars = (inputs.current_w_len / params.ring_dimension)
             .next_power_of_two()
             .trailing_zeros() as usize;
@@ -683,14 +686,16 @@ mod tests {
             incidence_a.num_polynomials(),
             incidence_a.num_claims(),
             incidence_a.num_public_rows(),
-        );
+        )
+        .unwrap();
         let next_w_ring_b = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
             &root_b.params,
             incidence_b.num_points(),
             incidence_b.num_polynomials(),
             incidence_b.num_claims(),
             incidence_b.num_public_rows(),
-        );
+        )
+        .unwrap();
 
         assert_eq!(next_w_ring_a, next_w_ring_b);
     }

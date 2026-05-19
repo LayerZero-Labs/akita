@@ -15,7 +15,9 @@ path = "src/main.rs"
 akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config" }
 akita-field = { path = "../../../crates/akita-field" }
-akita-pcs = { path = "../../../crates/akita-pcs", default-features = false, features = ["parallel"] }
+akita-pcs = { path = "../../../crates/akita-pcs", default-features = false, features = [
+  "parallel",
+] }
 akita-prover = { path = "../../../crates/akita-prover" }
 akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }
@@ -29,11 +31,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [features]
 default = ["parallel"]
 parallel = [
-    "dep:rayon",
-    "akita-pcs/parallel",
-    "akita-config/parallel",
-    "akita-field/parallel",
-    "akita-prover/parallel",
+  "dep:rayon",
+  "akita-pcs/parallel",
+  "akita-config/parallel",
+  "akita-field/parallel",
+  "akita-prover/parallel",
 ]
 
 [lints.rust]
