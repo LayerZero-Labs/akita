@@ -18,6 +18,7 @@ pub use ring_switch::{
     prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
 };
 pub use setup_claim_reduction::{
+    flatten_setup_claim_polynomial, materialize_setup_claim_polynomial,
     materialize_setup_claim_tables, verify_setup_claim_reduction,
     verify_stage2_with_setup_claim_reduction,
 };

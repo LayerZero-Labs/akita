@@ -319,9 +319,10 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     /// Expected stage-2 closing oracle value when the setup-dependent residual
     /// is supplied externally.
     ///
-    /// This mirrors [`Self::expected_output_claim`] except `m_setup_eval`
-    /// replaces the on-the-fly setup matrix evaluation. Callers verify the
-    /// supplied `m_setup_eval` separately via a claim-reduction sumcheck.
+    /// This mirrors [`Self::expected_output_claim`] except
+    /// `scaled_m_setup_eval` supplies `w_eval * alpha(r_y) * m_setup(r_x)`.
+    /// Callers verify the supplied scaled value separately via a
+    /// claim-reduction sumcheck.
     ///
     /// # Errors
     ///
@@ -330,7 +331,7 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     pub fn expected_output_claim_with_m_setup(
         &self,
         challenges: &[F],
-        m_setup_eval: F,
+        scaled_m_setup_eval: F,
     ) -> Result<F, AkitaError> {
         let eq_val = EqPolynomial::mle(&self.r_stage1, challenges);
         let w_eval = self.witness_eval(challenges)?;
@@ -339,9 +340,22 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
         let m_alg = self.m_alg_eval(x_challenges)?;
-        let m_val = m_alg + m_setup_eval;
-        let relation_oracle = w_eval * alpha_val * m_val;
+        let relation_oracle = w_eval * alpha_val * m_alg + scaled_m_setup_eval;
         Ok(self.gamma_range * virtual_oracle + self.gamma_rel * relation_oracle)
+    }
+
+    /// Scaling factor `lambda = w_eval * alpha(r_y)` used by the book §5.4
+    /// setup-side claim reduction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the witness oracle or alpha table evaluation fails
+    /// at the supplied stage-2 point.
+    pub fn setup_claim_scale(&self, challenges: &[F]) -> Result<F, AkitaError> {
+        let w_eval = self.witness_eval(challenges)?;
+        let (y_challenges, _) = challenges.split_at(self.ring_bits);
+        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
+        Ok(w_eval * alpha_val)
     }
 
     /// Expose the ring-coordinate variable count needed to split sumcheck

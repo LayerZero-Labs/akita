@@ -465,9 +465,8 @@ impl<'a, F: FieldCore, const D: usize> SetupMatrixPolynomialView<'a, F, D> {
     /// `row | (col << row_bits) | (coeff << (row_bits + col_bits))`.
     ///
     /// Out-of-range row/column indices are zero-padded. The returned vector
-    /// has length `2^(row_bits + col_bits + coeff_bits)`, matching the layout
-    /// produced by `PreparedMEval::setup_weight_table_at_point` so the two
-    /// can be passed jointly to a setup-claim-reduction sumcheck.
+    /// has length `2^(row_bits + col_bits + coeff_bits)`, matching the raw
+    /// layout produced by `PreparedMEval::setup_weight_table_at_point`.
     pub fn materialize_table(&self) -> Vec<F> {
         let row_bits = self.row_bits();
         let col_bits = self.col_bits();

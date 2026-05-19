@@ -785,6 +785,7 @@ mod tests {
         let x_challenges: Vec<F> = (0..m_evals_x.len().trailing_zeros() as usize)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
+        let claim_scale = F::from_u64(17);
 
         let mut prover_tr = Blake2bTranscript::<F>::new(b"setup-claim-reduction-rt");
         let prover_out = akita_prover::protocol::prove_setup_claim_reduction::<F, _, D>(
@@ -792,6 +793,7 @@ mod tests {
             &setup.expanded,
             &x_challenges,
             alpha,
+            claim_scale,
             &mut prover_tr,
         )
         .expect("prove setup claim reduction");
@@ -808,6 +810,7 @@ mod tests {
                 &setup.expanded,
                 &x_challenges,
                 alpha,
+                claim_scale,
                 &payload,
                 &mut verifier_tr,
                 false,
@@ -833,5 +836,177 @@ mod tests {
             .expect("commitment layout")
             .with_tensor_stage1_challenges();
         assert_setup_claim_reduction_roundtrip(level_params);
+    }
+
+    #[test]
+    #[ignore = "diagnostic measurement; run explicitly with --ignored --nocapture"]
+    fn measure_setup_claim_reduction_row_coeff_vs_raw_full_table() {
+        use akita_sumcheck::multilinear_eval;
+        use akita_verifier::materialize_setup_claim_tables;
+        use std::time::Instant;
+
+        type F = fp128::Field;
+        type Cfg = BareCfg<fp128::D128Full>;
+        const D: usize = fp128::D128Full::D;
+        const NV: usize = 12;
+
+        let level_params = Cfg::commitment_layout(NV)
+            .expect("commitment layout")
+            .with_tensor_stage1_challenges();
+        let mut rng = StdRng::seed_from_u64(0xc1a1_4d35);
+        let evals: Vec<F> = (0..(1usize << NV))
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let point: Vec<F> = (0..NV)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(&[poly.clone()], &setup)
+        .expect("commitment");
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let ring_opening_point = ring_opening_point_from_field(
+            &point[alpha_bits..],
+            level_params.r_vars,
+            level_params.m_vars,
+            BasisMode::Lagrange,
+            BlockOrder::RowMajor,
+        )
+        .expect("ring opening point");
+        let (y_ring, w_folded) = poly.evaluate_and_fold(
+            &ring_opening_point.b,
+            &ring_opening_point.a,
+            level_params.block_len,
+        );
+        let mut transcript = Blake2bTranscript::<F>::new(b"setup-claim-reduction-measure");
+        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        for pt in &point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
+            &setup.ntt_shared,
+            vec![ring_opening_point.clone()],
+            vec![0usize],
+            &[&poly],
+            vec![w_folded],
+            &[1usize],
+            level_params.clone(),
+            vec![batched_hint],
+            &mut transcript,
+            std::slice::from_ref(&commitment),
+            std::slice::from_ref(&y_ring),
+            vec![F::one()],
+            setup.expanded.seed.max_stride,
+        )
+        .expect("quadratic equation");
+        ring_switch_build_w::<F, D>(
+            &mut quad_eq,
+            &setup.expanded,
+            &setup.ntt_shared,
+            &level_params,
+        )
+        .expect("ring-switch witness");
+
+        let alpha = F::from_u64(99);
+        let rows = level_params.m_row_count(1, 1);
+        let tau1: Vec<F> = (0..rows.next_power_of_two().trailing_zeros() as usize)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let alpha_evals_y = scalar_powers(alpha, D);
+        let m_evals_x = compute_m_evals_x::<F, D>(
+            &setup.expanded,
+            &[ring_opening_point],
+            &[0usize],
+            &quad_eq.challenges,
+            alpha,
+            &alpha_evals_y,
+            &level_params,
+            &tau1,
+            &[1usize],
+            &[F::one()],
+            1,
+        )
+        .expect("m evals");
+        let prepared = prepare_m_eval::<F, D>(
+            &quad_eq.challenges,
+            alpha,
+            &level_params,
+            &tau1,
+            &[1usize],
+            &[F::one()],
+            1,
+            1,
+            &[],
+        )
+        .expect("prepare_m_eval");
+        let x_challenges: Vec<F> = (0..m_evals_x.len().trailing_zeros() as usize)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let claim_scale = F::from_u64(17);
+
+        let start = Instant::now();
+        let raw_weights = prepared
+            .setup_weight_table_at_point::<D>(&x_challenges, &setup.expanded, alpha)
+            .expect("raw weights");
+        let raw_weight_elapsed = start.elapsed();
+
+        let (raw_rows, raw_cols, raw_coeffs) =
+            prepared.setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
+        let raw_table_start = Instant::now();
+        let raw_table = setup
+            .expanded
+            .shared_matrix
+            .setup_polynomial_view_with_stride::<D>(
+                prepared.setup_polynomial_row_count(),
+                1usize << raw_cols,
+                setup.expanded.seed.max_stride.max(1usize << raw_cols),
+            )
+            .materialize_table();
+        let raw_table_elapsed = raw_table_start.elapsed();
+        let r_raw: Vec<F> = (0..raw_rows + raw_cols + raw_coeffs)
+            .map(|i| F::from_u64(401 + i as u64))
+            .collect();
+        let raw_eval_start = Instant::now();
+        let raw_eval = multilinear_eval(&raw_weights, &r_raw).expect("raw mle");
+        let raw_eval_elapsed = raw_eval_start.elapsed();
+
+        let new_start = Instant::now();
+        let (new_weights, new_table) = materialize_setup_claim_tables::<F, D>(
+            &prepared,
+            &x_challenges,
+            &setup.expanded,
+            alpha,
+            claim_scale,
+        )
+        .expect("new row|coeff tables");
+        let new_elapsed = new_start.elapsed();
+        let (new_row_bits, new_coeff_bits) = prepared.setup_claim_reduction_dims();
+        let r_new: Vec<F> = (0..new_row_bits + new_coeff_bits)
+            .map(|i| F::from_u64(401 + i as u64))
+            .collect();
+        let new_eval_start = Instant::now();
+        let new_eval = multilinear_eval(&new_weights, &r_new).expect("new mle");
+        let new_eval_elapsed = new_eval_start.elapsed();
+
+        eprintln!(
+            "setup CR measurement: raw_dims=row_bits {raw_rows}, col_bits {raw_cols}, coeff_bits {raw_coeffs}; \
+             new_dims=row_bits {new_row_bits}, coeff_bits {new_coeff_bits}; raw_len={} new_len={} len_ratio={:.2}x",
+            raw_weights.len(),
+            new_weights.len(),
+            raw_weights.len() as f64 / new_weights.len() as f64
+        );
+        eprintln!(
+            "setup CR measurement: raw_weight={raw_weight_elapsed:?}, raw_table={raw_table_elapsed:?}, \
+             raw_eval={raw_eval_elapsed:?}; new_tables={new_elapsed:?}, new_eval={new_eval_elapsed:?}"
+        );
+        assert_eq!(raw_weights.len(), raw_table.len());
+        assert_eq!(new_weights.len(), new_table.len());
+        assert!(!raw_eval.is_zero() || !new_eval.is_zero());
     }
 }

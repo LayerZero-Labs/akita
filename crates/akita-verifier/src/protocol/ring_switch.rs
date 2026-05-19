@@ -1687,16 +1687,17 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             .collect()
     }
 
-    /// Materialize setup-polynomial weights for the setup part at `x`.
+    /// Materialize raw setup-polynomial weights for the setup part at `x`.
     ///
     /// The returned table is indexed as `row | col | coeff` in little-endian
     /// bit order and is padded to powers of two in row and column dimensions.
     /// Its inner product with `setup.shared_matrix.setup_polynomial_view()`
     /// equals `eval_split_at_point(...).setup`.
     ///
-    /// This drives the verifier-side setup-claim-reduction sumcheck: pairing
-    /// these weights with the shared setup polynomial reduces
-    /// `m_setup(r_x)` to a single point claim on `S(r_i, r_col, r_k)`.
+    /// This is the pre-§5.4 raw `row | col | coeff` materialization used by
+    /// diagnostic invariants. The active setup-claim-reduction protocol fixes
+    /// the stage-2 `r_x` structurally and uses [`Self::setup_claim_weight_table`]
+    /// together with [`Self::materialize_setup_claim_polynomial_at_point`].
     ///
     /// # Errors
     ///
@@ -2054,9 +2055,11 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         total_cols.next_power_of_two().trailing_zeros() as usize
     }
 
-    /// Padded row/column dimensions used by the setup polynomial view in the
-    /// claim-reduction sumcheck. The setup-claim sumcheck binds variables in
-    /// `(row | col | coeff)` bit order over those dimensions.
+    /// Padded row/column dimensions used by the raw setup polynomial view.
+    ///
+    /// This is still the routed setup-storage envelope. The setup claim
+    /// reduction itself binds only logical M-row families and coefficients;
+    /// see [`Self::setup_claim_reduction_dims`].
     #[inline]
     pub fn setup_polynomial_padded_dims(&self, _setup_max_stride: usize) -> (usize, usize, usize) {
         let (row_count, col_count_padded) = self.padded_dims_pair();
@@ -2080,6 +2083,393 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     #[inline]
     pub fn setup_polynomial_row_count(&self) -> usize {
         self.padded_dims_pair().0
+    }
+
+    /// Logical M-row count used by the book-shaped setup claim reduction.
+    ///
+    /// The setup-side reducer fixes the main stage-2 `r_x` and sums over
+    /// row families and ring coefficients only.
+    #[inline]
+    pub fn setup_claim_row_count(&self) -> usize {
+        self.rows
+    }
+
+    /// Number of sumcheck variables for the setup claim-reduction point,
+    /// returned as `(row_bits, coeff_bits)`.
+    #[inline]
+    pub fn setup_claim_reduction_dims(&self) -> (usize, usize) {
+        let row_bits = self.rows.next_power_of_two().trailing_zeros() as usize;
+        let coeff_bits = self.alpha_pows.len().trailing_zeros() as usize;
+        (row_bits, coeff_bits)
+    }
+
+    /// Materialize the setup polynomial with its stage-2 column dimension
+    /// already evaluated at `x_challenges`.
+    ///
+    /// The returned vector has one ring per logical M-row family. Its MLE is
+    /// the book §5.4 value `S(r_i, r_x, r_k)`: row variables remain live,
+    /// the setup-column/M-table variables are fixed to the main stage-2 point
+    /// `r_x`, and the ring coefficient variables remain live.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the shared setup matrix cannot be viewed at this
+    /// level's ring dimension.
+    pub fn materialize_setup_claim_polynomial_at_point<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        setup: &AkitaExpandedSetup<F>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        akita_field::op_counter::with_category(akita_field::op_counter::OpCategory::Setup, || {
+            self.materialize_setup_claim_polynomial_at_point_inner::<D>(x_challenges, setup)
+        })
+    }
+
+    fn materialize_setup_claim_polynomial_at_point_inner<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        setup: &AkitaExpandedSetup<F>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        let stride = setup.seed.max_stride.max(1);
+        let mut out = vec![CyclotomicRing::<F, D>::zero(); self.rows];
+
+        let mut add_ring = |logical_row: usize,
+                            source: &CyclotomicRing<F, D>,
+                            scale: F|
+         -> Result<(), AkitaError> {
+            if logical_row >= out.len() {
+                return Err(AkitaError::InvalidSize {
+                    expected: out.len(),
+                    actual: logical_row + 1,
+                });
+            }
+            if scale.is_zero() {
+                return Ok(());
+            }
+            for coeff in 0..D {
+                out[logical_row].coeffs[coeff] += scale * source.coeffs[coeff];
+            }
+            Ok(())
+        };
+
+        if !self.uses_homogeneous_outer_layout() {
+            let d_view = setup.shared_matrix.ring_view::<D>(self.n_d, stride);
+            let a_view = setup.shared_matrix.ring_view::<D>(self.n_a, stride);
+            let row_layout = &self.row_layout;
+            let tiered_d_relation = has_tiered_group(&self.group_layouts);
+            let b_start = row_layout.original_b.start;
+            let (w_len, t_len, z_len) = self.segment_lengths_grouped();
+            let offset_z = if self.z_first { 0 } else { w_len + t_len };
+            let offset_w = if self.z_first { z_len } else { 0 };
+            let offset_t = if self.z_first { z_len + w_len } else { w_len };
+
+            let mut d_running_offset = 0usize;
+            let mut b_running_offset = 0usize;
+            for layout in &self.group_layouts {
+                let spec = &layout.spec;
+                let is_tiered = spec.tier.is_some_and(|t| t.is_tiered());
+                let group_role = if tiered_d_relation && self.group_layouts.len() >= 3 {
+                    if layout.group_idx == 0 {
+                        0usize
+                    } else if layout.group_idx + 1 == self.group_layouts.len() {
+                        2usize
+                    } else {
+                        1usize
+                    }
+                } else if tiered_d_relation && layout.group_idx + 1 == self.group_layouts.len() {
+                    2usize
+                } else {
+                    1usize
+                };
+                let is_meta_group = group_role == 2;
+                let group_blocks = layout.claim_count * spec.num_blocks;
+                let n_b_chunk = spec.b_key.row_len();
+                let b_weights_count = group_b_row_count(layout);
+                let b_base = if group_role == 0 {
+                    row_layout.w_b.start
+                } else if is_meta_group {
+                    row_layout.meta_b.start
+                } else {
+                    b_start + b_running_offset
+                };
+                let d_weights_count = group_d_row_count(layout, self.n_d, tiered_d_relation);
+                let d_base = if tiered_d_relation {
+                    if group_role == 0 {
+                        row_layout.w_d.start
+                    } else if is_meta_group {
+                        row_layout.meta_d.start
+                    } else {
+                        row_layout.original_d.start + d_running_offset
+                    }
+                } else {
+                    row_layout.original_d.start
+                };
+                let a_base = if group_role == 0 {
+                    row_layout.w_a.start
+                } else if is_meta_group {
+                    row_layout.meta_a.start
+                } else {
+                    row_layout.original_a.start
+                };
+                let b_view = setup.shared_matrix.ring_view::<D>(n_b_chunk, stride);
+
+                for dig in 0..spec.num_digits_open {
+                    for local_blk in 0..group_blocks {
+                        let claim_within = local_blk / spec.num_blocks;
+                        let block_idx = local_blk % spec.num_blocks;
+                        let x_local = dig * group_blocks + local_blk;
+                        let eq = eq_weight_at_index(
+                            x_challenges,
+                            offset_w + layout.w_hat_start + x_local,
+                        );
+                        if eq.is_zero() {
+                            continue;
+                        }
+                        let d_col = block_idx * spec.num_digits_open + dig;
+                        let d_row_base = if tiered_d_relation && is_tiered {
+                            claim_within * self.n_d
+                        } else {
+                            0
+                        };
+                        for row in 0..self.n_d {
+                            add_ring(d_base + d_row_base + row, &d_view.row(row)[d_col], eq)?;
+                        }
+                    }
+                }
+
+                for a_idx in 0..self.n_a {
+                    for digit_idx in 0..spec.num_digits_open {
+                        let compound = a_idx * spec.num_digits_open + digit_idx;
+                        for local_blk in 0..group_blocks {
+                            let claim_within = local_blk / spec.num_blocks;
+                            let block_idx = local_blk % spec.num_blocks;
+                            let x_local = compound * group_blocks + local_blk;
+                            let eq = eq_weight_at_index(
+                                x_challenges,
+                                offset_t + layout.t_hat_start + x_local,
+                            );
+                            if eq.is_zero() {
+                                continue;
+                            }
+                            let local_col = if is_tiered {
+                                block_idx * self.n_a * spec.num_digits_open + compound
+                            } else {
+                                claim_within * spec.num_blocks * self.n_a * spec.num_digits_open
+                                    + block_idx * self.n_a * spec.num_digits_open
+                                    + compound
+                            };
+                            let b_row_base = if is_tiered {
+                                claim_within * n_b_chunk
+                            } else {
+                                0
+                            };
+                            for row in 0..n_b_chunk {
+                                add_ring(
+                                    b_base + b_row_base + row,
+                                    &b_view.row(row)[local_col],
+                                    eq,
+                                )?;
+                            }
+                        }
+                    }
+                }
+
+                let fold_gadget = gadget_row_scalars::<F>(spec.num_digits_fold, self.log_basis);
+                let z_total_blocks = self.num_eval_rows * spec.block_len;
+                for dc in 0..spec.num_digits_commit {
+                    for (df, &fold_g) in fold_gadget.iter().enumerate() {
+                        let compound = dc * spec.num_digits_fold + df;
+                        for global_blk in 0..z_total_blocks {
+                            let point_idx = global_blk / spec.block_len;
+                            if !(layout.claim_start..layout.claim_start + layout.claim_count)
+                                .any(|claim_idx| self.claim_to_point[claim_idx] == point_idx)
+                            {
+                                continue;
+                            }
+                            let blk = global_blk % spec.block_len;
+                            let phys_k = blk * spec.num_digits_commit + dc;
+                            let x_local = compound * z_total_blocks + global_blk;
+                            let eq = eq_weight_at_index(
+                                x_challenges,
+                                offset_z + layout.z_hat_start + x_local,
+                            );
+                            if eq.is_zero() {
+                                continue;
+                            }
+                            for row in 0..self.n_a {
+                                add_ring(a_base + row, &a_view.row(row)[phys_k], -(eq * fold_g))?;
+                            }
+                        }
+                    }
+                }
+
+                if group_role == 1 {
+                    d_running_offset += d_weights_count;
+                    b_running_offset += b_weights_count;
+                }
+            }
+            return Ok(out);
+        }
+
+        let d_view = setup.shared_matrix.ring_view::<D>(self.n_d, stride);
+        let b_view = setup.shared_matrix.ring_view::<D>(self.n_b, stride);
+        let a_view = setup.shared_matrix.ring_view::<D>(self.n_a, stride);
+        let row_layout = &self.row_layout;
+        let d_start = row_layout.original_d.start;
+        let commitment_row_count = self.n_b * self.num_commitment_groups;
+        let b_start = d_start + self.n_d;
+        let a_start = b_start + commitment_row_count;
+
+        let w_len = self.depth_open * self.total_blocks;
+        let t_len = self.depth_open * self.n_a * self.total_blocks;
+        let z_total_blocks = self.num_points * self.block_len;
+        let z_len = self.depth_fold * self.depth_commit * z_total_blocks;
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+
+        let num_blocks = self.num_blocks;
+        let per_claim_d_width = num_blocks * self.depth_open;
+        for dig in 0..self.depth_open {
+            for blk in 0..self.total_blocks {
+                let claim_idx = blk / num_blocks;
+                let block_idx = blk % num_blocks;
+                let x_idx = dig * self.total_blocks + blk;
+                let eq = eq_weight_at_index(x_challenges, offset_w + x_idx);
+                if eq.is_zero() {
+                    continue;
+                }
+                let d_col = claim_idx * per_claim_d_width + block_idx * self.depth_open + dig;
+                for row in 0..self.n_d {
+                    add_ring(d_start + row, &d_view.row(row)[d_col], eq)?;
+                }
+            }
+        }
+
+        let t_compound_per_block = self.n_a * self.depth_open;
+        let t_cols_per_claim = t_compound_per_block * num_blocks;
+        for compound_dig in 0..(self.n_a * self.depth_open) {
+            let a_idx = compound_dig / self.depth_open;
+            let digit_idx = compound_dig % self.depth_open;
+            for blk in 0..self.total_blocks {
+                let claim_idx = blk / num_blocks;
+                let block_idx = blk % num_blocks;
+                let (group_idx, claim_idx_within_group) = self.claim_to_group[claim_idx];
+                let x_idx = compound_dig * self.total_blocks + blk;
+                let eq = eq_weight_at_index(x_challenges, offset_t + x_idx);
+                if eq.is_zero() {
+                    continue;
+                }
+                let local_col = claim_idx_within_group * t_cols_per_claim
+                    + block_idx * t_compound_per_block
+                    + a_idx * self.depth_open
+                    + digit_idx;
+                for row in 0..self.n_b {
+                    add_ring(
+                        b_start + group_idx * self.n_b + row,
+                        &b_view.row(row)[local_col],
+                        eq,
+                    )?;
+                }
+            }
+        }
+
+        let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
+        let inner_width = self.inner_width;
+        for compound_dig in 0..(self.depth_fold * self.depth_commit) {
+            let dc = compound_dig / self.depth_fold;
+            let df = compound_dig % self.depth_fold;
+            for global_blk in 0..z_total_blocks {
+                let point_idx = global_blk / self.block_len;
+                let blk = global_blk % self.block_len;
+                let phys_k = point_idx * inner_width + blk * self.depth_commit + dc;
+                let x_idx = compound_dig * z_total_blocks + global_blk;
+                let eq = eq_weight_at_index(x_challenges, offset_z + x_idx);
+                if eq.is_zero() {
+                    continue;
+                }
+                for row in 0..self.n_a {
+                    add_ring(
+                        a_start + row,
+                        &a_view.row(row)[phys_k],
+                        -(eq * fold_gadget[df]),
+                    )?;
+                }
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Materialize setup claim-reduction weights over `row | coeff`.
+    ///
+    /// The paired setup table is produced by
+    /// [`Self::materialize_setup_claim_polynomial_at_point`]. Their inner
+    /// product equals the scaled setup contribution
+    /// `claim_scale * m_setup(r_x)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this level cannot derive the required powers of
+    /// the stage-2 `alpha` challenge for the ring dimension.
+    pub fn setup_claim_weight_table<const D: usize>(
+        &self,
+        alpha: F,
+        claim_scale: F,
+    ) -> Result<Vec<F>, AkitaError> {
+        let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
+        let (row_bits, coeff_bits) = self.setup_claim_reduction_dims();
+        debug_assert_eq!(coeff_bits, D.trailing_zeros() as usize);
+        let row_pow = 1usize << row_bits;
+        let mut weights = vec![F::zero(); row_pow * D];
+        for row in 0..row_pow {
+            let row_weight = self.eq_tau1.get(row).copied().unwrap_or(F::zero());
+            if row_weight.is_zero() {
+                continue;
+            }
+            for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
+                weights[row | (coeff << row_bits)] = claim_scale * row_weight * alpha_pow;
+            }
+        }
+        Ok(weights)
+    }
+
+    /// Evaluate the setup claim-reduction weight polynomial at `r_i | r_k`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `r_setup` does not have `row_bits + coeff_bits`
+    /// entries or if the `alpha` powers cannot be derived for this `D`.
+    pub fn eval_setup_claim_weight_at_point<const D: usize>(
+        &self,
+        alpha: F,
+        claim_scale: F,
+        r_setup: &[F],
+    ) -> Result<F, AkitaError> {
+        let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
+        let (row_bits, coeff_bits) = self.setup_claim_reduction_dims();
+        let expected_len = row_bits + coeff_bits;
+        if r_setup.len() != expected_len {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_len,
+                actual: r_setup.len(),
+            });
+        }
+        let row_challenges = &r_setup[..row_bits];
+        let coeff_challenges = &r_setup[row_bits..];
+        let eq_row = EqPolynomial::evals(row_challenges);
+        let eq_coeff = EqPolynomial::evals(coeff_challenges);
+        let row_factor = eq_row
+            .iter()
+            .enumerate()
+            .map(|(row, &eq)| self.eq_tau1.get(row).copied().unwrap_or(F::zero()) * eq)
+            .sum::<F>();
+        let coeff_factor = alpha_pows
+            .iter()
+            .zip(eq_coeff.iter())
+            .map(|(alpha_pow, eq)| *alpha_pow * *eq)
+            .sum::<F>();
+        Ok(claim_scale * row_factor * coeff_factor)
     }
 
     #[inline]
@@ -2112,7 +2502,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         self.tier_setup_params
     }
 
-    /// Setup polynomial view column count used by claim reduction.
+    /// Raw setup polynomial view column count.
     ///
     /// Returned col count is **not** padded to a power of two; callers
     /// that need the padded value should use
@@ -2127,8 +2517,8 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         self.padded_dims_pair().1
     }
 
-    /// Evaluate the multilinear setup weight polynomial at the sumcheck-bound
-    /// point `r_setup` *without* materializing the full weight table.
+    /// Evaluate the raw multilinear setup weight polynomial at a
+    /// `row | col | coeff` point *without* materializing the full weight table.
     ///
     /// Produces the same value as
     /// `multilinear_eval(&prepared.setup_weight_table_at_point(...), r_setup)`
@@ -2312,7 +2702,8 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         Ok(w_contribution + t_contribution + z_contribution)
     }
 
-    /// Heterogeneous-LP analog of [`Self::eval_setup_weight_at_point`].
+    /// Heterogeneous-LP analog of [`Self::eval_setup_weight_at_point`] for the
+    /// raw `row | col | coeff` helper.
     ///
     /// Computes the same value as
     /// `multilinear_eval(&setup_weight_table_at_point_grouped(...), r_setup)`
@@ -2331,8 +2722,9 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     /// `O(Σ_g (depth_open_g · group_blocks_g · log col + n_a · depth_open_g ·
     ///   group_blocks_g + depth_commit_g · depth_fold_g · z_total_blocks))`
     /// field multiplies, plus `O(2^row_bits + 2^col_bits + 2^coeff_bits)`
-    /// for the small eq tables — book §5.3 line 528–538's
-    /// `O(log m_row + log d)` setup-side asymptotic on tiered paths.
+    /// for the small eq tables. This helper is not the active §5.4
+    /// setup-claim-reduction verifier, which no longer samples a fresh column
+    /// point.
     #[allow(clippy::too_many_arguments)]
     fn eval_setup_weight_at_point_grouped<const D: usize>(
         &self,

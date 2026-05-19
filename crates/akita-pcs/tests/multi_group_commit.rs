@@ -620,17 +620,13 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
     );
 }
 
-/// Structured-vs-materialized invariant for `eval_setup_weight_at_point`
-/// on tiered groups. The verifier's claim-reduction sumcheck closes
-/// using `eval_setup_weight_at_point(r_setup)`; on tiered LPs it now
-/// dispatches to `eval_setup_weight_at_point_grouped`, which factors
-/// row & coeff out of the per-(dig, blk) loops instead of materialising
-/// the `2^(row_bits + col_bits + coeff_bits)` weight hypercube. Book
-/// §5.3 line 528–538 promises `O(log m_row + log d)` setup-side cost;
-/// this test locks down "structured == materialized" at random
-/// `r_setup` so any future regression in the per-group algebra (row
-/// weight slicing, claim-within indexing, A-binding sign on the Z
-/// segment) is caught directly without waiting for an E2E reject.
+/// Structured-vs-materialized invariant for the raw
+/// `eval_setup_weight_at_point` helper on tiered groups. The active
+/// book-shaped setup-claim-reduction no longer uses this `row | col | coeff`
+/// point, but the helper remains a useful diagnostic for the grouped raw
+/// M-table algebra. This test locks down "structured == materialized" at
+/// random `r_setup` so regressions in row weight slicing, claim-within
+/// indexing, or the A-binding sign on the Z segment are caught directly.
 #[test]
 fn tiered_eval_setup_weight_at_point_matches_materialized() {
     let setup = make_setup();
@@ -734,8 +730,7 @@ fn tiered_eval_setup_weight_at_point_matches_materialized() {
     assert_eq!(
         structured, materialized,
         "structured eval_setup_weight_at_point_grouped must match \
-         multilinear_eval of the materialized weight table at random \
-         r_setup (book §5.3 line 528–538 setup-side O(log m_row + log d))"
+         multilinear_eval of the materialized raw weight table at random r_setup"
     );
 }
 

@@ -35,7 +35,7 @@ fn setup_claim_reduction_dense_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 15;
+        const NV: usize = 20;
         const D: usize = DENSE_D;
         type Scheme = AkitaCommitmentScheme<D, ClaimReductionDenseCfg>;
 
@@ -70,9 +70,29 @@ fn setup_claim_reduction_dense_prove_verify() {
             .root
             .as_fold()
             .expect("test must exercise tensor root fold");
+        let payload = fold_root
+            .stage2
+            .setup_claim_reduction
+            .as_ref()
+            .expect("fold root stage-2 proof should carry a setup claim-reduction payload");
         assert!(
-            fold_root.stage2.setup_claim_reduction.is_some(),
-            "fold root stage-2 proof should carry a setup claim-reduction payload"
+            layout
+                .setup_polynomial_padded_dims(&[1], 1, 1)
+                .expect("setup dims")
+                .1
+                .trailing_zeros()
+                > 0,
+            "test must have setup column bits to prove CR rounds omit them",
+        );
+        let expected_rounds = layout
+            .m_row_count(1, 1)
+            .next_power_of_two()
+            .trailing_zeros() as usize
+            + D.trailing_zeros() as usize;
+        assert_eq!(
+            payload.sumcheck.round_polys.len(),
+            expected_rounds,
+            "setup claim-reduction rounds must be row_bits + coeff_bits, excluding col_bits"
         );
 
         let mut verifier_transcript =
@@ -273,10 +293,9 @@ fn setup_claim_reduction_rejects_tampered_m_setup_eval() {
 
 /// Tamper test for the Phase D-full wire field `s_opening_value`.
 /// Mirrors the `m_setup_eval` test above: corrupting the prover-claimed
-/// `S(r_setup)` must fail verification. The closing-oracle equality
-/// `weight_at_point * s_opening_value == final_running_claim` and the
-/// transitional `s_opening_value == setup_view.mle(...)` check each
-/// suffice to catch the tamper.
+/// `S(r_i, r_x, r_k)` at the fixed main-stage `r_x` must fail verification.
+/// The closing-oracle equality and, on non-routed levels, the cleartext
+/// derived-polynomial check each suffice to catch the tamper.
 #[test]
 fn setup_claim_reduction_rejects_tampered_s_opening_value() {
     init_rayon_pool();

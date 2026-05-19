@@ -663,14 +663,13 @@ fn root_setup_field_len_and_rounds(
     shape: &WitnessShape,
 ) -> Option<(usize, usize)> {
     let claim_group_sizes = root_claim_group_sizes(shape)?;
-    let (row_count, col_count_padded) = lp
+    let (row_count, _col_count_padded) = lp
         .setup_polynomial_padded_dims(&claim_group_sizes, shape.num_points, shape.num_points)
         .ok()?;
     let field_len = row_count
-        .saturating_mul(col_count_padded)
+        .next_power_of_two()
         .saturating_mul(lp.ring_dimension);
     let rounds = row_count.next_power_of_two().trailing_zeros() as usize
-        + col_count_padded.trailing_zeros() as usize
         + lp.ring_dimension.trailing_zeros() as usize;
     Some((field_len, rounds))
 }

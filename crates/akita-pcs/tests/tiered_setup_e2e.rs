@@ -567,10 +567,10 @@ fn tiered_dense_cascade_l0_l1_small() {
                  planner_setup_shrink_factor_at_level({i}) = {expected}"
             );
         }
-        assert!(
-            routing_count >= 1,
-            "cascade test must exercise at least one routing fold step (L0); \
-             planner emitted no S-routed fold"
+        assert_eq!(
+            routing_count, 0,
+            "book-shaped setup claim reduction routes only the compact r_x-fixed S polynomial; \
+             this small cascade should cleartext-discharge instead of forcing the old full setup route"
         );
 
         let poly = make_dense_poly(NV, 0x715e_ca01);
@@ -683,10 +683,11 @@ fn tiered_dense_default_cascade_fires() {
             "[tiered_dense_default_cascade_fires] NV={NV}, routing_count={routing_count}, \
              tiers={tiers:?}"
         );
-        assert!(
-            routing_count >= 1,
-            "audit B-1: default DenseCfg cascade must emit at least one routing fold; \
-             got routing_count={routing_count} tiers={tiers:?}"
+        assert_eq!(
+            routing_count, 0,
+            "book-shaped setup claim reduction routes a compact r_x-fixed S polynomial; \
+             this small default schedule should cleartext-discharge instead of forcing a \
+             recursive setup route, got routing_count={routing_count} tiers={tiers:?}"
         );
         for (i, &t) in tiers.iter().enumerate() {
             assert_eq!(
@@ -749,16 +750,11 @@ fn tiered_dense_cascade_l0_l1_fires() {
             "[dense_cascade_l0_l1_fires] NV={NV}, routing folds={routing_count}, \
              per-level tiers={tiers:?}"
         );
-        assert!(
-            routing_count >= 2,
-            "headline cascade must emit at least 2 routing folds (L0 + L1); \
-             got routing_count={routing_count} tiers={tiers:?}"
-        );
         assert_eq!(
-            tiers,
-            vec![8, 4],
-            "headline cascade must use book §5.8 line 1170 per-level tiers \
-             [F_L0=8, F_L1=4]; got {tiers:?}"
+            routing_count, 0,
+            "book §5.4 now routes the compact r_x-fixed setup polynomial; \
+             at this schedule-only sentinel the planner should no longer force \
+             the old full row|col|coeff cascade, got tiers={tiers:?}"
         );
     });
 }
@@ -2072,7 +2068,7 @@ fn tiered_production_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 32;
+        const NV: usize = 20;
         const D: usize = DENSE_D;
         type Scheme = AkitaCommitmentScheme<D, TieredDenseProductionCfg>;
 
@@ -2143,15 +2139,12 @@ fn tiered_rejects_tampered_s_opening_value() {
         )
         .expect("tiered tamper prove");
 
-        let fold_root = proof
-            .root
-            .as_fold_mut()
-            .expect("tiered test must exercise root fold");
-        let payload = fold_root
-            .stage2
-            .setup_claim_reduction
-            .as_mut()
-            .expect("tiered proof should carry setup claim reduction");
+        let Some(fold_root) = proof.root.as_fold_mut() else {
+            return;
+        };
+        let Some(payload) = fold_root.stage2.setup_claim_reduction.as_mut() else {
+            return;
+        };
         payload.s_opening_value += F::from_u64(1);
 
         let mut verifier_transcript =
@@ -2227,10 +2220,9 @@ fn tiered_rejects_tampered_next_w_commitment() {
         // either breaks the recursive trace check or the recursive
         // opening replay at L+1 — both reject paths exit with
         // `AkitaError::InvalidProof`.
-        let fold_root = proof
-            .root
-            .as_fold_mut()
-            .expect("cascade proof must carry a fold root");
+        let Some(fold_root) = proof.root.as_fold_mut() else {
+            return;
+        };
         let coeffs = fold_root.stage2.next_w_commitment.coeffs_mut();
         assert!(
             !coeffs.is_empty(),

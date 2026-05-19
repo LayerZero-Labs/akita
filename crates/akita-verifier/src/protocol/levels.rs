@@ -5,8 +5,9 @@
 //! until the verifier-facing config boundary is extracted.
 
 use crate::{
-    derive_stage1_challenges, ring_switch_verifier, verify_stage2_with_setup_claim_reduction,
-    AkitaStage1Verifier, AkitaStage2Verifier, Stage2MEvalSource,
+    derive_stage1_challenges, materialize_setup_claim_polynomial, ring_switch_verifier,
+    verify_stage2_with_setup_claim_reduction, AkitaStage1Verifier, AkitaStage2Verifier,
+    Stage2MEvalSource,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::trace;
@@ -75,7 +76,7 @@ use std::time::Instant;
 /// level must discharge. The single-poly recursive path uses
 /// `claims.len() == 1`; Phase D-full slice F adds an additional claim
 /// for the shared setup polynomial `S` so the next level discharges
-/// the deferred `S(r_setup) = y_setup` claim alongside the folded
+/// the deferred `S(r_i, r_x, r_k) = y_setup` claim alongside the folded
 /// witness via multi-claim batched Hachi.
 pub struct RecursiveVerifierState<F: FieldCore> {
     /// Recursive opening claims to discharge at the next fold level.
@@ -84,20 +85,23 @@ pub struct RecursiveVerifierState<F: FieldCore> {
 
 /// Deferred setup-polynomial opening emitted by setup-claim reduction.
 pub struct DeferredSetupOpening<F: FieldCore> {
-    /// Raw setup-claim point in `row | col | coeff` order.
+    /// Setup-claim point in `row | coeff` order.
     pub r_setup: Vec<F>,
     /// Number of row variables in `r_setup`.
     pub row_bits: usize,
-    /// Number of column variables in `r_setup`.
+    /// Number of column variables in `r_setup` (zero for the book-shaped
+    /// reducer; retained for the shared opening-point mapper).
     pub col_bits: usize,
     /// Number of coefficient variables in `r_setup`.
     pub coeff_bits: usize,
     /// Claimed value `S(opening_point)`.
     pub opening: F,
-    /// Live setup row count used by the originating M-table.
+    /// Live setup row-family count used by the originating M-table.
     pub row_count: usize,
-    /// Live setup column count used by the originating M-table.
+    /// Live setup column count after fixing `r_x` (one).
     pub col_count: usize,
+    /// Verifier-derived coefficients of the `r_x`-fixed setup polynomial.
+    pub polynomial: FlatRingVec<F>,
 }
 
 /// Output of one verified fold level.
@@ -138,73 +142,6 @@ fn setup_opening_point_from_r_setup<F: FieldCore>(
     Ok(out)
 }
 
-fn derive_setup_commitment_flat<F, const D: usize>(
-    setup: &AkitaVerifierSetup<F>,
-    row_count: usize,
-    col_count: usize,
-    s_lp: &LevelParams,
-) -> Result<FlatRingVec<F>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-{
-    let stride = setup.expanded.seed.max_stride.max(1);
-    let s_view = setup
-        .expanded
-        .shared_matrix
-        .ring_view::<D>(row_count, stride);
-    let a_view = setup
-        .expanded
-        .shared_matrix
-        .ring_view::<D>(s_lp.a_key.row_len(), stride);
-    let b_view = setup
-        .expanded
-        .shared_matrix
-        .ring_view::<D>(s_lp.b_key.row_len(), stride);
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let commit_params =
-        BalancedDecomposePow2I8Params::new(s_lp.num_digits_commit, s_lp.log_basis, q);
-    let open_params = BalancedDecomposePow2I8Params::new(s_lp.num_digits_open, s_lp.log_basis, q);
-    let mut t_rows =
-        vec![vec![CyclotomicRing::<F, D>::zero(); s_lp.a_key.row_len()]; s_lp.num_blocks];
-    for (block_idx, t_for_block) in t_rows.iter_mut().enumerate() {
-        for elem_idx in 0..s_lp.block_len {
-            let global = block_idx * s_lp.block_len + elem_idx;
-            let row = global / col_count;
-            let col_in_s = global % col_count;
-            if row >= row_count {
-                continue;
-            }
-            let mut digits = vec![[0i8; D]; s_lp.num_digits_commit];
-            s_view.row(row)[col_in_s]
-                .balanced_decompose_pow2_i8_into_with_params(&mut digits, &commit_params);
-            for (digit_idx, digit) in digits.iter().enumerate() {
-                let digit_ring = CyclotomicRing::from_coefficients(digit.map(F::from_i8));
-                let matrix_col = elem_idx * s_lp.num_digits_commit + digit_idx;
-                for (a_idx, acc) in t_for_block.iter_mut().enumerate() {
-                    *acc += a_view.row(a_idx)[matrix_col] * digit_ring;
-                }
-            }
-        }
-    }
-    let mut u = vec![CyclotomicRing::<F, D>::zero(); s_lp.b_key.row_len()];
-    for (block_idx, t_for_block) in t_rows.iter().enumerate() {
-        for (a_idx, t) in t_for_block.iter().enumerate() {
-            let mut digits = vec![[0i8; D]; s_lp.num_digits_open];
-            t.balanced_decompose_pow2_i8_into_with_params(&mut digits, &open_params);
-            for (digit_idx, digit) in digits.iter().enumerate() {
-                let digit_ring = CyclotomicRing::from_coefficients(digit.map(F::from_i8));
-                let matrix_col = block_idx * s_lp.a_key.row_len() * s_lp.num_digits_open
-                    + a_idx * s_lp.num_digits_open
-                    + digit_idx;
-                for (b_idx, acc) in u.iter_mut().enumerate() {
-                    *acc += b_view.row(b_idx)[matrix_col] * digit_ring;
-                }
-            }
-        }
-    }
-    Ok(FlatRingVec::from_ring_elems::<D>(&u))
-}
-
 /// Verifier-side commit on a sequence of ring elements under `s_lp`.
 ///
 /// Mirrors the prover's `commit_dense_s_handle` in
@@ -213,8 +150,8 @@ where
 /// digit-decompose `t_rows` and form `u = B · t̂`, using the shared
 /// CRT+NTT mat-vec kernels instead of naive ring multiplication.
 ///
-/// Used by both [`derive_setup_commitment_flat`] (which builds its
-/// input from a shared-matrix sub-view) and
+/// Used by both setup-claim routing (which builds its input from the
+/// `r_x`-fixed derived setup polynomial) and
 /// [`derive_tiered_setup_material_for_verifier`] (which builds its
 /// inputs from per-chunk slices of the shared matrix and the
 /// concatenated chunk-commits for the meta tier). Both must use this
@@ -242,7 +179,7 @@ fn derive_batched_chunk_commitments<F, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + 'static,
 {
     let num_chunks = chunk_inputs.len();
     if num_chunks == 0 {
@@ -304,7 +241,7 @@ fn derive_commitment_for_ring_slice<F, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + 'static,
 {
     let stride = setup.expanded.seed.max_stride.max(1);
 
@@ -344,6 +281,20 @@ where
         stride,
         &flat_digits,
     ))
+}
+
+fn derive_setup_claim_commitment_flat<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    polynomial: &FlatRingVec<F>,
+    s_lp: &LevelParams,
+) -> Result<FlatRingVec<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + 'static,
+{
+    let rings = polynomial.try_to_vec::<D>()?;
+    let ntt_shared = setup.ntt_shared_get_or_init::<D>()?;
+    let u = derive_commitment_for_ring_slice::<F, D>(setup, &rings, s_lp, &ntt_shared)?;
+    Ok(FlatRingVec::from_ring_elems::<D>(&u))
 }
 
 /// Compute the meta-tier `LevelParams` from the per-chunk LP and tier
@@ -466,6 +417,7 @@ fn expand_tiered_setup_claims<F, T, const D: usize>(
     next_level_params: &LevelParams,
     row_count: usize,
     col_count: usize,
+    setup_polynomial: &FlatRingVec<F>,
     tier: TieredSetupParams,
     r_setup: &[F],
     row_bits: usize,
@@ -484,17 +436,27 @@ where
         setup_opening_point_from_r_setup(r_setup, row_bits, col_bits, coeff_bits, &full_s_lp)?;
     let chunk_lp = tiered_setup_group_lp(next_level_params, setup_field_len, tier)?;
     let meta_lp = meta_lp_from_chunks(next_level_params, &chunk_lp, tier)?;
-    let material = tiered_setup_material_for_verifier::<F, D>(
-        setup, row_count, col_count, &chunk_lp, &meta_lp, tier,
+    let setup_rings = setup_polynomial.try_to_vec::<D>()?;
+    if setup_rings.len() != row_count * col_count {
+        return Err(AkitaError::InvalidSize {
+            expected: row_count * col_count,
+            actual: setup_rings.len(),
+        });
+    }
+    let material = derive_tiered_setup_material_from_rings_for_verifier::<F, D>(
+        setup,
+        &setup_rings,
+        &chunk_lp,
+        &meta_lp,
+        tier,
     )?;
     let chunk_w_len = chunk_lp.num_blocks * chunk_lp.block_len * D;
     let meta_input_pow2 = (tier.num_chunks * chunk_lp.b_key.row_len()).next_power_of_two();
     let meta_w_len = meta_input_pow2 * D;
     let alpha_bits = D.trailing_zeros() as usize;
 
-    // Re-read s_rings to slice per-chunk coefficients for opening MLEs.
-    // The setup matrix is public, so the verifier and prover trivially
-    // agree on these values. Cost is k chunks × chunk_n × D field ops.
+    // Slice the verifier-derived `r_x`-fixed setup polynomial for per-chunk
+    // opening MLEs. Cost is k chunks × chunk_n × D field ops.
     let live_n_s = row_count * col_count;
     let n_s = live_n_s.next_power_of_two();
     let log_shrink = tier.log2_shrink()? as usize;
@@ -514,15 +476,7 @@ where
     let m_high_start = alpha_bits + chunk_lp.r_vars + log_shrink + chunk_lp.m_vars;
     let eq_high_r = EqPolynomial::evals(&opening_point[r_high_start..r_high_start + log_shrink]);
     let eq_high_m = EqPolynomial::evals(&opening_point[m_high_start..m_high_start + log_shrink]);
-    let stride = setup.expanded.seed.max_stride.max(1);
-    let s_view = setup
-        .expanded
-        .shared_matrix
-        .ring_view::<D>(row_count, stride);
-    let mut s_rings = Vec::with_capacity(n_s);
-    for row in 0..row_count {
-        s_rings.extend_from_slice(&s_view.row(row)[..col_count]);
-    }
+    let mut s_rings = setup_rings;
     s_rings.resize(n_s, CyclotomicRing::<F, D>::zero());
 
     // Compute per-chunk slices and per-chunk MLE openings.
@@ -729,6 +683,74 @@ where
     // Mirror the prover's `build_tiered_handle_material`: commit the
     // k chunks under the SHARED `chunk_lp` via a single batched A-step
     // over `k * num_blocks_chunk` blocks (book §5.4 lines 686-700).
+    let chunk_ring_inputs: Vec<Vec<CyclotomicRing<F, D>>> = chunk_indices
+        .iter()
+        .map(|indices| indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>())
+        .collect();
+    let chunk_b_commitments =
+        derive_batched_chunk_commitments::<F, D>(setup, &chunk_ring_inputs, chunk_lp, &ntt_shared)?;
+
+    let meta_len = chunk_b_commitments.iter().map(Vec::len).sum::<usize>();
+    if meta_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "tiered meta commitment input is empty".to_string(),
+        ));
+    }
+    let next_pow2 = meta_len.next_power_of_two();
+    let mut meta_input: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(next_pow2);
+    for chunk in &chunk_b_commitments {
+        meta_input.extend_from_slice(chunk);
+    }
+    meta_input.resize(next_pow2, CyclotomicRing::<F, D>::zero());
+    let meta_b_commitment =
+        derive_commitment_for_ring_slice::<F, D>(setup, &meta_input, meta_lp, &ntt_shared)?;
+
+    let commitments = TieredSetupCommitments {
+        chunk_b_commitments,
+        meta_b_commitment,
+        params: tier,
+    };
+    commitments.validate_shape()?;
+    Ok(commitments)
+}
+
+fn derive_tiered_setup_material_from_rings_for_verifier<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    rings: &[CyclotomicRing<F, D>],
+    chunk_lp: &LevelParams,
+    meta_lp: &LevelParams,
+    tier: TieredSetupParams,
+) -> Result<TieredSetupCommitments<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + 'static,
+{
+    let n_s = rings.len().next_power_of_two();
+    if tier.num_chunks == 0 {
+        return Err(AkitaError::InvalidInput(
+            "tiered routing requires num_chunks >= 1".to_string(),
+        ));
+    }
+    if !n_s.is_multiple_of(tier.num_chunks) {
+        return Err(AkitaError::InvalidInput(format!(
+            "padded setup claim polynomial has {n_s} ring elements but tier num_chunks = {} requires a multiple",
+            tier.num_chunks
+        )));
+    }
+    let chunk_n = n_s / tier.num_chunks;
+    if chunk_n == 0 || !chunk_n.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(format!(
+            "tiered chunk size {chunk_n} must be a non-zero power of two"
+        )));
+    }
+    let log_shrink = tier.log2_shrink()? as usize;
+    let chunk_indices = tiered_setup_chunk_index_map(
+        chunk_lp.r_vars + log_shrink,
+        chunk_lp.m_vars + log_shrink,
+        tier,
+    )?;
+    let mut s_rings = rings.to_vec();
+    s_rings.resize(n_s, CyclotomicRing::<F, D>::zero());
+    let ntt_shared = setup.ntt_shared_get_or_init::<D>()?;
     let chunk_ring_inputs: Vec<Vec<CyclotomicRing<F, D>>> = chunk_indices
         .iter()
         .map(|indices| indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>())
@@ -1161,7 +1183,7 @@ where
                 "[verify_root] stage2/setup-claim verify start route_setup={routes_setup_recursively}"
             );
             // `routes_setup_recursively == true`: the deferred
-            // `S(r_setup) = y_setup` claim is discharged by the next
+            // `S(r_i, r_x, r_k) = y_setup` claim is discharged by the next
             // fold level's joint multi-group open (book §5.3 lines
             // 627-660). Otherwise the cleartext mle check inside
             // `verify_setup_claim_reduction` must run as the anchor.
@@ -1181,19 +1203,27 @@ where
                 t.elapsed()
             );
             if routes_setup_recursively {
-                let (row_bits, col_bits, coeff_bits) = stage2_verifier
+                let (row_bits, coeff_bits) = stage2_verifier
                     .prepared_m_eval()
-                    .setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
+                    .setup_claim_reduction_dims();
+                let x_challenges = &stage2_challenges[stage2_verifier.ring_bits()..];
+                let row_count = 1usize << row_bits;
+                let mut setup_rings = materialize_setup_claim_polynomial::<F, D>(
+                    stage2_verifier.prepared_m_eval(),
+                    x_challenges,
+                    &setup.expanded,
+                )?;
+                setup_rings.resize(row_count, CyclotomicRing::<F, D>::zero());
+                let setup_polynomial = FlatRingVec::from_ring_elems::<D>(&setup_rings);
                 deferred_setup_opening = Some(DeferredSetupOpening {
                     r_setup,
                     row_bits,
-                    col_bits,
+                    col_bits: 0,
                     coeff_bits,
                     opening: s_opening_value,
-                    row_count: stage2_verifier
-                        .prepared_m_eval()
-                        .setup_polynomial_row_count(),
-                    col_count: 1usize << col_bits,
+                    row_count,
+                    col_count: 1,
+                    polynomial: setup_polynomial,
                 });
             }
             stage2_challenges
@@ -1632,19 +1662,27 @@ where
                 t.elapsed()
             );
             if routes_setup_recursively {
-                let (row_bits, col_bits, coeff_bits) = stage2_verifier
+                let (row_bits, coeff_bits) = stage2_verifier
                     .prepared_m_eval()
-                    .setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
+                    .setup_claim_reduction_dims();
+                let x_challenges = &stage2_challenges[stage2_verifier.ring_bits()..];
+                let row_count = 1usize << row_bits;
+                let mut setup_rings = materialize_setup_claim_polynomial::<F, D>(
+                    stage2_verifier.prepared_m_eval(),
+                    x_challenges,
+                    &setup.expanded,
+                )?;
+                setup_rings.resize(row_count, CyclotomicRing::<F, D>::zero());
+                let setup_polynomial = FlatRingVec::from_ring_elems::<D>(&setup_rings);
                 deferred_setup_opening = Some(DeferredSetupOpening {
                     r_setup,
                     row_bits,
-                    col_bits,
+                    col_bits: 0,
                     coeff_bits,
                     opening: s_opening_value,
-                    row_count: stage2_verifier
-                        .prepared_m_eval()
-                        .setup_polynomial_row_count(),
-                    col_count: 1usize << col_bits,
+                    row_count,
+                    col_count: 1,
+                    polynomial: setup_polynomial,
                 });
             }
             stage2_challenges
@@ -1963,6 +2001,7 @@ where
                         &scheduled_next_params,
                         setup_opening.row_count,
                         setup_opening.col_count,
+                        &setup_opening.polynomial,
                         level_step.tier_setup_params,
                         &setup_opening.r_setup,
                         setup_opening.row_bits,
@@ -1980,10 +2019,9 @@ where
                         setup_opening.coeff_bits,
                         &s_lp,
                     )?;
-                    let commitment = derive_setup_commitment_flat::<F, D>(
+                    let commitment = derive_setup_claim_commitment_flat::<F, D>(
                         setup,
-                        setup_opening.row_count,
-                        setup_opening.col_count,
+                        &setup_opening.polynomial,
                         &s_lp,
                     )?;
                     claims.push(RecursiveOpeningClaim {
@@ -2129,6 +2167,7 @@ where
                     next_level_params,
                     setup_opening.row_count,
                     setup_opening.col_count,
+                    &setup_opening.polynomial,
                     root_step.tier_setup_params,
                     &setup_opening.r_setup,
                     setup_opening.row_bits,
@@ -2146,10 +2185,9 @@ where
                     setup_opening.coeff_bits,
                     &s_lp,
                 )?;
-                let commitment = derive_setup_commitment_flat::<F, D>(
+                let commitment = derive_setup_claim_commitment_flat::<F, D>(
                     setup,
-                    setup_opening.row_count,
-                    setup_opening.col_count,
+                    &setup_opening.polynomial,
                     &s_lp,
                 )?;
                 claims.push(RecursiveOpeningClaim {

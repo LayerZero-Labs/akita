@@ -1037,29 +1037,32 @@ pub struct AkitaStage1Proof<F: FieldCore> {
 /// Setup-side claim-reduction payload appended to stage 2 when the verifier
 /// defers the setup-dependent M-table contribution to a follow-up sumcheck.
 ///
-/// `m_setup_eval` is the prover-sent value of `m_setup(r_x)`, equal to the
-/// inner product of the structured weight table with the shared setup
-/// polynomial. The sumcheck proves that claim.
+/// `m_setup_eval` is the prover-sent scaled value
+/// `lambda * m_setup(r_x)`, equal to the inner product of the scaled
+/// row/coeff weight table with the shared setup polynomial after its column
+/// dimension is fixed at the main stage-2 `r_x`. The sumcheck proves that
+/// claim without dividing by `lambda`.
 ///
-/// `s_opening_value` is the prover-claimed value of `S(r_setup)` where
-/// `r_setup` is the sumcheck-bound point. Phase D-full routes this value
-/// forward as a `RecursiveOpeningClaim` on `S` that the next fold level
-/// discharges via the Hachi PCS, replacing the per-level
-/// `setup_view.mle(...)` evaluation. The closing-oracle equality
+/// `s_opening_value` is the prover-claimed value of `S(r_i, r_x, r_k)` where
+/// `(r_i, r_k)` is the sumcheck-bound point and `r_x` is fixed by the main
+/// stage-2 sumcheck. Phase D-full routes this value forward as a
+/// `RecursiveOpeningClaim` on the derived setup polynomial that the next fold
+/// level discharges via the Hachi PCS, replacing the per-level cleartext
+/// evaluation. The closing-oracle equality
 /// `weight_at_point * s_opening_value == final_running_claim` ties
 /// `s_opening_value` to the prover's sumcheck transcript; soundness of
 /// the value itself follows from the next-level recursive opening.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupClaimReductionPayload<F: FieldCore> {
-    /// Reduced setup-side evaluation `m_setup(r_x)`. Used as the input
-    /// claim of the claim-reduction sumcheck and as the setup-dependent
-    /// residual in the stage-2 closing oracle.
+    /// Reduced setup-side evaluation `lambda * m_setup(r_x)`. Used as the
+    /// input claim of the claim-reduction sumcheck and as the already-scaled
+    /// setup-dependent residual in the stage-2 closing oracle.
     pub m_setup_eval: F,
-    /// Prover-claimed value `S(r_setup)`. The next fold level verifies
-    /// this claim via a recursive opening of `S` against its tiered
-    /// commitment.
+    /// Prover-claimed value `S(r_i, r_x, r_k)`. The next fold level verifies
+    /// this claim via a recursive opening of the `r_x`-fixed setup polynomial.
     pub s_opening_value: F,
-    /// Sumcheck proof for `sum_z w_setup(z; r_x) * S(z) = m_setup_eval`.
+    /// Sumcheck proof for
+    /// `sum_{i,k} eq(tau_1,i) * lambda * alpha^k * S(i,r_x,k) = m_setup_eval`.
     pub sumcheck: SumcheckProof<F>,
 }
 

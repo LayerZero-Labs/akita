@@ -349,13 +349,13 @@ pub fn planned_setup_padded_dims(
 /// Planned setup-polynomial field-element length emitted by level `lp`'s
 /// M-table.
 ///
-/// Equals `row_count * col_count_padded * ring_dimension` for the dims
-/// returned by [`planned_setup_padded_dims`]; see that function for
+/// Equals `row_count_padded * ring_dimension`: the setup column dimension
+/// is already fixed at the main stage-2 `r_x` before this polynomial is
+/// routed recursively. See [`planned_setup_padded_dims`] for
 /// `s_lp_in` / `incoming_tier` semantics.
 ///
-/// Mirrors `PreparedMEval::setup_polynomial_row_count *
-/// setup_polynomial_col_count_padded() * D` so the planner can reason
-/// about the cascade growth without materializing a full `PreparedMEval`.
+/// Mirrors the runtime `r_x`-fixed setup-claim polynomial padded over the
+/// row-family dimension.
 pub fn planned_setup_field_len(
     lp: &LevelParams,
     s_lp_in: Option<&LevelParams>,
@@ -363,7 +363,7 @@ pub fn planned_setup_field_len(
     num_eval_rows: usize,
     num_commitment_groups: usize,
 ) -> usize {
-    let (row_count, col_count_padded) = planned_setup_padded_dims(
+    let (row_count, _col_count_padded) = planned_setup_padded_dims(
         lp,
         s_lp_in,
         incoming_tier,
@@ -371,7 +371,7 @@ pub fn planned_setup_field_len(
         num_commitment_groups,
     );
     row_count
-        .saturating_mul(col_count_padded)
+        .next_power_of_two()
         .saturating_mul(lp.ring_dimension)
 }
 
@@ -462,9 +462,9 @@ pub fn planned_verifier_setup_storage_field_len_for_setup(
 /// Round count of the setup-side claim-reduction sumcheck at level
 /// `lp` (book §5.3 line 658, book §5.4 line 752).
 ///
-/// The sumcheck binds variables in `(row | col | coeff)` order over
-/// the padded setup-polynomial view, so the round count is
-/// `row_bits + col_bits + coeff_bits` where:
+/// The sumcheck fixes the main stage-2 column point `r_x` and binds
+/// variables in `(row | coeff)` order, so the round count is
+/// `row_bits + coeff_bits` where:
 ///
 /// * `row_bits = log2_ceil(row_count)` — the rows envelope
 ///   `max(n_A, max_g n_B_g, n_D)`. Under tiered grouping the meta-tier
@@ -472,9 +472,6 @@ pub fn planned_verifier_setup_storage_field_len_for_setup(
 ///   shared (book line 752 "MLE evaluation cost is `O(|D_chunk|) +
 ///   O(log k)`, independent of `k`") so the envelope is independent of
 ///   `k`.
-/// * `col_bits = log2(col_count_padded)` — the padded column envelope
-///   `max(W-cols, max_g B_cols_g, A-cols)`, which grows with the
-///   joint W+S layout under cascade routing.
 /// * `coeff_bits = log2(ring_dimension)` — the per-coefficient bind.
 ///
 /// Sumcheck degree is `2` (product of structured weight and `S`),
@@ -490,17 +487,17 @@ pub fn planned_setup_claim_reduction_rounds(
     num_eval_rows: usize,
     num_commitment_groups: usize,
 ) -> usize {
-    let (row_count, col_count_padded) = planned_setup_padded_dims(
+    let _ = planned_setup_padded_dims(
         lp,
         s_lp_in,
         incoming_tier,
         num_eval_rows,
         num_commitment_groups,
     );
+    let row_count = lp.m_row_count(num_commitment_groups, num_eval_rows);
     let row_bits = row_count.next_power_of_two().trailing_zeros() as usize;
-    let col_bits = col_count_padded.trailing_zeros() as usize;
     let coeff_bits = lp.ring_dimension.trailing_zeros() as usize;
-    row_bits + col_bits + coeff_bits
+    row_bits + coeff_bits
 }
 
 /// Planned multi-group joint fold output (ring-element count) when level
@@ -1171,23 +1168,23 @@ mod tests {
     }
 
     #[test]
-    fn planned_setup_padded_dims_round_count_matches_field_len_log() {
-        // For any (s_lp_in, incoming_tier, num_eval_rows, num_groups)
-        // the CR rounds equal `row_bits + col_bits + coeff_bits`, and
-        // `setup_field_len = row_count * col_count_padded * D` shares
-        // its log2 with the rounds count (since col_count_padded and
-        // D are powers of two).
+    fn planned_setup_claim_reduction_round_count_omits_col_bits() {
+        // The book-shaped CR rounds equal `row_bits + coeff_bits`; the
+        // setup column dimension is already fixed at the main stage-2 `r_x`.
         let base = lp_for_chunk_test();
 
         // Single-group baseline.
-        let (row_count_single, col_padded_single) =
+        let (_row_count_single, col_padded_single) =
             planned_setup_padded_dims(&base, None, TieredSetupParams::un_tiered(), 1, 1);
         let rounds_single =
             planned_setup_claim_reduction_rounds(&base, None, TieredSetupParams::un_tiered(), 1, 1);
-        let expected_single = row_count_single.next_power_of_two().trailing_zeros() as usize
-            + col_padded_single.trailing_zeros() as usize
+        let expected_single = base.m_row_count(1, 1).next_power_of_two().trailing_zeros() as usize
             + base.ring_dimension.trailing_zeros() as usize;
         assert_eq!(rounds_single, expected_single);
+        assert!(
+            col_padded_single.trailing_zeros() > 0,
+            "test must have column bits to prove they are omitted"
+        );
 
         // Un-tiered cascade incoming (W, S): the planner passes
         // num_eval_rows = num_commitment_groups = 2.
@@ -1200,12 +1197,11 @@ mod tests {
             2,
             2,
         );
-        let (row_count_untiered, col_padded_untiered) =
+        let (_row_count_untiered, _col_padded_untiered) =
             planned_setup_padded_dims(&base, Some(&s_lp), TieredSetupParams::un_tiered(), 2, 2);
         assert_eq!(
             rounds_untiered,
-            row_count_untiered.next_power_of_two().trailing_zeros() as usize
-                + col_padded_untiered.trailing_zeros() as usize
+            base.m_row_count(2, 2).next_power_of_two().trailing_zeros() as usize
                 + base.ring_dimension.trailing_zeros() as usize
         );
 
@@ -1216,17 +1212,16 @@ mod tests {
         let chunk_lp = tiered_setup_group_lp(&base, big_field_len, tier).expect("chunk_lp");
         let rounds_tiered =
             planned_setup_claim_reduction_rounds(&base, Some(&chunk_lp), tier, 3, 3);
-        let (row_count_tiered, col_padded_tiered) =
+        let (_row_count_tiered, _col_padded_tiered) =
             planned_setup_padded_dims(&base, Some(&chunk_lp), tier, 3, 3);
         assert_eq!(
             rounds_tiered,
-            row_count_tiered.next_power_of_two().trailing_zeros() as usize
-                + col_padded_tiered.trailing_zeros() as usize
+            base.m_row_count(3, 3).next_power_of_two().trailing_zeros() as usize
                 + base.ring_dimension.trailing_zeros() as usize
         );
 
-        // Tiered cascade rounds must dominate single-group baseline:
-        // the multi-group M-table is structurally wider.
+        // Tiered cascade rounds still reflect the larger logical M-row
+        // family count, but never add setup column bits.
         assert!(
             rounds_tiered >= rounds_single,
             "tiered CR rounds ({rounds_tiered}) must be at least single-group ({rounds_single})"

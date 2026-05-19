@@ -164,6 +164,26 @@ where
             .max(lp.outer_width().next_power_of_two())
             .max(lp.d_matrix_width().next_power_of_two());
     };
+
+    let singleton_layout = Cfg::commitment_layout(max_num_vars)?;
+    visit(&singleton_layout);
+    let batched_layout = if max_num_batched_polys > 1 {
+        let batch = AkitaRootBatchSummary::new(
+            max_num_batched_polys,
+            max_num_batched_polys,
+            max_num_points.min(max_num_batched_polys).max(1),
+        )?;
+        Some((
+            batch,
+            Cfg::get_params_for_batched_commitment(max_num_vars, max_num_vars, batch)?,
+        ))
+    } else {
+        None
+    };
+    if let Some((_, layout)) = &batched_layout {
+        visit(layout);
+    }
+
     let mut visit_schedule = |schedule: &Schedule| -> Result<(), AkitaError> {
         let mut incoming_setup: Option<(usize, TieredSetupParams)> = None;
         for step in &schedule.steps {
@@ -215,12 +235,7 @@ where
     )?;
     visit_schedule(&singleton)?;
 
-    if max_num_batched_polys > 1 {
-        let batch = AkitaRootBatchSummary::new(
-            max_num_batched_polys,
-            max_num_batched_polys,
-            max_num_points.min(max_num_batched_polys).max(1),
-        )?;
+    if let Some((batch, _)) = batched_layout {
         let batched = cascade_schedule::<Cfg>(max_num_vars, max_num_vars, batch)?;
         visit_schedule(&batched)?;
     }

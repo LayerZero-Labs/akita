@@ -99,7 +99,7 @@ where
 /// [`AkitaCommitmentHint`]s produced by [`commit_with_params`]. The
 /// hints carry the digit-decomposed inner witnesses and the recomposed
 /// `t` rows; the recursive Hachi PCS step at the next fold level needs
-/// both to discharge `S(r_setup) = y_setup` against the meta-bound
+/// both to discharge `S(r_i, r_x, r_k) = y_setup` against the meta-bound
 /// chunk commitments.
 ///
 /// The split into [`TieredSetupCommitments`] (verifier-derivable) and
