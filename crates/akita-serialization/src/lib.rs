@@ -6,6 +6,14 @@
 
 use std::io::{Read, Write};
 
+/// Default maximum number of elements accepted by self-described validated
+/// vector decoding.
+///
+/// Protocol shapes should normally provide tighter bounds before vector
+/// allocation. This cap protects generic verifier-facing decoders from
+/// allocating directly from attacker-controlled lengths.
+pub const DEFAULT_MAX_SEQUENCE_LEN: usize = 1 << 24;
+
 /// Compression mode for serialization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compress {
@@ -38,6 +46,15 @@ pub enum SerializationError {
     /// Unexpected data
     #[error("Unexpected data")]
     UnexpectedData,
+
+    /// Encoded sequence length exceeds the configured decoder limit.
+    #[error("Sequence length {len} exceeds maximum {max}")]
+    LengthLimitExceeded {
+        /// Encoded length.
+        len: u64,
+        /// Maximum accepted length.
+        max: usize,
+    },
 }
 
 /// Trait for validating deserialized data.
@@ -119,6 +136,10 @@ pub trait AkitaDeserialize: Sized {
     }
 
     /// Deserialize from compressed form without validation.
+    ///
+    /// This is for trusted internal buffers whose producer and shape have
+    /// already been checked in the same trust domain. Use
+    /// [`Self::deserialize_compressed`] for verifier-facing bytes.
     fn deserialize_compressed_unchecked<R: Read>(
         reader: R,
         ctx: &Self::Context,
@@ -135,6 +156,10 @@ pub trait AkitaDeserialize: Sized {
     }
 
     /// Deserialize from uncompressed form without validation.
+    ///
+    /// This is for trusted internal buffers whose producer and shape have
+    /// already been checked in the same trust domain. Use
+    /// [`Self::deserialize_uncompressed`] for verifier-facing bytes.
     fn deserialize_uncompressed_unchecked<R: Read>(
         reader: R,
         ctx: &Self::Context,
@@ -145,6 +170,23 @@ pub trait AkitaDeserialize: Sized {
 
 mod primitive_impls {
     use super::*;
+
+    fn checked_vec_len(len: u64, validate: Validate) -> Result<usize, SerializationError> {
+        let len_usize =
+            usize::try_from(len).map_err(|_| SerializationError::LengthLimitExceeded {
+                len,
+                max: usize::MAX,
+            })?;
+
+        if validate == Validate::Yes && len_usize > DEFAULT_MAX_SEQUENCE_LEN {
+            return Err(SerializationError::LengthLimitExceeded {
+                len,
+                max: DEFAULT_MAX_SEQUENCE_LEN,
+            });
+        }
+
+        Ok(len_usize)
+    }
 
     macro_rules! impl_primitive_serialization {
         ($t:ty, $size:expr) => {
@@ -225,7 +267,10 @@ mod primitive_impls {
             _ctx: &(),
         ) -> Result<Self, SerializationError> {
             let val = u64::deserialize_with_mode(reader, compress, validate, &())?;
-            Ok(val as usize)
+            usize::try_from(val).map_err(|_| SerializationError::LengthLimitExceeded {
+                len: val,
+                max: usize::MAX,
+            })
         }
     }
 
@@ -307,7 +352,8 @@ mod primitive_impls {
             validate: Validate,
             _ctx: &(),
         ) -> Result<Self, SerializationError> {
-            let len = u64::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
+            let encoded_len = u64::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let len = checked_vec_len(encoded_len, validate)?;
             let mut vec = Vec::with_capacity(len);
             for _ in 0..len {
                 vec.push(T::deserialize_with_mode(
@@ -318,6 +364,55 @@ mod primitive_impls {
                 )?);
             }
             Ok(vec)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn validated_vec_rejects_default_limit_exhaustion() {
+        let mut bytes = Vec::new();
+        ((DEFAULT_MAX_SEQUENCE_LEN as u64) + 1)
+            .serialize_compressed(&mut bytes)
+            .unwrap();
+
+        let err = Vec::<u8>::deserialize_compressed(&bytes[..], &()).unwrap_err();
+        assert!(matches!(
+            err,
+            SerializationError::LengthLimitExceeded { .. }
+        ));
+    }
+
+    #[test]
+    fn unchecked_vec_is_reserved_for_trusted_internal_buffers() {
+        let mut bytes = Vec::new();
+        3u64.serialize_compressed(&mut bytes).unwrap();
+        bytes.extend_from_slice(&[1, 2, 3]);
+
+        let decoded = Vec::<u8>::deserialize_compressed_unchecked(&bytes[..], &()).unwrap();
+        assert_eq!(decoded, vec![1, 2, 3]);
+    }
+
+    proptest! {
+        #[test]
+        fn vec_u8_round_trips(values in proptest::collection::vec(any::<u8>(), 0..1024)) {
+            let mut encoded = Vec::new();
+            prop_assert!(values.serialize_compressed(&mut encoded).is_ok());
+
+            match Vec::<u8>::deserialize_compressed(&encoded[..], &()) {
+                Ok(decoded) => prop_assert_eq!(decoded, values),
+                Err(err) => prop_assert!(false, "round trip failed: {err}"),
+            }
+        }
+
+        #[test]
+        fn bool_rejects_non_canonical_bytes(byte in 2u8..) {
+            let err = bool::deserialize_compressed(&[byte][..], &()).unwrap_err();
+            prop_assert!(matches!(err, SerializationError::InvalidData(_)));
         }
     }
 }

@@ -21,21 +21,13 @@
 
 [workspace]
 resolver = "2"
-members = [
-    "artifact",
-    "glue",
-    "guest",
-    "host",
-]
+members = ["artifact", "glue", "guest", "host"]
 # Default to building the binaries (`host` + `artifact`) only. They each
 # pull in `guest` / `glue` as path deps with the right feature
 # unification (the host enables `jolt-sdk/host` so the guest's
 # `#[jolt::provable]` macro can expand its host-side helpers; building the
 # guest standalone — without `jolt-sdk/host` features — would fail).
-default-members = [
-    "artifact",
-    "host",
-]
+default-members = ["artifact", "host"]
 
 [patch.crates-io]
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }

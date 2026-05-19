@@ -29,7 +29,14 @@ where
         });
     }
 
-    let y_len = 1usize << ring_bits;
+    let y_len = 1usize
+        .checked_shl(
+            u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
+                expected: usize::BITS as usize,
+                actual: ring_bits,
+            })?,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
     if packed_witness.num_elems != physical_w_len {
         return Err(AkitaError::InvalidProof);
     }
@@ -41,8 +48,8 @@ where
     }
 
     let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
-    let eq_y = EqPolynomial::evals(y_challenges);
-    let eq_x = EqPolynomial::evals(x_challenges);
+    let eq_y = EqPolynomial::evals(y_challenges)?;
+    let eq_x = EqPolynomial::evals(x_challenges)?;
     let live_x_cols = physical_w_len / D;
 
     let mut acc = E::zero();
@@ -78,14 +85,21 @@ where
         });
     }
 
-    let d = 1usize << ring_bits;
+    let d = 1usize
+        .checked_shl(
+            u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
+                expected: usize::BITS as usize,
+                actual: ring_bits,
+            })?,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
     if !field_witness.len().is_multiple_of(d) {
         return Err(AkitaError::InvalidProof);
     }
 
     let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
-    let eq_y = EqPolynomial::evals(y_challenges);
-    let eq_x = EqPolynomial::evals(x_challenges);
+    let eq_y = EqPolynomial::evals(y_challenges)?;
+    let eq_x = EqPolynomial::evals(x_challenges)?;
     let live_x_cols = field_witness.len() / d;
 
     let mut acc = E::zero();
@@ -188,11 +202,35 @@ where
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
-    ) -> Self {
-        let relation_claim = relation_claim_override.unwrap_or_else(|| {
-            relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u, y_rings)
-        });
-        Self {
+    ) -> Result<Self, AkitaError> {
+        let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
+            AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
+        })?;
+        if r_stage1.len() != num_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: num_rounds,
+                actual: r_stage1.len(),
+            });
+        }
+        let expected_alpha_len = 1usize
+            .checked_shl(
+                u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
+                    expected: usize::BITS as usize,
+                    actual: ring_bits,
+                })?,
+            )
+            .ok_or(AkitaError::InvalidProof)?;
+        if alpha_evals_y.len() != expected_alpha_len {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_alpha_len,
+                actual: alpha_evals_y.len(),
+            });
+        }
+        let relation_claim = match relation_claim_override {
+            Some(claim) => claim,
+            None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u, y_rings)?,
+        };
+        Ok(Self {
             batching_coeff,
             s_claim,
             witness_oracle,
@@ -207,7 +245,7 @@ where
             ring_bits,
             relation_claim,
             _marker: PhantomData,
-        }
+        })
     }
 
     /// Construct a verifier that evaluates the final direct witness locally.
@@ -232,7 +270,7 @@ where
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
-    ) -> Self {
+    ) -> Result<Self, AkitaError> {
         Self::new(
             batching_coeff,
             s_claim,
@@ -278,7 +316,7 @@ where
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
-    ) -> Self {
+    ) -> Result<Self, AkitaError> {
         Self::new(
             batching_coeff,
             s_claim,
@@ -346,7 +384,7 @@ where
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
     fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
-        let eq_val = EqPolynomial::mle(&self.r_stage1, challenges);
+        let eq_val = EqPolynomial::mle(&self.r_stage1, challenges)?;
         let w_eval = {
             let _span = tracing::info_span!("stage2_witness_eval").entered();
             self.witness_eval(challenges)?
@@ -374,6 +412,7 @@ mod tests {
 
     type F = Prime128Offset275;
     type E = Fp2<F, NegOneNr>;
+    const D: usize = 4;
 
     fn build_w_evals<F: FieldCore>(
         w: &[F],
@@ -453,5 +492,26 @@ mod tests {
             field_witness_eval::<F, E>(&field_witness, &challenges, 1, 1).expect("valid witness");
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn packed_witness_eval_rejects_challenge_dimension_mismatch() {
+        let packed = PackedDigits::from_i8_digits(&[1, -1, 0, 2], 3);
+        let err = packed_witness_eval::<F, E, D>(&packed, 1, &[E::zero()], 1, 1)
+            .expect_err("wrong arity");
+        assert!(matches!(err, AkitaError::InvalidSize { .. }));
+    }
+
+    #[test]
+    fn packed_witness_eval_rejects_truncated_data() {
+        let packed = PackedDigits {
+            num_elems: 4,
+            bits_per_elem: 3,
+            data: vec![],
+        };
+        let challenges = vec![E::zero(), E::zero()];
+        let err = packed_witness_eval::<F, E, D>(&packed, 1, &challenges, 1, 1)
+            .expect_err("truncated packed witness");
+        assert!(matches!(err, AkitaError::InvalidProof));
     }
 }

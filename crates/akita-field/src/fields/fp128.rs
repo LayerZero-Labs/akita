@@ -241,7 +241,13 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
-    #[cfg_attr(any(target_arch = "aarch64", target_arch = "x86_64"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_arch = "aarch64", target_arch = "x86_64"),
+        expect(
+            dead_code,
+            reason = "target-specific helper is intentionally unused on some architectures"
+        )
+    )]
     #[inline(always)]
     fn add_raw_portable(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         // Compute s = a + b as two limbs.
@@ -695,7 +701,13 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
-    #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
+    #[cfg_attr(
+        target_arch = "aarch64",
+        expect(
+            dead_code,
+            reason = "target-specific helper is intentionally unused on some architectures"
+        )
+    )]
     #[inline(always)]
     fn mul_raw_portable(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         let [r0, r1, r2, r3] = Self(a).mul_wide(Self(b));
@@ -715,7 +727,13 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
-    #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
+    #[cfg_attr(
+        target_arch = "aarch64",
+        expect(
+            dead_code,
+            reason = "target-specific helper is intentionally unused on some architectures"
+        )
+    )]
     #[inline(always)]
     fn mul_add_raw_portable(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
         let prod = Self(a).mul_wide(Self(b));
@@ -920,7 +938,13 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
-    #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
+    #[cfg_attr(
+        target_arch = "aarch64",
+        expect(
+            dead_code,
+            reason = "target-specific helper is intentionally unused on some architectures"
+        )
+    )]
     #[inline(always)]
     fn sqr_raw_portable(a: [u64; 2]) -> [u64; 2] {
         let [r0, r1, r2, r3] = Self(a).sqr_wide();

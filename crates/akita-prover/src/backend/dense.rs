@@ -298,7 +298,7 @@ where
         E: ExtField<F>,
     {
         let (split_bits, width) = self.tensor_shape::<E>(Some(logical_point))?;
-        let tail_eq = EqPolynomial::evals(&logical_point[split_bits..]);
+        let tail_eq = EqPolynomial::evals(&logical_point[split_bits..])?;
         self.tensor_extension_column_partials_with_tail_eq(width, &tail_eq)
     }
 
@@ -313,7 +313,7 @@ where
             return Ok(Vec::new());
         };
         let (split_bits, width) = first.tensor_shape::<E>(Some(logical_point))?;
-        let tail_eq = EqPolynomial::evals(&logical_point[split_bits..]);
+        let tail_eq = EqPolynomial::evals(&logical_point[split_bits..])?;
         polys
             .iter()
             .map(|poly| {
