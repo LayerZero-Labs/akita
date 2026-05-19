@@ -410,11 +410,33 @@ pub fn planned_verifier_setup_storage_field_len(
         num_eval_rows,
         num_commitment_groups,
     );
+    planned_verifier_setup_storage_field_len_for_setup(lp, setup_field_len, storage_tier)
+}
+
+/// Planned verifier setup-precompute storage for a known setup-polynomial
+/// length, in field elements.
+///
+/// `storage_lp` is the LP used to commit/store the emitted setup material at
+/// the receiving level. Runtime tiered material is derived against
+/// `next_params`, not the level that emitted `S`.
+///
+/// # Errors
+///
+/// Returns an error if the configured tier cannot be derived for
+/// `setup_field_len` under `storage_lp`.
+pub fn planned_verifier_setup_storage_field_len_for_setup(
+    storage_lp: &LevelParams,
+    setup_field_len: usize,
+    storage_tier: TieredSetupParams,
+) -> Result<usize, AkitaError> {
+    if setup_field_len == 0 {
+        return Ok(0);
+    }
     if !storage_tier.is_tiered() {
         return Ok(setup_field_len);
     }
 
-    let chunk_lp = tiered_setup_group_lp(lp, setup_field_len, storage_tier)?;
+    let chunk_lp = tiered_setup_group_lp(storage_lp, setup_field_len, storage_tier)?;
     let chunk_commit_field_len = chunk_lp
         .b_key
         .row_len()
@@ -422,9 +444,10 @@ pub fn planned_verifier_setup_storage_field_len(
     let meta_field_len = storage_tier
         .num_chunks
         .saturating_mul(chunk_lp.b_key.row_len())
-        .saturating_mul(lp.ring_dimension)
+        .saturating_mul(storage_lp.ring_dimension)
         .next_power_of_two();
-    let meta_lp = derive_chunk_sis_ranks_from_widths(untiered_setup_group_lp(lp, meta_field_len)?)?;
+    let meta_lp =
+        derive_chunk_sis_ranks_from_widths(untiered_setup_group_lp(storage_lp, meta_field_len)?)?;
     let meta_commit_field_len = meta_lp
         .b_key
         .row_len()

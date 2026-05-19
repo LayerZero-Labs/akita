@@ -160,6 +160,18 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     fn planner_setup_storage_amortization_proofs() -> usize {
         1000
     }
+
+    /// Bytes-equivalent weight for verifier cleartext evaluation of a setup
+    /// polynomial when a setup-claim-reduction level does not route `S`
+    /// recursively.
+    ///
+    /// This is a per-proof verifier work term, unlike setup storage, so it is
+    /// not amortized. The default charges one field-element byte per cleartext
+    /// field element evaluated. Set to `0` to recover the historical wire-only
+    /// behavior for this component.
+    fn planner_cleartext_discharge_weight() -> usize {
+        1
+    }
 }
 
 pub use akita_types::WitnessShape;
