@@ -877,7 +877,15 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::baseline::{baseline_params_for, run_baseline_planner};
     use crate::proof_size::ring_vec_bytes;
+
+    fn baseline_total(d: u32, lcb: u32, nv: usize) -> usize {
+        let bp = baseline_params_for(d, lcb, nv);
+        run_baseline_planner(&bp)
+            .expect("baseline planner should produce a schedule")
+            .total
+    }
 
     #[test]
     fn onehot_32_produces_schedule() {
@@ -891,10 +899,11 @@ mod tests {
     fn onehot_32_beats_baseline() {
         let opts = PlannerOptions::new(1, 32);
         let sched = run_universal_planner(&opts);
+        let baseline = baseline_total(64, 1, 32);
         assert!(
-            sched.total_bytes < 91_445,
-            "onehot nv=32: {} should stay below the D=64 baseline",
-            sched.total_bytes
+            sched.total_bytes < baseline,
+            "onehot nv=32: {} should stay below the D=64 baseline ({baseline})",
+            sched.total_bytes,
         );
     }
 
@@ -902,10 +911,11 @@ mod tests {
     fn full_32_beats_baseline() {
         let opts = PlannerOptions::new(128, 32);
         let sched = run_universal_planner(&opts);
+        let baseline = baseline_total(128, 128, 32);
         assert!(
-            sched.total_bytes < 163_501,
-            "full nv=32: {} should stay below the D=128 baseline",
-            sched.total_bytes
+            sched.total_bytes < baseline,
+            "full nv=32: {} should stay below the D=128 baseline ({baseline})",
+            sched.total_bytes,
         );
     }
 
@@ -913,8 +923,13 @@ mod tests {
     fn full_25_produces_schedule() {
         let opts = PlannerOptions::new(128, 25);
         let sched = run_universal_planner(&opts);
+        let baseline = baseline_total(128, 128, 25);
         assert!(sched.num_fold_levels() > 0);
-        assert!(sched.total_bytes < 166_613);
+        assert!(
+            sched.total_bytes < baseline,
+            "full nv=25: {} should stay below the D=128 baseline ({baseline})",
+            sched.total_bytes,
+        );
     }
 
     #[test]
