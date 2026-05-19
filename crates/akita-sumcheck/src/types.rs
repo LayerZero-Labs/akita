@@ -129,7 +129,14 @@ impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
         degree: &usize,
     ) -> Result<Self, SerializationError> {
         let stored_coeffs = Self::stored_coeff_count_for_degree(*degree);
-        let mut coeffs_except_linear_term = Vec::with_capacity(stored_coeffs);
+        let mut coeffs_except_linear_term = Vec::new();
+        coeffs_except_linear_term
+            .try_reserve_exact(stored_coeffs)
+            .map_err(|_| {
+                SerializationError::InvalidData(
+                    "eq-factored polynomial allocation failed".to_string(),
+                )
+            })?;
         for _ in 0..stored_coeffs {
             coeffs_except_linear_term.push(E::deserialize_with_mode(
                 &mut reader,
@@ -194,7 +201,10 @@ impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
         ctx: &SumcheckProofShape,
     ) -> Result<Self, SerializationError> {
         let (num_rounds, degree) = *ctx;
-        let mut round_polys = Vec::with_capacity(num_rounds);
+        let mut round_polys = Vec::new();
+        round_polys.try_reserve_exact(num_rounds).map_err(|_| {
+            SerializationError::InvalidData("sumcheck proof allocation failed".to_string())
+        })?;
         for _ in 0..num_rounds {
             round_polys.push(CompressedUniPoly::deserialize_with_mode(
                 &mut reader,
@@ -317,7 +327,12 @@ impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
         ctx: &EqFactoredSumcheckProofShape,
     ) -> Result<Self, SerializationError> {
         let (num_rounds, degree) = *ctx;
-        let mut round_polys = Vec::with_capacity(num_rounds);
+        let mut round_polys = Vec::new();
+        round_polys.try_reserve_exact(num_rounds).map_err(|_| {
+            SerializationError::InvalidData(
+                "eq-factored sumcheck proof allocation failed".to_string(),
+            )
+        })?;
         for _ in 0..num_rounds {
             round_polys.push(EqFactoredUniPoly::deserialize_with_mode(
                 &mut reader,

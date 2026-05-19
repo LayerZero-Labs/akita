@@ -109,8 +109,8 @@ where
     assert_eq!(poly.indices().len() * onehot_k, 1usize << point.len());
 
     let low_vars = onehot_k.trailing_zeros() as usize;
-    let low_weights = lagrange_weights(&point[..low_vars]);
-    let high_weights = lagrange_weights(&point[low_vars..]);
+    let low_weights = lagrange_weights(&point[..low_vars]).expect("valid low opening point");
+    let high_weights = lagrange_weights(&point[low_vars..]).expect("valid high opening point");
     poly.indices()
         .iter()
         .enumerate()

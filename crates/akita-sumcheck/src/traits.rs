@@ -134,7 +134,12 @@ pub trait EqFactoredSumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
     fn input_claim(&self) -> E;
 
     /// Construct the fresh mutable round state used by the verifier driver.
-    fn start_round_state(&self) -> Self::RoundState;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the instance dimensions cannot construct the
+    /// eq-factored round state.
+    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError>;
 
     /// Compute the expected final oracle evaluation `f(r_0, ..., r_{n-1})`.
     ///

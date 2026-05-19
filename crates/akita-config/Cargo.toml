@@ -4,16 +4,19 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 authors = [
-    "Markos Georghiades <mgeorghiades@a16z.com>",
-    "Quang Dao <qvd@andrew.cmu.edu>",
-    "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-    "Omid Bodaghi <omibo@layerzero.foundation>",
-    "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+  "Markos Georghiades <mgeorghiades@a16z.com>",
+  "Quang Dao <qvd@andrew.cmu.edu>",
+  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+  "Omid Bodaghi <omibo@layerzero.foundation>",
+  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
 ]
 license = "Apache-2.0 OR MIT"
 description = "Runtime configuration presets and schedule policy for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
+
+[package.metadata.cargo-machete]
+ignored = ["akita-algebra"]
 
 [features]
 default = ["parallel"]
@@ -38,10 +41,5 @@ required-features = ["planner"]
 name = "tune_small_field_schedules"
 required-features = ["planner"]
 
-[lints.rust]
-missing_docs = "warn"
-unreachable_pub = "warn"
-
-[lints.clippy]
-missing_errors_doc = "warn"
-missing_panics_doc = "warn"
+[lints]
+workspace = true

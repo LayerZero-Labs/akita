@@ -338,7 +338,7 @@ mod tests {
 
         let alpha = F::from_u64(29);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = lp.m_row_count(1, 1);
+        let rows = lp.m_row_count(1, 1).expect("valid row count");
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
 
         for row in 0..rows {
@@ -375,7 +375,8 @@ mod tests {
                 &quad_eq.v,
                 &commitment.u,
                 std::slice::from_ref(&y_ring),
-            );
+            )
+            .expect("relation claim");
             assert_eq!(got, expected, "ring-multiplier row {row} mismatch");
         }
     }
@@ -454,7 +455,7 @@ mod tests {
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = lp.m_row_count(1, 1);
+        let rows = lp.m_row_count(1, 1).unwrap();
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
 
         for row in 0..rows {
@@ -491,7 +492,8 @@ mod tests {
                 &quad_eq.v,
                 &commitment.u,
                 std::slice::from_ref(&y_ring),
-            );
+            )
+            .unwrap();
             assert_eq!(got, expected, "row {row} mismatch");
         }
     }
@@ -610,7 +612,7 @@ mod tests {
 
         let alpha = F::from_u64(42);
         let alpha_evals_y = scalar_powers(alpha, D);
-        let rows = level_params.m_row_count(1, 1);
+        let rows = level_params.m_row_count(1, 1).unwrap();
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
         let tau1: Vec<F> = (0..num_i)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
