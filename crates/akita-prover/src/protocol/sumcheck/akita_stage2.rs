@@ -31,17 +31,21 @@
 //! `s_claim = w(r_stage1) * (w(r_stage1) + 1)`
 //! `        = sum_z eq(r_stage1, z) * w(z) * (w(z) + 1)`
 //!
-//! for the same multilinear witness table. With `gamma = batching_coeff`, the
-//! exact identity established by this sumcheck is
+//! for the same multilinear witness table. The transcript samples two
+//! batching coefficients per book §5.6 Figure 12 Round 8 line 912-919:
+//! `gamma_range` (via `CHALLENGE_SUMCHECK_BATCH`) for the range-check /
+//! virtual side, and `gamma_rel` (via `CHALLENGE_SUMCHECK_BATCH_REL`)
+//! for the relation side. The exact identity established by this
+//! sumcheck is
 //!
-//! `gamma * s_claim + relation_claim =`
-//! `sum_{x,y} [ gamma * eq(r_stage1, (x, y)) * w(x, y) * (w(x, y) + 1)`
-//! `           + w(x, y) * a(y) * m_tau1(x) ]`.
+//! `gamma_range * s_claim + gamma_rel * relation_claim =`
+//! `sum_{x,y} [ gamma_range * eq(r_stage1, (x, y)) * w(x, y) * (w(x, y) + 1)`
+//! `           + gamma_rel * w(x, y) * a(y) * m_tau1(x) ]`.
 //!
 //! After all rounds, at `r_stage2 = (r_x, r_y)`, the verifier checks
 //!
-//! `gamma * eq(r_stage1, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
-//! `  + w(r_stage2) * a(r_y) * m_tau1(r_x)`,
+//! `gamma_range * eq(r_stage1, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
+//! `  + gamma_rel * w(r_stage2) * a(r_y) * m_tau1(r_x)`,
 //!
 //! exactly the oracle returned by `expected_output_claim()`. The prover fuses
 //! both halves around the same local `w0` / `dw` scan so the witness-side work
@@ -2525,7 +2529,7 @@ mod tests {
     }
 
     fn new_stage2_test_prover(
-        batching_coeff: F,
+        gamma_range: F,
         w_compact: Vec<i8>,
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
@@ -2534,8 +2538,11 @@ mod tests {
         let s_claim = s_claim_from_compact_rows(&w_compact, &params);
         let relation_claim =
             relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
+        // Test fixture uses gamma_rel = 1 (the standard normalization);
+        // the protocol's two-coefficient form is exercised at the
+        // verifier-level integration tests.
         AkitaStage2Prover::new(
-            batching_coeff,
+            gamma_range,
             F::one(),
             w_compact,
             params.r_stage1,
@@ -3375,10 +3382,10 @@ mod tests {
         let m_evals_x: Vec<F> = (0..(1usize << col_bits))
             .map(|i| F::from_u64((43 * i as u64) + 431))
             .collect();
-        let batching_coeff = F::from_u64(449);
+        let gamma_range = F::from_u64(449);
 
         let mut prover = new_stage2_test_prover(
-            batching_coeff,
+            gamma_range,
             w_prefix.clone(),
             alpha_evals_y.clone(),
             m_evals_x.clone(),
@@ -3412,7 +3419,7 @@ mod tests {
         let m_val = multilinear_eval(&m_evals_x, x_challenges).unwrap();
         let w_val = prover.final_w_eval();
         let expected_oracle =
-            batching_coeff * eq_val * w_val * (w_val + F::one()) + w_val * alpha_val * m_val;
+            gamma_range * eq_val * w_val * (w_val + F::one()) + w_val * alpha_val * m_val;
 
         assert_eq!(
             running_claim, expected_oracle,
