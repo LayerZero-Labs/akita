@@ -14,6 +14,7 @@ use crate::{
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
+use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     HalvingField, Invertible, PseudoMersenneField, RandomSampling,
@@ -25,8 +26,8 @@ use akita_sumcheck::{
     tensor_equality_factor_evals, tensor_logical_claim_from_partials, tensor_opening_split,
     tensor_packed_witness_evals, tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
     tensor_row_partials_from_columns, BatchedExtensionOpeningReductionProver,
-    BatchedExtensionOpeningReductionTerm, ExtensionOpeningReductionProver,
-    SparseExtensionOpeningWitness, SumcheckInstanceProver, SumcheckProof,
+    BatchedExtensionOpeningReductionTerm, ExtensionOpeningReductionProver, SumcheckInstanceProver,
+    SumcheckProof, SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
@@ -1322,30 +1323,6 @@ struct RootExtensionOpeningReduction<C: FieldCore> {
     factors_by_point: Vec<C>,
 }
 
-fn tensor_head_point<E: FieldCore>(
-    logical_point: &[E],
-    num_vars: usize,
-    split_bits: usize,
-    head: usize,
-) -> Result<Vec<E>, AkitaError> {
-    if logical_point.len() > num_vars || split_bits > num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: num_vars,
-            actual: logical_point.len().max(split_bits),
-        });
-    }
-    let mut padded = logical_point.to_vec();
-    padded.resize(num_vars, E::zero());
-    for (bit, coord) in padded.iter_mut().enumerate().take(split_bits) {
-        *coord = if ((head >> bit) & 1) == 0 {
-            E::zero()
-        } else {
-            E::one()
-        };
-    }
-    Ok(padded)
-}
-
 fn lift_claim_point<E, C>(point: &[E], num_vars: usize) -> Result<Vec<C>, AkitaError>
 where
     E: FieldCore,
@@ -1427,14 +1404,47 @@ where
     {
         let _span =
             tracing::info_span!("root_extension_prepare_partials", width, split_bits).entered();
-        for (claim_idx, poly) in polys.iter().enumerate() {
+        let mut column_partials_by_claim = (0..incidence_summary.num_claims())
+            .map(|_| None)
+            .collect::<Vec<_>>();
+        for (point_idx, logical_point) in padded_points_e
+            .iter()
+            .enumerate()
+            .take(incidence_summary.num_points())
+        {
+            let claim_indices = incidence_summary
+                .claim_to_point()
+                .iter()
+                .enumerate()
+                .filter_map(|(claim_idx, &claim_point_idx)| {
+                    (claim_point_idx == point_idx).then_some(claim_idx)
+                })
+                .collect::<Vec<_>>();
+            let point_polys = claim_indices
+                .iter()
+                .map(|&claim_idx| polys[claim_idx])
+                .collect::<Vec<_>>();
+            let point_partials = <P as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<
+                E,
+            >(&point_polys, logical_point)?;
+            if point_partials.len() != claim_indices.len() {
+                return Err(AkitaError::InvalidSize {
+                    expected: claim_indices.len(),
+                    actual: point_partials.len(),
+                });
+            }
+            for (claim_idx, column_partials) in claim_indices.into_iter().zip(point_partials) {
+                column_partials_by_claim[claim_idx] = Some(column_partials);
+            }
+        }
+        for (claim_idx, column_partials) in column_partials_by_claim.into_iter().enumerate() {
             let point_idx = incidence_summary.claim_to_point()[claim_idx];
             let logical_point = &padded_points_e[point_idx];
-            let mut column_partials = Vec::with_capacity(width);
-            for head in 0..width {
-                let partial_point = tensor_head_point(logical_point, num_vars, split_bits, head)?;
-                column_partials.push(poly.evaluate_extension::<E>(&partial_point)?);
-            }
+            let column_partials = column_partials.ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "missing root extension-opening column partials for claim".to_string(),
+                )
+            })?;
             let opening =
                 tensor_logical_claim_from_partials::<F, E>(logical_point, &column_partials)?;
             let row_partials = tensor_row_partials_from_columns::<F, E>(&column_partials)?
@@ -1509,23 +1519,42 @@ where
         )?
     };
 
-    let sparse_witnesses = {
-        let _span = tracing::info_span!("root_extension_sparse_witnesses").entered();
-        polys
+    let sparse_terms = {
+        let _span = tracing::info_span!("root_extension_sparse_terms").entered();
+        let mut terms = Vec::with_capacity(incidence_summary.num_points());
+        let mut all_sparse = true;
+        for (point_idx, padded_point) in padded_points
             .iter()
-            .map(|poly| poly.tensor_packed_extension_sparse_evals::<C>())
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    let mut terms = Vec::with_capacity(incidence_summary.num_points());
-    if sparse_witnesses.iter().all(Option::is_some) {
+            .enumerate()
+            .take(incidence_summary.num_points())
         {
-            let _span = tracing::info_span!("root_extension_sparse_terms").entered();
-            for (point_idx, padded_point) in padded_points
-                .iter()
-                .enumerate()
-                .take(incidence_summary.num_points())
-            {
-                let tail_point = &padded_point[split_bits..];
+            let tail_point = &padded_point[split_bits..];
+            let mut point_polys = Vec::new();
+            let mut point_coeffs = Vec::new();
+            for (claim_idx, poly) in polys.iter().enumerate() {
+                if incidence_summary.claim_to_point()[claim_idx] == point_idx {
+                    point_polys.push(*poly);
+                    point_coeffs.push(row_coefficients[claim_idx]);
+                }
+            }
+            let witness_evals = {
+                let _span = tracing::info_span!(
+                    "root_extension_sparse_witnesses",
+                    point_idx,
+                    num_terms = point_polys.len()
+                )
+                .entered();
+                <P as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_linear_combination::<C>(
+                    &point_polys,
+                    &point_coeffs,
+                )?
+            };
+            let Some(witness_evals) = witness_evals else {
+                all_sparse = false;
+                break;
+            };
+            let lazy_rounds = tail_point.len().min(SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS);
+            if lazy_rounds == 0 {
                 let factor_evals = {
                     let _span = tracing::debug_span!(
                         "root_extension_factor_evals",
@@ -1535,30 +1564,40 @@ where
                     .entered();
                     tensor_equality_factor_evals::<F, C>(tail_point, &eta)?
                 };
-                let witness_evals = SparseExtensionOpeningWitness::linear_combination(
-                    sparse_witnesses
-                        .iter()
-                        .enumerate()
-                        .filter(|(claim_idx, _)| {
-                            incidence_summary.claim_to_point()[*claim_idx] == point_idx
-                        })
-                        .map(|(claim_idx, witness)| {
-                            (
-                                row_coefficients[claim_idx],
-                                witness
-                                    .as_ref()
-                                    .expect("all sparse witnesses checked above"),
-                            )
-                        }),
-                )?;
                 terms.push(BatchedExtensionOpeningReductionTerm::new_sparse(
                     witness_evals,
                     factor_evals,
                     C::one(),
                 )?);
+            } else {
+                let _span = tracing::debug_span!(
+                    "root_extension_lazy_tensor_factor",
+                    point_idx,
+                    tail_vars = tail_point.len(),
+                    lazy_rounds
+                )
+                .entered();
+                terms.push(
+                    BatchedExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
+                        witness_evals,
+                        tail_point.to_vec(),
+                        eta.clone(),
+                        C::one(),
+                        lazy_rounds,
+                    )?,
+                );
             }
         }
+        if all_sparse {
+            Some(terms)
+        } else {
+            None
+        }
+    };
+    let terms = if let Some(terms) = sparse_terms {
+        terms
     } else {
+        let mut terms = Vec::with_capacity(incidence_summary.num_claims());
         {
             let _span = tracing::info_span!("root_extension_dense_terms").entered();
             for (claim_idx, poly) in polys.iter().enumerate() {
@@ -1573,16 +1612,12 @@ where
                 )?);
             }
         }
-    }
+        terms
+    };
     let mut prover = {
         let _span = tracing::info_span!("root_extension_reduction_prover_new").entered();
-        BatchedExtensionOpeningReductionProver::new(terms)?
+        BatchedExtensionOpeningReductionProver::new(terms, input_claim)?
     };
-    if prover.input_claim() != input_claim {
-        return Err(AkitaError::InvalidInput(
-            "root extension-opening reduction input claim mismatch".to_string(),
-        ));
-    }
     let (sumcheck, rho, final_claim) =
         prove_sumcheck::<F, _, C, _, _>(&mut prover, transcript, |tr| {
             sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
@@ -1909,8 +1944,7 @@ where
             alpha_bits,
         )?;
         prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
-        let transformed_polys = polys
-            .iter()
+        let transformed_polys = cfg_iter!(polys)
             .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
             .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?;
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
