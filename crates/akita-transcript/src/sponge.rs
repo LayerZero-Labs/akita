@@ -343,4 +343,14 @@ mod tests {
             right.squeeze_scalar(crate::label!("right_challenge"))
         );
     }
+
+    #[test]
+    fn framed_bytes_encoding_is_prefix_free() {
+        let short = FramedBytes { bytes: b"abc" }.encode();
+        let long = FramedBytes { bytes: b"abcdef" }.encode();
+
+        assert_eq!(&short.as_ref()[..8], &3u64.to_le_bytes());
+        assert_eq!(&long.as_ref()[..8], &6u64.to_le_bytes());
+        assert!(!long.as_ref().starts_with(short.as_ref()));
+    }
 }

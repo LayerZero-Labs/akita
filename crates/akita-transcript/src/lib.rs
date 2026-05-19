@@ -14,12 +14,6 @@ pub use label::Label;
 pub use logging::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
 pub use sponge::{AkitaTranscript, TranscriptSponge, PROTOCOL_TAG};
 
-/// Blake2b-selected Akita transcript.
-pub type Blake2bTranscript<F> = AkitaTranscript<F>;
-
-/// Keccak-selected Akita transcript.
-pub type KeccakTranscript<F> = AkitaTranscript<F>;
-
 /// Transcript interface for protocol Fiat-Shamir transforms.
 ///
 /// The protocol layer is label-aware and uses deterministic byte encoding for

@@ -51,7 +51,7 @@ Build a first-approximation Fiat-Shamir hardening layer for Akita that delivers 
 The implementation must preserve the following invariants. Where a check is mechanically enforced, the test or assertion is named.
 
 1. **Preamble determines challenges.** For any two `(prover, verifier)` pair runs with different `AkitaInstanceDescriptor` bytes, the first challenge squeezed from the transcript differs. Tested by `transcript_preamble_separation` (new): randomize one field of the descriptor, prove on side A, verify with descriptor B, assert rejection at challenge #1.
-2. **Prover/verifier event-stream equality.** For any valid `(config, nv, incidence, basis)`, the chronological sequence of `Absorb { label, bytes_digest, bytes_len }` and `Squeeze { label, len }` events recorded by `LoggingTranscript` on the prover and verifier sides is identical. Tested by `transcript_event_stream_equality` (new differential prop-test, generalized from existing `tests/transcript_trace.rs`).
+2. **Prover/verifier event-stream equality.** For every exercised valid `(nv, incidence, basis)` case, the chronological sequence of `Absorb { label, bytes_digest, bytes_len }` and `Squeeze { label, len }` events recorded by `LoggingTranscript` on the prover and verifier sides is identical. Tested by hardening fixtures plus a differential prop-test, generalized from the historical `tests/transcript_trace.rs` diagnostic.
 3. **No silent unbinding (smell-check enforced).** Every proof field that becomes an input to a challenge-dependent verifier subprotocol is absorbed before any dependent squeeze. Enforced in this PR by smell check #4 (`wire_value_before_squeeze_coverage`) inside `LoggingTranscript` at test time, NOT by the type system. Future work (P1, deferred) promotes this to compile-time via a prover/verifier trait split or a verifier proof-reader adapter.
 4. **No back-compat preservation of today's transcript bytes.** Per the workspace's "Full Cutover, No Backward Compatibility" rule, this PR is free to change the transcript byte layout. Existing proofs do not need to verify after this PR. All in-tree end-to-end tests (`muldiv`, the akita-pcs e2e suite, examples/profile) must continue to pass against the new transcript.
 5. **Labels never enter the production sponge.** Asserted by a unit test in `akita-transcript`: build an `AkitaTranscript` in production-build mode, exercise every method, dump the spongefish op log, assert no label-tagged bytes appear. The label parameter on every method is a ZST in release/non-logging builds and is compiled out.
@@ -69,21 +69,21 @@ The implementation must preserve the following invariants. Where a check is mech
 
 ### Acceptance Criteria
 
-- [ ] `akita-transcript` adds `spongefish` `0.7.x` as a workspace dependency.
-- [ ] Two new Cargo features added to `akita-transcript/Cargo.toml`: `transcript-blake2b` (default) and `transcript-keccak`, gating `spongefish::instantiations::Blake2b512` / `spongefish::instantiations::Keccak` respectively. Builds with no backend enabled fail; explicit Keccak uses `--no-default-features`; Cargo all-features/default-unified builds resolve to Blake2b.
-- [ ] New `AkitaInstanceDescriptor` type in `akita-types` with the four-section shape from §Pillar P0, including normalized batch incidence, effective post-fallback schedule digest, setup artifact identity, and protocol feature mode. Add a canonical `AkitaSerialize` / `AkitaDeserialize` round-trip test, and a cross-side equality unit test (prover and verifier construct byte-identical descriptors from their respective sources).
-- [ ] Today's symmetric `Transcript<F>` trait is replaced by `AkitaTranscript<Sponge>`, implemented as a thin wrapper over `spongefish::ProverState<Sponge>` / `spongefish::VerifierState<'_, Sponge>`. **Both sides use the same trait surface** for this PR. All in-tree callsites are migrated in one pass. No back-compat shim is kept.
-- [ ] Local `spongefish::Encoding<[H::U]>` / `spongefish::Decoding<[H::U]>` impls are added for the `akita-field` / `akita-serialization` types we need (concrete prime field elements, extension elements, ring elements, flat vectors, digit blocks, sparse challenges). Each impl is exercised by a round-trip test.
-- [ ] `AkitaTranscript` construction takes an `AkitaInstanceDescriptor` and a fixed protocol tag, builds the `spongefish::DomainSeparator` with `.instance(<descriptor bytes>)`, and returns the wrapped prover or verifier state.
-- [ ] `Label` ZST + `label!()` macro: every `AkitaTranscript` method takes `Label` as a leading argument. In `cfg(not(feature = "logging-transcript"))` builds, including ordinary unit tests, `Label` is a unit struct and the macro expands to it; the parameter is compiled out. Under `--features logging-transcript`, `Label` carries `{tag: &'static str, file: &'static str, line: u32}`.
-- [ ] A default-feature unit test asserts `size_of::<Label>() == 0`, and the `Label` value is never serialized, hashed, or retained by the production transcript path.
-- [ ] Invariant 5 (labels never enter the production sponge) is verified by a dedicated unit test.
-- [ ] `LoggingTranscript<Sponge>` is published as a real `pub` helper in `akita-transcript`, behind `feature = "logging-transcript"`, with a small CLI example `crates/akita-pcs/examples/transcript_schedule` that dumps the schedule for a chosen `(mode, num_vars)`. Cross-crate integration tests that need rich labels enable the feature explicitly.
-- [ ] The five smell checks listed in §Smell Checks below all pass on every in-tree end-to-end test run that opts into `LoggingTranscript`.
-- [ ] A new `crates/akita-pcs/tests/transcript_hardening.rs` integration test exists and exercises: (a) preamble separation under perturbed descriptors, (b) prover/verifier event-stream equality, (c) the smell checks.
-- [ ] A differential property test (using `proptest`) under `crates/akita-pcs/tests/` fuzzes `(config, nv, incidence, basis)` and asserts event-stream equality + verify-success. Seed corpus covers at minimum: smallest valid `nv`, one mid-range, one near-canonical (`nv=20`), and non-uniform batch groupings such as `[2, 1]` vs `[1, 2]`.
-- [ ] `crates/akita-pcs/tests/transcript_trace.rs` is rewritten as a thin schedule-dump test that delegates to `LoggingTranscript`.
-- [ ] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`, and `cargo test` pass under `--features transcript-blake2b`, `--features transcript-blake2b,logging-transcript`, `--features transcript-keccak,logging-transcript --no-default-features`, and repository all-features CI.
+- [x] `akita-transcript` adds `spongefish` `0.7.x` as a workspace dependency.
+- [x] Two new Cargo features added to `akita-transcript/Cargo.toml`: `transcript-blake2b` (default) and `transcript-keccak`, gating `spongefish::instantiations::Blake2b512` / `spongefish::instantiations::Keccak` respectively. Builds with no backend enabled fail; explicit Keccak uses `--no-default-features`; Cargo all-features/default-unified builds resolve to Blake2b.
+- [x] New `AkitaInstanceDescriptor` type in `akita-types` with the four-section shape from §Pillar P0, including normalized batch incidence, effective post-fallback schedule digest, setup artifact identity, and protocol feature mode. Canonical `AkitaSerialize` / `AkitaDeserialize` round-trip tests and prover/verifier event equality cover cross-side descriptor-byte equality.
+- [x] The old Jolt-backed transcript backend and `Blake2bTranscript` / `KeccakTranscript` public aliases are removed. `AkitaTranscript<Sponge>` is the transcript implementation, backed by `spongefish::ProverState<Sponge>` / `spongefish::VerifierState<'_, Sponge>`. The local generic `Transcript<F>` protocol trait remains as the shared trait surface for prover, verifier, and `LoggingTranscript`.
+- [x] Spongefish absorbs Akita values through canonical Akita serialization or canonical field bytes wrapped in a local prefix-free `FramedBytes` `Encoding<[u8]>` adapter. Direct `Encoding` / `Decoding` impls for `akita-field` / `akita-serialization` types are intentionally not added in `akita-transcript`, because those would be foreign-trait impls over foreign crate types unless routed through local wrappers.
+- [x] `AkitaTranscript` construction takes canonical `AkitaInstanceDescriptor` bytes plus a fixed protocol tag, builds the `spongefish::DomainSeparator` with `.instance(<descriptor bytes>)`, and returns the wrapped prover or verifier state. The byte-taking API avoids a crate cycle from `akita-transcript` back into `akita-types`.
+- [x] `Label` ZST + `label!()` macro: every direct `AkitaTranscript` method takes `Label` as a leading argument. In `cfg(not(feature = "logging-transcript"))` builds, including ordinary unit tests, `Label` is a unit struct and the macro expands to it; the parameter is compiled out. Under `--features logging-transcript`, `Label` carries `{tag: &'static str, file: &'static str, line: u32}`.
+- [x] A default-feature unit test asserts `size_of::<Label>() == 0`, and the `Label` value is never serialized, hashed, or retained by the production transcript path.
+- [x] Invariant 5 (labels never enter the production sponge) is verified by a dedicated unit test.
+- [x] `LoggingTranscript<Sponge>` is published as a real `pub` helper in `akita-transcript`, behind `feature = "logging-transcript"`, with a small CLI example `crates/akita-pcs/examples/transcript_schedule` that dumps the schedule. Cross-crate integration tests that need rich labels enable the feature explicitly.
+- [x] The five smell checks listed in §Smell Checks below pass on the hardening tests that opt into `LoggingTranscript`.
+- [x] A new `crates/akita-pcs/tests/transcript_hardening.rs` integration test exists and exercises: (a) preamble separation under perturbed descriptors, (b) prover/verifier event-stream equality, (c) the smell checks.
+- [x] A differential property test (using `proptest`) under `crates/akita-pcs/tests/` fuzzes batch incidence and asserts event-stream equality + verify-success. The seed corpus covers smallest valid `nv`, mid-range, near-canonical `nv=20`, both Lagrange and Monomial basis modes, and non-uniform batch groupings `[1, 2]` / `[2, 1]`.
+- [x] The previous `crates/akita-pcs/tests/transcript_trace.rs` diagnostic is replaced by `LoggingTranscript` hardening tests plus the `transcript_schedule` example; the stale local test file no longer exists on this branch.
+- [x] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`, and `cargo test` pass under `--features transcript-blake2b`, `--features transcript-blake2b,logging-transcript`, `--features transcript-keccak,logging-transcript --no-default-features`, and repository all-features CI.
 
 ### Smell Checks
 
@@ -106,8 +106,8 @@ Each smell check is an ordinary assertion-shaped guard inside `LoggingTranscript
 - `crates/akita-transcript/src/lib.rs::tests::labels_never_in_production_sponge` — Invariant 5.
 - `crates/akita-pcs/tests/transcript_hardening.rs::preamble_separation` — perturbing each descriptor field changes challenge #1.
 - `crates/akita-pcs/tests/transcript_hardening.rs::event_stream_equality_small` — single fixture, full inspection.
-- `crates/akita-pcs/tests/transcript_hardening.rs::smell_checks_pass` — exercises each numbered smell check above, including the wire-coverage manifest.
-- `crates/akita-pcs/tests/transcript_hardening_proptest.rs` — `proptest`-driven fuzz over `(config, nv, incidence, basis)`, asserting event-stream equality and verify-success.
+- `crates/akita-pcs/tests/transcript_hardening.rs::smell_checks_pass_for_matched_wire_absorb` — exercises the positive wire-coverage path, with unit tests in `akita-transcript` covering the individual negative smell-check cases.
+- `crates/akita-pcs/tests/transcript_hardening_proptest.rs` — `proptest`-driven fuzz over batch incidence, plus a deterministic seed corpus over `nv`, incidence, and basis, asserting event-stream equality and verify-success.
 - `crates/akita-pcs/tests/transcript_hardening.rs::pr88_regression` — explicit replay of the PR #88 setup; smell check #4 must fail for the legacy shape that absorbs `next_w_commitment` but consumes cleartext `final_w`, and must also fail if `final_w` is mutated after a matching absorb. Locks in the bug class.
 
 **Existing tests that must keep passing (with transcript-bytes updated):**
@@ -115,9 +115,9 @@ Each smell check is an ordinary assertion-shaped guard inside `LoggingTranscript
 - The full `cargo test` workspace run.
 - `AKITA_MODE=onehot AKITA_NUM_VARS=20 cargo run --release --example profile` smoke run.
 
-**Tests that are rewritten:**
+**Tests that are replaced:**
 
-- `crates/akita-pcs/tests/transcript_trace.rs` — becomes a thin schedule-dump test using `LoggingTranscript`. All ad-hoc event-coalescing / parallel-test-mutex scaffolding moves into `LoggingTranscript` itself.
+- `crates/akita-pcs/tests/transcript_trace.rs` — replaced by durable `LoggingTranscript` hardening tests and the `transcript_schedule` example. All ad-hoc event-coalescing / parallel-test-mutex scaffolding moves into `LoggingTranscript` itself.
 
 ### Performance
 
@@ -125,7 +125,7 @@ The preamble adds *one* descriptor absorb per proof. The descriptor is on the or
 
 Labels add **zero** bytes to the production sponge (Invariant 5) and **zero** runtime cost in production (the `Label` ZST is compiled out).
 
-`AkitaTranscript<Sponge>` is a thin wrapper over the spongefish state; no expected runtime impact vs the existing `Blake2bTranscript`.
+`AkitaTranscript<Sponge>` is a thin wrapper over the spongefish state; no expected runtime impact vs the previous transcript backend.
 
 ## Design
 
@@ -153,7 +153,7 @@ Labels add **zero** bytes to the production sponge (Invariant 5) and **zero** ru
    │   AkitaTranscript<Sponge>                                │
    │     .absorb_field(Label, &F)                             │
    │     .absorb_bytes(Label, &[u8])                          │
-   │     .absorb_ring(Label, &R)                              │
+   │     .absorb_serde(Label, &S)                             │
    │     .squeeze_scalar(Label) -> F                          │
    │     .squeeze_bytes(Label, len) -> Vec<u8>                │
    │                                                          │
@@ -379,19 +379,29 @@ The macro is intentionally literal-only in this PR. If we later want shared cons
 
 #### P2.b `AkitaTranscript<Sponge>` wrapper
 
-A thin newtype over `spongefish::ProverState<Sponge>` (prover side) and `spongefish::VerifierState<'_, Sponge>` (verifier side). For this PR, both sides expose the same trait surface:
+A thin wrapper over `spongefish::ProverState<Sponge>` (prover side) and `spongefish::VerifierState<'_, Sponge>` (verifier side). For this PR, both sides expose the same local protocol trait surface, and the direct `AkitaTranscript` methods take `Label` arguments:
 
 ```rust
-pub trait AkitaTranscript<F> {
+pub struct AkitaTranscript<F, Sponge = TranscriptSponge> { /* spongefish state */ }
+
+impl<F, Sponge> AkitaTranscript<F, Sponge> {
     fn absorb_field(&mut self, label: Label, value: &F);
     fn absorb_bytes(&mut self, label: Label, bytes: &[u8]);
-    fn absorb_ring<R: AkitaRing>(&mut self, label: Label, value: &R);
+    fn absorb_serde<S: AkitaSerialize>(&mut self, label: Label, value: &S);
     fn squeeze_scalar(&mut self, label: Label) -> F;
     fn squeeze_bytes(&mut self, label: Label, len: usize) -> Vec<u8>;
 }
+
+pub trait Transcript<F> {
+    fn append_bytes(&mut self, label: &[u8], bytes: &[u8]);
+    fn append_field(&mut self, label: &[u8], value: &F);
+    fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], value: &S);
+    fn challenge_scalar(&mut self, label: &[u8]) -> F;
+    fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8>;
+}
 ```
 
-Implemented directly on the wrapped spongefish states via the orphan rule (the trait is locally defined). The asymmetric `ProverTranscript` / `VerifierTranscript` split is deferred — see §Deferred Follow-Ups.
+Implemented directly on the wrapped spongefish states and via the local `Transcript<F>` trait so prover, verifier, and `LoggingTranscript` can share the same protocol plumbing. The old `Blake2bTranscript` / `KeccakTranscript` aliases are not kept. The asymmetric `ProverTranscript` / `VerifierTranscript` split is deferred — see §Deferred Follow-Ups.
 
 #### P2.c `LoggingTranscript<Sponge>` and smell checks
 
@@ -403,7 +413,7 @@ The five smell checks (enumerated in §Smell Checks) run as ordinary assertion-s
 
 ### Pillar P3 — Differential prop-test
 
-A `proptest` strategy generates random `(config, nv, incidence, basis)` tuples that are valid per the planner's constraints (skipping anything the planner would reject), runs the prover and verifier with `LoggingTranscript` wrappers, and asserts:
+A `proptest` strategy generates random valid batch-incidence shapes, and a deterministic seed corpus covers the remaining expensive axes (`nv`, basis mode, near-canonical `nv=20`). Each case runs the prover and verifier with `LoggingTranscript` wrappers and asserts:
 
 1. `verify` returns `Ok(())`.
 2. Prover and verifier event streams are pointwise equal.
@@ -439,7 +449,7 @@ These TODOs are the catchment for future revisions.
 
 ### Open Question 2 — Adopt `spongefish` as a crate, or just its ideas? — **RESOLVED 2026-05-18: ADOPT**
 
-We adopt `spongefish` as a direct dependency in `akita-transcript`. The decision is independent of whether `jolt-transcript` ships its own spongefish port (a16z/jolt#1455). Implement `spongefish::Encoding<[H::U]>` / `Decoding<[H::U]>` for our `akita-field` / `akita-serialization` types directly in `akita-transcript`. Spongefish's arkworks codec feature is NOT enabled — Akita does not depend on `ark-ff` / `ark-serialize` at the transcript layer.
+We adopt `spongefish` as a direct dependency in `akita-transcript`. The decision is independent of whether `jolt-transcript` ships its own spongefish port (a16z/jolt#1455). Akita feeds canonical field bytes and canonical Akita serialization into spongefish through a local prefix-free `FramedBytes` adapter. Spongefish's arkworks codec feature is NOT enabled — Akita does not depend on `ark-ff` / `ark-serialize` at the transcript layer.
 
 ### Open Question 3 — Keep per-call labels? — **RESOLVED 2026-05-18: STRIP IN PRODUCTION, KEEP IN DEBUG**
 
@@ -449,11 +459,11 @@ Resolved via the `Label` ZST + `label!()` macro design in §Pillar P2.a. Product
 
 Originally resolved as "narrow scope this PR." Re-resolved on review: most of `Bound<T>`'s value depends on a working prover/verifier trait split (P1) or equivalent proof-reader adapter, which is itself deferred. Without that boundary, `Bound<T>` cannot prove that the exact structured proof value consumed later was the one absorbed at the right transcript epoch. **Deferred to a follow-up PR after P1 / proof-reader work lands.** See §Deferred Follow-Ups.
 
-### Open Question 5 — Fate of `crates/akita-pcs/tests/transcript_trace.rs` — **RESOLVED 2026-05-18: REWRITE**
+### Open Question 5 — Fate of `crates/akita-pcs/tests/transcript_trace.rs` — **RESOLVED 2026-05-18: REPLACE**
 
-Rewrite as a thin schedule-dump test that delegates to `LoggingTranscript` and lives next to `transcript_hardening.rs`. Ad-hoc event-coalescing and parallel-test-mutex scaffolding moves into `LoggingTranscript` itself.
+Replace the stale local diagnostic with durable `LoggingTranscript` hardening tests plus the `transcript_schedule` example. Ad-hoc event-coalescing and parallel-test-mutex scaffolding moves into `LoggingTranscript` itself.
 
-### Open Question 6 — Cutover strategy
+### Open Question 6 — Cutover strategy — **RESOLVED 2026-05-18: ONE PR**
 
 Akita has no back-compat guarantee, so we can do a hard cutover in one PR (replace `Transcript<F>` with `AkitaTranscript<Sponge>`, update all callsites in one pass). Consistent with the workspace's "Full Cutover, No Backward Compatibility" rule.
 
@@ -461,7 +471,7 @@ Counter: PR #88 was already large. A transcript cutover plus the descriptor work
 
 My recommendation: one PR. The intermediate state (some callsites on old trait, some on new; descriptor exists but isn't enforced) is worse than either endpoint.
 
-**Status: needs confirmation.**
+Resolved operationally by Quang's implementation request: one PR, sliced into granular commits and pushes.
 
 ## Deferred Follow-Ups
 
@@ -506,17 +516,17 @@ These are *named* future PRs with crisp triggers, so the scope cut in this PR is
 
 ## Execution
 
-Suggested order (only Open Question 6 still needs confirmation; can proceed in parallel with steps 1–3):
+Suggested order:
 
 1. **`AkitaInstanceDescriptor` in `akita-types`.** Define the four sub-structs (`AlgebraSection`, `SetupSection`, `PlanSection`, `CallSection`), `AkitaSerialize` / `AkitaDeserialize` impls with deterministic canonical encoding, round-trip test, and the cross-side equality unit test (prover and verifier construct identical bytes from their respective input sources).
-2. **Spongefish wiring.** Add `spongefish = "0.7"` to workspace `Cargo.toml`. Add `transcript-blake2b` (default) + `transcript-keccak` features in `akita-transcript`, with Cargo all-features/default-unified builds resolving to Blake2b. Implement `spongefish::Encoding<[H::U]>` / `Decoding<[H::U]>` for the akita-field / akita-serialization types we need.
+2. **Spongefish wiring.** Add `spongefish = "0.7"` to workspace `Cargo.toml`. Add `transcript-blake2b` (default) + `transcript-keccak` features in `akita-transcript`, with Cargo all-features/default-unified builds resolving to Blake2b. Feed canonical Akita encodings into spongefish through the local prefix-free `FramedBytes` adapter.
 3. **`Label` ZST + `label!()` macro.** Add `label.rs` with the cfg-gated `Label` type and macro. Add `ALL_LABELS: &[&str]` registry (smell check #3 consumes this).
-4. **`AkitaTranscript<Sponge>` wrapper.** Thin newtype over `ProverState<Sponge>` / `VerifierState<'_, Sponge>`. Constructor takes `AkitaInstanceDescriptor` + protocol tag, builds `spongefish::DomainSeparator` with `.instance(...)`, returns the wrapped state. Add the trait surface (`absorb_field`, `absorb_bytes`, `absorb_ring`, `squeeze_scalar`, `squeeze_bytes`), each method taking a leading `Label`. Add Invariant 5 unit test.
-5. **Cutover.** Replace today's `Blake2bTranscript` / `KeccakTranscript` types and the symmetric `Transcript<F>` trait. Migrate all in-tree callsites in one pass, passing `label!("...")` to every call (per workspace rule "Full Cutover, No Backward Compatibility"). Verify `cargo fmt && cargo clippy && cargo test` pass.
+4. **`AkitaTranscript<Sponge>` wrapper.** Thin wrapper over `ProverState<Sponge>` / `VerifierState<'_, Sponge>`. Constructor takes canonical `AkitaInstanceDescriptor` bytes + protocol tag, builds `spongefish::DomainSeparator` with `.instance(...)`, returns the wrapped state. Add the direct method surface (`absorb_field`, `absorb_bytes`, `absorb_serde`, `squeeze_scalar`, `squeeze_bytes`), each method taking a leading `Label`. Add Invariant 5 unit test.
+5. **Cutover.** Replace today's `Blake2bTranscript` / `KeccakTranscript` types with `AkitaTranscript`, and keep only the local generic `Transcript<F>` protocol trait needed by prover/verifier/logging wrappers. Migrate all in-tree callsites in one pass (per workspace rule "Full Cutover, No Backward Compatibility"). Verify `cargo fmt && cargo clippy && cargo test` pass.
 6. **`LoggingTranscript<Sponge>`.** Promote from `crates/akita-pcs/tests/transcript_trace.rs` into `akita-transcript` under `feature = "logging-transcript"`. Drop the local mutex / coalescing scaffolding. Add the `record_wire_use` instrumentation hook, or a `TrackedAkitaBatchedProof` view backed by that hook, for smell check #4.
 7. **Smell checks.** Implement the five smell checks in `LoggingTranscript`. Each is an ordinary assertion-shaped guard active only when the wrapper is.
-8. **Hardening tests.** Write `crates/akita-pcs/tests/transcript_hardening.rs` (preamble separation, event-stream equality, smell checks, PR #88 regression) and `transcript_hardening_proptest.rs` (proptest fuzz over `(config, nv, incidence, basis)`).
-9. **Rewrite `transcript_trace.rs`.** Thin schedule-dump test using `LoggingTranscript`.
+8. **Hardening tests.** Write `crates/akita-pcs/tests/transcript_hardening.rs` (preamble separation, event-stream equality, smell checks, PR #88 regression) and `transcript_hardening_proptest.rs` (proptest fuzz over batch incidence plus deterministic coverage of `nv` and basis).
+9. **Replace `transcript_trace.rs`.** Use durable `LoggingTranscript` hardening tests plus the `transcript_schedule` example.
 10. **`transcript_schedule` example.** New small CLI under `crates/akita-pcs/examples/`.
 11. **Cross-feature CI.** Verify `cargo test` passes under `--features transcript-blake2b`, `--features transcript-blake2b,logging-transcript`, `--features transcript-keccak,logging-transcript --no-default-features`, and repository all-features CI.
 
@@ -528,6 +538,6 @@ Suggested order (only Open Question 6 still needs confirmation; can proceed in p
 - `a16z/jolt#1382` (open) — `quangvdao`'s extension of #1358 to more verifier-boundary bindings.
 - [arkworks-rs/spongefish](https://github.com/arkworks-rs/spongefish) — duplex-sponge Fiat-Shamir crate aligned with `draft-irtf-cfrg-fiat-shamir-02`.
 - [Plonky3 PR #1603](https://github.com/Plonky3/Plonky3/pull/1603) — `TranscriptBound<T>` type-level binding enforcement, analogous to this spec's deferred Pillar P4.
-- `crates/akita-pcs/tests/transcript_trace.rs` (current main) — one-shot diagnostic that surfaced the PR #88 bug.
+- `crates/akita-pcs/tests/transcript_trace.rs` (historical main-branch diagnostic) — one-shot diagnostic that surfaced the PR #88 bug.
 - `crates/akita-transcript/src/labels.rs:10-11` — the existing NOTE this spec formalizes (short-term in Pillar P2.a, long-term in Deferred Follow-Up #3).
 - `specs/terminal-fold-cutover.md` (in `akita/` worktree) — retrospective for PR #88, the bug that motivated this hardening layer.

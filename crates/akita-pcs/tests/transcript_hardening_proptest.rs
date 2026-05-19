@@ -34,13 +34,12 @@ fn batch_shape(index: usize) -> Vec<usize> {
     }
 }
 
-fn logged_dense_round_trip(shape_index: usize, seed: u64) {
+fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: BasisMode, seed: u64) {
     init_rayon_pool();
-    const NV: usize = 10;
 
     let num_polys_per_point = batch_shape(shape_index);
     let total_claims: usize = num_polys_per_point.iter().sum();
-    let incidence = ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.clone())
+    let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point.clone())
         .expect("valid incidence");
     let layout =
         DenseCfg::get_params_for_batched_commitment(&incidence).expect("batched commit layout");
@@ -52,7 +51,7 @@ fn logged_dense_round_trip(shape_index: usize, seed: u64) {
             (0..count)
                 .map(|poly_idx| {
                     make_dense_poly(
-                        NV,
+                        num_vars,
                         seed.wrapping_add((point_idx as u64) << 16)
                             .wrapping_add(poly_idx as u64),
                     )
@@ -61,7 +60,7 @@ fn logged_dense_round_trip(shape_index: usize, seed: u64) {
         })
         .collect();
     let opening_points_owned: Vec<Vec<F>> = (0..num_polys_per_point.len())
-        .map(|point_idx| random_point(NV, seed.wrapping_add(0x9e37_0000 + point_idx as u64)))
+        .map(|point_idx| random_point(num_vars, seed.wrapping_add(0x9e37_0000 + point_idx as u64)))
         .collect();
     let openings_per_point: Vec<Vec<F>> = polys_per_point
         .iter()
@@ -69,7 +68,7 @@ fn logged_dense_round_trip(shape_index: usize, seed: u64) {
         .map(|(polys, point)| {
             polys
                 .iter()
-                .map(|poly| opening_from_poly(poly, point, &layout))
+                .map(|poly| opening_from_poly_with_basis(poly, point, &layout, basis_mode))
                 .collect()
         })
         .collect();
@@ -80,7 +79,7 @@ fn logged_dense_round_trip(shape_index: usize, seed: u64) {
     let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
     let setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_prover(
-        NV,
+        num_vars,
         total_claims,
         num_polys_per_point.len(),
     );
@@ -97,7 +96,7 @@ fn logged_dense_round_trip(shape_index: usize, seed: u64) {
         &setup,
         prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
         &mut prover_transcript,
-        BasisMode::Lagrange,
+        basis_mode,
     )
     .expect("prove");
 
@@ -108,7 +107,7 @@ fn logged_dense_round_trip(shape_index: usize, seed: u64) {
         &verifier_setup,
         &mut verifier_transcript,
         verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
-        BasisMode::Lagrange,
+        basis_mode,
     )
     .expect("verify");
 
@@ -120,11 +119,26 @@ fn logged_dense_round_trip(shape_index: usize, seed: u64) {
     );
 }
 
+#[test]
+fn seed_corpus_covers_nv_basis_and_batch_shapes() {
+    run_on_large_stack(|| {
+        for (num_vars, shape_index, basis_mode, seed) in [
+            (8, 0, BasisMode::Lagrange, 0x1001),
+            (10, 1, BasisMode::Lagrange, 0x1002),
+            (20, 0, BasisMode::Lagrange, 0x1003),
+            (10, 2, BasisMode::Lagrange, 0x1004),
+            (10, 3, BasisMode::Monomial, 0x1005),
+        ] {
+            logged_dense_round_trip(num_vars, shape_index, basis_mode, seed);
+        }
+    });
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(4))]
 
     #[test]
     fn event_stream_equality_fuzzes_batch_shapes(shape_index in 0usize..4, seed in any::<u64>()) {
-        logged_dense_round_trip(shape_index, seed);
+        run_on_large_stack(move || logged_dense_round_trip(10, shape_index, BasisMode::Lagrange, seed));
     }
 }

@@ -2277,7 +2277,7 @@ where
 mod tests {
     use super::*;
     use akita_field::{Fp2, Fp32, LiftBase, NegOneNr};
-    use akita_transcript::Blake2bTranscript;
+    use akita_transcript::AkitaTranscript;
     #[cfg(feature = "zk")]
     use akita_types::FlatDigitBlocks;
     use akita_types::{AkitaSetupSeed, FlatMatrix};
@@ -2365,7 +2365,7 @@ mod tests {
                 });
 
         let mut transcript =
-            Blake2bTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
+            AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
         let reduction = prove_recursive_extension_opening_reduction::<F, E, _>(
             &logical_w,
             &point,
