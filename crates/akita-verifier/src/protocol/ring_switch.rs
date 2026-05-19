@@ -1665,9 +1665,15 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     /// that the structured split recombines to the materialized M-eval
     /// table. Reuses [`Self::eval_split_at_point`] at every Boolean point.
     ///
+    /// Gated behind `#[cfg(any(test, feature = "test-helpers"))]` so this
+    /// O(2^x_bits) materializer does not appear in the production verifier
+    /// surface; downstream test crates opt in via the `test-helpers`
+    /// feature.
+    ///
     /// # Errors
     ///
     /// Returns any error surfaced by [`Self::eval_split_at_point`].
+    #[cfg(any(test, feature = "test-helpers"))]
     pub fn split_eval_table<const D: usize>(
         &self,
         setup: &AkitaExpandedSetup<F>,

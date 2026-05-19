@@ -15,6 +15,11 @@ use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
 use akita_field::{AkitaError, FieldCore};
 
 /// Prover instance for `scale * sum_z eq(target, z) * table(z)`.
+///
+/// Test-only helper. Gated behind `#[cfg(any(test, feature = "test-helpers"))]`
+/// because production has no caller: the setup-claim-reduction sumcheck
+/// uses [`WeightedTableProver`] (arbitrary weight table) instead.
+#[cfg(any(test, feature = "test-helpers"))]
 pub struct EqWeightedTableProver<E: FieldCore> {
     table: Vec<E>,
     weights: Vec<E>,
@@ -23,6 +28,7 @@ pub struct EqWeightedTableProver<E: FieldCore> {
     num_rounds: usize,
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl<E: FieldCore> EqWeightedTableProver<E> {
     /// Construct a prover from table evaluations and the eq target point.
     ///
@@ -58,6 +64,7 @@ impl<E: FieldCore> EqWeightedTableProver<E> {
     }
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl<E: FieldCore> SumcheckInstanceProver<E> for EqWeightedTableProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -140,12 +147,18 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for WeightedTableProver<E> {
 }
 
 /// Verifier instance for `sum_z weight(z) * table(z)`.
+///
+/// Test-only helper. Gated behind `#[cfg(any(test, feature = "test-helpers"))]`
+/// because production verifier paths inline the closing oracle check
+/// rather than instantiating this sumcheck verifier.
+#[cfg(any(test, feature = "test-helpers"))]
 pub struct WeightedTableVerifier<E: FieldCore> {
     table: Vec<E>,
     weights: Vec<E>,
     input_claim: E,
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl<E: FieldCore> WeightedTableVerifier<E> {
     /// Construct a verifier from table and weight evaluations.
     ///
@@ -162,6 +175,7 @@ impl<E: FieldCore> WeightedTableVerifier<E> {
     }
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl<E: FieldCore> SumcheckInstanceVerifier<E> for WeightedTableVerifier<E> {
     fn num_rounds(&self) -> usize {
         self.table.len().trailing_zeros() as usize
@@ -182,6 +196,10 @@ impl<E: FieldCore> SumcheckInstanceVerifier<E> for WeightedTableVerifier<E> {
 }
 
 /// Verifier instance for `scale * sum_z eq(target, z) * table(z)`.
+///
+/// Test-only helper. Gated behind `#[cfg(any(test, feature = "test-helpers"))]`
+/// for the same reason as [`EqWeightedTableProver`].
+#[cfg(any(test, feature = "test-helpers"))]
 pub struct EqWeightedTableVerifier<E: FieldCore> {
     table: Vec<E>,
     target_point: Vec<E>,
@@ -189,6 +207,7 @@ pub struct EqWeightedTableVerifier<E: FieldCore> {
     scale: E,
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl<E: FieldCore> EqWeightedTableVerifier<E> {
     /// Construct a verifier from table evaluations, target point, and claim.
     ///
@@ -211,6 +230,7 @@ impl<E: FieldCore> EqWeightedTableVerifier<E> {
     }
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 impl<E: FieldCore> SumcheckInstanceVerifier<E> for EqWeightedTableVerifier<E> {
     fn num_rounds(&self) -> usize {
         self.target_point.len()
@@ -236,6 +256,7 @@ impl<E: FieldCore> SumcheckInstanceVerifier<E> for EqWeightedTableVerifier<E> {
 /// # Errors
 ///
 /// Returns an error if the points have different lengths.
+#[cfg(any(test, feature = "test-helpers"))]
 fn eq_eval<E: FieldCore>(target: &[E], point: &[E]) -> Result<E, AkitaError> {
     if target.len() != point.len() {
         return Err(AkitaError::InvalidSize {
@@ -251,6 +272,7 @@ fn eq_eval<E: FieldCore>(target: &[E], point: &[E]) -> Result<E, AkitaError> {
         }))
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 fn validate_table_shape(table_len: usize, num_vars: usize) -> Result<(), AkitaError> {
     let expected = 1usize
         .checked_shl(num_vars as u32)
@@ -292,6 +314,7 @@ fn product_round_poly<E: FieldCore>(table: &[E], weights: &[E]) -> UniPoly<E> {
     UniPoly::from_coeffs(coeffs.to_vec())
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
 fn eq_table<E: FieldCore>(point: &[E]) -> Vec<E> {
     let len = 1usize << point.len();
     (0..len)

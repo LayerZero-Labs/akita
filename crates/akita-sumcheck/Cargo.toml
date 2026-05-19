@@ -22,6 +22,14 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 tracing = "0.1"
 
+[features]
+default = []
+# Exposes test-only sumcheck helpers (`EqWeightedTableProver`,
+# `EqWeightedTableVerifier`, `WeightedTableVerifier`) to downstream test
+# crates. Not for production use; the production prover uses
+# `WeightedTableProver`, which is unconditionally `pub`.
+test-helpers = []
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

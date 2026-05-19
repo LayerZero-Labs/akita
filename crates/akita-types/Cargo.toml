@@ -25,6 +25,7 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 tracing = "0.1"
 
 [dev-dependencies]
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", features = ["test-helpers"] }
 rand = "0.8"
 
 [lints.rust]

@@ -28,8 +28,10 @@ pub use drivers::{
     prove_sumcheck, prove_sumcheck_with_omitted_prefix_rounds, verify_eq_factored_sumcheck,
     verify_sumcheck, verify_sumcheck_rounds_only, verify_sumcheck_with_prefix_rounds,
 };
+pub use eq_weighted_table::WeightedTableProver;
+#[cfg(any(test, feature = "test-helpers"))]
 pub use eq_weighted_table::{
-    EqWeightedTableProver, EqWeightedTableVerifier, WeightedTableProver, WeightedTableVerifier,
+    EqWeightedTableProver, EqWeightedTableVerifier, WeightedTableVerifier,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,

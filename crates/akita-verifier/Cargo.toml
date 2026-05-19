@@ -27,6 +27,9 @@ tracing = "0.1"
 [features]
 default = []
 parallel = ["akita-algebra/parallel", "akita-field/parallel"]
+# Exposes verifier-internal helpers (e.g. `PreparedMEval::split_eval_table`)
+# to downstream integration test crates. Not for production use.
+test-helpers = []
 
 [lints.rust]
 missing_docs = "warn"
