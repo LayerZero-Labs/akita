@@ -2475,63 +2475,134 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 .sum();
 
             // W block: D-matrix rows × ŵ digit columns.
+            //
+            // Phase 5 book §5.5 line 752 chunk-axis amortisation. For
+            // tier-marked groups the per-(dig, chunk, blk) sum factors
+            // by hoisting `dig` to an outer loop and computing the
+            // inner (chunk, blk) sum via `eval_offset_eq_tensor` with
+            // factors `[eq_col_per_dig, d_row_factors]`. Per-chunk
+            // `d_factor` becomes a 1-D tensor factor instead of a
+            // claim_within-indexed scalar; the chunk-axis bits of
+            // x_local are folded by the offset-eq carry DP in
+            // `O(num_blocks_chunk + k)` per dig (vs the prior
+            // `O(num_blocks_chunk · k · log x_bits)` per dig).
             let mut w_inner = F::zero();
-            for dig in 0..spec.num_digits_open {
-                for local_blk in 0..group_blocks {
-                    let claim_within = local_blk / spec.num_blocks;
-                    let block_idx = local_blk % spec.num_blocks;
-                    let x_local = dig * group_blocks + local_blk;
-                    let eq =
-                        eq_weight_at_index(x_challenges, offset_w + layout.w_hat_start + x_local);
-                    if eq.is_zero() {
-                        continue;
+            let chunk_axis_amortised = is_tiered && d_chunk_count > 1;
+            if chunk_axis_amortised {
+                let c_base = offset_w + layout.w_hat_start;
+                let mut f_blk: Vec<F> = vec![F::zero(); spec.num_blocks];
+                for dig in 0..spec.num_digits_open {
+                    // Per-dig column factor: `eq_col[blk * num_digits_open + dig]`
+                    // for blk ∈ [0, num_blocks_chunk).
+                    for (blk_idx, slot) in f_blk.iter_mut().enumerate() {
+                        let d_col = blk_idx * spec.num_digits_open + dig;
+                        *slot = if d_col < eq_col.len() {
+                            eq_col[d_col]
+                        } else {
+                            F::zero()
+                        };
                     }
-                    let d_col = block_idx * spec.num_digits_open + dig;
-                    if d_col >= eq_col.len() {
-                        continue;
+                    let c_dig = c_base + dig * group_blocks;
+                    w_inner += eval_offset_eq_tensor(
+                        x_challenges,
+                        c_dig,
+                        F::one(),
+                        &[&f_blk, &d_row_factors[..]],
+                    );
+                }
+            } else {
+                for dig in 0..spec.num_digits_open {
+                    for local_blk in 0..group_blocks {
+                        let claim_within = local_blk / spec.num_blocks;
+                        let block_idx = local_blk % spec.num_blocks;
+                        let x_local = dig * group_blocks + local_blk;
+                        let eq = eq_weight_at_index(
+                            x_challenges,
+                            offset_w + layout.w_hat_start + x_local,
+                        );
+                        if eq.is_zero() {
+                            continue;
+                        }
+                        let d_col = block_idx * spec.num_digits_open + dig;
+                        if d_col >= eq_col.len() {
+                            continue;
+                        }
+                        let d_factor = if d_chunk_count == 1 {
+                            d_row_factors[0]
+                        } else {
+                            d_row_factors[claim_within]
+                        };
+                        w_inner += eq * eq_col[d_col] * d_factor;
                     }
-                    let d_factor = if d_chunk_count == 1 {
-                        d_row_factors[0]
-                    } else {
-                        d_row_factors[claim_within]
-                    };
-                    w_inner += eq * eq_col[d_col] * d_factor;
                 }
             }
             total += w_inner * coeff_factor;
 
             // T block: B-matrix rows × t̂ digit columns.
+            //
+            // Phase 5 book §5.5 line 752 chunk-axis amortisation
+            // (same shape as the W block above): hoist `compound` to
+            // outer loop and fold the chunk axis via
+            // `eval_offset_eq_tensor` with factors
+            // `[eq_col_per_compound, b_row_factors]`. For tier-marked
+            // groups `local_col = block_idx * n_a * num_digits_open
+            // + compound` is chunk-independent (book §5.4 line 752
+            // shared B_chunk col indexing).
             let mut t_inner = F::zero();
-            for a_idx in 0..self.n_a {
-                for digit_idx in 0..spec.num_digits_open {
-                    let compound = a_idx * spec.num_digits_open + digit_idx;
-                    for local_blk in 0..group_blocks {
-                        let claim_within = local_blk / spec.num_blocks;
-                        let block_idx = local_blk % spec.num_blocks;
-                        let x_local = compound * group_blocks + local_blk;
-                        let eq = eq_weight_at_index(
-                            x_challenges,
-                            offset_t + layout.t_hat_start + x_local,
-                        );
-                        if eq.is_zero() {
-                            continue;
-                        }
-                        let local_col = if is_tiered {
-                            block_idx * self.n_a * spec.num_digits_open + compound
+            let t_chunk_amortised = is_tiered && b_chunk_count > 1;
+            if t_chunk_amortised {
+                let c_base = offset_t + layout.t_hat_start;
+                let compound_count = self.n_a * spec.num_digits_open;
+                let mut f_blk: Vec<F> = vec![F::zero(); spec.num_blocks];
+                for compound in 0..compound_count {
+                    for (blk_idx, slot) in f_blk.iter_mut().enumerate() {
+                        let local_col = blk_idx * self.n_a * spec.num_digits_open + compound;
+                        *slot = if local_col < eq_col.len() {
+                            eq_col[local_col]
                         } else {
-                            claim_within * spec.num_blocks * self.n_a * spec.num_digits_open
-                                + block_idx * self.n_a * spec.num_digits_open
-                                + compound
+                            F::zero()
                         };
-                        if local_col >= eq_col.len() {
-                            continue;
+                    }
+                    let c_compound = c_base + compound * group_blocks;
+                    t_inner += eval_offset_eq_tensor(
+                        x_challenges,
+                        c_compound,
+                        F::one(),
+                        &[&f_blk, &b_row_factors[..]],
+                    );
+                }
+            } else {
+                for a_idx in 0..self.n_a {
+                    for digit_idx in 0..spec.num_digits_open {
+                        let compound = a_idx * spec.num_digits_open + digit_idx;
+                        for local_blk in 0..group_blocks {
+                            let claim_within = local_blk / spec.num_blocks;
+                            let block_idx = local_blk % spec.num_blocks;
+                            let x_local = compound * group_blocks + local_blk;
+                            let eq = eq_weight_at_index(
+                                x_challenges,
+                                offset_t + layout.t_hat_start + x_local,
+                            );
+                            if eq.is_zero() {
+                                continue;
+                            }
+                            let local_col = if is_tiered {
+                                block_idx * self.n_a * spec.num_digits_open + compound
+                            } else {
+                                claim_within * spec.num_blocks * self.n_a * spec.num_digits_open
+                                    + block_idx * self.n_a * spec.num_digits_open
+                                    + compound
+                            };
+                            if local_col >= eq_col.len() {
+                                continue;
+                            }
+                            let b_factor = if b_chunk_count == 1 {
+                                b_row_factors[0]
+                            } else {
+                                b_row_factors[claim_within]
+                            };
+                            t_inner += eq * eq_col[local_col] * b_factor;
                         }
-                        let b_factor = if b_chunk_count == 1 {
-                            b_row_factors[0]
-                        } else {
-                            b_row_factors[claim_within]
-                        };
-                        t_inner += eq * eq_col[local_col] * b_factor;
                     }
                 }
             }
