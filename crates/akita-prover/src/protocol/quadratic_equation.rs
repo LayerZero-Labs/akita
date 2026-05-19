@@ -2683,37 +2683,70 @@ mod tests {
             (total, r_tail)
         };
 
-        let d_row = layout.w_d.start;
-        let b_row = layout.w_b.start;
-        let original_a_row = layout.original_a.start;
-        let meta_a_row = layout.meta_a.start;
-        for (row_idx, expected) in [
-            (d_row, eval_ring_at(&v[0], &alpha)),
-            (b_row, eval_ring_at(&commitment_rows[0], &alpha)),
-            (original_a_row, TestField::zero()),
-            (meta_a_row, TestField::zero()),
-        ] {
+        // Per book §5.4 line 728-729, the A-row block sums to
+        // `(2 + has_w_group) · n_a` rows split as `w_a | original_a
+        // | meta_a` (one combined Ajtai binding per tier, not
+        // `k × n_a` per chunk). With `block_digits = 0` the identity
+        // collapses to `0 = 0`, but enumerating every A-row offset
+        // here pins the runtime layout against the §5.4 schema.
+        assert_eq!(layout.w_a.len(), tiered_lp.a_key.row_len());
+        assert_eq!(layout.original_a.len(), tiered_lp.a_key.row_len());
+        assert_eq!(layout.meta_a.len(), tiered_lp.a_key.row_len());
+        assert_eq!(
+            layout.w_a.len() + layout.original_a.len() + layout.meta_a.len(),
+            (2 + 1) * tiered_lp.a_key.row_len(),
+            "book §5.4 line 728-729: ONE combined Ajtai binding per tier (W + original + meta), not k·n_a per chunk"
+        );
+        let mut row_cases: Vec<(usize, TestField, &'static str)> = vec![
+            (layout.w_d.start, eval_ring_at(&v[0], &alpha), "w_d"),
+            (
+                layout.w_b.start,
+                eval_ring_at(&commitment_rows[0], &alpha),
+                "w_b",
+            ),
+        ];
+        for r_idx in layout.w_a.clone() {
+            row_cases.push((r_idx, TestField::zero(), "w_a"));
+        }
+        for r_idx in layout.original_a.clone() {
+            row_cases.push((r_idx, TestField::zero(), "original_a"));
+        }
+        for r_idx in layout.meta_a.clone() {
+            row_cases.push((r_idx, TestField::zero(), "meta_a"));
+        }
+        for (row_idx, expected, label) in row_cases {
             let (actual, r_tail) = row_dot(row_idx);
             assert_eq!(
                 r_tail,
                 -denom * eval_ring_at(&r[row_idx], &alpha),
-                "r-tail contribution must recompose row {row_idx}'s quotient"
+                "r-tail contribution must recompose row {row_idx} ({label}) quotient"
             );
             assert_eq!(
                 actual, expected,
-                "tiered grouped M row {row_idx} must match its row RHS"
+                "tiered grouped M row {row_idx} ({label}) must match its row RHS"
             );
         }
     }
 
-    /// Production-shaped row-local invariant covering every D/B row of
-    /// the book §5.4 `[W, chunks(k=4), meta]` layout with `n_a = n_b = n_d
-    /// = 2`. The matrix relation rows (`A · z_pre = c` book §5.4 lines
-    /// 728-729 / 747-749) are exercised end-to-end by the tiered E2E
-    /// tests; replicating their consistency in a unit test would require
-    /// constructing valid commitment material that satisfies the
-    /// decomposition bound on `t = A·b`, which only holds for the
-    /// bounded-norm witnesses produced by the prover.
+    /// Production-shaped row-local invariant covering every D / B / A
+    /// row of the book §5.4 `[W, chunks(k=2), meta]` layout with
+    /// `n_a = n_b = n_d = 2`. The A-row block follows book §5.4 lines
+    /// 728-729: ONE combined Ajtai binding `A · z_pre = c` per tier
+    /// (W + original + meta), not `k × n_a` per-chunk A rows, so the
+    /// total A-row count is `(2 + has_w_group) · n_a = 6`. For A-rows
+    /// we assert (a) the layout offsets match the `(2 + has_w_group)·
+    /// n_a` schema and (b) the M-tail block correctly recomposes the
+    /// prover-emitted `r[a_row]` quotient; the stronger `M·z = 0`
+    /// closure check is deferred to the E2E tests because synthesizing
+    /// a self-consistent `(t_hat, z_pre)` pair outside the prover
+    /// (i.e. with `t_hat = gadget(cyclic(A·b))` and `z_pre = cyclic(
+    /// Σ stage1·b)` decoupled from the stage-1 challenge sampling that
+    /// the prover internally couples) leaves a residue tied to the
+    /// `(stage1·cyclic(A·b)) − A·cyclic(stage1·b)` carry split that
+    /// the bare prover-emitted single-row `r` does not absorb. Eval
+    /// and fold rows depend on the prover's per-claim `y_ring` values
+    /// that the synthetic `public_outputs` here aren't tied to, so
+    /// they also remain exercised end-to-end by the tiered E2E tests.
     #[test]
     fn tiered_grouped_m_rows_match_committed_witness_multi_a() {
         let setup = AkitaProverSetup::<TestField, D_TEST>::generate_with_capacity(8, 4, 3, 4, 64)
@@ -3020,12 +3053,16 @@ mod tests {
             (total, r_tail)
         };
 
-        // Enumerate every D / B / A row in the 10-group layout. Eval
-        // and fold rows depend on the prover's per-claim y_ring values
-        // (here we use synthetic `public_outputs` that aren't tied to
-        // the random witness), so they're exercised end-to-end by the
-        // E2E tests rather than here; the row-local invariant focuses
-        // on the matrix relation (book §5.4 lines 717–729 / 735–749).
+        // Enumerate every D / B / A row in the 6-group layout. The A
+        // rows assert the book §5.4 line 728-729 combined-Ajtai story:
+        // each tier (W, original/chunks, meta) emits exactly `n_a`
+        // A-rows whose RHS y-value is zero, so the M·z dot product
+        // must vanish when t_hat is the gadget decomposition of
+        // A · block_digits and z_pre = Σ_blocks stage1 · block_digits.
+        // Eval and fold rows depend on the prover's per-claim y_ring
+        // values (here we use synthetic `public_outputs` that aren't
+        // tied to the random witness), so they're exercised end-to-end
+        // by the E2E tests rather than here.
         let mut row_cases: Vec<(usize, TestField, &'static str)> = Vec::new();
         let mut v_idx = 0usize;
         for r_idx in layout.w_d.clone() {
@@ -3061,6 +3098,27 @@ mod tests {
             ));
             u_idx += 1;
         }
+        // Combined Ajtai rows per tier (book §5.4 line 728-729).
+        // `total_a_row_count` enforces `(2 + has_w_group) · n_a`
+        // total A-rows; here `n_a = 2`, `has_w_group = true`, so 6
+        // rows split as `w_a` (2) | `original_a` (2) | `meta_a` (2).
+        // The A-row enumeration below asserts only the r-tail
+        // recomposition; see the doc comment on the test function for
+        // why we don't close `M·z = 0` here.
+        assert_eq!(layout.w_a.len(), tiered_lp.a_key.row_len());
+        assert_eq!(layout.original_a.len(), tiered_lp.a_key.row_len());
+        assert_eq!(layout.meta_a.len(), tiered_lp.a_key.row_len());
+        assert_eq!(
+            layout.w_a.len() + layout.original_a.len() + layout.meta_a.len(),
+            (2 + 1) * tiered_lp.a_key.row_len(),
+            "book §5.4 line 728-729: ONE combined Ajtai binding per tier (W + original + meta), not k·n_a per chunk"
+        );
+        let a_row_iter = layout
+            .w_a
+            .clone()
+            .map(|r| (r, "w_a"))
+            .chain(layout.original_a.clone().map(|r| (r, "original_a")))
+            .chain(layout.meta_a.clone().map(|r| (r, "meta_a")));
 
         for (row_idx, expected, label) in row_cases {
             let (actual, r_tail) = row_dot(row_idx);
@@ -3072,6 +3130,14 @@ mod tests {
             assert_eq!(
                 actual, expected,
                 "tiered grouped M row {row_idx} ({label}) must match its RHS"
+            );
+        }
+        for (row_idx, label) in a_row_iter {
+            let (_actual, r_tail) = row_dot(row_idx);
+            assert_eq!(
+                r_tail,
+                -denom * eval_ring_at(&r[row_idx], &alpha),
+                "r-tail contribution must recompose row {row_idx} ({label}) quotient"
             );
         }
     }
