@@ -270,14 +270,36 @@ pub struct GroupLayout {
 /// groups (book §5.4 per-chunk B-checks under shared `B_chunk`) and
 /// `n_B_g` for un-tiered groups.
 ///
-/// The 10 check groups of book §5.4 lines 709–754 (5 from the original
-/// polynomial + 5 from the tier-3 meta tier) are realized as the same
-/// 5 row families iterated over `(W + chunks + meta)` commitment groups
-/// at level L+1. The meta tier is committed via the standard Akita
-/// machinery (book line 695 "binds the collection of per-chunk commitment
-/// vectors via a standard Akita commitment") and therefore participates
-/// in the joint D, B, and A row families just like any other group; it
-/// requires no separate row families.
+/// # 10-vs-15 check-group enumeration (book §5.5 + §5.6)
+///
+/// Book §5.5 lines 709–754 enumerates 10 stage-2 check groups for the
+/// tier-marked relation: 5 for the original polynomial (`D_chunk`,
+/// `B_chunk`, eval, fold, Ajtai) + 5 for the tier-3 meta commitment
+/// (`D_meta`, `B_meta`, eval-like, fold, `A_meta`). Book §5.6 lines
+/// 940–953 extends this to the joint W+S cascade case (next-level
+/// witness = standard folded `w` + unfolded routed `S`), which binds
+/// an additional 5 ordinary-recursive-W rows alongside the chunks +
+/// meta tiers — that is the source of the 15 tiered fields below.
+///
+/// Concretely the 15 tiered row-family fields below are sourced as:
+///   - `w_{d,b,eval,fold,a}` (5) — book §5.6 extension for the joint
+///     `(W, original, meta)` cascade case.
+///   - `original_{d,b,eval,fold,a}` (5) — book §5.5 per-chunk +
+///     fold/eval/Ajtai rows for the original polynomial tier.
+///   - `meta_{d,b,eval,fold,a}` (5) — book §5.5 per-chunk +
+///     fold/eval/Ajtai rows for the tier-3 meta commitment tier.
+///
+/// Contract: at any given level, exactly one of these populations is
+/// non-empty:
+///   - tiered, no W: `{original_*, meta_*}` populated (book §5.5
+///     baseline, e.g. single-tier `f = 8` opening at a terminal
+///     level);
+///   - cascade-merged: `{w_*, original_*, meta_*}` all populated (book
+///     §5.6 joint W+S case, e.g. cascade L+1 ingesting both the
+///     folded witness AND the routed S from L);
+///   - non-tiered: the upper-block `{fold, eval, d, b, a}` joint
+///     fields are the source of truth, and every tiered field above
+///     is empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MRowLayout {
     /// Joint fold-consistency row (always at index 0).
