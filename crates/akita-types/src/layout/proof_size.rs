@@ -148,9 +148,17 @@ pub fn untiered_setup_group_lp(
     )
 }
 
-/// Planned setup-polynomial field-element length emitted by level `lp`'s
-/// M-table when the level's setup-claim reduction routes `S` to the next
-/// fold (book §5.3 lines 627-642, book §5.4 lines 686-754).
+/// Planned padded `(row_count, col_count_padded)` for the stage-2
+/// M-table setup-polynomial view at level `lp` (book §5.3 lines
+/// 627-642, book §5.4 lines 686-754).
+///
+/// Single source of truth for the cascade-aware dims that both the
+/// emitted setup-polynomial length ([`planned_setup_field_len`]) and
+/// the setup-claim-reduction sumcheck rounds
+/// ([`planned_setup_claim_reduction_rounds`]) consume. Mirrors the
+/// runtime envelope `PreparedMEval` materializes via
+/// [`setup_polynomial_padded_dims_inner`] without instantiating a
+/// `PreparedMEval` at planner time.
 ///
 /// `s_lp_in` is the chunk-shaped `S`-group LP carried in from the
 /// previous level when the cascade is already active. `incoming_tier`
@@ -162,17 +170,13 @@ pub fn untiered_setup_group_lp(
 ///
 /// Pass `None` for `s_lp_in` and `un_tiered()` for `incoming_tier` when
 /// the level runs single-group (only `W`).
-///
-/// Mirrors `PreparedMEval::setup_polynomial_row_count *
-/// setup_polynomial_col_count_padded() * D` so the planner can reason
-/// about the cascade growth without materializing a full `PreparedMEval`.
-pub fn planned_setup_field_len(
+pub fn planned_setup_padded_dims(
     lp: &LevelParams,
     s_lp_in: Option<&LevelParams>,
     incoming_tier: TieredSetupParams,
     num_eval_rows: usize,
     num_commitment_groups: usize,
-) -> usize {
+) -> (usize, usize) {
     let n_a = lp.a_key.row_len();
     let n_b_outer = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
@@ -225,10 +229,80 @@ pub fn planned_setup_field_len(
         let row_count = n_a.max(n_b_outer).max(n_d).max(1);
         (col_count, row_count)
     };
-    let col_count_padded = col_count.next_power_of_two();
+    (row_count, col_count.next_power_of_two())
+}
+
+/// Planned setup-polynomial field-element length emitted by level `lp`'s
+/// M-table.
+///
+/// Equals `row_count * col_count_padded * ring_dimension` for the dims
+/// returned by [`planned_setup_padded_dims`]; see that function for
+/// `s_lp_in` / `incoming_tier` semantics.
+///
+/// Mirrors `PreparedMEval::setup_polynomial_row_count *
+/// setup_polynomial_col_count_padded() * D` so the planner can reason
+/// about the cascade growth without materializing a full `PreparedMEval`.
+pub fn planned_setup_field_len(
+    lp: &LevelParams,
+    s_lp_in: Option<&LevelParams>,
+    incoming_tier: TieredSetupParams,
+    num_eval_rows: usize,
+    num_commitment_groups: usize,
+) -> usize {
+    let (row_count, col_count_padded) = planned_setup_padded_dims(
+        lp,
+        s_lp_in,
+        incoming_tier,
+        num_eval_rows,
+        num_commitment_groups,
+    );
     row_count
         .saturating_mul(col_count_padded)
         .saturating_mul(lp.ring_dimension)
+}
+
+/// Round count of the setup-side claim-reduction sumcheck at level
+/// `lp` (book §5.3 line 658, book §5.4 line 752).
+///
+/// The sumcheck binds variables in `(row | col | coeff)` order over
+/// the padded setup-polynomial view, so the round count is
+/// `row_bits + col_bits + coeff_bits` where:
+///
+/// * `row_bits = log2_ceil(row_count)` — the rows envelope
+///   `max(n_A, max_g n_B_g, n_D)`. Under tiered grouping the meta-tier
+///   `n_B_meta` is included via `max_g n_B_g`; per-chunk B/D rows are
+///   shared (book line 752 "MLE evaluation cost is `O(|D_chunk|) +
+///   O(log k)`, independent of `k`") so the envelope is independent of
+///   `k`.
+/// * `col_bits = log2(col_count_padded)` — the padded column envelope
+///   `max(W-cols, max_g B_cols_g, A-cols)`, which grows with the
+///   joint W+S layout under cascade routing.
+/// * `coeff_bits = log2(ring_dimension)` — the per-coefficient bind.
+///
+/// Sumcheck degree is `2` (product of structured weight and `S`),
+/// so the per-round serialized payload is `degree * field_bytes` (the
+/// linear term is recoverable from the round claim).
+///
+/// See [`planned_setup_padded_dims`] for the `(s_lp_in, incoming_tier,
+/// num_eval_rows, num_commitment_groups)` semantics.
+pub fn planned_setup_claim_reduction_rounds(
+    lp: &LevelParams,
+    s_lp_in: Option<&LevelParams>,
+    incoming_tier: TieredSetupParams,
+    num_eval_rows: usize,
+    num_commitment_groups: usize,
+) -> usize {
+    let (row_count, col_count_padded) = planned_setup_padded_dims(
+        lp,
+        s_lp_in,
+        incoming_tier,
+        num_eval_rows,
+        num_commitment_groups,
+    );
+    let row_bits = row_count.next_power_of_two().trailing_zeros() as usize;
+    let col_bits = col_count_padded.trailing_zeros() as usize;
+    let coeff_bits = lp.ring_dimension.trailing_zeros() as usize;
+    row_bits + col_bits + coeff_bits
 }
 
 /// Planned multi-group joint fold output (ring-element count) when level
@@ -609,6 +683,44 @@ pub fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
 }
 
 /// Header-stripped byte size of one folded proof level.
+///
+/// Mirrors the on-wire shape of [`crate::AkitaLevelProof`] /
+/// [`crate::AkitaBatchedFoldRoot`]:
+///
+/// * `y_bytes` — `num_claims · D · field_bytes`. `num_claims` is the
+///   number of distinct opening points on the wire (= number of
+///   `y_ring` slots = number of commitment groups joint-opened at
+///   this level). For a singleton recursive level it is `1`; under
+///   un-tiered cascade routing (book §5.3 lines 627-660) it is `2`
+///   (W, S); under tiered cascade routing (book §5.4 lines 686-754)
+///   it is `3` (W, chunks-as-1-group, meta). The per-chunk
+///   B-commitments are NOT on the wire — the verifier reconstructs
+///   them from preprocessed setup material per book line 752 "MLE
+///   evaluation cost is `O(|D_chunk|) + O(log k)`, independent of `k`".
+/// * `v_bytes` — `n_D · D · field_bytes`.
+/// * `stage1_bytes` — range-check tree proof for the stage-2 column
+///   rounds; computed via `stage1_proof_bytes(rounds, b, elem_bytes)`.
+/// * `stage2 sumcheck` — `rounds · 3 · field_bytes` (the compressed
+///   unipoly stores all coefficients except the linear term).
+/// * `setup_claim_reduction` (optional) — `rounds_cr · 2 · field_bytes`
+///   for the book §5.3 line 658 / §5.4 line 752 reduction sumcheck,
+///   plus `2 · field_bytes` for `m_setup_eval` and `s_opening_value`.
+///   Pass `Some(rounds)` whenever the level emits a CR payload
+///   (`lp.use_setup_claim_reduction == true`); `None` otherwise.
+///   Rounds are produced by [`planned_setup_claim_reduction_rounds`]
+///   from the level's M-table shape, which depends on the incoming
+///   cascade `(s_lp_in, incoming_tier, num_eval_rows,
+///   num_commitment_groups)`.
+/// * `next_commit_bytes` — `next_lp.n_B · next_lp.D · field_bytes`.
+///   The next-level commitment is a single `FlatRingVec` whose ring
+///   count is `next_lp.b_key.row_len()`. The planner sizes `next_lp`
+///   against the joint witness `current_w_len + s_field_len_in`, so
+///   the SIS-driven `n_B` already reflects the wider joint W; no
+///   further widening is required here. Per-chunk and meta-tier
+///   commitments live in the preprocessed
+///   [`crate::TieredSetupCommitments`] on the verifier side and are
+///   never serialized in the proof.
+/// * `next_eval_bytes` — one `field_bytes` for `next_w_eval`.
 pub fn level_proof_bytes(
     field_bits: u32,
     lp: &LevelParams,
@@ -616,6 +728,7 @@ pub fn level_proof_bytes(
     next_lp: &LevelParams,
     next_w_len: usize,
     num_claims: usize,
+    setup_claim_reduction_rounds: Option<usize>,
 ) -> usize {
     let elem_bytes = field_bytes(field_bits);
     let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, elem_bytes);
@@ -626,23 +739,33 @@ pub fn level_proof_bytes(
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
     let b = 1usize << level_lp.log_basis;
     let stage1_bytes = stage1_proof_bytes(rounds, b, elem_bytes);
+    // Setup-claim-reduction payload: degree-2 sumcheck over the padded
+    // setup-polynomial view + `m_setup_eval` + `s_opening_value`.
+    let cr_bytes = setup_claim_reduction_rounds.map_or(0, |cr_rounds| {
+        sumcheck_bytes(cr_rounds, 2, elem_bytes) + 2 * elem_bytes
+    });
 
     y_bytes
         + v_bytes
         + stage1_bytes
         + sumcheck_bytes(rounds, 3, elem_bytes)
+        + cr_bytes
         + next_commit_bytes
         + next_eval_bytes
 }
 
-/// Header-stripped byte size of a singleton recursive proof level.
+/// Header-stripped byte size of a singleton recursive proof level
+/// WITHOUT a setup-claim-reduction payload.
+///
+/// For CR-on levels the caller must use [`level_proof_bytes`] directly
+/// with `Some(rounds)` from [`planned_setup_claim_reduction_rounds`].
 pub fn recursive_level_proof_bytes(
     field_bits: u32,
     lp: &LevelParams,
     next_lp: &LevelParams,
     next_w_len: usize,
 ) -> usize {
-    level_proof_bytes(field_bits, lp, lp, next_lp, next_w_len, 1)
+    level_proof_bytes(field_bits, lp, lp, next_lp, next_w_len, 1, None)
 }
 
 #[cfg(test)]
@@ -733,6 +856,91 @@ mod tests {
             2,
         );
         assert_eq!(untiered, tiered_at_f1);
+    }
+
+    #[test]
+    fn level_proof_bytes_cr_payload_adds_setup_reduction_cost() {
+        // Singleton recursive level: CR-off baseline + Some(rounds)
+        // overload differ by exactly `rounds * 2 * elem_bytes + 2 *
+        // elem_bytes` (degree-2 sumcheck + `m_setup_eval` +
+        // `s_opening_value`).
+        let lp = lp_for_chunk_test();
+        let next_lp = lp_for_chunk_test();
+        let next_w_len = next_lp.ring_dimension * 4;
+        let baseline = level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, 1, None);
+        let elem_bytes = field_bytes(128);
+        for rounds in [4_usize, 16, 25] {
+            let with_cr = level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, 1, Some(rounds));
+            let cr_expected = sumcheck_bytes(rounds, 2, elem_bytes) + 2 * elem_bytes;
+            assert_eq!(
+                with_cr - baseline,
+                cr_expected,
+                "CR-on overhead must equal degree-2 sumcheck + 2 scalars at rounds={rounds}"
+            );
+        }
+    }
+
+    #[test]
+    fn planned_setup_padded_dims_round_count_matches_field_len_log() {
+        // For any (s_lp_in, incoming_tier, num_eval_rows, num_groups)
+        // the CR rounds equal `row_bits + col_bits + coeff_bits`, and
+        // `setup_field_len = row_count * col_count_padded * D` shares
+        // its log2 with the rounds count (since col_count_padded and
+        // D are powers of two).
+        let base = lp_for_chunk_test();
+
+        // Single-group baseline.
+        let (row_count_single, col_padded_single) =
+            planned_setup_padded_dims(&base, None, TieredSetupParams::un_tiered(), 1, 1);
+        let rounds_single =
+            planned_setup_claim_reduction_rounds(&base, None, TieredSetupParams::un_tiered(), 1, 1);
+        let expected_single = row_count_single.next_power_of_two().trailing_zeros() as usize
+            + col_padded_single.trailing_zeros() as usize
+            + base.ring_dimension.trailing_zeros() as usize;
+        assert_eq!(rounds_single, expected_single);
+
+        // Un-tiered cascade incoming (W, S): the planner passes
+        // num_eval_rows = num_commitment_groups = 2.
+        let setup_field_len = 8 * base.ring_dimension;
+        let s_lp = untiered_setup_group_lp(&base, setup_field_len).expect("s_lp");
+        let rounds_untiered = planned_setup_claim_reduction_rounds(
+            &base,
+            Some(&s_lp),
+            TieredSetupParams::un_tiered(),
+            2,
+            2,
+        );
+        let (row_count_untiered, col_padded_untiered) =
+            planned_setup_padded_dims(&base, Some(&s_lp), TieredSetupParams::un_tiered(), 2, 2);
+        assert_eq!(
+            rounds_untiered,
+            row_count_untiered.next_power_of_two().trailing_zeros() as usize
+                + col_padded_untiered.trailing_zeros() as usize
+                + base.ring_dimension.trailing_zeros() as usize
+        );
+
+        // Tiered cascade incoming (W, chunks, meta): the planner
+        // passes num_eval_rows = num_commitment_groups = 3.
+        let big_field_len = 16 * 16 * base.ring_dimension;
+        let tier = TieredSetupParams::new(2).expect("f=2");
+        let chunk_lp = tiered_setup_group_lp(&base, big_field_len, tier).expect("chunk_lp");
+        let rounds_tiered =
+            planned_setup_claim_reduction_rounds(&base, Some(&chunk_lp), tier, 3, 3);
+        let (row_count_tiered, col_padded_tiered) =
+            planned_setup_padded_dims(&base, Some(&chunk_lp), tier, 3, 3);
+        assert_eq!(
+            rounds_tiered,
+            row_count_tiered.next_power_of_two().trailing_zeros() as usize
+                + col_padded_tiered.trailing_zeros() as usize
+                + base.ring_dimension.trailing_zeros() as usize
+        );
+
+        // Tiered cascade rounds must dominate single-group baseline:
+        // the multi-group M-table is structurally wider.
+        assert!(
+            rounds_tiered >= rounds_single,
+            "tiered CR rounds ({rounds_tiered}) must be at least single-group ({rounds_single})"
+        );
     }
 
     #[test]

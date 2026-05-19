@@ -88,7 +88,7 @@ mod tests {
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_config::proof_optimized::fp128;
-    use akita_config::CommitmentConfig;
+    use akita_config::{BareCfg, CommitmentConfig};
     use akita_pcs::AkitaCommitmentScheme;
     use akita_pcs::{CanonicalField, CommitmentProver, Transcript};
     use akita_prover::protocol::ring_switch::{
@@ -216,8 +216,13 @@ mod tests {
     #[test]
     fn full_root_rows_match_direct_relation_claim() {
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
-        const D: usize = Cfg::D;
+        // `D128Full` defaults to CR-on with tier_shrink=2 per audit B-1;
+        // the cascade is infeasible at NV=12 (too few variables for the
+        // shrink chain). This test exercises the M-relation row layout
+        // and does not need a CR-on cfg, so route through `BareCfg` to
+        // pick up the un-cascaded schedule.
+        type Cfg = BareCfg<fp128::D128Full>;
+        const D: usize = fp128::D128Full::D;
         const NV: usize = 12;
 
         let lp = Cfg::commitment_layout(NV).expect("lp");
@@ -360,8 +365,11 @@ mod tests {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
-        const D: usize = Cfg::D;
+        // `D128Full` defaults to CR-on with tier_shrink=2 per audit B-1;
+        // the cascade is infeasible at NV=12. This helper only exercises
+        // the M-eval matching invariant, so route through `BareCfg`.
+        type Cfg = BareCfg<fp128::D128Full>;
+        const D: usize = fp128::D128Full::D;
         const NV: usize = 12;
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
@@ -611,7 +619,11 @@ mod tests {
 
     #[test]
     fn prepared_m_eval_matches_materialized() {
-        type Cfg = fp128::D128Full;
+        // `D128Full` defaults to CR-on with tier_shrink=2 per audit B-1;
+        // the cascade is infeasible at NV=12. Use `BareCfg` to bypass
+        // the cascade: this test only exercises the M-eval matching
+        // invariant, which is independent of CR routing.
+        type Cfg = BareCfg<fp128::D128Full>;
         const NV: usize = 12;
         let level_params = Cfg::commitment_layout(NV).expect("commitment layout");
         assert_prepared_m_eval_matches_materialized(level_params);
@@ -619,7 +631,7 @@ mod tests {
 
     #[test]
     fn prepared_m_eval_tensor_matches_materialized() {
-        type Cfg = fp128::D128Full;
+        type Cfg = BareCfg<fp128::D128Full>;
         const NV: usize = 12;
         let level_params = Cfg::commitment_layout(NV)
             .expect("commitment layout")
@@ -629,8 +641,12 @@ mod tests {
 
     fn assert_setup_claim_reduction_roundtrip(level_params: akita_types::LevelParams) {
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
-        const D: usize = Cfg::D;
+        // `D128Full` defaults to CR-on with tier_shrink=2 per audit B-1;
+        // the cascade is infeasible at NV=12. The CR sumcheck under test
+        // is constructed directly from `level_params`/setup matrix, so
+        // route through `BareCfg` to pick up the un-cascaded schedule.
+        type Cfg = BareCfg<fp128::D128Full>;
+        const D: usize = fp128::D128Full::D;
         const NV: usize = 12;
 
         let mut rng = StdRng::seed_from_u64(0xc1a1_de5e);
@@ -771,7 +787,7 @@ mod tests {
 
     #[test]
     fn setup_claim_reduction_roundtrip_flat() {
-        type Cfg = fp128::D128Full;
+        type Cfg = BareCfg<fp128::D128Full>;
         const NV: usize = 12;
         let level_params = Cfg::commitment_layout(NV).expect("commitment layout");
         assert_setup_claim_reduction_roundtrip(level_params);
@@ -779,7 +795,7 @@ mod tests {
 
     #[test]
     fn setup_claim_reduction_roundtrip_tensor() {
-        type Cfg = fp128::D128Full;
+        type Cfg = BareCfg<fp128::D128Full>;
         const NV: usize = 12;
         let level_params = Cfg::commitment_layout(NV)
             .expect("commitment layout")

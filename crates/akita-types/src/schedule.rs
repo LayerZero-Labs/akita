@@ -551,6 +551,9 @@ where
                     }
                 };
                 let runtime_level_bytes = if fold_level == 0 {
+                    // Generated schedule entries are CR-off (see
+                    // `generated_level_params`: `use_setup_claim_reduction = false`
+                    // by construction), so the CR payload is empty here.
                     level_proof_bytes(
                         field_bits,
                         &lp,
@@ -558,6 +561,7 @@ where
                         &next_level_params,
                         next_inputs.current_w_len,
                         key.batch.num_points,
+                        None,
                     )
                 } else {
                     recursive_level_proof_bytes(
@@ -1659,7 +1663,7 @@ mod tests {
             );
 
             assert_eq!(
-                level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, num_points),
+                level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, num_points, None),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );

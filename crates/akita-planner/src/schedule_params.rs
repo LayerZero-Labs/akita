@@ -18,11 +18,11 @@ use akita_types::layout::digit_math::{
 };
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, planned_joint_next_w_len_with_setup_group,
-    planned_joint_next_w_len_with_setup_group_tiered, planned_setup_field_len,
-    planned_w_ring_element_count_with_claims, root_current_w_len, scale_batched_root_layout,
-    schedule_from_plan, tiered_setup_group_lp, AjtaiKeyParams, AkitaRootBatchSummary,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape, FoldStep,
-    LevelParams, Schedule, Step, TieredSetupParams, WitnessShape,
+    planned_joint_next_w_len_with_setup_group_tiered, planned_setup_claim_reduction_rounds,
+    planned_setup_field_len, planned_w_ring_element_count_with_claims, root_current_w_len,
+    scale_batched_root_layout, schedule_from_plan, tiered_setup_group_lp, AjtaiKeyParams,
+    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
+    DirectWitnessShape, FoldStep, LevelParams, Schedule, Step, TieredSetupParams, WitnessShape,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -74,6 +74,24 @@ struct CandidateLevelParams {
     /// `TieredSetupParams::new(f)?` when the planner enables the tiered
     /// `|S|/f` cascade.
     tier_setup_params: TieredSetupParams,
+    /// Number of distinct opening points this level joint-opens (= the
+    /// number of `y_ring` slots in the emitted level proof). Set by the
+    /// incoming cascade state:
+    ///
+    /// * `1` — singleton recursive level (no incoming `S`).
+    /// * `2` — un-tiered cascade incoming (W, S).
+    /// * `3` — tiered cascade incoming (W, chunks, meta).
+    ///
+    /// Mirrors `num_groups_for_y` in
+    /// `prove_recursive_multi_fold_with_params`; the on-wire proof
+    /// carries one `y_ring` per group.
+    proof_num_eval_rows: usize,
+    /// Optional setup-side claim-reduction sumcheck round count for the
+    /// proof emitted at THIS level (book §5.3 line 658, §5.4 line 752).
+    /// `Some(rounds)` whenever `lp.use_setup_claim_reduction == true`
+    /// (CR fires unconditionally on CR-on levels; the cleartext-S
+    /// discharge path still emits the same payload). `None` otherwise.
+    setup_claim_reduction_rounds: Option<usize>,
 }
 
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
@@ -183,27 +201,26 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
         (w_ring, w_ring * level_lp.ring_dimension)
     };
 
-    // `s_field_len_emitted` is the `S` polynomial size this level pushes
-    // to the next as a separate commitment-group handle. It is set by
-    // THIS level's M-table dims. When cascade is active here the
-    // M-table groups depend on the incoming tier:
+    // Cascade-aware M-table shape at THIS level. The number of distinct
+    // opening points (and therefore commitment groups in the joint open)
+    // is set by the incoming cascade:
     //
     // * un-tiered cascade (`incoming_tier.shrink_factor == 1`, book
-    //   §5.3): 2 groups `(W, S)` and 2 distinct opening points;
+    //   §5.3): 2 groups `(W, S)`;
     // * tiered cascade (`incoming_tier.is_tiered()`, book §5.4): 3
-    //   groups `(W, chunks, meta)` and 3 distinct opening points,
-    //   because the tiered chunks expand into a `claim_count = k`
-    //   group and the meta commit (concatenated chunk B-commitments)
-    //   sits alongside them as a third opening point.
-    //
-    // Otherwise the M-table is single-group (only `W`).
+    //   groups `(W, chunks, meta)` — the tiered chunks expand into a
+    //   `claim_count = k` group and the meta commit sits alongside as
+    //   a third opening point;
+    // * singleton: 1 group (only `W`).
+    let (num_eval_rows, num_commitment_groups) =
+        match (s_lp_in.is_some(), incoming_tier.is_tiered()) {
+            (true, true) => (3, 3),
+            (true, false) => (2, 2),
+            _ => (1, 1),
+        };
+    // `s_field_len_emitted` is the `S` polynomial size this level pushes
+    // to the next as a separate commitment-group handle.
     let s_field_len_emitted = if level_lp.use_setup_claim_reduction && routes_setup_recursively {
-        let (num_eval_rows, num_commitment_groups) =
-            match (s_lp_in.is_some(), incoming_tier.is_tiered()) {
-                (true, true) => (3, 3),
-                (true, false) => (2, 2),
-                _ => (1, 1),
-            };
         planned_setup_field_len(
             &level_lp,
             s_lp_in.as_ref(),
@@ -213,6 +230,26 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
         )
     } else {
         0
+    };
+    // Book §5.3 line 658 / §5.4 line 752 setup-claim-reduction
+    // sumcheck round count. Fires unconditionally on CR-on levels
+    // regardless of whether `S` is routed recursively or discharged
+    // via cleartext mle: the runtime emits the same payload either
+    // way (see `crates/akita-prover/src/protocol/flow.rs` line 1315).
+    // Sized against the same `(s_lp_in, incoming_tier, num_eval_rows,
+    // num_commitment_groups)` shape that `planned_setup_field_len`
+    // consumes so the cost model tracks the joint-open envelope
+    // exactly, including the tiered chunks + meta expansion.
+    let setup_claim_reduction_rounds = if level_lp.use_setup_claim_reduction {
+        Some(planned_setup_claim_reduction_rounds(
+            &level_lp,
+            s_lp_in.as_ref(),
+            incoming_tier,
+            num_eval_rows,
+            num_commitment_groups,
+        ))
+    } else {
+        None
     };
     // Carry the OUTGOING tier shape only when this level actually
     // routes the S group recursively. Otherwise the FoldStep is the
@@ -256,10 +293,20 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
         w_ring,
         s_field_len_emitted,
         tier_setup_params,
+        proof_num_eval_rows: num_eval_rows,
+        setup_claim_reduction_rounds,
     })
 }
 
 /// Compute the proof bytes for this fold level against a concrete successor.
+///
+/// `num_public_outputs` is the number of `y_ring` slots on the wire for
+/// THIS level (= number of distinct opening points in the joint open).
+/// The setup-claim-reduction payload bytes (book §5.3 line 658, §5.4
+/// line 752) are derived inside [`level_proof_bytes`] from `lp`,
+/// `s_field_len_emitted`, and `tier_setup_params` carried on the
+/// candidate so the DP scores CR-on shapes against the actual on-wire
+/// payload instead of the single-claim baseline.
 fn compute_level_proof_size<Cfg: PlannerConfig>(
     candidate: &CandidateLevelParams,
     next_level_params: &LevelParams,
@@ -273,6 +320,7 @@ fn compute_level_proof_size<Cfg: PlannerConfig>(
         next_level_params,
         candidate.next_w_len,
         num_public_outputs,
+        candidate.setup_claim_reduction_rounds,
     )
 }
 
@@ -509,8 +557,14 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
                 ) else {
                     continue;
                 };
-                let level_proof_size =
-                    compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
+                // Pass the candidate's joint-open `num_eval_rows` (1 for
+                // singleton, 2 for un-tiered cascade, 3 for tiered) so
+                // `y_bytes` reflects the actual on-wire y-ring count.
+                let level_proof_size = compute_level_proof_size::<Cfg>(
+                    &candidate,
+                    &next_level_params,
+                    candidate.proof_num_eval_rows,
+                );
 
                 let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
                 let objective_cost = level_proof_size
@@ -712,6 +766,13 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
             .as_ref()
             .is_none_or(|b| natural_next_w_len < b.next_w_len)
         {
+            // Root candidate before cascade routing is selected: this
+            // helper is consumed by `derive_root_candidate` callers
+            // that then re-derive the routed shape via
+            // `find_optimal_schedule_with_max`'s root cascade block,
+            // which constructs a fresh `CandidateLevelParams` with the
+            // proper CR rounds and num_eval_rows. Keep this snapshot
+            // single-claim until the routed candidate replaces it.
             best = Some(CandidateLevelParams {
                 proof_lp,
                 lp: level_lp,
@@ -719,6 +780,8 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
                 w_ring,
                 s_field_len_emitted: 0,
                 tier_setup_params: TieredSetupParams::un_tiered(),
+                proof_num_eval_rows: shape.num_points,
+                setup_claim_reduction_rounds: None,
             });
         }
     }
@@ -864,20 +927,20 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             &[false, true]
         };
         for &routes_setup_recursively in route_choices {
+            // Root's M-table never carries an incoming `S` group: any
+            // tier shape applies at the next level when chunks expand.
+            // Pass `un_tiered()` for the incoming tier and use the
+            // root's `(num_commitment_groups, num_points)` shape.
+            let root_num_eval_rows = shape.num_points;
+            let root_num_commitment_groups = shape.num_commitment_groups;
             let root_s_field_len_emitted =
                 if candidate.lp.use_setup_claim_reduction && routes_setup_recursively {
-                    // Root's M-table never carries an incoming `S` group:
-                    // any tier shape is applied at the next level when the
-                    // chunks expand. Pass `un_tiered()` so the formula uses
-                    // the root's `(num_commitment_groups, num_points)` shape.
-                    let num_eval_rows = shape.num_points;
-                    let num_commitment_groups = shape.num_commitment_groups;
                     planned_setup_field_len(
                         &candidate.lp,
                         None,
                         TieredSetupParams::un_tiered(),
-                        num_eval_rows,
-                        num_commitment_groups,
+                        root_num_eval_rows,
+                        root_num_commitment_groups,
                     )
                 } else {
                     0
@@ -910,9 +973,33 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             ) else {
                 continue;
             };
-            // Root-level proofs carry one public y-ring per distinct opening point.
-            let root_proof_size =
-                compute_level_proof_size::<Cfg>(&candidate, &next_level_params, shape.num_points);
+            // Root-level proofs carry one public y-ring per distinct
+            // opening point AND the CR payload for CR-on configs (book
+            // §5.3 line 658, §5.4 line 752). The CR sumcheck rounds
+            // are computed from the root's M-table shape with no
+            // incoming `S` (root never has incoming cascade) and the
+            // batched root's `(num_eval_rows, num_commitment_groups)`
+            // taken straight from the input shape.
+            let root_cr_rounds = if candidate.lp.use_setup_claim_reduction {
+                Some(planned_setup_claim_reduction_rounds(
+                    &candidate.lp,
+                    None,
+                    TieredSetupParams::un_tiered(),
+                    shape.num_points,
+                    shape.num_commitment_groups,
+                ))
+            } else {
+                None
+            };
+            let root_proof_size = level_proof_bytes(
+                fb,
+                &candidate.proof_lp,
+                &candidate.lp,
+                &next_level_params,
+                candidate.next_w_len,
+                shape.num_points,
+                root_cr_rounds,
+            );
 
             let proof_bytes = root_proof_size.saturating_add(suffix.proof_bytes);
             let objective_cost = root_proof_size
@@ -922,17 +1009,20 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
                 ))
                 .saturating_add(suffix.objective_cost);
             if objective_cost < best.objective_cost {
+                let root_tier_for_step = if root_s_field_len_emitted > 0 {
+                    root_tier
+                } else {
+                    TieredSetupParams::un_tiered()
+                };
                 let root_candidate = CandidateLevelParams {
                     proof_lp: candidate.proof_lp.clone(),
                     lp: candidate.lp.clone(),
                     next_w_len: candidate.next_w_len,
                     w_ring: candidate.w_ring,
                     s_field_len_emitted: root_s_field_len_emitted,
-                    tier_setup_params: if root_s_field_len_emitted > 0 {
-                        root_tier
-                    } else {
-                        TieredSetupParams::un_tiered()
-                    },
+                    tier_setup_params: root_tier_for_step,
+                    proof_num_eval_rows: shape.num_points,
+                    setup_claim_reduction_rounds: root_cr_rounds,
                 };
                 let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                 steps.push(to_fold_step(
