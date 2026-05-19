@@ -406,3 +406,39 @@ cargo test --release -p akita-pcs --test setup_claim_reduction_e2e
 ### 10.7 Conclusion
 
 The §9 conclusion stands. The Phase-D-full v2 path (book §5 / Figure 12) preserves the project's 128-bit security baseline at every shape the post-`c9d9904` production preset reaches. The verifier defensive asserts from `f17b0dc` (S-1 + S-5) plus the closed cache-tamper API from `831ccfc` mean the only paths a malicious prover can attempt are caught by the wire-level rejection tests `tiered_rejects_tampered_s_opening_value` and `tiered_rejects_tampered_next_w_commitment`. No new SIS analysis is required.
+
+---
+
+## 11 — γ-folding soundness for the L+1 chunks aggregation (Drift 3)
+
+**Scope**: book §5.4 lines 686-754 / §5.5 line 752 "Growth ≈ 1.0-3.0×". The L+1 prover absorbs the `k` per-chunk B-side commitments `u_j` and the meta tier commitment `u_meta`, samples `γ ∈ F^k` via `CHALLENGE_TIERED_CHUNK_AGGREGATION`, then aggregates the `k` chunk claims into ONE chunks claim at the shared opening point (book line 949 "share folding challenges"). Mirrored on the verifier side in `expand_tiered_setup_claims`.
+
+### 11.1 Construction
+
+- Prover absorbs `u_0, …, u_{k-1}, u_meta` into the transcript (k+1 commitments).
+- `γ_0, …, γ_{k-1} ← transcript.challenge_scalar(CHALLENGE_TIERED_CHUNK_AGGREGATION)` are k independent F-scalars (mirrors the existing `CHALLENGE_EVAL_BATCH` form).
+- `chunk_poly_agg = Σ_{j=0}^{k-1} γ_j · chunk_polys[j]` is the aggregated chunk polynomial.
+- `(u_agg, hint_agg) = commit_dense_s_handle_direct(chunk_poly_agg, chunk_lp)` produces the L+1 chunks_agg commitment via the standard `chunk_lp` Ajtai chain. Both prover and verifier compute the same `u_agg` deterministically from `(public S, γ)`.
+- L+1 ingests ONE chunks_agg claim `(u_agg, chunk_poly_agg, chunk_opening_agg)` with `claim_count = 1` (instead of `k` per-chunk claims). The meta tier still commits the concatenated `(u_0, …, u_{k-1})`.
+
+### 11.2 Soundness reduction
+
+The L+1 verifies the M-relation `u_agg = M_chunks · chunk_poly_agg` via the standard sumcheck (book §5.5). By linearity of the M-table evaluation, `M_chunks · Σ_j γ_j · chunk_polys[j] = Σ_j γ_j · (M_chunks · chunk_polys[j]) = Σ_j γ_j · u_j_expected`, where `u_j_expected` is the chunk_lp commitment to `chunk_polys[j]`. So if the prover-supplied `chunk_polys[j]` matches the public S slice for each `j`, the M-relation closes.
+
+Conversely, if any `chunk_polys[j]` differs from its public S slice, `chunk_poly_agg` deviates from `Σ_j γ_j · S_chunks[j]`, and `u_agg` produced by the prover (under the chunk_lp commit chain on the deviant `chunk_poly_agg`) differs from the verifier-derived `u_agg` (computed independently from public S + γ via the same chain). The L+1 verifier rejects.
+
+**Schwartz-Zippel-style knowledge error per chunks group per cascade level**: for any prover that deviates in `chunk_polys[j]` at index `j`, the probability over uniform `γ ∈ F^k` that the deviation cancels at the aggregated chunk_poly_agg is at most `1 / |F|`. With `|F| ≥ 2^128` (production preset modulus), the per-chunks-group knowledge error is `≤ 2^-128`.
+
+### 11.3 Composed budget impact
+
+The composed proof knowledge error across the cascade is the sum of per-level / per-claim errors. Pre-Drift-3 the L+1 had `k` per-chunk claims, each contributing the standard §10.2 sumcheck slack `~2^-123` to the composed budget. Post-Drift-3 the L+1 has ONE aggregated chunks claim contributing the standard `~2^-123` PLUS the new γ-folding knowledge error `2^-128`. The composed budget is dominated by the pre-existing terms; the γ-folding contribution adds `O(L · 2^-128)` across the `L = 5` cascade levels at NV=44 — fully negligible vs the `~2^-100` to `~2^-118` composed knowledge error of the post-fix branch.
+
+**Bottom line**: the L+1 chunks aggregation introduces a `2^-128` knowledge error per cascade level. The composed budget remains ≥ 100 bits at every preset / NV the planner schedules. No SIS rank changes — the chunk_lp Ajtai chain is unchanged, just driven once on the aggregated chunk_poly_agg instead of `k` times on the individual chunk_polys[j].
+
+### 11.4 Reproducibility
+
+- Prover-side aggregation: `crates/akita-prover/src/protocol/flow.rs::prove_recursive_level_with_policy` (tiered branch, post-`f5e3ee3`).
+- Verifier-side mirror: `crates/akita-verifier/src/protocol/levels.rs::expand_tiered_setup_claims` (post-`f5e3ee3`).
+- Transcript label: `crates/akita-transcript/src/labels.rs::CHALLENGE_TIERED_CHUNK_AGGREGATION = b"ak/c/tca"`.
+- Soundness gate test: `crates/akita-pcs/tests/tiered_setup_e2e.rs::tiered_rejects_tampered_s_opening_value` + `tiered_rejects_tampered_next_w_commitment` (both pass post-`f5e3ee3` and validate that a malicious prover attempting to lie about the aggregated chunks claim is rejected at the verifier's M-relation sumcheck).
+- M-row layout / planner cost-model updates: `crates/akita-types/src/layout/params.rs::m_row_layout` / `total_b_row_count` / `total_d_row_count` and `crates/akita-types/src/layout/proof_size.rs::planned_joint_w_ring_with_setup_group_tiered` all drop the `tier.num_chunks` multiplier post-`f5e3ee3`, reflecting `claim_count = 1` for the aggregated chunks group.
