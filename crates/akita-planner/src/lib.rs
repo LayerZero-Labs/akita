@@ -137,6 +137,29 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     fn planner_setup_shrink_factor_at_level(_level: usize) -> usize {
         Self::planner_setup_shrink_factor()
     }
+
+    /// Relative weight for verifier setup-precompute storage in the planner
+    /// objective.
+    ///
+    /// The reported schedule size remains proof bytes. This weight only affects
+    /// DP comparisons by adding
+    /// `ceil(setup_storage_bytes * weight / amortization_proofs)` to each
+    /// setup-claim-reduction level. The default models Jolt-style amortization:
+    /// storage is paid once per setup and spread over many proofs. Set this to
+    /// `0` to disable the storage component, or raise it to approximate a
+    /// per-deployment policy without changing planner code.
+    fn planner_setup_storage_weight() -> usize {
+        1
+    }
+
+    /// Expected number of proofs sharing one verifier setup precompute.
+    ///
+    /// The default `1000` is intentionally conservative for production
+    /// integrations where setup material is reused many times. Configs with a
+    /// one-shot deployment model can lower this value; `0` is treated as `1`.
+    fn planner_setup_storage_amortization_proofs() -> usize {
+        1000
+    }
 }
 
 pub use akita_types::WitnessShape;

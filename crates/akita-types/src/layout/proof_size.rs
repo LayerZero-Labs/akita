@@ -375,6 +375,67 @@ pub fn planned_setup_field_len(
         .saturating_mul(lp.ring_dimension)
 }
 
+/// Planned verifier-side setup-precompute storage for this level, in field
+/// elements.
+///
+/// This is intentionally separate from [`level_proof_bytes`]: proof bytes
+/// remain the on-wire schedule size, while planner objectives may add an
+/// amortized storage cost when comparing cascade-vs-direct schedules.
+///
+/// For an un-tiered setup claim the verifier stores/evaluates the full setup
+/// polynomial view. For a tiered outgoing setup claim, the verifier stores the
+/// precomputed per-chunk B-side commitments plus the meta-tier B commitment
+/// from book §5.4.
+///
+/// # Errors
+///
+/// Returns an error if the configured tier cannot be derived for this level's
+/// setup-polynomial shape.
+pub fn planned_verifier_setup_storage_field_len(
+    lp: &LevelParams,
+    s_lp_in: Option<&LevelParams>,
+    incoming_tier: TieredSetupParams,
+    storage_tier: TieredSetupParams,
+    num_eval_rows: usize,
+    num_commitment_groups: usize,
+) -> Result<usize, AkitaError> {
+    if !lp.use_setup_claim_reduction {
+        return Ok(0);
+    }
+
+    let setup_field_len = planned_setup_field_len(
+        lp,
+        s_lp_in,
+        incoming_tier,
+        num_eval_rows,
+        num_commitment_groups,
+    );
+    if !storage_tier.is_tiered() {
+        return Ok(setup_field_len);
+    }
+
+    let chunk_lp = tiered_setup_group_lp(lp, setup_field_len, storage_tier)?;
+    let chunk_commit_field_len = chunk_lp
+        .b_key
+        .row_len()
+        .saturating_mul(chunk_lp.ring_dimension);
+    let meta_field_len = storage_tier
+        .num_chunks
+        .saturating_mul(chunk_lp.b_key.row_len())
+        .saturating_mul(lp.ring_dimension)
+        .next_power_of_two();
+    let meta_lp = derive_chunk_sis_ranks_from_widths(untiered_setup_group_lp(lp, meta_field_len)?)?;
+    let meta_commit_field_len = meta_lp
+        .b_key
+        .row_len()
+        .saturating_mul(meta_lp.ring_dimension);
+
+    Ok(storage_tier
+        .num_chunks
+        .saturating_mul(chunk_commit_field_len)
+        .saturating_add(meta_commit_field_len))
+}
+
 /// Round count of the setup-side claim-reduction sumcheck at level
 /// `lp` (book §5.3 line 658, book §5.4 line 752).
 ///

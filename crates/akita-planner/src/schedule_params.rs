@@ -17,11 +17,12 @@ use akita_types::layout::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field,
 };
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, planned_joint_next_w_len_with_setup_group,
-    planned_joint_next_w_len_with_setup_group_tiered, planned_setup_claim_reduction_rounds,
-    planned_setup_field_len, planned_w_ring_element_count_with_claims, root_current_w_len,
-    scale_batched_root_layout, schedule_from_plan, tiered_setup_group_lp, AjtaiKeyParams,
-    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
+    direct_witness_bytes, field_bytes, level_proof_bytes,
+    planned_joint_next_w_len_with_setup_group, planned_joint_next_w_len_with_setup_group_tiered,
+    planned_setup_claim_reduction_rounds, planned_setup_field_len,
+    planned_verifier_setup_storage_field_len, planned_w_ring_element_count_with_claims,
+    root_current_w_len, scale_batched_root_layout, schedule_from_plan, tiered_setup_group_lp,
+    AjtaiKeyParams, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
     DirectWitnessShape, FoldStep, LevelParams, Schedule, Step, TieredSetupParams, WitnessShape,
 };
 
@@ -92,6 +93,10 @@ struct CandidateLevelParams {
     /// (CR fires unconditionally on CR-on levels; the cleartext-S
     /// discharge path still emits the same payload). `None` otherwise.
     setup_claim_reduction_rounds: Option<usize>,
+    /// Verifier-side setup precompute material for this level, in field
+    /// elements. The planner amortizes this into the objective cost but
+    /// keeps `level_bytes` / `Schedule::total_bytes` as wire bytes.
+    verifier_setup_storage_field_len: usize,
 }
 
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
@@ -251,6 +256,20 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
     } else {
         None
     };
+    let storage_tier = if routes_setup_recursively {
+        outgoing_tier
+    } else {
+        TieredSetupParams::un_tiered()
+    };
+    let verifier_setup_storage_field_len = planned_verifier_setup_storage_field_len(
+        &level_lp,
+        s_lp_in.as_ref(),
+        incoming_tier,
+        storage_tier,
+        num_eval_rows,
+        num_commitment_groups,
+    )
+    .ok()?;
     // Carry the OUTGOING tier shape only when this level actually
     // routes the S group recursively. Otherwise the FoldStep is the
     // un-tiered baseline and the runtime keeps the existing
@@ -295,6 +314,7 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
         tier_setup_params,
         proof_num_eval_rows: num_eval_rows,
         setup_claim_reduction_rounds,
+        verifier_setup_storage_field_len,
     })
 }
 
@@ -322,6 +342,15 @@ fn compute_level_proof_size<Cfg: PlannerConfig>(
         num_public_outputs,
         candidate.setup_claim_reduction_rounds,
     )
+}
+
+fn setup_storage_objective_cost<Cfg: PlannerConfig>(storage_field_len: usize) -> usize {
+    if storage_field_len == 0 || Cfg::planner_setup_storage_weight() == 0 {
+        return 0;
+    }
+    let storage_bytes = storage_field_len.saturating_mul(field_bytes(Cfg::planner_field_bits()));
+    let weighted = storage_bytes.saturating_mul(Cfg::planner_setup_storage_weight());
+    weighted.div_ceil(Cfg::planner_setup_storage_amortization_proofs().max(1))
 }
 
 // -----------------------------------------------------------------------
@@ -568,6 +597,9 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
 
                 let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
                 let objective_cost = level_proof_size
+                    .saturating_add(setup_storage_objective_cost::<Cfg>(
+                        candidate.verifier_setup_storage_field_len,
+                    ))
                     .saturating_add(stage1_prover_penalty::<Cfg>(
                         &candidate.lp,
                         candidate.next_w_len,
@@ -782,6 +814,7 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
                 tier_setup_params: TieredSetupParams::un_tiered(),
                 proof_num_eval_rows: shape.num_points,
                 setup_claim_reduction_rounds: None,
+                verifier_setup_storage_field_len: 0,
             });
         }
     }
@@ -998,6 +1031,21 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             } else {
                 None
             };
+            let root_storage_tier = if routes_setup_recursively {
+                root_tier
+            } else {
+                TieredSetupParams::un_tiered()
+            };
+            let Ok(root_setup_storage_field_len) = planned_verifier_setup_storage_field_len(
+                &candidate.lp,
+                None,
+                TieredSetupParams::un_tiered(),
+                root_storage_tier,
+                shape.num_points,
+                shape.num_commitment_groups,
+            ) else {
+                continue;
+            };
             let root_proof_size = level_proof_bytes(
                 fb,
                 &candidate.proof_lp,
@@ -1010,6 +1058,9 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
 
             let proof_bytes = root_proof_size.saturating_add(suffix.proof_bytes);
             let objective_cost = root_proof_size
+                .saturating_add(setup_storage_objective_cost::<Cfg>(
+                    root_setup_storage_field_len,
+                ))
                 .saturating_add(stage1_prover_penalty::<Cfg>(
                     &candidate.lp,
                     candidate.next_w_len,
@@ -1030,6 +1081,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
                     tier_setup_params: root_tier_for_step,
                     proof_num_eval_rows: shape.num_points,
                     setup_claim_reduction_rounds: root_cr_rounds,
+                    verifier_setup_storage_field_len: root_setup_storage_field_len,
                 };
                 let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                 steps.push(to_fold_step(
