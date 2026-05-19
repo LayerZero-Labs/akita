@@ -1013,6 +1013,24 @@ where
         "[verify_root] stage2 input claim ok after {:?}",
         total_t.elapsed()
     );
+    // S-1: schedule shape must equal proof shape at the stage-2 dispatch.
+    // The prover emits `stage2.setup_claim_reduction` iff
+    // `batched_lp.use_setup_claim_reduction == true` (independent of
+    // whether the deferred claim is routed recursively or anchored by
+    // the cleartext mle check inside `verify_setup_claim_reduction`).
+    // Without this check the verifier dispatches purely on proof shape
+    // and ignores the schedule.
+    //
+    // The schedule-says-route case (`routes_setup_recursively == true`,
+    // i.e. planner's `s_field_len_emitted > 0`) implies
+    // `use_setup_claim_reduction == true` by construction (see
+    // `akita-planner/src/schedule_params.rs:200`), so this single check
+    // also covers audit S-1 prong #2.
+    let lp_says_emit = batched_lp.use_setup_claim_reduction;
+    let proof_says_emit = stage2.setup_claim_reduction.is_some();
+    if lp_says_emit != proof_says_emit {
+        return Err(AkitaError::InvalidProof);
+    }
     let mut deferred_setup_opening = None;
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -1452,17 +1470,20 @@ where
         );
         return Err(AkitaError::InvalidProof);
     }
-    if num_claims == 6 {
-        tracing::debug!(
-            "[verify_one_level] verifier stage2.next_w_eval={:?}",
-            stage2.next_w_eval
-        );
-    }
     tracing::debug!(
         "[verify_one_level] stage2 input claim ok after {:?}",
         total_t.elapsed()
     );
 
+    // S-1: schedule shape must equal proof shape at the stage-2 dispatch.
+    // See `verify_root_level` for the contract; the rationale is
+    // identical at every fold level. The level's `lp` is the source of
+    // truth for whether the prover emits `setup_claim_reduction`.
+    let lp_says_emit = lp.use_setup_claim_reduction;
+    let proof_says_emit = stage2.setup_claim_reduction.is_some();
+    if lp_says_emit != proof_says_emit {
+        return Err(AkitaError::InvalidProof);
+    }
     let mut deferred_setup_opening = None;
     let challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -1852,6 +1873,16 @@ where
                     });
                 }
             }
+            // S-5: when the schedule routes S recursively, the next-level
+            // claim batch must contain MORE than the W claim alone (at
+            // least one untiered S-claim entry, or tiered chunk + meta
+            // entries). S-1 already binds the proof's
+            // `setup_claim_reduction` presence to `routes_setup_recursively`,
+            // so the only way to reach `claims.len() == 1` here is a bug
+            // in the expansion logic — reject loudly.
+            if routes_setup_recursively && claims.len() == 1 {
+                return Err(AkitaError::InvalidProof);
+            }
             current_state = RecursiveVerifierState { claims };
         }
     }
@@ -2006,6 +2037,12 @@ where
                     tier_marker: None,
                 });
             }
+        }
+        // S-5: see the equivalent comment in `verify_batched_recursive_suffix`.
+        // When the schedule routes S recursively the first recursive level
+        // must receive at least one S-claim alongside the W-claim.
+        if root_routes_setup_recursively && claims.len() == 1 {
+            return Err(AkitaError::InvalidProof);
         }
         let current_state = RecursiveVerifierState { claims };
         verify_batched_recursive_suffix::<F, T, D>(
