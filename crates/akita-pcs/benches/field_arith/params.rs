@@ -16,8 +16,7 @@ impl ArithmeticBenchParams {
         throughput_default: usize,
     ) -> Self {
         let latency_iters = env_usize(&format!("{prefix}_LATENCY_ITERS"), latency_default);
-        let inverse_latency_iters =
-            env_usize(&format!("{prefix}_INVERSE_LATENCY_ITERS"), 128).min(latency_iters);
+        let inverse_latency_iters = env_usize(&format!("{prefix}_INVERSE_LATENCY_ITERS"), 128);
         let throughput_iters = env_usize(&format!("{prefix}_THROUGHPUT_ITERS"), throughput_default);
         let inverse_throughput_iters = env_usize(&format!("{prefix}_INVERSE_THROUGHPUT_ITERS"), 32);
         let streams = env_usize(&format!("{prefix}_STREAMS"), 8);

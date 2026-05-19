@@ -30,7 +30,13 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
     let scalar_latency_inputs: Vec<F> = (0..params.latency_iters)
         .map(|_| F::random(&mut rng))
         .collect();
+    let scalar_inverse_latency_inputs: Vec<F> = (0..params.inverse_latency_iters)
+        .map(|_| F::random(&mut rng))
+        .collect();
     let packed_latency_inputs: Vec<PF> = (0..params.latency_iters)
+        .map(|_| PF::from_fn(|_| F::random(&mut rng)))
+        .collect();
+    let packed_inverse_latency_inputs: Vec<PF> = (0..params.inverse_latency_iters)
         .map(|_| PF::from_fn(|_| F::random(&mut rng)))
         .collect();
     let scalar_stream_lanes: Vec<(F, F)> = (0..params.streams)
@@ -166,7 +172,7 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
         ),
         |b| {
             b.iter_custom(|iters| {
-                let inputs = black_box(&scalar_latency_inputs[..params.inverse_latency_iters]);
+                let inputs = black_box(&scalar_inverse_latency_inputs);
                 let mut acc = F::one();
                 let start = Instant::now();
                 for _ in 0..iters {
@@ -266,7 +272,7 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
         ),
         |b| {
             b.iter_custom(|iters| {
-                let inputs = black_box(&packed_latency_inputs[..params.inverse_latency_iters]);
+                let inputs = black_box(&packed_inverse_latency_inputs);
                 let mut acc = PF::broadcast(F::one());
                 let start = Instant::now();
                 for _ in 0..iters {
