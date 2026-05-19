@@ -109,6 +109,18 @@ where
         .take_hint()
         .ok_or_else(|| AkitaError::InvalidInput("missing hint in prover".to_string()))?;
     hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
+    // Take ûhat_concat per opening point before consuming the hint so
+    // the tiered M-witness build can thread it into the new uhat
+    // segment between t̂ and the blinding/z segments. For legacy hints
+    // this is an empty Vec.
+    let outer_digits = hint.take_outer_digits();
+    if lp.is_tiered_root() {
+        debug_assert!(
+            !outer_digits.is_empty(),
+            "tiered LevelParams requires AkitaCommitmentHint.outer_digits to be populated; \
+             call commit_tiered_with_params (or commit_with_params which auto-dispatches)"
+        );
+    }
     #[cfg(feature = "zk")]
     let (decomposed_inner_rows, recomposed_inner_rows, b_blinding_digits) = hint.into_flat_parts();
     #[cfg(not(feature = "zk"))]
@@ -146,20 +158,38 @@ where
         lp.inner_width(),
         setup.seed.max_stride,
         ntt_shared,
+        // Tiered: thread per-point `ûhat_concat` taken from the hint
+        // above. Empty `&[]` for legacy LevelParams.
+        &outer_digits,
     )?;
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
-        build_w_coeffs::<F, D>(
-            &w_hat,
-            #[cfg(feature = "zk")]
-            &d_blinding_digits,
-            &decomposed_inner_rows,
-            #[cfg(feature = "zk")]
-            &b_blinding_digits,
-            &z_pre.centered_coeffs,
-            &r,
-            lp,
-        )
+        if lp.is_tiered_root() {
+            build_w_coeffs_tiered::<F, D>(
+                &w_hat,
+                #[cfg(feature = "zk")]
+                &d_blinding_digits,
+                &decomposed_inner_rows,
+                &outer_digits,
+                #[cfg(feature = "zk")]
+                &b_blinding_digits,
+                &z_pre.centered_coeffs,
+                &r,
+                lp,
+            )
+        } else {
+            build_w_coeffs::<F, D>(
+                &w_hat,
+                #[cfg(feature = "zk")]
+                &d_blinding_digits,
+                &decomposed_inner_rows,
+                #[cfg(feature = "zk")]
+                &b_blinding_digits,
+                &z_pre.centered_coeffs,
+                &r,
+                lp,
+            )
+        }
     };
     Ok(w)
 }
@@ -1269,6 +1299,200 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             t_block_count,
             t_planes_per_block,
         );
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, b_blinding_digits);
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
+        emit_z_pre_block_inner(
+            &mut out,
+            z_pre_centered,
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            log_basis,
+        );
+    }
+
+    let mut r_planes = vec![[0i8; D]; levels];
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
+    for ri in r {
+        r_planes.fill([0i8; D]);
+        ri.balanced_decompose_pow2_i8_into_with_params(&mut r_planes, &decompose_params);
+        for plane in &r_planes {
+            out.extend_from_slice(plane);
+        }
+    }
+    RecursiveWitnessFlat::from_i8_digits(out)
+}
+
+/// Tiered-path counterpart to [`build_w_coeffs`] (`specs/tiered_commit.md` §3).
+///
+/// Same semantics and segment ordering as the legacy function, with the
+/// new `uhat_concat_per_point` segment inserted immediately after the
+/// `t̂` segment (before the ZK blinding segments). Per spec §9:
+///
+/// ```text
+/// z_first = true :   M = [ ẑ ‖ ŵ ‖ t̂ ‖ uhat ‖ b_blind ‖ d_blind ‖ r-tail ]
+/// z_first = false:   M = [ ŵ ‖ t̂ ‖ uhat ‖ b_blind ‖ d_blind ‖ ẑ ‖ r-tail ]
+/// ```
+///
+/// `uhat_concat_per_point[g]` is the per-point `ûhat_concat` produced by
+/// [`crate::api::commit_tiered_with_params`] and stored in
+/// [`AkitaCommitmentHint::outer_digits`]. Its flat-digit length must be
+/// `n_b' · split_factor · num_digits_outer` for every point. The function
+/// emits the per-point segments concatenated in point-major order, so the
+/// resulting flat segment matches the `dig → row → chunk → point` axis
+/// order described in `specs/optimized_verifier.md`-style tables (block-
+/// agnostic; ûhat has no block axis).
+///
+/// # Panics
+///
+/// Panics if any `uhat_concat_per_point[g]` length disagrees with the
+/// declared `n_b' · split_factor · num_digits_outer` shape from `lp`.
+/// These invariants are enforced upstream by `commit_tiered_with_params`,
+/// so a panic here indicates a caller bug.
+#[allow(clippy::too_many_arguments)]
+pub fn build_w_coeffs_tiered<F: CanonicalField, const D: usize>(
+    w_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
+    t_hat: &FlatDigitBlocks<D>,
+    uhat_concat_per_point: &[FlatDigitBlocks<D>],
+    #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
+    z_pre_centered: &[[i32; D]],
+    r: &[CyclotomicRing<F, D>],
+    lp: &LevelParams,
+) -> RecursiveWitnessFlat {
+    assert!(
+        lp.is_tiered_root(),
+        "build_w_coeffs_tiered requires lp.is_tiered_root() (split_factor > 1); \
+         use build_w_coeffs for the legacy path"
+    );
+    let log_basis = lp.log_basis;
+    let num_digits_fold = lp.num_digits_fold;
+    let depth_open = lp.num_digits_open;
+    let depth_commit = lp.num_digits_commit;
+    let block_len = lp.block_len;
+    let levels = r_decomp_levels::<F>(log_basis);
+
+    let expected_uhat_per_point = lp.b_prime_rows() * lp.split_factor * lp.num_digits_outer;
+    for (g, uhat_g) in uhat_concat_per_point.iter().enumerate() {
+        assert_eq!(
+            uhat_g.flat_digits().len(),
+            expected_uhat_per_point,
+            "build_w_coeffs_tiered: uhat_concat_per_point[{g}] has {} planes, expected {}",
+            uhat_g.flat_digits().len(),
+            expected_uhat_per_point,
+        );
+    }
+    let total_uhat_planes: usize = uhat_concat_per_point
+        .iter()
+        .map(|d| d.flat_digits().len())
+        .sum();
+
+    let w_hat_planes = w_hat.flat_digits().len();
+    let t_hat_planes = t_hat.flat_digits().len();
+    #[cfg(feature = "zk")]
+    let d_blinding_planes = d_blinding_digits.flat_digits().len();
+    #[cfg(not(feature = "zk"))]
+    let d_blinding_planes = 0usize;
+    #[cfg(feature = "zk")]
+    let b_blinding_planes: usize = b_blinding_digits
+        .iter()
+        .map(|digits| digits.flat_digits().len())
+        .sum();
+    #[cfg(not(feature = "zk"))]
+    let b_blinding_planes = 0usize;
+    let z_count = w_hat_planes
+        + d_blinding_planes
+        + t_hat_planes
+        + total_uhat_planes
+        + b_blinding_planes
+        + z_pre_centered.len() * num_digits_fold;
+    let r_hat_count = r.len() * levels;
+    let z_first = lp.m_vars >= lp.r_vars;
+    tracing::debug!(
+        w_hat_planes,
+        d_blinding_planes,
+        t_hat_planes,
+        total_uhat_planes,
+        b_blinding_planes,
+        z_pre_elems = z_pre_centered.len(),
+        z_pre_planes = z_pre_centered.len() * num_digits_fold,
+        r_elems = r.len(),
+        r_planes = r_hat_count,
+        total_ring = z_count + r_hat_count,
+        total_field = (z_count + r_hat_count) * D,
+        z_first,
+        split_factor = lp.split_factor,
+        num_digits_outer = lp.num_digits_outer,
+        "build_w_coeffs_tiered"
+    );
+
+    let total_planes = z_count + r_hat_count;
+    let total_elems = total_planes * D;
+    let mut out: Vec<i8> = Vec::with_capacity(total_elems);
+
+    let w_block_count = w_hat.block_count();
+    assert_eq!(
+        w_hat_planes,
+        w_block_count * depth_open,
+        "build_w_coeffs_tiered: w_hat block layout does not match open digit depth"
+    );
+    let t_block_count = t_hat.block_count();
+    let t_planes_per_block = if t_block_count == 0 {
+        0
+    } else {
+        assert_eq!(
+            t_hat_planes % t_block_count,
+            0,
+            "build_w_coeffs_tiered: t_hat block layout must be uniform"
+        );
+        t_hat_planes / t_block_count
+    };
+
+    // Emit a uhat segment per opening point, point-major, then within
+    // each point the underlying `FlatDigitBlocks` ordering
+    // (`dig → row → chunk` produced by `tiered_commit`). Direct i8
+    // digit-plane emission, same convention as `emit_blinding_planes`.
+    let emit_uhat_segment = |out: &mut Vec<i8>, uhat_per_point: &[FlatDigitBlocks<D>]| {
+        for uhat_g in uhat_per_point {
+            for plane in uhat_g.flat_digits() {
+                out.extend_from_slice(plane);
+            }
+        }
+    };
+
+    if z_first {
+        emit_z_pre_block_inner(
+            &mut out,
+            z_pre_centered,
+            block_len,
+            depth_commit,
+            num_digits_fold,
+            log_basis,
+        );
+        emit_planes_block_inner(&mut out, w_hat.flat_digits(), w_block_count, depth_open);
+        emit_planes_block_inner(
+            &mut out,
+            t_hat.flat_digits(),
+            t_block_count,
+            t_planes_per_block,
+        );
+        emit_uhat_segment(&mut out, uhat_concat_per_point);
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, b_blinding_digits);
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
+    } else {
+        emit_planes_block_inner(&mut out, w_hat.flat_digits(), w_block_count, depth_open);
+        emit_planes_block_inner(
+            &mut out,
+            t_hat.flat_digits(),
+            t_block_count,
+            t_planes_per_block,
+        );
+        emit_uhat_segment(&mut out, uhat_concat_per_point);
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, b_blinding_digits);
         #[cfg(feature = "zk")]

@@ -16,7 +16,7 @@ use akita_challenges::sample_sparse_challenges;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling};
 use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
 use akita_types::{
@@ -511,14 +511,27 @@ where
             .iter()
             .flat_map(|commitment| commitment.u.iter().copied())
             .collect();
-        let y = generate_y::<F, D>(
-            &v,
-            &commitment_rows,
-            y_rings,
-            lp.d_key.row_len(),
-            lp.b_key.row_len(),
-            lp.a_key.row_len(),
-        )?;
+        let y = if lp.is_tiered_root() {
+            // Tiered: commitment_rows is `u_final` (n_F per point), and
+            // y reserves tier-1 zero rows between D and F. See
+            // `specs/tiered_commit.md` §3.
+            generate_y_tiered::<F, D>(
+                &v,
+                &commitment_rows,
+                y_rings,
+                &lp,
+                incidence_summary.num_points(),
+            )?
+        } else {
+            generate_y::<F, D>(
+                &v,
+                &commitment_rows,
+                y_rings,
+                lp.d_key.row_len(),
+                lp.b_key.row_len(),
+                lp.a_key.row_len(),
+            )?
+        };
         let w_folded = pre_folded_by_poly.into_iter().flatten().collect();
 
         Ok(Self {
@@ -690,14 +703,29 @@ where
             }
         };
 
-        let y = generate_y::<F, D>(
-            &v,
-            commitment,
-            y_rings,
-            lp.d_key.row_len(),
-            lp.b_key.row_len(),
-            lp.a_key.row_len(),
-        )?;
+        let y = if lp.is_tiered_root() {
+            // Recursive-level new_prover (this path) has `num_points`
+            // implicit in `commitment.len() / lp.outer_commitment_rows()`.
+            // For the legacy single-point recursive path this is 1; for
+            // tiered roots the caller (`new_recursive_multipoint_prover`)
+            // would supply the same shape.
+            let expected_outer = lp.outer_commitment_rows();
+            let recursive_num_points = if expected_outer == 0 {
+                1
+            } else {
+                commitment.len() / expected_outer
+            };
+            generate_y_tiered::<F, D>(&v, commitment, y_rings, &lp, recursive_num_points)?
+        } else {
+            generate_y::<F, D>(
+                &v,
+                commitment,
+                y_rings,
+                lp.d_key.row_len(),
+                lp.b_key.row_len(),
+                lp.a_key.row_len(),
+            )?
+        };
         let w_folded = pre_folded_by_claim.into_iter().flatten().collect();
 
         Ok(Self {
@@ -1168,6 +1196,22 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     Ok(rows)
 }
 
+/// Pre-computed per-(point, chunk, b'-row) cyclic products and gadget
+/// reductions for the tiered M-row r-quotient computation. Built once
+/// per `compute_r_split_eq` call when `lp.is_tiered_root()`.
+struct TieredCyclicState<F: FieldCore, const D: usize> {
+    /// `per_point_b_prime_cyclic[g][chunk_i][r']` = cyclic
+    /// `(B' · t̂_chunk_i^{(g)})[r']`.
+    per_point_b_prime_cyclic: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
+    /// `per_point_g_uhat[g][chunk_i][r']` = Σ_d outer_gadget[d] · û_i[r', d].
+    per_point_g_uhat: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
+    /// `per_point_f_cyclic[g][r]` = cyclic `(F · ûhat_concat^{(g)})[r]`.
+    per_point_f_cyclic: Vec<Vec<CyclotomicRing<F, D>>>,
+    split: usize,
+    n_b_prime: usize,
+    n_f: usize,
+}
+
 /// Split-eq replacement for `generate_m` + `compute_r_via_poly_division`.
 ///
 /// Computes `r` such that `M·z = y + (X^D+1)·r` without materializing M or z.
@@ -1181,7 +1225,7 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
 pub fn compute_r_split_eq<F, const D: usize>(
     lp: &LevelParams,
-    _setup: &AkitaExpandedSetup<F>,
+    setup: &AkitaExpandedSetup<F>,
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
@@ -1203,9 +1247,15 @@ pub fn compute_r_split_eq<F, const D: usize>(
     inner_width: usize,
     stride: usize,
     ntt_shared: &NttSlotCache<D>,
+    // Per-point `ûhat_concat` digit planes for the tiered root path
+    // (`specs/tiered_commit.md` §3). Empty `&[]` for legacy
+    // `split_factor == 1` calls; a `FlatDigitBlocks` of length
+    // `n_b' · split_factor · num_digits_outer` per opening point for
+    // `lp.is_tiered_root() == true`.
+    outer_digits_per_point: &[FlatDigitBlocks<D>],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField + RandomSampling,
 {
     if num_polys_per_point.is_empty() || num_polys_per_point.contains(&0) {
         return Err(AkitaError::InvalidProof);
@@ -1271,11 +1321,41 @@ where
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
-    //             B (commitment_row_count) | A (n_a)
+    // Row layout depends on tiering (`specs/tiered_commit.md` §3):
+    //   Legacy: consistency (1) | public | D (n_d) | B (n_b · num_points) | A (n_a)
+    //   Tiered: consistency (1) | public | D (n_d)
+    //         | tier1 (f · n_b' · num_points) | F (n_F · num_points) | A (n_a)
     let d_start = 1 + num_public_outputs;
-    let b_start = d_start + n_d;
-    let a_start = b_start + commitment_row_count;
+    let (tier1_start, tier1_end, f_start, a_start);
+    if lp.is_tiered_root() {
+        tier1_start = d_start + n_d;
+        let tier1_count = lp
+            .split_factor
+            .checked_mul(lp.b_prime_rows())
+            .and_then(|x| x.checked_mul(num_points))
+            .ok_or(AkitaError::InvalidProof)?;
+        tier1_end = tier1_start + tier1_count;
+        f_start = tier1_end;
+        let f_count = lp
+            .f_key
+            .row_len()
+            .checked_mul(num_points)
+            .ok_or(AkitaError::InvalidProof)?;
+        a_start = f_start + f_count;
+        if outer_digits_per_point.len() != num_points {
+            return Err(AkitaError::InvalidProof);
+        }
+    } else {
+        // Legacy layout — tier1/F starts/ends collapse to the B-row
+        // block so the existing index arithmetic stays identical.
+        tier1_start = d_start + n_d;
+        tier1_end = tier1_start + commitment_row_count;
+        f_start = tier1_end;
+        a_start = tier1_end;
+    }
+    // Legacy alias kept so the legacy branch's `commitment_cyclic_rows`
+    // indexing reads cleanly.
+    let b_start = tier1_start;
 
     if inner_width == 0 || !z_pre_centered.len().is_multiple_of(inner_width) {
         return Err(AkitaError::InvalidProof);
@@ -1322,7 +1402,17 @@ where
             *dst += src;
         }
     }
-    let commitment_cyclic_rows = if commitment_row_count == n_b && num_points == 1 {
+    // Legacy: assemble the `n_b · num_points` `B · t̂` cyclic rows that
+    // the row-loop's b_start..a_start range will consume. Tiered path
+    // skips this and computes tier-1 + F cyclic products separately
+    // below.
+    let commitment_cyclic_rows: Vec<CyclotomicRing<F, D>> = if lp.is_tiered_root() {
+        // b_cyclic is unused in the tiered path; freeing it explicitly
+        // so the borrow checker is happy with `t_hat` being borrowed
+        // again below.
+        drop(b_cyclic);
+        Vec::new()
+    } else if commitment_row_count == n_b && num_points == 1 {
         #[cfg(feature = "zk")]
         let mut rows = b_cyclic;
         #[cfg(not(feature = "zk"))]
@@ -1341,6 +1431,7 @@ where
         }
         rows
     } else {
+        drop(b_cyclic);
         repeated_b_commitment_rows(
             ntt_shared,
             n_b,
@@ -1352,9 +1443,130 @@ where
             blocks_per_claim,
         )?
     };
-    if commitment_cyclic_rows.len() != commitment_row_count {
+    if !lp.is_tiered_root() && commitment_cyclic_rows.len() != commitment_row_count {
         return Err(AkitaError::InvalidProof);
     }
+
+    // Tiered: precompute the per-(point, chunk) cyclic `B' · t̂_i`
+    // rectangles and the per-point `G · ûhat_i` reduced rings, plus the
+    // per-point cyclic `F · ûhat_concat` rectangle. F's NTT cache is
+    // derived from the same public matrix seed used for setup, with a
+    // distinct domain label so its entries are independent of A/B/D.
+    let tiered_state = if lp.is_tiered_root() {
+        let n_b_prime = lp.b_prime_rows();
+        let depth_outer = lp.num_digits_outer;
+        let n_f = lp.f_key.row_len();
+        let f_width = lp.f_key.col_len();
+        let outer_log_basis = lp.outer_log_basis;
+        // F NTT cache derived deterministically from the setup seed.
+        let f_flat = crate::kernels::matrix::derive_tier1_f_matrix_flat::<F, D>(
+            n_f * f_width,
+            &setup.seed.public_matrix_seed,
+        );
+        let f_ntt = crate::kernels::crt_ntt::build_ntt_slot(f_flat.ring_view::<D>(n_f, f_width))
+            .map_err(|e| AkitaError::InvalidSetup(format!("tiered F NTT cache: {e:?}")))?;
+        // Outer gadget vector G = (1, 2^b, 2^{2b}, …).
+        let outer_gadget: Vec<F> = (0..depth_outer)
+            .map(|d| F::from_u64(1u64 << (outer_log_basis * d as u32)))
+            .collect();
+
+        // Per-point t̂ digit span: each point owns
+        // `num_polys_per_point[g] * blocks_per_claim` blocks in the
+        // shared `t_hat` FlatDigitBlocks. The block layout is uniform
+        // per-poly with `n_a * depth_open` digit planes, so per-point
+        // plane count is `num_polys_per_point[g] * n_a * depth_open * blocks_per_claim`
+        // = `num_polys_per_point[g] * b_prime_width() * split_factor`.
+        let split = lp.split_factor;
+        let mut t_hat_offset = 0usize;
+        let mut per_point_b_prime_cyclic: Vec<Vec<Vec<CyclotomicRing<F, D>>>> =
+            Vec::with_capacity(num_points);
+        let mut per_point_g_uhat: Vec<Vec<Vec<CyclotomicRing<F, D>>>> =
+            Vec::with_capacity(num_points);
+        let mut per_point_f_cyclic: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_points);
+        for (g, &bundle_size) in num_polys_per_point.iter().enumerate() {
+            let per_point_planes =
+                bundle_size * lp.a_key.row_len() * lp.num_digits_open * blocks_per_claim;
+            let per_point_full_outer_width = bundle_size
+                .checked_mul(lp.b_prime_width())
+                .and_then(|x| x.checked_mul(split))
+                .ok_or(AkitaError::InvalidProof)?;
+            // chunk_width here is the per-chunk slice width of the
+            // per-point B-physical column space, equal to
+            // `per_point_full_outer_width / split`.
+            let per_point_chunk_width = per_point_full_outer_width / split;
+            // For the single-bundle path (max_group_polys = 1) this
+            // matches `chunk_width` derived from `lp` directly. For
+            // multi-poly bundles the per-point chunk is wider.
+            debug_assert_eq!(per_point_chunk_width * split, per_point_full_outer_width);
+            let t_hat_planes = t_hat.flat_digits();
+            if t_hat_offset + per_point_planes > t_hat_planes.len() {
+                return Err(AkitaError::InvalidProof);
+            }
+            let t_hat_g = &t_hat_planes[t_hat_offset..t_hat_offset + per_point_planes];
+            t_hat_offset += per_point_planes;
+
+            let mut chunks_cyclic: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(split);
+            for chunk_i in 0..split {
+                let lo = chunk_i * per_point_chunk_width;
+                let hi = lo + per_point_chunk_width;
+                let chunk = &t_hat_g[lo..hi];
+                let cyclic =
+                    mat_vec_mul_ntt_single_i8_cyclic::<F, D>(ntt_shared, n_b_prime, stride, chunk);
+                chunks_cyclic.push(cyclic);
+            }
+            per_point_b_prime_cyclic.push(chunks_cyclic);
+
+            // G · ûhat_i per (chunk, b'_row) from outer_digits_per_point[g].
+            let uhat_g = &outer_digits_per_point[g];
+            let uhat_planes = uhat_g.flat_digits();
+            if uhat_planes.len() != n_b_prime * split * depth_outer {
+                return Err(AkitaError::InvalidProof);
+            }
+            let mut g_uhat_per_chunk: Vec<Vec<CyclotomicRing<F, D>>> =
+                vec![vec![CyclotomicRing::<F, D>::zero(); n_b_prime]; split];
+            for (chunk_i, chunk_slot) in g_uhat_per_chunk.iter_mut().enumerate() {
+                for (r_prime, slot) in chunk_slot.iter_mut().enumerate() {
+                    let mut acc = CyclotomicRing::<F, D>::zero();
+                    for (d, &gadget) in outer_gadget.iter().enumerate() {
+                        let plane_idx =
+                            chunk_i * (n_b_prime * depth_outer) + r_prime * depth_outer + d;
+                        let plane = &uhat_planes[plane_idx];
+                        let mut coeffs = [F::zero(); D];
+                        for k in 0..D {
+                            let x = plane[k];
+                            coeffs[k] = if x < 0 {
+                                -F::from_u64((-(x as i64)) as u64)
+                            } else {
+                                F::from_u64(x as u64)
+                            };
+                        }
+                        for c in coeffs.iter_mut() {
+                            *c *= gadget;
+                        }
+                        acc += CyclotomicRing::<F, D>::from_coefficients(coeffs);
+                    }
+                    *slot = acc;
+                }
+            }
+            per_point_g_uhat.push(g_uhat_per_chunk);
+
+            // F · ûhat_concat^(g) (cyclic).
+            let f_cyclic =
+                mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&f_ntt, n_f, f_width, uhat_planes);
+            per_point_f_cyclic.push(f_cyclic);
+        }
+
+        Some(TieredCyclicState {
+            per_point_b_prime_cyclic,
+            per_point_g_uhat,
+            per_point_f_cyclic,
+            split,
+            n_b_prime,
+            n_f,
+        })
+    } else {
+        None
+    };
     let constant_opening_multipliers = ring_multiplier_points
         .iter()
         .all(|point| point.is_constant());
@@ -1412,10 +1624,33 @@ where
                 &y[row_idx],
             ));
         } else if row_idx < a_start {
-            result.push(quotient_from_cyclic_and_reduced(
-                &commitment_cyclic_rows[row_idx - b_start],
-                &y[row_idx],
-            ));
+            if let Some(ts) = &tiered_state {
+                // Tiered row layout: tier1 (f · n_b' · num_points) then
+                // F (n_F · num_points).
+                if row_idx < tier1_end {
+                    let local = row_idx - tier1_start;
+                    let per_point_tier1 = ts.split * ts.n_b_prime;
+                    let g = local / per_point_tier1;
+                    let inside = local % per_point_tier1;
+                    let chunk_i = inside / ts.n_b_prime;
+                    let r_prime = inside % ts.n_b_prime;
+                    let cyclic = &ts.per_point_b_prime_cyclic[g][chunk_i][r_prime];
+                    let g_uhat = &ts.per_point_g_uhat[g][chunk_i][r_prime];
+                    result.push(quotient_from_cyclic_and_reduced(cyclic, g_uhat));
+                } else {
+                    let local = row_idx - f_start;
+                    let g = local / ts.n_f;
+                    let r = local % ts.n_f;
+                    let cyclic = &ts.per_point_f_cyclic[g][r];
+                    // y[row_idx] holds u_final per generate_y_tiered.
+                    result.push(quotient_from_cyclic_and_reduced(cyclic, &y[row_idx]));
+                }
+            } else {
+                result.push(quotient_from_cyclic_and_reduced(
+                    &commitment_cyclic_rows[row_idx - b_start],
+                    &y[row_idx],
+                ));
+            }
         } else {
             let t_row = Instant::now();
             let _span = tracing::info_span!("A_row").entered();
@@ -1506,6 +1741,81 @@ where
     out.extend_from_slice(public_outputs);
     out.extend_from_slice(v);
     out.extend_from_slice(commitment_rows);
+    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
+    Ok(out)
+}
+
+/// Tiered counterpart to [`generate_y`] (`specs/tiered_commit.md` §3).
+///
+/// Builds the RHS vector `y` matching the tiered M-row layout:
+///
+/// ```text
+/// consistency (0) | public | D (v) | tier1 (zeros) | F (u_final) | A (zeros)
+/// ```
+///
+/// `u_final_rows` is the flattened per-point public commitment, with
+/// `u_final_rows.len() == lp.f_key.row_len() * num_points`. Tier-1 rows
+/// (`f · n_b' · num_points` entries) are filled with zero ring elements
+/// because the tier-1 relation `B' · t̂_i − G · ûhat_i = 0` has zero RHS.
+///
+/// # Errors
+///
+/// Returns an error if `v.len() != n_d`, `u_final_rows.len()` does not
+/// equal `n_F · num_points`, or if `lp.is_tiered_root()` is false (the
+/// caller must use [`generate_y`] for the legacy path).
+pub fn generate_y_tiered<F, const D: usize>(
+    v: &[CyclotomicRing<F, D>],
+    u_final_rows: &[CyclotomicRing<F, D>],
+    public_outputs: &[CyclotomicRing<F, D>],
+    lp: &akita_types::LevelParams,
+    num_points: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore,
+{
+    if !lp.is_tiered_root() {
+        return Err(AkitaError::InvalidInput(
+            "generate_y_tiered requires lp.is_tiered_root(); use generate_y for the legacy path"
+                .to_string(),
+        ));
+    }
+    let n_d = lp.d_key.row_len();
+    let n_a = lp.a_key.row_len();
+    let n_b_prime = lp.b_prime_rows();
+    let n_f = lp.f_key.row_len();
+    let split = lp.split_factor;
+    if v.len() != n_d {
+        return Err(AkitaError::InvalidSize {
+            expected: n_d,
+            actual: v.len(),
+        });
+    }
+    let expected_u_final = n_f
+        .checked_mul(num_points)
+        .ok_or_else(|| AkitaError::InvalidSetup("tiered u_final length overflow".to_string()))?;
+    if u_final_rows.len() != expected_u_final {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_u_final,
+            actual: u_final_rows.len(),
+        });
+    }
+    if public_outputs.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "generate_y_tiered requires at least one public output".to_string(),
+        ));
+    }
+    let tier1_row_count = split
+        .checked_mul(n_b_prime)
+        .and_then(|x| x.checked_mul(num_points))
+        .ok_or_else(|| AkitaError::InvalidSetup("tiered tier1 row count overflow".to_string()))?;
+    let mut out = Vec::with_capacity(
+        1 + public_outputs.len() + n_d + tier1_row_count + u_final_rows.len() + n_a,
+    );
+    out.push(CyclotomicRing::<F, D>::zero());
+    out.extend_from_slice(public_outputs);
+    out.extend_from_slice(v);
+    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), tier1_row_count));
+    out.extend_from_slice(u_final_rows);
     out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
     Ok(out)
 }

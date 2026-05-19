@@ -824,6 +824,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 batched_root_lp.inner_width(),
                 batch_setup.expanded.seed.max_stride,
                 &batch_setup.ntt_shared,
+                // Legacy path: no per-point outer digits.
+                &[],
             )
             .expect("debug batched r");
         // Local sparse-mul-accumulate: dispatches `+1` / `-1` / generic fast

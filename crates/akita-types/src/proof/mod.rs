@@ -910,6 +910,17 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         &self.outer_digits
     }
 
+    /// Take ownership of the tiered outer digit decompositions,
+    /// leaving an empty `Vec` in place so the hint can still be
+    /// consumed by [`into_flat_parts`] afterwards. Used by the prover
+    /// pipeline to thread `ûhat_concat` into the M-witness while
+    /// still calling the legacy `into_flat_parts` to flatten the
+    /// inner rows.
+    #[inline]
+    pub fn take_outer_digits(&mut self) -> Vec<FlatDigitBlocks<D>> {
+        std::mem::take(&mut self.outer_digits)
+    }
+
     /// Returns `true` when this hint carries tiered outer digits.
     /// `false` is the legacy single-tier shape.
     #[inline]
