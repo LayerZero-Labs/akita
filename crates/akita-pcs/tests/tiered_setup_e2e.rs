@@ -972,36 +972,42 @@ fn tiered_dense_cascade_speedup_measurement() {
                 b"tiered_setup_e2e/speedup/cascade",
             );
 
-            let baseline_verify_s = baseline
+            let baseline_amortized_s = baseline
                 .as_ref()
                 .and_then(|m| median_measured(&m.verify_times))
                 .map(|d| d.as_secs_f64());
 
             eprintln!(
-                "    {:<34}  {:>9}  {:>9}  {:>12}  routing  tiers",
-                "config", "prove(s)", "verify(s)", "vs_baseline",
+                "    {:<34}  {:>9}  {:>10}  {:>11}  {:>12}  routing  tiers",
+                "config", "prove(s)", "cold_v(s)", "amort_v(s)", "vs_baseline",
             );
             for m in [&baseline, &untiered, &t2_only, &cascade]
                 .into_iter()
                 .flatten()
             {
                 let prove_med = median_measured(&m.prove_times).unwrap_or(Duration::ZERO);
-                let verify_med = median_measured(&m.verify_times).unwrap_or(Duration::ZERO);
-                let verify_s = verify_med.as_secs_f64();
-                let ratio = match (baseline_verify_s, verify_s) {
+                let verify_cold = m.verify_times.first().copied().unwrap_or(Duration::ZERO);
+                let verify_amortized = median_measured(&m.verify_times).unwrap_or(Duration::ZERO);
+                let verify_s = verify_amortized.as_secs_f64();
+                let ratio = match (baseline_amortized_s, verify_s) {
                     (Some(bv), v) if v > 0.0 => format!("{:>11.2}×", bv / v),
                     _ => format!("{:>12}", "n/a"),
                 };
                 eprintln!(
-                    "    {:<34}  {:>9.3}  {:>9.3}  {}  {:>4}     {:?}",
+                    "    {:<34}  {:>9.3}  {:>10.3}  {:>11.3}  {}  {:>4}     {:?}",
                     m.label,
                     prove_med.as_secs_f64(),
-                    verify_med.as_secs_f64(),
+                    verify_cold.as_secs_f64(),
+                    verify_amortized.as_secs_f64(),
                     ratio,
                     m.routing_count,
                     m.tiers,
                 );
             }
+            eprintln!(
+                "    (cold_v = iter 1, populates ntt_shared_cache + tiered_s_cache; \
+                 amort_v = median of iters 2..N, book-aligned per Fig. 12 line 817)"
+            );
 
             eprintln!();
             eprintln!(
@@ -1022,8 +1028,11 @@ fn tiered_dense_cascade_speedup_measurement() {
             );
 
             // Qualitative trend hint (not asserted; reported only).
+            // Compared against amortized (cache-hit) verify time, which is
+            // the book-aligned metric per Figure 12 line 817 ("preprocessed
+            // shared-matrix commitment C_S").
             if let (Some(bv), Some(tv), Some(cv)) = (
-                baseline_verify_s,
+                baseline_amortized_s,
                 t2_only
                     .as_ref()
                     .and_then(|m| median_measured(&m.verify_times))
@@ -1047,6 +1056,12 @@ fn tiered_dense_cascade_speedup_measurement() {
 
 /// Per-config measurement record for
 /// [`tiered_dense_cascade_speedup_measurement`].
+///
+/// `verify_times[0]` is the cold-cache iteration that populates
+/// `AkitaVerifierSetup::ntt_shared_cache` and `tiered_s_cache`;
+/// `verify_times[1..]` are amortized cache-hit verifies that map to
+/// book Table 1141-1158's "verifier op count" framing (book Figure 12
+/// line 817 / §5.3 line 952: `C_S` is preprocessed at setup time).
 #[derive(Clone, Debug)]
 struct SpeedupMeasurement {
     label: String,
@@ -1098,22 +1113,30 @@ where
         "speedup config schedule",
     );
 
+    // Book Figure 12 line 817 / §5.3 line 952: the preprocessed
+    // shared-matrix commitment `C_S` is derived once during setup and
+    // reused across every verify call on that setup. We mirror that
+    // model here by reusing one `AkitaVerifierSetup` (and the prover
+    // setup that backs it) across all iterations: the first verify
+    // pays the cold-cache cost of populating `ntt_shared_cache` and
+    // `tiered_s_cache`; subsequent verifies hit the cache and pay only
+    // the per-proof verifier op work the book's Table 1141-1158
+    // measures. Both numbers are reported below.
     let poly = make_dense_poly(nv, poly_seed);
     let pt = random_point(nv, point_seed);
     let opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
+    let setup = <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
+        nv, 1, 1,
+    );
+    let verifier_setup =
+        <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<F, DENSE_D>>::setup_verifier(
+            &setup,
+        );
 
     let mut prove_times = Vec::with_capacity(iterations);
     let mut verify_times = Vec::with_capacity(iterations);
 
     for iter in 0..iterations {
-        let setup =
-            <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
-                nv, 1, 1,
-            );
-        let verifier_setup = <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<
-            F,
-            DENSE_D,
-        >>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<
             F,
             DENSE_D,
