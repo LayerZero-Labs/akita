@@ -18,10 +18,17 @@ readme = "../../README.md"
 [dependencies]
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-jolt-transcript = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
+blake2 = "0.10.6"
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b1329d35ac9577438d05aed4f17a57b9f9", default-features = false }
 
 [features]
-default = []
+default = ["transcript-blake2b"]
+logging-transcript = []
+# spongefish 0.7 imports StdHash from its prover/verifier/domain modules
+# even when Akita selects Blake2b or Keccak explicitly, so sha3 is required
+# for the crate to compile with default-features disabled.
+transcript-blake2b = ["spongefish/blake2", "spongefish/sha3"]
+transcript-keccak = ["spongefish/keccak", "spongefish/sha3"]
 zk = ["akita-field/zk"]
 
 [lints.rust]

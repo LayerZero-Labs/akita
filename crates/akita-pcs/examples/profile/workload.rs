@@ -12,7 +12,7 @@ use akita_prover::{
     AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex, OneHotPoly,
 };
 use akita_serialization::AkitaSerialize;
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     AkitaBatchedProof, AkitaCommitmentHint, AkitaSchedulePlan, AkitaVerifierSetup, BasisMode,
@@ -215,7 +215,7 @@ fn run_prove<
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<FF>::new(b"profile");
+    let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         setup,
         vec![(
@@ -264,7 +264,7 @@ fn run_prove<
 
     let t0 = Instant::now();
     let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_verifier(setup);
-    let mut verifier_transcript = Blake2bTranscript::<FF>::new(b"profile");
+    let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
     match <Scheme<D, Cfg> as CommitmentVerifier<FF, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -548,7 +548,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
     let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<FF>::new(b"profile");
+    let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         &setup,
         vec![(
@@ -607,7 +607,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t0 = Instant::now();
     let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_verifier(&setup);
-    let mut verifier_transcript = Blake2bTranscript::<FF>::new(b"profile");
+    let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
     match <Scheme<D, Cfg> as CommitmentVerifier<FF, D>>::batched_verify(
         &proof,
         &verifier_setup,

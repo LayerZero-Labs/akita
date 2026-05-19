@@ -10,7 +10,7 @@ use akita_prover::kernels::linear::mat_vec_mul_ntt_single_i8;
 use akita_prover::{AkitaProverSetup, CommitmentProver, QuadraticEquation};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleInputs, AkitaScheduleLookupKey,
     AkitaSchedulePlan, AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary,
@@ -197,7 +197,7 @@ fn plain_root_d_image<const D: usize>(
         layout.block_len,
     );
 
-    let mut transcript = Blake2bTranscript::<F>::new(label);
+    let mut transcript = AkitaTranscript::<F>::new(label);
     commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
     for coord in point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, coord);
@@ -342,7 +342,7 @@ where
         let commitments = [commitment];
         let openings = [expected_opening];
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(label);
+        let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(&point, &poly_refs, &commitments[0], hint),
@@ -362,7 +362,7 @@ where
         )
         .expect("deserialize zk proof");
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(label);
+        let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         <Scheme<D, Cfg<BaseCfg>> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -433,7 +433,7 @@ where
         let commitments = [commitment];
         let openings = [expected_opening];
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(label);
+        let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(&point, &poly_refs, &commitments[0], hint.clone()),
@@ -442,7 +442,7 @@ where
         )
         .expect("zk prove");
 
-        let mut second_prover_transcript = Blake2bTranscript::<F>::new(label);
+        let mut second_prover_transcript = AkitaTranscript::<F>::new(label);
         let second_proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(&point, &poly_refs, &commitments[0], hint),
@@ -463,7 +463,7 @@ where
         )
         .expect("deserialize zk proof");
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(label);
+        let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         <Scheme<D, Cfg<BaseCfg>> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
