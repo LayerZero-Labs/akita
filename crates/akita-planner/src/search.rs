@@ -667,11 +667,22 @@ impl Planner {
                         continue;
                     }
                     if total < best.cost {
-                        let (suffix, active_level_bytes, fold_next_w_len) = if suffix_is_terminal {
-                            (suffix_terminal, terminal_prefix, lc.terminal_next_w_len)
-                        } else {
-                            (suffix_intermediate, entry_commit + prefix, lc.next_w_len)
-                        };
+                        let (suffix, active_level_bytes, fold_next_w_len, fold_w_ring) =
+                            if suffix_is_terminal {
+                                (
+                                    suffix_terminal,
+                                    terminal_prefix,
+                                    lc.terminal_next_w_len,
+                                    lc.terminal_next_w_len / cfg.d as usize,
+                                )
+                            } else {
+                                (
+                                    suffix_intermediate,
+                                    entry_commit + prefix,
+                                    lc.next_w_len,
+                                    lc.w_ring_elems,
+                                )
+                            };
                         let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                         steps.push(PlannedStep::Fold(PlannedFoldStep {
                             current_w_len: w_len,
@@ -686,7 +697,7 @@ impl Planner {
                             delta_open: lc.delta_open,
                             delta_fold: lc.delta_fold,
                             delta_commit: lc.delta_commit,
-                            w_ring: lc.w_ring_elems,
+                            w_ring: fold_w_ring,
                             next_w_len: fold_next_w_len,
                             level_bytes: active_level_bytes,
                             label: cfg.label,
@@ -822,19 +833,22 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                         .as_ref()
                         .is_none_or(|(best_total, _)| total < *best_total);
                     if is_better {
-                        let (suffix, active_level_bytes, fold_next_w_len) = if suffix_is_terminal {
-                            (
-                                suffix_terminal,
-                                root_terminal_prefix,
-                                root_lc.terminal_next_w_len,
-                            )
-                        } else {
-                            (
-                                suffix_intermediate,
-                                root_entry_commit + root_prefix,
-                                root_lc.next_w_len,
-                            )
-                        };
+                        let (suffix, active_level_bytes, fold_next_w_len, fold_w_ring) =
+                            if suffix_is_terminal {
+                                (
+                                    suffix_terminal,
+                                    root_terminal_prefix,
+                                    root_lc.terminal_next_w_len,
+                                    root_lc.terminal_next_w_len / root_cfg.d as usize,
+                                )
+                            } else {
+                                (
+                                    suffix_intermediate,
+                                    root_entry_commit + root_prefix,
+                                    root_lc.next_w_len,
+                                    root_lc.w_ring_elems,
+                                )
+                            };
                         let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                         steps.push(PlannedStep::Fold(PlannedFoldStep {
                             current_w_len: root_w_len,
@@ -849,7 +863,7 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                             delta_open: root_lc.delta_open,
                             delta_fold: root_lc.delta_fold,
                             delta_commit: root_lc.delta_commit,
-                            w_ring: root_lc.w_ring_elems,
+                            w_ring: fold_w_ring,
                             next_w_len: fold_next_w_len,
                             level_bytes: active_level_bytes,
                             label: root_cfg.label,
@@ -930,6 +944,24 @@ mod tests {
             "full nv=25: {} should stay below the D=128 baseline ({baseline})",
             sched.total_bytes,
         );
+    }
+
+    #[test]
+    fn fold_steps_record_w_ring_matching_next_w_len() {
+        for opts in [
+            PlannerOptions::new(1, 32),
+            PlannerOptions::new(128, 25),
+            PlannerOptions::new(128, 32),
+        ] {
+            let sched = run_universal_planner(&opts);
+            for step in sched.fold_steps() {
+                assert_eq!(
+                    step.w_ring * step.d as usize,
+                    step.next_w_len,
+                    "fold step should record the active layout ring count"
+                );
+            }
+        }
     }
 
     #[test]
