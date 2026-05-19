@@ -18,7 +18,7 @@ use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_BATCH_REL, CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_SUMCHECK_BATCH_REL, CHALLENGE_SUMCHECK_ROUND, CHALLENGE_TIERED_CHUNK_AGGREGATION,
 };
 
 /// Mirror the prover's `prove_recursive_multi_fold_with_params`
@@ -441,22 +441,28 @@ where
     Ok((eval * inner_reduction.sigma_m1()).coefficients()[0])
 }
 
-/// Expand a routed tiered S claim into `k + 1` `RecursiveOpeningClaim`
-/// entries (k chunks at `chunk_lp` + 1 meta at `meta_lp`).
+/// Expand a routed tiered S claim into 2 `RecursiveOpeningClaim`
+/// entries: ONE aggregated chunks claim (γ-folded from k per-chunk
+/// claims; book §5.4 lines 686-754, §5.5 line 752) + 1 meta claim.
 ///
-/// Derives the verifier-side per-chunk and meta commitments via
-/// [`derive_tiered_setup_material_for_verifier`] and the per-claim
-/// openings via [`dense_ring_opening_at_point`] reading public material
-/// directly.
-/// All chunk + meta claims share the routed opening point because
-/// book §5.4 line 949 dictates "the two polynomials share folding
-/// challenges". The unused `_y_setup` parameter (the routed
-/// setup-claim-reduction output) is intentionally NOT used as the
-/// per-claim opening: it is the AGGREGATE opening at the routed
-/// point, while each chunk owns its own MLE at the same point.
+/// γ-folding step: absorb the k chunk u_j + meta u_meta into
+/// `transcript`, sample γ ∈ F^k via CHALLENGE_TIERED_CHUNK_AGGREGATION.
+/// Compute `chunk_poly_agg = Σ_j γ_j · chunk_polys[j]` and re-commit
+/// via the standard chunk_lp chain → `u_agg_fresh`. Mirrors the
+/// prover's `prove_recursive_level_with_policy` aggregation. The L+1
+/// M-relation verifies `u_agg_fresh = M_chunks · chunk_poly_agg` by
+/// standard linearity.
+///
+/// Soundness: if any chunk_polys[j] deviates from its public
+/// S-derived form, the aggregated `chunk_poly_agg` deviates with
+/// probability `1 - O(1/|F|)` over uniform γ, and the L+1 M-relation
+/// check fails. The recombined_setup_opening check (Σ_j eq_high(j) ·
+/// chunk_opening_j == y_setup) anchors the per-chunk MLE evaluations
+/// to the routed S opening before γ-aggregation.
 #[allow(clippy::too_many_arguments)]
-fn expand_tiered_setup_claims<F, const D: usize>(
+fn expand_tiered_setup_claims<F, T, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
     next_level_params: &LevelParams,
     row_count: usize,
     col_count: usize,
@@ -470,6 +476,7 @@ fn expand_tiered_setup_claims<F, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Send + Sync + 'static,
+    T: Transcript<F>,
 {
     let setup_field_len = row_count * col_count * D;
     let full_s_lp = untiered_setup_group_lp(next_level_params, setup_field_len)?;
@@ -518,9 +525,11 @@ where
     }
     s_rings.resize(n_s, CyclotomicRing::<F, D>::zero());
 
+    // Compute per-chunk slices and per-chunk MLE openings.
+    let mut chunk_slices: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(tier.num_chunks);
+    let mut chunk_openings: Vec<F> = Vec::with_capacity(tier.num_chunks);
     let mut recombined_setup_opening = F::zero();
     for (j, indices) in chunk_indices.iter().enumerate() {
-        let commitment = FlatRingVec::from_ring_elems::<D>(&material.chunk_b_commitments[j]);
         let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
         let chunk_opening = dense_ring_opening_at_point::<F, D>(
             &chunk_slice,
@@ -531,26 +540,61 @@ where
         let high_m = j / tier.shrink_factor;
         let high_r = j % tier.shrink_factor;
         recombined_setup_opening += eq_high_m[high_m] * eq_high_r[high_r] * chunk_opening;
-        claims.push(RecursiveOpeningClaim {
-            opening_point: chunk_opening_point.clone(),
-            opening: chunk_opening,
-            commitment,
-            basis: BasisMode::Lagrange,
-            w_len: chunk_w_len,
-            log_basis: next_level_params.log_basis,
-            per_claim_lp: Some(chunk_lp.clone()),
-            tier_marker: Some(tier),
-        });
+        chunk_slices.push(chunk_slice);
+        chunk_openings.push(chunk_opening);
     }
     if recombined_setup_opening != y_setup {
         tracing::debug!("[expand_tiered_setup_claims] recombined setup opening mismatch");
         return Err(AkitaError::InvalidProof);
     }
 
+    // γ-folding step: bind γ to k chunk u_j + meta u_meta first.
+    for u in &material.chunk_b_commitments {
+        let flat = FlatRingVec::from_ring_elems::<D>(u);
+        flat.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    }
+    let meta_commitment_flat = FlatRingVec::from_ring_elems::<D>(&material.meta_b_commitment);
+    meta_commitment_flat.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    let gamma_chunk: Vec<F> = (0..tier.num_chunks)
+        .map(|_| transcript.challenge_scalar(CHALLENGE_TIERED_CHUNK_AGGREGATION))
+        .collect();
+
+    // chunk_poly_agg = Σ_j γ_chunk[j] · chunk_slices[j]
+    let chunk_n = chunk_slices[0].len();
+    let mut chunk_poly_agg: Vec<CyclotomicRing<F, D>> =
+        vec![CyclotomicRing::<F, D>::zero(); chunk_n];
+    for j in 0..tier.num_chunks {
+        for (acc, ring) in chunk_poly_agg.iter_mut().zip(chunk_slices[j].iter()) {
+            *acc += ring.scale(&gamma_chunk[j]);
+        }
+    }
+
+    // Aggregated opening: Σ_j γ_j · chunk_opening_j (linear by MLE).
+    let mut chunk_opening_agg = F::zero();
+    for j in 0..tier.num_chunks {
+        chunk_opening_agg += gamma_chunk[j] * chunk_openings[j];
+    }
+
+    // u_agg_fresh: commit chunk_poly_agg under chunk_lp via standard chain.
+    let ntt_shared = setup.ntt_shared_get_or_init::<D>()?;
+    let u_agg_fresh =
+        derive_commitment_for_ring_slice::<F, D>(setup, &chunk_poly_agg, &chunk_lp, &ntt_shared)?;
+    let u_agg_flat = FlatRingVec::from_ring_elems::<D>(&u_agg_fresh);
+
+    claims.push(RecursiveOpeningClaim {
+        opening_point: chunk_opening_point,
+        opening: chunk_opening_agg,
+        commitment: u_agg_flat,
+        basis: BasisMode::Lagrange,
+        w_len: chunk_w_len,
+        log_basis: next_level_params.log_basis,
+        per_claim_lp: Some(chunk_lp.clone()),
+        tier_marker: Some(tier),
+    });
+
     // Meta input poly: padded concat of chunk B-commitments (book line
     // 695 "binds the collection of per-chunk commitment vectors via a
-    // standard Akita commitment"). Mirrors the prover's
-    // `build_tiered_handle_material` construction.
+    // standard Akita commitment"). Unchanged by γ-folding.
     let meta_len: usize = material.chunk_b_commitments.iter().map(Vec::len).sum();
     let mut meta_input: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(meta_input_pow2);
     for chunk in &material.chunk_b_commitments {
@@ -562,13 +606,12 @@ where
         "meta input concatenation overruns the pow2-padded buffer"
     );
 
-    let meta_commitment = FlatRingVec::from_ring_elems::<D>(&material.meta_b_commitment);
     let meta_opening =
         dense_ring_opening_at_point::<F, D>(&meta_input, &opening_point, &meta_lp, alpha_bits)?;
     claims.push(RecursiveOpeningClaim {
         opening_point: opening_point.to_vec(),
         opening: meta_opening,
-        commitment: meta_commitment,
+        commitment: meta_commitment_flat,
         basis: BasisMode::Lagrange,
         w_len: meta_w_len,
         log_basis: next_level_params.log_basis,
@@ -1914,8 +1957,9 @@ where
             if let Some(setup_opening) = verified.setup_opening {
                 let setup_field_len = setup_opening.row_count * setup_opening.col_count * level_d;
                 if level_step.tier_setup_params.is_tiered() {
-                    expand_tiered_setup_claims::<F, D>(
+                    expand_tiered_setup_claims::<F, T, D>(
                         setup,
+                        transcript,
                         &scheduled_next_params,
                         setup_opening.row_count,
                         setup_opening.col_count,
@@ -2079,8 +2123,9 @@ where
         if let Some(setup_opening) = root_verified.setup_opening {
             let setup_field_len = setup_opening.row_count * setup_opening.col_count * D;
             if root_step.tier_setup_params.is_tiered() {
-                expand_tiered_setup_claims::<F, D>(
+                expand_tiered_setup_claims::<F, T, D>(
                     setup,
+                    transcript,
                     next_level_params,
                     setup_opening.row_count,
                     setup_opening.col_count,

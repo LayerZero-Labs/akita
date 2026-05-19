@@ -22,7 +22,7 @@ use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_BATCH_REL, CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_SUMCHECK_BATCH_REL, CHALLENGE_SUMCHECK_ROUND, CHALLENGE_TIERED_CHUNK_AGGREGATION,
 };
 use akita_transcript::Transcript;
 use akita_types::{
@@ -2062,14 +2062,22 @@ where
         .collect::<Result<_, _>>()?;
     let mut view_iter = views.iter();
 
-    // Expand tiered handles into k+1 sub-claims (k chunks + 1 meta).
-    // Non-tiered handles produce 1 entry each. After expansion we have
-    // parallel slices that prove_recursive_multi_fold_with_params
-    // treats as a flat heterogeneous-LP multi-claim batch.
+    // Expand handles into per-claim sub-claims for the L+1 multi-fold.
+    // Non-tiered handles produce 1 entry each. Tiered handles produce
+    // ONE aggregated chunks claim (book §5.4 lines 686-754, §5.5 line
+    // 752 "Growth ≈ 1.0-3.0×") + 1 meta claim.
+    //
+    // γ-folding: after absorbing the k chunk u_j + meta u_meta into
+    // the transcript, sample γ ∈ F^k via CHALLENGE_TIERED_CHUNK_AGGREGATION.
+    // Aggregate chunk_poly_agg = Σ_j γ_j · chunk_polys[j] then re-commit
+    // via the standard chunk_lp chain → (u_agg_fresh, hint_agg). The L+1
+    // M-relation verifies `u_agg_fresh = M_chunks · chunk_poly_agg` by
+    // standard linearity; the verifier mirror in expand_tiered_setup_claims
+    // computes the same u_agg_fresh from public S + γ + chunk_indices.
     let mut handle_polys: Vec<RecursiveHandlePoly<'_, F, D>> = Vec::new();
     let mut opening_points: Vec<Vec<F>> = Vec::new();
     let mut typed_hints: Vec<AkitaCommitmentHint<F, D>> = Vec::new();
-    let mut commitment_refs: Vec<&FlatRingVec<F>> = Vec::new();
+    let mut commitment_owned: Vec<FlatRingVec<F>> = Vec::new();
     let mut per_claim_lps: Vec<Option<LevelParams>> = Vec::new();
     let mut tiered_per_claim: Vec<Option<TieredSetupParams>> = Vec::new();
     for h in &current_state.handles {
@@ -2086,20 +2094,16 @@ where
                 )));
                 opening_points.push(h.opening_point.clone());
                 typed_hints.push(h.hint.to_typed::<D>()?);
-                commitment_refs.push(&h.commitment);
+                commitment_owned.push(h.commitment.clone());
                 per_claim_lps.push(h.per_handle_lp.clone());
                 tiered_per_claim.push(None);
             }
             (None, Some(tiered)) => {
                 tracing::debug!(
-                    "[recursive_level] level={level} expanding tiered handle chunks={} after {:?}",
+                    "[recursive_level] level={level} aggregating tiered handle chunks={} after {:?}",
                     tiered.tier.num_chunks,
                     total_t.elapsed()
                 );
-                // Expand to k chunk claims + 1 meta claim. All share
-                // the routed setup opening point (book line 949 "share
-                // folding challenges"). Each chunk's per-claim LP is
-                // `chunk_lp`; meta's is `meta_lp`.
                 let log_shrink = tiered.tier.log2_shrink()? as usize;
                 let chunk_opening_point = tiered_setup_chunk_opening_point(
                     &tiered.opening_point,
@@ -2108,28 +2112,71 @@ where
                     tiered.chunk_lp.m_vars + log_shrink,
                     tiered.tier,
                 )?;
-                for j in 0..tiered.tier.num_chunks {
-                    let chunk_coeffs = tiered.chunk_polys[j].try_to_vec::<D>()?;
-                    handle_polys.push(RecursiveHandlePoly::Dense(DensePoly::from_ring_coeffs(
-                        chunk_coeffs,
-                    )));
-                    opening_points.push(chunk_opening_point.clone());
-                    typed_hints.push(tiered.chunk_hints[j].to_typed::<D>()?);
-                    commitment_refs.push(&tiered.chunk_commitments[j]);
-                    per_claim_lps.push(Some(tiered.chunk_lp.clone()));
-                    tiered_per_claim.push(Some(tiered.tier));
+
+                // γ-folding step: bind γ to the k chunk u_j and meta u
+                // before computing the aggregation. Mirrors the verifier's
+                // expand_tiered_setup_claims absorption + γ sample.
+                for u in &tiered.chunk_commitments {
+                    u.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
                 }
+                tiered
+                    .meta_commitment
+                    .append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+                let gamma_chunk: Vec<F> = (0..tiered.tier.num_chunks)
+                    .map(|_| transcript.challenge_scalar(CHALLENGE_TIERED_CHUNK_AGGREGATION))
+                    .collect();
+
+                // chunk_poly_agg = Σ_j γ_chunk[j] · chunk_polys[j]
+                let chunk_n = tiered.chunk_polys[0].as_ring_slice::<D>()?.len();
+                let mut chunk_poly_agg: Vec<CyclotomicRing<F, D>> =
+                    vec![CyclotomicRing::<F, D>::zero(); chunk_n];
+                for (j, (chunk_poly, gamma_j)) in tiered
+                    .chunk_polys
+                    .iter()
+                    .zip(gamma_chunk.iter())
+                    .enumerate()
+                {
+                    let rings = chunk_poly.as_ring_slice::<D>()?;
+                    if rings.len() != chunk_n {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "tiered chunk_polys[{j}] has {} rings; expected {chunk_n}",
+                            rings.len()
+                        )));
+                    }
+                    for (acc, ring) in chunk_poly_agg.iter_mut().zip(rings.iter()) {
+                        *acc += ring.scale(gamma_j);
+                    }
+                }
+
+                // Re-commit chunk_poly_agg under chunk_lp via the standard
+                // dense chain. Produces u_agg_fresh (1 chunks_agg commitment)
+                // and hint_agg (proper i8 t̂_agg digits) without overflow.
+                let (u_agg_flat, hint_agg) = commit_dense_s_handle_direct::<F, D>(
+                    expanded,
+                    &chunk_poly_agg,
+                    &tiered.chunk_lp,
+                )?;
+
+                handle_polys.push(RecursiveHandlePoly::Dense(DensePoly::from_ring_coeffs(
+                    chunk_poly_agg,
+                )));
+                opening_points.push(chunk_opening_point);
+                typed_hints.push(hint_agg.to_typed::<D>()?);
+                commitment_owned.push(u_agg_flat);
+                per_claim_lps.push(Some(tiered.chunk_lp.clone()));
+                tiered_per_claim.push(Some(tiered.tier));
+
                 let meta_coeffs = tiered.meta_input_poly.try_to_vec::<D>()?;
                 handle_polys.push(RecursiveHandlePoly::Dense(DensePoly::from_ring_coeffs(
                     meta_coeffs,
                 )));
                 opening_points.push(tiered.opening_point.clone());
                 typed_hints.push(tiered.meta_hint.to_typed::<D>()?);
-                commitment_refs.push(&tiered.meta_commitment);
+                commitment_owned.push(tiered.meta_commitment.clone());
                 per_claim_lps.push(Some(tiered.meta_lp.clone()));
                 tiered_per_claim.push(None);
                 tracing::debug!(
-                    "[recursive_level] level={level} expanded tiered handle after {:?}",
+                    "[recursive_level] level={level} aggregated tiered handle after {:?}",
                     total_t.elapsed()
                 );
             }
@@ -2140,12 +2187,13 @@ where
                 handle_polys.push(RecursiveHandlePoly::Witness(view));
                 opening_points.push(h.opening_point.clone());
                 typed_hints.push(h.hint.to_typed::<D>()?);
-                commitment_refs.push(&h.commitment);
+                commitment_owned.push(h.commitment.clone());
                 per_claim_lps.push(h.per_handle_lp.clone());
                 tiered_per_claim.push(None);
             }
         }
     }
+    let commitment_refs: Vec<&FlatRingVec<F>> = commitment_owned.iter().collect();
     let opening_point_refs: Vec<&[F]> = opening_points.iter().map(Vec::as_slice).collect();
     drop(_setup_span);
 

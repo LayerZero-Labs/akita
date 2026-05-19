@@ -2422,7 +2422,10 @@ mod tests {
             ]),
             ..outer
         };
-        let claim_group_sizes = [1usize, tier.num_chunks, 1usize];
+        // After Drift 3 γ-aggregation, the chunks group has claim_count = 1
+        // (one aggregated chunks claim under shared chunk_lp).
+        let _ = tier;
+        let claim_group_sizes = [1usize, 1usize, 1usize];
         let num_eval_rows = claim_group_sizes.len();
         let layouts = tiered_lp
             .group_layouts(&claim_group_sizes, num_eval_rows)
@@ -2465,9 +2468,12 @@ mod tests {
             })
             .collect();
         let mut transcript = Blake2bTranscript::<TestField>::new(b"tiered-row-local");
+        // Heterogeneous-LP groups sample at pow2(total_group_blocks); mirrors
+        // the prover-side challenge-count selection in
+        // `prove_recursive_multi_fold_with_params`.
         let challenges = sample_stage1_challenges::<TestField, _, D_TEST>(
             &mut transcript,
-            total_group_blocks,
+            total_group_blocks.next_power_of_two().max(1),
             1,
             &tiered_lp.stage1_config,
             &tiered_lp.stage1_challenge_shape,
@@ -2779,7 +2785,9 @@ mod tests {
             ]),
             ..outer
         };
-        let claim_group_sizes = [1usize, tier.num_chunks, 1usize];
+        // After Drift 3 γ-aggregation, the chunks group has claim_count = 1.
+        let _ = tier;
+        let claim_group_sizes = [1usize, 1usize, 1usize];
         let num_eval_rows = claim_group_sizes.len();
         let layouts = tiered_lp
             .group_layouts(&claim_group_sizes, num_eval_rows)
@@ -2824,7 +2832,7 @@ mod tests {
         let mut transcript = Blake2bTranscript::<TestField>::new(b"tiered-row-local-multi-a");
         let challenges = sample_stage1_challenges::<TestField, _, D_TEST>(
             &mut transcript,
-            total_group_blocks,
+            total_group_blocks.next_power_of_two().max(1),
             1,
             &tiered_lp.stage1_config,
             &tiered_lp.stage1_challenge_shape,

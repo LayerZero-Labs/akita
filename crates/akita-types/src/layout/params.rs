@@ -1018,13 +1018,7 @@ impl LevelParams {
             Some(groups) => groups
                 .iter()
                 .take(num_commitment_groups)
-                .map(|g| {
-                    let chunks = g
-                        .tier
-                        .filter(|tier| tier.is_tiered())
-                        .map_or(1, |tier| tier.num_chunks);
-                    chunks * g.b_key.row_len()
-                })
+                .map(|g| g.b_key.row_len())
                 .sum(),
         }
     }
@@ -1048,17 +1042,10 @@ impl LevelParams {
         if !has_tiered {
             return self.d_key.row_len();
         }
-        groups
-            .iter()
-            .take(num_commitment_groups)
-            .map(|g| {
-                let chunks = g
-                    .tier
-                    .filter(|tier| tier.is_tiered())
-                    .map_or(1, |tier| tier.num_chunks);
-                chunks * self.d_key.row_len()
-            })
-            .sum()
+        // After Drift 3 γ-aggregation, each tier-marked chunks group
+        // contributes claim_count = 1 (one aggregated chunks claim).
+        // The D rows are still per-group (W + chunks_agg + meta).
+        num_commitment_groups * self.d_key.row_len()
     }
 
     /// Total A-row count for the M relation.
@@ -1122,30 +1109,17 @@ impl LevelParams {
             let meta_idx = num_commitments - 1;
             let has_w_group = num_commitments >= 3;
             let chunk_start = usize::from(has_w_group);
-            let original_d_len: usize = groups
-                .iter()
-                .skip(chunk_start)
-                .take(meta_idx - chunk_start)
-                .map(|g| {
-                    let chunks = g
-                        .tier
-                        .filter(|tier| tier.is_tiered())
-                        .map_or(1, |tier| tier.num_chunks);
-                    chunks * self.d_key.row_len()
-                })
-                .sum();
+            // After Drift 3 γ-aggregation each tier-marked chunks group
+            // contributes claim_count = 1 (one aggregated chunks claim under
+            // shared `B_chunk`), so the per-group D and B row counts no
+            // longer multiply by `tier.num_chunks`.
+            let original_d_len: usize = (meta_idx - chunk_start) * self.d_key.row_len();
             let meta_d_len = self.d_key.row_len();
             let original_b_len: usize = groups
                 .iter()
                 .skip(chunk_start)
                 .take(meta_idx - chunk_start)
-                .map(|g| {
-                    let chunks = g
-                        .tier
-                        .filter(|tier| tier.is_tiered())
-                        .map_or(1, |tier| tier.num_chunks);
-                    chunks * g.b_key.row_len()
-                })
+                .map(|g| g.b_key.row_len())
                 .sum();
             let meta_b_len = groups.get(meta_idx).map(|g| g.b_key.row_len()).unwrap_or(0);
             let w_d_len = if has_w_group { self.d_key.row_len() } else { 0 };
@@ -1541,14 +1515,12 @@ mod tests {
         let layout = lp.m_row_layout(3, 3);
         assert_eq!(layout.w_d.start, 0);
         assert_eq!(layout.w_d.len(), lp.d_key.row_len());
-        assert_eq!(
-            layout.original_d.len(),
-            tier.num_chunks * lp.d_key.row_len()
-        );
-        assert_eq!(
-            layout.original_b.len(),
-            tier.num_chunks * s_group.b_key.row_len()
-        );
+        // After Drift 3 γ-aggregation the chunks group has
+        // claim_count = 1, so original_d / original_b drop the
+        // tier.num_chunks multiplier.
+        let _ = tier;
+        assert_eq!(layout.original_d.len(), lp.d_key.row_len());
+        assert_eq!(layout.original_b.len(), s_group.b_key.row_len());
         assert_eq!(layout.w_b.len(), w_group.b_key.row_len());
         assert_eq!(layout.w_eval.len(), 1);
         assert!(layout.w_fold.is_some());

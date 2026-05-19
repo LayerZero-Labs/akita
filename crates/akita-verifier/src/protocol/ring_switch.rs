@@ -117,12 +117,10 @@ impl<F: FieldCore> PreparedMEvalSplit<F> {
 /// [`GroupLayout`] so the M-eval path can iterate `group_layouts` once.
 #[inline]
 fn group_b_row_count(layout: &GroupLayout) -> usize {
-    let chunks = layout
-        .spec
-        .tier
-        .filter(|t| t.is_tiered())
-        .map_or(1, |t| t.num_chunks);
-    chunks * layout.spec.b_key.row_len()
+    // After Drift 3 γ-aggregation each tier-marked chunks group carries
+    // claim_count = 1 (one aggregated chunks claim under shared B_chunk).
+    // The per-group B row count is therefore `claim_count * n_B_g`.
+    layout.claim_count * layout.spec.b_key.row_len()
 }
 
 #[inline]
@@ -137,12 +135,9 @@ fn group_d_row_count(layout: &GroupLayout, n_d: usize, tiered_relation: bool) ->
     if !tiered_relation {
         return 0;
     }
-    let chunks = layout
-        .spec
-        .tier
-        .filter(|t| t.is_tiered())
-        .map_or(1, |t| t.num_chunks);
-    chunks * n_d
+    // After Drift 3 γ-aggregation each tier-marked chunks group has
+    // claim_count = 1, so the per-group D row count is `claim_count * n_d`.
+    layout.claim_count * n_d
 }
 
 enum PreparedChallengeEvals<F: FieldCore> {

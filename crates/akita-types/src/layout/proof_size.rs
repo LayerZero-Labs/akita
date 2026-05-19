@@ -743,26 +743,28 @@ pub fn planned_joint_w_ring_with_setup_group_tiered(
         Ok(lp) => lp,
         Err(_) => s_lp.clone(),
     };
+    let _ = k;
     let w_hat_w = outer_lp.num_blocks * outer_lp.num_digits_open;
     let t_hat_w = outer_lp.num_blocks * n_a * outer_lp.num_digits_open;
     let z_pre_w = num_eval_rows * outer_lp.inner_width() * outer_lp.num_digits_fold;
-    // Chunks group with claim_count=k under shared chunk_lp:
-    // `w_hat` and `t_hat` scale with `k` (each chunk has its own
-    // digit-decomposed inner witness). `z_pre` does NOT scale with `k`
-    // because the chunks share folding challenges (book line 949) and
-    // their folded witnesses sum into ONE z_pre per group via
-    // `aggregate_decompose_fold_witnesses`.
-    let w_hat_s = k * s_lp.num_blocks * s_lp.num_digits_open;
-    let t_hat_s = k * s_lp.num_blocks * n_a * s_lp.num_digits_open;
+    // After Drift 3 γ-aggregation (book §5.4-§5.5), the k chunk claims
+    // collapse into ONE aggregated chunks claim under shared `chunk_lp`.
+    // `w_hat`, `t_hat`, `z_pre`, B and D rows therefore scale with 1
+    // chunks claim (no `k` multiplier). The meta tier still commits
+    // the k chunk u_j vectors as a padded concat (unchanged), and the
+    // meta_lp width carries that `k * n_B_chunk` factor internally.
+    let w_hat_s = s_lp.num_blocks * s_lp.num_digits_open;
+    let t_hat_s = s_lp.num_blocks * n_a * s_lp.num_digits_open;
     let z_pre_s = num_eval_rows * s_lp.inner_width() * s_lp.num_digits_fold;
     let w_hat_meta = meta_lp.num_blocks * meta_lp.num_digits_open;
     let t_hat_meta = meta_lp.num_blocks * n_a * meta_lp.num_digits_open;
     let z_pre_meta = num_eval_rows * meta_lp.inner_width() * meta_lp.num_digits_fold;
-    // M-relation r-tail: 1 consistency + num_eval_rows + tier-aware D rows
-    // + sum_g n_B_g + original/meta A rows. The tiered routed shape has W,
-    // k chunks, and meta D slices under the shared D prefix.
-    let total_b = outer_lp.b_key.row_len() + k * s_lp.b_key.row_len() + meta_lp.b_key.row_len();
-    let total_d = (k + 2) * outer_lp.d_key.row_len();
+    // M-relation r-tail: 1 consistency + num_eval_rows + per-group D
+    // rows + sum_g n_B_g + original/meta A rows. The aggregated chunks
+    // shape has W, chunks_agg, and meta as 3 groups, each contributing
+    // n_D rows under the shared D prefix.
+    let total_b = outer_lp.b_key.row_len() + s_lp.b_key.row_len() + meta_lp.b_key.row_len();
+    let total_d = 3 * outer_lp.d_key.row_len();
     let r_rows = 3 + num_eval_rows + total_d + total_b + 3 * n_a;
     let r_count = r_rows * compute_num_digits_full_field(field_bits, outer_lp.log_basis);
     w_hat_w

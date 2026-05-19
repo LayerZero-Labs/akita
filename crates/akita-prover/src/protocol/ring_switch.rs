@@ -658,10 +658,11 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
             } else {
                 &eq_tau1[row_layout.original_a.clone()]
             };
-            let chunks = spec
-                .tier
-                .filter(|tier| tier.is_tiered())
-                .map_or(1, |tier| tier.num_chunks);
+            // After Drift 3 γ-aggregation each tier-marked group carries
+            // claim_count = 1 (the aggregated chunks claim), so the per-group
+            // D and B row contributions are scaled by `layout.claim_count`
+            // (which is 1 for chunks_agg and 1 for un-tiered groups).
+            let chunks = layout.claim_count;
             let d_weights_count = if has_tiered_group { chunks * n_d } else { 0 };
             let group_d_weights = if has_tiered_group {
                 let base = if group_role == 0 {
