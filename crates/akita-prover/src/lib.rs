@@ -31,6 +31,29 @@ pub use backend::{
 pub use kernels::MultiDNttCaches;
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::QuadraticEquation;
+
+/// Re-exports of the tiered prover-side r-quotient reference impl from
+/// `specs/tiered_commit.md` §3. Intended for cross-crate integration
+/// tests and as the soundness oracle for the future production tiered
+/// `compute_r_split_eq` branch (Phase 4c-wire). Not part of the
+/// prover's intended downstream API.
+pub mod tier1_rows_reference {
+    pub use crate::protocol::tier1_rows_reference::{
+        compute_tier1_and_f_rows_reference, Tier1AndFRowsInputs,
+    };
+}
+
+/// Re-export of the tiered commit kernel used by `commit_tiered_with_params`.
+pub mod tiered_commit {
+    pub use crate::protocol::tiered_commit::{
+        tiered_commit, TieredCommitOutput, TieredCommitParams,
+    };
+}
+
+/// Re-export of the tier-1 F-matrix derivation helper.
+pub mod tier1_f_matrix {
+    pub use crate::kernels::matrix::derive_tier1_f_matrix_flat;
+}
 pub use protocol::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix, commit_next_w_with_policy,
     prepare_batched_prove_inputs, prove_batched_with_policy, prove_fold_level_from_quadratic,

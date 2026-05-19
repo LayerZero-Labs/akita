@@ -13,7 +13,7 @@
 
 mod setup_contribution;
 mod structured_slice;
-mod tier1_reference;
+pub(crate) mod tier1_reference;
 #[cfg(feature = "zk")]
 mod zk_blinding;
 

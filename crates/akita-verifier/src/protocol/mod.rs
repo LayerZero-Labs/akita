@@ -3,7 +3,7 @@
 pub(crate) mod batched;
 pub(crate) mod levels;
 pub(crate) mod ring_switch;
-mod slice_mle;
+pub(crate) mod slice_mle;
 
 pub use batched::{
     verify_batched_with_policy, verify_root_direct_commitments_with_params,

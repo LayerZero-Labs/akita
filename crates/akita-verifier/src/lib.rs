@@ -35,3 +35,13 @@ pub use protocol::{
     RootDirectBlindingPayload,
 };
 pub use stages::AkitaStage1Verifier;
+
+/// Re-exports of the tiered M-row brute-force reference evaluator from
+/// `specs/tiered_commit.md` §3. Intended for cross-crate integration
+/// tests and as the soundness oracle for the future optimised tiered
+/// evaluator (Phase 4b-opt). Not part of the verifier's downstream API.
+pub mod tier1_reference {
+    pub use crate::protocol::slice_mle::tier1_reference::{
+        compute_tier1_and_f_contribution_reference, BPhysicalLayout, Tier1AndFInputs,
+    };
+}

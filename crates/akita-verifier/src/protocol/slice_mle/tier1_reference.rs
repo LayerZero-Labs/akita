@@ -38,7 +38,7 @@ use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_types::layout::flat_matrix::RingMatrixView;
 
 /// Inputs describing one opening point's tiered M-row contribution.
-pub(crate) struct Tier1AndFInputs<'a, F: FieldCore, E: FieldCore, const D: usize> {
+pub struct Tier1AndFInputs<'a, F: FieldCore, E: FieldCore, const D: usize> {
     /// `B'` view (the column-window restriction of B used by the tiered
     /// path). `b_prime_view.num_rows() == n_b'`,
     /// `b_prime_view.num_cols() == chunk_width`.
@@ -69,8 +69,9 @@ pub(crate) struct Tier1AndFInputs<'a, F: FieldCore, E: FieldCore, const D: usize
     /// M-column offset of the `uhat` segment (lies between `t̂` and the
     /// blinding/`z` segments per the tiered layout in §3).
     pub offset_uhat: usize,
-    /// Tiering parameters.
+    /// Splitting factor `f` (spec §2).
     pub split_factor: usize,
+    /// Outer gadget depth `δ_outer` (spec §5).
     pub num_digits_outer: usize,
     /// Inner B-physical layout describing how a B-physical column index
     /// `c ∈ [0, outer_width)` decodes into `(digit, a_row, block,
@@ -83,9 +84,12 @@ pub(crate) struct Tier1AndFInputs<'a, F: FieldCore, E: FieldCore, const D: usize
 /// B-physical layout for one polynomial bundle (matches
 /// `get_eq_indices_for_b` in `setup_contribution.rs`).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct BPhysicalLayout {
+pub struct BPhysicalLayout {
+    /// Inner SIS rank `n_a`.
     pub n_a: usize,
+    /// `B = 2^r_vars` — number of committed blocks per polynomial.
     pub num_blocks: usize,
+    /// Open-side gadget depth `δ_open`.
     pub depth_open: usize,
     /// `num_polys_per_point[g]` — the bundle size at each point. For the
     /// reference impl we only need the per-point bundle size; we accept
@@ -105,7 +109,18 @@ pub(crate) struct BPhysicalLayout {
 /// `num_polys_per_point[g]` (length `num_points`) is the per-point
 /// polynomial bundle size; tier-1 rows are emitted in
 /// `(point, chunk, b'_row)` order.
-pub(crate) fn compute_tier1_and_f_contribution_reference<F, E, const D: usize>(
+///
+/// # Panics
+///
+/// Panics if any of the input slices' lengths disagree with the
+/// declared shape parameters: `f_view.num_cols()` must equal
+/// `n_b' · split_factor · num_digits_outer`, `num_polys_per_point.len()`
+/// must equal `num_points`, `outer_gadget.len()` must equal
+/// `num_digits_outer`, `tier1_row_weights.len()` must equal
+/// `num_points · split_factor · n_b'`, and `f_row_weights.len()` must
+/// equal `num_points · n_F`. The shape parameters are deterministic
+/// from `LevelParams`, so a panic here always indicates a caller bug.
+pub fn compute_tier1_and_f_contribution_reference<F, E, const D: usize>(
     inputs: &Tier1AndFInputs<'_, F, E, D>,
     num_polys_per_point: &[usize],
 ) -> E

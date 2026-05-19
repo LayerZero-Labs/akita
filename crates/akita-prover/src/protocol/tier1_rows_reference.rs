@@ -45,7 +45,7 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 
 /// Inputs describing the prover-side state needed to emit the
 /// tier-1 + F M-rows for *all* opening points in one call.
-pub(crate) struct Tier1AndFRowsInputs<'a, F: FieldCore, const D: usize> {
+pub struct Tier1AndFRowsInputs<'a, F: FieldCore, const D: usize> {
     /// NTT cache of the **full** outer B matrix. `B'` is read as the
     /// leading `chunk_width` columns of each B row by passing a
     /// shorter input vector to `mat_vec_mul_ntt_single_i8_cyclic`.
@@ -78,8 +78,9 @@ pub(crate) struct Tier1AndFRowsInputs<'a, F: FieldCore, const D: usize> {
     /// Per-point public commitment `u_final`. `u_final_per_point[g]`
     /// has length `n_F`.
     pub u_final_per_point: &'a [&'a [CyclotomicRing<F, D>]],
-    /// Tiering parameters.
+    /// Splitting factor `f` (spec §2).
     pub split_factor: usize,
+    /// Outer gadget depth `δ_outer`.
     pub num_digits_outer: usize,
     /// Outer gadget vector `G = (1, 2^{outer_log_basis}, …)`, length
     /// `num_digits_outer`.
@@ -100,7 +101,7 @@ pub(crate) struct Tier1AndFRowsInputs<'a, F: FieldCore, const D: usize> {
 ///
 /// Panics if the per-point slice lengths are inconsistent with the
 /// declared shape parameters.
-pub(crate) fn compute_tier1_and_f_rows_reference<F, const D: usize>(
+pub fn compute_tier1_and_f_rows_reference<F, const D: usize>(
     inputs: &Tier1AndFRowsInputs<'_, F, D>,
 ) -> Vec<CyclotomicRing<F, D>>
 where
