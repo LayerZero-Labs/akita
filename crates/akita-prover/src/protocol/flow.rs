@@ -13,12 +13,12 @@ use crate::{
     RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use akita_algebra::{CyclotomicRing, EqPolynomial};
+use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
-use akita_sumcheck::{multilinear_eval, prove_sumcheck, SumcheckProof};
+use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
@@ -52,11 +52,11 @@ use std::time::Instant;
 /// `per_handle_lp` is the optional per-handle [`LevelParams`] override
 /// that the multi-group batched Hachi commit at the next level
 /// consumes (book §5.3 lines 643–660). `None` inherits the level's
-/// shared LP (today's homogeneous single-LP shape); `Some(lp)` carries
-/// this handle's per-commitment-group `(m, r, B, digit_count)`. Slice F
-/// activates the heterogeneous path; until then, the prover rejects
-/// when per-handle LPs are non-homogeneous (see
-/// `prove_recursive_multi_fold_with_params`).
+/// shared LP; `Some(lp)` carries this handle's per-commitment-group
+/// `(m, r, B, digit_count)`. Heterogeneous per-handle LPs are collapsed
+/// into [`LevelParams::groups`] by
+/// [`prove_recursive_multi_fold_with_params`] and dispatched through
+/// the multi-group commit kernel.
 ///
 /// `tiered` carries the book §5.4 routed tiered S material. When
 /// `Some(_)`, this handle replaces a dense `S` handle: the next fold
@@ -1255,8 +1255,6 @@ where
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-    let m_evals_x_for_check = (level == 1).then(|| m_evals_x.clone());
-    let alpha_evals_y_for_check = (level == 1).then(|| alpha_evals_y.clone());
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let t = Instant::now();
         tracing::debug!(
@@ -1280,33 +1278,11 @@ where
             prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
-        if level == 1 {
-            tracing::debug!(
-                "[fold_from_qe] level={level} stage2 challenges prefix: {:?}",
-                &sumcheck_challenges[..sumcheck_challenges.len().min(4)]
-            );
-        }
 
         let w_eval = {
             let _span = tracing::info_span!("multilinear_eval", level).entered();
             stage2_prover.final_w_eval()
         };
-        if let (Some(alpha_evals_y_for_check), Some(m_evals_x_for_check)) = (
-            alpha_evals_y_for_check.as_ref(),
-            m_evals_x_for_check.as_ref(),
-        ) {
-            tracing::debug!("[fold_from_qe] level={level} prover w_eval={w_eval:?}");
-            let (y_challenges, x_challenges) = sumcheck_challenges.split_at(ring_bits);
-            let eq_val = EqPolynomial::mle(&r_stage1, &sumcheck_challenges);
-            let alpha_val = multilinear_eval(alpha_evals_y_for_check, y_challenges)?;
-            let m_val = multilinear_eval(m_evals_x_for_check, x_challenges)?;
-            let expected_oracle =
-                batching_coeff * eq_val * w_eval * (w_eval + F::one()) + w_eval * alpha_val * m_val;
-            tracing::debug!(
-                "[fold_from_qe] level={level} stage2_final_matches_oracle={}",
-                stage2_final_claim == expected_oracle
-            );
-        }
         tracing::debug!(
             "[fold_from_qe] level={level} stage2 done after {:?}",
             t.elapsed()
@@ -1318,33 +1294,6 @@ where
             w_eval,
         )
     };
-    let mut sampled_split_for_check = None;
-    if let Some(m_evals_x_for_check) = m_evals_x_for_check {
-        let x_challenges = &sumcheck_challenges[ring_bits..];
-        let prepared = prepare_m_eval::<F, D>(
-            &stage1_challenges_for_prepare,
-            alpha,
-            lp,
-            &tau1,
-            &claim_group_sizes,
-            &gamma_for_prepare,
-            num_eval_rows_for_prepare,
-            opening_points_len,
-            &claim_to_point,
-        )?;
-        let split = prepared.eval_split_at_point::<D>(
-            x_challenges,
-            expanded,
-            quad_eq.opening_points(),
-            alpha,
-        )?;
-        let table_eval = multilinear_eval(&m_evals_x_for_check, x_challenges)?;
-        tracing::debug!(
-            "[fold_from_qe] level={level} m-table sampled check table_matches_split={}",
-            table_eval == split.combined()
-        );
-        sampled_split_for_check = Some(split);
-    }
 
     let (setup_claim_reduction, r_setup) = if lp.use_setup_claim_reduction {
         let t = Instant::now();
@@ -1369,14 +1318,6 @@ where
             alpha,
             transcript,
         )?;
-        if level == 1 {
-            if let Some(split) = sampled_split_for_check.as_ref() {
-                tracing::debug!(
-                    "[fold_from_qe] level={level} setup input matches split.setup={}",
-                    out.input_claim == split.setup
-                );
-            }
-        }
         let r_setup = out.challenges.clone();
         let payload = SetupClaimReductionPayload {
             m_setup_eval: out.input_claim,
