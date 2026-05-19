@@ -195,6 +195,20 @@ pub struct TieredSetupHandleBundle<F: FieldCore, const D: usize> {
 /// # Errors
 ///
 /// Returns the same errors as [`derive_tiered_setup_full_commitments`].
+///
+/// Shares its chunk-index map and meta-concat recipe with
+/// `crate::protocol::flow::build_tiered_handle_material`. The two
+/// callers consume different IO shapes (this one reads
+/// `setup.expanded.shared_matrix.ring_view::<D>(1, n_s)`; the
+/// `flow.rs` variant reads a multi-row `ring_view(row_count,
+/// max_stride)` and emits an in-flight recursive prover state with
+/// extra `(chunk_lp, meta_lp, tier, opening_point)` fields) and
+/// commit primitives (`commit_with_params` here vs
+/// `commit_dense_s_handle_direct` there), so the shared abstraction
+/// would add a commit closure + output builder layer larger than the
+/// duplication it saves. Keep both; any future change to the chunk
+/// partition rule, meta packing, or per-chunk LP shape must update
+/// both call sites in lockstep (book §5.4 lines 686-754).
 pub fn derive_tiered_setup_handle_bundle<F, const D: usize>(
     setup: &AkitaProverSetup<F, D>,
     chunk_params: &LevelParams,

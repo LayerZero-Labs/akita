@@ -369,6 +369,23 @@ where
 /// `opening_point` is the routed setup-claim opening point, shared
 /// across the chunk + meta sub-claims at the next fold level.
 #[allow(clippy::too_many_arguments)]
+/// In-flight tiered routed-S material for the recursive prover state.
+///
+/// Shares its chunk-index map and meta-concat recipe with
+/// [`crate::api::tiered_setup::derive_tiered_setup_handle_bundle`].
+/// The two callers consume different IO shapes (this one reads a
+/// multi-row `ring_view(row_count, max_stride)` and emits in-flight
+/// `TieredHandleMaterial` with `(chunk_lp, meta_lp, tier,
+/// opening_point)` fields; the setup-time variant reads
+/// `ring_view(1, n_s)` and emits the verifier-derivable
+/// [`akita_types::TieredSetupCommitments`]) and commit primitives
+/// (`commit_dense_s_handle_direct` here vs the high-level
+/// `commit_with_params` there). Per `.cursor/rules/code_changes.mdc`
+/// "smallest coherent change", the shared abstraction would add a
+/// commit closure + output builder layer larger than the duplication
+/// it saves; keep both. Any future change to the chunk partition rule,
+/// meta packing, or per-chunk LP shape must update both call sites in
+/// lockstep (book §5.4 lines 686-754).
 fn build_tiered_handle_material<F, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     _ntt_shared: &NttSlotCache<D>,
