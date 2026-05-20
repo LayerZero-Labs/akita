@@ -23,7 +23,8 @@ use akita_types::generated::table_entry_envelope_for_max_num_vars;
 use akita_types::WitnessShape;
 use akita_types::{
     exact_planned_level_execution, planned_log_basis_at_level_from_schedule,
-    planned_schedule_key_from_schedule, AkitaRootBatchSummary, AkitaScheduleInputs,
+    planned_schedule_key_from_schedule, recursive_level_decomposition_from_root,
+    recursive_level_layout_from_params, AkitaRootBatchSummary, AkitaScheduleInputs,
     AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
 };
 
@@ -466,13 +467,37 @@ fn cr_on_max_setup_matrix_size<Cfg: CommitmentConfig>(
             .max(lp.outer_width().next_power_of_two())
             .max(lp.d_matrix_width().next_power_of_two());
     };
+    let root_decomp = Cfg::decomposition();
+    let w_commit_decomp =
+        recursive_level_decomposition_from_root(root_decomp, root_decomp.log_basis);
     let mut visit_schedule = |schedule: &akita_types::Schedule| -> Result<(), AkitaError> {
         let mut incoming_setup: Option<(usize, akita_types::TieredSetupParams)> = None;
-        for step in &schedule.steps {
+        for (level, step) in schedule.steps.iter().enumerate() {
             let akita_types::Step::Fold(fold) = step else {
                 continue;
             };
             visit(&fold.params);
+            if let Some(next_step) = schedule.steps.get(level + 1) {
+                let next_level = level + 1;
+                let successor_params = match next_step {
+                    akita_types::Step::Fold(next_fold) => next_fold.params.clone(),
+                    akita_types::Step::Direct(direct) => Cfg::level_params_with_log_basis(
+                        AkitaScheduleInputs {
+                            max_num_vars,
+                            level: next_level,
+                            current_w_len: fold.next_w_len,
+                        },
+                        direct.bits_per_elem,
+                    ),
+                };
+                visit(&successor_params);
+                let w_commit_lp = recursive_level_layout_from_params(
+                    &successor_params,
+                    fold.next_w_len,
+                    w_commit_decomp,
+                )?;
+                visit(&w_commit_lp);
+            }
             if let Some((setup_field_len, tier)) = incoming_setup.take() {
                 if setup_field_len > 0 {
                     let s_lp =
@@ -952,6 +977,14 @@ macro_rules! impl_fp128_preset {
                     0 => <Self as akita_planner::PlannerConfig>::planner_setup_shrink_factor(),
                     _ => 1,
                 }
+            }
+
+            fn planner_cleartext_discharge_weight() -> usize {
+                // Keep the built-in proof-optimized presets byte-oriented:
+                // their generated CR-off tables are unavailable once CR is
+                // enabled, so the runtime planner should still preserve the
+                // small terminal-tail schedules these presets are named for.
+                0
             }
         }
     };

@@ -39,6 +39,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_planner::PlannerConfig;
 use akita_types::{
+    recursive_level_decomposition_from_root, recursive_level_layout_from_params,
     tiered_setup_group_lp, untiered_setup_group_lp, AjtaiRole, AkitaRootBatchSummary,
     AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, CommitmentEnvelope,
     DecompositionParams, LevelParams, Schedule, ScheduleProvider, Step, TieredSetupParams,
@@ -184,13 +185,37 @@ where
         visit(layout);
     }
 
+    let root_decomp = Cfg::decomposition();
+    let w_commit_decomp =
+        recursive_level_decomposition_from_root(root_decomp, root_decomp.log_basis);
     let mut visit_schedule = |schedule: &Schedule| -> Result<(), AkitaError> {
         let mut incoming_setup: Option<(usize, TieredSetupParams)> = None;
-        for step in &schedule.steps {
+        for (level, step) in schedule.steps.iter().enumerate() {
             let Step::Fold(fold) = step else {
                 continue;
             };
             visit(&fold.params);
+            if let Some(next_step) = schedule.steps.get(level + 1) {
+                let next_level = level + 1;
+                let successor_params = match next_step {
+                    Step::Fold(next_fold) => next_fold.params.clone(),
+                    Step::Direct(direct) => Cfg::level_params_with_log_basis(
+                        AkitaScheduleInputs {
+                            max_num_vars,
+                            level: next_level,
+                            current_w_len: fold.next_w_len,
+                        },
+                        direct.bits_per_elem,
+                    ),
+                };
+                visit(&successor_params);
+                let w_commit_lp = recursive_level_layout_from_params(
+                    &successor_params,
+                    fold.next_w_len,
+                    w_commit_decomp,
+                )?;
+                visit(&w_commit_lp);
+            }
             if let Some((setup_field_len, tier)) = incoming_setup.take() {
                 if setup_field_len > 0 {
                     let s_lp = tiered_setup_group_lp(&fold.params, setup_field_len, tier)?;
@@ -326,6 +351,10 @@ where
 
     fn planner_stage1_prover_weight() -> usize {
         Base::planner_stage1_prover_weight()
+    }
+
+    fn planner_cleartext_discharge_weight() -> usize {
+        1
     }
 
     /// Phase D-full Slice G hook: report the size of the shared setup
@@ -583,6 +612,10 @@ where
 
     fn planner_stage1_prover_weight() -> usize {
         Base::planner_stage1_prover_weight()
+    }
+
+    fn planner_cleartext_discharge_weight() -> usize {
+        1
     }
 
     fn planner_setup_polynomial_size(max_num_vars: usize) -> usize {

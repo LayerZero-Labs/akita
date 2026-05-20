@@ -17,10 +17,13 @@ use akita_transcript::Blake2bTranscript;
 use akita_types::LevelParams;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
+    schedule_num_fold_levels, AkitaRootBatchSummary, AkitaScheduleLookupKey, Schedule,
+    ScheduleProvider, Step,
+};
+use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
     RingCommitment,
 };
-use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, ScheduleProvider};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -66,6 +69,18 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("failed to spawn thread")
         .join()
         .expect("test thread panicked");
+}
+
+fn singleton_runtime_schedule<Cfg: CommitmentConfig>(nv: usize) -> Schedule {
+    Cfg::get_params_for_prove(nv, nv, 1, AkitaRootBatchSummary::singleton())
+        .expect("runtime singleton schedule")
+}
+
+fn schedule_terminal_bits(schedule: &Schedule) -> u32 {
+    match schedule.steps.last().expect("schedule must not be empty") {
+        Step::Direct(direct) => direct.bits_per_elem,
+        Step::Fold(_) => panic!("schedule must terminate with a direct step"),
+    }
 }
 
 fn prove_input<'a, FF: FieldCore, P, C, H>(
@@ -322,14 +337,8 @@ fn full_d128_prove_verify() {
         assert!(proof_bytes > 0, "proof must be non-empty");
         let total_fold_levels = batched_total_fold_levels(&proof);
         assert!(total_fold_levels > 0, "proof must have at least one level");
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
-            FULL_TEST_NV,
-            FULL_TEST_NV,
-            1,
-        ))
-        .expect("schedule plan")
-        .expect("adaptive full config should expose a schedule plan");
-        assert_eq!(total_fold_levels, plan.num_fold_levels());
+        let schedule = singleton_runtime_schedule::<Cfg>(FULL_TEST_NV);
+        assert_eq!(total_fold_levels, schedule_num_fold_levels(&schedule));
 
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -592,13 +601,14 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan")
-            .expect("adaptive full config should expose a schedule plan");
+        let schedule = singleton_runtime_schedule::<Cfg>(nv);
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(nv, b"akita_e2e/adaptive-full-mixed");
 
-        assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
+        assert_eq!(
+            batched_total_fold_levels(&proof),
+            schedule_num_fold_levels(&schedule)
+        );
 
         let mut proof_bytes = Vec::new();
         proof
@@ -615,7 +625,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
                 .as_packed_digits()
                 .expect("current terminal witness should be packed digits")
                 .bits_per_elem,
-            plan.terminal_state().log_basis
+            schedule_terminal_bits(&schedule)
         );
 
         let commitments = [commitment];
@@ -661,9 +671,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let onehot_poly = OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap();
         let pt = random_point::<F>(nv);
         let expected_opening = opening_from_poly(&onehot_poly, &pt, &layout);
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan")
-            .expect("adaptive onehot config should expose a schedule plan");
+        let schedule = singleton_runtime_schedule::<Cfg>(nv);
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
@@ -698,10 +706,13 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         )
         .unwrap();
 
-        assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
+        assert_eq!(
+            batched_total_fold_levels(&proof),
+            schedule_num_fold_levels(&schedule)
+        );
         assert_eq!(
             proof.size(),
-            plan.exact_proof_bytes,
+            schedule.total_bytes,
             "planner should match the direct-tail proof size"
         );
         let mut serialized = Vec::new();
@@ -717,7 +728,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                 .as_packed_digits()
                 .expect("current terminal witness should be packed digits")
                 .bits_per_elem,
-            plan.terminal_state().log_basis
+            schedule_terminal_bits(&schedule)
         );
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
@@ -1053,27 +1064,20 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         let layout = Cfg::commitment_layout(nv).expect("layout");
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan")
-            .expect("adaptive full config should expose a schedule plan");
+        let schedule = singleton_runtime_schedule::<Cfg>(nv);
 
         let mut max_inner = layout.inner_width();
         let mut max_outer = layout.outer_width();
         let mut max_d_width = layout.d_matrix_width();
 
-        for state in plan.states().skip(1) {
-            let level_inputs = AkitaScheduleInputs {
-                max_num_vars: nv,
-                level: state.level,
-                current_w_len: state.current_w_len,
+        for step in schedule.steps.iter().skip(1) {
+            let Step::Fold(fold) = step else {
+                continue;
             };
-            let params = Cfg::level_params_with_log_basis(
-                level_inputs,
-                Cfg::log_basis_at_level(level_inputs),
-            );
+            let params = fold.params.clone();
             let recursive_layout = akita_types::recursive_level_layout_from_params(
                 &params,
-                state.current_w_len,
+                fold.current_w_len,
                 Cfg::decomposition(),
             )
             .expect("recursive layout");

@@ -346,12 +346,39 @@ pub fn planned_setup_padded_dims(
     (row_count, col_count.next_power_of_two())
 }
 
+/// Planned setup-polynomial field-element work for a cleartext terminal
+/// discharge.
+///
+/// This is deliberately larger than [`planned_setup_field_len`]: even after
+/// the setup-side reducer fixes `r_x`, a terminal verifier still derives that
+/// compact row/coeff polynomial from the shared setup matrix across the live
+/// setup-column envelope.
+pub fn planned_setup_cleartext_discharge_field_len(
+    lp: &LevelParams,
+    s_lp_in: Option<&LevelParams>,
+    incoming_tier: TieredSetupParams,
+    num_eval_rows: usize,
+    num_commitment_groups: usize,
+) -> usize {
+    let (row_count, col_count_padded) = planned_setup_padded_dims(
+        lp,
+        s_lp_in,
+        incoming_tier,
+        num_eval_rows,
+        num_commitment_groups,
+    );
+    row_count
+        .next_power_of_two()
+        .saturating_mul(col_count_padded)
+        .saturating_mul(lp.ring_dimension)
+}
+
 /// Planned setup-polynomial field-element length emitted by level `lp`'s
 /// M-table.
 ///
-/// Equals `row_count_padded * ring_dimension`: the setup column dimension
-/// is already fixed at the main stage-2 `r_x` before this polynomial is
-/// routed recursively. See [`planned_setup_padded_dims`] for
+/// Equals `m_row_count.next_power_of_two() * ring_dimension`: the setup
+/// column dimension is already fixed at the main stage-2 `r_x` before this
+/// polynomial is routed recursively. See [`planned_setup_padded_dims`] for
 /// `s_lp_in` / `incoming_tier` semantics.
 ///
 /// Mirrors the runtime `r_x`-fixed setup-claim polynomial padded over the
@@ -363,13 +390,14 @@ pub fn planned_setup_field_len(
     num_eval_rows: usize,
     num_commitment_groups: usize,
 ) -> usize {
-    let (row_count, _col_count_padded) = planned_setup_padded_dims(
+    let _ = planned_setup_padded_dims(
         lp,
         s_lp_in,
         incoming_tier,
         num_eval_rows,
         num_commitment_groups,
     );
+    let row_count = lp.m_row_count(num_commitment_groups, num_eval_rows);
     row_count
         .next_power_of_two()
         .saturating_mul(lp.ring_dimension)

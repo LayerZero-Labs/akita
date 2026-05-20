@@ -1276,6 +1276,7 @@ fn mat_vec_mul_i8_block_parallel_with_params_impl<
     let lut = DigitMontLut::new(params);
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+    let inner_width = ntt_mat.iter().map(|row| row.len()).min().unwrap_or(0);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1284,10 +1285,13 @@ fn mat_vec_mul_i8_block_parallel_with_params_impl<
             let mut digit_buf = vec![[0i8; D]; num_digits];
             let mut col = 0usize;
 
-            for coeff_vec in block.iter() {
+            'cols: for coeff_vec in block.iter() {
                 coeff_vec
                     .balanced_decompose_pow2_i8_into_with_params(&mut digit_buf, &decompose_params);
                 for digit in &digit_buf {
+                    if col >= inner_width {
+                        break 'cols;
+                    }
                     if CHECK_ZERO && is_zero_plane(digit) {
                         col += 1;
                         continue;
@@ -1377,6 +1381,7 @@ fn mat_vec_mul_i8_dense_single_row_with_params<
     let mat_row = &ntt_mat[0];
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+    let inner_width = mat_row.len();
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1385,10 +1390,13 @@ fn mat_vec_mul_i8_dense_single_row_with_params<
             let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
             let mut col = 0usize;
 
-            for coeff_vec in block.iter() {
+            'cols: for coeff_vec in block.iter() {
                 coeff_vec
                     .balanced_decompose_pow2_i8_into_with_params(&mut digit_buf, &decompose_params);
                 for digit in &digit_buf {
+                    if col >= inner_width {
+                        break 'cols;
+                    }
                     acc.add_assign_pointwise_mul_i8_with_lut_scratch(
                         &mat_row[col],
                         digit,
@@ -1423,6 +1431,7 @@ fn mat_vec_mul_i8_dense_two_row_fused_with_params<
     let mat_row1 = &ntt_mat[1];
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+    let inner_width = mat_row0.len().min(mat_row1.len());
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1432,10 +1441,13 @@ fn mat_vec_mul_i8_dense_two_row_fused_with_params<
             let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
             let mut col = 0usize;
 
-            for coeff_vec in block.iter() {
+            'cols: for coeff_vec in block.iter() {
                 coeff_vec
                     .balanced_decompose_pow2_i8_into_with_params(&mut digit_buf, &decompose_params);
                 for digit in &digit_buf {
+                    if col >= inner_width {
+                        break 'cols;
+                    }
                     CyclotomicCrtNtt::add_assign_pointwise_mul_i8_pair_with_lut_scratch(
                         [&mut acc0, &mut acc1],
                         [&mat_row0[col], &mat_row1[col]],
@@ -1475,6 +1487,7 @@ fn mat_vec_mul_i8_dense_three_row_fused_with_params<
     let mat_row2 = &ntt_mat[2];
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+    let inner_width = mat_row0.len().min(mat_row1.len()).min(mat_row2.len());
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -1485,10 +1498,13 @@ fn mat_vec_mul_i8_dense_three_row_fused_with_params<
             let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
             let mut col = 0usize;
 
-            for coeff_vec in block.iter() {
+            'cols: for coeff_vec in block.iter() {
                 coeff_vec
                     .balanced_decompose_pow2_i8_into_with_params(&mut digit_buf, &decompose_params);
                 for digit in &digit_buf {
+                    if col >= inner_width {
+                        break 'cols;
+                    }
                     CyclotomicCrtNtt::add_assign_pointwise_mul_i8_triple_with_lut_scratch(
                         [&mut acc0, &mut acc1, &mut acc2],
                         [&mat_row0[col], &mat_row1[col], &mat_row2[col]],

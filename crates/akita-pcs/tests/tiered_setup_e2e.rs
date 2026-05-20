@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 type TieredDenseSmallCfg = ClaimReductionCfg<DenseCfg, 2>;
+type UntieredDenseClaimReductionCfg = ClaimReductionCfg<DenseCfg, 1>;
 type TieredOneHotSmallCfg = ClaimReductionCfg<OneHotCfg, 2>;
 type TieredDenseMidCfg = ClaimReductionCfg<DenseCfg, 4>;
 type TieredOneHotMidCfg = ClaimReductionCfg<OneHotCfg, 4>;
@@ -490,6 +491,103 @@ fn inspect_cascade_schedule(schedule: &akita_types::Schedule) -> (usize, Vec<usi
         }
     }
     (tiers.len(), tiers)
+}
+
+/// Route-positive regression for the book §5.8 headline cascade.
+///
+/// The existing schedule sentinels print the routing count but currently
+/// permit `routing_count == 0`. This test is intentionally explicit: the
+/// `(f_L0, f_L1) = (8, 4)` cascade is not "firing" unless the schedule emits
+/// at least two recursive setup routes with tiers `[8, 4]`.
+#[test]
+#[ignore = "documents book f=8 full-S cascade drift: compact r_x-fixed S cannot be f^2-tiered"]
+fn tiered_headline_cascade_routes_setup_positive_regression() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 32;
+        let schedule = DenseCascadeCfg::get_params_for_prove(
+            NV,
+            NV,
+            1,
+            akita_types::AkitaRootBatchSummary::singleton(),
+        )
+        .expect("dense headline cascade schedule");
+        let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
+        assert!(
+            routing_count >= 2,
+            "book §5.8 headline cascade should route setup recursively at NV={NV}; \
+             got routing_count={routing_count}, tiers={tiers:?}"
+        );
+        assert_eq!(
+            &tiers[..2],
+            [8, 4],
+            "book §5.8 headline cascade should begin with tiers [8, 4]; got {tiers:?}"
+        );
+    });
+}
+
+#[test]
+fn untiered_setup_claim_routes_positive_regression() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 19;
+        const D: usize = DENSE_D;
+        type Scheme = AkitaCommitmentScheme<D, UntieredDenseClaimReductionCfg>;
+
+        let schedule = UntieredDenseClaimReductionCfg::get_params_for_prove(
+            NV,
+            NV,
+            1,
+            akita_types::AkitaRootBatchSummary::singleton(),
+        )
+        .expect("untiered claim-reduction schedule");
+        let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
+        assert!(
+            routing_count >= 1,
+            "recursive setup routing should fire for the compact un-tiered setup claim; \
+             got routing_count={routing_count}, tiers={tiers:?}"
+        );
+        assert_eq!(
+            tiers[0], 1,
+            "compact setup-claim routing should use the un-tiered f=1 shape; got {tiers:?}"
+        );
+
+        let layout = UntieredDenseClaimReductionCfg::commitment_layout(NV).expect("layout");
+        assert!(layout.use_setup_claim_reduction);
+        let poly = make_dense_poly(NV, 0x715e_f101);
+        let pt = random_point(NV, 0x715e_f102);
+        let opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .expect("commit");
+        let poly_refs = [&poly];
+        let openings = [opening];
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"tiered_setup_e2e/untiered_route_positive");
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            prove_input(&pt, &poly_refs, &commitment, hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("untiered routed setup prove");
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"tiered_setup_e2e/untiered_route_positive");
+        <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect("untiered routed setup verify");
+    });
 }
 
 /// Book §5.8 cascade end-to-end at small NV. Exercises the per-level

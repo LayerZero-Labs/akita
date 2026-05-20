@@ -19,11 +19,12 @@ use akita_types::layout::digit_math::{
 use akita_types::{
     direct_witness_bytes, field_bytes, level_proof_bytes,
     planned_joint_next_w_len_with_setup_group, planned_joint_next_w_len_with_setup_group_tiered,
-    planned_setup_claim_reduction_rounds, planned_setup_field_len,
-    planned_verifier_setup_storage_field_len_for_setup, planned_w_ring_element_count_with_claims,
-    root_current_w_len, scale_batched_root_layout, schedule_from_plan, tiered_setup_group_lp,
-    AjtaiKeyParams, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
-    DirectWitnessShape, FoldStep, LevelParams, Schedule, Step, TieredSetupParams, WitnessShape,
+    planned_setup_claim_reduction_rounds, planned_setup_cleartext_discharge_field_len,
+    planned_setup_field_len, planned_verifier_setup_storage_field_len_for_setup,
+    planned_w_ring_element_count_with_claims, root_current_w_len, scale_batched_root_layout,
+    schedule_from_plan, tiered_setup_group_lp, AjtaiKeyParams, AkitaRootBatchSummary,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape, FoldStep,
+    LevelParams, Schedule, Step, TieredSetupParams, WitnessShape,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -94,9 +95,13 @@ struct CandidateLevelParams {
     /// discharge path still emits the same payload). `None` otherwise.
     setup_claim_reduction_rounds: Option<usize>,
     /// Setup-polynomial length this CR-on level binds, in field elements.
-    /// The planner uses this both for routed setup-storage precompute and
-    /// for cleartext-discharge work. Zero when CR is off.
+    /// The planner uses this compact `r_x`-fixed length for routed setup
+    /// storage precompute. Zero when CR is off.
     setup_field_len: usize,
+    /// Verifier work proxy for terminal cleartext discharge of this level's
+    /// setup claim. This includes the setup-column envelope needed to derive
+    /// the compact `r_x`-fixed polynomial from the public shared matrix.
+    setup_cleartext_discharge_field_len: usize,
 }
 
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
@@ -234,6 +239,17 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
     } else {
         0
     };
+    let setup_cleartext_discharge_field_len = if level_lp.use_setup_claim_reduction {
+        planned_setup_cleartext_discharge_field_len(
+            &level_lp,
+            s_lp_in.as_ref(),
+            incoming_tier,
+            num_eval_rows,
+            num_commitment_groups,
+        )
+    } else {
+        0
+    };
     // `s_field_len_emitted` is the `S` polynomial size this level pushes
     // to the next as a separate commitment-group handle.
     let s_field_len_emitted = if routes_setup_recursively {
@@ -306,6 +322,7 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
         proof_num_eval_rows: num_eval_rows,
         setup_claim_reduction_rounds,
         setup_field_len,
+        setup_cleartext_discharge_field_len,
     })
 }
 
@@ -493,21 +510,29 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
         }
     }
 
-    // Baseline: send the witness directly without folding. The cascade
-    // chain terminates here; any pending `S` at the direct step is
-    // discharged via the cleartext mle check in
-    // `verify_setup_claim_reduction`.
+    // Baseline: send the witness directly without folding. This is only
+    // valid when no parent routed `S` into the suffix; an incoming `S`
+    // has no direct-send protocol hook and must be consumed by a fold.
     let fb = Cfg::planner_field_bits();
-    let direct_bytes = direct_witness_bytes(
-        fb,
-        &DirectWitnessShape::PackedDigits((current_w_len, current_lb)),
-    );
-    let direct_objective_cost =
-        direct_bytes.saturating_add(cleartext_discharge_objective_cost::<Cfg>(s_field_len_in));
-    let mut best = PlannedSuffix {
-        objective_cost: direct_objective_cost,
-        proof_bytes: direct_bytes,
-        steps: vec![to_direct_step(current_w_len, current_lb)],
+    let mut best = if s_field_len_in == 0 {
+        let direct_bytes = direct_witness_bytes(
+            fb,
+            &DirectWitnessShape::PackedDigits((current_w_len, current_lb)),
+        );
+        PlannedSuffix {
+            objective_cost: direct_bytes,
+            proof_bytes: direct_bytes,
+            steps: vec![to_direct_step(current_w_len, current_lb)],
+        }
+    } else {
+        // A parent that routed `S` already dropped its cleartext setup check.
+        // The next suffix step must therefore be a fold that jointly opens the
+        // incoming setup claim; direct-send has no protocol hook to discharge it.
+        PlannedSuffix {
+            objective_cost: usize::MAX,
+            proof_bytes: usize::MAX,
+            steps: Vec::new(),
+        }
     };
     let route_choices: &[bool] = &[false, true];
 
@@ -570,19 +595,31 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
                     &next_level_params,
                     candidate.proof_num_eval_rows,
                 );
-                let Ok(setup_storage_field_len) =
-                    planned_verifier_setup_storage_field_len_for_setup(
+                let setup_storage_field_len = if routes_setup_recursively {
+                    let Ok(len) = planned_verifier_setup_storage_field_len_for_setup(
                         &next_level_params,
                         candidate.setup_field_len,
                         candidate.tier_setup_params,
-                    )
-                else {
-                    continue;
+                    ) else {
+                        continue;
+                    };
+                    len
+                } else {
+                    0
                 };
 
                 let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
+                let cleartext_discharge_field_len =
+                    if candidate.lp.use_setup_claim_reduction && !routes_setup_recursively {
+                        candidate.setup_cleartext_discharge_field_len
+                    } else {
+                        0
+                    };
                 let objective_cost = level_proof_size
                     .saturating_add(setup_storage_objective_cost::<Cfg>(setup_storage_field_len))
+                    .saturating_add(cleartext_discharge_objective_cost::<Cfg>(
+                        cleartext_discharge_field_len,
+                    ))
                     .saturating_add(stage1_prover_penalty::<Cfg>(
                         &candidate.lp,
                         candidate.next_w_len,
@@ -658,20 +695,25 @@ fn root_claim_group_sizes(shape: &WitnessShape) -> Option<Vec<usize>> {
     Some(sizes)
 }
 
-fn root_setup_field_len_and_rounds(
+fn root_setup_field_len_rounds_and_cleartext(
     lp: &LevelParams,
     shape: &WitnessShape,
-) -> Option<(usize, usize)> {
+) -> Option<(usize, usize, usize)> {
     let claim_group_sizes = root_claim_group_sizes(shape)?;
     let (row_count, _col_count_padded) = lp
         .setup_polynomial_padded_dims(&claim_group_sizes, shape.num_points, shape.num_points)
         .ok()?;
-    let field_len = row_count
+    let compact_row_count = lp.m_row_count(shape.num_commitment_groups, shape.num_points);
+    let field_len = compact_row_count
         .next_power_of_two()
         .saturating_mul(lp.ring_dimension);
-    let rounds = row_count.next_power_of_two().trailing_zeros() as usize
+    let rounds = compact_row_count.next_power_of_two().trailing_zeros() as usize
         + lp.ring_dimension.trailing_zeros() as usize;
-    Some((field_len, rounds))
+    let cleartext_field_len = row_count
+        .next_power_of_two()
+        .saturating_mul(_col_count_padded)
+        .saturating_mul(lp.ring_dimension);
+    Some((field_len, rounds, cleartext_field_len))
 }
 
 // -----------------------------------------------------------------------
@@ -827,6 +869,7 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
                 proof_num_eval_rows: shape.num_points,
                 setup_claim_reduction_rounds: None,
                 setup_field_len: 0,
+                setup_cleartext_discharge_field_len: 0,
             });
         }
     }
@@ -958,16 +1001,17 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             // tier shape applies at the next level when chunks expand.
             // Pass `un_tiered()` for the incoming tier and use the
             // root's full claim-group shape.
-            let root_setup_field_len = if candidate.lp.use_setup_claim_reduction {
-                let Some((field_len, _rounds)) =
-                    root_setup_field_len_and_rounds(&candidate.lp, &shape)
-                else {
-                    continue;
+            let (root_setup_field_len, root_cr_rounds, root_setup_cleartext_field_len) =
+                if candidate.lp.use_setup_claim_reduction {
+                    let Some((field_len, rounds, cleartext_field_len)) =
+                        root_setup_field_len_rounds_and_cleartext(&candidate.lp, &shape)
+                    else {
+                        continue;
+                    };
+                    (field_len, Some(rounds), cleartext_field_len)
+                } else {
+                    (0, None, 0)
                 };
-                field_len
-            } else {
-                0
-            };
             let root_s_field_len_emitted = if routes_setup_recursively {
                 root_setup_field_len
             } else {
@@ -976,7 +1020,6 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             if routes_setup_recursively && root_s_field_len_emitted == 0 {
                 continue;
             }
-
             let suffix = derive_optimal_suffix_schedule::<Cfg>(
                 &mut memo,
                 max_num_vars,
@@ -1004,37 +1047,22 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             // Root-level proofs carry one public y-ring per distinct
             // opening point AND the CR payload for CR-on configs (book
             // §5.3 line 658, §5.4 line 752). The CR sumcheck rounds
-            // are computed from the root's M-table shape with no
-            // incoming `S` (root never has incoming cascade) and the
-            // batched root's `(num_eval_rows, num_commitment_groups)`
-            // taken straight from the input shape.
-            let root_cr_rounds = if candidate.lp.use_setup_claim_reduction {
-                let Some((_field_len, rounds)) =
-                    root_setup_field_len_and_rounds(&candidate.lp, &shape)
-                else {
-                    continue;
-                };
-                Some(rounds)
-            } else {
-                None
-            };
-            let root_storage_tier = if routes_setup_recursively {
-                root_tier
-            } else {
-                TieredSetupParams::un_tiered()
-            };
-            let Ok(root_setup_storage_field_len) =
-                planned_verifier_setup_storage_field_len_for_setup(
+            // are computed from the compact row/coeff claim shape above.
+            let root_setup_storage_field_len = if routes_setup_recursively {
+                match planned_verifier_setup_storage_field_len_for_setup(
                     &next_level_params,
                     root_setup_field_len,
-                    root_storage_tier,
-                )
-            else {
-                continue;
+                    root_tier,
+                ) {
+                    Ok(len) => len,
+                    Err(_err) => continue,
+                }
+            } else {
+                0
             };
             let root_cleartext_discharge_field_len =
                 if candidate.lp.use_setup_claim_reduction && !routes_setup_recursively {
-                    root_setup_field_len
+                    root_setup_cleartext_field_len
                 } else {
                     0
                 };
@@ -1077,6 +1105,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
                     proof_num_eval_rows: shape.num_points,
                     setup_claim_reduction_rounds: root_cr_rounds,
                     setup_field_len: root_setup_field_len,
+                    setup_cleartext_discharge_field_len: root_setup_cleartext_field_len,
                 };
                 let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                 steps.push(to_fold_step(
