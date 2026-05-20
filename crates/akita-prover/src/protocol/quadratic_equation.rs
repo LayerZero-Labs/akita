@@ -1476,10 +1476,18 @@ where
         );
         let f_ntt = crate::kernels::crt_ntt::build_ntt_slot(f_flat.ring_view::<D>(n_f, f_width))
             .map_err(|e| AkitaError::InvalidSetup(format!("tiered F NTT cache: {e:?}")))?;
-        // Outer gadget vector G = (1, 2^b, 2^{2b}, …).
-        let outer_gadget: Vec<F> = (0..depth_outer)
-            .map(|d| F::from_u64(1u64 << (outer_log_basis * d as u32)))
-            .collect();
+        // Outer gadget vector G = (1, 2^b, 2^{2b}, …). Computed
+        // iteratively in F so `outer_log_basis · num_digits_outer ≥
+        // 64` (always true for full-field Q128 with `outer_log_basis ≤
+        // 6`) doesn't blow up `1u64 << k` (which silently wraps in
+        // release mode when `k ≥ 64`).
+        let two_to_b = F::from_u64(1u64 << outer_log_basis);
+        let mut outer_gadget: Vec<F> = Vec::with_capacity(depth_outer);
+        let mut step = F::one();
+        for _ in 0..depth_outer {
+            outer_gadget.push(step);
+            step *= two_to_b;
+        }
 
         // Per-point t̂ digit span: each point owns
         // `num_polys_per_point[g] * blocks_per_claim` blocks in the

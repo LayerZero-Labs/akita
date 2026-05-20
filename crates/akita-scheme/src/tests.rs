@@ -3096,11 +3096,38 @@ impl Fp32TieredRootFoldCfg {
     fn root_lp() -> LevelParams {
         // Start from the same base shape as the legacy
         // Fp32RingSubfieldRootFoldCfg fixture, then inject tiering.
+        // `AKITA_TEST_NA` env var overrides `n_a` (default 1) so the
+        // n_a > 1 path can be exercised under split>1 without changing
+        // the other dimensions.
+        let n_a = std::env::var("AKITA_TEST_NA")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1usize);
+        let r_vars = std::env::var("AKITA_TEST_RVARS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0usize);
+        let depth_commit = std::env::var("AKITA_TEST_DC")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(12usize);
+        let depth_open = std::env::var("AKITA_TEST_DO")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(12usize);
+        let depth_fold = std::env::var("AKITA_TEST_DF")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(12usize);
+        let log_basis = std::env::var("AKITA_TEST_LB")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3u32);
         let base = LevelParams::params_only(
             akita_types::SisModulusFamily::Q32,
             <Self as CommitmentConfig>::D,
-            3,
-            1,
+            log_basis,
+            n_a,
             1,
             1,
             akita_challenges::SparseChallengeConfig::Uniform {
@@ -3108,21 +3135,28 @@ impl Fp32TieredRootFoldCfg {
                 nonzero_coeffs: vec![-1, 1],
             },
         )
-        .with_decomp(0, 0, 12, 12, 12, 0)
+        .with_decomp(0, r_vars, depth_commit, depth_open, depth_fold, 0)
         .unwrap();
-        // Tiering: split_factor=2 with `outer_log_basis = log_basis`
-        // so the gadget-decomposed ûhat digits stay in the same
-        // `[-(b/2)..(b/2)-1]` band the stage-1/2 sumcheck lookup
-        // tables expect (the prefix-aware constructors in
-        // `two_round_prefix.rs` index a fixed `b=2^log_basis`
-        // lookup table over ALL witness cells, including ûhat).
-        // Outer width = n_a · num_digits_open · num_blocks = 1·12·1 = 12;
-        // chunk_width = 6. With `outer_log_basis = 3`, full Fp32
-        // coverage needs `ceil(32/3) = 11` outer digits; F has shape
-        // n_F=1 × (n_b'·split·δ_outer) = 1×22.
-        let split_factor = 2usize;
-        let outer_log_basis = 3u32;
-        let num_digits_outer = 11usize;
+        // Tiering: split_factor (2 by default, override via env) with
+        // `outer_log_basis = log_basis` so the gadget-decomposed ûhat
+        // digits stay in the same `[-(b/2)..(b/2)-1]` band the
+        // stage-1/2 sumcheck lookup tables expect (the prefix-aware
+        // constructors in `two_round_prefix.rs` index a fixed
+        // `b=2^log_basis` lookup table over ALL witness cells,
+        // including ûhat). Outer width = n_a · num_digits_open ·
+        // num_blocks = 1·12·1 = 12; chunk_width = 12/split. With
+        // `outer_log_basis = 3`, full Fp32 coverage needs `ceil(32/3) =
+        // 11` outer digits; F has shape n_F=1 × (n_b'·split·δ_outer).
+        let split_factor = std::env::var("AKITA_TEST_SPLIT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2usize);
+        // outer_log_basis must equal log_basis for stage-1/2 sumcheck
+        // lookup-table compatibility. num_digits_outer must cover
+        // field_bits (32 for Fp32) with outer_log_basis.
+        let outer_log_basis = log_basis;
+        let num_digits_outer =
+            ((32 + outer_log_basis - 1) / outer_log_basis) as usize;
         let n_f = 1usize;
         let chunk_width = base.full_outer_width() / split_factor;
         let f_width = base.b_key.row_len() * split_factor * num_digits_outer;
@@ -3345,7 +3379,7 @@ impl CommitmentConfig for Fp32TieredRootFoldCfg {
                     current_w_len: compact_w_len,
                     witness_shape: akita_types::DirectWitnessShape::PackedDigits((
                         compact_w_len,
-                        3,
+                        lp.log_basis,
                     )),
                     direct_bytes: compact_w_len,
                 }),
@@ -3397,9 +3431,8 @@ fn tiered_root_fold_full_sumcheck_e2e_roundtrips() {
     // Sanity: the test Cfg actually enables tiering.
     let lp = TCfg::root_lp();
     assert!(lp.is_tiered_root(), "test fixture must enable tiering");
-    assert_eq!(lp.split_factor, 2);
-    assert_eq!(lp.outer_log_basis, 3);
-    assert_eq!(lp.num_digits_outer, 11);
+    assert!(lp.split_factor >= 2);
+    assert_eq!(lp.outer_log_basis, lp.log_basis);
 
     let len = 1usize << NUM_VARS;
     let evals = (0..len)
@@ -3524,7 +3557,15 @@ fn tiered_prepared_row_eval_matches_materialized() {
     type TF = <TCfg as CommitmentConfig>::Field;
     const TD: usize = TCfg::D;
     type TScheme = AkitaCommitmentScheme<TD, TCfg>;
-    const NV: usize = 1;
+    // NV needs to be at least `log2(D) + r_vars + m_vars` to give the
+    // ring opening point enough coordinates; the diagnostic fixture
+    // bumps NV automatically when r_vars > 0.
+    let r_vars = std::env::var("AKITA_TEST_RVARS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0usize);
+    let nv: usize = (TD.trailing_zeros() as usize + r_vars).max(1);
+    let NV = nv;
 
     let lp = TCfg::root_lp();
     assert!(lp.is_tiered_root(), "fixture must enable tiering");
