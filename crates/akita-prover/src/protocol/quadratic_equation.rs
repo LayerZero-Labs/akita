@@ -421,31 +421,39 @@ where
             }
         };
 
+        // Terminal layout drops the D-block from the M-matrix entirely:
+        // `v = D · w_hat` never travels on the wire, the verifier never
+        // reconstructs it, and downstream prover paths (`ring_switch_build_w`,
+        // `relation_claim_from_rows_extension`) consume an empty `v` slice.
+        // Skip both the D-side blinding sample and the D-NTT under Terminal.
         #[cfg(feature = "zk")]
-        let d_blinding_digits = sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?;
-
-        let v = {
-            let _span = tracing::info_span!(
-                "compute_batched_v",
-                w_hat_planes = w_hat.flat_digits().len()
-            )
-            .entered();
-            compute_v_rows(
-                ntt_d,
-                lp.d_key.row_len(),
-                stride,
-                &w_hat,
-                #[cfg(feature = "zk")]
-                &d_blinding_digits,
-            )
+        let d_blinding_digits = match m_row_layout {
+            MRowLayout::Intermediate => {
+                sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?
+            }
+            MRowLayout::Terminal => FlatDigitBlocks::<D>::empty(),
         };
 
-        // Terminal layout drops the D-block from the M-matrix entirely; `v`
-        // never travels on the wire and the verifier never reconstructs it,
-        // so skipping the transcript bind keeps prover and verifier in sync.
-        if matches!(m_row_layout, MRowLayout::Intermediate) {
-            transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
-        }
+        let v = match m_row_layout {
+            MRowLayout::Intermediate => {
+                let _span = tracing::info_span!(
+                    "compute_batched_v",
+                    w_hat_planes = w_hat.flat_digits().len()
+                )
+                .entered();
+                let v = compute_v_rows(
+                    ntt_d,
+                    lp.d_key.row_len(),
+                    stride,
+                    &w_hat,
+                    #[cfg(feature = "zk")]
+                    &d_blinding_digits,
+                );
+                transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+                v
+            }
+            MRowLayout::Terminal => Vec::new(),
+        };
 
         let total_blocks = lp.num_blocks.checked_mul(num_claims).ok_or_else(|| {
             AkitaError::InvalidSetup("batched challenge count overflow".to_string())
@@ -641,31 +649,36 @@ where
         };
         hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
 
+        // See the `new_prover` comment: Terminal layout omits `v = D · w_hat`
+        // entirely, so skip both the D-side blinding sample and the D-NTT.
         #[cfg(feature = "zk")]
-        let d_blinding_digits = sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?;
-
-        let v = {
-            let _span = tracing::info_span!(
-                "compute_recursive_multipoint_v",
-                w_hat_planes = w_hat.flat_digits().len()
-            )
-            .entered();
-            compute_v_rows(
-                ntt_d,
-                lp.d_key.row_len(),
-                stride,
-                &w_hat,
-                #[cfg(feature = "zk")]
-                &d_blinding_digits,
-            )
+        let d_blinding_digits = match m_row_layout {
+            MRowLayout::Intermediate => {
+                sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?
+            }
+            MRowLayout::Terminal => FlatDigitBlocks::<D>::empty(),
         };
 
-        // Terminal layout drops the D-block from the M-matrix entirely; `v`
-        // never travels on the wire and the verifier never reconstructs it,
-        // so skipping the transcript bind keeps prover and verifier in sync.
-        if matches!(m_row_layout, MRowLayout::Intermediate) {
-            transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
-        }
+        let v = match m_row_layout {
+            MRowLayout::Intermediate => {
+                let _span = tracing::info_span!(
+                    "compute_recursive_multipoint_v",
+                    w_hat_planes = w_hat.flat_digits().len()
+                )
+                .entered();
+                let v = compute_v_rows(
+                    ntt_d,
+                    lp.d_key.row_len(),
+                    stride,
+                    &w_hat,
+                    #[cfg(feature = "zk")]
+                    &d_blinding_digits,
+                );
+                transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+                v
+            }
+            MRowLayout::Terminal => Vec::new(),
+        };
 
         let total_blocks = lp.num_blocks.checked_mul(num_claims).ok_or_else(|| {
             AkitaError::InvalidSetup("recursive multipoint challenge count overflow".to_string())

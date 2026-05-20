@@ -570,7 +570,7 @@ where
                 s_claim,
                 final_witness,
                 w_len,
-                r_stage1.clone(),
+                r_stage1,
                 rs.alpha_evals_y,
                 row_eval_source,
                 &setup.expanded,
@@ -591,7 +591,7 @@ where
                 batching_coeff,
                 s_claim,
                 *next_w_eval,
-                r_stage1.clone(),
+                r_stage1,
                 rs.alpha_evals_y,
                 row_eval_source,
                 &setup.expanded,
@@ -948,7 +948,7 @@ where
             s_claim,
             &terminal_proof.final_witness,
             w_len,
-            r_stage1.clone(),
+            r_stage1,
             rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
@@ -967,7 +967,7 @@ where
             batching_coeff,
             s_claim,
             level_proof.stage2.next_w_eval,
-            r_stage1.clone(),
+            r_stage1,
             rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
@@ -1242,10 +1242,13 @@ where
                         BlockOrder::ColumnMajor,
                     )?
                 };
-                // Terminal step also implies the scheduled successor must be
-                // a Direct step with the matching packed-digit shape.
-                if let Some(scheduled_next) = scheduled_next_params {
-                    let _ = scheduled_next;
+                // Invariant: a terminal step implies the scheduled successor
+                // is a Direct step (not a Fold), which `scheduled_recursive_verify_level`
+                // signals by returning `None`. The trailing-`Direct` witness
+                // shape is already validated in `verify_fold_batched_proof`
+                // before this loop runs.
+                if scheduled_next_params.is_some() {
+                    return Err(AkitaError::InvalidProof);
                 }
             }
         }

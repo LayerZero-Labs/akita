@@ -137,7 +137,8 @@ where
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
-    let _ring_bits = validate_ring_dispatch::<D>()?;
+    // `validate_ring_dispatch` is called inside `ring_switch_verifier_after_absorb`;
+    // the outer wrapper just performs the witness absorb before delegating.
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
     ring_switch_verifier_after_absorb::<F, E, T, D>(
         opening_points,

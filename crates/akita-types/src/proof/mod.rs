@@ -1500,7 +1500,7 @@ pub struct TerminalLevelProofShape {
     pub y_rings_coeffs: usize,
     /// Shape of the optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
-    /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
+    /// Stage-2 sumcheck shape: one compact coefficient count per round.
     pub stage2_sumcheck: SumcheckProofShape,
     /// Shape of the terminal direct witness.
     pub final_witness: DirectWitnessShape,
@@ -3106,6 +3106,15 @@ impl AkitaDeserialize for DirectWitnessShape {
 
 impl Valid for TerminalLevelProofShape {
     fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.y_rings_coeffs)?;
+        if let Some(reduction) = &self.extension_opening_reduction {
+            reduction.check()?;
+        }
+        checked_shape_len(self.stage2_sumcheck.len())?;
+        for &degree in &self.stage2_sumcheck {
+            checked_shape_len(degree)?;
+        }
+        self.final_witness.check()?;
         Ok(())
     }
 }
@@ -3353,7 +3362,11 @@ impl AkitaDeserialize for AkitaBatchedProofShape {
                     validate,
                     &(),
                 )?;
-                Ok(Self::Terminal(terminal_shape))
+                let out = Self::Terminal(terminal_shape);
+                if matches!(validate, Validate::Yes) {
+                    out.check()?;
+                }
+                Ok(out)
             }
             2 => {
                 let witness_shapes = Vec::<DirectWitnessShape>::deserialize_with_mode(
@@ -3602,5 +3615,64 @@ mod tests {
         )
         .expect("deserialize proof with extension-opening reduction");
         assert_eq!(decoded_with_reduction, with_reduction);
+    }
+
+    #[test]
+    fn terminal_level_proof_serde_round_trip() {
+        const D: usize = 8;
+        let final_witness = DirectWitnessProof::PackedDigits(
+            PackedDigits::from_i8_digits_with_min_bits(&[1i8, -1, 0, 2], 3),
+        );
+
+        let without_reduction = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            None,
+            SumcheckProof {
+                round_polys: Vec::new(),
+            },
+            final_witness.clone(),
+        );
+        assert!(without_reduction.extension_opening_reduction.is_none());
+        assert!(without_reduction
+            .shape()
+            .extension_opening_reduction
+            .is_none());
+
+        let mut bytes = Vec::new();
+        without_reduction
+            .serialize_uncompressed(&mut bytes)
+            .expect("serialize terminal proof without extension-opening reduction");
+        assert_eq!(bytes.len(), without_reduction.serialized_size(Compress::No));
+
+        let decoded = TerminalLevelProof::<F, F>::deserialize_uncompressed(
+            &*bytes,
+            &without_reduction.shape(),
+        )
+        .expect("deserialize terminal proof without extension-opening reduction");
+        assert_eq!(decoded, without_reduction);
+
+        let with_reduction = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            Some(tiny_reduction()),
+            SumcheckProof {
+                round_polys: Vec::new(),
+            },
+            final_witness,
+        );
+        let mut bytes_with_reduction = Vec::new();
+        with_reduction
+            .serialize_uncompressed(&mut bytes_with_reduction)
+            .expect("serialize terminal proof with extension-opening reduction");
+        let decoded_with_reduction = TerminalLevelProof::<F, F>::deserialize_uncompressed(
+            &*bytes_with_reduction,
+            &with_reduction.shape(),
+        )
+        .expect("deserialize terminal proof with extension-opening reduction");
+        assert_eq!(decoded_with_reduction, with_reduction);
+
+        with_reduction
+            .shape()
+            .check()
+            .expect("terminal shape with reduction passes Valid::check()");
     }
 }

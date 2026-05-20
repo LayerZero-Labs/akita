@@ -47,9 +47,9 @@ use akita_types::{
     schedule_num_fold_levels, schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
     AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, DirectStep, DirectWitnessProof,
-    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
-    MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape,
+    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
+    PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
     RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
 };
 
@@ -248,43 +248,6 @@ pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D
     pub flat_hints: Vec<AkitaCommitmentHint<F, D>>,
 }
 
-/// Pick the `log_basis` for the terminal packed-digit witness.
-///
-/// The planner's final direct step is authoritative and must match the
-/// runtime recursive state.
-///
-/// # Errors
-///
-/// Returns an error if the schedule does not terminate in a direct step or if
-/// the terminal direct step does not match the runtime witness length/basis.
-pub fn resolve_final_direct_step<'a, F, L>(
-    schedule: &'a Schedule,
-    current_state: &RecursiveProverState<F, L>,
-) -> Result<&'a DirectStep, AkitaError>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-{
-    let Some(Step::Direct(direct_step)) = schedule.steps.last() else {
-        return Err(AkitaError::InvalidSetup(
-            "schedule must terminate in a direct step".to_string(),
-        ));
-    };
-    let DirectWitnessShape::PackedDigits((_, bits_per_elem)) = direct_step.witness_shape else {
-        return Err(AkitaError::InvalidSetup(
-            "recursive schedule must terminate in a packed-digit direct step".to_string(),
-        ));
-    };
-    if direct_step.current_w_len != current_state.w.len()
-        || bits_per_elem != current_state.log_basis
-    {
-        return Err(AkitaError::InvalidSetup(
-            "scheduled direct step did not match final runtime state".to_string(),
-        ));
-    }
-    Ok(direct_step)
-}
-
 /// Assemble intermediate fold-level proofs followed by the terminal-level
 /// proof.
 ///
@@ -305,38 +268,6 @@ where
         .collect::<Vec<_>>();
     steps.push(AkitaProofStep::Terminal(terminal));
     steps
-}
-
-/// Build the terminal `final_witness` payload from a recursive prover state
-/// against a scheduled packed-digit direct step.
-///
-/// # Errors
-///
-/// Returns an invalid-setup error when the scheduled terminal step is not a
-/// packed-digit witness matching the final runtime witness length.
-pub fn build_final_witness_payload<F, L>(
-    final_state: &RecursiveProverState<F, L>,
-    direct_step: &DirectStep,
-) -> Result<DirectWitnessProof<F>, AkitaError>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-{
-    let DirectWitnessShape::PackedDigits((num_elems, final_log_basis)) = direct_step.witness_shape
-    else {
-        return Err(AkitaError::InvalidSetup(
-            "recursive suffix must terminate in a packed-digit direct witness".to_string(),
-        ));
-    };
-    let final_digits = final_state.logical_w().as_i8_digits();
-    if final_digits.len() != num_elems {
-        return Err(AkitaError::InvalidSetup(
-            "scheduled direct witness shape did not match final logical witness".to_string(),
-        ));
-    }
-    Ok(DirectWitnessProof::PackedDigits(
-        PackedDigits::from_i8_digits_with_min_bits(final_digits, final_log_basis),
-    ))
 }
 
 struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
@@ -3278,8 +3209,8 @@ where
     )?;
 
     // Terminal layout: the D-block is omitted, so the relation claim sums no
-    // `v` rows. `quad_eq.v` is computed by ring_switch_build_w as a witness
-    // side effect but never travels on the wire.
+    // `v` rows. `quad_eq.v` is constructed as an empty vector under
+    // `MRowLayout::Terminal`; pass `&[]` here for symmetry with the verifier.
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
         &rs.tau1,
         rs.alpha,

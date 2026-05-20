@@ -279,10 +279,19 @@ fn finalize_terminal_direct_witness_shape<Cfg: PlannerConfig>(
     nw: usize,
     nz: usize,
 ) {
-    let Some(last) = suffix_steps.last_mut() else {
+    // Suffix DP invariant: this finalizer only runs for terminal-suffix
+    // candidates whose suffix is exactly `[Direct]`. Any longer suffix or a
+    // non-`Direct` first step indicates a misuse from a caller that did not
+    // gate on `matches!(suffix_steps.first(), Some(Step::Direct(_)))`.
+    debug_assert_eq!(
+        suffix_steps.len(),
+        1,
+        "finalize_terminal_direct_witness_shape expects exactly one suffix step"
+    );
+    let Some(first) = suffix_steps.first_mut() else {
         return;
     };
-    let Step::Direct(direct) = last else {
+    let Step::Direct(direct) = first else {
         return;
     };
     let DirectWitnessShape::PackedDigits((_, log_basis)) = direct.witness_shape else {

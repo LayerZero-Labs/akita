@@ -384,12 +384,10 @@ where
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
     fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
-        let eq_val = EqPolynomial::mle(&self.r_stage1, challenges)?;
         let w_eval = {
             let _span = tracing::info_span!("stage2_witness_eval").entered();
             self.witness_eval(challenges)?
         };
-        let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
 
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
@@ -398,8 +396,16 @@ where
             self.row_eval(x_challenges)?
         };
         let relation_oracle = w_eval * alpha_val * row_val;
-        let result = self.batching_coeff * virtual_oracle + relation_oracle;
-        Ok(result)
+
+        // Terminal levels run with `batching_coeff = 0`, which zeros the
+        // virtual half regardless of `r_stage1` / `w_eval`. Skip the
+        // EqPolynomial eval and the `w * (w + 1)` round in that case.
+        if self.batching_coeff.is_zero() {
+            return Ok(relation_oracle);
+        }
+        let eq_val = EqPolynomial::mle(&self.r_stage1, challenges)?;
+        let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
+        Ok(self.batching_coeff * virtual_oracle + relation_oracle)
     }
 }
 

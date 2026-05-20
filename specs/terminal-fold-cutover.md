@@ -19,7 +19,7 @@ terminal fold, and (b) drops the redundant D-block of the `M`-matrix
 (the `v = D · w_hat` rows) from the terminal fold entirely, removing
 `v` from `TerminalLevelProof`, shrinking the relation sumcheck, and
 shrinking the shipped recursive witness. The PR also hard-splits the
-proof shape into separate `IntermediateLevelProof` / `TerminalLevelProof`
+proof shape into separate `AkitaLevelProof` / `TerminalLevelProof`
 types and refits the planner and generated schedule tables to the new
 terminal-level cost model.
 
@@ -42,16 +42,16 @@ with a transmit-and-bind terminal protocol that:
    level under a new `MRowLayout::Terminal` mode, omits `v` from
    `TerminalLevelProof`, and runs the relation sumcheck without any
    `v`-rows.
-4. Splits `AkitaLevelProof` into hard, non-shared
-   `IntermediateLevelProof` and `TerminalLevelProof` types and lifts
-   the same split into `AkitaProofStep::{Intermediate, Terminal}` and
+4. Keeps `AkitaLevelProof` as the intermediate-only proof and adds a
+   hard-split, non-shared `TerminalLevelProof` sibling, lifting the
+   same split into `AkitaProofStep::{Intermediate, Terminal}` and
    `AkitaBatchedRootProof::{Fold, Terminal}`.
 5. Refits the planner (dynamic + generated tables + baseline) so the
    schedule's recorded `next_w_len` for the last fold matches the
    prover's actual terminal-layout cleartext witness length.
 
 Key abstractions touched: `AkitaBatchedProof`, `AkitaBatchedRootProof`,
-`AkitaProofStep`, `IntermediateLevelProof`, `TerminalLevelProof`,
+`AkitaProofStep`, `AkitaLevelProof`, `TerminalLevelProof`,
 `MRowLayout`, `QuadraticEquation::{new_prover,
 new_recursive_multipoint_prover}`, `ring_switch_build_w`,
 `compute_r_split_eq`, `generate_y`,
@@ -90,9 +90,10 @@ the baseline planner.
   guard and the
   `adaptive_{bounded,onehot}_plan_matches_runtime_next_w_len` tests in
   `crates/akita-config/src/schedule_policy.rs`.
-- **Proof type separation.** `AkitaLevelProof` is gone. Intermediate
-  steps deserialize as `AkitaProofStep::Intermediate`, terminal as
-  `AkitaProofStep::Terminal`; root deserializes as
+- **Proof type separation.** `AkitaLevelProof` is intermediate-only,
+  with `TerminalLevelProof` as a sibling type. Intermediate steps
+  deserialize as `AkitaProofStep::Intermediate(AkitaLevelProof)`,
+  terminal as `AkitaProofStep::Terminal(TerminalLevelProof)`; root deserializes as
   `AkitaBatchedRootProof::Fold` (multi-fold) or
   `AkitaBatchedRootProof::Terminal` (single-fold). Protected by
   `AkitaBatchedProof` shape derivation/`shape()` and the serialize +
@@ -246,10 +247,11 @@ Affected crates and the change at each boundary:
     layout-free helpers internally call the new helpers with
     `MRowLayout::Intermediate` so external callers see no behavior
     change.
-  - `AkitaLevelProof` hard-split into `IntermediateLevelProof` (still
-    carries `v`, stage-1 sumcheck, `next_w_commitment`,
-    `next_w_eval`) and `TerminalLevelProof` (no `v`, no stage-1, no
-    next-commitment; ships `final_witness` and an optional
+  - `AkitaLevelProof` is now intermediate-only (still carries `v`,
+    stage-1 sumcheck, `next_w_commitment`, `next_w_eval`); its
+    terminal-only fields are extracted into a new sibling
+    `TerminalLevelProof` (no `v`, no stage-1, no next-commitment;
+    ships `final_witness` and an optional
     `extension_opening_reduction`).
   - `AkitaProofStep::{Intermediate, Terminal}` mirrors the level
     split; `AkitaBatchedRootProof::{Fold, Terminal}` mirrors it for
@@ -344,10 +346,10 @@ Affected crates and the change at each boundary:
   M-matrix at the terminal level is the right structural fix.
 - **Keep `AkitaLevelProof` as a single struct with optional `v`,
   optional `stage1`, optional `next_w_commitment`.** Rejected as
-  user-visible mess. The hard split into
-  `IntermediateLevelProof` / `TerminalLevelProof` makes the proof
-  variants checkable at the type level and forces the verifier to
-  branch on the variant rather than on `Option` fields.
+  user-visible mess. The hard split into intermediate-only
+  `AkitaLevelProof` and a new `TerminalLevelProof` sibling makes the
+  proof variants checkable at the type level and forces the verifier
+  to branch on the variant rather than on `Option` fields.
 - **Refit only the dynamic planner (skip the generated-tables
   pipeline).** Rejected: schedules served from the generated tables
   must agree with the runtime witness sizing, otherwise the prover's
@@ -372,8 +374,9 @@ Affected crates and the change at each boundary:
 
 Done in the following order, all on `quang/akita-fix-tail`:
 
-1. Hard-split `AkitaLevelProof` into `IntermediateLevelProof` and
-   `TerminalLevelProof`; lift the split into `AkitaProofStep` and
+1. Keep `AkitaLevelProof` as the intermediate-only proof and add a
+   new `TerminalLevelProof` sibling carrying the terminal-only fields;
+   lift the split into `AkitaProofStep` and
    `AkitaBatchedRootProof`; update serialization + shape derivation;
    update all match sites in prover/verifier/tests.
 2. Move the cleartext `final_witness` absorb to the same transcript

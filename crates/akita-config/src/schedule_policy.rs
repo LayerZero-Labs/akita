@@ -296,7 +296,15 @@ mod tests {
 
     #[cfg(not(feature = "zk"))]
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
-        let key = AkitaScheduleLookupKey::singleton(num_vars);
+        assert_plan_matches_runtime_w_sizes_for_key::<Cfg>(AkitaScheduleLookupKey::singleton(
+            num_vars,
+        ));
+    }
+
+    #[cfg(not(feature = "zk"))]
+    fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(
+        key: AkitaScheduleLookupKey,
+    ) {
         let plan = Cfg::schedule_plan(key)
             .expect("planner should succeed")
             .expect("config should provide a planner");
@@ -313,14 +321,26 @@ mod tests {
             } else {
                 akita_types::MRowLayout::Intermediate
             };
+            // Root-level batched witnesses fan out over the key's vector
+            // counts; recursive levels collapse back to singleton-by-construction.
+            let (np, nt, nw, nz) = if idx == 0 {
+                (
+                    key.num_points,
+                    key.num_t_vectors,
+                    key.num_w_vectors,
+                    key.num_z_vectors,
+                )
+            } else {
+                (1, 1, 1, 1)
+            };
             let runtime_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<
                 Cfg::Field,
-            >(&level.lp, 1, 1, 1, 1, layout)
+            >(&level.lp, np, nt, nw, nz, layout)
             .expect("valid planned witness")
                 * level.lp.ring_dimension;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,
-                "planner/runtime next_w_len mismatch at level {} for num_vars={num_vars}",
+                "planner/runtime next_w_len mismatch at level {} for key={key:?}",
                 level.inputs.level
             );
         }
