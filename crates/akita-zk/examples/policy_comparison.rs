@@ -199,7 +199,7 @@ fn main() {
         let g_bytes = compact_estimate_bytes(padded_coeffs, g_bits, false);
         let lyub_p = 1.0 / lyubashevsky_m(wf, ZK_ERROR_BITS);
 
-        let gae_params = GaertnerRejectionParams::for_l2_bound(
+        let gaertner_params = GaertnerRejectionParams::for_l2_bound(
             ell,
             D,
             &cfg,
@@ -209,11 +209,11 @@ fn main() {
             TAIL_ERROR_BITS,
         )
         .unwrap();
-        let gae_bits = bits_for_response_bound(gae_params.response_bound);
+        let gaertner_bits = bits_for_response_bound(gaertner_params.response_bound);
         // Gärtner version sends one extra sign byte.
-        let gae_bytes = compact_estimate_bytes(padded_coeffs, gae_bits, true);
-        let gae_p = gae_params.estimated_acceptance_probability();
-        let gae_m = gae_params.rejection_m;
+        let gaertner_bytes = compact_estimate_bytes(padded_coeffs, gaertner_bits, true);
+        let gaertner_p = gaertner_params.estimated_acceptance_probability();
+        let gaertner_m = gaertner_params.rejection_m;
 
         let bliss_p = 1.0 / bliss_bimodal_m(wf);
 
@@ -227,16 +227,16 @@ fn main() {
         );
         println!(
             "sweep_bliss={wf:.1},{:.0},{},{},{:.4},{:.9}",
-            gae_params.sigma,
-            gae_bits,
+            gaertner_params.sigma,
+            gaertner_bits,
             // BLISS would also need sign hiding; counted public-sign for parity.
-            compact_estimate_bytes(padded_coeffs, gae_bits, true),
+            compact_estimate_bytes(padded_coeffs, gaertner_bits, true),
             bliss_bimodal_m(wf),
             bliss_p
         );
         println!(
             "sweep_gaertner={wf:.1},{:.0},{},{},{:.6},{:.9}",
-            gae_params.sigma, gae_bits, gae_bytes, gae_m, gae_p,
+            gaertner_params.sigma, gaertner_bits, gaertner_bytes, gaertner_m, gaertner_p,
         );
     }
     println!();
@@ -333,7 +333,7 @@ fn main() {
         }
 
         // Gärtner (public sign, non-ZK).
-        let gae_params = GaertnerRejectionParams::for_l2_bound(
+        let gaertner_params = GaertnerRejectionParams::for_l2_bound(
             ell,
             D,
             &cfg,
@@ -343,40 +343,40 @@ fn main() {
             TAIL_ERROR_BITS,
         )
         .unwrap();
-        let gae_bits = bits_for_response_bound(gae_params.response_bound);
-        let gae_est = compact_estimate_bytes(padded_coeffs, gae_bits, true);
+        let gaertner_bits = bits_for_response_bound(gaertner_params.response_bound);
+        let gaertner_est = compact_estimate_bytes(padded_coeffs, gaertner_bits, true);
         let prove_start = Instant::now();
-        let gae_proof = prove_compact_public_sign_gaertner_ajtai_opening::<F, Tr, _, D>(
+        let gaertner_proof = prove_compact_public_sign_gaertner_ajtai_opening::<F, Tr, _, D>(
             &relation,
             &witness,
             &cfg,
-            &gae_params,
+            &gaertner_params,
             &mut rng,
             prove_attempts,
         );
-        let gae_prove_ms = prove_start.elapsed().as_millis();
-        match gae_proof {
+        let gaertner_prove_ms = prove_start.elapsed().as_millis();
+        match gaertner_proof {
             Ok(proof) => {
                 let verify_start = Instant::now();
                 let ok = verify_compact_public_sign_gaertner_ajtai_opening::<F, Tr, D>(
                     &relation,
                     &cfg,
-                    &gae_params,
+                    &gaertner_params,
                     &proof,
                 )
                 .unwrap();
                 let verify_ms = verify_start.elapsed().as_millis();
                 println!(
-                    "run_gaertner: alpha={wf:.1}, verifies={ok}, prove_ms={gae_prove_ms}, verify_ms={verify_ms}, response_bits={gae_bits}, est_bytes={gae_est}, measured_bytes={}, sign={}, p_accept={:.6}",
+                    "run_gaertner: alpha={wf:.1}, verifies={ok}, prove_ms={gaertner_prove_ms}, verify_ms={verify_ms}, response_bits={gaertner_bits}, est_bytes={gaertner_est}, measured_bytes={}, sign={}, p_accept={:.6}",
                     proof.serialized_size(),
                     proof.sign,
-                    gae_params.estimated_acceptance_probability()
+                    gaertner_params.estimated_acceptance_probability()
                 );
             }
             Err(e) => {
                 println!(
-                    "run_gaertner: alpha={wf:.1}, FAILED prove_ms={gae_prove_ms}, p_accept={:.6}, err={e}",
-                    gae_params.estimated_acceptance_probability()
+                    "run_gaertner: alpha={wf:.1}, FAILED prove_ms={gaertner_prove_ms}, p_accept={:.6}, err={e}",
+                    gaertner_params.estimated_acceptance_probability()
                 );
             }
         }
