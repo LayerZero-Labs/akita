@@ -674,14 +674,17 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             // matrix seed using the domain-separated label
             // `b"tier1-f"`. Mirrors the prover-side derivation in
             // `crates/akita-prover/src/kernels/matrix.rs` and commit
-            // `f39615bf`. We rebuild the F matrix here on every
-            // evaluation; future revisions can cache it on the
-            // verifier setup once `AkitaVerifierSetup` carries
-            // tiering metadata.
-            let f_flat = {
+            // `f39615bf`. Cached lazily on the expanded setup so
+            // repeated verifies on the same setup pay the SHAKE
+            // expansion only once. The very first verify still
+            // populates the cache — that one trial sees the original
+            // derive cost (still attributed to the
+            // `tier1_f_matrix_derive` span when populated for the
+            // first time).
+            let f_flat = setup.tier1_f_matrix(n_f * f_width, |s| {
                 let _f_span = tracing::info_span!("tier1_f_matrix_derive").entered();
-                derive_tier1_f_matrix_flat::<F, D>(n_f * f_width, &setup.seed.public_matrix_seed)
-            };
+                derive_tier1_f_matrix_flat::<F, D>(n_f * f_width, s)
+            });
             let f_view = f_flat.ring_view::<D>(n_f, f_width);
 
             // Row weight slices from eq_tau1. Tiered row layout from

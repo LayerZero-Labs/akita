@@ -30,7 +30,8 @@ pub(crate) fn derive_tier1_f_matrix_flat<F: FieldCore + RandomSampling, const D:
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {
-    let ring_elements: Vec<CyclotomicRing<F, D>> = (0..total_ring_elements)
+    use akita_field::parallel::*;
+    let ring_elements: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..total_ring_elements)
         .map(|idx| {
             let mut entry_rng = ShakeXofRng::new(seed, TIER1_F_MATRIX_LABEL, idx);
             CyclotomicRing::random(&mut entry_rng)

@@ -49,16 +49,16 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
         let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total))?;
 
-        let expanded = Arc::new(AkitaExpandedSetup {
-            seed: AkitaSetupSeed {
+        let expanded = Arc::new(AkitaExpandedSetup::new(
+            AkitaSetupSeed {
                 max_num_vars,
                 max_num_batched_polys,
                 max_num_points,
                 max_stride,
                 public_matrix_seed,
             },
-            shared_matrix: shared_flat,
-        });
+            shared_flat,
+        ));
 
         Ok(Self {
             expanded,
