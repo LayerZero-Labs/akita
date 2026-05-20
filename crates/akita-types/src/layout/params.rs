@@ -432,6 +432,11 @@ impl LevelParams {
 
     /// Build a new `LevelParams` that keeps rank/ring info from `self` but
     /// replaces all layout-derived fields with those from `other`.
+    ///
+    /// `fold_challenge_shape` is part of the layout: it determines block
+    /// partitioning for stage-1 challenge sampling and is propagated from
+    /// `other` so SIS-derived parameter sets adopt the shape baked into the
+    /// layout they are paired with.
     pub fn with_layout(&self, other: &LevelParams) -> Self {
         let d = self.ring_dimension;
         Self {
@@ -463,7 +468,7 @@ impl LevelParams {
             m_vars: other.m_vars,
             r_vars: other.r_vars,
             stage1_config: self.stage1_config.clone(),
-            fold_challenge_shape: self.fold_challenge_shape,
+            fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
             num_digits_fold: other.num_digits_fold,

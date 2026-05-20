@@ -49,7 +49,7 @@ where
     let level_lp = scale_batched_root_layout(
         root_lp,
         num_claims,
-        Cfg::planner_stage1_challenge_config(Cfg::PLANNER_D).l1_norm(),
+        root_lp.challenge_l1_mass(),
         Cfg::planner_field_bits(),
     )?;
     let derived_root_lp =
