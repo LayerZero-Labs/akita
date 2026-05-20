@@ -108,7 +108,6 @@ where
         .checked_mul(level_lp.ring_dimension)
         .and_then(|len| len.checked_mul(Cfg::planner_recursive_witness_expansion()))
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
-    let w_ring = next_w_len / level_lp.ring_dimension;
 
     let input_elem_bits = if level == 0 {
         fb as usize
@@ -125,7 +124,6 @@ where
         return Ok(None);
     }
 
-    let _ = w_ring;
     Ok(Some(CandidateLevelParams {
         proof_lp: level_lp.clone(),
         lp: level_lp,
@@ -715,7 +713,6 @@ where
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("root recursive witness length overflow".into())
             })?;
-        let w_ring = next_w_len / level_lp.ring_dimension;
 
         let next_bits = next_w_len.checked_mul(log_basis as usize).ok_or_else(|| {
             AkitaError::InvalidSetup("root next witness bit length overflow".into())
@@ -727,7 +724,6 @@ where
             continue;
         }
 
-        let _ = w_ring;
         if best.as_ref().is_none_or(|b| next_w_len < b.next_w_len) {
             best = Some(CandidateLevelParams {
                 proof_lp,
