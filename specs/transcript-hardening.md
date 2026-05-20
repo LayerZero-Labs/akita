@@ -249,7 +249,7 @@ pub struct SetupSection {
     /// Blake2b of canonical bytes of the expanded verifier matrix artifact.
     /// This can be precomputed and cached at setup construction. In the
     /// ordinary transparent path it is implied by `setup_seed_digest`, but
-    /// binding the actual artifact catches mis-expanded or custom-loaded setup
+    /// binding the actual artifact catches incorrectly expanded or custom-loaded setup
     /// matrices.
     pub shared_matrix_digest: [u8; 32],
 
