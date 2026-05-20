@@ -1,27 +1,28 @@
 # `feat/tensor-challenges` vs `main` — Deep §5 conformance audit
 
-**Date**: 2026-05-19
-**HEAD**: `81cceecf6206123170eab38d388768a320b16f00` (audited code HEAD before this audit-doc iteration commit)
+**Date**: 2026-05-20
+**HEAD**: `dd5302587bf76291135c58e525b2763093514395` (audited code HEAD before this audit-doc iteration commit)
 **Merge base**: `4b0b86a946dca5124ddc1c0197bda7b73284a137`
-**Commits on top of main**: 153 total (`150` non-merge + `3` merge commits)
-**Diff stat**: `133 files changed, 149559 insertions(+), 5562 deletions(-)`
+**Commits on top of main**: 155 total (`152` non-merge + `3` merge commits)
+**Diff stat**: `133 files changed, 149999 insertions(+), 5604 deletions(-)`
 **Book ref**: `/home/giuseppe/lattice-jolt/sections/akita/5_fourth_root_verifier.tex`
 **Scope**: every meaningful change on top of main, classified against book §5 / Figure 12.
 **Methodology**: commit-by-commit walkthrough + file-by-file diff + book line cross-reference.
 
-> Iteration status: this is the iteration-2 scaffold plus first-pass evidence.
+> Iteration status: this is the iteration-3 scaffold plus first-pass evidence.
 > Anything marked `ITERATION-TODO` is intentionally not yet accepted as audited.
 > The completion promise is false until all TODO markers are removed and every
 > commit row has a final class.
 
 ## Executive summary
 
-- **Audit inventory updated**: audited code HEAD is `81cceecf`, merge-base is `4b0b86a9`, with `153` commits and `133` changed files on top of `origin/main`.
+- **Audit inventory updated**: audited code HEAD is `dd530258`, merge-base is `4b0b86a9`, with `155` commits and `133` changed files on top of `origin/main`.
 - **Diff shape is heavily audit/spec/generated skewed**: `scripts/` accounts for `108,492` net LOC, `specs/` for `6,100` net LOC, and generated schedule/security data are a major part of the raw insertion count. These need classification but should not be mistaken for protocol code.
 - **Primary protocol crates touched**: `akita-prover` (`+5,562` net), `akita-verifier` (`+4,742` net), `akita-types` (`+4,588` net), `akita-pcs` tests/benches (`+6,174` net), `akita-config` (`+1,799` net), `akita-planner` (`+1,043` net), `akita-challenges` (`+1,406` net), and `akita-algebra` (`+2,053` net).
-- **Initial aligned evidence found**: tensor challenge left/right sampling and transcript digesting match §5.2 / Figure 12 rounds 2-4; setup claim-reduction uses a degree-2 sumcheck with the dedicated transcript label; `MRowLayout` documents the book's 10 tier groups plus the §5.6 joint-W extension.
+- **Initial aligned evidence found**: tensor challenge left/right sampling and transcript digesting match §5.2 / Figure 12 rounds 2-4; setup claim-reduction now uses the book-shaped row/coeff degree-2 reducer with the dedicated transcript label; `MRowLayout` documents the book's 10 tier groups plus the §5.6 joint-W extension.
 - **Initial gap candidate confirmed for revalidation**: the implementation has an offset-slice carry-DP evaluator, but no general sliced tensor transducer API matching §5.3 Definition/Algorithm. This is likely a non-blocking gap if all production calls use offset slices only.
-- **Initial drift register is not final**: prior drift closures in `specs/section5_protocol_drift_audit.md` must be rechecked against HEAD and commit history, especially cascade natural discovery, force-route retirement, chunk aggregation transcript binding, and `setup_verifier` prepopulation timing.
+- **New high-priority drift candidate from iteration 3**: after `81cceec` / `dd53025`, the claim reducer is closer to §5.4 lines 615-621, but the active schedule/test evidence no longer emits the book §5.8 headline `(f_L0=8, f_L1=4)` recursive cascade. `DenseCascadeCfg`'s sentinel at NV=22 asserts `routing_count == 0`, while the old positive regression for two routed tiers is ignored as "compact r_x-fixed S cannot be f^2-tiered".
+- **Initial drift register is not final**: prior drift closures in `specs/section5_protocol_drift_audit.md` must be rechecked against HEAD and commit history, especially cascade natural discovery, force-route retirement, chunk aggregation transcript binding, and `setup_verifier` prepopulation timing. Iteration 3 re-opens the cascade closure as **DRIFT-1 candidate** until the §5.6-§5.8 sub-audit resolves whether another path realizes the book cascade.
 - **Production-readiness verdict is deferred** until the full commit chronology, public API delta, type-shape delta, test delta, security delta, and cascade measurement walkthrough are complete.
 
 ## Diff overview by crate
@@ -58,12 +59,19 @@
   - **Implementation**: `crates/akita-challenges/src/stage1.rs:532-542` samples `CHALLENGE_STAGE1_FOLD_TENSOR_LEFT`, absorbs `ABSORB_STAGE1_TENSOR_LEFT`, then samples `CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT`.
   - **Why aligned**: The verifier/prover derive left and right tensor halves in the book order. The explicit left digest absorb is an implementation domain-separation step for the book's empty Round 3; it binds the right-half challenge to the sampled left half without adding a prover message.
 
-- **Setup-side claim-reduction verifier uses a degree-2 sumcheck and dedicated transcript label** (commits: `2a4df12`, `9451f22`, `aa01e37` require per-commit blame refinement)
+- **Setup-side claim-reduction verifier uses a degree-2 sumcheck and dedicated transcript label** (commits: `2a4df12`, `9451f22`, `aa01e37`, `81cceec` require per-commit blame refinement)
   - **Book**: §5.4 lines 599-626:
     > "Define the scaling factor ... $\lambda := w_{\mathsf{eval}} \cdot \wt{\alpha}(r_y)$ ... Subtracting the verifier-computable algebraic part ... the remaining claim is ... proved by a degree-$2$ sumcheck over $\lceil \log_2 m_{\mathsf{row}} \rceil + \log_2 d$ variables ... The critical design choice: carry the scaled claim ... rather than dividing by $\lambda$."
-  - **Implementation**: `crates/akita-verifier/src/protocol/setup_claim_reduction.rs:124-147` calls `verify_sumcheck_rounds_only(..., 2, payload.m_setup_eval, ..., CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND)`.
-  - **Implementation**: `crates/akita-verifier/src/protocol/setup_claim_reduction.rs:149-156` checks `weight_at_point * payload.s_opening_value == payload.m_setup_eval` before the optional cleartext-vs-recursive closing path.
+  - **Implementation**: `crates/akita-verifier/src/protocol/setup_claim_reduction.rs:175-182` calls `verify_sumcheck_rounds_only(..., 2, payload.m_setup_eval, ..., CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND)`.
+  - **Implementation**: `crates/akita-verifier/src/protocol/setup_claim_reduction.rs:184-189` checks `weight_at_point * payload.s_opening_value == final_running_claim` before the optional cleartext-vs-recursive closing path.
   - **Why aligned**: The verifier performs the book's short setup-side sumcheck with degree 2 and carries a scaled setup claim instead of dividing by the possibly-zero scaling factor.
+
+- **Book-shaped setup-claim reducer fixes the sumcheck variable set to row families plus coefficients** (commits: `81cceec`, `dd53025`)
+  - **Book**: §5.4 lines 615-621:
+    > "This is proved by a degree-$2$ sumcheck over $\lceil \log_2 m_{\mathsf{row}} \rceil + \log_2 d$ variables, reducing to a single point evaluation on the preprocessed shared-matrix commitment: $\lambda \cdot \mle{S}(r_i,\, r_x,\, r_k) = y_{\mathsf{setup}}$."
+  - **Implementation**: `crates/akita-verifier/src/protocol/setup_claim_reduction.rs:91-105` flattens only `row | coeff`; `crates/akita-verifier/src/protocol/setup_claim_reduction.rs:108-118` sets rounds to `row_bits + coeff_bits`; `crates/akita-types/src/layout/proof_size.rs:511-528` uses the same planned round count.
+  - **Implementation**: `crates/akita-prover/src/protocol/flow.rs:1309-1327` computes `claim_scale = w_eval * alpha(r_y)` and emits `SetupClaimReductionPayload { m_setup_eval: out.input_claim, s_opening_value, sumcheck }`; `crates/akita-verifier/src/protocol/setup_claim_reduction.rs:253-280` replays the main stage-2 sumcheck, computes the same scale, and verifies the setup reducer.
+  - **Why aligned**: The reducer no longer treats the setup claim as a full row/column/coeff MLE sumcheck; it fixes the stage-2 `r_x` point first and runs exactly the book's row-family plus coefficient sumcheck, carrying the scaled claim without division. This alignment creates a separate cascade drift candidate below because §5.5/§5.8 tiering still talks about routing/chunking the setup polynomial across recursive levels.
 
 - **Transcript labels added for Figure 12 stage boundaries** (commits: `dd5889b`, `f18418f`, `f90a056` require per-commit blame refinement)
   - **Book**: §5.6 lines 837-854, 885-919:
@@ -81,6 +89,20 @@
   - **Why aligned**: The book's 10 groups cover the tiered S/meta relation; the implementation adds 5 W groups for the §5.6 next-level joint witness case and documents the extension boundary explicitly.
 
 ### DRIFT (implementation differs from the book in observable behaviour)
+
+- **DRIFT-1: Headline `(f_L0=8, f_L1=4)` cascade is not emitted on the active book-shaped reducer path** (commits: `81cceec`, `dd53025`; prior related commits: `9ddf99b`, `9d33e27`, `fd0ddb3`, `4f90979`, `71d7eef`)
+  - **Book**: §5.4 lines 627-632:
+    > "The matrix polynomial $\mle{S}$ from level~$L$ is batched into level~$L{+}1$'s witness for joint PCS opening: it enters level~$L{+}1$ \emph{unfolded} as an additional polynomial alongside the folded witness."
+  - **Book**: §5.8 lines 1171-1175:
+    > "Technique~2 requires tiered commitments at $f = 8$ (L0) $+ f_{\mathsf{L1}} = 4$ (L1) to keep the T2 cascade ratio $\lesssim 1$ across two levels. Setup storage drops from $32.5\,\text{GB}$ to ${\approx}\, 4.3\,\text{GB}$ for $n_v = 44$."
+  - **Implementation**: `crates/akita-verifier/src/protocol/setup_claim_reduction.rs:91-118` and `crates/akita-types/src/layout/proof_size.rs:511-528` reduce the setup-side claim to a compact `row | coeff` polynomial with `r_x` already fixed.
+  - **Implementation**: `crates/akita-pcs/tests/tiered_setup_e2e.rs:500-527` contains the old positive regression for at least two routed tiers `[8, 4]`, but it is `#[ignore = "documents book f=8 full-S cascade drift: compact r_x-fixed S cannot be f^2-tiered"]`.
+  - **Implementation**: `crates/akita-pcs/tests/tiered_setup_e2e.rs:800-857` asserts `DenseCascadeCfg` at NV=22 has book tier policy values `(8,4,1...)` but `routing_count == 0`; `crates/akita-pcs/tests/tiered_setup_e2e.rs:741-789` similarly asserts the default dense CR-on preset cleartext-discharges with `routing_count == 0`.
+  - **Nature of drift**: structural / schedule-selection / cascade-shape. The Round 8 reducer is aligned with the book's short row/coeff sumcheck, but the advertised §5.8 two-level recursive tier cascade is not active on the current schedule path.
+  - **Soundness impact**: NONE for accepted proofs if cleartext discharge runs; ASYMPTOTIC / production-performance impact for the fourth-root verifier claim.
+  - **Production blocker**: CONDITIONAL. It is a blocker for claiming the book §5.8 "T1+T2 @ L0+L1" cascade or production-ready fourth-root performance. It is not a blocker for the local soundness of the row/coeff claim-reduction sumcheck.
+  - **Recommended fix**: decide the intended contract, then make it explicit. If the book contract is full recursive cascade, restore a schedule/proof path that routes the full preprocessed `S` commitment through `[8,4]` tiers and keep the row/coeff reducer as the local sumcheck view. If the new contract is compact `r_x`-fixed cleartext discharge, update §5.8-facing docs and do not market the branch as implementing the book cascade speedup.
+  - **Cross-reference**: prior `section5_protocol_drift_audit.md` GAP-3 / SCOPE-3 claimed force-route and shared-matrix-collapse closure; iteration 3 refines that as re-opened for HEAD because current tests encode no routed headline cascade.
 
 - **DRIFT-TODO: Cascade discovery and force-route retirement require fresh audit**
   - **Book**: §5.8 lines 1171-1175:
@@ -133,15 +155,15 @@
 | §5.1 Problem and setup | narrative | 0 | 0 | 0 | `ITERATION-TODO` |
 | §5.2 Tensor stage-1 challenges | `ITERATION-TODO` | 1 seeded | 0 seeded | 0 seeded | `ITERATION-TODO` |
 | §5.3 Automaton contraction | `ITERATION-TODO` | 1 seeded | 0 seeded | 1 seeded | `ITERATION-TODO` |
-| §5.4 Claim-reduction sumcheck | `ITERATION-TODO` | 1 seeded | 0 seeded | 0 seeded | `ITERATION-TODO` |
+| §5.4 Claim-reduction sumcheck | `ITERATION-TODO` | 2 seeded | 0 seeded | 0 seeded | `ITERATION-TODO` |
 | §5.5 Tiered commitment design | `ITERATION-TODO` | 1 seeded | 1 candidate | 0 seeded | `ITERATION-TODO` |
 | §5.6 Combined protocol (Figure 12) | 8 rounds + output | 3 candidates | 0 seeded | 0 seeded | `ITERATION-TODO` |
 | §5.7 Security analysis | `ITERATION-TODO` | 0 | 0 | 0 | `ITERATION-TODO` |
-| §5.8 Concrete instantiation | `ITERATION-TODO` | 0 | 1 candidate | 0 | `ITERATION-TODO` |
+| §5.8 Concrete instantiation | `ITERATION-TODO` | 0 | 1 re-opened | 0 | `ITERATION-TODO` |
 
 ## Commit-by-commit walkthrough (chronological)
 
-The branch has `153` commits on top of the merge-base: `150` non-merge commits plus `3` merge commits (`ebb7c93`, `e94edeb`, `6bbaaec`). Iteration 2 expanded the complete spine below. Rows marked `PRELIMINARY` are not accepted final classifications until the relevant slice audit has attached file:line + book-line evidence.
+The branch has `155` commits on top of the merge-base: `152` non-merge commits plus `3` merge commits (`ebb7c93`, `e94edeb`, `6bbaaec`). Iteration 3 extended the complete spine below. Rows marked `PRELIMINARY` are not accepted final classifications until the relevant slice audit has attached file:line + book-line evidence.
 
 | # | Hash | Date | Title | §5 subsection | Class | Notes |
 |---:|---|---|---|---|---|---|
@@ -298,6 +320,8 @@ The branch has `153` commits on top of the merge-base: `150` non-merge commits p
 | 151 | `7c846fb` | 2026-05-19 | specs/audit: close DRIFT-3 via option (b) + document option (a) upgrade path | n/a | DOCS | Prior audit closure register. |
 | 152 | `5106c35` | 2026-05-19 | specs/audit: seed full §5 diff audit loop | n/a | DOCS | Creates this audit doc/scratchpad; not protocol code. |
 | 153 | `81cceec` | 2026-05-19 | phase5/setup-claim: align reducer with book shape | §5.4 / Fig. 12 R8 | GAP-CLOSING | NEW in iteration 2; must audit against book lines 599-626 and setup reducer code. |
+| 154 | `16595eb` | 2026-05-19 | specs/audit: expand full section 5 diff spine | n/a | DOCS | Iteration-2 audit-doc expansion; not protocol code. |
+| 155 | `dd53025` | 2026-05-20 | phase5/setup-claim: fix routed schedule gates | §5.4 / §5.8 | DRIFT | Iteration-3 evidence: fixes gates for compact row/coeff setup-claim routing, but current cascade sentinels assert `routing_count == 0` for the headline `(8,4)` path; see DRIFT-1 candidate. |
 
 ## Public API surface delta
 
@@ -354,15 +378,19 @@ Initial label deltas to verify:
 
 ## Cascade discovery walkthrough
 
-`ITERATION-TODO`: run or inspect `probe_cascade_schedules_extended` and classify the current state after commits `9ddf99b`, `9d33e27`, `fd0ddb3`, `4f90979`, `71d7eef`.
+Iteration-3 status: **re-opened**. The current HEAD has two different stories that must be reconciled before this section can be marked complete:
 
-Open questions for the next slice:
+- The planner objective code still enumerates both `routes_setup_recursively = false` and `true`, and charges setup storage / cleartext discharge objective terms in `crates/akita-planner/src/schedule_params.rs:537-627` and `crates/akita-planner/src/schedule_params.rs:998-1091`.
+- The current book-shaped setup reducer fixes `r_x` before the setup-side sumcheck, so the routed polynomial is compact row/coeff data (`crates/akita-verifier/src/protocol/setup_claim_reduction.rs:91-118`) rather than the older full row/col/coeff setup matrix.
+- Test evidence says the headline cascade is not currently emitted: `crates/akita-pcs/tests/tiered_setup_e2e.rs:800-857` asserts `DenseCascadeCfg` has `(f_L0,f_L1)=(8,4)` policy but `routing_count == 0`; `crates/akita-pcs/tests/tiered_setup_e2e.rs:500-527` keeps the old positive `[8,4]` routed assertion ignored as a documented drift.
 
-1. Does the planner emit `(f_L0=8, f_L1=4)` for `DenseCascadeCfg` at the configured NVs?
-2. Is that emission forced or naturally objective-driven?
-3. What is the smallest NV where each cascade config emits the cascade?
-4. What are cold and amortized verifier costs at NV=22 dense and NV=28 onehot?
-5. How do these extrapolate against book Table lines 1141-1158?
+Current answers, pending the §5.6-§5.8 sub-audit:
+
+1. Does the planner emit `(f_L0=8, f_L1=4)` for `DenseCascadeCfg`? **It exposes the per-level tier policy, but active schedule assertions at NV=22 expect zero recursive setup routes.**
+2. Forced or natural? **Neither for the active sentinel path; it cleartext-discharges.** The code no longer appears to force the old full-S route, but stale comments in `crates/akita-config/src/proof_optimized.rs:923-949` still mention force-routing and must be updated or reconciled.
+3. Smallest NV? **TODO** via `probe_cascade_schedules_extended`; current non-ignored sentinels mention dense default NV=19 and headline schedule-only NV=22, both with `routing_count == 0`.
+4. Wall-clock cost? **TODO**; existing measurement tests need reclassification because a zero-route compact reducer is not the book's L0+L1 cascade.
+5. Book Table 1141-1158 prediction? **Still 16x / 35x / 265x for T1+T2 @ L0+L1, but current HEAD has not yet shown that path active.**
 
 ## Production readiness verdict
 
@@ -388,6 +416,19 @@ Commands and evidence used in iteration 1:
 - `git log --merges --pretty='%h%x09%ad%x09%s' --date=short <merge-base>..HEAD --reverse`
 - `ReadFile` on the book and prior audits.
 - `rg` on tensor labels, `MRowLayout`, setup claim-reduction, and offset-eq evidence.
+
+Additional commands/evidence used in iteration 3:
+
+- `git status --short --branch`
+- `git branch --show-current`
+- `git rev-parse HEAD`
+- `git merge-base feat/tensor-challenges origin/main`
+- `git rev-list --count $(git merge-base feat/tensor-challenges origin/main)..HEAD`
+- `git diff --shortstat $(git merge-base feat/tensor-challenges origin/main)..HEAD`
+- `git log --pretty='%h %ad %s' --date=short $(git merge-base feat/tensor-challenges origin/main)..HEAD --reverse`
+- `git diff --numstat $(git merge-base feat/tensor-challenges origin/main)..HEAD`
+- `ReadFile` on `setup_claim_reduction.rs`, `stage2.rs`, `flow.rs`, `levels.rs`, `schedule_params.rs`, `proof_size.rs`, and `tiered_setup_e2e.rs`.
+- Three read-only subagents were dispatched for §5.2-§5.3, §5.4-§5.5, and §5.6-§5.8. Their results are not merged yet in this doc revision.
 
 Files not yet fully audited:
 

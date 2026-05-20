@@ -1,8 +1,22 @@
 ---
-iteration: 2
+iteration: 3
 max_iterations: 8
 completion_promise: "Deep §5 conformance audit completed on `feat/tensor-challenges`. `specs/section5_full_diff_audit.md` exists at HEAD and contains: (1) commit-by-commit walkthrough of every commit between `git merge-base origin/main HEAD` and HEAD, each classified as ALIGNED / DRIFT / GAP-CLOSING / SCOPE-OUTSIDE / SCAFFOLDING / TEST / DOCS / REVERT with §5 subsection cross-reference; (2) DRIFT register with file:line + exact book line citation + soundness-impact + production-blocker status for every drift; (3) GAP register with same fidelity for every §5 element absent from the implementation; (4) per-Figure-12-round implementation map (rounds 1-8) with commit hashes + prover/verifier file:line + transcript labels; (5) per-§5-subsection completeness matrix showing ALIGNED/DRIFT/GAP counts per subsection; (6) public API surface delta (every new pub symbol vs main); (7) transcript label delta (every new label cross-referenced to a Figure 12 round); (8) type-shape delta covering LevelParams / MRowLayout / proof shapes / cache types / tiered types / claim-reduction types; (9) test coverage delta listing every new test + gaps; (10) security delta vs security_analysis.md §10; (11) cascade discovery walkthrough; (12) three-tier production-readiness verdict. Every ALIGNED claim has a file:line + book line citation; every DRIFT has a fix recommendation; every GAP has a next-step. The drift register cross-references and either CONFIRMS or REFINES every entry in the prior `specs/section5_protocol_drift_audit.md`. No source code changed (audit doc + scratchpad only). No commits other than the audit doc + scratchpad. No push. cargo state unchanged from loop start."
 ---
+
+## Iteration 3 state (2026-05-20)
+
+- Parent-owned audit doc: `specs/section5_full_diff_audit.md`.
+- Audited code HEAD for this iteration: `dd5302587bf76291135c58e525b2763093514395`.
+- Merge base remains `4b0b86a946dca5124ddc1c0197bda7b73284a137`; branch has `155` commits on top of main and diff stat `133 files changed, 149999 insertions(+), 5604 deletions(-)`.
+- Parent slice completed: re-audited the post-scaffold setup-claim reducer / routed schedule gate changes (`81cceec`, `dd53025`) against book §5.4 lines 615-621, §5.4 lines 627-632, and §5.8 lines 1171-1175.
+- Doc update recorded one aligned item: book-shaped setup-claim reducer now uses row-family plus coeff variables (`row_bits + coeff_bits`) and carries the scaled `lambda * m_setup` claim.
+- Doc update re-opened cascade as **DRIFT-1 candidate**: current non-ignored schedule sentinels assert `routing_count == 0` for `DenseCascadeCfg` at NV=22 despite `(f_L0, f_L1) = (8,4)` policy; old positive `[8,4]` routed regression is ignored as documenting compact `r_x`-fixed S drift.
+- Background read-only subagents dispatched but not merged yet:
+  - §5.2-§5.3 tensor challenge / automaton slice.
+  - §5.4-§5.5 claim reduction / tiered commitment slice.
+  - §5.6-§5.8 Figure 12 / security / cascade slice.
+- Next iteration should merge subagent outputs, replace `DRIFT-TODO` with confirmed/refined cascade disposition, and begin finalizing public API/type/test deltas.
 
 Deep review of every change on `feat/tensor-challenges` vs `main` for §5 protocol conformance.
 
