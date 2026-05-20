@@ -18,7 +18,7 @@ use akita_types::{
     combine_polys, eval_poly, linear_combination, range_check_eval_from_s,
     stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
     stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
-    RingSliceSerializer,
+    MRowLayout, RingSliceSerializer,
 };
 
 /// Absorb the prover's `v` rows and sample the sparse stage-1 fold challenges.
@@ -31,12 +31,19 @@ pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     num_blocks: usize,
     lp: &LevelParams,
+    m_row_layout: MRowLayout,
 ) -> Result<Vec<SparseChallenge>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
+    // Terminal layout drops the D-block (`v = D · ŵ`) from M entirely;
+    // `v` never travels on the wire, so the absorb must be skipped on
+    // both prover and verifier to keep the Fiat-Shamir transcript in
+    // sync. Intermediate layouts still bind the prover's `v` rows.
+    if matches!(m_row_layout, MRowLayout::Intermediate) {
+        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
+    }
     sample_sparse_challenges::<F, T, D>(
         transcript,
         CHALLENGE_STAGE1_FOLD,
@@ -74,7 +81,7 @@ impl<F: FieldCore + FromPrimitiveInt> EqFactoredSumcheckInstanceVerifier<F>
         F::zero()
     }
 
-    fn start_round_state(&self) -> Self::RoundState {
+    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
         GruenSplitEq::new(&self.tau0)
     }
 
@@ -130,7 +137,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifie
         self.input_claim
     }
 
-    fn start_round_state(&self) -> Self::RoundState {
+    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
         GruenSplitEq::new(&self.tau)
     }
 
@@ -187,7 +194,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVeri
         self.input_claim
     }
 
-    fn start_round_state(&self) -> Self::RoundState {
+    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
         GruenSplitEq::new(&self.tau)
     }
 

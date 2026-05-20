@@ -20,7 +20,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, Ran
 use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, RingCommitment, RingSliceSerializer,
+    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
+    RingSliceSerializer,
 };
 use akita_types::{AkitaExpandedSetup, ClaimIncidenceSummary, LevelParams};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -178,6 +179,13 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     /// Number of batched evaluation rows in the matrix equation.  Equals
     /// the number of packaged public rows.
     num_public_rows: usize,
+    /// M-row layout for this relation. Terminal levels omit the D-block
+    /// (the partial-evaluated `v = D · ŵ` rows) from the M matrix and from
+    /// `y`; intermediate levels retain it. Stored so downstream prover
+    /// helpers (`compute_r_split_eq`, `ring_switch_finalize*`) pick the same
+    /// layout as the verifier without re-plumbing the layout through every
+    /// call site.
+    m_row_layout: MRowLayout,
 }
 
 fn compute_v_rows<F: FieldCore + CanonicalField, const D: usize>(
@@ -246,6 +254,7 @@ where
         y_rings: &[CyclotomicRing<F, D>],
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         stride: usize,
+        m_row_layout: MRowLayout,
     ) -> Result<Self, AkitaError> {
         {
             let x: u8 = 0;
@@ -426,26 +435,39 @@ where
             }
         };
 
+        // Terminal layout drops the D-block from the M-matrix entirely:
+        // `v = D · w_hat` never travels on the wire, the verifier never
+        // reconstructs it, and downstream prover paths (`ring_switch_build_w`,
+        // `relation_claim_from_rows_extension`) consume an empty `v` slice.
+        // Skip both the D-side blinding sample and the D-NTT under Terminal.
         #[cfg(feature = "zk")]
-        let d_blinding_digits = sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?;
-
-        let v = {
-            let _span = tracing::info_span!(
-                "compute_batched_v",
-                w_hat_planes = w_hat.flat_digits().len()
-            )
-            .entered();
-            compute_v_rows(
-                ntt_d,
-                lp.d_key.row_len(),
-                stride,
-                &w_hat,
-                #[cfg(feature = "zk")]
-                &d_blinding_digits,
-            )
+        let d_blinding_digits = match m_row_layout {
+            MRowLayout::Intermediate => {
+                sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?
+            }
+            MRowLayout::Terminal => FlatDigitBlocks::<D>::empty(),
         };
 
-        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+        let v = match m_row_layout {
+            MRowLayout::Intermediate => {
+                let _span = tracing::info_span!(
+                    "compute_batched_v",
+                    w_hat_planes = w_hat.flat_digits().len()
+                )
+                .entered();
+                let v = compute_v_rows(
+                    ntt_d,
+                    lp.d_key.row_len(),
+                    stride,
+                    &w_hat,
+                    #[cfg(feature = "zk")]
+                    &d_blinding_digits,
+                );
+                transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+                v
+            }
+            MRowLayout::Terminal => Vec::new(),
+        };
 
         let total_blocks = lp.num_blocks.checked_mul(num_claims).ok_or_else(|| {
             AkitaError::InvalidSetup("batched challenge count overflow".to_string())
@@ -522,23 +544,32 @@ where
             .iter()
             .flat_map(|commitment| commitment.u.iter().copied())
             .collect();
+        // Compose the terminal-fold cutover (drop D-rows from M) with
+        // the tiered M-row split (extra tier-1 zero rows + F rows
+        // between D and A). At Terminal both `v` and `n_d_active`
+        // collapse to empty/zero; at Intermediate we forward the full D
+        // half. The tiered branch additionally inserts
+        // `split · n_b' · num_points` zero rows between D and the
+        // commitment block per `specs/tiered_commit.md` §3.
+        let (y_v_slice, n_d_active) = match m_row_layout {
+            MRowLayout::Intermediate => (v.as_slice(), lp.d_key.row_len()),
+            MRowLayout::Terminal => (&[][..], 0usize),
+        };
         let y = if lp.is_tiered_root() {
-            // Tiered: commitment_rows is `u_final` (n_F per point), and
-            // y reserves tier-1 zero rows between D and F. See
-            // `specs/tiered_commit.md` §3.
             generate_y_tiered::<F, D>(
-                &v,
+                y_v_slice,
                 &commitment_rows,
                 y_rings,
                 &lp,
                 incidence_summary.num_points(),
+                n_d_active,
             )?
         } else {
             generate_y::<F, D>(
-                &v,
+                y_v_slice,
                 &commitment_rows,
                 y_rings,
-                lp.d_key.row_len(),
+                n_d_active,
                 lp.b_key.row_len(),
                 lp.a_key.row_len(),
             )?
@@ -564,6 +595,7 @@ where
             gamma,
             row_coefficient_rings,
             num_public_rows,
+            m_row_layout,
         })
     }
 
@@ -595,6 +627,7 @@ where
         commitment: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         stride: usize,
+        m_row_layout: MRowLayout,
     ) -> Result<Self, AkitaError> {
         let num_claims = ring_opening_points.len();
         if num_claims == 0
@@ -644,26 +677,36 @@ where
         };
         hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
 
+        // See the `new_prover` comment: Terminal layout omits `v = D · w_hat`
+        // entirely, so skip both the D-side blinding sample and the D-NTT.
         #[cfg(feature = "zk")]
-        let d_blinding_digits = sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?;
-
-        let v = {
-            let _span = tracing::info_span!(
-                "compute_recursive_multipoint_v",
-                w_hat_planes = w_hat.flat_digits().len()
-            )
-            .entered();
-            compute_v_rows(
-                ntt_d,
-                lp.d_key.row_len(),
-                stride,
-                &w_hat,
-                #[cfg(feature = "zk")]
-                &d_blinding_digits,
-            )
+        let d_blinding_digits = match m_row_layout {
+            MRowLayout::Intermediate => {
+                sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?
+            }
+            MRowLayout::Terminal => FlatDigitBlocks::<D>::empty(),
         };
 
-        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+        let v = match m_row_layout {
+            MRowLayout::Intermediate => {
+                let _span = tracing::info_span!(
+                    "compute_recursive_multipoint_v",
+                    w_hat_planes = w_hat.flat_digits().len()
+                )
+                .entered();
+                let v = compute_v_rows(
+                    ntt_d,
+                    lp.d_key.row_len(),
+                    stride,
+                    &w_hat,
+                    #[cfg(feature = "zk")]
+                    &d_blinding_digits,
+                );
+                transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+                v
+            }
+            MRowLayout::Terminal => Vec::new(),
+        };
 
         let total_blocks = lp.num_blocks.checked_mul(num_claims).ok_or_else(|| {
             AkitaError::InvalidSetup("recursive multipoint challenge count overflow".to_string())
@@ -714,25 +757,37 @@ where
             }
         };
 
+        // Compose terminal-fold (drop D-rows) with tiered (extra tier-1
+        // zero rows + F rows). See the corresponding branch in
+        // `new_prover` above.
+        let (y_v_slice, n_d_active) = match m_row_layout {
+            MRowLayout::Intermediate => (v.as_slice(), lp.d_key.row_len()),
+            MRowLayout::Terminal => (&[][..], 0usize),
+        };
         let y = if lp.is_tiered_root() {
-            // Recursive-level new_prover (this path) has `num_points`
-            // implicit in `commitment.len() / lp.outer_commitment_rows()`.
-            // For the legacy single-point recursive path this is 1; for
-            // tiered roots the caller (`new_recursive_multipoint_prover`)
-            // would supply the same shape.
+            // Tiered recursive: `commitment` is `u_final` (n_F per
+            // point). Recover `num_points` from the commitment length
+            // and `lp`'s tiered outer row count.
             let expected_outer = lp.outer_commitment_rows();
             let recursive_num_points = if expected_outer == 0 {
                 1
             } else {
                 commitment.len() / expected_outer
             };
-            generate_y_tiered::<F, D>(&v, commitment, y_rings, &lp, recursive_num_points)?
-        } else {
-            generate_y::<F, D>(
-                &v,
+            generate_y_tiered::<F, D>(
+                y_v_slice,
                 commitment,
                 y_rings,
-                lp.d_key.row_len(),
+                &lp,
+                recursive_num_points,
+                n_d_active,
+            )?
+        } else {
+            generate_y::<F, D>(
+                y_v_slice,
+                commitment,
+                y_rings,
+                n_d_active,
                 lp.b_key.row_len(),
                 lp.a_key.row_len(),
             )?
@@ -758,12 +813,18 @@ where
             gamma: vec![F::one(); num_claims],
             row_coefficient_rings: vec![CyclotomicRing::one(); num_claims],
             num_public_rows: num_claims,
+            m_row_layout,
         })
     }
 
     /// Get the vector y.
     pub fn y(&self) -> &[CyclotomicRing<F, D>] {
         &self.y
+    }
+
+    /// M-row layout this relation was built for.
+    pub fn m_row_layout(&self) -> MRowLayout {
+        self.m_row_layout
     }
 
     /// Get the vector v.
@@ -1264,6 +1325,11 @@ pub fn compute_r_split_eq<F, const D: usize>(
     // `n_b' · split_factor · num_digits_outer` per opening point for
     // `lp.is_tiered_root() == true`.
     outer_digits_per_point: &[FlatDigitBlocks<D>],
+    // Active M-row layout for this call site. `Terminal` drops the
+    // D-block from M (and from `y`); see `specs/terminal-fold-cutover.md`.
+    // Composes with the tiered split: a Terminal-layout tiered root
+    // emits `[consistency | public | tier1 | F | A]` (no D rows).
+    m_row_layout: MRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField + RandomSampling,
@@ -1325,21 +1391,34 @@ where
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
     let n_a = lp.a_key.row_len();
+    // Terminal layout drops the D-rows from M (and from `y`). All structural
+    // offsets must use `n_d_active`, not `n_d`, to match the verifier.
+    let n_d_active = match m_row_layout {
+        MRowLayout::Intermediate => n_d,
+        MRowLayout::Terminal => 0,
+    };
     let commitment_row_count = n_b
         .checked_mul(num_points)
         .ok_or(AkitaError::InvalidProof)?;
-    let num_rows = lp.m_row_count(num_points, num_public_outputs);
+    let num_rows = lp.m_row_count_for(num_points, num_public_outputs, m_row_layout)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Row layout depends on tiering (`specs/tiered_commit.md` §3):
-    //   Legacy: consistency (1) | public | D (n_d) | B (n_b · num_points) | A (n_a)
-    //   Tiered: consistency (1) | public | D (n_d)
-    //         | tier1 (f · n_b' · num_points) | F (n_F · num_points) | A (n_a)
+    // Row layout: composed Terminal-fold (drop D-block) × tiered split.
+    //   Legacy + Intermediate: consistency (1) | public | D (n_d)
+    //                          | B (n_b · num_points) | A (n_a)
+    //   Legacy + Terminal:     consistency (1) | public
+    //                          | B (n_b · num_points) | A (n_a)
+    //   Tiered + Intermediate: consistency (1) | public | D (n_d)
+    //                          | tier1 (f · n_b' · num_points)
+    //                          | F (n_F · num_points) | A (n_a)
+    //   Tiered + Terminal:     consistency (1) | public
+    //                          | tier1 (f · n_b' · num_points)
+    //                          | F (n_F · num_points) | A (n_a)
     let d_start = 1 + num_public_outputs;
     let (tier1_start, tier1_end, f_start, a_start);
     if lp.is_tiered_root() {
-        tier1_start = d_start + n_d;
+        tier1_start = d_start + n_d_active;
         let tier1_count = lp
             .split_factor
             .checked_mul(lp.b_prime_rows())
@@ -1359,7 +1438,7 @@ where
     } else {
         // Legacy layout — tier1/F starts/ends collapse to the B-row
         // block so the existing index arithmetic stays identical.
-        tier1_start = d_start + n_d;
+        tier1_start = d_start + n_d_active;
         tier1_end = tier1_start + commitment_row_count;
         f_start = tier1_end;
         a_start = tier1_end;
@@ -1377,7 +1456,7 @@ where
 
     let (d_cyclic, b_cyclic, mut a_quotients) = fused_split_eq_quotients::<F, D>(
         ntt_shared,
-        n_d,
+        n_d_active,
         n_b,
         n_a,
         stride,
@@ -1391,7 +1470,7 @@ where
     #[cfg(feature = "zk")]
     add_blinding_cyclic_rows(
         ntt_shared,
-        n_d,
+        n_d_active,
         stride,
         w_hat_flat.len(),
         d_blinding_digits,
@@ -1474,7 +1553,7 @@ where
             n_f * f_width,
             &setup.seed.public_matrix_seed,
         );
-        let f_ntt = crate::kernels::crt_ntt::build_ntt_slot(f_flat.ring_view::<D>(n_f, f_width))
+        let f_ntt = crate::kernels::crt_ntt::build_ntt_slot(f_flat.ring_view::<D>(n_f, f_width)?)
             .map_err(|e| AkitaError::InvalidSetup(format!("tiered F NTT cache: {e:?}")))?;
         // Outer gadget vector G = (1, 2^b, 2^{2b}, …). Computed
         // iteratively in F so `outer_log_basis · num_digits_outer ≥
@@ -1788,6 +1867,11 @@ pub fn generate_y_tiered<F, const D: usize>(
     public_outputs: &[CyclotomicRing<F, D>],
     lp: &akita_types::LevelParams,
     num_points: usize,
+    // Active D-row count: `lp.d_key.row_len()` for `MRowLayout::Intermediate`,
+    // `0` for `MRowLayout::Terminal` (the terminal-fold cutover drops the
+    // D-block from the M-matrix; see `specs/terminal-fold-cutover.md`).
+    // Callers must pass `&[]` for `v` when `n_d_active == 0`.
+    n_d_active: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore,
@@ -1798,14 +1882,13 @@ where
                 .to_string(),
         ));
     }
-    let n_d = lp.d_key.row_len();
     let n_a = lp.a_key.row_len();
     let n_b_prime = lp.b_prime_rows();
     let n_f = lp.f_key.row_len();
     let split = lp.split_factor;
-    if v.len() != n_d {
+    if v.len() != n_d_active {
         return Err(AkitaError::InvalidSize {
-            expected: n_d,
+            expected: n_d_active,
             actual: v.len(),
         });
     }
@@ -1828,7 +1911,7 @@ where
         .and_then(|x| x.checked_mul(num_points))
         .ok_or_else(|| AkitaError::InvalidSetup("tiered tier1 row count overflow".to_string()))?;
     let mut out = Vec::with_capacity(
-        1 + public_outputs.len() + n_d + tier1_row_count + u_final_rows.len() + n_a,
+        1 + public_outputs.len() + n_d_active + tier1_row_count + u_final_rows.len() + n_a,
     );
     out.push(CyclotomicRing::<F, D>::zero());
     out.extend_from_slice(public_outputs);

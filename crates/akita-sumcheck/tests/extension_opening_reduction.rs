@@ -11,7 +11,8 @@ use akita_sumcheck::{
     verify_extension_opening_reduction_rounds, verify_sumcheck,
     BatchedExtensionOpeningReductionProver, BatchedExtensionOpeningReductionTerm,
     ExtensionOpeningFactorTerm, ExtensionOpeningReductionFactor, ExtensionOpeningReductionProver,
-    ExtensionOpeningReductionVerifier, SumcheckInstanceProver, EXTENSION_OPENING_REDUCTION_DEGREE,
+    ExtensionOpeningReductionVerifier, SparseExtensionOpeningWitness, SumcheckInstanceProver,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{Blake2bTranscript, Transcript};
@@ -24,6 +25,49 @@ fn new_transcript() -> Blake2bTranscript<F> {
 
 fn sample_round(tr: &mut Blake2bTranscript<F>) -> F {
     tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND)
+}
+
+#[test]
+fn sparse_witness_sorted_constructor_combines_without_sorting() {
+    let witness = SparseExtensionOpeningWitness::from_sorted_entries(
+        8,
+        vec![
+            (1, F::from_u64(3)),
+            (1, F::from_u64(5)),
+            (3, F::zero()),
+            (4, F::from_u64(7)),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        witness.entries(),
+        &[(1, F::from_u64(8)), (4, F::from_u64(7))]
+    );
+
+    assert!(SparseExtensionOpeningWitness::from_sorted_entries(
+        8,
+        vec![(2, F::one()), (1, F::one())],
+    )
+    .is_err());
+
+    let unique = SparseExtensionOpeningWitness::from_sorted_unique_entries(
+        8,
+        vec![(1, F::from_u64(3)), (4, F::from_u64(7))],
+    )
+    .unwrap();
+    assert_eq!(
+        unique.entries(),
+        &[(1, F::from_u64(3)), (4, F::from_u64(7))]
+    );
+    assert!(SparseExtensionOpeningWitness::from_sorted_unique_entries(
+        8,
+        vec![(1, F::one()), (1, F::one())],
+    )
+    .is_err());
+    assert!(
+        SparseExtensionOpeningWitness::from_sorted_unique_entries(8, vec![(1, F::zero())],)
+            .is_err()
+    );
 }
 
 fn lifted_multilinear_eval<B, E>(evals: &[B], point: &[E]) -> E
@@ -137,7 +181,7 @@ fn singleton_factor_claim_matches_multilinear_opening() {
     assert_eq!(claim, expected);
 
     let rho = vec![F::from_u64(2), F::from_u64(9), F::from_u64(6)];
-    let factor_evals = factor.evals();
+    let factor_evals = factor.evals().unwrap();
     let folded_factor = akita_sumcheck::multilinear_eval(&factor_evals, &rho).unwrap();
     assert_eq!(folded_factor, factor.evaluate(&rho).unwrap());
 }
@@ -178,7 +222,7 @@ fn row_factor_batches_multiple_opening_points() {
         F::from_u64(37),
         F::from_u64(41),
     ];
-    let factor_evals = factor.evals();
+    let factor_evals = factor.evals().unwrap();
     assert_eq!(
         akita_sumcheck::multilinear_eval(&factor_evals, &rho).unwrap(),
         factor.evaluate(&rho).unwrap()
@@ -247,7 +291,11 @@ fn batched_extension_opening_reduction_uses_one_common_rho() {
         BatchedExtensionOpeningReductionTerm::new(witness_b.clone(), factor_b.clone(), coeff_b)
             .unwrap(),
     ];
-    let mut prover = BatchedExtensionOpeningReductionProver::new(terms).unwrap();
+    assert_eq!(
+        BatchedExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap(),
+        expected_claim
+    );
+    let mut prover = BatchedExtensionOpeningReductionProver::new(terms, expected_claim).unwrap();
     assert_eq!(prover.input_claim(), expected_claim);
     assert_eq!(prover.degree_bound(), EXTENSION_OPENING_REDUCTION_DEGREE);
 
@@ -274,6 +322,79 @@ fn batched_extension_opening_reduction_uses_one_common_rho() {
 }
 
 #[test]
+fn sparse_tensor_factor_matches_dense_factor_rounds() {
+    type B = Prime64Offset59;
+    type E = Ext2<B>;
+
+    let tail_point = (0..5)
+        .map(|idx| {
+            E::from_base_slice(&[
+                B::from_u64(3 * idx as u64 + 7),
+                B::from_u64(5 * idx as u64 + 11),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let eta = vec![E::from_base_slice(&[B::from_u64(17), B::from_u64(19)])];
+    let coeff = E::from_base_slice(&[B::from_u64(23), B::from_u64(29)]);
+    let entries = vec![
+        (1, E::from_base_slice(&[B::from_u64(31), B::from_u64(37)])),
+        (2, E::from_base_slice(&[B::from_u64(41), B::from_u64(43)])),
+        (3, E::from_base_slice(&[B::from_u64(47), B::from_u64(53)])),
+        (5, E::from_base_slice(&[B::from_u64(59), B::from_u64(61)])),
+        (20, E::from_base_slice(&[B::from_u64(67), B::from_u64(71)])),
+        (25, E::from_base_slice(&[B::from_u64(73), B::from_u64(79)])),
+    ];
+    let sparse_witness =
+        SparseExtensionOpeningWitness::new(1usize << tail_point.len(), entries).unwrap();
+
+    let dense_factor = tensor_equality_factor_evals::<B, E>(&tail_point, &eta).unwrap();
+    let dense_term = BatchedExtensionOpeningReductionTerm::new_sparse(
+        sparse_witness.clone(),
+        dense_factor,
+        coeff,
+    )
+    .unwrap();
+    let lazy_term = BatchedExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
+        sparse_witness,
+        tail_point.clone(),
+        eta,
+        coeff,
+        2,
+    )
+    .unwrap();
+
+    let expected_claim =
+        BatchedExtensionOpeningReductionProver::input_claim_from_terms(&[dense_term.clone()])
+            .unwrap();
+    assert_eq!(
+        BatchedExtensionOpeningReductionProver::input_claim_from_terms(&[lazy_term.clone()])
+            .unwrap(),
+        expected_claim
+    );
+
+    let mut dense_prover =
+        BatchedExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
+    let mut lazy_prover =
+        BatchedExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
+    let mut claim = expected_claim;
+    for round in 0..tail_point.len() {
+        let dense_round = dense_prover.compute_round_univariate(round, claim);
+        let lazy_round = lazy_prover.compute_round_univariate(round, claim);
+        assert_eq!(lazy_round, dense_round);
+
+        let challenge = E::from_base_slice(&[
+            B::from_u64(83 + 2 * round as u64),
+            B::from_u64(89 + 3 * round as u64),
+        ]);
+        claim = dense_round.evaluate(&challenge);
+        dense_prover.ingest_challenge(round, challenge);
+        lazy_prover.ingest_challenge(round, challenge);
+    }
+
+    assert_eq!(lazy_prover.final_terms(), dense_prover.final_terms());
+}
+
+#[test]
 fn extension_opening_reduction_proves_transparent_factor_claim() {
     let witness_evals: Vec<F> = (0..16).map(|i| F::from_u64((3 * i + 5) as u64)).collect();
     let factor = ExtensionOpeningReductionFactor::from_terms(vec![
@@ -297,7 +418,7 @@ fn extension_opening_reduction_proves_transparent_factor_claim() {
         ),
     ])
     .unwrap();
-    let factor_evals = factor.evals();
+    let factor_evals = factor.evals().unwrap();
     let expected_claim = factor.claim_for_witness(&witness_evals).unwrap();
 
     let mut prover =
@@ -340,7 +461,7 @@ fn detached_verifier_checks_transparent_factor_against_opened_witness() {
         F::from_u64(11),
     ])
     .unwrap();
-    let factor_evals = factor.evals();
+    let factor_evals = factor.evals().unwrap();
     let input_claim = factor.claim_for_witness(&witness_evals).unwrap();
 
     let mut prover =

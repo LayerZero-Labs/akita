@@ -142,7 +142,7 @@ where
     let mut scaled_claim = verifier.input_claim();
     let mut claim_scale = E::one();
     let mut challenges = Vec::with_capacity(num_rounds);
-    let mut round_state = verifier.start_round_state();
+    let mut round_state = verifier.start_round_state()?;
 
     transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &scaled_claim);
 

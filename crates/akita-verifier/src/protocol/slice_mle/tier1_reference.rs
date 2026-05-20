@@ -249,10 +249,14 @@ where
                         inputs.full_vec_randomness,
                         m_col,
                     );
-                    let alpha_eval = eval_ring_at_pows(
-                        &inputs.b_prime_view.row(r_prime)[local_c],
-                        inputs.alpha_pows,
-                    );
+                    // `.expect()` is acceptable here: this is the
+                    // brute-force reference used only by tests; the
+                    // optimised production path pre-collects `B'` rows.
+                    let row = inputs
+                        .b_prime_view
+                        .row(r_prime)
+                        .expect("B' view row in range");
+                    let alpha_eval = eval_ring_at_pows(&row[local_c], inputs.alpha_pows);
                     total += row_weight * eq_col_at * alpha_eval;
                 }
 
@@ -298,12 +302,17 @@ where
         for r in 0..n_f {
             let row_flat = g * n_f + r;
             let row_weight = inputs.f_row_weights[row_flat];
-            for c in 0..f_width {
+            // `.expect()` is acceptable here: this is a brute-force
+            // test/reference path; production goes through
+            // `compute_uhat_and_f_contribution_optimized`, which uses
+            // the pre-collected `f_view.rows()` cache.
+            let row = inputs.f_view.row(r).expect("F view row in range");
+            for (c, ring_entry) in row.iter().enumerate().take(f_width) {
                 let uhat_local = g * f_width + c;
                 let m_col = inputs.offset_uhat + uhat_local;
                 let eq_col_at =
                     akita_algebra::offset_eq::eq_eval_at_index(inputs.full_vec_randomness, m_col);
-                let alpha_eval = eval_ring_at_pows(&inputs.f_view.row(r)[c], inputs.alpha_pows);
+                let alpha_eval = eval_ring_at_pows(ring_entry, inputs.alpha_pows);
                 total += row_weight * eq_col_at * alpha_eval;
             }
         }
@@ -445,7 +454,10 @@ where
             if row_weight.is_zero() {
                 continue;
             }
-            let row = inputs.f_view.row(r);
+            let row = inputs
+                .f_view
+                .row(r)
+                .expect("F view row in range during optimized eval");
             for (c, ring_entry) in row.iter().enumerate().take(f_width) {
                 let uhat_local = g * f_width + c;
                 let m_col = inputs.offset_uhat + uhat_local;
@@ -535,13 +547,17 @@ mod tests {
             .map(|i| f(2 + i as u64))
             .collect();
         let b_prime_flat = FlatMatrix::<F>::from_flat_data(b_prime_data, D);
-        let b_prime_view = b_prime_flat.ring_view::<D>(n_b_prime, chunk_width);
+        let b_prime_view = b_prime_flat
+            .ring_view::<D>(n_b_prime, chunk_width)
+            .expect("test fixture b_prime view valid");
 
         let f_data: Vec<F> = (0..(n_f * f_width * D))
             .map(|i| f(50 + i as u64 * 3))
             .collect();
         let f_mat = FlatMatrix::<F>::from_flat_data(f_data, D);
-        let f_view = f_mat.ring_view::<D>(n_f, f_width);
+        let f_view = f_mat
+            .ring_view::<D>(n_f, f_width)
+            .expect("test fixture f view valid");
 
         // M-column layout (z_first = false):
         //   w_len = num_claims · num_blocks · depth_open = 1·2·2 = 4
@@ -632,10 +648,8 @@ mod tests {
                             + num_t_vectors_local * digit_idx
                             + num_t_vectors_local * depth_open * a_row_idx;
                         let m_col = offset_t + block_idx + num_blocks * high;
-                        let alpha_eval = eval_ring_at_pows(
-                            &inputs.b_prime_view.row(r_prime)[local_c],
-                            &alpha_pows,
-                        );
+                        let b_row = inputs.b_prime_view.row(r_prime).expect("test b' row");
+                        let alpha_eval = eval_ring_at_pows(&b_row[local_c], &alpha_pows);
                         expected += w * eq_full[m_col] * alpha_eval;
                     }
 
@@ -656,10 +670,11 @@ mod tests {
             for r in 0..n_f {
                 let row_flat = g * n_f + r;
                 let w = f_row_weights[row_flat];
+                let f_row = inputs.f_view.row(r).expect("test F row");
                 for c in 0..f_width {
                     let uhat_local = g * f_width + c;
                     let m_col = offset_uhat + uhat_local;
-                    let alpha_eval = eval_ring_at_pows(&inputs.f_view.row(r)[c], &alpha_pows);
+                    let alpha_eval = eval_ring_at_pows(&f_row[c], &alpha_pows);
                     expected += w * eq_full[m_col] * alpha_eval;
                 }
             }
@@ -696,10 +711,8 @@ mod tests {
                             + num_t_vectors_local * digit_idx
                             + num_t_vectors_local * depth_open * a_row_idx;
                         let m_col = offset_t + block_idx + num_blocks * high;
-                        let alpha_eval = eval_ring_at_pows(
-                            &inputs.b_prime_view.row(r_prime)[local_c],
-                            &alpha_pows,
-                        );
+                        let b_row = inputs.b_prime_view.row(r_prime).expect("test b' row");
+                        let alpha_eval = eval_ring_at_pows(&b_row[local_c], &alpha_pows);
                         b_prime_half += w * eq_full[m_col] * alpha_eval;
                     }
                 }

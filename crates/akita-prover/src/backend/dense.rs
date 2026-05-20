@@ -7,10 +7,11 @@
 use akita_algebra::ring::cyclotomic::{
     decompose_centering_threshold, BalancedDecomposePow2I8Params,
 };
-use akita_algebra::CyclotomicRing;
+use akita_algebra::{CyclotomicRing, EqPolynomial};
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_sumcheck::tensor_opening_split;
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -176,6 +177,68 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         (cache.num_digits == num_digits && cache.log_basis == log_basis)
             .then_some(cache.planes.as_slice())
     }
+
+    fn live_coeff_len(&self) -> Result<usize, AkitaError> {
+        1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })
+    }
+
+    fn tensor_shape<E>(&self, logical_point: Option<&[E]>) -> Result<(usize, usize), AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let (split_bits, width) = tensor_opening_split::<F, E>()?;
+        if split_bits > self.num_vars {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening tensor split exceeds polynomial arity".to_string(),
+            ));
+        }
+        if width > D || D % width != 0 {
+            return Err(AkitaError::InvalidInput(format!(
+                "extension degree {width} does not evenly pack into dense ring degree {D}"
+            )));
+        }
+        if let Some(point) = logical_point {
+            if point.len() != self.num_vars {
+                return Err(AkitaError::InvalidPointDimension {
+                    expected: self.num_vars,
+                    actual: point.len(),
+                });
+            }
+        }
+        Ok((split_bits, width))
+    }
+
+    fn tensor_extension_column_partials_with_tail_eq<E>(
+        &self,
+        width: usize,
+        tail_eq: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let live_len = self.live_coeff_len()?;
+        let expected_tail_len = live_len / width;
+        if tail_eq.len() != expected_tail_len {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_tail_len,
+                actual: tail_eq.len(),
+            });
+        }
+
+        let mut partials = vec![E::zero(); width];
+        for (tail, &weight) in tail_eq.iter().enumerate() {
+            let flat_idx = tail * width;
+            let ring_idx = flat_idx / D;
+            let coeff_idx = flat_idx % D;
+            let coeffs = &self.coeffs[ring_idx].coefficients()[coeff_idx..coeff_idx + width];
+            for (partial, &coeff) in partials.iter_mut().zip(coeffs.iter()) {
+                *partial += weight.mul_base(coeff);
+            }
+        }
+        Ok(partials)
+    }
 }
 
 impl<F, const D: usize> AkitaPolyOps<F, D> for DensePoly<F, D>
@@ -228,6 +291,57 @@ where
                 acc
             })
             .collect()
+    }
+
+    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let (split_bits, width) = self.tensor_shape::<E>(Some(logical_point))?;
+        let tail_eq = EqPolynomial::evals(&logical_point[split_bits..])?;
+        self.tensor_extension_column_partials_with_tail_eq(width, &tail_eq)
+    }
+
+    fn tensor_extension_column_partials_batch<E>(
+        polys: &[&Self],
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let Some(first) = polys.first() else {
+            return Ok(Vec::new());
+        };
+        let (split_bits, width) = first.tensor_shape::<E>(Some(logical_point))?;
+        let tail_eq = EqPolynomial::evals(&logical_point[split_bits..])?;
+        polys
+            .iter()
+            .map(|poly| {
+                poly.tensor_shape::<E>(Some(logical_point))?;
+                poly.tensor_extension_column_partials_with_tail_eq(width, &tail_eq)
+            })
+            .collect()
+    }
+
+    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let (_split_bits, width) = self.tensor_shape::<E>(None)?;
+        let live_len = self.live_coeff_len()?;
+        let mut evals = Vec::with_capacity(live_len / width);
+        let mut remaining = live_len;
+        for ring in &self.coeffs {
+            let take = remaining.min(D);
+            for coeffs in ring.coefficients()[..take].chunks_exact(width) {
+                evals.push(E::from_base_slice(coeffs));
+            }
+            remaining -= take;
+            if remaining == 0 {
+                break;
+            }
+        }
+        Ok(evals)
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]
@@ -671,7 +785,9 @@ pub(crate) mod test_helpers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_field::fields::{TowerBasisFp4, TwoNr, UnitNr};
     use akita_field::Prime128OffsetA7F7 as F;
+    use akita_sumcheck::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
 
     fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
         CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
@@ -699,5 +815,36 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn dense_tensor_opening_methods_match_flat_reference() {
+        const D: usize = 8;
+        type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+
+        let num_vars = 5;
+        let evals = (0..(1usize << num_vars))
+            .map(|idx| F::from_u64(17 * idx as u64 + 9))
+            .collect::<Vec<_>>();
+        let point = (0..num_vars)
+            .map(|idx| {
+                E::from_base_slice(&[
+                    F::from_u64(idx as u64 + 2),
+                    F::from_u64(3 * idx as u64 + 4),
+                    F::from_u64(5 * idx as u64 + 6),
+                    F::from_u64(7 * idx as u64 + 8),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
+
+        let expected_partials =
+            tensor_column_partials_from_base_evals::<F, E>(num_vars, &evals, &point).unwrap();
+        let got_partials = poly.tensor_extension_column_partials::<E>(&point).unwrap();
+        assert_eq!(got_partials, expected_partials);
+
+        let expected_packed = tensor_packed_witness_evals::<F, E>(num_vars, &evals).unwrap();
+        let got_packed = poly.tensor_packed_extension_evals::<E>().unwrap();
+        assert_eq!(got_packed, expected_packed);
     }
 }

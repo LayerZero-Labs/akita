@@ -41,8 +41,9 @@ use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use akita_types::{FlatMatrix, RingMatrixView, RingSubfieldEncoding};
 use std::marker::PhantomData;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
+use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::decompose_rows_i8_into;
@@ -538,8 +539,8 @@ where
             let remaining = MAX_WIDE_SHIFT_ACCUMULATIONS - shift_accumulations;
             let take = remaining.min(coeffs.len());
             let (current, rest) = coeffs.split_at(take);
-            for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
-                let a_wide = WideCyclotomicRing::from_ring(&A.row(a_idx)[col]);
+            for (a_row, t_w) in A.rows().zip(t_wide.iter_mut()) {
+                let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
                 for &ci in current {
                     a_wide.shift_accumulate_into(t_w, ci as usize);
                 }
@@ -596,6 +597,7 @@ pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     pub(crate) indices: Vec<Option<I>>,
     pub(crate) total_ring_elems: usize,
     pub(crate) block_cache: OnceLock<(usize, OneHotBlocks)>,
+    pub(crate) tensor_root_cache: OnceLock<(usize, Arc<SparseRingPoly<F, D>>)>,
     pub(crate) _marker: PhantomData<(F, I)>,
 }
 
@@ -654,6 +656,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             indices,
             total_ring_elems,
             block_cache: OnceLock::new(),
+            tensor_root_cache: OnceLock::new(),
             _marker: PhantomData,
         })
     }
@@ -753,7 +756,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         SparseExtensionOpeningWitness::new(table_len, entries)
     }
 
-    fn tensor_packed_sparse_ring_poly<E>(&self) -> Result<SparseRingPoly<F, D>, AkitaError>
+    fn tensor_packed_sparse_ring_poly<E>(&self) -> Result<Arc<SparseRingPoly<F, D>>, AkitaError>
     where
         F: FromPrimitiveInt,
         E: RingSubfieldEncoding<F>,
@@ -785,6 +788,11 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         let half = D / double_width;
         let step = D / double_width;
         let total_ring_elems = total_evals / D;
+        if let Some((cached_width, poly)) = self.tensor_root_cache.get() {
+            if *cached_width == width {
+                return Ok(Arc::clone(poly));
+            }
+        }
         let mut coeffs = Vec::with_capacity(self.indices.len() * width.min(2));
 
         for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
@@ -799,25 +807,41 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             if slot_idx < half {
                 let shift = slot_idx;
                 if coord == 0 {
-                    coeffs.push((ring_idx, shift, 1));
+                    coeffs.push(SparseRingCoeff::new(ring_idx, shift, 1)?);
                 } else {
                     let pos_offset = coord * step;
-                    coeffs.push((ring_idx, shift + pos_offset, 1));
-                    coeffs.push((ring_idx, shift + D - pos_offset, -1));
+                    coeffs.push(SparseRingCoeff::new(ring_idx, shift + pos_offset, 1)?);
+                    coeffs.push(SparseRingCoeff::new(ring_idx, shift + D - pos_offset, -1)?);
                 }
             } else {
                 let shift = slot_idx - half + D / 2;
                 if coord == 0 {
-                    coeffs.push((ring_idx, shift, 1));
+                    coeffs.push(SparseRingCoeff::new(ring_idx, shift, 1)?);
                 } else {
                     let pos_offset = coord * step;
-                    coeffs.push((ring_idx, shift + pos_offset, 1));
-                    coeffs.push((ring_idx, shift - pos_offset, 1));
+                    coeffs.push(SparseRingCoeff::new(ring_idx, shift - pos_offset, 1)?);
+                    coeffs.push(SparseRingCoeff::new(ring_idx, shift + pos_offset, 1)?);
                 }
             }
         }
 
-        SparseRingPoly::<F, D>::from_signed_coeffs(self.num_vars, total_ring_elems, coeffs)
+        let poly = if self.onehot_k >= D {
+            SparseRingPoly::<F, D>::from_sorted_packed_coeffs(
+                self.num_vars,
+                total_ring_elems,
+                coeffs,
+            )
+        } else {
+            SparseRingPoly::<F, D>::from_packed_coeffs(self.num_vars, total_ring_elems, coeffs)
+        }?;
+        let poly = Arc::new(poly);
+        let _ = self.tensor_root_cache.set((width, Arc::clone(&poly)));
+        if let Some((cached_width, cached_poly)) = self.tensor_root_cache.get() {
+            if *cached_width == width {
+                return Ok(Arc::clone(cached_poly));
+            }
+        }
+        Ok(poly)
     }
 
     fn tensor_packing_shape<E>(&self) -> Result<(usize, usize), AkitaError>
@@ -846,6 +870,24 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             .checked_mul(self.onehot_k)
             .and_then(|base| base.checked_add(raw.as_usize()))
             .ok_or_else(|| AkitaError::InvalidInput(format!("onehot {context} index overflow")))
+    }
+
+    fn next_tensor_packed_sparse_position(
+        &self,
+        cursor: &mut usize,
+        width: usize,
+    ) -> Result<Option<(usize, usize)>, AkitaError> {
+        while *cursor < self.indices.len() {
+            let chunk_idx = *cursor;
+            *cursor += 1;
+            let Some(raw) = self.indices[chunk_idx] else {
+                continue;
+            };
+            let field_pos =
+                self.hot_field_position(chunk_idx, raw, "tensor-packed witness batch")?;
+            return Ok(Some((field_pos / width, field_pos % width)));
+        }
+        Ok(None)
     }
 
     fn build_blocks_inner(&self, block_len: usize) -> Result<OneHotBlocks, AkitaError> {
@@ -1128,9 +1170,9 @@ where
             });
         }
         let low_weights =
-            akita_types::basis_weights(&point[..low_vars], akita_types::BasisMode::Lagrange);
+            akita_types::basis_weights(&point[..low_vars], akita_types::BasisMode::Lagrange)?;
         let high_weights =
-            akita_types::basis_weights(&point[low_vars..], akita_types::BasisMode::Lagrange);
+            akita_types::basis_weights(&point[low_vars..], akita_types::BasisMode::Lagrange)?;
         Ok(self
             .indices
             .iter()
@@ -1141,6 +1183,129 @@ where
             .fold(E::zero(), |acc, weight| acc + weight))
     }
 
+    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        if logical_point.len() != self.num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: self.num_vars,
+                actual: logical_point.len(),
+            });
+        }
+        let (split_bits, width) = akita_sumcheck::tensor_opening_split::<F, E>()?;
+        if split_bits > self.num_vars {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening tensor split exceeds polynomial arity".to_string(),
+            ));
+        }
+        let low_vars = self.onehot_k.trailing_zeros() as usize;
+        if low_vars > logical_point.len() {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: low_vars,
+                actual: logical_point.len(),
+            });
+        }
+        if split_bits <= low_vars {
+            let head_mask = width - 1;
+            let low_tail_weights = akita_types::basis_weights(
+                &logical_point[split_bits..low_vars],
+                akita_types::BasisMode::Lagrange,
+            )?;
+            let high_weights = akita_types::basis_weights(
+                &logical_point[low_vars..],
+                akita_types::BasisMode::Lagrange,
+            )?;
+            let mut partials = vec![E::zero(); width];
+            for (chunk_idx, hot_idx) in self.indices.iter().copied().enumerate() {
+                let Some(raw) = hot_idx else {
+                    continue;
+                };
+                let raw = raw.as_usize();
+                let head = raw & head_mask;
+                let low_tail = raw >> split_bits;
+                partials[head] += high_weights[chunk_idx] * low_tail_weights[low_tail];
+            }
+            return Ok(partials);
+        }
+
+        let mut point = logical_point.to_vec();
+        let mut partials = Vec::with_capacity(width);
+        for head in 0..width {
+            for (bit, coord) in point.iter_mut().enumerate().take(split_bits) {
+                *coord = if ((head >> bit) & 1) == 0 {
+                    E::zero()
+                } else {
+                    E::one()
+                };
+            }
+            partials.push(self.evaluate_extension::<E>(&point)?);
+        }
+        Ok(partials)
+    }
+
+    fn tensor_extension_column_partials_batch<E>(
+        polys: &[&Self],
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let Some(first) = polys.first() else {
+            return Ok(Vec::new());
+        };
+        if logical_point.len() != first.num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: first.num_vars,
+                actual: logical_point.len(),
+            });
+        }
+        let (split_bits, width) = akita_sumcheck::tensor_opening_split::<F, E>()?;
+        if split_bits > first.num_vars {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening tensor split exceeds polynomial arity".to_string(),
+            ));
+        }
+        let low_vars = first.onehot_k.trailing_zeros() as usize;
+        let can_share_weights = split_bits <= low_vars
+            && low_vars <= logical_point.len()
+            && polys
+                .iter()
+                .all(|poly| poly.num_vars == first.num_vars && poly.onehot_k == first.onehot_k);
+        if !can_share_weights {
+            return polys
+                .iter()
+                .map(|poly| poly.tensor_extension_column_partials(logical_point))
+                .collect();
+        }
+
+        let head_mask = width - 1;
+        let low_tail_weights = akita_types::basis_weights(
+            &logical_point[split_bits..low_vars],
+            akita_types::BasisMode::Lagrange,
+        )?;
+        let high_weights = akita_types::basis_weights(
+            &logical_point[low_vars..],
+            akita_types::BasisMode::Lagrange,
+        )?;
+        let out = cfg_iter!(polys)
+            .map(|poly| {
+                let mut partials = vec![E::zero(); width];
+                for (chunk_idx, hot_idx) in poly.indices.iter().copied().enumerate() {
+                    let Some(raw) = hot_idx else {
+                        continue;
+                    };
+                    let raw = raw.as_usize();
+                    let head = raw & head_mask;
+                    let low_tail = raw >> split_bits;
+                    partials[head] += high_weights[chunk_idx] * low_tail_weights[low_tail];
+                }
+                partials
+            })
+            .collect::<Vec<_>>();
+        Ok(out)
+    }
+
     fn tensor_packed_extension_sparse_evals<E>(
         &self,
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
@@ -1148,6 +1313,158 @@ where
         E: ExtField<F>,
     {
         Ok(Some(self.tensor_packed_sparse_witness::<E>()?))
+    }
+
+    fn tensor_packed_extension_sparse_linear_combination<E>(
+        polys: &[&Self],
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let _span = tracing::info_span!(
+            "OneHotPoly::tensor_packed_sparse_witness_linear_combination",
+            num_polys = polys.len()
+        )
+        .entered();
+        if polys.len() != coeffs.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: polys.len(),
+                actual: coeffs.len(),
+            });
+        }
+        let first = polys.first().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "onehot sparse witness linear combination requires at least one polynomial"
+                    .to_string(),
+            )
+        })?;
+        let (width, total_evals) = first.tensor_packing_shape::<E>()?;
+        let table_len = total_evals / width;
+        let basis = (0..width)
+            .map(|head| {
+                let mut coords = vec![F::zero(); width];
+                coords[head] = F::one();
+                E::from_base_slice(&coords)
+            })
+            .collect::<Vec<_>>();
+        let weighted_basis = coeffs
+            .iter()
+            .copied()
+            .map(|coeff| {
+                basis
+                    .iter()
+                    .copied()
+                    .map(|basis_elem| basis_elem * coeff)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let capacity = polys.iter().map(|poly| poly.indices.len()).sum();
+        let same_chunk_layout = polys.iter().all(|poly| {
+            poly.onehot_k == first.onehot_k && poly.indices.len() == first.indices.len()
+        });
+        if same_chunk_layout && first.onehot_k >= width && first.onehot_k.is_multiple_of(width) {
+            let tails_per_chunk = first.onehot_k / width;
+            #[cfg(feature = "parallel")]
+            let target_ranges = rayon::current_num_threads().max(1) * 4;
+            #[cfg(not(feature = "parallel"))]
+            let target_ranges = 1usize;
+            let range_len = (first.indices.len() / target_ranges).max(1 << 12);
+            let ranges = (0..first.indices.len())
+                .step_by(range_len)
+                .map(|start| (start, (start + range_len).min(first.indices.len())))
+                .collect::<Vec<_>>();
+            let chunks = cfg_into_iter!(ranges)
+                .map(|(start, end)| {
+                    let mut entries = Vec::with_capacity((end - start) * polys.len());
+                    let mut local = Vec::with_capacity(polys.len());
+                    for chunk_idx in start..end {
+                        local.clear();
+                        for (poly_idx, poly) in polys.iter().enumerate() {
+                            if coeffs[poly_idx] == E::zero() {
+                                continue;
+                            }
+                            let Some(raw) = poly.indices[chunk_idx] else {
+                                continue;
+                            };
+                            let field_pos = poly.hot_field_position(
+                                chunk_idx,
+                                raw,
+                                "tensor-packed witness batch",
+                            )?;
+                            let tail = field_pos / width;
+                            let head = field_pos % width;
+                            debug_assert_eq!(tail / tails_per_chunk, chunk_idx);
+                            local.push((tail % tails_per_chunk, weighted_basis[poly_idx][head]));
+                        }
+                        local.sort_unstable_by_key(|(local_tail, _)| *local_tail);
+                        for &(local_tail, value) in &local {
+                            let tail = chunk_idx * tails_per_chunk + local_tail;
+                            if let Some((last_tail, last_value)) = entries.last_mut() {
+                                if *last_tail == tail {
+                                    *last_value += value;
+                                    if *last_value == E::zero() {
+                                        entries.pop();
+                                    }
+                                    continue;
+                                }
+                            }
+                            if value != E::zero() {
+                                entries.push((tail, value));
+                            }
+                        }
+                    }
+                    Ok(entries)
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let mut entries = Vec::with_capacity(capacity);
+            for chunk in chunks {
+                entries.extend(chunk);
+            }
+            return Ok(Some(
+                SparseExtensionOpeningWitness::from_sorted_unique_entries(table_len, entries)?,
+            ));
+        }
+
+        let mut cursors = vec![0usize; polys.len()];
+        let mut next_entries = Vec::with_capacity(polys.len());
+        for (poly_idx, (poly, &coeff)) in polys.iter().zip(coeffs).enumerate() {
+            let (poly_width, poly_total_evals) = poly.tensor_packing_shape::<E>()?;
+            if poly_width != width || poly_total_evals != total_evals {
+                return Err(AkitaError::InvalidSize {
+                    expected: total_evals,
+                    actual: poly_total_evals,
+                });
+            }
+            if coeff == E::zero() {
+                next_entries.push(None);
+                continue;
+            }
+            next_entries
+                .push(poly.next_tensor_packed_sparse_position(&mut cursors[poly_idx], width)?);
+        }
+
+        let mut entries = Vec::with_capacity(capacity);
+        while let Some(tail) = next_entries
+            .iter()
+            .filter_map(|entry| entry.map(|(tail, _)| tail))
+            .min()
+        {
+            let mut value = E::zero();
+            for (poly_idx, poly) in polys.iter().enumerate() {
+                while matches!(next_entries[poly_idx], Some((entry_tail, _)) if entry_tail == tail)
+                {
+                    let (_, head) = next_entries[poly_idx].expect("entry checked above");
+                    value += weighted_basis[poly_idx][head];
+                    next_entries[poly_idx] =
+                        poly.next_tensor_packed_sparse_position(&mut cursors[poly_idx], width)?;
+                }
+            }
+            entries.push((tail, value));
+        }
+        Ok(Some(SparseExtensionOpeningWitness::from_sorted_entries(
+            table_len, entries,
+        )?))
     }
 
     fn tensor_packed_extension_root_poly<E>(
@@ -1224,7 +1541,7 @@ where
         matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, AkitaError> {
         let blocks = self.blocks_for(block_len)?;
-        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride)?;
         let num_blocks = blocks.num_blocks();
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
@@ -1296,7 +1613,7 @@ where
         matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         let blocks = self.blocks_for(block_len)?;
-        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride)?;
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
             return Err(AkitaError::InvalidSetup(format!(
@@ -1469,8 +1786,8 @@ where
     for entry in single_chunk_entries {
         let col = entry.pos_in_block() * num_digits;
         let coeff_idx = entry.coeff_idx();
-        for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
-            let a_wide = WideCyclotomicRing::from_ring(&a_view.row(a_idx)[col]);
+        for (a_row, t_w) in a_view.rows().zip(t_wide.iter_mut()) {
+            let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
             a_wide.shift_accumulate_into(t_w, coeff_idx);
         }
     }
@@ -1506,10 +1823,6 @@ where
 /// 2 MB is a conservative middle ground: fits in Apple M-series L2
 /// (~4 MB/core) and exceeds most x86 per-core L2 (~256 KB–1 MB) only
 /// modestly, relying on the shared L3 backstop.
-///
-// TODO: benchmark column-sweep on x86 vs ARM with budget values
-// (512 KB, 1 MB, 2 MB, 4 MB) at production configs to determine
-// whether a smaller or arch-specific budget helps on x86.
 const L2_TILE_BUDGET: usize = 1 << 21;
 
 /// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
@@ -1598,8 +1911,7 @@ where
                     .map(|_| vec![WideCyclotomicRing::zero(); n_a])
                     .collect();
 
-                for a_idx in 0..n_a {
-                    let a_row = a_view.row(a_idx);
+                for (a_idx, a_row) in a_view.rows().enumerate().take(n_a) {
                     let mut idx = 0usize;
                     while idx < col_entries.len() {
                         let col = col_entries[idx].0;
@@ -1978,7 +2290,9 @@ mod tests {
     use super::test_helpers::inner_ajtai_multi_chunk_t_only;
     use super::*;
     use crate::DensePoly;
-    use akita_field::fields::{Fp64, Prime128Offset275, Prime24Offset3};
+    use akita_field::fields::{
+        Fp64, Prime128Offset275, Prime24Offset3, TowerBasisFp4, TwoNr, UnitNr,
+    };
     use akita_field::RandomSampling;
     use akita_types::FlatMatrix;
     use rand::rngs::StdRng;
@@ -2168,6 +2482,178 @@ mod tests {
     }
 
     #[test]
+    fn tensor_column_partials_match_dense_reference() {
+        type F = Prime24Offset3;
+        type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+        const D: usize = 16;
+
+        let poly = OneHotPoly::<F, D>::new(
+            8,
+            vec![
+                Some(0usize),
+                Some(7),
+                None,
+                Some(3),
+                Some(5),
+                Some(1),
+                None,
+                Some(6),
+            ],
+        )
+        .unwrap();
+        let dense = materialize_onehot_as_dense(&poly);
+        let point = (0..poly.num_vars())
+            .map(|idx| {
+                E::from_base_slice(&[
+                    F::from_canonical_u128_reduced(3 * idx as u128 + 2),
+                    F::from_canonical_u128_reduced(3 * idx as u128 + 3),
+                    F::from_canonical_u128_reduced(3 * idx as u128 + 5),
+                    F::from_canonical_u128_reduced(3 * idx as u128 + 7),
+                ])
+            })
+            .collect::<Vec<_>>();
+
+        let sparse_partials = poly.tensor_extension_column_partials::<E>(&point).unwrap();
+        let dense_partials = dense.tensor_extension_column_partials::<E>(&point).unwrap();
+        assert_eq!(sparse_partials, dense_partials);
+    }
+
+    #[test]
+    fn batched_tensor_column_partials_match_individual() {
+        type F = Prime24Offset3;
+        type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+        const D: usize = 16;
+
+        let polys = [
+            OneHotPoly::<F, D>::new(
+                8,
+                vec![
+                    Some(0usize),
+                    Some(7),
+                    None,
+                    Some(3),
+                    Some(5),
+                    Some(1),
+                    None,
+                    Some(6),
+                ],
+            )
+            .unwrap(),
+            OneHotPoly::<F, D>::new(
+                8,
+                vec![
+                    Some(4usize),
+                    Some(2),
+                    Some(7),
+                    None,
+                    Some(1),
+                    None,
+                    Some(5),
+                    Some(0),
+                ],
+            )
+            .unwrap(),
+        ];
+        let point = (0..polys[0].num_vars())
+            .map(|idx| {
+                E::from_base_slice(&[
+                    F::from_canonical_u128_reduced(5 * idx as u128 + 2),
+                    F::from_canonical_u128_reduced(5 * idx as u128 + 3),
+                    F::from_canonical_u128_reduced(5 * idx as u128 + 5),
+                    F::from_canonical_u128_reduced(5 * idx as u128 + 7),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let expected = polys
+            .iter()
+            .map(|poly| poly.tensor_extension_column_partials::<E>(&point).unwrap())
+            .collect::<Vec<_>>();
+        let poly_refs = polys.iter().collect::<Vec<_>>();
+        let got =
+            <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
+                &poly_refs, &point,
+            )
+            .unwrap();
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
+        type F = Prime24Offset3;
+        type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+        const D: usize = 16;
+
+        let polys = [
+            OneHotPoly::<F, D>::new(
+                8,
+                vec![
+                    Some(0usize),
+                    Some(7),
+                    None,
+                    Some(3),
+                    Some(5),
+                    Some(1),
+                    None,
+                    Some(6),
+                ],
+            )
+            .unwrap(),
+            OneHotPoly::<F, D>::new(
+                8,
+                vec![
+                    Some(4usize),
+                    Some(2),
+                    Some(7),
+                    None,
+                    Some(1),
+                    None,
+                    Some(5),
+                    Some(0),
+                ],
+            )
+            .unwrap(),
+        ];
+        let coeffs = vec![
+            E::from_base_slice(&[
+                F::from_canonical_u128_reduced(3),
+                F::from_canonical_u128_reduced(5),
+                F::from_canonical_u128_reduced(7),
+                F::from_canonical_u128_reduced(11),
+            ]),
+            E::from_base_slice(&[
+                F::from_canonical_u128_reduced(13),
+                F::from_canonical_u128_reduced(17),
+                F::from_canonical_u128_reduced(19),
+                F::from_canonical_u128_reduced(23),
+            ]),
+        ];
+        let witnesses = polys
+            .iter()
+            .map(|poly| {
+                poly.tensor_packed_extension_sparse_evals::<E>()
+                    .unwrap()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let expected = SparseExtensionOpeningWitness::linear_combination(
+            coeffs.iter().copied().zip(&witnesses),
+        )
+        .unwrap();
+        let poly_refs = polys.iter().collect::<Vec<_>>();
+        let got =
+            <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_linear_combination::<E>(
+                &poly_refs,
+                &coeffs,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(got.table_len(), expected.table_len());
+        assert_eq!(got.entries(), expected.entries());
+    }
+
+    #[test]
     fn wide_matches_reference() {
         type F = Fp64<4294967197>;
         const D: usize = 64;
@@ -2194,7 +2680,7 @@ mod tests {
             .flat_map(|row| row.iter().copied())
             .collect();
         let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
-        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits);
+        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits).unwrap();
         let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
         let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, num_digits);
 
@@ -2231,7 +2717,7 @@ mod tests {
             .flat_map(|row| row.iter().copied())
             .collect();
         let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
-        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits);
+        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits).unwrap();
         let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
         let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, num_digits);
 
@@ -2261,7 +2747,7 @@ mod tests {
         let single_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
 
         let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
-        let a_view = a_flat.ring_view::<D>(1, block_len);
+        let a_view = a_flat.ring_view::<D>(1, block_len).unwrap();
 
         let single_chunk_views: Vec<&[SingleChunkEntry]> = (0..single_chunk_blocks.num_blocks())
             .map(|i| single_chunk_blocks.block(i))
@@ -2299,7 +2785,9 @@ mod tests {
         let multi_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
 
         let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
-        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits_commit);
+        let a_view = a_flat
+            .ring_view::<D>(n_a, block_len * num_digits_commit)
+            .unwrap();
 
         let views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.num_blocks())
             .map(|i| multi_chunk_blocks.block(i))

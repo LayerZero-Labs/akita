@@ -3,7 +3,7 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore, MulBase};
+use akita_field::{AkitaError, CanonicalField, FieldCore, MulBase};
 
 /// Compute the stage-2 relation claim from the public M-row data.
 ///
@@ -11,10 +11,10 @@ use akita_field::{CanonicalField, FieldCore, MulBase};
 /// the M row layout: consistency zero row, public `y_rings`, D rows `v`, B
 /// rows `u`, then A zero rows.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `D` is zero because cyclotomic rings require a nonzero const
-/// dimension.
+/// Returns an error if the equality table implied by `tau1` would overflow or
+/// exceed the verifier sequence bound.
 #[tracing::instrument(skip_all, name = "relation_claim_from_rows")]
 pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
     tau1: &[F],
@@ -22,33 +22,33 @@ pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     u: &[CyclotomicRing<F, D>],
     y_rings: &[CyclotomicRing<F, D>],
-) -> F {
-    let eq_tau1 = EqPolynomial::evals(tau1);
+) -> Result<F, AkitaError> {
+    let eq_tau1 = EqPolynomial::evals(tau1)?;
     let mut acc = F::zero();
     let mut row_idx = 1usize;
 
     for y_ring in y_rings {
         if row_idx >= eq_tau1.len() {
-            return acc;
+            return Ok(acc);
         }
         acc += eq_tau1[row_idx] * eval_ring_at(y_ring, &alpha);
         row_idx += 1;
     }
     for r in v {
         if row_idx >= eq_tau1.len() {
-            return acc;
+            return Ok(acc);
         }
         acc += eq_tau1[row_idx] * eval_ring_at(r, &alpha);
         row_idx += 1;
     }
     for r in u {
         if row_idx >= eq_tau1.len() {
-            return acc;
+            return Ok(acc);
         }
         acc += eq_tau1[row_idx] * eval_ring_at(r, &alpha);
         row_idx += 1;
     }
-    acc
+    Ok(acc)
 }
 
 /// Tiered variant of [`relation_claim_from_rows_extension`] for the tiered
@@ -69,9 +69,11 @@ pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
 /// `Σ_row eq_tau1[row] · y[row]` the sumcheck instance reconstructs from
 /// the witness. See Phase 4f-sumcheck.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `D` is zero (cyclotomic rings require a nonzero dimension).
+/// Returns an error if the equality table implied by `tau1` would overflow
+/// (matches the surrounding [`relation_claim_from_rows_extension`]
+/// contract after the security-hardening pass).
 #[tracing::instrument(skip_all, name = "relation_claim_from_rows_extension_tiered")]
 pub fn relation_claim_from_rows_extension_tiered<F, E, const D: usize>(
     tau1: &[E],
@@ -80,26 +82,26 @@ pub fn relation_claim_from_rows_extension_tiered<F, E, const D: usize>(
     u_final_rows: &[CyclotomicRing<F, D>],
     y_rings: &[CyclotomicRing<F, D>],
     tier1_zero_rows: usize,
-) -> E
+) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FieldCore + MulBase<F>,
 {
-    let eq_tau1 = EqPolynomial::evals(tau1);
+    let eq_tau1 = EqPolynomial::evals(tau1)?;
     let alpha_pows = scalar_powers(alpha, D);
     let mut acc = E::zero();
     let mut row_idx = 1usize;
 
     for y_ring in y_rings {
         if row_idx >= eq_tau1.len() {
-            return acc;
+            return Ok(acc);
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(y_ring, &alpha_pows);
         row_idx += 1;
     }
     for r in v {
         if row_idx >= eq_tau1.len() {
-            return acc;
+            return Ok(acc);
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
         row_idx += 1;
@@ -109,12 +111,12 @@ where
     row_idx = row_idx.saturating_add(tier1_zero_rows);
     for r in u_final_rows {
         if row_idx >= eq_tau1.len() {
-            return acc;
+            return Ok(acc);
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
         row_idx += 1;
     }
-    acc
+    Ok(acc)
 }
 
 /// Compute the stage-2 relation claim with an extension-field evaluation point.
@@ -128,38 +130,38 @@ pub fn relation_claim_from_rows_extension<F, E, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     u: &[CyclotomicRing<F, D>],
     y_rings: &[CyclotomicRing<F, D>],
-) -> E
+) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FieldCore + MulBase<F>,
 {
-    let eq_tau1 = EqPolynomial::evals(tau1);
+    let eq_tau1 = EqPolynomial::evals(tau1)?;
     let alpha_pows = scalar_powers(alpha, D);
     let mut acc = E::zero();
     let mut row_idx = 1usize;
 
     for y_ring in y_rings {
         if row_idx >= eq_tau1.len() {
-            return acc;
+            return Ok(acc);
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(y_ring, &alpha_pows);
         row_idx += 1;
     }
     for r in v {
         if row_idx >= eq_tau1.len() {
-            return acc;
+            return Ok(acc);
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
         row_idx += 1;
     }
     for r in u {
         if row_idx >= eq_tau1.len() {
-            return acc;
+            return Ok(acc);
         }
         acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
         row_idx += 1;
     }
-    acc
+    Ok(acc)
 }
 
 #[cfg(test)]
@@ -199,7 +201,7 @@ mod tests {
             F::from_u64(12),
         ])];
 
-        let base = relation_claim_from_rows::<F, D>(&tau1, alpha, &v, &u, &y);
+        let base = relation_claim_from_rows::<F, D>(&tau1, alpha, &v, &u, &y).unwrap();
         let lifted_tau1: Vec<E> = tau1.iter().copied().map(E::lift_base).collect();
         let lifted = relation_claim_from_rows_extension::<F, E, D>(
             &lifted_tau1,
@@ -207,7 +209,8 @@ mod tests {
             &v,
             &u,
             &y,
-        );
+        )
+        .unwrap();
 
         assert_eq!(lifted, E::lift_base(base));
     }

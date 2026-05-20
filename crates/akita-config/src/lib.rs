@@ -900,12 +900,6 @@ mod fp128_policy_tests {
 
     #[test]
     #[cfg(not(feature = "zk"))]
-    fn current_d128_full_schedule_stays_within_audited_sis_widths() {
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D128Full>(8, 50);
-    }
-
-    #[test]
-    #[cfg(not(feature = "zk"))]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
         // B-row rank=1 at num_vars>=46 level=1 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 45);
@@ -1031,7 +1025,7 @@ mod fp128_policy_tests {
 
         type SmallCfg = fp32::D64Full;
         assert_eq!(
-            <fp128::D128Full as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
+            <fp128::D64Full as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
             1
         );
         assert_eq!(

@@ -366,7 +366,8 @@ mod tests {
             n_f * f_width,
             &setup.expanded.seed.public_matrix_seed,
         );
-        let f_cache = build_ntt_slot(f_flat.ring_view::<D>(n_f, f_width)).expect("f cache");
+        let f_view = f_flat.ring_view::<D>(n_f, f_width).expect("test F view");
+        let f_cache = build_ntt_slot(f_view).expect("f cache");
 
         // Run the tiered commit to get the witness.
         let (commitment, hint) = commit_tiered_with_params::<F, D, _>(

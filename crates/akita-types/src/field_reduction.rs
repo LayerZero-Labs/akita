@@ -7,7 +7,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_field::{
     AkitaError, Ext2, ExtField, FieldCore, FromPrimitiveInt, Invertible, RingSubfieldFp4,
-    RingSubfieldFp4MulBackend,
+    RingSubfieldFp4MulBackend, RingSubfieldFp8, RingSubfieldFp8MulBackend,
 };
 use akita_serialization::Valid;
 
@@ -62,6 +62,16 @@ where
     }
 }
 
+impl<F> RingSubfieldEncoding<F> for RingSubfieldFp8<F>
+where
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp8MulBackend,
+{
+    #[inline]
+    fn to_ring_subfield_coords(&self) -> Vec<F> {
+        self.coeffs.to_vec()
+    }
+}
+
 /// Validation witness for the subgroup `H = <sigma_-1, sigma_(4K+1)>` of the
 /// `R_q = Z_q[X] / (X^D + 1)` Galois action.
 ///
@@ -70,7 +80,9 @@ where
 /// monomorphize and unroll. The struct is zero-sized and only exists to make
 /// "validated `(D, K)`" explicit in function signatures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SubfieldParams<const D: usize, const K: usize>;
+pub struct SubfieldParams<const D: usize, const K: usize> {
+    _private: (),
+}
 
 impl<const D: usize, const K: usize> SubfieldParams<D, K> {
     /// Validate `(D, K)` and return the witness.
@@ -120,7 +132,7 @@ impl<const D: usize, const K: usize> SubfieldParams<D, K> {
             )));
         }
 
-        Ok(Self)
+        Ok(Self { _private: () })
     }
 
     /// Extension degree `K`.
@@ -631,7 +643,7 @@ where
 {
     macro_rules! arm {
         ($k:expr) => {{
-            let coords: &[F; $k] = opening_coords.try_into().expect("checked length");
+            let coords: &[F; $k] = opening_coords.try_into().map_err(|_| error.clone())?;
             let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
             Ok(check_trace_inner_product::<F, D, $k>(
                 params,
@@ -702,7 +714,9 @@ fn mul_mod(a: usize, b: usize, modulus: usize) -> usize {
 mod tests {
     use super::*;
     use crate::{reduce_inner_opening_to_ring_element, BasisMode};
-    use akita_field::{ExtField, Fp32, RingSubfieldFp4, TowerBasisFp4, TwoNr, UnitNr};
+    use akita_field::{
+        ExtField, Fp32, RingSubfieldFp4, RingSubfieldFp8, TowerBasisFp4, TwoNr, UnitNr,
+    };
 
     type F = Fp32<251>;
     type AkitaF32 = Fp32<4294967197>;
@@ -1221,6 +1235,68 @@ mod tests {
         assert_ring_subfield_fp4_embedding_is_multiplicative::<8>();
         assert_ring_subfield_fp4_embedding_is_multiplicative::<64>();
         assert_ring_subfield_fp4_embedding_is_multiplicative::<128>();
+    }
+
+    fn assert_ring_subfield_fp8_embedding_is_multiplicative<const D: usize>() {
+        let params = SubfieldParams::<D, 8>::new().unwrap();
+        let x = RingSubfieldFp8::new([
+            AkitaF32::from_u64(2),
+            AkitaF32::from_u64(3),
+            AkitaF32::from_u64(5),
+            AkitaF32::from_u64(7),
+            AkitaF32::from_u64(11),
+            AkitaF32::from_u64(13),
+            AkitaF32::from_u64(17),
+            AkitaF32::from_u64(19),
+        ]);
+        let y = RingSubfieldFp8::new([
+            AkitaF32::from_u64(23),
+            AkitaF32::from_u64(29),
+            AkitaF32::from_u64(31),
+            AkitaF32::from_u64(37),
+            AkitaF32::from_u64(41),
+            AkitaF32::from_u64(43),
+            AkitaF32::from_u64(47),
+            AkitaF32::from_u64(53),
+        ]);
+
+        assert_eq!(
+            embed_subfield::<AkitaF32, D, 8>(params, &(x * y).coeffs),
+            embed_subfield::<AkitaF32, D, 8>(params, &x.coeffs)
+                * embed_subfield::<AkitaF32, D, 8>(params, &y.coeffs)
+        );
+    }
+
+    #[test]
+    fn ring_subfield_fp8_embedding_places_coefficients_in_ring_subfield_basis() {
+        const D: usize = 16;
+        let params = SubfieldParams::<D, 8>::new().unwrap();
+        let x = RingSubfieldFp8::new([
+            AkitaF32::from_u64(2),
+            AkitaF32::from_u64(3),
+            AkitaF32::from_u64(5),
+            AkitaF32::from_u64(7),
+            AkitaF32::from_u64(11),
+            AkitaF32::from_u64(13),
+            AkitaF32::from_u64(17),
+            AkitaF32::from_u64(19),
+        ]);
+        let embedded = embed_subfield::<AkitaF32, D, 8>(params, &x.coeffs);
+        let coeffs = embedded.coefficients();
+
+        assert_eq!(coeffs[0], AkitaF32::from_u64(2));
+        for j in 1..8 {
+            assert_eq!(coeffs[j], x.coeffs[j]);
+            assert_eq!(coeffs[D - j], -x.coeffs[j]);
+        }
+        assert!(coeffs[8].is_zero());
+    }
+
+    #[test]
+    fn ring_subfield_fp8_embedding_is_multiplicative_across_ring_dimensions() {
+        assert_ring_subfield_fp8_embedding_is_multiplicative::<16>();
+        assert_ring_subfield_fp8_embedding_is_multiplicative::<64>();
+        assert_ring_subfield_fp8_embedding_is_multiplicative::<128>();
     }
 
     /// Generate `D / 4` deterministic `RingSubfieldFp4` elements seeded by `tag`.

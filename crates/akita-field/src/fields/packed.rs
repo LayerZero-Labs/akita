@@ -3,7 +3,7 @@
 use crate::fields::ext::{
     power_basis_fp4_mul_coeffs, Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
 };
-use crate::fields::{Fp128, Fp32, Fp64};
+use crate::fields::{Fp128, Fp16, Fp32, Fp64};
 use crate::{FieldCore, Invertible};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use num_traits::{One, Zero};
@@ -98,13 +98,12 @@ pub trait PackedField:
     where
         C: Fp2Config<Self::Scalar>,
     {
-        let a0b0 = a0 * b0;
-        let a1b1 = a1 * b1;
-        let a0b1 = a0 * b1;
-        let a1b0 = a1 * b0;
+        let v0 = a0 * b0;
+        let v1 = a1 * b1;
+        let cross = (a0 + a1) * (b0 + b1);
         (
-            a0b0 + C::mul_non_residue(a1b1, Self::broadcast),
-            a0b1 + a1b0,
+            v0 + C::mul_non_residue(v1, Self::broadcast),
+            cross - v0 - v1,
         )
     }
 
@@ -351,6 +350,13 @@ pub type Fp128Packing<const P: u128> = NoPacking<Fp128<P>>;
 
 impl<const P: u128> HasPacking for Fp128<P> {
     type Packing = Fp128Packing<P>;
+}
+
+/// Selected packed backend for `Fp16`.
+pub type Fp16Packing<const P: u32> = NoPacking<Fp16<P>>;
+
+impl<const P: u32> HasPacking for Fp16<P> {
+    type Packing = Fp16Packing<P>;
 }
 
 /// Selected packed backend for `Fp32`.

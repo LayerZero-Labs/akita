@@ -98,6 +98,19 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
         log_basis: u32,
     ) -> Result<LevelParams, AkitaError>;
 
+    /// Recursive direct-tail layout for an explicit basis.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the terminal direct witness has no SIS-secure
+    /// parameterization.
+    fn planner_direct_level_params_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, AkitaError> {
+        Self::planner_current_level_layout_with_log_basis(inputs, log_basis)
+    }
+
     /// Active root params for a concrete root layout.
     ///
     /// # Errors

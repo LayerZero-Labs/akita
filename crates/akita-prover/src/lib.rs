@@ -55,13 +55,16 @@ pub mod tier1_f_matrix {
     pub use crate::kernels::matrix::derive_tier1_f_matrix_flat;
 }
 pub use protocol::{
-    build_final_proof_steps, build_folded_batched_proof_with_suffix, commit_next_w_with_policy,
-    prepare_batched_prove_inputs, prove_batched_with_policy, prove_fold_level_from_quadratic,
-    prove_folded_batched_with_policy, prove_recursive_fold_with_params,
-    prove_recursive_level_with_policy, prove_recursive_suffix_with_policy, prove_root_direct,
-    prove_root_fold_from_quadratic, prove_root_fold_with_params, resolve_final_direct_step,
+    build_final_proof_steps, build_folded_batched_proof_with_suffix,
+    build_terminal_root_batched_proof, commit_next_w_with_policy, prepare_batched_prove_inputs,
+    prove_batched_with_policy, prove_fold_level_from_quadratic, prove_folded_batched_with_policy,
+    prove_recursive_fold_with_params, prove_recursive_level_with_policy,
+    prove_recursive_suffix_with_policy, prove_root_direct, prove_root_fold_from_quadratic,
+    prove_root_fold_with_params, prove_terminal_fold_level_from_quadratic,
+    prove_terminal_recursive_fold_with_params, prove_terminal_recursive_level_with_policy,
+    prove_terminal_root_fold_from_quadratic, prove_terminal_root_fold_with_params,
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
-    RingSwitchOutput, RootLevelRawOutput,
+    RingSwitchOutput, RootLevelRawOutput, SuffixLevelOutput, SuffixLevelRequest,
 };
 /// One commitment plus the polynomials it bundles, opened at one point.
 ///
@@ -276,6 +279,63 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         Ok(layer[0])
     }
 
+    /// Compute the tensor-column partials used by root extension-opening
+    /// reduction.
+    ///
+    /// Backends with sparse structure should override this method. The default
+    /// materializes the direct root witness and evaluates all tensor heads in
+    /// one pass over the tail equality table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the point has the wrong arity, if the backend
+    /// cannot expose a field-element root witness, or if the tensor shape is
+    /// invalid.
+    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        if logical_point.len() != num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: num_vars,
+                actual: logical_point.len(),
+            });
+        }
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root tensor partials require field-element root witness".to_string(),
+            )
+        })?;
+        akita_sumcheck::tensor_column_partials_from_base_evals::<F, E>(
+            num_vars,
+            field_elems.coeffs(),
+            logical_point,
+        )
+    }
+
+    /// Compute tensor-column partials for several polynomials at one point.
+    ///
+    /// Backends may override this to share point-dependent work across a
+    /// same-point batch. The default preserves the scalar method behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any polynomial rejects the point or tensor shape.
+    fn tensor_extension_column_partials_batch<E>(
+        polys: &[&Self],
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        polys
+            .iter()
+            .map(|poly| poly.tensor_extension_column_partials(logical_point))
+            .collect()
+    }
+
     /// Materialize the tensor-packed root witness table used by extension
     /// opening reduction.
     ///
@@ -314,6 +374,41 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         E: ExtField<F>,
     {
         Ok(None)
+    }
+
+    /// Build a sparse linear combination of tensor-packed root witnesses.
+    ///
+    /// Backends that can combine sparse transformed roots directly should
+    /// override this method. The default preserves the same sparse/dense
+    /// fallback contract as [`Self::tensor_packed_extension_sparse_evals`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the coefficient list does not match `polys`, or if
+    /// any sparse tensor-packed witness is malformed.
+    fn tensor_packed_extension_sparse_linear_combination<E>(
+        polys: &[&Self],
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        if polys.len() != coeffs.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: polys.len(),
+                actual: coeffs.len(),
+            });
+        }
+        let mut witnesses = Vec::with_capacity(polys.len());
+        for poly in polys {
+            let Some(witness) = poly.tensor_packed_extension_sparse_evals::<E>()? else {
+                return Ok(None);
+            };
+            witnesses.push(witness);
+        }
+        Ok(Some(SparseExtensionOpeningWitness::linear_combination(
+            coeffs.iter().copied().zip(witnesses.iter()),
+        )?))
     }
 
     /// Materialize the tensor-packed root polynomial committed for extension
@@ -513,6 +608,24 @@ where
         <P as AkitaPolyOps<F, D>>::evaluate_extension::<E>(*self, point)
     }
 
+    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_extension_column_partials::<E>(*self, logical_point)
+    }
+
+    fn tensor_extension_column_partials_batch<E>(
+        polys: &[&Self],
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
+        P::tensor_extension_column_partials_batch(&inner_refs, logical_point)
+    }
+
     fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
     where
         E: ExtField<F>,
@@ -527,6 +640,17 @@ where
         E: ExtField<F>,
     {
         <P as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_evals::<E>(*self)
+    }
+
+    fn tensor_packed_extension_sparse_linear_combination<E>(
+        polys: &[&Self],
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
+        P::tensor_packed_extension_sparse_linear_combination(&inner_refs, coeffs)
     }
 
     fn tensor_packed_extension_poly<E>(&self) -> Result<DensePoly<F, D>, AkitaError>

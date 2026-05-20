@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 authors = [
-    "Markos Georghiades <mgeorghiades@a16z.com>",
-    "Quang Dao <qvd@andrew.cmu.edu>",
-    "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
-    "Omid Bodaghi <omibo@layerzero.foundation>",
-    "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+  "Markos Georghiades <mgeorghiades@a16z.com>",
+  "Quang Dao <qvd@andrew.cmu.edu>",
+  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+  "Omid Bodaghi <omibo@layerzero.foundation>",
+  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
 ]
 license = "Apache-2.0 OR MIT"
 description = "End-to-end Akita PCS scheme orchestration"
@@ -17,24 +17,21 @@ readme = "../../README.md"
 
 [features]
 default = []
-planner = [
-    "akita-config/planner",
-    "akita-setup/planner",
-]
+planner = ["akita-config/planner", "akita-setup/planner"]
 parallel = [
-    "dep:rayon",
-    "akita-algebra/parallel",
-    "akita-field/parallel",
-    "akita-prover/parallel",
-    "akita-setup/parallel",
-    "akita-verifier/parallel",
+  "dep:rayon",
+  "akita-algebra/parallel",
+  "akita-field/parallel",
+  "akita-prover/parallel",
+  "akita-setup/parallel",
+  "akita-verifier/parallel",
 ]
 zk = [
-    "akita-config/zk",
-    "akita-prover/zk",
-    "akita-setup/zk",
-    "akita-types/zk",
-    "akita-verifier/zk",
+  "akita-config/zk",
+  "akita-prover/zk",
+  "akita-setup/zk",
+  "akita-types/zk",
+  "akita-verifier/zk",
 ]
 
 [dependencies]
@@ -56,10 +53,5 @@ akita-planner = { version = "0.1.0", path = "../akita-planner" }
 rand = "0.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 
-[lints.rust]
-missing_docs = "warn"
-unreachable_pub = "warn"
-
-[lints.clippy]
-missing_errors_doc = "warn"
-missing_panics_doc = "warn"
+[lints]
+workspace = true

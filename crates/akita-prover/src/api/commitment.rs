@@ -97,7 +97,7 @@ where
             total_f_ring_elements,
             &setup.expanded.seed.public_matrix_seed,
         );
-        let f_ntt_cache = build_ntt_slot(f_flat.ring_view::<D>(n_f, f_width))?;
+        let f_ntt_cache = build_ntt_slot(f_flat.ring_view::<D>(n_f, f_width)?)?;
         return commit_tiered_with_params::<F, D, P>(polys, setup, params, &f_ntt_cache, f_width);
     }
 
@@ -608,7 +608,9 @@ mod tests {
             .map(|idx| F::from_canonical_u128_reduced(1 + (idx as u128 * 13) % 97))
             .collect();
         let flat = FlatMatrix::<F>::from_flat_data(data, D);
-        let view = flat.ring_view::<D>(n_f, f_width);
+        let view = flat
+            .ring_view::<D>(n_f, f_width)
+            .expect("test F view shape");
         let cache = build_ntt_slot(view).expect("build F NTT cache");
         (cache, f_width)
     }
@@ -890,7 +892,10 @@ mod tests {
             total_f_ring_elements,
             &setup.expanded.seed.public_matrix_seed,
         );
-        let f_cache = build_ntt_slot(f_flat.ring_view::<D>(n_f, f_width)).expect("f cache");
+        let f_view = f_flat
+            .ring_view::<D>(n_f, f_width)
+            .expect("test F view shape");
+        let f_cache = build_ntt_slot(f_view).expect("f cache");
         let (commitment_b, hint_b) = commit_tiered_with_params::<F, D, _>(
             std::slice::from_ref(&poly),
             &setup,

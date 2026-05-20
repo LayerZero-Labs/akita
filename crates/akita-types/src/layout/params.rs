@@ -9,6 +9,27 @@ use akita_field::AkitaError;
 
 pub use crate::generated::sis_floor::SisModulusFamily;
 
+/// Per-level M-matrix row layout selector.
+///
+/// At an intermediate fold the prover ships a fresh commitment for the next
+/// witness; the verifier never sees `w_hat` in cleartext and the D-block rows
+/// `v = D * w_hat` must appear in the M-matrix to bind `w_hat` into the
+/// sumcheck.
+///
+/// At a terminal fold the cleartext witness is absorbed into the transcript
+/// and shipped on the wire, so the verifier evaluates the final witness
+/// directly. Keeping the D-block in the relation would be vestigial; this enum
+/// lets the prover, verifier, and planner agree to drop it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MRowLayout {
+    /// Full layout including the D-block (`v = D * w_hat` rows). Used at every
+    /// intermediate fold level and at the root when stage-1 runs.
+    Intermediate,
+    /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
+    /// the terminal fold level where `final_witness` ships on the wire.
+    Terminal,
+}
+
 /// Parameters for a single Ajtai commitment matrix.
 ///
 /// Each matrix in the protocol (A, B, D) is characterised by its row count
@@ -402,15 +423,63 @@ impl LevelParams {
     /// See `specs/tiered_commit.md` §3 for the precise meaning of the
     /// tier-1 and F row blocks.
     #[inline]
-    pub fn m_row_count(&self, num_commitments: usize, num_public_outputs: usize) -> usize {
-        let common = 1 + num_public_outputs + self.d_key.row_len() + self.a_key.row_len();
-        if self.is_tiered_root() {
-            common
-                + self.split_factor * self.b_key.row_len() * num_commitments
-                + self.f_key.row_len() * num_commitments
+    pub fn m_row_count(
+        &self,
+        num_commitments: usize,
+        num_public_outputs: usize,
+    ) -> Result<usize, AkitaError> {
+        self.m_row_count_for(
+            num_commitments,
+            num_public_outputs,
+            MRowLayout::Intermediate,
+        )
+    }
+
+    /// Row count for an explicit M-row layout.
+    ///
+    /// At the terminal fold the cleartext witness is shipped on the wire and
+    /// the D-block is dropped from the M-matrix; see [`MRowLayout`]. For
+    /// tiered roots (`split_factor > 1`) the legacy `n_b · num_commitments`
+    /// B-block is replaced by a `split_factor · n_b' · num_commitments`
+    /// tier-1 block plus an `n_F · num_commitments` F block, per
+    /// `specs/tiered_commit.md` §3. The two features (terminal-fold and
+    /// tiering) compose: a Terminal-layout tiered root drops the D-block
+    /// AND uses the tier-1 + F row split.
+    #[inline]
+    pub fn m_row_count_for(
+        &self,
+        num_commitments: usize,
+        num_public_outputs: usize,
+        layout: MRowLayout,
+    ) -> Result<usize, AkitaError> {
+        let oflow = || AkitaError::InvalidSetup("M-row count overflow".to_string());
+        let n_d_active = match layout {
+            MRowLayout::Intermediate => self.d_key.row_len(),
+            MRowLayout::Terminal => 0,
+        };
+        let b_block_rows = if self.is_tiered_root() {
+            self.split_factor
+                .checked_mul(self.b_key.row_len())
+                .and_then(|x| x.checked_mul(num_commitments))
+                .and_then(|tier1_rows| {
+                    self.f_key
+                        .row_len()
+                        .checked_mul(num_commitments)
+                        .and_then(|f_rows| tier1_rows.checked_add(f_rows))
+                })
+                .ok_or_else(oflow)?
         } else {
-            common + self.b_key.row_len() * num_commitments
-        }
+            self.b_key
+                .row_len()
+                .checked_mul(num_commitments)
+                .ok_or_else(oflow)?
+        };
+        n_d_active
+            .checked_add(b_block_rows)
+            .and_then(|rows| rows.checked_add(num_public_outputs))
+            .and_then(|rows| rows.checked_add(1))
+            .and_then(|rows| rows.checked_add(self.a_key.row_len()))
+            .ok_or_else(oflow)
     }
 
     /// Fill in the layout-derived fields from explicit decomposition parameters.
@@ -621,8 +690,12 @@ mod tests {
     fn m_row_count_values() {
         let lp = sample_params_only().with_layout(&sample_layout_lp());
 
-        assert_eq!(lp.m_row_count(1, 1), 3 + 4 + 1 + 1 + 2);
-        assert_eq!(lp.m_row_count(2, 5), 3 + 4 * 2 + 5 + 1 + 2);
-        assert_eq!(lp.m_row_count(4, 4), 3 + 4 * 4 + 4 + 1 + 2);
+        assert_eq!(lp.m_row_count(1, 1).unwrap(), 3 + 4 + 1 + 1 + 2);
+        assert_eq!(lp.m_row_count(2, 5).unwrap(), 3 + 4 * 2 + 5 + 1 + 2);
+        assert_eq!(lp.m_row_count(4, 4).unwrap(), 3 + 4 * 4 + 4 + 1 + 2);
+        assert_eq!(
+            lp.m_row_count_for(2, 5, MRowLayout::Terminal).unwrap(),
+            4 * 2 + 5 + 1 + 2
+        );
     }
 }

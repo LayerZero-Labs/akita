@@ -82,11 +82,7 @@ impl<F: FieldCore> AkitaExpandedSetup<F> {
     /// Panics in debug if a subsequent caller passes a different
     /// `num_rings` than the first one — the setup is being reused at
     /// an unexpected tiered SIS shape.
-    pub fn tier1_f_matrix<DeriveFn>(
-        &self,
-        num_rings: usize,
-        derive: DeriveFn,
-    ) -> &FlatMatrix<F>
+    pub fn tier1_f_matrix<DeriveFn>(&self, num_rings: usize, derive: DeriveFn) -> &FlatMatrix<F>
     where
         DeriveFn: FnOnce(&PublicMatrixSeed) -> FlatMatrix<F>,
     {

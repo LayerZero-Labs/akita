@@ -226,8 +226,10 @@ fn forced_tiering_commit_and_references_compose_end_to_end() {
     // ----- F NTT cache (matches commit_with_params's derivation) -----------
     let f_flat =
         derive_tier1_f_matrix_flat::<F, D>(n_f * f_width, &setup.expanded.seed.public_matrix_seed);
-    let f_ntt = akita_prover::kernels::crt_ntt::build_ntt_slot(f_flat.ring_view::<D>(n_f, f_width))
-        .expect("f ntt cache");
+    let f_view = f_flat
+        .ring_view::<D>(n_f, f_width)
+        .expect("test F view shape");
+    let f_ntt = akita_prover::kernels::crt_ntt::build_ntt_slot(f_view).expect("f ntt cache");
 
     // ----- Outer gadget vector ---------------------------------------------
     //
@@ -283,7 +285,9 @@ fn forced_tiering_commit_and_references_compose_end_to_end() {
     let n_d = tier.d_key.row_len();
     let n_a_rows = tier.a_key.row_len();
     let num_public_rows = num_points; // singleton bundle per point
-    let num_rows = tier.m_row_count(num_points, num_public_rows);
+    let num_rows = tier
+        .m_row_count(num_points, num_public_rows)
+        .expect("m_row_count");
     let rows_pow2 = num_rows.next_power_of_two();
     let eq_tau1: Vec<F> = (0..rows_pow2)
         .map(|idx| F::from_canonical_u128_reduced(((idx as u128) * 41 + 13) % 521))
@@ -321,8 +325,9 @@ fn forced_tiering_commit_and_references_compose_end_to_end() {
     let b_prime_view = setup
         .expanded
         .shared_matrix
-        .ring_view::<D>(n_b_prime, setup.expanded.seed.max_stride);
-    let f_view = f_flat.ring_view::<D>(n_f, f_width);
+        .ring_view::<D>(n_b_prime, setup.expanded.seed.max_stride)
+        .expect("b' view");
+    let f_view = f_flat.ring_view::<D>(n_f, f_width).expect("f view");
 
     let verifier_inputs = Tier1AndFInputs::<F, F, D> {
         b_prime_view,
@@ -381,8 +386,8 @@ fn forced_tiering_commit_and_references_compose_end_to_end() {
                     + num_t_vectors_local * digit_idx
                     + num_t_vectors_local * tier.num_digits_open * a_row_idx;
                 let m_col = offset_t + block_idx + tier.num_blocks * high;
-                let alpha_eval =
-                    eval_ring_at_pows(&b_prime_view.row(r_prime)[local_c], &alpha_pows);
+                let b_row = b_prime_view.row(r_prime).expect("b' row in range");
+                let alpha_eval = eval_ring_at_pows(&b_row[local_c], &alpha_pows);
                 expected += w * eq_full[m_col] * alpha_eval;
             }
             // -G·ûhat_i half.
@@ -397,9 +402,10 @@ fn forced_tiering_commit_and_references_compose_end_to_end() {
     for r in 0..n_f {
         let row_flat = r;
         let w = f_row_weights[row_flat];
+        let f_row_data = f_view.row(r).expect("f row in range");
         for c in 0..f_width {
             let m_col = offset_uhat + c;
-            let alpha_eval = eval_ring_at_pows(&f_view.row(r)[c], &alpha_pows);
+            let alpha_eval = eval_ring_at_pows(&f_row_data[c], &alpha_pows);
             expected += w * eq_full[m_col] * alpha_eval;
         }
     }

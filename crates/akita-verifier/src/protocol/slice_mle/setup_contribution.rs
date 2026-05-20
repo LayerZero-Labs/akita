@@ -2,7 +2,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_types::AkitaExpandedSetup;
 
 use super::structured_slice::POSSIBLE_CARRIES;
@@ -146,50 +146,108 @@ pub(crate) fn compute_setup_contribution<F, E, const D: usize>(
     offset_w: usize,
     offset_t: usize,
     offset_z: usize,
-) -> E
+) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
+    if prepared.num_blocks == 0 || !prepared.num_blocks.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "num_blocks must be a non-zero power of two".to_string(),
+        ));
+    }
+    if prepared.block_len == 0 || prepared.depth_commit == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "Z layout requires non-zero block length and commit depth".to_string(),
+        ));
+    }
     let block_bits = prepared.num_blocks.trailing_zeros() as usize;
-    let block_mask = prepared.num_blocks.wrapping_sub(1);
+    if block_bits > full_vec_randomness.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: block_bits,
+            actual: full_vec_randomness.len(),
+        });
+    }
+    let block_mask = prepared.num_blocks - 1;
     let block_offset_low = offset_w & block_mask;
     let w_offset_high = offset_w >> block_bits;
     let t_offset_high = offset_t >> block_bits;
     let high_challenges = &full_vec_randomness[block_bits..];
 
     let z_offset_low_bits = prepared.block_len.trailing_zeros() as usize;
-    let z_offset_low = offset_z & prepared.block_len.wrapping_sub(1);
+    if z_offset_low_bits > full_vec_randomness.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: z_offset_low_bits,
+            actual: full_vec_randomness.len(),
+        });
+    }
+    let z_offset_low = offset_z & prepared.block_len.saturating_sub(1);
     let z_range = prepared.inner_width;
     let z_used = prepared.n_a > 0 && z_range > 0;
     let z_dims_pow2 = prepared.block_len.is_power_of_two();
 
-    let d_start = 1 + prepared.num_public_rows;
-    let b_start = d_start + prepared.n_d;
-    // Tiered row layout (`specs/tiered_commit.md` §3) replaces the
-    // `n_b · num_points` B-row block with a `split · n_b' · num_points`
-    // tier-1 block followed by an `n_F · num_points` F block. Reading
-    // `a_weights` from the legacy `a_start` would slurp tier-1 row
-    // weights into the A-row weight slice and corrupt the Z-half α-eval
-    // (W half is OK because `d_weights` uses `d_start`, which is
-    // unchanged). Must match the prover's `compute_m_evals_x` tiered
-    // dispatch and the verifier's `t_structured_contribution` /
-    // `tier1_reference` row weight slicing.
-    let a_start = if prepared.is_tiered {
-        b_start
-            + prepared.split_factor * prepared.n_b * prepared.num_points
-            + prepared.n_f * prepared.num_points
+    // Row layout: composed Terminal-fold (drop D-block) × tiered split.
+    // The two compose: at Terminal `n_d_active == 0` collapses the D
+    // segment out of the offset chain; at tiered we extend the
+    // commitment row block from `n_b · num_points` to
+    // `split · n_b' · num_points + n_F · num_points` (`specs/tiered_commit.md` §3).
+    let n_d_active = prepared.n_d_active();
+    let d_start = 1usize
+        .checked_add(prepared.num_public_rows)
+        .ok_or_else(|| AkitaError::InvalidSetup("D row start overflow".to_string()))?;
+    let b_start = d_start
+        .checked_add(n_d_active)
+        .ok_or_else(|| AkitaError::InvalidSetup("B row start overflow".to_string()))?;
+    let commitment_rows_block = if prepared.is_tiered {
+        prepared
+            .split_factor
+            .checked_mul(prepared.n_b)
+            .and_then(|x| x.checked_mul(prepared.num_points))
+            .and_then(|tier1| {
+                prepared
+                    .n_f
+                    .checked_mul(prepared.num_points)
+                    .and_then(|f_rows| tier1.checked_add(f_rows))
+            })
+            .ok_or_else(|| AkitaError::InvalidSetup("tiered row width overflow".to_string()))?
     } else {
-        b_start + prepared.n_b * prepared.num_points
+        prepared
+            .n_b
+            .checked_mul(prepared.num_points)
+            .ok_or_else(|| AkitaError::InvalidSetup("B row width overflow".to_string()))?
     };
+    let a_start = b_start
+        .checked_add(commitment_rows_block)
+        .ok_or_else(|| AkitaError::InvalidSetup("A row start overflow".to_string()))?;
+    if d_start
+        .checked_add(n_d_active)
+        .is_none_or(|end| end > prepared.eq_tau1.len())
+        || a_start > prepared.rows
+        || prepared.rows > prepared.eq_tau1.len()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "M-row weights are inconsistent with verifier layout".to_string(),
+        ));
+    }
     let tier1_start = b_start;
-    let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
+    let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
     let a_weights = &prepared.eq_tau1[a_start..prepared.rows];
 
-    let stride_t = prepared.n_a * prepared.depth_open;
-    let cols_per_poly_t = stride_t * prepared.num_blocks;
-    let b_per_claim_w = prepared.num_blocks * prepared.depth_open;
-    let n_cols_w = prepared.num_claims * b_per_claim_w;
+    let stride_t = prepared
+        .n_a
+        .checked_mul(prepared.depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("T stride overflow".to_string()))?;
+    let cols_per_poly_t = stride_t
+        .checked_mul(prepared.num_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("T column width overflow".to_string()))?;
+    let b_per_claim_w = prepared
+        .num_blocks
+        .checked_mul(prepared.depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("W claim width overflow".to_string()))?;
+    let n_cols_w = prepared
+        .num_claims
+        .checked_mul(b_per_claim_w)
+        .ok_or_else(|| AkitaError::InvalidSetup("W column width overflow".to_string()))?;
 
     // T's row weight is group-dependent and its c-axis indexes `poly_idx`
     // within the group. Its M-layout high index, however, is the global
@@ -207,33 +265,64 @@ where
         group_offsets.push(next_offset);
         next_offset += group_poly_count;
     }
-    let n_cols_t = max_group_poly_count * cols_per_poly_t;
+    let n_cols_t = max_group_poly_count
+        .checked_mul(cols_per_poly_t)
+        .ok_or_else(|| AkitaError::InvalidSetup("T column width overflow".to_string()))?;
 
     // Row range covers every SIS row that any of W/T/Z touch. Z extends
     // it to `n_a` when active, so Z-only rows participate inside the loop
     // — no separate post-loop matrix-A scan.
     let r_max = if z_used {
-        prepared.n_d.max(prepared.n_b).max(prepared.n_a)
+        n_d_active.max(prepared.n_b).max(prepared.n_a)
     } else {
-        prepared.n_d.max(prepared.n_b)
+        n_d_active.max(prepared.n_b)
     };
-    let n_cols_total = n_cols_w.max(n_cols_t).max(if z_used { z_range } else { 0 });
-    assert!(
-        n_cols_total > 0,
-        "matrix-row pattern evaluation requires at least one SIS column"
-    );
-    assert!(
-        r_max > 0,
-        "matrix-row pattern evaluation requires at least one SIS row"
-    );
+    // `n_cols_total` is used (a) to assert the shared matrix stride is
+    // wide enough for every column the per-row loop will actually scan,
+    // and (b) below as the maximum column extent reached by any of the
+    // three halves. For tiered roots the T-half's per-row α-eval extent
+    // is `chunk_width` (one chunk of `B'`), not the full per-point
+    // bundle `n_cols_t` that `t_eq_slice_per_group` covers — so use the
+    // tiered `chunk_width` in the stride check.
+    let t_scan_width = if prepared.is_tiered {
+        prepared.b_prime_width
+    } else {
+        n_cols_t
+    };
+    let n_cols_total = n_cols_w
+        .max(t_scan_width)
+        .max(if z_used { z_range } else { 0 });
+    if n_cols_total == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "matrix-row pattern evaluation requires at least one SIS column".to_string(),
+        ));
+    }
+    if r_max == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "matrix-row pattern evaluation requires at least one SIS row".to_string(),
+        ));
+    }
+    if n_cols_total > setup.seed.max_stride {
+        return Err(AkitaError::InvalidSetup(
+            "shared matrix stride is too small for selected verifier layout".to_string(),
+        ));
+    }
 
-    let eq_hi_w_table: Vec<E> = (0..=prepared.num_claims * prepared.depth_open)
+    let w_hi_len = prepared
+        .num_claims
+        .checked_mul(prepared.depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("W high-eq width overflow".to_string()))?;
+    let t_hi_len = prepared
+        .num_t_vectors
+        .checked_mul(prepared.depth_open)
+        .and_then(|len| len.checked_mul(prepared.n_a))
+        .ok_or_else(|| AkitaError::InvalidSetup("T high-eq width overflow".to_string()))?;
+    let eq_hi_w_table: Vec<E> = (0..=w_hi_len)
         .map(|k| eq_eval_at_index(high_challenges, w_offset_high + k))
         .collect();
-    let eq_hi_t_table: Vec<E> = (0..=prepared.num_t_vectors * prepared.depth_open * prepared.n_a)
+    let eq_hi_t_table: Vec<E> = (0..=t_hi_len)
         .map(|k| eq_eval_at_index(high_challenges, t_offset_high + k))
         .collect();
-
     let w_eq_slice: Vec<E> = cfg_into_iter!(0..n_cols_w)
         .map(|current_index| {
             let (low_eq_idx, high_eq_idx) = get_eq_indices_for_d(
@@ -331,8 +420,15 @@ where
     } else {
         // Build a peeled eq cache so each per-cell `eq(r, offset_z +
         // j_M^Z)` is O(1) instead of O(|r|).
-        let z_total_blocks_dense = prepared.block_len * prepared.num_points;
-        let z_len_dense = prepared.depth_fold * prepared.depth_commit * z_total_blocks_dense;
+        let z_total_blocks_dense = prepared
+            .block_len
+            .checked_mul(prepared.num_points)
+            .ok_or_else(|| AkitaError::InvalidSetup("dense Z block width overflow".to_string()))?;
+        let z_len_dense = prepared
+            .depth_fold
+            .checked_mul(prepared.depth_commit)
+            .and_then(|len| len.checked_mul(z_total_blocks_dense))
+            .ok_or_else(|| AkitaError::InvalidSetup("dense Z length overflow".to_string()))?;
         let n_rand = full_vec_randomness.len();
         let k = z_len_dense
             .saturating_sub(1)
@@ -341,11 +437,23 @@ where
             .unwrap_or(0)
             .max(1)
             .min(n_rand);
-        let mask = (1usize << k) - 1;
+        let mask = 1usize
+            .checked_shl(u32::try_from(k).map_err(|_| AkitaError::InvalidSize {
+                expected: usize::BITS as usize,
+                actual: k,
+            })?)
+            .ok_or_else(|| AkitaError::InvalidSetup("dense Z eq width overflow".to_string()))?
+            - 1;
         let offset_z_dense_low = offset_z & mask;
         let offset_z_dense_high = offset_z >> k;
-        let eq_low_z_dense = EqPolynomial::evals(&full_vec_randomness[..k]);
-        let max_high = (offset_z + z_len_dense - 1) >> k;
+        let eq_low_z_dense = EqPolynomial::evals(&full_vec_randomness[..k])?;
+        let max_high = offset_z
+            .checked_add(z_len_dense)
+            .and_then(|end| end.checked_sub(1))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("dense Z high-eq bound overflow".to_string())
+            })?
+            >> k;
         let n_high = max_high - offset_z_dense_high + 1;
         let eq_high_z_dense: Vec<E> = (0..n_high)
             .map(|h| eq_eval_at_index(&full_vec_randomness[k..], offset_z_dense_high + h))
@@ -388,7 +496,9 @@ where
     }
     let shared_view = setup
         .shared_matrix
-        .ring_view::<D>(r_max, setup.seed.max_stride);
+        .ring_view::<D>(r_max, setup.seed.max_stride)?;
+    let shared_stride = shared_view.num_cols();
+    let shared_flat = shared_view.as_slice();
 
     // Per-row pre-combined T-half pattern. For legacy roots this is the
     // per-row group sum `Σ_g b_w(row, g) · t_eq_per_group[g][c]` over
@@ -403,13 +513,7 @@ where
     // standalone tier-1 evaluator's `B' · t̂` work — `tier1_reference.rs`
     // now only handles the structured `−G · ûhat` half and the
     // `F · ûhat_concat` α-eval over the separate `F` matrix).
-    let n_b_rows_active = if prepared.is_tiered {
-        // `n_b'` (= `prepared.n_b` under the tiered planner's
-        // single-input convention).
-        prepared.n_b
-    } else {
-        prepared.n_b
-    };
+    let n_b_rows_active = prepared.n_b; // n_b' under tiered single-input convention
     let chunk_width = if prepared.is_tiered {
         prepared.b_prime_width
     } else {
@@ -441,13 +545,13 @@ where
 
     let row_contribs: Vec<E> = cfg_into_iter!(0..r_max)
         .map(|row| {
-            let row_slice = shared_view.row(row);
+            let row_start = row * shared_stride;
+            let row_slice = &shared_flat[row_start..row_start + shared_stride];
 
-            let e_w = if row < prepared.n_d { n_cols_w } else { 0 };
-            // Tiered: T-half is the tier-1 `B'·t̂` block; its column
-            // extent is `chunk_width` (the verifier α-evaluates only
-            // the leading `chunk_width` columns of each `B'` row).
-            // Legacy: T-half is the full per-point B-physical bundle.
+            // Terminal-fold drops the D-block (`n_d_active == 0`);
+            // tiered cuts the T-half column extent down to `chunk_width`
+            // because B' is a column-prefix subview of B.
+            let e_w = if row < n_d_active { n_cols_w } else { 0 };
             let e_t = if prepared.is_tiered {
                 if row < n_b_rows_active {
                     chunk_width
@@ -512,15 +616,25 @@ where
                     })
                     .collect()
             };
+            let d_weight = if row < n_d_active {
+                d_weights[row]
+            } else {
+                E::zero()
+            };
+            let a_weight = if row < prepared.n_a && z_used {
+                a_weights[row]
+            } else {
+                E::zero()
+            };
 
             let s1 = if e1 > 0 {
                 slice_inner_sum::<F, E, true, true, true>(
                     0..e1,
                     &r_eval,
-                    d_weights[row],
+                    d_weight,
                     &w_eq_slice,
                     &t_eq_for_row,
-                    a_weights[row],
+                    a_weight,
                     &z_eq_slice,
                 )
             } else {
@@ -535,22 +649,22 @@ where
                         E::zero(),
                         &w_eq_slice,
                         &t_eq_for_row,
-                        a_weights[row],
+                        a_weight,
                         &z_eq_slice,
                     ),
                     Pat::T => slice_inner_sum::<F, E, true, false, true>(
                         e1..e2,
                         &r_eval,
-                        d_weights[row],
+                        d_weight,
                         &w_eq_slice,
                         &t_eq_for_row,
-                        a_weights[row],
+                        a_weight,
                         &z_eq_slice,
                     ),
                     Pat::Z => slice_inner_sum::<F, E, true, true, false>(
                         e1..e2,
                         &r_eval,
-                        d_weights[row],
+                        d_weight,
                         &w_eq_slice,
                         &t_eq_for_row,
                         E::zero(),
@@ -566,7 +680,7 @@ where
                     Pat::W => slice_inner_sum::<F, E, true, false, false>(
                         e2..e3,
                         &r_eval,
-                        d_weights[row],
+                        d_weight,
                         &w_eq_slice,
                         &t_eq_for_row,
                         E::zero(),
@@ -587,7 +701,7 @@ where
                         E::zero(),
                         &w_eq_slice,
                         &t_eq_for_row,
-                        a_weights[row],
+                        a_weight,
                         &z_eq_slice,
                     ),
                 }
@@ -599,7 +713,7 @@ where
         })
         .collect();
 
-    row_contribs.into_iter().sum::<E>()
+    Ok(row_contribs.into_iter().sum::<E>())
 }
 
 #[cfg(test)]
@@ -609,7 +723,7 @@ mod tests {
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_field::Prime128OffsetA7F7;
-    use akita_types::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix};
+    use akita_types::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix, MRowLayout};
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
@@ -700,6 +814,7 @@ mod tests {
             log_basis,
             n_a,
             n_d,
+            m_row_layout: MRowLayout::Intermediate,
             n_b,
             num_points,
             rows,
@@ -725,9 +840,10 @@ mod tests {
         let alpha_pows = scalar_powers(alpha, D);
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
         let block_bits = num_blocks.trailing_zeros() as usize;
-        let eq_low = EqPolynomial::evals(&full_vec_randomness[..block_bits]);
+        let eq_low = EqPolynomial::evals(&full_vec_randomness[..block_bits]).unwrap();
         let z_offset_low_bits = block_len.trailing_zeros() as usize;
-        let z_block_low_eq = EqPolynomial::evals(&full_vec_randomness[..z_offset_low_bits]);
+        let z_block_low_eq =
+            EqPolynomial::evals(&full_vec_randomness[..z_offset_low_bits]).unwrap();
 
         let got = compute_setup_contribution::<F, F, D>(
             &prepared,
@@ -740,9 +856,14 @@ mod tests {
             offset_w,
             offset_t,
             offset_z,
-        );
+        )
+        .unwrap();
 
-        let shared_view = setup.shared_matrix.ring_view::<D>(r_max, max_stride);
+        let shared_view = setup
+            .shared_matrix
+            .ring_view::<D>(r_max, max_stride)
+            .unwrap();
+        let shared_rows: Vec<_> = shared_view.rows().collect();
         let d_start = 1 + num_public_rows;
         let b_start = d_start + n_d;
         let a_start = b_start + n_b * num_points;
@@ -757,7 +878,7 @@ mod tests {
                         let d_phys_col = (claim * num_blocks + block) * depth_open + digit;
                         let m_idx = block + num_blocks * (claim + num_claims * digit);
                         expected += weight
-                            * eval_ring_at_pows(&shared_view.row(row)[d_phys_col], &alpha_pows)
+                            * eval_ring_at_pows(&shared_rows[row][d_phys_col], &alpha_pows)
                             * eq[offset_w + m_idx];
                     }
                 }
@@ -782,10 +903,7 @@ mod tests {
                                             + num_t_vectors * digit
                                             + num_t_vectors * depth_open * a_idx);
                                 expected += weight
-                                    * eval_ring_at_pows(
-                                        &shared_view.row(row)[local_col],
-                                        &alpha_pows,
-                                    )
+                                    * eval_ring_at_pows(&shared_rows[row][local_col], &alpha_pows)
                                     * eq[offset_t + m_idx];
                             }
                         }
@@ -806,7 +924,7 @@ mod tests {
                                 + block_len
                                     * (point + num_points * df + num_points * depth_fold * dc);
                             expected -= weight
-                                * eval_ring_at_pows(&shared_view.row(row)[local_col], &alpha_pows)
+                                * eval_ring_at_pows(&shared_rows[row][local_col], &alpha_pows)
                                 * fold_weight
                                 * eq[offset_z + m_idx];
                         }

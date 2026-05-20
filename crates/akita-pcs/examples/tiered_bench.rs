@@ -812,13 +812,7 @@ fn main() {
 
     let (legacy_stats, legacy_breakdown) = if !only_tier {
         let mut rng_legacy = StdRng::seed_from_u64(0xa11ce);
-        let stats = run_bench::<LegacyBenchCfg>(
-            "legacy_f1",
-            nv,
-            trials,
-            &mut rng_legacy,
-            &timings,
-        );
+        let stats = run_bench::<LegacyBenchCfg>("legacy_f1", nv, trials, &mut rng_legacy, &timings);
         let snapshot = timings.snapshot();
         (Some(stats), snapshot)
     } else {
@@ -920,7 +914,10 @@ fn main() {
         breakdown: &'a [(&'static str, usize, Duration)],
         name: &str,
     ) -> Option<&'a Duration> {
-        breakdown.iter().find(|(n, _, _)| *n == name).map(|(_, _, d)| d)
+        breakdown
+            .iter()
+            .find(|(n, _, _)| *n == name)
+            .map(|(_, _, d)| d)
     }
 
     fn print_compare(
@@ -956,9 +953,7 @@ fn main() {
             ("tier1_f_matrix_derive", 6),
         ];
         println!();
-        println!(
-            "--- Component comparison (mean ms / trial across {trials} trials) ---"
-        );
+        println!("--- Component comparison (mean ms / trial across {trials} trials) ---");
         println!(
             "  {:<48} {:>12}  {:>12}  {:>10}",
             "component", "legacy (f=1)", "tiered (f=3)", "Δ (T - L)"

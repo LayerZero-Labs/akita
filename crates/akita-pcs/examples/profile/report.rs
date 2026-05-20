@@ -1,8 +1,8 @@
 use akita_field::FieldCore;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaSchedulePlan,
-    DirectWitnessProof, LevelParams,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, AkitaSchedulePlan,
+    DirectWitnessProof, LevelParams, TerminalLevelProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -161,6 +161,76 @@ where
     total
 }
 
+fn print_terminal_level_breakdown<FF, L, const D: usize>(
+    label: &str,
+    level_idx: usize,
+    level: &TerminalLevelProof<FF, L>,
+    root_variant: &'static str,
+) -> usize
+where
+    FF: FieldCore + AkitaSerialize,
+    L: FieldCore + AkitaSerialize,
+{
+    let y_rings_size = level.y_rings.serialized_size(Compress::No);
+    let (extension_opening_partials_size, extension_opening_sumcheck_size) =
+        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
+    let stage2_sumcheck_size = level.stage2_sumcheck.serialized_size(Compress::No);
+    let final_witness_size = level.final_witness.serialized_size(Compress::No);
+    let full = level.serialized_size(Compress::No);
+    // `total_bytes` excludes `final_witness` to mirror the planner's
+    // `terminal_level_proof_bytes`. `final_witness` is reported separately as
+    // the proof tail (`tail_bytes`) and accounted for in `accounted_bytes`.
+    let total = full - final_witness_size;
+
+    // Only the fields structurally present in `TerminalLevelProof` are
+    // emitted: `y_rings`, optional extension-opening reduction, the
+    // stage-2 sumcheck, and `final_witness`. The intermediate-level
+    // fields (`v`, `stage1_*`, `next_w_*`) are absent at terminal and
+    // therefore omitted from the tracing payload; downstream parsers
+    // default missing keys to zero.
+    tracing::info!(
+        label,
+        level = level_idx,
+        d = D,
+        total_bytes = total,
+        y_ring_bytes = y_rings_size,
+        extension_opening_partials_bytes = extension_opening_partials_size,
+        extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
+        stage2_sumcheck_bytes = stage2_sumcheck_size,
+        final_witness_bytes = final_witness_size,
+        root_variant = root_variant,
+        "proof fold level"
+    );
+
+    let header = if level_idx == 0 {
+        "batched_root (terminal)".to_string()
+    } else {
+        format!("akita_fold L{level_idx} (terminal)")
+    };
+    eprintln!(
+        "[{label}]   {header}: total={total} bytes (excl. final_witness={final_witness_size})"
+    );
+    eprintln!(
+        "[{label}]     y_rings={} bytes ({} ring elems, D={})",
+        y_rings_size,
+        ring_elem_count(level.y_rings.coeff_len(), D),
+        D,
+    );
+    eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
+    eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
+    eprintln!("[{label}]     final_witness={final_witness_size} bytes (absorbed via transcript)");
+    assert_eq!(
+        full,
+        y_rings_size
+            + extension_opening_partials_size
+            + extension_opening_sumcheck_size
+            + stage2_sumcheck_size
+            + final_witness_size
+    );
+    total
+}
+
 fn print_batched_root_breakdown<FF, L, const D: usize>(
     label: &str,
     root: &AkitaBatchedRootProof<FF, L>,
@@ -169,24 +239,21 @@ where
     FF: FieldCore + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
+    if let Some(terminal) = root.as_terminal_root() {
+        return print_terminal_level_breakdown::<FF, L, D>(label, 0, terminal, "terminal");
+    }
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
         eprintln!("[{label}]   batched_root: total={total} bytes (root-direct)");
+        // Root-direct is a single bare witness payload with no folded
+        // substructure. Only `total_bytes` and `root_variant` are
+        // structurally meaningful here; all per-component fields are
+        // omitted (parsers default missing keys to zero).
         tracing::info!(
             label,
             level = 0usize,
             d = D,
             total_bytes = total,
-            y_ring_bytes = 0usize,
-            v_bytes = 0usize,
-            extension_opening_partials_bytes = 0usize,
-            extension_opening_sumcheck_bytes = 0usize,
-            stage1_sumcheck_bytes = 0usize,
-            stage1_interstage_claims_bytes = 0usize,
-            stage1_s_claim_bytes = 0usize,
-            stage2_sumcheck_bytes = 0usize,
-            next_w_commitment_bytes = 0usize,
-            next_w_eval_bytes = 0usize,
             root_variant = "direct",
             "proof fold level"
         );
@@ -281,16 +348,20 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     L: FieldCore + AkitaSerialize,
 {
     let root_total = proof.root.serialized_size(Compress::No);
-    let recursive_levels_total: usize = proof
-        .fold_levels()
-        .map(|level| level.serialized_size(Compress::No))
+    let recursive_steps_total: usize = proof
+        .steps
+        .iter()
+        .map(|step| step.serialized_size(Compress::No))
         .sum();
-    let akita_levels_total = root_total + recursive_levels_total;
     let tail_total = if proof.is_root_direct() {
         0
     } else {
         proof.final_witness().serialized_size(Compress::No)
     };
+    // The terminal step's serialized size includes `final_witness`, which is
+    // already accounted for in `tail_total`. Subtract it so the Akita-fold
+    // line item only counts the per-level non-witness bytes.
+    let akita_levels_total = root_total + recursive_steps_total - tail_total;
     let accounted_total = akita_levels_total + tail_total;
     let framing_total = proof
         .size()
@@ -301,10 +372,14 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
                 proof.size()
             )
         });
+    // Total fold levels = 1 root + every entry in `proof.steps` (which
+    // already includes the terminal step in the multi-fold case).
+    // `num_fold_levels()` counts intermediate-only steps and would
+    // undercount the terminal step.
     let fold_levels = if proof.is_root_direct() {
         0
     } else {
-        proof.num_fold_levels() + 1
+        1 + proof.steps.len()
     };
 
     tracing::info!(
@@ -331,8 +406,16 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
         "[{label}] proof accounting must exactly match serialized proof size"
     );
     print_batched_root_breakdown::<FF, L, D>(label, &proof.root);
-    for (i, lp) in proof.fold_levels().enumerate() {
-        print_akita_level_breakdown::<FF, L, D>(label, i + 1, lp);
+    for (i, step) in proof.steps.iter().enumerate() {
+        let level_idx = i + 1;
+        match step {
+            AkitaProofStep::Intermediate(lp) => {
+                print_akita_level_breakdown::<FF, L, D>(label, level_idx, lp);
+            }
+            AkitaProofStep::Terminal(lp) => {
+                print_terminal_level_breakdown::<FF, L, D>(label, level_idx, lp, "fold");
+            }
+        }
     }
     if !proof.is_root_direct() {
         emit_observed_tail_summary(label, proof.final_witness());

@@ -47,7 +47,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
         let public_matrix_seed = sample_public_matrix_seed();
         let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
-        let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total))?;
+        let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total)?)?;
 
         let expanded = Arc::new(AkitaExpandedSetup::new(
             AkitaSetupSeed {
@@ -86,8 +86,8 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         F: CanonicalField,
     {
         let expanded = Arc::new(expanded);
-        let total = expanded.shared_matrix.total_ring_elements_at::<D>();
-        let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total))?;
+        let total = expanded.shared_matrix.total_ring_elements_at::<D>()?;
+        let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total)?)?;
         Ok(Self {
             expanded,
             ntt_shared,

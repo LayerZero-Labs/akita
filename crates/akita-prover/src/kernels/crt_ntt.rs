@@ -8,9 +8,7 @@ use akita_algebra::ntt::tables::{
 use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{
-    cfg_into_iter, cfg_join, AkitaError, CanonicalField, FieldCore, PseudoMersenneField,
-};
+use akita_field::{cfg_iter, cfg_join, AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
 use akita_field::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
 
 use akita_types::RingMatrixView;
@@ -125,13 +123,8 @@ where
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
 {
-    let total = mat.num_rows() * mat.num_cols();
-    cfg_into_iter!(0..total)
-        .map(|idx| {
-            let r = idx / mat.num_cols();
-            let c = idx % mat.num_cols();
-            CyclotomicCrtNtt::from_ring_with_params(&mat.row(r)[c], params)
-        })
+    cfg_iter!(mat.as_slice())
+        .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, params))
         .collect()
 }
 
@@ -143,13 +136,8 @@ where
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
 {
-    let total = mat.num_rows() * mat.num_cols();
-    cfg_into_iter!(0..total)
-        .map(|idx| {
-            let r = idx / mat.num_cols();
-            let c = idx % mat.num_cols();
-            CyclotomicCrtNtt::from_ring_cyclic(&mat.row(r)[c], params)
-        })
+    cfg_iter!(mat.as_slice())
+        .map(|ring| CyclotomicCrtNtt::from_ring_cyclic(ring, params))
         .collect()
 }
 

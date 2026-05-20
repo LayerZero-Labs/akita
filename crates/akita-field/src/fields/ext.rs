@@ -1,7 +1,7 @@
-//! Quadratic and quartic extension fields.
+//! Quadratic, quartic, and ring-subfield extension fields.
 
 use super::wide::{AccumPair, HasUnreducedOps};
-use super::{fp128::Fp128, fp32::Fp32, fp64::Fp64};
+use super::{fp128::Fp128, fp16::Fp16, fp32::Fp32, fp64::Fp64};
 use crate::{BalancedDigitLookup, CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -246,11 +246,10 @@ impl<F: FieldCore, C: Fp2Config<F>> Mul for Fp2<F, C> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
-        let a0b0 = self.coeffs[0] * rhs.coeffs[0];
-        let a1b1 = self.coeffs[1] * rhs.coeffs[1];
-        let a0b1 = self.coeffs[0] * rhs.coeffs[1];
-        let a1b0 = self.coeffs[1] * rhs.coeffs[0];
-        Self::new(a0b0 + Self::mul_nr(a1b1), a0b1 + a1b0)
+        let v0 = self.coeffs[0] * rhs.coeffs[0];
+        let v1 = self.coeffs[1] * rhs.coeffs[1];
+        let cross = (self.coeffs[0] + self.coeffs[1]) * (rhs.coeffs[0] + rhs.coeffs[1]);
+        Self::new(v0 + Self::mul_nr(v1), cross - v0 - v1)
     }
 }
 impl<F: FieldCore, C: Fp2Config<F>> MulAssign for Fp2<F, C> {
@@ -641,6 +640,59 @@ impl<const P: u32> RingSubfieldFp4MulBackend for Fp32<P> {
         ]
     }
 }
+
+#[inline(always)]
+fn ring_subfield_fp8_add_phi<F: FieldCore>(out: &mut [F; 8], idx: usize, value: F) {
+    match idx {
+        0 => out[0] += value + value,
+        1..=7 => out[idx] += value,
+        8 => {}
+        9..=15 => out[16 - idx] -= value,
+        _ => unreachable!("fp8 Chebyshev index out of range"),
+    }
+}
+
+#[inline(always)]
+fn ring_subfield_fp8_mul_coeffs<F: FieldCore>(a: [F; 8], b: [F; 8]) -> [F; 8] {
+    let mut out = [F::zero(); 8];
+
+    let diag = std::array::from_fn::<_, 8, _>(|i| a[i] * b[i]);
+    out[0] += diag[0];
+
+    for k in 1..8 {
+        let mixed = (a[0] + a[k]) * (b[0] + b[k]) - diag[0] - diag[k];
+        out[k] += mixed;
+    }
+
+    for (i, diag_i) in diag.iter().copied().enumerate().skip(1) {
+        out[0] += diag_i + diag_i;
+        ring_subfield_fp8_add_phi(&mut out, i + i, diag_i);
+    }
+
+    for i in 1..8 {
+        for j in (i + 1)..8 {
+            let mixed = (a[i] + a[j]) * (b[i] + b[j]) - diag[i] - diag[j];
+            ring_subfield_fp8_add_phi(&mut out, i + j, mixed);
+            ring_subfield_fp8_add_phi(&mut out, j - i, mixed);
+        }
+    }
+
+    out
+}
+
+/// Backend hook for scalar ring-subfield degree-8 multiplication.
+pub trait RingSubfieldFp8MulBackend: FieldCore {
+    /// Multiply coefficient arrays in `[1, e1, ..., e7]` basis.
+    #[inline(always)]
+    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        ring_subfield_fp8_mul_coeffs::<Self>(a, b)
+    }
+}
+
+impl<const P: u32> RingSubfieldFp8MulBackend for Fp16<P> {}
+impl<const P: u32> RingSubfieldFp8MulBackend for Fp32<P> {}
+impl<const P: u64> RingSubfieldFp8MulBackend for Fp64<P> {}
+impl<const P: u128> RingSubfieldFp8MulBackend for Fp128<P> {}
 
 #[inline(always)]
 fn tower_basis_fp4_mul_coeffs<F, C2, C4>(a: [Fp2<F, C2>; 2], b: [Fp2<F, C2>; 2]) -> [Fp2<F, C2>; 2]
@@ -1783,6 +1835,373 @@ where
     }
 }
 
+/// Degree-8 ring subfield element in canonical basis `[1, e1, ..., e7]`.
+#[repr(transparent)]
+pub struct RingSubfieldFp8<F: FieldCore> {
+    /// Coefficients in basis `[1, e1, ..., e7]`.
+    pub coeffs: [F; 8],
+}
+
+impl<F: FieldCore> RingSubfieldFp8<F> {
+    /// Construct from canonical ring-subfield basis coefficients.
+    #[inline]
+    pub fn new(coeffs: [F; 8]) -> Self {
+        Self { coeffs }
+    }
+
+    /// Additive identity.
+    #[inline]
+    pub fn zero() -> Self {
+        Self::new([F::zero(); 8])
+    }
+
+    /// Multiplicative identity.
+    #[inline]
+    pub fn one() -> Self {
+        Self::new(std::array::from_fn(|i| {
+            if i == 0 {
+                F::one()
+            } else {
+                F::zero()
+            }
+        }))
+    }
+
+    /// Check whether this element is zero.
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.coeffs.iter().all(|coeff| coeff.is_zero())
+    }
+
+    /// Construct from a `u64` embedded in the base field.
+    #[inline]
+    pub fn from_u64(val: u64) -> Self
+    where
+        F: FromPrimitiveInt,
+    {
+        Self::new(std::array::from_fn(|i| {
+            if i == 0 {
+                F::from_u64(val)
+            } else {
+                F::zero()
+            }
+        }))
+    }
+
+    /// Construct from an `i64` embedded in the base field.
+    #[inline]
+    pub fn from_i64(val: i64) -> Self
+    where
+        F: FromPrimitiveInt,
+    {
+        Self::new(std::array::from_fn(|i| {
+            if i == 0 {
+                F::from_i64(val)
+            } else {
+                F::zero()
+            }
+        }))
+    }
+}
+
+impl<F: FieldCore + std::fmt::Debug> std::fmt::Debug for RingSubfieldFp8<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RingSubfieldFp8")
+            .field("coeffs", &self.coeffs)
+            .finish()
+    }
+}
+
+impl<F: FieldCore> Clone for RingSubfieldFp8<F> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F: FieldCore> Copy for RingSubfieldFp8<F> {}
+
+impl<F: FieldCore> Default for RingSubfieldFp8<F> {
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
+impl<F: FieldCore> PartialEq for RingSubfieldFp8<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.coeffs == other.coeffs
+    }
+}
+
+impl<F: FieldCore> Eq for RingSubfieldFp8<F> {}
+
+impl<F: FieldCore> Add for RingSubfieldFp8<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] + rhs.coeffs[i]))
+    }
+}
+
+impl<F: FieldCore> Sub for RingSubfieldFp8<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] - rhs.coeffs[i]))
+    }
+}
+
+impl<F: FieldCore> Neg for RingSubfieldFp8<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn neg(self) -> Self::Output {
+        Self::new(std::array::from_fn(|i| -self.coeffs[i]))
+    }
+}
+
+impl<F: FieldCore> AddAssign for RingSubfieldFp8<F> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        for i in 0..8 {
+            self.coeffs[i] += rhs.coeffs[i];
+        }
+    }
+}
+
+impl<F: FieldCore> SubAssign for RingSubfieldFp8<F> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        for i in 0..8 {
+            self.coeffs[i] -= rhs.coeffs[i];
+        }
+    }
+}
+
+impl<F: RingSubfieldFp8MulBackend> Mul for RingSubfieldFp8<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self::new(F::ring_subfield_fp8_mul(self.coeffs, rhs.coeffs))
+    }
+}
+
+impl<F: RingSubfieldFp8MulBackend> MulAssign for RingSubfieldFp8<F> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
+impl<'a, F: FieldCore> Add<&'a Self> for RingSubfieldFp8<F> {
+    type Output = Self;
+
+    fn add(self, rhs: &'a Self) -> Self::Output {
+        self + *rhs
+    }
+}
+
+impl<'a, F: FieldCore> Sub<&'a Self> for RingSubfieldFp8<F> {
+    type Output = Self;
+
+    fn sub(self, rhs: &'a Self) -> Self::Output {
+        self - *rhs
+    }
+}
+
+impl<'a, F: RingSubfieldFp8MulBackend> Mul<&'a Self> for RingSubfieldFp8<F> {
+    type Output = Self;
+
+    fn mul(self, rhs: &'a Self) -> Self::Output {
+        self * *rhs
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for RingSubfieldFp8<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        for coeff in self.coeffs {
+            coeff.check()?;
+        }
+        Ok(())
+    }
+}
+
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for RingSubfieldFp8<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        for coeff in self.coeffs {
+            coeff.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.coeffs
+            .iter()
+            .map(|coeff| coeff.serialized_size(compress))
+            .sum()
+    }
+}
+
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for RingSubfieldFp8<F>
+{
+    type Context = ();
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let coeffs = [
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+        ];
+        let out = Self::new(coeffs);
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl<F: FieldCore + Valid + RingSubfieldFp8MulBackend> RingCore for RingSubfieldFp8<F> {
+    #[inline(always)]
+    fn square(&self) -> Self {
+        *self * *self
+    }
+}
+
+impl<F: FieldCore + Valid + RingSubfieldFp8MulBackend> Invertible for RingSubfieldFp8<F> {
+    fn inverse(&self) -> Option<Self> {
+        if self.is_zero() {
+            return None;
+        }
+
+        let mut aug = [[F::zero(); 9]; 8];
+        for col in 0..8 {
+            let mut basis = [F::zero(); 8];
+            basis[col] = F::one();
+            let product = *self * Self::new(basis);
+            for (row, coeff) in product.coeffs.iter().copied().enumerate() {
+                aug[row][col] = coeff;
+            }
+        }
+        aug[0][8] = F::one();
+
+        for col in 0..8 {
+            let pivot = (col..8).find(|&row| !aug[row][col].is_zero())?;
+            if pivot != col {
+                aug.swap(col, pivot);
+            }
+            let inv = aug[col][col].inverse()?;
+            for j in col..=8 {
+                aug[col][j] *= inv;
+            }
+            for row in 0..8 {
+                if row == col {
+                    continue;
+                }
+                let factor = aug[row][col];
+                if factor.is_zero() {
+                    continue;
+                }
+                for j in col..=8 {
+                    aug[row][j] -= factor * aug[col][j];
+                }
+            }
+        }
+
+        Some(Self::new(std::array::from_fn(|i| aug[i][8])))
+    }
+}
+
+impl<F: HalvingField + Valid + RingSubfieldFp8MulBackend> HalvingField for RingSubfieldFp8<F> {
+    #[inline]
+    fn half(self) -> Self {
+        Self::new(std::array::from_fn(|i| self.coeffs[i].half()))
+    }
+}
+
+impl<F: FieldCore + RandomSampling + Valid> RandomSampling for RingSubfieldFp8<F> {
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        Self::new(std::array::from_fn(|_| F::random(rng)))
+    }
+}
+
+impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for RingSubfieldFp8<F> {
+    fn from_u64(val: u64) -> Self {
+        Self::from_u64(val)
+    }
+
+    fn from_i64(val: i64) -> Self {
+        Self::from_i64(val)
+    }
+
+    fn from_u128(val: u128) -> Self {
+        Self::new(std::array::from_fn(|i| {
+            if i == 0 {
+                F::from_u128(val)
+            } else {
+                F::zero()
+            }
+        }))
+    }
+
+    fn from_i128(val: i128) -> Self {
+        Self::new(std::array::from_fn(|i| {
+            if i == 0 {
+                F::from_i128(val)
+            } else {
+                F::zero()
+            }
+        }))
+    }
+}
+
+impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for RingSubfieldFp8<F> {}
+
+impl<F> HasUnreducedOps for RingSubfieldFp8<F>
+where
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp8MulBackend,
+{
+    type MulU64Accum = Self;
+    type ProductAccum = Self;
+
+    #[inline]
+    fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
+        let small = F::from_u64(small);
+        Self::new(self.coeffs.map(|coeff| coeff * small))
+    }
+
+    #[inline]
+    fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum {
+        self * other
+    }
+
+    #[inline]
+    fn reduce_mul_u64_accum(accum: Self::MulU64Accum) -> Self {
+        accum
+    }
+
+    #[inline]
+    fn reduce_product_accum(accum: Self::ProductAccum) -> Self {
+        accum
+    }
+}
+
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
@@ -1790,7 +2209,7 @@ mod tests {
         canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
         ExtField, FrobeniusExtField,
     };
-    use crate::Fp64;
+    use crate::{Fp64, Prime16Offset99};
     use crate::{FromPrimitiveInt, Invertible};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -1800,6 +2219,8 @@ mod tests {
     type E4 = TowerBasisFp4<F, TwoNr, UnitNr>;
     type P4 = PowerBasisFp4<F, TwoNr>;
     type R4 = RingSubfieldFp4<F>;
+    type R8 = RingSubfieldFp8<F>;
+    type R8Fp16 = RingSubfieldFp8<Prime16Offset99>;
 
     #[test]
     fn fp2_add_sub_identity() {
@@ -1949,6 +2370,72 @@ mod tests {
     }
 
     #[test]
+    fn ring_subfield_fp8_multiplication_table_spot_checks() {
+        let two = F::from_u64(2);
+        let e = |idx: usize| {
+            R8::new(std::array::from_fn(|i| {
+                if i == idx {
+                    F::one()
+                } else {
+                    F::zero()
+                }
+            }))
+        };
+        let two_const = R8::new([
+            two,
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+        ]);
+
+        assert_eq!(e(1) * e(1), two_const + e(2));
+        assert_eq!(e(2) * e(2), two_const + e(4));
+        assert_eq!(e(4) * e(4), two_const);
+        assert_eq!(e(7) * e(7), two_const - e(2));
+        assert_eq!(e(5) * e(7), e(2) - e(4));
+    }
+
+    #[test]
+    fn ring_subfield_fp8_square_matches_mul() {
+        let mut rng = StdRng::seed_from_u64(7777);
+        for _ in 0..50 {
+            let a = R8::random(&mut rng);
+            assert_eq!(a.square(), a * a);
+        }
+    }
+
+    #[test]
+    fn ring_subfield_fp8_inv() {
+        let mut rng = StdRng::seed_from_u64(8888);
+        for _ in 0..50 {
+            let a = R8::random(&mut rng);
+            if !a.is_zero() {
+                let inv = a.inverse().unwrap();
+                assert_eq!(a * inv, R8::one());
+            }
+        }
+    }
+
+    #[test]
+    fn ring_subfield_fp8_fp16_serialization_is_coeff_ordered() {
+        let x = R8Fp16::new(std::array::from_fn(|i| {
+            Prime16Offset99::from_u64(i as u64 + 1)
+        }));
+        let mut bytes = Vec::new();
+        x.serialize_with_mode(&mut bytes, Compress::No).unwrap();
+        assert_eq!(x.serialized_size(Compress::No), 16);
+        assert_eq!(bytes, vec![1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8, 0]);
+
+        let decoded =
+            R8Fp16::deserialize_with_mode(&bytes[..], Compress::No, Validate::Yes, &()).unwrap();
+        assert_eq!(decoded, x);
+    }
+
+    #[test]
     fn frobenius_fp2_is_conjugation() {
         let x = E2::new(F::from_u64(13), F::from_u64(21));
         assert_eq!(<E2 as FrobeniusExtField<F>>::frobenius_pow(x, 0), x);
@@ -2010,6 +2497,24 @@ mod tests {
     }
 
     #[test]
+    fn canonical_ring_subfield_fp8_thetas_are_the_packing_basis() {
+        let thetas = canonical_frobenius_thetas::<F, R8>(8).unwrap();
+        for (idx, theta) in thetas.iter().enumerate().take(8) {
+            assert_eq!(
+                *theta,
+                R8::new(std::array::from_fn(|i| {
+                    if i == idx {
+                        F::one()
+                    } else {
+                        F::zero()
+                    }
+                }))
+            );
+        }
+        validate_canonical_frobenius_thetas::<F, R8>(8).unwrap();
+    }
+
+    #[test]
     fn duplicate_moore_theta_rejects() {
         let theta = E2::one();
         let err = solve_frobenius_moore::<F, E2>(&[theta, theta], &[E2::one(), E2::one()])
@@ -2047,6 +2552,7 @@ mod tests {
         assert_eq!(<E2 as ExtField<F>>::EXT_DEGREE, 2);
         assert_eq!(<E4 as ExtField<F>>::EXT_DEGREE, 4);
         assert_eq!(<R4 as ExtField<F>>::EXT_DEGREE, 4);
+        assert_eq!(<R8 as ExtField<F>>::EXT_DEGREE, 8);
     }
 
     #[test]
@@ -2066,6 +2572,13 @@ mod tests {
 
         let r4 = R4::from_base_slice(&[c0, c1, c2, c3]);
         assert_eq!(r4, R4::new([c0, c1, c2, c3]));
+
+        let c4 = F::from_u64(13);
+        let c5 = F::from_u64(17);
+        let c6 = F::from_u64(19);
+        let c7 = F::from_u64(23);
+        let r8 = R8::from_base_slice(&[c0, c1, c2, c3, c4, c5, c6, c7]);
+        assert_eq!(r8, R8::new([c0, c1, c2, c3, c4, c5, c6, c7]));
     }
 
     #[test]

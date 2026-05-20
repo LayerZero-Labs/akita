@@ -138,7 +138,7 @@ impl<const P: u64> Fp64<P> {
     /// Multiplicative identity.
     #[inline]
     pub fn one() -> Self {
-        Self(if P > 1 { 1 } else { 0 })
+        Self(u64::from(P > 1))
     }
 
     /// Check whether this element is zero.
