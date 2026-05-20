@@ -834,6 +834,7 @@ fn decode_sis_family<R: Read>(
         0 => Ok(SisModulusFamily::Q32),
         1 => Ok(SisModulusFamily::Q64),
         2 => Ok(SisModulusFamily::Q128),
+        3 => Ok(SisModulusFamily::Q16),
         other => Err(SerializationError::InvalidData(format!(
             "unknown SisModulusFamily tag {other}"
         ))),
@@ -845,6 +846,7 @@ fn sis_family_tag(family: SisModulusFamily) -> u8 {
         SisModulusFamily::Q32 => 0,
         SisModulusFamily::Q64 => 1,
         SisModulusFamily::Q128 => 2,
+        SisModulusFamily::Q16 => 3,
     }
 }
 

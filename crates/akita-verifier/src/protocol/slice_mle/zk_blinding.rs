@@ -31,7 +31,7 @@ where
         .ring_view::<D>(prepared.n_b, setup.seed.max_stride)?;
     let b_stride = b_view.num_cols();
     let b_flat = b_view.as_slice();
-    let b_start = 1 + prepared.num_public_rows + prepared.n_d;
+    let b_start = 1 + prepared.num_public_rows + prepared.n_d_active();
 
     // Mirror the prover's group-local B input layout:
     // `[group t_hat || group blinding]` for each commitment group.
@@ -109,7 +109,8 @@ where
     let d_stride = d_view.num_cols();
     let d_flat = d_view.as_slice();
     let d_start = 1 + prepared.num_public_rows;
-    let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
+    let n_d_active = prepared.n_d_active();
+    let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
     let max_d_blinding_col = layout
         .w_len
         .checked_add(d_blinding_segment_len)
@@ -149,7 +150,7 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::zk;
-    use akita_types::{AkitaSetupSeed, FlatMatrix};
+    use akita_types::{AkitaSetupSeed, FlatMatrix, MRowLayout};
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
@@ -249,6 +250,7 @@ mod tests {
             log_basis,
             n_a,
             n_d,
+            m_row_layout: MRowLayout::Intermediate,
             n_b,
             num_points,
             rows,

@@ -42,11 +42,16 @@ where
             let Some((last, rest)) = proof.steps.split_last() else {
                 return Err(AkitaError::InvalidProof);
             };
-            if !matches!(last, AkitaProofStep::Direct(_))
+            if !matches!(last, AkitaProofStep::Terminal(_))
                 || rest
                     .iter()
-                    .any(|step| !matches!(step, AkitaProofStep::Fold(_)))
+                    .any(|step| !matches!(step, AkitaProofStep::Intermediate(_)))
             {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        AkitaBatchedRootProof::Terminal(_) => {
+            if !proof.steps.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
         }
@@ -528,7 +533,7 @@ where
                 direct_commitment_payload,
             )?;
         }
-        AkitaBatchedRootProof::Fold(_) => {
+        AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
             let BatchedVerifierScheduleContext::Fold(layouts) = schedule_context else {
                 return Err(AkitaError::InvalidProof);
             };

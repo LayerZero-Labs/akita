@@ -305,8 +305,13 @@ where
                 Cfg::level_params_with_log_basis,
             )
         },
-        |level, current_state, level_params, next_params| {
-            dispatch_prove_level::<F, T, D, Cfg>(
+        |request| match request {
+            akita_prover::SuffixLevelRequest::Intermediate {
+                level,
+                current_state,
+                level_params,
+                next_params,
+            } => dispatch_prove_level::<F, T, D, Cfg>(
                 level_params.ring_dimension,
                 ntt_cache,
                 &setup.expanded,
@@ -318,8 +323,102 @@ where
                 level_params,
                 next_params,
             )
+            .map(akita_prover::SuffixLevelOutput::Intermediate),
+            akita_prover::SuffixLevelRequest::Terminal {
+                level,
+                current_state,
+                level_params,
+                final_log_basis,
+            } => dispatch_prove_terminal_level::<F, T, D, Cfg>(
+                level_params.ring_dimension,
+                ntt_cache,
+                &setup.expanded,
+                &setup.ntt_shared,
+                current_state,
+                transcript,
+                level,
+                level_params,
+                final_log_basis,
+            )
+            .map(akita_prover::SuffixLevelOutput::Terminal),
         },
     )
+}
+
+/// Dispatch a terminal prove-level operation to the correct ring dimension.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn dispatch_prove_terminal_level<F, T, const D: usize, Cfg>(
+    level_d: usize,
+    ntt_cache: &mut MultiDNttCaches,
+    expanded: &AkitaExpandedSetup<F>,
+    setup_ntt_shared: &NttSlotCache<D>,
+    current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
+    transcript: &mut T,
+    level: usize,
+    level_params: &LevelParams,
+    final_log_basis: u32,
+) -> Result<akita_types::TerminalLevelProof<F, Cfg::ChallengeField>, AkitaError>
+where
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
+{
+    if level_d == D {
+        akita_prover::prove_terminal_recursive_level_with_policy::<F, Cfg::ChallengeField, T, D, _>(
+            expanded,
+            setup_ntt_shared,
+            transcript,
+            current_state,
+            level,
+            level_params,
+            final_log_basis,
+            |params, current_w_len| {
+                akita_types::recursive_level_layout_from_params(
+                    params,
+                    current_w_len,
+                    Cfg::decomposition(),
+                )
+            },
+        )
+    } else {
+        dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
+            akita_prover::prove_terminal_recursive_level_with_policy::<
+                F,
+                Cfg::ChallengeField,
+                T,
+                { D_LEVEL },
+                _,
+            >(
+                expanded,
+                ntt_shared,
+                transcript,
+                current_state,
+                level,
+                level_params,
+                final_log_basis,
+                |params, current_w_len| {
+                    akita_types::recursive_level_layout_from_params(
+                        params,
+                        current_w_len,
+                        Cfg::decomposition(),
+                    )
+                },
+            )
+        })
+    }
 }
 
 impl<F, const D: usize, Cfg> CommitmentProver<F, D> for AkitaCommitmentScheme<D, Cfg>
