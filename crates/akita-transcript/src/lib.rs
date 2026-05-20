@@ -1,23 +1,39 @@
 //! Protocol transcript contracts and implementations.
 
-mod hash;
+mod label;
 pub mod labels;
+#[cfg(feature = "logging-transcript")]
+mod logging;
+mod sponge;
 
 use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
 
-pub use hash::{Blake2bTranscript, KeccakTranscript};
+pub use label::Label;
+#[cfg(feature = "logging-transcript")]
+pub use logging::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
+pub use sponge::{AkitaTranscript, TranscriptSponge, PROTOCOL_TAG};
 
 /// Transcript interface for protocol Fiat-Shamir transforms.
 ///
 /// The protocol layer is label-aware and uses deterministic byte encoding for
 /// all absorbed values.
-pub trait Transcript<F>: Clone + Send + Sync + 'static
+pub trait Transcript<F>: Send
 where
     F: FieldCore + CanonicalField,
 {
     /// Construct a new transcript under a domain label.
     fn new(domain_label: &[u8]) -> Self;
+
+    /// Bind canonical instance-descriptor bytes before replaying a proof.
+    ///
+    /// Implementations must absorb these bytes with transcript-specific domain
+    /// separation. The method is required so custom transcript backends cannot
+    /// accidentally skip Akita instance binding.
+    fn bind_instance_bytes(&mut self, instance_bytes: &[u8]);
+
+    /// Record a verifier-side structured proof-field use for logging checks.
+    fn record_wire_serde<S: AkitaSerialize>(&mut self, _label: &[u8], _s: &S) {}
 
     /// Append labeled raw bytes.
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]);

@@ -6,7 +6,7 @@ use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
 };
@@ -123,7 +123,7 @@ fn bench_dense_phases<
         b.iter_batched(
             || vec![hint.clone()],
             |h| {
-                let mut transcript = Blake2bTranscript::<F>::new(b"bench");
+                let mut transcript = AkitaTranscript::<F>::new(b"bench");
                 black_box(
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
@@ -147,7 +147,7 @@ fn bench_dense_phases<
 
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -165,7 +165,7 @@ fn bench_dense_phases<
 
     group.bench_function("verify", |b| {
         b.iter(|| {
-            let mut transcript = Blake2bTranscript::<F>::new(b"bench");
+            let mut transcript = AkitaTranscript::<F>::new(b"bench");
             <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                 black_box(&proof),
                 black_box(&verifier_setup),
@@ -191,7 +191,7 @@ fn bench_dense_phases<
             )
             .unwrap();
             let cms = [cm];
-            let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
+            let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
             let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                 &setup,
                 vec![(
@@ -206,7 +206,7 @@ fn bench_dense_phases<
                 BasisMode::Lagrange,
             )
             .unwrap();
-            let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
+            let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
             <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                 &pf,
                 &verifier_setup,
@@ -308,7 +308,7 @@ fn bench_onehot_phases<
         b.iter_batched(
             || vec![hint.clone()],
             |h| {
-                let mut transcript = Blake2bTranscript::<F>::new(b"bench");
+                let mut transcript = AkitaTranscript::<F>::new(b"bench");
                 black_box(
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
@@ -332,7 +332,7 @@ fn bench_onehot_phases<
 
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -350,7 +350,7 @@ fn bench_onehot_phases<
 
     group.bench_function("verify", |b| {
         b.iter(|| {
-            let mut transcript = Blake2bTranscript::<F>::new(b"bench");
+            let mut transcript = AkitaTranscript::<F>::new(b"bench");
             <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                 black_box(&proof),
                 black_box(&verifier_setup),
@@ -376,7 +376,7 @@ fn bench_onehot_phases<
             )
             .unwrap();
             let cms = [cm];
-            let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
+            let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
             let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                 &setup,
                 vec![(
@@ -391,7 +391,7 @@ fn bench_onehot_phases<
                 BasisMode::Lagrange,
             )
             .unwrap();
-            let mut vt_tr = Blake2bTranscript::<F>::new(b"bench");
+            let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
             <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                 &pf,
                 &verifier_setup,

@@ -779,7 +779,7 @@ mod tests {
                 }))
             })
             .collect();
-        let setup = AkitaExpandedSetup::new(
+        let setup = AkitaExpandedSetup::from_parts(
             AkitaSetupSeed {
                 max_num_vars: 32,
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
@@ -788,7 +788,8 @@ mod tests {
                 public_matrix_seed: [7u8; 32],
             },
             FlatMatrix::from_ring_slice::<D>(&matrix_entries),
-        );
+        )
+        .unwrap();
 
         let eq_tau1: Vec<F> = (0..rows.next_power_of_two())
             .map(|idx| f(11 + idx as u128))

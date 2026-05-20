@@ -524,6 +524,7 @@ where
         RootStageInput::Terminal { final_witness, .. } => {
             // Bind the ring-switch challenges to the cleartext witness rather
             // than to a separate commitment, mirroring the prover.
+            transcript.record_wire_serde(ABSORB_SUMCHECK_W, *final_witness);
             transcript.append_serde(ABSORB_SUMCHECK_W, *final_witness);
             ring_switch_verifier_after_absorb::<F, C, T, { D }>(
                 &ring_opening_points,
@@ -926,6 +927,7 @@ where
             MRowLayout::Intermediate,
         )?,
         FoldProofView::Terminal(terminal_proof) => {
+            transcript.record_wire_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
             transcript.append_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
             ring_switch_verifier_after_absorb::<F, L, T, { D }>(
                 &ring_opening_points,

@@ -29,7 +29,7 @@ use akita_prover::CommitmentProver;
 #[cfg(feature = "planner")]
 use akita_prover::MultilinearPolynomial;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::AkitaBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -91,8 +91,7 @@ mod non_zk_aggregated_cases {
                 "single group should yield exactly one commitment"
             );
 
-            let mut prover_transcript =
-                Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
+            let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
             let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
@@ -122,7 +121,7 @@ mod non_zk_aggregated_cases {
 
             let opening_groups: [&[F]; 1] = [&openings];
             let mut verifier_transcript =
-                Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
+                AkitaTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
             let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
                 F,
                 ONEHOT_D,
@@ -179,8 +178,7 @@ mod non_zk_aggregated_cases {
                 "single group should yield exactly one commitment"
             );
 
-            let mut prover_transcript =
-                Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/dense");
+            let mut prover_transcript = AkitaTranscript::<F>::new(b"batched_aggregated_e2e/dense");
             let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
@@ -210,7 +208,7 @@ mod non_zk_aggregated_cases {
 
             let opening_groups: [&[F]; 1] = [&openings];
             let mut verifier_transcript =
-                Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/dense");
+                AkitaTranscript::<F>::new(b"batched_aggregated_e2e/dense");
             let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<
                 F,
                 DENSE_D,
@@ -304,7 +302,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let hints = vec![hint];
 
         let mut prover_transcript =
-            Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
+            AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
         let proof =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
@@ -327,7 +325,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
 
         let opening_groups: [&[F]; 1] = [&openings];
         let mut verifier_transcript =
-            Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
+            AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
         let result =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
                 &decoded,

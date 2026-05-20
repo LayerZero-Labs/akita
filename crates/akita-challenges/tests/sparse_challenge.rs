@@ -5,7 +5,7 @@ use akita_algebra::ring::CyclotomicRing;
 use akita_challenges::{sample_sparse_challenges, SparseChallenge, SparseChallengeConfig};
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::{AkitaTranscript, Transcript};
 
 type F = Fp64<4294967197>;
 
@@ -100,8 +100,8 @@ fn uniform_sampling_is_deterministic_and_exact_weight() {
         nonzero_coeffs: vec![-1, 1],
     };
 
-    let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-    let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    let mut t1 = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t1.append_field(b"seed", &F::from_u64(123));
     t2.append_field(b"seed", &F::from_u64(123));
 
@@ -160,8 +160,8 @@ fn bounded_l1_domain_separator_is_canonical() {
 fn bounded_l1_sampling_is_deterministic_and_within_bounds() {
     let cfg = SparseChallengeConfig::BoundedL1Norm;
 
-    let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-    let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    let mut t1 = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t1.append_field(b"seed", &F::from_u64(42));
     t2.append_field(b"seed", &F::from_u64(42));
 
@@ -189,7 +189,7 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
     // behaviour for the (D=32, M=8, B=121) preset. Updating these expected
     // values is a transcript-distribution change.
     let cfg = SparseChallengeConfig::BoundedL1Norm;
-    let mut t = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    let mut t = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t.append_field(b"seed", &F::from_u64(0xC0FFEE));
     let c = sample_sparse_challenges::<F, _, D>(&mut t, b"ref", 1, &cfg)
         .unwrap()
@@ -200,12 +200,12 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
     // `0, -1, +1, -2, +2, ...`. Updating these expected values is a
     // transcript-distribution change.
     let expected_positions: Vec<u32> = vec![
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-        26, 28, 29, 30, 31,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+        27, 28, 29, 30,
     ];
     let expected_coeffs: Vec<i8> = vec![
-        1, 4, 5, 7, 3, -3, 6, -1, -5, 5, -1, -4, -5, -6, 4, 4, -1, -4, -6, 2, 2, 2, -1, 1, -6, 1,
-        -1, 8, -8, -8,
+        -6, 1, -4, -7, 7, -3, -5, -2, -2, 4, -7, -8, -1, -1, -1, -5, -4, -6, 7, -7, -8, -3, -2, 8,
+        4, 2, 1, 1, 4,
     ];
     assert_eq!(c.positions, expected_positions);
     assert_eq!(c.coeffs, expected_coeffs);
@@ -220,7 +220,7 @@ fn bounded_l1_rejects_non_d32_ring() {
     let cfg = SparseChallengeConfig::BoundedL1Norm;
     assert!(cfg.validate::<D_SMALL>().is_err());
 
-    let mut t = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    let mut t = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t.append_field(b"seed", &F::from_u64(0xDADADA));
     let err = sample_sparse_challenges::<F, _, D_SMALL>(&mut t, b"non-d32", 1, &cfg)
         .expect_err("non-D=32 BoundedL1Norm must be rejected");
@@ -238,7 +238,7 @@ fn bounded_l1_d32_samples_are_in_norm_bound() {
     // must satisfy the structural invariants and the L_inf / L1 bounds. We
     // sample a healthy batch to exercise more than one descent path.
     let cfg = SparseChallengeConfig::BoundedL1Norm;
-    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(0xBEEF));
     let challenges =
         sample_sparse_challenges::<F, _, D>(&mut transcript, b"norm-check", 4096, &cfg).unwrap();
@@ -263,7 +263,7 @@ fn exact_shell_sampling_has_exact_magnitude_counts() {
     };
     cfg.validate::<D>().unwrap();
 
-    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    let mut transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(789));
     let challenge = sample_sparse_challenges::<F, _, D>(&mut transcript, b"shell", 1, &cfg)
         .unwrap()

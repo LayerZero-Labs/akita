@@ -61,5 +61,5 @@ pub use akita_field::{
 pub use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, ProverClaims};
 pub use akita_scheme::AkitaCommitmentScheme;
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+pub use akita_transcript::{AkitaTranscript, Transcript};
 pub use akita_types::{BasisMode, BlockOrder};

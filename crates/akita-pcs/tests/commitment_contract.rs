@@ -9,7 +9,7 @@ use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
     AkitaPolyOps, CommitmentProver, CommittedPolynomials, DecomposeFoldWitness, ProverClaims,
 };
-use akita_transcript::{labels, Blake2bTranscript, Transcript};
+use akita_transcript::{labels, AkitaTranscript, Transcript};
 use akita_types::FlatMatrix;
 use akita_types::{AkitaCommitment, AppendToTranscript, BasisMode, DummyProof, FlatDigitBlocks};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
@@ -180,7 +180,7 @@ fn commitment_scheme_round_trip() {
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut prover_t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let prove_inputs = vec![(
         &opening_point[..],
         CommittedPolynomials {
@@ -193,7 +193,7 @@ fn commitment_scheme_round_trip() {
         DummyScheme::batched_prove(&psetup, prove_inputs, &mut prover_t, BasisMode::Lagrange)
             .unwrap();
 
-    let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut verifier_t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let verify_inputs = vec![(
         &opening_point[..],
         CommittedOpenings {

@@ -515,7 +515,7 @@ mod tests {
     use super::*;
     use akita_field::{Fp2, Fp32, LiftBase, NegOneNr, TowerBasisFp4, UnitNr};
     use akita_transcript::{
-        append_ext_field, labels, sample_ext_challenge, Blake2bTranscript, Transcript,
+        append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
     };
 
     type Base = Fp32<251>;
@@ -694,8 +694,8 @@ mod tests {
 
     #[test]
     fn config_samples_extension_challenge_role() {
-        let mut t1 = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let mut t2 = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
         let c1 =
             ExtensionRoleConfig::sample_challenge_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
@@ -762,8 +762,8 @@ mod tests {
     fn config_appends_extension_claim_role() {
         let claim = BaseFp2::new(Base::from_u64(9), Base::from_u64(10));
 
-        let mut t1 = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let mut t2 = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
         ExtensionRoleConfig::append_claim_field(&mut t1, labels::ABSORB_EVALUATION_CLAIMS, &claim);
         append_ext_field::<Base, BaseFp2, _>(&mut t2, labels::ABSORB_EVALUATION_CLAIMS, &claim);

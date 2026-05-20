@@ -448,6 +448,7 @@ pub fn prove_batched_with_policy<
     const D: usize,
     SelectSchedule,
     SelectRootNext,
+    BindTranscript,
     ProveFolded,
 >(
     expanded: &AkitaExpandedSetup<F>,
@@ -456,6 +457,7 @@ pub fn prove_batched_with_policy<
     basis: BasisMode,
     select_schedule: SelectSchedule,
     select_root_next_params: SelectRootNext,
+    bind_transcript: BindTranscript,
     prove_folded: ProveFolded,
 ) -> Result<AkitaBatchedProof<F, L>, AkitaError>
 where
@@ -466,6 +468,8 @@ where
     P: AkitaPolyOps<F, D>,
     SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     SelectRootNext: FnOnce(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
+    BindTranscript:
+        FnOnce(&mut T, &ClaimIncidenceSummary, &Schedule, BasisMode) -> Result<(), AkitaError>,
     ProveFolded: FnOnce(
         PreparedBatchedProveInputs<'a, F, E, P, D>,
         Schedule,
@@ -488,6 +492,13 @@ where
             schedule = root_direct_schedule(num_vars)?;
         }
     }
+
+    bind_transcript(
+        transcript,
+        &prepared_claims.incidence_summary,
+        &schedule,
+        basis,
+    )?;
 
     if schedule_is_root_direct(&schedule) {
         return prove_root_direct::<F, L, D, P>(
@@ -3301,7 +3312,7 @@ where
 mod tests {
     use super::*;
     use akita_field::{Fp2, Fp32, LiftBase, NegOneNr};
-    use akita_transcript::Blake2bTranscript;
+    use akita_transcript::AkitaTranscript;
     #[cfg(feature = "zk")]
     use akita_types::FlatDigitBlocks;
     use akita_types::{AkitaSetupSeed, FlatMatrix};
@@ -3310,7 +3321,7 @@ mod tests {
     type E = Fp2<F, NegOneNr>;
 
     fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup::new(
+        AkitaExpandedSetup::from_parts(
             AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 4,
@@ -3320,6 +3331,7 @@ mod tests {
             },
             FlatMatrix::from_flat_data(vec![F::zero()], 1),
         )
+        .unwrap()
     }
 
     #[test]
@@ -3389,7 +3401,7 @@ mod tests {
                 });
 
         let mut transcript =
-            Blake2bTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
+            AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
         let reduction = prove_recursive_extension_opening_reduction::<F, E, _>(
             &logical_w,
             &point,

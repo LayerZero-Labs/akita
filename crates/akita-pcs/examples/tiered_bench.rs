@@ -37,7 +37,7 @@ use akita_config::CommitmentConfig;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, CommittedPolynomials, OneHotPoly};
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::{
     AjtaiKeyParams, AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, BasisMode,
     ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, LevelParams, SisModulusFamily,
@@ -790,7 +790,7 @@ where
     let poly_refs = [&poly];
     let commitments = [commitment];
     let t_prove = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<Field>::new(b"tiered_bench");
+    let mut prover_transcript = AkitaTranscript::<Field>::new(b"tiered_bench");
     let proof = <Scheme<D, Cfg> as CommitmentProver<Field, D>>::batched_prove(
         &setup,
         vec![(
@@ -819,7 +819,7 @@ where
     timings.reset();
     println!("[{label}] running {trials} verify trials...");
     for trial in 0..trials {
-        let mut verifier_transcript = Blake2bTranscript::<Field>::new(b"tiered_bench");
+        let mut verifier_transcript = AkitaTranscript::<Field>::new(b"tiered_bench");
         let t = Instant::now();
         let result = <Scheme<D, Cfg> as CommitmentVerifier<Field, D>>::batched_verify(
             &proof,

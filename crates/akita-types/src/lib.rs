@@ -7,6 +7,7 @@
 pub mod config;
 pub mod field_reduction;
 pub mod generated;
+pub mod instance_descriptor;
 pub mod layout;
 pub mod proof;
 pub mod schedule;
@@ -20,6 +21,11 @@ pub use field_reduction::{
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
     recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role,
     RingSubfieldEncoding, SubfieldParams,
+};
+pub use instance_descriptor::{
+    digest_effective_schedule, digest_incidence, digest_level_params, digest_serializable,
+    AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet,
+    SetupArtifactDigests, SetupSection,
 };
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,

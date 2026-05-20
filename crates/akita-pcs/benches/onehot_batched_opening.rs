@@ -6,7 +6,7 @@ use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, OneHotPoly};
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::LevelParams;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
@@ -117,7 +117,7 @@ fn bench_single_case(c: &mut Criterion) {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let prove_hints = vec![hint.clone()];
-                let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
+                let mut transcript = AkitaTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
                 let proof =
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
@@ -141,7 +141,7 @@ fn bench_single_case(c: &mut Criterion) {
         })
     });
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"bench/onehot-opening/single");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -161,7 +161,7 @@ fn bench_single_case(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
-                let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
+                let mut transcript = AkitaTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                     &proof,
@@ -220,7 +220,7 @@ fn bench_batched_case(c: &mut Criterion) {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let prove_hint = hints.clone();
-                let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
+                let mut transcript = AkitaTranscript::<F>::new(b"bench/onehot-opening/batched");
                 let start = Instant::now();
                 let proof =
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
@@ -244,7 +244,7 @@ fn bench_batched_case(c: &mut Criterion) {
         })
     });
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"bench/onehot-opening/batched");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -264,7 +264,7 @@ fn bench_batched_case(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
-                let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
+                let mut transcript = AkitaTranscript::<F>::new(b"bench/onehot-opening/batched");
                 let start = Instant::now();
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                     &proof,

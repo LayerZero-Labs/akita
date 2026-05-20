@@ -12,7 +12,7 @@ use akita_sumcheck::{
     SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly,
 };
 use akita_transcript::labels as tr_labels;
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::{AkitaTranscript, Transcript};
 
 type F = Prime128Offset275;
 
@@ -97,11 +97,11 @@ impl SumcheckInstanceVerifier<F> for ToyMlInstance {
     }
 }
 
-fn new_transcript() -> Blake2bTranscript<F> {
-    <Blake2bTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
+fn new_transcript() -> AkitaTranscript<F> {
+    <AkitaTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
 }
 
-fn sample_round(tr: &mut Blake2bTranscript<F>) -> F {
+fn sample_round(tr: &mut AkitaTranscript<F>) -> F {
     tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND)
 }
 

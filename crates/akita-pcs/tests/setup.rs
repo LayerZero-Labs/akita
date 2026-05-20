@@ -28,7 +28,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::BasisMode;
 use akita_verifier::CommitmentVerifier;
 use common::{
@@ -134,7 +134,7 @@ where
     let opening_groups = [&openings[..]];
     let hints = vec![hint];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
@@ -148,7 +148,7 @@ where
     )
     .expect("prove");
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -204,7 +204,7 @@ where
     let opening_groups = [&openings[..]];
     let hints = vec![hint];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
@@ -218,7 +218,7 @@ where
     )
     .expect("prove");
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -278,7 +278,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
@@ -292,7 +292,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     )
     .expect("batched prove");
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -363,7 +363,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-onehot");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
@@ -377,7 +377,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     )
     .expect("batched onehot prove");
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-onehot");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
