@@ -663,6 +663,12 @@ pub fn build_w_evals_compact(
 ///
 /// Returns an error if the batch shape, opening-point layout, challenge count,
 /// or expanded matrix dimensions are inconsistent.
+///
+/// # Panics
+///
+/// Panics if the tiered `b_prime_view` is not present when accessed inside
+/// the per-column tier-1 contribution block (this should be unreachable since
+/// the option is constructed and read under the same `is_tiered` predicate).
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
 pub fn compute_m_evals_x<F, E, const D: usize>(
@@ -682,7 +688,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     num_public_rows: usize,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
     if alpha_pows.len() != D {
@@ -789,11 +795,18 @@ where
         .checked_mul(z_base_len)
         .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
     let rows = lp.m_row_count(num_points, num_public_rows);
+    // Tiered uhat segment length, zero for legacy LevelParams.
+    let uhat_len_for_total = if lp.is_tiered_root() {
+        num_points * lp.b_prime_rows() * lp.split_factor * lp.num_digits_outer
+    } else {
+        0usize
+    };
     let levels = r_decomp_levels::<F>(log_basis);
     #[cfg(feature = "zk")]
     let total_cols = w_len
         .checked_add(d_blinding_segment_len)
         .and_then(|cols| cols.checked_add(t_len))
+        .and_then(|cols| cols.checked_add(uhat_len_for_total))
         .and_then(|cols| cols.checked_add(b_blinding_segment_len))
         .and_then(|cols| cols.checked_add(z_len))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
@@ -801,6 +814,7 @@ where
     #[cfg(not(feature = "zk"))]
     let total_cols = w_len
         .checked_add(t_len)
+        .and_then(|cols| cols.checked_add(uhat_len_for_total))
         .and_then(|cols| cols.checked_add(z_len))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
         .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
@@ -842,14 +856,45 @@ where
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
 
-    // Row layout: consistency (1) | public (num_public_rows) | D (n_d) |
-    //             B (n_b * num_points) | A (n_a)
-    let commitment_row_count = n_b * num_points;
+    // Row layout depends on tiering (`specs/tiered_commit.md` §3):
+    //   Legacy: consistency (1) | public | D (n_d) | B (n_b·num_points) | A (n_a)
+    //   Tiered: consistency (1) | public | D (n_d)
+    //         | tier1 (split·n_b'·num_points) | F (n_F·num_points) | A (n_a)
+    let is_tiered = lp.is_tiered_root();
+    let commitment_row_count = if is_tiered {
+        // Legacy B-rows are absent under tiering; the tier-1 + F rows
+        // are computed below and contribute to t_segment, uhat_segment,
+        // and the (separate) F α-evals via `f_view`.
+        0
+    } else {
+        n_b * num_points
+    };
     let consistency_weight = eq_tau1[0];
     let public_weights = &eq_tau1[1..(1 + num_public_rows)];
     let d_start = 1 + num_public_rows;
     let b_start = d_start + n_d;
-    let a_start = b_start + commitment_row_count;
+    // For tiered, b_start is also tier1_start; tier1 spans
+    // `split · n_b' · num_points` rows, then F spans `n_F · num_points`.
+    let (tier1_start, tier1_end, f_start, a_start) = if is_tiered {
+        let n_b_prime = lp.b_prime_rows();
+        let n_f = lp.f_key.row_len();
+        let tier1_start = b_start;
+        let tier1_count = lp.split_factor * n_b_prime * num_points;
+        let tier1_end = tier1_start + tier1_count;
+        let f_start = tier1_end;
+        let f_count = n_f * num_points;
+        let a_start = f_start + f_count;
+        (tier1_start, tier1_end, f_start, a_start)
+    } else {
+        let a_start = b_start + commitment_row_count;
+        (
+            b_start,
+            b_start + commitment_row_count,
+            b_start + commitment_row_count,
+            a_start,
+        )
+    };
+    let _ = (tier1_start, tier1_end, f_start); // suppress unused warnings when not tiered
     let a_weights = &eq_tau1[a_start..rows];
     let t_compound_per_block = n_a * depth_open;
 
@@ -944,6 +989,18 @@ where
             challenge_sums_by_t_block[dst_offset + block_idx] += c_alphas[src_offset + block_idx];
         }
     }
+    // Tiered: precompute the B' column window view + per-point tier-1
+    // row weights so the t_segment loop's per-x contribution from
+    // tier-1 rows can be computed in O(n_b'). When legacy, these are
+    // unused. See `specs/tiered_commit.md` §3 for the row layout.
+    let (b_prime_view_opt, split_factor_local) = if is_tiered {
+        let b_prime_view = setup
+            .shared_matrix
+            .ring_view::<D>(lp.b_prime_rows(), lp.b_prime_width());
+        (Some(b_prime_view), lp.split_factor)
+    } else {
+        (None, 1usize)
+    };
     let t_segment: Vec<E> = cfg_into_iter!(0..t_len)
         .map(|x| {
             let compound_dig = x / t_total_blocks;
@@ -956,12 +1013,37 @@ where
             let phys_claim_offset =
                 block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
             let local_col = poly_idx_within_group * t_cols_per_vector + phys_claim_offset;
-            let commitment_weights =
-                &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
             let mut acc = a_weights[a_idx] * challenge_sums_by_t_block[blk] * g1_open[digit_idx];
-            for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
-                if !eq_i.is_zero() {
-                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
+            if is_tiered {
+                // Tier-1 contribution at this t̂ M-col: decode B-physical
+                // chunk index from `local_col` and accumulate
+                // `tier1_row_weight[g, i, r'] · α-eval(B'[r', local_c])`
+                // for the (g, i) that contains this column.
+                let b_prime_view = b_prime_view_opt.as_ref().expect("b_prime_view present");
+                let n_b_prime = lp.b_prime_rows();
+                let chunk_width = lp.b_prime_width();
+                let chunk_i = local_col / chunk_width;
+                let local_c = local_col % chunk_width;
+                // tier1 row index for (point_idx, chunk_i, r') flattened
+                // in (point, chunk, b'_row) major order.
+                let tier1_block_start = tier1_start
+                    + point_idx * (split_factor_local * n_b_prime)
+                    + chunk_i * n_b_prime;
+                for r_prime in 0..n_b_prime {
+                    let eq_i = eq_tau1[tier1_block_start + r_prime];
+                    if !eq_i.is_zero() {
+                        acc += eq_i
+                            * eval_ring_at_pows(&b_prime_view.row(r_prime)[local_c], alpha_pows);
+                    }
+                }
+            } else {
+                let commitment_weights =
+                    &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
+                for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
+                    if !eq_i.is_zero() {
+                        acc +=
+                            *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
+                    }
                 }
             }
             acc
@@ -1040,11 +1122,71 @@ where
         })
         .collect();
 
+    // Tiered uhat segment: per-cell M̃ contribution covering tier-1
+    // `-G·ûhat_i` rows and F `F·ûhat_concat` rows. Length:
+    // `num_points · n_b' · split_factor · num_digits_outer`.
+    let uhat_segment: Vec<E> = if is_tiered {
+        let n_b_prime = lp.b_prime_rows();
+        let n_f = lp.f_key.row_len();
+        let depth_outer = lp.num_digits_outer;
+        let split = lp.split_factor;
+        let f_width = n_b_prime * split * depth_outer;
+        // F NTT-free view: derive F's ring entries from the setup seed
+        // and read α-evals directly.
+        let f_flat = crate::kernels::matrix::derive_tier1_f_matrix_flat::<F, D>(
+            n_f * f_width,
+            &setup.seed.public_matrix_seed,
+        );
+        let f_view = f_flat.ring_view::<D>(n_f, f_width);
+        // Outer gadget in the extension field (computed in F via
+        // repeated multiplication so `outer_log_basis · num_digits_outer
+        // ≥ 64` doesn't blow up `1u64 << k`).
+        let outer_log_basis = lp.outer_log_basis;
+        let two_to_b = F::from_u64(1u64 << outer_log_basis);
+        let mut outer_gadget = Vec::with_capacity(depth_outer);
+        let mut step = F::one();
+        for _ in 0..depth_outer {
+            outer_gadget.push(step);
+            step *= two_to_b;
+        }
+        let uhat_len_local = num_points * n_b_prime * split * depth_outer;
+        (0..uhat_len_local)
+            .map(|idx| {
+                // Decode dig → row → chunk → point per spec §3.
+                let d = idx % depth_outer;
+                let r_prime = (idx / depth_outer) % n_b_prime;
+                let chunk_i = (idx / (depth_outer * n_b_prime)) % split;
+                let g = idx / (depth_outer * n_b_prime * split);
+                // tier-1 row (g, i, r') contributes `-gadget[d]`.
+                let tier1_row =
+                    tier1_start + g * (split * n_b_prime) + chunk_i * n_b_prime + r_prime;
+                let tier1_w = eq_tau1[tier1_row];
+                let mut acc = -(tier1_w.mul_base(outer_gadget[d]));
+                // F rows for point g contribute α-eval(F[r, f_col]) at
+                // uhat_concat cell `f_col`. The uhat layout per point
+                // is `dig → row → chunk` (spec §9); the F column index
+                // matches the per-point offset.
+                let f_col = chunk_i * (n_b_prime * depth_outer) + r_prime * depth_outer + d;
+                for r in 0..n_f {
+                    let f_row = f_start + g * n_f + r;
+                    let f_w = eq_tau1[f_row];
+                    if !f_w.is_zero() {
+                        acc += f_w * eval_ring_at_pows(&f_view.row(r)[f_col], alpha_pows);
+                    }
+                }
+                acc
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let z_first = lp.m_vars >= lp.r_vars;
     if z_first {
         out.extend(z_segment);
         out.extend(w_segment);
         out.extend(t_segment);
+        out.extend(uhat_segment);
         #[cfg(feature = "zk")]
         out.extend(b_blinding_segment);
         #[cfg(feature = "zk")]
@@ -1052,6 +1194,7 @@ where
     } else {
         out.extend(w_segment);
         out.extend(t_segment);
+        out.extend(uhat_segment);
         #[cfg(feature = "zk")]
         out.extend(b_blinding_segment);
         #[cfg(feature = "zk")]

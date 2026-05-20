@@ -893,6 +893,16 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     let w_hat_count = num_w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat_count = num_t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = num_public_rows * lp.inner_width() * lp.num_digits_fold;
+    // Tiered M-witness adds a `ûhat` segment between `t̂` and any
+    // blinding/`z̟` segments. Length: `num_points · n_b' · split_factor
+    // · num_digits_outer` (one `ûhat_concat` per opening point). Zero
+    // for legacy `LevelParams` (`split_factor == 1`, `num_digits_outer
+    // == 0`). See `specs/tiered_commit.md` §9.
+    let uhat_count = if lp.is_tiered_root() {
+        num_points * lp.b_prime_rows() * lp.split_factor * lp.num_digits_outer
+    } else {
+        0usize
+    };
     // One public y-row per packaged public opening row.
     let r_rows = lp.m_row_count(num_points, num_public_rows);
     let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
@@ -909,11 +919,17 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
                 lp.ring_dimension,
                 lp.log_basis,
             );
-        w_hat_count + t_hat_count + b_blinding_count + d_blinding_count + z_pre_count + r_count
+        w_hat_count
+            + t_hat_count
+            + uhat_count
+            + b_blinding_count
+            + d_blinding_count
+            + z_pre_count
+            + r_count
     }
     #[cfg(not(feature = "zk"))]
     {
-        w_hat_count + t_hat_count + z_pre_count + r_count
+        w_hat_count + t_hat_count + uhat_count + z_pre_count + r_count
     }
 }
 

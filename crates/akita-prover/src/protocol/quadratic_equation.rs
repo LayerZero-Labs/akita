@@ -369,6 +369,13 @@ where
             let mut t_rows_by_poly = Vec::new();
             #[cfg(feature = "zk")]
             let mut b_blinding_digits = Vec::new();
+            // Tiered: each per-point hint may carry one `ûhat_concat`
+            // entry produced by `commit_tiered_with_params`. Collect
+            // them into a per-point `Vec<FlatDigitBlocks>` so the
+            // combined hint can re-attach them via
+            // `with_outer_digits` below, which is what
+            // `ring_switch_build_w::take_outer_digits` later consumes.
+            let mut combined_outer_digits: Vec<FlatDigitBlocks<D>> = Vec::new();
             for (mut hint, &group_size) in hints.into_iter().zip(num_polys_per_point.iter()) {
                 if hint.decomposed_inner_rows.len() != group_size {
                     return Err(AkitaError::InvalidInput(
@@ -377,6 +384,8 @@ where
                     ));
                 }
                 hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
+                let mut per_point_outer = hint.take_outer_digits();
+                combined_outer_digits.append(&mut per_point_outer);
                 #[cfg(feature = "zk")]
                 let (digits_by_poly, rows_by_poly, mut blinding_by_group) = hint.into_parts();
                 #[cfg(not(feature = "zk"))]
@@ -405,6 +414,7 @@ where
                     t_rows_by_poly,
                     b_blinding_digits,
                 )
+                .with_outer_digits(combined_outer_digits)
             }
             #[cfg(not(feature = "zk"))]
             {
@@ -412,6 +422,7 @@ where
                     decomposed_inner_rows,
                     t_rows_by_poly,
                 )
+                .with_outer_digits(combined_outer_digits)
             }
         };
 
