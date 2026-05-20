@@ -10,7 +10,7 @@ pub mod kernels;
 pub mod protocol;
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::IntegerChallenge;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
@@ -436,9 +436,13 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     }
 
     /// Prover decompose + challenge-fold step.
+    ///
+    /// Challenges are widened to [`IntegerChallenge`] so the same hot loop
+    /// covers both the i8-coefficient flat sampler and the wider-coefficient
+    /// tensor-product sampler.
     fn decompose_fold(
         &self,
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -447,7 +451,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// Optional fused batched variant of [`Self::decompose_fold`].
     fn decompose_fold_batched(
         _polys: &[&Self],
-        _challenges: &[SparseChallenge],
+        _challenges: &[IntegerChallenge],
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,
@@ -646,7 +650,7 @@ where
 
     fn decompose_fold(
         &self,
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -658,7 +662,7 @@ where
 
     fn decompose_fold_batched(
         polys: &[&Self],
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,

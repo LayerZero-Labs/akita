@@ -315,12 +315,13 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let total_blocks = root_lp
-        .num_blocks
-        .checked_mul(num_claims)
-        .ok_or_else(|| AkitaError::InvalidSetup("batched root block count overflow".to_string()))?;
-    let stage1_challenges =
-        derive_stage1_challenges::<F, T, D>(transcript, v_typed, total_blocks, batched_lp)?;
+    let stage1_challenges = derive_stage1_challenges::<F, T, D>(
+        transcript,
+        v_typed,
+        root_lp.num_blocks,
+        num_claims,
+        batched_lp,
+    )?;
 
     let w_len = if is_last {
         final_w_len.ok_or(AkitaError::InvalidProof)?
@@ -580,7 +581,7 @@ where
         .collect::<Vec<_>>();
     let num_claims = y_rings.len();
     let stage1_challenges =
-        derive_stage1_challenges::<F, T, D>(transcript, v_typed, lp.num_blocks * num_claims, lp)?;
+        derive_stage1_challenges::<F, T, D>(transcript, v_typed, lp.num_blocks, num_claims, lp)?;
 
     let w_len = if is_last {
         final_w_len.ok_or(AkitaError::InvalidProof)?

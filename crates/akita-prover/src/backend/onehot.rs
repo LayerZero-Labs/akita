@@ -31,7 +31,7 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::IntegerChallenge;
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{
@@ -942,7 +942,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     fn decompose_fold_single_chunk_onehot(
         &self,
         single_chunk_blocks: &FlatBlocks<SingleChunkEntry>,
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
     ) -> DecomposeFoldWitness<F, D>
@@ -981,7 +981,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     fn decompose_fold_multi_chunk_onehot(
         &self,
         multi_chunk_blocks: &FlatBlocks<MultiChunkEntry>,
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
     ) -> DecomposeFoldWitness<F, D>
@@ -1012,7 +1012,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
     fn decompose_fold_batched_single_chunk_onehot(
         polys: &[&Self],
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
     ) -> Option<DecomposeFoldWitness<F, D>>
@@ -1063,7 +1063,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
     fn decompose_fold_batched_multi_chunk_onehot(
         polys: &[&Self],
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
     ) -> Option<DecomposeFoldWitness<F, D>>
@@ -1480,7 +1480,7 @@ where
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]
     fn decompose_fold(
         &self,
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
@@ -1501,7 +1501,7 @@ where
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
     fn decompose_fold_batched(
         polys: &[&Self],
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
@@ -2086,7 +2086,7 @@ where
 /// across polynomials) feed through the same signature.
 pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
     multi_chunk_blocks: &[&[MultiChunkEntry]],
-    challenges: &[SparseChallenge],
+    challenges: &[IntegerChallenge],
     num_blocks: usize,
     inner_width: usize,
     num_digits: usize,
@@ -2108,7 +2108,7 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i16; D]; D];
+            let mut rotated = vec![[0i32; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = multi_chunk_blocks[block_idx];
@@ -2126,7 +2126,7 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
                         let rot = &rotated[ci as usize];
                         let dst = &mut acc[local_pos];
                         for k in 0..D {
-                            dst[k] += rot[k] as i32;
+                            dst[k] += rot[k];
                         }
                     }
                 }
@@ -2145,7 +2145,7 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
 /// See [`multi_chunk_onehot_accumulate`] for the block-view convention.
 pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
     single_chunk_blocks: &[&[SingleChunkEntry]],
-    challenges: &[SparseChallenge],
+    challenges: &[IntegerChallenge],
     num_blocks: usize,
     block_len: usize,
 ) -> Vec<[i32; D]> {
@@ -2163,7 +2163,7 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
             let pos_end = (pos_start + pos_chunk).min(block_len);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i16; D]; D];
+            let mut rotated = vec![[0i32; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = single_chunk_blocks[block_idx];
@@ -2178,7 +2178,7 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
                     let dst = &mut acc[entry.pos_in_block() - pos_start];
                     let rot = &rotated[entry.coeff_idx()];
                     for k in 0..D {
-                        dst[k] += rot[k] as i32;
+                        dst[k] += rot[k];
                     }
                 }
             }
@@ -2290,6 +2290,7 @@ mod tests {
     use super::test_helpers::inner_ajtai_multi_chunk_t_only;
     use super::*;
     use crate::DensePoly;
+    use akita_challenges::SparseChallenge;
     use akita_field::fields::{
         Fp64, Prime128Offset275, Prime24Offset3, TowerBasisFp4, TwoNr, UnitNr,
     };
@@ -2831,7 +2832,7 @@ mod tests {
             OneHotPoly::<F, D>::new(block_len, indices0).unwrap(),
             OneHotPoly::<F, D>::new(block_len, indices1).unwrap(),
         ];
-        let challenges = vec![
+        let challenges = [
             SparseChallenge {
                 positions: vec![0, 5],
                 coeffs: vec![1, -1],
@@ -2850,10 +2851,14 @@ mod tests {
             },
         ];
 
+        let int_challenges: Vec<IntegerChallenge> = challenges
+            .iter()
+            .map(IntegerChallenge::from_sparse)
+            .collect();
         let expected = aggregate_witnesses(
             &polys
                 .iter()
-                .zip(challenges.chunks(2))
+                .zip(int_challenges.chunks(2))
                 .map(|(poly, poly_challenges)| {
                     poly.decompose_fold(poly_challenges, block_len, 1, 0)
                 })
@@ -2862,7 +2867,7 @@ mod tests {
         let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
         let got = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
             &poly_refs,
-            &challenges,
+            &int_challenges,
             block_len,
             1,
             0,

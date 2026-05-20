@@ -3,7 +3,7 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_algebra::ring::scalar_powers;
-use akita_challenges::SparseChallenge;
+use akita_challenges::TensorChallenges;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
 };
@@ -119,7 +119,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &[SparseChallenge],
+    challenges: &TensorChallenges,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -226,7 +226,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "prepare_ring_switch_row_eval")]
 pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
-    challenges: &[SparseChallenge],
+    challenges: &TensorChallenges,
     alpha: E,
     lp: &LevelParams,
     tau1: &[E],
@@ -304,10 +304,10 @@ where
     let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
-    if challenges.len() != total_blocks {
+    if challenges.logical_len() != total_blocks {
         return Err(AkitaError::InvalidSize {
             expected: total_blocks,
-            actual: challenges.len(),
+            actual: challenges.logical_len(),
         });
     }
     let block_len = lp.block_len;
@@ -361,10 +361,7 @@ where
         });
     }
 
-    let c_alphas: Vec<E> = challenges
-        .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, E, D>(&alpha_pows))
-        .collect::<Result<_, _>>()?;
+    let c_alphas: Vec<E> = challenges.evals_at_pows::<F, E, D>(&alpha_pows)?;
 
     let z_first = lp.m_vars >= lp.r_vars;
 
@@ -891,11 +888,16 @@ mod tests {
         }
     }
 
+    fn empty_flat_challenges() -> TensorChallenges {
+        TensorChallenges::Flat(Vec::new())
+    }
+
     #[test]
     fn ring_switch_prepare_rejects_invalid_log_basis() {
         let lp = LevelParams::params_only(SisModulusFamily::Q32, D, 0, 1, 1, 1, stage1_config());
+        let challenges = empty_flat_challenges();
         let err = match prepare_ring_switch_row_eval::<F, F, D>(
-            &[],
+            &challenges,
             F::one(),
             &lp,
             &[],
@@ -917,8 +919,9 @@ mod tests {
     #[test]
     fn ring_switch_prepare_rejects_zero_num_blocks() {
         let lp = LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config());
+        let challenges = empty_flat_challenges();
         let err = match prepare_ring_switch_row_eval::<F, F, D>(
-            &[],
+            &challenges,
             F::one(),
             &lp,
             &[],

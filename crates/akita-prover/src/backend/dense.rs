@@ -8,14 +8,14 @@ use akita_algebra::ring::cyclotomic::{
     decompose_centering_threshold, BalancedDecomposePow2I8Params,
 };
 use akita_algebra::{CyclotomicRing, EqPolynomial};
-use akita_challenges::SparseChallenge;
+use akita_challenges::IntegerChallenge;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_sumcheck::tensor_opening_split;
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
-    decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
+    decompose_ring_single_digit, integer_mul_acc, try_small_i8_cache_from_ring_coeffs,
     DecomposeParams,
 };
 use crate::kernels::crt_ntt::NttSlotCache;
@@ -347,7 +347,7 @@ where
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]
     fn decompose_fold(
         &self,
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -390,7 +390,7 @@ where
                                 if global_idx >= small_coeffs.len() {
                                     continue;
                                 }
-                                sparse_mul_acc::<D>(&small_coeffs[global_idx], c_i, &mut z_local);
+                                integer_mul_acc::<D>(&small_coeffs[global_idx], c_i, &mut z_local);
                             }
 
                             z_local
@@ -416,7 +416,7 @@ where
                             }
                             let ring = &coeffs[global_idx];
                             decompose_ring_single_digit::<F, D>(ring, &mut digit_plane, &params);
-                            sparse_mul_acc::<D>(&digit_plane, c_i, &mut z_local);
+                            integer_mul_acc::<D>(&digit_plane, c_i, &mut z_local);
                         }
 
                         z_local
@@ -712,7 +712,7 @@ fn digit_block_slices<const D: usize>(
 
 fn accumulate_cached_digit_planes<const D: usize>(
     digit_planes: &[[i8; D]],
-    challenges: &[SparseChallenge],
+    challenges: &[IntegerChallenge],
     block_len: usize,
     num_digits: usize,
 ) -> Vec<[i32; D]> {
@@ -728,7 +728,7 @@ fn accumulate_cached_digit_planes<const D: usize>(
                 let Some(digit_plane) = digit_planes.get(plane_idx) else {
                     continue;
                 };
-                sparse_mul_acc::<D>(digit_plane, challenge, &mut acc);
+                integer_mul_acc::<D>(digit_plane, challenge, &mut acc);
             }
             acc
         })

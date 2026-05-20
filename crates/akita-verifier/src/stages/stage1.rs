@@ -7,12 +7,14 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::sample_sparse_challenges;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{sample_tensor_challenges, TensorChallengeLabels, TensorChallenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
-use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
+use akita_transcript::labels::{
+    self, ABSORB_PROVER_V, ABSORB_TENSOR_FOLD_LEFT, CHALLENGE_STAGE1_FOLD,
+    CHALLENGE_TENSOR_FOLD_LEFT, CHALLENGE_TENSOR_FOLD_RIGHT,
+};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     combine_polys, eval_poly, linear_combination, range_check_eval_from_s,
@@ -21,27 +23,44 @@ use akita_types::{
     RingSliceSerializer,
 };
 
-/// Absorb the prover's `v` rows and sample the sparse stage-1 fold challenges.
+/// Stage-1 fold label bundle used by both the flat and tensor samplers.
+#[inline]
+pub(crate) fn fold_challenge_labels() -> TensorChallengeLabels<'static> {
+    TensorChallengeLabels {
+        flat: CHALLENGE_STAGE1_FOLD,
+        tensor_left: CHALLENGE_TENSOR_FOLD_LEFT,
+        tensor_left_digest: ABSORB_TENSOR_FOLD_LEFT,
+        tensor_right: CHALLENGE_TENSOR_FOLD_RIGHT,
+    }
+}
+
+/// Absorb the prover's `v` rows and sample the stage-1 fold challenges in the
+/// shape declared by `lp.fold_challenge_shape` (flat per-block or tensor
+/// product of two `√num_blocks`-length factors).
 ///
 /// # Errors
 ///
-/// Returns an error if sparse challenge sampling fails.
+/// Returns an error if challenge sampling fails (e.g. shape validation,
+/// non-power-of-two block count in the tensor case, or count overflow).
 pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     transcript: &mut T,
     v: &[CyclotomicRing<F, D>],
     num_blocks: usize,
+    num_claims: usize,
     lp: &LevelParams,
-) -> Result<Vec<SparseChallenge>, AkitaError>
+) -> Result<TensorChallenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
-    sample_sparse_challenges::<F, T, D>(
+    sample_tensor_challenges::<F, T, D>(
         transcript,
-        CHALLENGE_STAGE1_FOLD,
         num_blocks,
+        num_claims,
         &lp.stage1_config,
+        &lp.fold_challenge_shape,
+        fold_challenge_labels(),
     )
 }
 

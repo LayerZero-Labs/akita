@@ -651,13 +651,13 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let a_start = b_start + batch_root_params.b_key.row_len() * num_points;
         let a_weights = &eq_tau1[a_start..m_rows];
         let alpha_pows = &rs.alpha_evals_y;
-        let eval_sparse_alpha = |challenge: &akita_challenges::SparseChallenge| -> OneHotF {
+        let eval_sparse_alpha = |challenge: &akita_challenges::IntegerChallenge| -> OneHotF {
             challenge
                 .positions
                 .iter()
                 .zip(challenge.coeffs.iter())
                 .fold(OneHotF::zero(), |acc, (&pos, &coeff)| {
-                    acc + OneHotF::from_i64(coeff as i64) * alpha_pows[pos as usize]
+                    acc + OneHotF::from_i64(i64::from(coeff)) * alpha_pows[pos as usize]
                 })
         };
         let eval_ring_at_pows_local =
@@ -669,7 +669,11 @@ fn debug_batched_root_relation_claim_matches_tables() {
                         acc + *coeff * *alpha_pow
                     })
             };
-        let c_alphas: Vec<OneHotF> = quad_eq.challenges.iter().map(eval_sparse_alpha).collect();
+        let c_alphas: Vec<OneHotF> = quad_eq
+            .integer_challenges
+            .iter()
+            .map(eval_sparse_alpha)
+            .collect();
         let gadget_scalars = |levels: usize| -> Vec<OneHotF> {
             let base = OneHotF::from_canonical_u128_reduced(1u128 << batched_root_lp.log_basis);
             let mut out = Vec::with_capacity(levels);
@@ -764,7 +768,11 @@ fn debug_batched_root_relation_claim_matches_tables() {
             .expect("debug batched D-blinding digits");
         let mut debug_z_witnesses = batch_polys
             .iter()
-            .zip(quad_eq.challenges.chunks(batched_root_lp.num_blocks))
+            .zip(
+                quad_eq
+                    .integer_challenges
+                    .chunks(batched_root_lp.num_blocks),
+            )
             .map(|(poly, poly_challenges)| {
                 poly.decompose_fold(
                     poly_challenges,
@@ -808,7 +816,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             akita_prover::protocol::quadratic_equation::compute_r_split_eq::<OneHotF, ONEHOT_D>(
                 &batched_root_lp,
                 &batch_setup.expanded,
-                &quad_eq.challenges,
+                &quad_eq.integer_challenges,
                 &debug_w_hat_flat,
                 #[cfg(feature = "zk")]
                 debug_d_blinding_digits,
@@ -839,7 +847,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         // useful for this debug cross-check.
         let mul_sparse_into =
             |ring: &CyclotomicRing<OneHotF, ONEHOT_D>,
-             challenge: &akita_challenges::SparseChallenge,
+             challenge: &akita_challenges::IntegerChallenge,
              dst: &mut CyclotomicRing<OneHotF, ONEHOT_D>| {
                 for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
                     match coeff {
@@ -848,7 +856,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                         c => ring.shift_scale_accumulate_into(
                             dst,
                             pos as usize,
-                            OneHotF::from_i64(c as i64),
+                            OneHotF::from_i64(i64::from(c)),
                         ),
                     }
                 }
@@ -859,7 +867,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             .cloned()
             .collect();
         let stored_a_inner_rows = quad_eq
-            .challenges
+            .integer_challenges
             .iter()
             .zip(stored_inner_rows_flat.iter())
             .fold(
@@ -870,7 +878,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 },
             );
         let reduced_a_inner_rows = quad_eq
-            .challenges
+            .integer_challenges
             .iter()
             .zip(debug_recomposed_inner_rows.iter())
             .fold(

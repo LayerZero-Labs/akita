@@ -578,6 +578,7 @@ where
             m_vars,
             r_vars,
             stage1_config: root_lp.stage1_config.clone(),
+            fold_challenge_shape: root_lp.fold_challenge_shape,
             num_digits_commit: root_lp.num_digits_commit,
             num_digits_open: root_lp.num_digits_open,
             num_digits_fold: per_poly_fold,
