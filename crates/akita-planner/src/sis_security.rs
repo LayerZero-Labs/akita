@@ -5,15 +5,12 @@
 
 pub use akita_types::SisModulusFamily;
 
-/// Maximum Module-SIS rank covered by the generated floor table.
-pub const MAX_RANK: u32 = akita_types::generated::sis_floor::MAX_RANK as u32;
-
-/// Expose the raw SIS width array for a given `(family, d, collision_inf)` pair.
+/// Expose the raw SIS width slice for a given `(family, d, collision_inf)` pair.
 pub fn sis_max_widths_public(
     family: SisModulusFamily,
     d: u32,
     collision_inf: u32,
-) -> Option<[u64; akita_types::generated::sis_floor::MAX_RANK]> {
+) -> Option<&'static [u64]> {
     akita_types::generated::sis_floor::sis_max_widths(family, d, collision_inf)
 }
 
@@ -96,7 +93,7 @@ mod tests {
     #[test]
     fn exceeds_max_rank() {
         assert_eq!(
-            min_rank_for_secure_width(SisModulusFamily::Q32, 32, 127, 16),
+            min_rank_for_secure_width(SisModulusFamily::Q32, 32, 2047, 557_704),
             None
         );
     }

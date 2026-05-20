@@ -28,10 +28,10 @@ pub use layout::{
     planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
     recursive_level_decomposition_from_root, recursive_level_layout_from_params,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
-    sis_secure_level_params, sumcheck_rounds, terminal_level_proof_bytes, AjtaiKeyParams,
-    BasisMode, BlockOrder, FlatMatrix, LevelParams, MRowLayout, RingMatrixView, RingOpeningPoint,
-    SisModulusFamily, SisRoleWidths,
+    root_extension_opening_partials, sis_derived_recursive_params_for_layout,
+    sis_derived_root_params_for_layout, sis_secure_level_params, sumcheck_rounds,
+    terminal_level_proof_bytes, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix, LevelParams,
+    MRowLayout, RingMatrixView, RingOpeningPoint, SisModulusFamily, SisRoleWidths,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

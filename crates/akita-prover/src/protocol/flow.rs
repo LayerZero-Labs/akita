@@ -43,14 +43,15 @@ use akita_types::{
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
     relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
-    root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
-    schedule_num_fold_levels, schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
-    AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape,
-    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
-    PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
-    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    root_extension_opening_partials, root_tensor_projection_enabled,
+    sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
+    schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs,
+    AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits,
+    ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof,
+    FlatRingVec, IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
+    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
+    TerminalLevelProof,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -1850,7 +1851,10 @@ where
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut openings = Vec::with_capacity(incidence_summary.num_claims());
-    let mut partials = Vec::with_capacity(incidence_summary.num_claims() * width);
+    let mut partials = Vec::with_capacity(root_extension_opening_partials(
+        width,
+        incidence_summary.num_claims(),
+    ));
     let mut row_partials_by_claim = Vec::with_capacity(incidence_summary.num_claims());
     {
         let _span =

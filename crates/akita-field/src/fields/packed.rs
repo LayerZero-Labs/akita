@@ -3,7 +3,7 @@
 use crate::fields::ext::{
     power_basis_fp4_mul_coeffs, Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
 };
-use crate::fields::{Fp128, Fp32, Fp64};
+use crate::fields::{Fp128, Fp16, Fp32, Fp64};
 use crate::{FieldCore, Invertible};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use num_traits::{One, Zero};
@@ -350,6 +350,13 @@ pub type Fp128Packing<const P: u128> = NoPacking<Fp128<P>>;
 
 impl<const P: u128> HasPacking for Fp128<P> {
     type Packing = Fp128Packing<P>;
+}
+
+/// Selected packed backend for `Fp16`.
+pub type Fp16Packing<const P: u32> = NoPacking<Fp16<P>>;
+
+impl<const P: u32> HasPacking for Fp16<P> {
+    type Packing = Fp16Packing<P>;
 }
 
 /// Selected packed backend for `Fp32`.

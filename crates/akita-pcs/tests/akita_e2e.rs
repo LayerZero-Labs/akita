@@ -4,7 +4,7 @@
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 #[cfg(feature = "planner")]
-use akita_config::proof_optimized::{fp32, fp64};
+use akita_config::proof_optimized::{fp16, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
@@ -316,11 +316,11 @@ fn opening_from_poly<FField: CanonicalField, const D: usize, P: AkitaPolyOps<FFi
 }
 
 #[test]
-fn full_d128_prove_verify() {
+fn full_d64_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D64Full;
         const D: usize = Cfg::D;
 
         let layout = Cfg::commitment_layout(FULL_TEST_NV).expect("layout");
@@ -408,7 +408,7 @@ fn full_d128_prove_verify() {
             proof_bytes,
             proof_kib = proof_bytes as f64 / 1024.0,
             levels = total_fold_levels,
-            "full-d128/nv{FULL_TEST_NV} e2e"
+            "full-d64/nv{FULL_TEST_NV} e2e"
         );
     });
 }
@@ -448,6 +448,39 @@ fn full_d32_prove_verify() {
         assert!(
             result.is_ok(),
             "D32 verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[cfg(feature = "planner")]
+#[test]
+fn fp16_static_dense_round_trip() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type FSmall = fp16::Field;
+        type Cfg = fp16::D32Full;
+        const D: usize = Cfg::D;
+
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+            make_dense_fixture::<FSmall, D, Cfg>(SMALL_FIELD_TEST_NV, b"akita_e2e/fp16-static");
+
+        let commitments = [commitment];
+        let openings = [opening];
+        let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"akita_e2e/fp16-static");
+        let result =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<FSmall, D>>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input(&opening_point[..], &openings[..], &commitments[0]),
+                BasisMode::Lagrange,
+            );
+
+        assert!(
+            result.is_ok(),
+            "fp16 static verification must pass: {:?}",
             result.err()
         );
     });
@@ -643,11 +676,11 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 }
 
 #[test]
-fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
+fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D64Full;
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
@@ -1133,7 +1166,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D64Full;
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
@@ -1183,7 +1216,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
 
 #[test]
 fn adaptive_schedule_key_changes_when_schedule_changes() {
-    type Cfg = fp128::D128Full;
+    type Cfg = fp128::D64Full;
 
     let mut distinct = std::collections::BTreeMap::new();
     for nv in 10..=18 {
