@@ -239,7 +239,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "rand_core 0.6.4",
- "sha3 0.10.8",
+ "sha3 0.10.9",
  "tracing",
 ]
 
