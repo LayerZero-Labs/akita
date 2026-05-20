@@ -2,10 +2,27 @@
 #![cfg(not(feature = "zk"))]
 
 use akita_algebra::ring::CyclotomicRing;
-use akita_challenges::{sample_sparse_challenges, SparseChallenge, SparseChallengeConfig};
+use akita_challenges::{
+    sample_sparse_challenges, sample_tensor_challenges, tensor_left_digest, IntegerChallenge,
+    SparseChallenge, SparseChallengeConfig, TensorChallengeLabels, TensorChallengeSet,
+    TensorChallengeShape, TensorChallenges,
+};
 use akita_field::{CanonicalField, FieldCore, Fp64};
-use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
+use akita_transcript::labels::{
+    ABSORB_TENSOR_FOLD_LEFT, CHALLENGE_STAGE1_FOLD, CHALLENGE_TENSOR_FOLD_LEFT,
+    CHALLENGE_TENSOR_FOLD_RIGHT, DOMAIN_AKITA_PROTOCOL,
+};
 use akita_transcript::{Blake2bTranscript, Transcript};
+
+/// Stage-1 fold label bundle reused by every tensor-vs-flat sampling test.
+fn stage1_tensor_labels() -> TensorChallengeLabels<'static> {
+    TensorChallengeLabels {
+        flat: CHALLENGE_STAGE1_FOLD,
+        tensor_left: CHALLENGE_TENSOR_FOLD_LEFT,
+        tensor_left_digest: ABSORB_TENSOR_FOLD_LEFT,
+        tensor_right: CHALLENGE_TENSOR_FOLD_RIGHT,
+    }
+}
 
 type F = Fp64<4294967197>;
 
@@ -25,6 +42,29 @@ fn l1_norm(c: &SparseChallenge) -> u64 {
         .iter()
         .map(|&v| (v as i32).unsigned_abs() as u64)
         .sum()
+}
+
+/// Local helper: convert an integer challenge to a dense ring element. Used
+/// only by the tensor cross-checks against the dense `CyclotomicRing` product.
+fn integer_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
+    c: &IntegerChallenge,
+) -> CyclotomicRing<F, D> {
+    let mut out = [F::zero(); D];
+    for (&pos, &coeff) in c.positions.iter().zip(c.coeffs.iter()) {
+        out[pos as usize] += F::from_i64(i64::from(coeff));
+    }
+    CyclotomicRing::from_coefficients(out)
+}
+
+/// Local helper: scalar power table `[1, alpha, alpha^2, ..., alpha^{D-1}]`.
+fn scalar_powers<F: FieldCore, const D: usize>(alpha: F) -> Vec<F> {
+    (0..D)
+        .scan(F::one(), |power, _| {
+            let out = *power;
+            *power *= alpha;
+            Some(out)
+        })
+        .collect()
 }
 
 /// Local helper: convert to a dense ring element for layout/validation tests.
@@ -280,4 +320,375 @@ fn exact_shell_sampling_has_exact_magnitude_counts() {
         challenge.coeffs.iter().filter(|&&c| c.abs() == 2).count(),
         2
     );
+}
+
+#[test]
+fn tensor_product_matches_dense_ring_product() {
+    const TD: usize = 8;
+    let left = SparseChallenge {
+        positions: vec![0, 6],
+        coeffs: vec![2, -1],
+    };
+    let right = SparseChallenge {
+        positions: vec![3, 5],
+        coeffs: vec![1, 4],
+    };
+
+    let product = IntegerChallenge::tensor_product::<TD>(&left, &right).unwrap();
+    let dense_product = sparse_challenge_to_dense::<F, TD>(&left).unwrap()
+        * sparse_challenge_to_dense::<F, TD>(&right).unwrap();
+
+    assert_eq!(integer_challenge_to_dense::<F, TD>(&product), dense_product);
+}
+
+#[test]
+fn tensor_sampling_uses_two_vectors() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::Uniform {
+        weight: 2,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    transcript.append_field(b"seed", &F::from_u64(7));
+
+    let challenges = sample_tensor_challenges::<F, _, TD>(
+        &mut transcript,
+        8,
+        2,
+        &cfg,
+        &TensorChallengeShape::Tensor,
+        stage1_tensor_labels(),
+    )
+    .unwrap();
+
+    let TensorChallenges::Tensor(tensor) = challenges else {
+        panic!("expected tensor challenges");
+    };
+    assert_eq!(tensor.left_len, 2);
+    assert_eq!(tensor.right_len, 4);
+    assert_eq!(tensor.left.len(), 4);
+    assert_eq!(tensor.right.len(), 8);
+    assert_eq!(tensor.expand_integer::<TD>().unwrap().len(), 16);
+}
+
+#[test]
+fn tensor_sampling_absorbs_left_digest_before_right() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::Uniform {
+        weight: 2,
+        nonzero_coeffs: vec![-1, 1],
+    };
+
+    let mut sampled_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    sampled_transcript.append_field(b"seed", &F::from_u64(0x5151));
+    let sampled = sample_tensor_challenges::<F, _, TD>(
+        &mut sampled_transcript,
+        8,
+        2,
+        &cfg,
+        &TensorChallengeShape::Tensor,
+        stage1_tensor_labels(),
+    )
+    .unwrap();
+    let TensorChallenges::Tensor(sampled) = sampled else {
+        panic!("expected tensor challenges");
+    };
+
+    let mut manual_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    manual_transcript.append_field(b"seed", &F::from_u64(0x5151));
+    let left = sample_sparse_challenges::<F, _, TD>(
+        &mut manual_transcript,
+        CHALLENGE_TENSOR_FOLD_LEFT,
+        sampled.left.len(),
+        &cfg,
+    )
+    .unwrap();
+    let left_digest =
+        tensor_left_digest::<TD>(&left, sampled.left_len, sampled.num_claims).unwrap();
+    manual_transcript.append_bytes(ABSORB_TENSOR_FOLD_LEFT, &left_digest);
+    let right = sample_sparse_challenges::<F, _, TD>(
+        &mut manual_transcript,
+        CHALLENGE_TENSOR_FOLD_RIGHT,
+        sampled.right.len(),
+        &cfg,
+    )
+    .unwrap();
+
+    // Without the left-digest absorb, the right vector would just be a second
+    // application of `sample_sparse_challenges` on the bare transcript. That
+    // alternate vector must not match the sampled vector, otherwise the
+    // right-side challenge would not be bound to the left.
+    let mut nodigest_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    nodigest_transcript.append_field(b"seed", &F::from_u64(0x5151));
+    let _nodigest_left = sample_sparse_challenges::<F, _, TD>(
+        &mut nodigest_transcript,
+        CHALLENGE_TENSOR_FOLD_LEFT,
+        sampled.left.len(),
+        &cfg,
+    )
+    .unwrap();
+    let nodigest_right = sample_sparse_challenges::<F, _, TD>(
+        &mut nodigest_transcript,
+        CHALLENGE_TENSOR_FOLD_RIGHT,
+        sampled.right.len(),
+        &cfg,
+    )
+    .unwrap();
+
+    assert_eq!(sampled.left, left);
+    assert_eq!(sampled.right, right);
+    assert_ne!(
+        sampled.right, nodigest_right,
+        "right challenges must be bound to the tensor-left output digest"
+    );
+}
+
+#[test]
+fn tensor_lazy_evals_match_expanded_products() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::Uniform {
+        weight: 2,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    transcript.append_field(b"seed", &F::from_u64(99));
+    let challenges = sample_tensor_challenges::<F, _, TD>(
+        &mut transcript,
+        8,
+        1,
+        &cfg,
+        &TensorChallengeShape::Tensor,
+        stage1_tensor_labels(),
+    )
+    .unwrap();
+
+    let alpha_pows = scalar_powers::<F, TD>(F::from_u64(5));
+    let lazy = challenges.evals_at_pows::<F, F, TD>(&alpha_pows).unwrap();
+    let expanded = challenges
+        .expand_integer::<TD>()
+        .unwrap()
+        .iter()
+        .map(|challenge| challenge.eval_at_pows::<F, F, TD>(&alpha_pows))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(lazy, expanded);
+}
+
+#[test]
+fn tensor_factored_aggregate_matches_expanded_products() {
+    const TD: usize = 8;
+    let tensor = TensorChallengeSet {
+        left: vec![
+            SparseChallenge {
+                positions: vec![0, 6],
+                coeffs: vec![2, -1],
+            },
+            SparseChallenge {
+                positions: vec![1, 3],
+                coeffs: vec![1, 3],
+            },
+            SparseChallenge {
+                positions: vec![2, 7],
+                coeffs: vec![-2, 1],
+            },
+            SparseChallenge {
+                positions: vec![0, 5],
+                coeffs: vec![1, -3],
+            },
+        ],
+        right: vec![
+            SparseChallenge {
+                positions: vec![0],
+                coeffs: vec![1],
+            },
+            SparseChallenge {
+                positions: vec![2],
+                coeffs: vec![-1],
+            },
+            SparseChallenge {
+                positions: vec![4],
+                coeffs: vec![2],
+            },
+            SparseChallenge {
+                positions: vec![6],
+                coeffs: vec![1],
+            },
+            SparseChallenge {
+                positions: vec![1, 5],
+                coeffs: vec![2, 1],
+            },
+            SparseChallenge {
+                positions: vec![3, 7],
+                coeffs: vec![-1, 2],
+            },
+            SparseChallenge {
+                positions: vec![0, 4],
+                coeffs: vec![1, -2],
+            },
+            SparseChallenge {
+                positions: vec![2, 6],
+                coeffs: vec![3, 1],
+            },
+        ],
+        left_len: 2,
+        right_len: 4,
+        num_claims: 2,
+    };
+    let claim_idx = 1;
+    let u_weights = vec![F::from_i64(3), -F::from_i64(2)];
+    let v_weights = vec![F::from_i64(5), F::zero(), -F::from_i64(7), F::from_i64(11)];
+    let alpha = F::from_u64(13);
+    let alpha_pows = scalar_powers::<F, TD>(alpha);
+    let alpha_pow_d_plus_one = alpha_pows[TD - 1] * alpha + F::one();
+
+    let got = tensor
+        .eval_factored_aggregate_at_pows::<F, F, TD>(
+            claim_idx,
+            &u_weights,
+            &v_weights,
+            &alpha_pows,
+            alpha_pow_d_plus_one,
+        )
+        .unwrap();
+
+    let expanded = tensor.expand_integer::<TD>().unwrap();
+    let start = claim_idx * tensor.left_len * tensor.right_len;
+    let mut expected = F::zero();
+    for (p, &u) in u_weights.iter().enumerate() {
+        for (q, &v) in v_weights.iter().enumerate() {
+            let idx = start + p * tensor.right_len + q;
+            expected += u * v * expanded[idx].eval_at_pows::<F, F, TD>(&alpha_pows).unwrap();
+        }
+    }
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn tensor_evals_at_pows_match_expanded_integer_reference() {
+    const TD: usize = 8;
+    let tensor = TensorChallengeSet {
+        left: vec![
+            SparseChallenge {
+                positions: vec![0, 3],
+                coeffs: vec![1, -2],
+            },
+            SparseChallenge {
+                positions: vec![2, 7],
+                coeffs: vec![2, 1],
+            },
+        ],
+        right: vec![
+            SparseChallenge {
+                positions: vec![1, 6],
+                coeffs: vec![-1, 2],
+            },
+            SparseChallenge {
+                positions: vec![0, 5],
+                coeffs: vec![3, -1],
+            },
+        ],
+        left_len: 2,
+        right_len: 2,
+        num_claims: 1,
+    };
+    let alpha_pows = scalar_powers::<F, TD>(F::from_u64(13));
+
+    let got = tensor.evals_at_pows::<F, F, TD>(&alpha_pows).unwrap();
+    let expected = tensor
+        .expand_integer::<TD>()
+        .unwrap()
+        .iter()
+        .map(|challenge| challenge.eval_at_pows::<F, F, TD>(&alpha_pows).unwrap())
+        .collect::<Vec<_>>();
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn tensor_product_only_formula_is_not_exact_for_generic_alpha() {
+    // The naive product formula ignores the negacyclic wrap term. At
+    // `alpha = 5, D = 2` the wrap term `α^D + 1` is non-zero, so the exact
+    // aggregate must differ from the bare product of evaluations.
+    const TD: usize = 2;
+    let tensor = TensorChallengeSet {
+        left: vec![SparseChallenge {
+            positions: vec![1],
+            coeffs: vec![1],
+        }],
+        right: vec![SparseChallenge {
+            positions: vec![1],
+            coeffs: vec![1],
+        }],
+        left_len: 1,
+        right_len: 1,
+        num_claims: 1,
+    };
+    let alpha = F::from_u64(5);
+    let alpha_pows = scalar_powers::<F, TD>(alpha);
+    let alpha_pow_d_plus_one = alpha_pows[TD - 1] * alpha + F::one();
+    let weights = [F::one()];
+
+    let exact = tensor
+        .eval_factored_aggregate_at_pows::<F, F, TD>(
+            0,
+            &weights,
+            &weights,
+            &alpha_pows,
+            alpha_pow_d_plus_one,
+        )
+        .unwrap();
+    let product_only = tensor.left[0]
+        .eval_at_pows::<F, F, TD>(&alpha_pows)
+        .unwrap()
+        * tensor.right[0]
+            .eval_at_pows::<F, F, TD>(&alpha_pows)
+            .unwrap();
+
+    assert_eq!(exact, -F::one());
+    assert_ne!(exact, product_only);
+}
+
+#[test]
+fn tensor_exact_aggregate_collapses_to_product_at_negacyclic_root() {
+    // When `alpha^D + 1 == 0` the negacyclic wrap term vanishes, so the
+    // exact aggregate degenerates to the bare product of evaluations.
+    const TD: usize = 2;
+    let tensor = TensorChallengeSet {
+        left: vec![SparseChallenge {
+            positions: vec![1],
+            coeffs: vec![1],
+        }],
+        right: vec![SparseChallenge {
+            positions: vec![1],
+            coeffs: vec![1],
+        }],
+        left_len: 1,
+        right_len: 1,
+        num_claims: 1,
+    };
+    let alpha = F::from_u64(983_270_775);
+    let alpha_pows = scalar_powers::<F, TD>(alpha);
+    let alpha_pow_d_plus_one = alpha_pows[TD - 1] * alpha + F::one();
+    let weights = [F::one()];
+
+    assert_eq!(alpha_pow_d_plus_one, F::zero());
+    let exact = tensor
+        .eval_factored_aggregate_at_pows::<F, F, TD>(
+            0,
+            &weights,
+            &weights,
+            &alpha_pows,
+            alpha_pow_d_plus_one,
+        )
+        .unwrap();
+    let product_only = tensor.left[0]
+        .eval_at_pows::<F, F, TD>(&alpha_pows)
+        .unwrap()
+        * tensor.right[0]
+            .eval_at_pows::<F, F, TD>(&alpha_pows)
+            .unwrap();
+
+    assert_eq!(exact, product_only);
 }
