@@ -576,6 +576,31 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "zk"))]
+    fn batched_root_plan_matches_runtime_next_w_len() {
+        let table = fp128_d64_onehot_table();
+        let entry = table
+            .entries
+            .iter()
+            .find(|entry| {
+                entry.key.num_commitment_groups > 1
+                    || entry.key.num_t_vectors > 1
+                    || entry.key.num_w_vectors > 1
+                    || entry.key.num_z_vectors > 1
+            })
+            .expect("generated table should contain a non-singleton batched-root row");
+        let key = AkitaScheduleLookupKey::new_with_points(
+            entry.key.num_vars,
+            entry.key.num_commitment_groups,
+            entry.key.num_t_vectors,
+            entry.key.num_w_vectors,
+            entry.key.num_z_vectors,
+        );
+
+        assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
     fn singleton_root_runtime_plan_matches_existing_root_layout() {
         type Cfg = fp128::D64OneHot;
 

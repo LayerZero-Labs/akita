@@ -278,24 +278,28 @@ fn finalize_terminal_direct_witness_shape<Cfg: PlannerConfig>(
     nt: usize,
     nw: usize,
     nz: usize,
-) {
+) -> Result<(), AkitaError> {
     // Suffix DP invariant: this finalizer only runs for terminal-suffix
     // candidates whose suffix is exactly `[Direct]`. Any longer suffix or a
     // non-`Direct` first step indicates a misuse from a caller that did not
     // gate on `matches!(suffix_steps.first(), Some(Step::Direct(_)))`.
-    debug_assert_eq!(
-        suffix_steps.len(),
-        1,
-        "finalize_terminal_direct_witness_shape expects exactly one suffix step"
-    );
-    let Some(first) = suffix_steps.first_mut() else {
-        return;
-    };
+    if suffix_steps.len() != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "terminal direct finalizer expects exactly one suffix step".to_string(),
+        ));
+    }
+    let first = suffix_steps.first_mut().ok_or_else(|| {
+        AkitaError::InvalidSetup("terminal direct finalizer received empty suffix".to_string())
+    })?;
     let Step::Direct(direct) = first else {
-        return;
+        return Err(AkitaError::InvalidSetup(
+            "terminal direct finalizer expected a direct suffix step".to_string(),
+        ));
     };
     let DirectWitnessShape::PackedDigits((_, log_basis)) = direct.witness_shape else {
-        return;
+        return Err(AkitaError::InvalidSetup(
+            "terminal direct finalizer expected a packed-digit witness".to_string(),
+        ));
     };
     let ring_count = akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::PlannerField>(
         &candidate.lp,
@@ -314,6 +318,7 @@ fn finalize_terminal_direct_witness_shape<Cfg: PlannerConfig>(
     direct.current_w_len = terminal_field_len;
     direct.witness_shape = witness_shape;
     direct.direct_bytes = direct_bytes;
+    Ok(())
 }
 
 /// Inclusive range of `log_basis` values to search at a given state.
@@ -453,7 +458,7 @@ where
                     1,
                     rec_rows,
                     rec_rows,
-                );
+                )?;
                 let (new_direct_bytes, terminal_field_len) =
                     match suffix_steps.first().expect("suffix non-empty") {
                         Step::Direct(direct) => (direct.direct_bytes, direct.current_w_len),
@@ -840,7 +845,7 @@ where
                 t_vectors,
                 w_vectors,
                 z_vectors,
-            );
+            )?;
             let (new_direct_bytes, terminal_field_len) =
                 match suffix_steps.first().expect("suffix non-empty") {
                     Step::Direct(direct) => (direct.direct_bytes, direct.current_w_len),
