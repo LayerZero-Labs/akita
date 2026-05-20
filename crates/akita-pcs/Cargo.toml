@@ -100,6 +100,10 @@ path = "examples/profile/main.rs"
 name = "tiered_bench"
 path = "examples/tiered_bench.rs"
 
+[[example]]
+name = "portable_bench"
+path = "examples/portable_bench.rs"
+
 [[bench]]
 name = "ring_ntt"
 harness = false

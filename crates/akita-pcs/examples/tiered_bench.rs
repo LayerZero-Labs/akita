@@ -40,14 +40,14 @@ use akita_prover::{CommitmentProver, CommittedPolynomials, OneHotPoly};
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
     AjtaiKeyParams, AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, BasisMode,
-    CommitmentEnvelope, DecompositionParams, LevelParams, SisModulusFamily,
+    ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, LevelParams, SisModulusFamily,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::HashMap;
 use std::env;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::span::{Attributes, Id};
 use tracing::Subscriber;
@@ -269,6 +269,48 @@ fn recursive_base_params(log_basis: u32) -> LevelParams {
     )
 }
 
+/// Process-local schedule cache for one bench Cfg, keyed by the
+/// schedule lookup key. Plays the role that the production
+/// `proof_optimized_schedule_plan` plays for `fp128::D32OneHot` (which
+/// ships an offline schedule table compiled in), but for the bench's
+/// custom Cfgs that don't have a generated table on disk:
+///   * the very first call to `get_params_for_prove(key)` runs
+///     `akita_planner::find_optimal_schedule::<Self>(key)` once and
+///     stashes the resulting `Schedule`,
+///   * every subsequent call (prover OR verifier — the verifier hits
+///     the same `Cfg::get_params_for_prove` hook via
+///     `akita-scheme/src/lib.rs:601`) returns a clone of the cached
+///     schedule, skipping the planner DP entirely.
+///
+/// Effect: identical to having an offline-generated schedule table
+/// per Cfg, but achieved lazily at first use, so the bench can iterate
+/// on tier-3 parameters without regenerating any committed `.rs`
+/// schedule file.
+type ScheduleCache = OnceLock<Mutex<HashMap<AkitaScheduleLookupKey, akita_types::Schedule>>>;
+
+fn get_cached_schedule<Cfg>(
+    cache: &ScheduleCache,
+    key: AkitaScheduleLookupKey,
+) -> Result<akita_types::Schedule, AkitaError>
+where
+    Cfg: akita_planner::PlannerConfig,
+{
+    let mutex = cache.get_or_init(|| Mutex::new(HashMap::new()));
+    {
+        let guard = mutex.lock().expect("schedule cache mutex poisoned");
+        if let Some(sched) = guard.get(&key) {
+            return Ok(sched.clone());
+        }
+    }
+    // Compute outside the lock so we don't block other (key-distinct)
+    // lookups while planning. Bench is single-threaded today but the
+    // pattern survives if a future caller parallelises verifies.
+    let sched = akita_planner::find_optimal_schedule::<Cfg>(key)?;
+    let mut guard = mutex.lock().expect("schedule cache mutex poisoned");
+    guard.entry(key).or_insert_with(|| sched.clone());
+    Ok(sched)
+}
+
 // One Cfg per split factor. They only differ in `make_root_lp`'s split
 // argument; everything else is identical. With this `find_optimal_schedule`
 // flows through the standard `CommitmentConfig::get_params_for_prove`
@@ -280,9 +322,23 @@ fn recursive_base_params(log_basis: u32) -> LevelParams {
 // to `chunk_width = outer_width / split_factor` per
 // `akita-planner/src/schedule_params.rs`.
 macro_rules! impl_bench_cfg {
-    ($name:ident, $split:expr, $label:expr) => {
+    ($name:ident, $cache:ident, $split:expr, $label:expr) => {
         #[derive(Clone, Copy, Debug, Default)]
         pub struct $name;
+
+        /// Per-Cfg lazy schedule cache. Acts as the in-process
+        /// equivalent of the generated schedule table that
+        /// `fp128::D32OneHot` ships on disk: the first
+        /// `get_params_for_prove` / `get_params_for_commitment` /
+        /// `batched_verify` call populates it via
+        /// `find_optimal_schedule::<Self>`, and every subsequent call
+        /// (in either prover or verifier) reads from it directly.
+        ///
+        /// Mirrors the production `ScheduleProvider` cache contract
+        /// closely enough that the prover/verifier code paths take the
+        /// "offline-cached" branch on every call except the first one
+        /// of the process.
+        static $cache: ScheduleCache = OnceLock::new();
 
         impl $name {
             pub const SPLIT_FACTOR: usize = $split;
@@ -372,8 +428,25 @@ macro_rules! impl_bench_cfg {
                 Ok(Self::root_lp().with_layout(lp))
             }
 
-            fn planner_log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
-                (LOG_BASIS, LOG_BASIS)
+            fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+                // At the ROOT (level 0) we pin `log_basis = LOG_BASIS`
+                // because the tiered fixture ties `outer_log_basis`
+                // (the ûhat gadget basis) to `log_basis` so the
+                // stage-1/2 sumcheck digit lookup tables cover the
+                // ûhat segment uniformly. For RECURSIVE levels there
+                // is no such tie, so we mirror the production
+                // `proof_optimized_log_basis_search_range = (2, 6)`
+                // and let the planner DP pick the proof-size-optimal
+                // log_basis at each level. This is what makes the
+                // bench Cfg's schedule converge to the
+                // `fp128::D32OneHot` offline-tuned schedule in proof
+                // bytes (planner-DP-only path matches what an offline
+                // table would emit).
+                if inputs.level == 0 {
+                    (LOG_BASIS, LOG_BASIS)
+                } else {
+                    (2, 6)
+                }
             }
         }
 
@@ -461,8 +534,14 @@ macro_rules! impl_bench_cfg {
                 LOG_BASIS
             }
 
-            fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
-                (LOG_BASIS, LOG_BASIS)
+            fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+                // See `planner_log_basis_search_range` above for the
+                // root-vs-recursive split rationale.
+                if inputs.level == 0 {
+                    (LOG_BASIS, LOG_BASIS)
+                } else {
+                    (2, 6)
+                }
             }
 
             fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, AkitaError> {
@@ -477,18 +556,36 @@ macro_rules! impl_bench_cfg {
                 Ok(Self::root_lp())
             }
 
-            // No `get_params_for_prove` override: the default in
-            // `CommitmentConfig` routes through
-            // `akita_planner::find_optimal_schedule::<Self>(key)` (see
-            // `crates/akita-config/src/lib.rs` ~ line 301). That is what
-            // we want for both legacy and tiered runs.
+            // Memoized `get_params_for_prove`. The production
+            // counterpart on `fp128::D32OneHot` reads a compiled-in
+            // schedule table and bypasses `find_optimal_schedule`
+            // entirely — that's exactly the verify-time win the user
+            // asked for ("verifier does not need to do computation on
+            // the fly"). For these bench Cfgs we don't ship a
+            // generated table file, so we lazily populate an
+            // in-process `OnceLock<Mutex<HashMap>>` on first call and
+            // serve every subsequent prover/verifier call from it.
+            //
+            // Effect at the bench's nv = 32 shape:
+            //   * planner DP runs ONCE per process (~1.3 ms);
+            //   * every verify trial after the first reads the cached
+            //     `Schedule` (a few μs);
+            //   * the schedule itself is bit-identical to what the
+            //     planner picks every time, so proof bytes match the
+            //     uncached path exactly.
+            fn get_params_for_prove(
+                incidence: &ClaimIncidenceSummary,
+            ) -> Result<akita_types::Schedule, AkitaError> {
+                let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
+                get_cached_schedule::<Self>(&$cache, key)
+            }
         }
     };
 }
 
-impl_bench_cfg!(LegacyBenchCfg, 1, "legacy_f1");
-impl_bench_cfg!(Tier2BenchCfg, 2, "tier2");
-impl_bench_cfg!(Tier3BenchCfg, 3, "tier3");
+impl_bench_cfg!(LegacyBenchCfg, LEGACY_F1_CACHE, 1, "legacy_f1");
+impl_bench_cfg!(Tier2BenchCfg, TIER2_F2_CACHE, 2, "tier2");
+impl_bench_cfg!(Tier3BenchCfg, TIER3_F3_CACHE, 3, "tier3");
 
 /// In-memory tracing layer that aggregates per-span wall-clock time
 /// across many enter/exit cycles, so we can attribute each portion of
