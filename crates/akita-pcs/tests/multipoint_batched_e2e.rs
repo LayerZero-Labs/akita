@@ -6,7 +6,7 @@ mod common;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{commit_with_params, CommitmentProver};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -122,7 +122,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
         .expect("dense batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense");
         let proof =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
@@ -148,7 +148,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
         )
         .expect("deserialize");
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense");
         let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -233,7 +233,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
         .expect("onehot batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
         let proof =
             <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
@@ -259,7 +259,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
         )
         .expect("deserialize");
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
         let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
             F,
             ONEHOT_D,
@@ -348,7 +348,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
             .collect();
 
         let mut prover_transcript =
-            Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_shared");
+            AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_shared");
         let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
             &setup,
             prover_claims,
@@ -384,7 +384,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
             .collect();
 
         let mut verifier_transcript =
-            Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_shared");
+            AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_shared");
         let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -469,7 +469,7 @@ mod non_zk_negative_cases {
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
             let mut prover_transcript =
-                Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
+                AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
             let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
@@ -488,7 +488,7 @@ mod non_zk_negative_cases {
 
             let swapped_points = vec![opening_points[1], opening_points[0]];
             let mut verifier_transcript =
-                Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
+                AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
             let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<
                 F,
                 DENSE_D,
@@ -559,7 +559,7 @@ mod non_zk_negative_cases {
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
             let mut transcript =
-                Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/capacity-overflow");
+                AkitaTranscript::<F>::new(b"multipoint_batched_e2e/capacity-overflow");
             let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
@@ -647,7 +647,7 @@ mod non_zk_negative_cases {
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
             let mut prover_transcript =
-                Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_opening_count");
+                AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_opening_count");
             let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
@@ -672,7 +672,7 @@ mod non_zk_negative_cases {
                 vec![truncated_p0.as_slice(), openings_per_point[1].as_slice()];
 
             let mut verifier_transcript =
-                Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_opening_count");
+                AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_opening_count");
             let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<
                 F,
                 DENSE_D,

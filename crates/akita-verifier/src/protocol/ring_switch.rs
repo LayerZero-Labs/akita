@@ -139,6 +139,7 @@ where
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_after_absorb`;
     // the outer wrapper just performs the witness absorb before delegating.
+    transcript.record_wire_serde(ABSORB_SUMCHECK_W, w_commitment);
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
     ring_switch_verifier_after_absorb::<F, E, T, D>(
         opening_points,
