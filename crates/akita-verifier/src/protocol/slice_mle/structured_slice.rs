@@ -443,9 +443,11 @@ mod tests {
             })
             .collect();
         let prepared = RingSwitchDeferredRowEval {
-            c_alphas: (0..total_blocks)
-                .map(|idx| f(3_000 + idx as u128))
-                .collect(),
+            c_alphas: crate::protocol::ring_switch::PreparedChallengeEvals::Flat(
+                (0..total_blocks)
+                    .map(|idx| f(3_000 + idx as u128))
+                    .collect(),
+            ),
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(4_000 + idx as u128))
                 .collect(),
@@ -534,13 +536,17 @@ mod tests {
             .iter()
             .map(|&point_idx| p.eq_tau1[1 + point_idx])
             .collect();
+        let c_alphas_flat = p
+            .c_alphas
+            .as_flat()
+            .expect("structured-slice test uses flat fixture");
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
                 let start = claim_idx * p.num_blocks;
                 summarize_pow2_block_carries(
                     &eq_low,
                     block_offset_low,
-                    &p.c_alphas[start..(start + p.num_blocks)],
+                    &c_alphas_flat[start..(start + p.num_blocks)],
                 )
             })
             .collect::<Result<_, _>>()
@@ -566,7 +572,7 @@ mod tests {
             let entry = (p.eq_tau1[1 + point_idx]
                 * p.gamma[claim_idx]
                 * fx.opening_points[point_idx].b[block_idx]
-                + p.eq_tau1[0] * p.c_alphas[blk])
+                + p.eq_tau1[0] * c_alphas_flat[blk])
                 * fx.g1_open[dig];
             expected += entry * eq[fx.offset_w + x];
         }
@@ -583,13 +589,17 @@ mod tests {
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_t & (p.num_blocks - 1);
 
+        let c_alphas_flat = p
+            .c_alphas
+            .as_flat()
+            .expect("structured-slice test uses flat fixture");
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
                 let start = claim_idx * p.num_blocks;
                 summarize_pow2_block_carries(
                     &eq_low,
                     block_offset_low,
-                    &p.c_alphas[start..(start + p.num_blocks)],
+                    &c_alphas_flat[start..(start + p.num_blocks)],
                 )
             })
             .collect::<Result<_, _>>()
@@ -610,7 +620,7 @@ mod tests {
             let blk = x % p.total_blocks;
             let a_idx = compound_dig / p.depth_open;
             let digit_idx = compound_dig % p.depth_open;
-            let entry = p.eq_tau1[a_start + a_idx] * p.c_alphas[blk] * fx.g1_open[digit_idx];
+            let entry = p.eq_tau1[a_start + a_idx] * c_alphas_flat[blk] * fx.g1_open[digit_idx];
             expected += entry * eq[fx.offset_t + x];
         }
         assert_eq!(got, expected);
