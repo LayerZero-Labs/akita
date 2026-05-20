@@ -22,22 +22,21 @@
 
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_config::proof_optimized::fp128;
+use akita_config::CommitmentConfig;
 use akita_field::FromPrimitiveInt as _;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, CommittedPolynomials, OneHotPoly};
 use akita_transcript::Blake2bTranscript;
-use akita_types::BasisMode;
+use akita_types::{AkitaVerifierSetup, BasisMode};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
 use std::time::Instant;
 
-type Cfg = fp128::D32OneHot;
 type Field = fp128::Field;
 const D: usize = 32;
 const ONEHOT_K: usize = 256;
-type Scheme = AkitaCommitmentScheme<D, Cfg>;
 
 fn opening_from_indices(indices: &[Option<u8>], onehot_k: usize, point: &[Field]) -> Field {
     // OneHot encoding: `evals[chunk * onehot_k + idx] = 1`, all else 0.
@@ -54,66 +53,77 @@ fn opening_from_indices(indices: &[Option<u8>], onehot_k: usize, point: &[Field]
     acc
 }
 
-fn main() {
-    let nv: usize = env::var("AKITA_BENCH_NV")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(32);
-    let trials: usize = env::var("AKITA_BENCH_TRIALS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(20);
+/// Per-Cfg phase wall-clock + proof-size summary.
+struct PhaseStats {
+    setup_secs: f64,
+    commit_secs: f64,
+    prove_secs: f64,
+    verify_mean_ms: f64,
+    verify_median_ms: f64,
+    verify_min_ms: f64,
+    verify_max_ms: f64,
+    proof_bytes: usize,
+}
 
-    println!("=========================================================");
-    println!(
-        " Portable bench: fp128::D32OneHot, nv={nv}, D={D}, onehot_k={ONEHOT_K}, \
-         1 poly, 1 point, {trials} verify trials"
-    );
-    println!("=========================================================");
-
+fn run_one_cfg<Cfg>(label: &str, nv: usize, trials: usize) -> PhaseStats
+where
+    Cfg: CommitmentConfig<Field = Field, ClaimField = Field, ChallengeField = Field>,
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+            Field,
+            D,
+            ClaimField = Field,
+            VerifierSetup = AkitaVerifierSetup<Field>,
+            Commitment = akita_types::RingCommitment<Field, D>,
+            BatchedProof = akita_types::AkitaBatchedProof<Field, Field>,
+            CommitHint = akita_types::AkitaCommitmentHint<Field, D>,
+        > + CommitmentVerifier<
+            Field,
+            D,
+            ClaimField = Field,
+            VerifierSetup = AkitaVerifierSetup<Field>,
+            Commitment = akita_types::RingCommitment<Field, D>,
+            BatchedProof = akita_types::AkitaBatchedProof<Field, Field>,
+        >,
+{
+    type Scheme<const DD: usize, Cfg> = AkitaCommitmentScheme<DD, Cfg>;
+    println!();
+    println!("---- {label} ----");
     let mut rng = StdRng::seed_from_u64(0xbe0bef);
 
-    // One-hot indices for `2^nv / onehot_k` chunks.
     let total_chunks = 1usize << (nv - ONEHOT_K.trailing_zeros() as usize);
     let t_indices = Instant::now();
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
     println!(
-        "generated {total_chunks} onehot indices ({:.2}s)",
+        "[{label}] generated {total_chunks} onehot indices ({:.2}s)",
         t_indices.elapsed().as_secs_f64()
     );
     let poly = OneHotPoly::<Field, D, u8>::new(ONEHOT_K, indices.clone()).expect("onehot poly");
 
-    let point: Vec<Field> = (0..nv).map(|_| Field::from_u128(rng.gen::<u128>())).collect();
-    let t_open = Instant::now();
+    let point: Vec<Field> = (0..nv)
+        .map(|_| Field::from_u128(rng.gen::<u128>()))
+        .collect();
     let opening = opening_from_indices(&indices, ONEHOT_K, &point);
-    println!(
-        "opening built ({:.2}s)",
-        t_open.elapsed().as_secs_f64()
-    );
 
-    // Setup.
     let t_setup = Instant::now();
-    let setup = <Scheme as CommitmentProver<Field, D>>::setup_prover(nv, 1, 1);
-    let verifier_setup = <Scheme as CommitmentProver<Field, D>>::setup_verifier(&setup);
+    let setup = <Scheme<D, Cfg> as CommitmentProver<Field, D>>::setup_prover(nv, 1, 1);
+    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<Field, D>>::setup_verifier(&setup);
     let setup_secs = t_setup.elapsed().as_secs_f64();
-    println!("setup_prover + setup_verifier: {:.4}s", setup_secs);
+    println!("[{label}] setup: {:.4}s", setup_secs);
 
-    // Commit.
     let t_commit = Instant::now();
     let (commitment, hint) =
-        <Scheme as CommitmentProver<Field, D>>::commit(std::slice::from_ref(&poly), &setup)
+        <Scheme<D, Cfg> as CommitmentProver<Field, D>>::commit(std::slice::from_ref(&poly), &setup)
             .expect("commit");
     let commit_secs = t_commit.elapsed().as_secs_f64();
-    println!("commit: {:.4}s", commit_secs);
+    println!("[{label}] commit: {:.4}s", commit_secs);
 
-    // Prove.
     let poly_refs = [&poly];
     let commitments = [commitment];
     let t_prove = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<Field>::new(b"portable_bench");
-    let proof = <Scheme as CommitmentProver<Field, D>>::batched_prove(
+    let proof = <Scheme<D, Cfg> as CommitmentProver<Field, D>>::batched_prove(
         &setup,
         vec![(
             &point[..],
@@ -129,18 +139,17 @@ fn main() {
     .expect("prove");
     let prove_secs = t_prove.elapsed().as_secs_f64();
     println!(
-        "prove: {:.4}s (proof bytes: {})",
+        "[{label}] prove: {:.4}s (proof bytes: {})",
         prove_secs,
         proof.size()
     );
 
-    // Verify N times.
     let openings = [opening];
     let mut verify_samples: Vec<f64> = Vec::with_capacity(trials);
     for trial in 0..trials {
         let mut verifier_transcript = Blake2bTranscript::<Field>::new(b"portable_bench");
         let t = Instant::now();
-        let result = <Scheme as CommitmentVerifier<Field, D>>::batched_verify(
+        let result = <Scheme<D, Cfg> as CommitmentVerifier<Field, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -154,45 +163,102 @@ fn main() {
             BasisMode::Lagrange,
         );
         if let Err(e) = &result {
-            panic!("verify failed at trial {trial}: {e:#?}");
+            panic!("[{label}] verify failed at trial {trial}: {e:#?}");
         }
-        let elapsed = t.elapsed().as_secs_f64();
-        verify_samples.push(elapsed);
-        println!("  verify trial {:>2}: {:.4} ms", trial + 1, elapsed * 1000.0);
+        verify_samples.push(t.elapsed().as_secs_f64());
     }
 
     let mut sorted = verify_samples.clone();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let mean = verify_samples.iter().sum::<f64>() / verify_samples.len() as f64;
-    let median = sorted[sorted.len() / 2];
-    let min = sorted[0];
-    let max = *sorted.last().unwrap();
+    println!(
+        "[{label}] verify: mean={:.4} ms, median={:.4} ms, min={:.4} ms, max={:.4} ms",
+        mean * 1000.0,
+        sorted[sorted.len() / 2] * 1000.0,
+        sorted[0] * 1000.0,
+        sorted.last().unwrap() * 1000.0,
+    );
+
+    PhaseStats {
+        setup_secs,
+        commit_secs,
+        prove_secs,
+        verify_mean_ms: mean * 1000.0,
+        verify_median_ms: sorted[sorted.len() / 2] * 1000.0,
+        verify_min_ms: sorted[0] * 1000.0,
+        verify_max_ms: *sorted.last().unwrap() * 1000.0,
+        proof_bytes: proof.size(),
+    }
+}
+
+fn main() {
+    let nv: usize = env::var("AKITA_BENCH_NV")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(32);
+    let trials: usize = env::var("AKITA_BENCH_TRIALS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+
+    println!("=========================================================");
+    println!(
+        " Portable bench: nv={nv}, D={D}, onehot_k={ONEHOT_K}, \
+         1 poly / 1 point, {trials} verify trials"
+    );
+    println!("=========================================================");
+
+    // Run BOTH the legacy production preset and the new tier-3
+    // production preset on the same workload (same point, same
+    // indices) so we compare apples-to-apples across phases.
+    let legacy = run_one_cfg::<fp128::D32OneHot>("fp128::D32OneHot (legacy)", nv, trials);
+    let tier3 = run_one_cfg::<fp128::D32OneHotTier3>("fp128::D32OneHotTier3", nv, trials);
 
     println!();
     println!("=========================================================");
-    println!(" Phase wall-clock summary (mean across {trials} verify trials)");
+    println!(" Side-by-side summary");
     println!("=========================================================");
     println!(
-        "  {:<10} {:>12} {:>12} {:>12} {:>12}",
-        "phase", "value (s)", "value (ms)", "", ""
+        "  {:<28} {:>16} {:>16} {:>16}",
+        "metric", "D32OneHot", "D32OneHotTier3", "Δ (tier3 - legacy)"
     );
-    let print_row = |label: &str, secs: f64| {
+    let row_secs = |name: &str, l: f64, t: f64| {
         println!(
-            "  {:<10} {:>12.4} {:>12.4}",
-            label,
-            secs,
-            secs * 1000.0
+            "  {:<28} {:>13.4}s   {:>13.4}s   {:>+13.4}s ",
+            name,
+            l,
+            t,
+            t - l
         );
     };
-    print_row("setup", setup_secs);
-    print_row("commit", commit_secs);
-    print_row("prove", prove_secs);
-    println!();
-    println!("  verify:");
-    println!("    mean   = {:.4} ms", mean * 1000.0);
-    println!("    median = {:.4} ms", median * 1000.0);
-    println!("    min    = {:.4} ms", min * 1000.0);
-    println!("    max    = {:.4} ms", max * 1000.0);
-    println!();
-    println!("  proof bytes: {}", proof.size());
+    let row_ms = |name: &str, l: f64, t: f64| {
+        println!(
+            "  {:<28} {:>14.3} ms  {:>14.3} ms  {:>+13.3} ms",
+            name,
+            l,
+            t,
+            t - l
+        );
+    };
+    let row_bytes = |name: &str, l: usize, t: usize| {
+        println!(
+            "  {:<28} {:>14}  B  {:>14}  B  {:>+13}  B",
+            name,
+            l,
+            t,
+            t as i64 - l as i64
+        );
+    };
+    row_secs("setup", legacy.setup_secs, tier3.setup_secs);
+    row_secs("commit", legacy.commit_secs, tier3.commit_secs);
+    row_secs("prove", legacy.prove_secs, tier3.prove_secs);
+    row_ms("verify (mean)", legacy.verify_mean_ms, tier3.verify_mean_ms);
+    row_ms(
+        "verify (median)",
+        legacy.verify_median_ms,
+        tier3.verify_median_ms,
+    );
+    row_ms("verify (min)", legacy.verify_min_ms, tier3.verify_min_ms);
+    row_ms("verify (max)", legacy.verify_max_ms, tier3.verify_max_ms);
+    row_bytes("proof size", legacy.proof_bytes, tier3.proof_bytes);
 }

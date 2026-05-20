@@ -205,7 +205,17 @@ where
     )
 }
 
-fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
+/// Witness ring-element count at the witness-side resolution used by
+/// the generated schedule materialiser
+/// (`schedule_plan_from_generated_entry`). Same as
+/// [`w_ring_element_count_with_counts`] but takes the field's bit
+/// width as an explicit `field_bits` argument so callers that don't
+/// have a concrete `F: CanonicalField` at hand (e.g. the post-
+/// processing tier-3 helpers in `akita-config`) can drive the exact
+/// same computation as the base path. Public so tiered presets can
+/// recompute downstream `runtime_next_w_len` consistently with the
+/// terminal-fold cutover logic upstream.
+pub fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     field_bits: u32,
     lp: &LevelParams,
     num_points: usize,
@@ -224,7 +234,12 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     )
 }
 
-fn w_ring_element_count_with_vector_counts_for_layout_bits<F: CanonicalField>(
+/// Layout-aware sibling of [`w_ring_element_count_with_vector_counts_bits`].
+/// Used by terminal-fold sizing in `schedule_plan_from_generated_entry`
+/// and by tiered presets that need to project recursive levels under
+/// `MRowLayout::Terminal`. Public for the same reason as the
+/// intermediate variant above.
+pub fn w_ring_element_count_with_vector_counts_for_layout_bits<F: CanonicalField>(
     field_bits: u32,
     lp: &LevelParams,
     num_points: usize,

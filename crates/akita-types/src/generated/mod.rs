@@ -47,6 +47,10 @@ pub mod fp128_d32_full;
 pub mod fp128_d32_full_zk;
 #[cfg(not(feature = "zk"))]
 pub mod fp128_d32_onehot;
+#[cfg(not(feature = "zk"))]
+pub mod fp128_d32_onehot_tier3;
+#[cfg(feature = "zk")]
+pub mod fp128_d32_onehot_tier3_zk;
 #[cfg(feature = "zk")]
 pub mod fp128_d32_onehot_zk;
 #[cfg(not(feature = "zk"))]
@@ -168,6 +172,24 @@ pub fn fp128_d32_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q128,
         entries: fp128_d32_onehot::FP128_D32_ONEHOT_SCHEDULES,
+    }
+}
+
+/// Generated schedule table for the tier-3 onehot `D=32` preset
+/// (`fp128::D32OneHotTier3`). Produced by
+/// `cargo run -p akita-config --features planner --bin gen_schedule_tables`.
+pub fn fp128_d32_onehot_tier3_table() -> GeneratedScheduleTable {
+    #[cfg(feature = "zk")]
+    {
+        GeneratedScheduleTable {
+            sis_family: SisModulusFamily::Q128,
+            entries: fp128_d32_onehot_tier3_zk::FP128_D32_ONEHOT_TIER3_ZK_SCHEDULES,
+        }
+    }
+    #[cfg(not(feature = "zk"))]
+    GeneratedScheduleTable {
+        sis_family: SisModulusFamily::Q128,
+        entries: fp128_d32_onehot_tier3::FP128_D32_ONEHOT_TIER3_SCHEDULES,
     }
 }
 

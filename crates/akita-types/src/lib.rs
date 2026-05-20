@@ -69,9 +69,10 @@ pub use schedule::{
     schedule_root_fold_step, scheduled_fold_execution, scheduled_next_level_params,
     split_batched_root_params, split_batched_root_params_from_schedule_plan,
     validate_opening_points_for_claims, w_ring_element_count, w_ring_element_count_with_counts,
-    w_ring_element_count_with_counts_for_layout, AkitaPlannedDirectStep, AkitaPlannedLevel,
-    AkitaPlannedLevelExecution, AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep, FoldStep, GeneratedSchedulePlanPolicy,
-    Schedule, ScheduleProvider, Step,
+    w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_vector_counts_bits,
+    w_ring_element_count_with_vector_counts_for_layout_bits, AkitaPlannedDirectStep,
+    AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState, AkitaPlannedStep,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep, FoldStep,
+    GeneratedSchedulePlanPolicy, Schedule, ScheduleProvider, Step,
 };
 pub use transcript::AppendToTranscript;
