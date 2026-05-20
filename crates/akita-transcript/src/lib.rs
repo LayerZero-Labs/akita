@@ -26,7 +26,11 @@ where
     fn new(domain_label: &[u8]) -> Self;
 
     /// Bind canonical instance-descriptor bytes before replaying a proof.
-    fn bind_instance_bytes(&mut self, _instance_bytes: &[u8]) {}
+    ///
+    /// Implementations must absorb these bytes with transcript-specific domain
+    /// separation. The method is required so custom transcript backends cannot
+    /// accidentally skip Akita instance binding.
+    fn bind_instance_bytes(&mut self, instance_bytes: &[u8]);
 
     /// Record a verifier-side structured proof-field use for logging checks.
     fn record_wire_serde<S: AkitaSerialize>(&mut self, _label: &[u8], _s: &S) {}
