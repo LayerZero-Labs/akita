@@ -33,7 +33,6 @@
 
 #![allow(dead_code)]
 
-use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_types::layout::flat_matrix::RingMatrixView;
@@ -323,40 +322,34 @@ where
     weight.mul_base(base)
 }
 
-/// Optimised production tier-1 + F evaluator per `specs/tiered_commit.md`
-/// §10. Same contract as
-/// [`compute_tier1_and_f_contribution_reference`] but reorganises the
-/// `B'` half so each `α-eval(B'[r', local_c])` is computed once and
-/// fanned out across all `f` chunks (the reference impl re-α-evaluates
-/// the same `B'` entry for every chunk, which dominates verifier cost
-/// at production scale).
+/// Residual tier-1 + F contribution after the `B' · t̂` half has been
+/// fused into [`super::setup_contribution::compute_setup_contribution`].
 ///
-/// Concretely, for the tier-1 `B'·t̂` half:
+/// Spec `specs/tiered_commit.md` §3 splits the new tiered M-rows into:
+///   (a) tier-1 `B' · t̂` half — α-eval over `n_b'` rows of `B'`. The
+///       fused setup-contribution evaluator now picks this up by
+///       extending its T-half row pattern to cover `(point, chunk)`
+///       under `is_tiered`, sharing the per-row SIS α-eval rectangle.
+///   (b) tier-1 `−G · ûhat` half — purely structured (no SIS scan):
+///       cells at distinct M-columns with weight `−tier1_w · gadget[d]`.
+///   (c) F rows — α-eval over a separate `F` matrix (`n_F · f_width`
+///       cells). Independent matrix; cannot share α-evals with the
+///       shared SIS matrix.
 ///
-/// ```text
-/// for each (g, r'):
-///   for each local_c in [0, chunk_width):
-///     α = α-eval(B'[r', local_c])        // ← computed ONCE per (r', local_c)
-///     for each chunk_i in [0, f):
-///       m_col = b_physical_to_m_col(chunk_i * chunk_width + local_c, ...)
-///       total += tier1_row_weights[g·f·n_b' + chunk_i·n_b' + r']
-///                  · eq_eval(x_challenges, m_col) · α
-/// ```
+/// This helper computes (b) + (c). It uses the same `eq_at` tensor-split
+/// lookup as the legacy optimised evaluator. The B' half is intentionally
+/// absent — including it here would double-count against
+/// `compute_setup_contribution`.
 ///
-/// All other halves (tier-1 `−G·ûhat`, F `α-eval(F)·ûhat_concat`)
-/// stay the same as the reference because they don't repeat work per
-/// chunk: the `−G·ûhat` cells are at distinct M-columns per chunk,
-/// and the F α-eval is over distinct `f_view` entries per F-row.
-///
-/// Returns the same `E` value as the reference (asserted by
-/// `tier1_and_f_optimized_matches_reference`).
+/// Returns the residual `E` value the caller adds on top of
+/// `compute_setup_contribution`'s tiered output.
 ///
 /// # Panics
 ///
 /// Same panic conditions as
 /// [`compute_tier1_and_f_contribution_reference`] (input length
 /// validations match).
-pub(crate) fn compute_tier1_and_f_contribution_optimized<F, E, const D: usize>(
+pub(crate) fn compute_uhat_and_f_contribution_optimized<F, E, const D: usize>(
     inputs: &Tier1AndFInputs<'_, F, E, D>,
     num_polys_per_point: &[usize],
 ) -> E
@@ -399,167 +392,22 @@ where
         "f_row_weights length must equal num_points · n_F"
     );
 
-    let mut t_vector_offsets = Vec::with_capacity(inputs.num_points);
-    let mut acc_off = 0usize;
-    for &k in num_polys_per_point {
-        t_vector_offsets.push(acc_off);
-        acc_off += k;
-    }
-    let num_t_vectors = inputs.b_physical.num_t_vectors;
-    assert_eq!(
-        num_t_vectors, acc_off,
-        "b_physical.num_t_vectors must match Σ num_polys_per_point",
-    );
-
     let mut total = E::zero();
 
-    // Precompute a tensor-product eq table over the full `x_challenges`
-    // so that `eq_eval_at_index(x_challenges, idx)` collapses to two
-    // table lookups + one mul instead of O(num_x_bits) field ops per
-    // call. We split into a low half (lowest `num_blocks_low_bits` =
-    // `log2(num_blocks)` bits, matching the M-layout's natural inner
-    // index for `t̂`) and a high half over the remaining bits, so
-    //   eq(x, idx) = eq_low[idx & low_mask] * eq_high[idx >> low_bits].
-    // The two halves are independent (standard tensor product on the
-    // EqPolynomial's underlying multilinear extension).
-    //
-    // Memory: `eq_low` is `num_blocks` entries (≤ a few KB even at
-    // production scale); `eq_high` is `2^(num_x_bits - log2 num_blocks)`
-    // entries, which is `~2^10` at the bench's `nv = 32` shape (3 MB
-    // for Fp128) and stays comfortably bounded.
-    let num_x_bits = inputs.full_vec_randomness.len();
-    let num_blocks = inputs.b_physical.num_blocks;
-    let low_bits = num_blocks.trailing_zeros() as usize;
-    // num_blocks must be a power of 2 for the split to work cleanly.
-    // Production fp128::D32OneHot layouts always satisfy this; if a
-    // non-power-of-2 layout ever shows up here, fall back to per-cell
-    // `eq_eval_at_index` rather than corrupting the result silently.
-    let pow2_blocks = num_blocks.is_power_of_two() && low_bits <= num_x_bits;
-    let (eq_low, eq_high) = if pow2_blocks {
-        let low_part = &inputs.full_vec_randomness[..low_bits];
-        let high_part = &inputs.full_vec_randomness[low_bits..];
-        (
-            EqPolynomial::evals(low_part),
-            EqPolynomial::evals(high_part),
-        )
-    } else {
-        (Vec::new(), Vec::new())
-    };
-    let low_mask = if pow2_blocks { num_blocks - 1 } else { 0 };
-    let high_len = if pow2_blocks {
-        1usize << (num_x_bits - low_bits)
-    } else {
-        0
-    };
-    let eq_at = |idx: usize| -> E {
-        if pow2_blocks {
-            let high = idx >> low_bits;
-            if high >= high_len {
-                return E::zero();
-            }
-            eq_low[idx & low_mask] * eq_high[high]
-        } else {
-            akita_algebra::offset_eq::eq_eval_at_index(inputs.full_vec_randomness, idx)
-        }
-    };
-
-    // ----- tier-1 `B' · t̂` half (shared α-eval across chunks) -----
-    //
-    // Savings vs the reference impl: we materialise
-    // `α-eval(B'[r', local_c])` once per `(r', local_c)` and fan it
-    // out across `f` chunks. The reference impl recomputes the same
-    // α-eval per chunk, paying an extra `(f-1)` factor on the dominant
-    // cost (D mul-adds per cell × chunk_width × n_b'). Each `eq` lookup
-    // is also collapsed via the precomputed `eq_low × eq_high` tensor
-    // table.
-    //
-    // The inner per-`local_c` work is parallelised with rayon when the
-    // `parallel` feature is on (typical for the production verifier).
-    for (g, &bundle_size) in num_polys_per_point.iter().enumerate() {
-        let outer_width_per_point = bundle_size
-            * inputs.b_physical.n_a
-            * inputs.b_physical.num_blocks
-            * inputs.b_physical.depth_open;
-        assert_eq!(
-            outer_width_per_point,
-            lp_split * chunk_width,
-            "per-point B-physical width must equal split · chunk_width",
-        );
-
-        let g_per_chunk_row_offset = g * (lp_split * n_b_prime);
-        for r_prime in 0..n_b_prime {
-            let row = inputs.b_prime_view.row(r_prime);
-            let tier1_weights_for_row: Vec<E> = (0..lp_split)
-                .map(|chunk_i| {
-                    inputs.tier1_row_weights[g_per_chunk_row_offset + chunk_i * n_b_prime + r_prime]
-                })
-                .collect();
-            #[cfg(feature = "parallel")]
-            let row_total: E = {
-                use akita_field::parallel::*;
-                cfg_into_iter!(0..chunk_width)
-                    .map(|local_c| {
-                        let alpha_eval = eval_ring_at_pows(&row[local_c], inputs.alpha_pows);
-                        if alpha_eval.is_zero() {
-                            return E::zero();
-                        }
-                        let mut chunk_acc = E::zero();
-                        for (chunk_i, &row_weight) in
-                            tier1_weights_for_row.iter().enumerate()
-                        {
-                            let b_physical_col = chunk_i * chunk_width + local_c;
-                            let m_col = b_physical_to_m_col(
-                                b_physical_col,
-                                g,
-                                &t_vector_offsets,
-                                bundle_size,
-                                &inputs.b_physical,
-                                num_t_vectors,
-                                inputs.offset_t,
-                            );
-                            let eq_col_at = eq_at(m_col);
-                            if eq_col_at.is_zero() {
-                                continue;
-                            }
-                            chunk_acc += row_weight * eq_col_at;
-                        }
-                        chunk_acc * alpha_eval
-                    })
-                    .sum()
-            };
-            #[cfg(not(feature = "parallel"))]
-            let row_total: E = {
-                let mut row_acc = E::zero();
-                for local_c in 0..chunk_width {
-                    let alpha_eval = eval_ring_at_pows(&row[local_c], inputs.alpha_pows);
-                    if alpha_eval.is_zero() {
-                        continue;
-                    }
-                    let mut chunk_acc = E::zero();
-                    for (chunk_i, &row_weight) in tier1_weights_for_row.iter().enumerate() {
-                        let b_physical_col = chunk_i * chunk_width + local_c;
-                        let m_col = b_physical_to_m_col(
-                            b_physical_col,
-                            g,
-                            &t_vector_offsets,
-                            bundle_size,
-                            &inputs.b_physical,
-                            num_t_vectors,
-                            inputs.offset_t,
-                        );
-                        let eq_col_at = eq_at(m_col);
-                        if eq_col_at.is_zero() {
-                            continue;
-                        }
-                        chunk_acc += row_weight * eq_col_at;
-                    }
-                    row_acc += chunk_acc * alpha_eval;
-                }
-                row_acc
-            };
-            total += row_total;
-        }
-    }
+    // The residual `−G·ûhat + F` work touches a small, contiguous
+    // window of M-columns (`num_points · split · n_b' · δ_outer +
+    // num_points · n_F · f_width` cells, ≈ 1170 for the production
+    // bench shape). Building an `eq_low × eq_high` tensor split here
+    // (as the original tier-1 evaluator did) would allocate a
+    // `2^(num_x_bits − log₂ num_blocks)` table — ≈ 64 K E-elements
+    // (~2 MB at Fp128) for the bench's nv = 32 root — far more work
+    // than a direct `eq_eval_at_index` call per cell. The `eq_low`
+    // table that `compute_setup_contribution` builds isn't usable
+    // here either: it covers the `t̂` block axis, while the `ûhat`
+    // segment lives in an entirely different M-column range. Just
+    // walk `full_vec_randomness` directly.
+    let eq_at =
+        |idx: usize| akita_algebra::offset_eq::eq_eval_at_index(inputs.full_vec_randomness, idx);
 
     // ----- tier-1 `−G · ûhat` half (per-chunk, per-row, per-digit) -----
     //
@@ -822,13 +670,46 @@ mod tests {
             "tier1+F reference must match the manual brute-force sum",
         );
 
-        // Cross-check: the optimised production evaluator must match
-        // the reference impl on the same fixture.
-        let got_opt =
-            compute_tier1_and_f_contribution_optimized::<F, F, D>(&inputs, &num_polys_per_point);
+        // Cross-check: the residual optimised evaluator handles only
+        // `−G·ûhat + F`. Adding back the brute-force `B'·t̂` half (which
+        // production now handles inside `compute_setup_contribution`'s
+        // tiered T-half) must reproduce the full reference.
+        let got_residual =
+            compute_uhat_and_f_contribution_optimized::<F, F, D>(&inputs, &num_polys_per_point);
+
+        let mut b_prime_half = F::zero();
+        for g in 0..num_points {
+            for chunk_i in 0..split {
+                for r_prime in 0..n_b_prime {
+                    let row_flat = g * (split * n_b_prime) + chunk_i * n_b_prime + r_prime;
+                    let w = tier1_row_weights[row_flat];
+                    for local_c in 0..chunk_width {
+                        let bp = chunk_i * chunk_width + local_c;
+                        let inside_poly = bp;
+                        let stride_t = n_a * depth_open;
+                        let digit_idx = inside_poly % depth_open;
+                        let a_row_idx = (inside_poly / depth_open) % n_a;
+                        let block_idx = inside_poly / stride_t;
+                        let flat_t_vector = 0;
+                        let num_t_vectors_local = 1usize;
+                        let high = flat_t_vector
+                            + num_t_vectors_local * digit_idx
+                            + num_t_vectors_local * depth_open * a_row_idx;
+                        let m_col = offset_t + block_idx + num_blocks * high;
+                        let alpha_eval = eval_ring_at_pows(
+                            &inputs.b_prime_view.row(r_prime)[local_c],
+                            &alpha_pows,
+                        );
+                        b_prime_half += w * eq_full[m_col] * alpha_eval;
+                    }
+                }
+            }
+        }
         assert_eq!(
-            got_opt, got,
-            "tier1+F optimised must match the reference impl",
+            got_residual + b_prime_half,
+            got,
+            "residual `−G·ûhat + F` plus the brute-force `B'·t̂` half must \
+             reproduce the full tier-1 + F reference",
         );
     }
 

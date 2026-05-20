@@ -85,6 +85,15 @@ fn get_eq_indices_for_a(
 /// Sum `Σ r_eval[c] · (Σ_{p ∈ active} weight_p · pattern_p[c])` over one
 /// contiguous column slice. The const generics select which of `{W, T, Z}`
 /// is active — the compiler strips the inactive arms at monomorphisation.
+///
+/// The T half is pre-combined per row into `t_eq_for_row` by the caller
+/// (`t_eq_for_row[c] = Σ_g b_w(row, g) · t_eq_per_group[g][c]` for legacy,
+/// `Σ_g Σ_chunk_i tier1_w(g, chunk_i, row) · t_eq_per_group[g][chunk_i·chunk_width + c]`
+/// for tiered roots). Pre-combining lets us share the dominant SIS row
+/// α-eval rectangle across the legacy `B·t̂` and tiered `B'·t̂` halves
+/// without paying a separate per-chunk α-eval pass (this is the
+/// optimization that replaces the standalone tier-1 evaluator's
+/// `B'·t̂` work — see `tier1_reference.rs`).
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn slice_inner_sum<F, E, const HAS_W: bool, const HAS_T: bool, const HAS_Z: bool>(
@@ -92,9 +101,7 @@ fn slice_inner_sum<F, E, const HAS_W: bool, const HAS_T: bool, const HAS_Z: bool
     r_eval: &[E],
     d_w: E,
     w_eq: &[E],
-    b_w_for_groups: &[E],
-    t_eq_per_group: &[Vec<E>],
-    num_groups: usize,
+    t_eq_for_row: &[E],
     a_w: E,
     z_eq: &[E],
 ) -> E
@@ -109,9 +116,7 @@ where
                 m += d_w * w_eq[c];
             }
             if HAS_T {
-                for g in 0..num_groups {
-                    m += b_w_for_groups[g] * t_eq_per_group[g][c];
-                }
+                m += t_eq_for_row[c];
             }
             if HAS_Z {
                 m += a_w * z_eq[c];
@@ -159,8 +164,8 @@ where
     let z_used = prepared.n_a > 0 && z_range > 0;
     let z_dims_pow2 = prepared.block_len.is_power_of_two();
 
-    let b_start = 1 + prepared.num_public_rows + prepared.n_d;
     let d_start = 1 + prepared.num_public_rows;
+    let b_start = d_start + prepared.n_d;
     // Tiered row layout (`specs/tiered_commit.md` §3) replaces the
     // `n_b · num_points` B-row block with a `split · n_b' · num_points`
     // tier-1 block followed by an `n_F · num_points` F block. Reading
@@ -177,6 +182,7 @@ where
     } else {
         b_start + prepared.n_b * prepared.num_points
     };
+    let tier1_start = b_start;
     let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
     let a_weights = &prepared.eq_tau1[a_start..prepared.rows];
 
@@ -383,26 +389,72 @@ where
     let shared_view = setup
         .shared_matrix
         .ring_view::<D>(r_max, setup.seed.max_stride);
-    let b_weights_by_row: Vec<Vec<E>> = (0..prepared.n_b)
-        .map(|row| {
-            (0..prepared.num_points)
-                .map(|g| prepared.eq_tau1[b_start + g * prepared.n_b + row])
-                .collect()
-        })
-        .collect();
+
+    // Per-row pre-combined T-half pattern. For legacy roots this is the
+    // per-row group sum `Σ_g b_w(row, g) · t_eq_per_group[g][c]` over
+    // `c ∈ [0, n_cols_t)`. For tiered roots the same row indexes
+    // `n_b'` rows of `B'` (which is a column-prefix subview of `B`), and
+    // the T-half row weight at column `local_c ∈ [0, chunk_width)` sums
+    // over `(g, chunk_i)`:
+    //   `Σ_g Σ_chunk_i tier1_w(g, chunk_i, row) · t_eq_per_group[g][chunk_i·chunk_width + local_c]`.
+    // Pre-combining lets us share the SIS row α-eval rectangle across
+    // legacy `B · t̂` and tiered `B' · t̂` without paying a separate
+    // per-chunk α-eval pass (this is the optimization that replaces the
+    // standalone tier-1 evaluator's `B' · t̂` work — `tier1_reference.rs`
+    // now only handles the structured `−G · ûhat` half and the
+    // `F · ûhat_concat` α-eval over the separate `F` matrix).
+    let n_b_rows_active = if prepared.is_tiered {
+        // `n_b'` (= `prepared.n_b` under the tiered planner's
+        // single-input convention).
+        prepared.n_b
+    } else {
+        prepared.n_b
+    };
+    let chunk_width = if prepared.is_tiered {
+        prepared.b_prime_width
+    } else {
+        0
+    };
+    let split_factor = if prepared.is_tiered {
+        prepared.split_factor
+    } else {
+        1
+    };
+    // `tier1_row_weights[g·split·n_b' + chunk_i·n_b' + r']`. Spec §3.
+    let tier1_row_weights: &[E] = if prepared.is_tiered {
+        let end = tier1_start + split_factor * n_b_rows_active * prepared.num_points;
+        &prepared.eq_tau1[tier1_start..end]
+    } else {
+        &[]
+    };
+    let b_weights_by_row: Vec<Vec<E>> = if prepared.is_tiered {
+        Vec::new()
+    } else {
+        (0..prepared.n_b)
+            .map(|row| {
+                (0..prepared.num_points)
+                    .map(|g| prepared.eq_tau1[b_start + g * prepared.n_b + row])
+                    .collect()
+            })
+            .collect()
+    };
 
     let row_contribs: Vec<E> = cfg_into_iter!(0..r_max)
         .map(|row| {
             let row_slice = shared_view.row(row);
 
             let e_w = if row < prepared.n_d { n_cols_w } else { 0 };
-            // Tiered path replaces the legacy B-row block with the
-            // tier-1 + F rows from `specs/tiered_commit.md` §3, which
-            // are evaluated separately by
-            // `compute_tier1_and_f_contribution_reference` from
-            // `eval_at_point`. Skip the legacy T-half α-eval rectangle
-            // entirely so the verifier does not double-count.
-            let e_t = if row < prepared.n_b && !prepared.is_tiered {
+            // Tiered: T-half is the tier-1 `B'·t̂` block; its column
+            // extent is `chunk_width` (the verifier α-evaluates only
+            // the leading `chunk_width` columns of each `B'` row).
+            // Legacy: T-half is the full per-point B-physical bundle.
+            let e_t = if prepared.is_tiered {
+                if row < n_b_rows_active {
+                    chunk_width
+                } else {
+                    0
+                }
+            } else if row < prepared.n_b {
                 n_cols_t
             } else {
                 0
@@ -424,11 +476,41 @@ where
                 .map(|c| eval_ring_at_pows(&row_slice[c], alpha_pows))
                 .collect();
 
-            // `b_w_for_groups` is only read when `HAS_T = true`, which
-            let b_w_for_groups: &[E] = if row < prepared.n_b {
-                &b_weights_by_row[row]
+            // Pre-combine the T-half row pattern. Empty when T inactive
+            // at this row.
+            let t_eq_for_row: Vec<E> = if e_t == 0 {
+                Vec::new()
+            } else if prepared.is_tiered {
+                cfg_into_iter!(0..chunk_width)
+                    .map(|local_c| {
+                        let mut acc = E::zero();
+                        for (g, t_eq_g) in t_eq_slice_per_group
+                            .iter()
+                            .enumerate()
+                            .take(prepared.num_points)
+                        {
+                            for chunk_i in 0..split_factor {
+                                let w_idx = g * (split_factor * n_b_rows_active)
+                                    + chunk_i * n_b_rows_active
+                                    + row;
+                                let w = tier1_row_weights[w_idx];
+                                let c_full = chunk_i * chunk_width + local_c;
+                                acc += w * t_eq_g[c_full];
+                            }
+                        }
+                        acc
+                    })
+                    .collect()
             } else {
-                &[]
+                cfg_into_iter!(0..n_cols_t)
+                    .map(|c| {
+                        let mut acc = E::zero();
+                        for (g, t_eq_g) in t_eq_slice_per_group.iter().enumerate() {
+                            acc += b_weights_by_row[row][g] * t_eq_g[c];
+                        }
+                        acc
+                    })
+                    .collect()
             };
 
             let s1 = if e1 > 0 {
@@ -437,9 +519,7 @@ where
                     &r_eval,
                     d_weights[row],
                     &w_eq_slice,
-                    b_w_for_groups,
-                    &t_eq_slice_per_group,
-                    prepared.num_points,
+                    &t_eq_for_row,
                     a_weights[row],
                     &z_eq_slice,
                 )
@@ -454,9 +534,7 @@ where
                         &r_eval,
                         E::zero(),
                         &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
+                        &t_eq_for_row,
                         a_weights[row],
                         &z_eq_slice,
                     ),
@@ -465,9 +543,7 @@ where
                         &r_eval,
                         d_weights[row],
                         &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
+                        &t_eq_for_row,
                         a_weights[row],
                         &z_eq_slice,
                     ),
@@ -476,9 +552,7 @@ where
                         &r_eval,
                         d_weights[row],
                         &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
+                        &t_eq_for_row,
                         E::zero(),
                         &z_eq_slice,
                     ),
@@ -494,9 +568,7 @@ where
                         &r_eval,
                         d_weights[row],
                         &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
+                        &t_eq_for_row,
                         E::zero(),
                         &z_eq_slice,
                     ),
@@ -505,9 +577,7 @@ where
                         &r_eval,
                         E::zero(),
                         &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
+                        &t_eq_for_row,
                         E::zero(),
                         &z_eq_slice,
                     ),
@@ -516,9 +586,7 @@ where
                         &r_eval,
                         E::zero(),
                         &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
+                        &t_eq_for_row,
                         a_weights[row],
                         &z_eq_slice,
                     ),

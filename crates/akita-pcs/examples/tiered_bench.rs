@@ -952,6 +952,7 @@ fn main() {
             ("r_structured", 5),
             ("r_dense", 5),
             ("tier1_and_f_contribution", 5),
+            ("uhat_and_f_contribution", 5),
             ("tier1_f_matrix_derive", 6),
         ];
         println!();

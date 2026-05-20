@@ -638,15 +638,18 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             + setup_contribution
             + r_contribution;
 
-        // Tiered tier-1 + F contribution. `compute_setup_contribution`
-        // above skips the legacy T-half when `prepared.is_tiered`, so
-        // we add the replacement contribution here. Per spec §3, this
-        // contribution covers the `(tier1 + F) × num_points` row block
-        // of M.
+        // Tiered residual `−G·ûhat + F` contribution. The tier-1
+        // `B' · t̂` half is now FUSED into `compute_setup_contribution`
+        // (its tiered T-half shares the per-row SIS α-eval rectangle
+        // — see `setup_contribution.rs`), so this helper only handles
+        // (a) the structured `−G · ûhat` cells at the `ûhat` segment
+        // of `M`, and (b) the `n_F · num_points` F-matrix rows
+        // (`α-eval(F) · ûhat_concat`) — both per `specs/tiered_commit.md`
+        // §3. The renamed helper makes the scope explicit.
         if self.is_tiered {
-            let _span = tracing::info_span!("tier1_and_f_contribution").entered();
+            let _span = tracing::info_span!("uhat_and_f_contribution").entered();
             use super::slice_mle::tier1_reference::{
-                compute_tier1_and_f_contribution_optimized, BPhysicalLayout, Tier1AndFInputs,
+                compute_uhat_and_f_contribution_optimized, BPhysicalLayout, Tier1AndFInputs,
             };
             use crate::protocol::tier1_f_matrix::derive_tier1_f_matrix_flat;
 
@@ -726,11 +729,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 },
                 num_points: self.num_points,
             };
-            let tier1_and_f = compute_tier1_and_f_contribution_optimized::<F, E, D>(
+            let uhat_and_f = compute_uhat_and_f_contribution_optimized::<F, E, D>(
                 &inputs,
                 &self.num_polys_per_point,
             );
-            total += tier1_and_f;
+            total += uhat_and_f;
         }
 
         #[cfg(feature = "zk")]
