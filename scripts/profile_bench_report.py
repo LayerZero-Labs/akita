@@ -261,18 +261,25 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             }
         elif "proof fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
+            # The emitter omits keys for components that don't exist in
+            # the current proof-step variant (e.g. terminal levels have
+            # no `v`, `stage1_*`, or `next_w_*`; root-direct has none of
+            # the per-component fields). Default to "0" for missing keys
+            # so the table column for that step renders as 0.
             proof_levels[level] = {
                 "level": level,
                 "d": int(kvs["d"]),
                 "total_bytes": int(kvs["total_bytes"]),
-                "y_ring_bytes": int(kvs["y_ring_bytes"]),
-                "v_bytes": int(kvs["v_bytes"]),
-                "stage1_sumcheck_bytes": int(kvs["stage1_sumcheck_bytes"]),
-                "stage1_interstage_claims_bytes": int(kvs["stage1_interstage_claims_bytes"]),
-                "stage1_s_claim_bytes": int(kvs["stage1_s_claim_bytes"]),
-                "stage2_sumcheck_bytes": int(kvs["stage2_sumcheck_bytes"]),
-                "next_w_commitment_bytes": int(kvs["next_w_commitment_bytes"]),
-                "next_w_eval_bytes": int(kvs["next_w_eval_bytes"]),
+                "y_ring_bytes": int(kvs.get("y_ring_bytes", "0")),
+                "v_bytes": int(kvs.get("v_bytes", "0")),
+                "stage1_sumcheck_bytes": int(kvs.get("stage1_sumcheck_bytes", "0")),
+                "stage1_interstage_claims_bytes": int(
+                    kvs.get("stage1_interstage_claims_bytes", "0")
+                ),
+                "stage1_s_claim_bytes": int(kvs.get("stage1_s_claim_bytes", "0")),
+                "stage2_sumcheck_bytes": int(kvs.get("stage2_sumcheck_bytes", "0")),
+                "next_w_commitment_bytes": int(kvs.get("next_w_commitment_bytes", "0")),
+                "next_w_eval_bytes": int(kvs.get("next_w_eval_bytes", "0")),
             }
             if "root_variant" in kvs:
                 proof_levels[level]["root_variant"] = kvs["root_variant"]

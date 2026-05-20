@@ -102,7 +102,7 @@ mod tests {
     use akita_types::relation_claim_from_rows;
     use akita_types::AppendToTranscript;
     use akita_types::{
-        ring_opening_point_from_field, BasisMode, BlockOrder, ClaimIncidenceSummary,
+        ring_opening_point_from_field, BasisMode, BlockOrder, ClaimIncidenceSummary, MRowLayout,
         RingMultiplierOpeningPoint,
     };
     use akita_verifier::prepare_ring_switch_row_eval;
@@ -327,6 +327,7 @@ mod tests {
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             setup.expanded.seed.max_stride,
+            MRowLayout::Intermediate,
         )
         .expect("quadratic equation");
 
@@ -366,6 +367,7 @@ mod tests {
                 &[0usize],
                 &[F::one()],
                 1,
+                MRowLayout::Intermediate,
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
@@ -444,6 +446,7 @@ mod tests {
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             setup.expanded.seed.max_stride,
+            MRowLayout::Intermediate,
         )
         .expect("quadratic equation");
 
@@ -483,6 +486,7 @@ mod tests {
                 &[0usize],
                 &[F::one()],
                 1,
+                MRowLayout::Intermediate,
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
@@ -599,6 +603,7 @@ mod tests {
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             setup.expanded.seed.max_stride,
+            MRowLayout::Intermediate,
         )
         .expect("quadratic equation");
 
@@ -633,6 +638,7 @@ mod tests {
             &[0usize],
             &[F::one()],
             1,
+            MRowLayout::Intermediate,
         )
         .expect("m evals (materialized)");
 
@@ -652,6 +658,7 @@ mod tests {
             &[0usize],
             &[F::one()],
             1,
+            MRowLayout::Intermediate,
             1,
             std::slice::from_ref(&ring_multiplier_point),
             &[0usize],

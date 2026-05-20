@@ -5,7 +5,7 @@
 //! until the verifier-facing config boundary is extracted.
 
 use super::validate_level_dispatch;
-use crate::protocol::ring_switch::ring_switch_verifier;
+use crate::protocol::ring_switch::{ring_switch_verifier, ring_switch_verifier_after_absorb};
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
 use akita_algebra::CyclotomicRing;
@@ -21,8 +21,8 @@ use akita_sumcheck::{
     SumcheckInstanceVerifier,
 };
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, ABSORB_SUMCHECK_W,
+    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -35,7 +35,8 @@ use akita_types::{
     schedule_num_fold_levels, w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof,
     AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
     ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule, Step,
+    LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule,
+    Step, TerminalLevelProof,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -54,11 +55,14 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub log_basis: u32,
 }
 
-/// Verify the root proof payload for singleton and multi-point batched proofs.
+/// Verify the intermediate-root proof payload for batched proofs whose root
+/// is followed by additional recursive levels.
 ///
 /// This replays the canonical root transcript layout: batch-shape header,
 /// commitments, padded opening points, per-claim field openings, one gamma
-/// challenge per claim, and gamma-combined per-point y-rings.
+/// challenge per claim, and gamma-combined per-point y-rings, then runs the
+/// stage-1 norm-check sumcheck and the stage-2 fused sumcheck, threading
+/// `next_w_commitment` through `ABSORB_SUMCHECK_W`.
 ///
 /// # Errors
 ///
@@ -66,7 +70,7 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
 /// fails, ring-switch replay fails, or either sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(crate) fn verify_root_level<F, E, C, T, const D: usize>(
+pub(crate) fn verify_intermediate_root_level<F, E, C, T, const D: usize>(
     y_rings_flat: &FlatRingVec<F>,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     v_flat: &FlatRingVec<F>,
@@ -81,9 +85,122 @@ pub(crate) fn verify_root_level<F, E, C, T, const D: usize>(
     basis: BasisMode,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
-    is_last: bool,
-    final_w: Option<&DirectWitnessProof<F>>,
-    final_w_len: Option<usize>,
+) -> Result<Vec<C>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F>,
+    C: RingSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    verify_root_level_inner::<F, E, C, T, D>(
+        y_rings_flat,
+        extension_opening_reduction,
+        Some(v_flat),
+        Some(stage1),
+        &stage2.sumcheck,
+        setup,
+        transcript,
+        claim_points,
+        openings,
+        commitments,
+        incidence_summary,
+        basis,
+        root_lp,
+        batched_lp,
+        RootStageInput::Intermediate {
+            next_w_commitment: &stage2.next_w_commitment,
+            next_w_eval: stage2.next_w_eval,
+        },
+    )
+}
+
+/// Verify the terminal-root proof payload — used when the schedule contains a
+/// single fold level (the root is itself the terminal fold and ships
+/// `final_witness` in cleartext).
+///
+/// Mirrors [`verify_intermediate_root_level`] up through the ring-switch
+/// preamble; at the terminal, [`ABSORB_SUMCHECK_W`] absorbs `final_witness`
+/// instead of a next-witness commitment, stage-1 is skipped entirely, and
+/// stage-2 runs in relation-only mode (`batching_coeff = 0`, `s_claim = 0`).
+///
+/// # Errors
+///
+/// Returns an error if the proof shape is inconsistent, any public trace
+/// check fails, ring-switch replay fails, or the stage-2 sumcheck rejects.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub(crate) fn verify_terminal_root_level<F, E, C, T, const D: usize>(
+    y_rings_flat: &FlatRingVec<F>,
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
+    stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
+    final_witness: &DirectWitnessProof<F>,
+    final_w_len: usize,
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    claim_points: &[&[E]],
+    openings: &[E],
+    commitments: &[RingCommitment<F, D>],
+    incidence_summary: &ClaimIncidenceSummary,
+    basis: BasisMode,
+    root_lp: &LevelParams,
+    batched_lp: &LevelParams,
+) -> Result<Vec<C>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F>,
+    C: RingSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    verify_root_level_inner::<F, E, C, T, D>(
+        y_rings_flat,
+        extension_opening_reduction,
+        None,
+        None,
+        stage2_sumcheck,
+        setup,
+        transcript,
+        claim_points,
+        openings,
+        commitments,
+        incidence_summary,
+        basis,
+        root_lp,
+        batched_lp,
+        RootStageInput::Terminal {
+            final_witness,
+            final_w_len,
+        },
+    )
+}
+
+enum RootStageInput<'a, F: FieldCore, C: FieldCore> {
+    Intermediate {
+        next_w_commitment: &'a FlatRingVec<F>,
+        next_w_eval: C,
+    },
+    Terminal {
+        final_witness: &'a DirectWitnessProof<F>,
+        final_w_len: usize,
+    },
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_root_level_inner<F, E, C, T, const D: usize>(
+    y_rings_flat: &FlatRingVec<F>,
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
+    v_flat: Option<&FlatRingVec<F>>,
+    stage1: Option<&AkitaStage1Proof<C>>,
+    stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    claim_points: &[&[E]],
+    openings: &[E],
+    commitments: &[RingCommitment<F, D>],
+    incidence_summary: &ClaimIncidenceSummary,
+    basis: BasisMode,
+    root_lp: &LevelParams,
+    batched_lp: &LevelParams,
+    stage_input: RootStageInput<'_, F, C>,
 ) -> Result<Vec<C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -92,8 +209,20 @@ where
     T: Transcript<F>,
 {
     validate_level_dispatch::<D>(root_lp)?;
+    let is_terminal = matches!(stage_input, RootStageInput::Terminal { .. });
+    let final_w_len_opt = match &stage_input {
+        RootStageInput::Terminal { final_w_len, .. } => Some(*final_w_len),
+        RootStageInput::Intermediate { .. } => None,
+    };
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
-    let v_typed = v_flat.as_ring_slice::<D>()?;
+    let v_typed_owned: Vec<CyclotomicRing<F, D>>;
+    let v_typed: &[CyclotomicRing<F, D>] = match v_flat {
+        Some(v_flat) => v_flat.as_ring_slice::<D>()?,
+        None => {
+            v_typed_owned = Vec::new();
+            &v_typed_owned
+        }
+    };
     let num_claims = incidence_summary.num_claims();
     let num_points = incidence_summary.num_points();
     if num_points == 0
@@ -103,7 +232,7 @@ where
         || openings.len() != num_claims
         || commitments.len() != incidence_summary.num_points()
         || incidence_summary.claim_to_point().len() != num_claims
-        || incidence_summary.claim_to_point().len() != num_claims
+        || incidence_summary.claim_poly_indices().len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -319,11 +448,20 @@ where
         .num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched root block count overflow".to_string()))?;
-    let stage1_challenges =
-        derive_stage1_challenges::<F, T, D>(transcript, v_typed, total_blocks, batched_lp)?;
+    let stage1_challenges = derive_stage1_challenges::<F, T, D>(
+        transcript,
+        v_typed,
+        total_blocks,
+        batched_lp,
+        if is_terminal {
+            MRowLayout::Terminal
+        } else {
+            MRowLayout::Intermediate
+        },
+    )?;
 
-    let w_len = if is_last {
-        final_w_len.ok_or(AkitaError::InvalidProof)?
+    let w_len = if is_terminal {
+        final_w_len_opt.ok_or(AkitaError::InvalidProof)?
     } else {
         w_ring_element_count_with_counts::<F>(
             batched_lp,
@@ -335,8 +473,10 @@ where
         .checked_mul(D)
         .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
     };
-    if is_last && final_w.is_none_or(|witness| witness.num_elems() != w_len) {
-        return Err(AkitaError::InvalidProof);
+    if let RootStageInput::Terminal { final_witness, .. } = &stage_input {
+        if final_witness.num_elems() != w_len {
+            return Err(AkitaError::InvalidProof);
+        }
     }
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = incidence_summary
@@ -353,21 +493,46 @@ where
                 .clone()
         })
         .collect();
-    let rs = ring_switch_verifier::<F, C, T, { D }>(
-        &ring_opening_points,
-        &ring_multiplier_points,
-        incidence_summary.claim_to_point(),
-        &stage1_challenges,
-        w_len,
-        &stage2.next_w_commitment,
-        transcript,
-        batched_lp,
-        incidence_summary.num_polys_per_point(),
-        incidence_summary.claim_to_point(),
-        incidence_summary.claim_poly_indices(),
-        &row_coefficients,
-        incidence_summary.num_public_rows(),
-    )?;
+    let rs = match &stage_input {
+        RootStageInput::Intermediate {
+            next_w_commitment, ..
+        } => ring_switch_verifier::<F, C, T, { D }>(
+            &ring_opening_points,
+            &ring_multiplier_points,
+            incidence_summary.claim_to_point(),
+            &stage1_challenges,
+            w_len,
+            next_w_commitment,
+            transcript,
+            batched_lp,
+            incidence_summary.num_polys_per_point(),
+            incidence_summary.claim_to_point(),
+            incidence_summary.claim_poly_indices(),
+            &row_coefficients,
+            incidence_summary.num_public_rows(),
+            MRowLayout::Intermediate,
+        )?,
+        RootStageInput::Terminal { final_witness, .. } => {
+            // Bind the ring-switch challenges to the cleartext witness rather
+            // than to a separate commitment, mirroring the prover.
+            transcript.append_serde(ABSORB_SUMCHECK_W, *final_witness);
+            ring_switch_verifier_after_absorb::<F, C, T, { D }>(
+                &ring_opening_points,
+                &ring_multiplier_points,
+                incidence_summary.claim_to_point(),
+                &stage1_challenges,
+                w_len,
+                transcript,
+                batched_lp,
+                incidence_summary.num_polys_per_point(),
+                incidence_summary.claim_to_point(),
+                incidence_summary.claim_poly_indices(),
+                &row_coefficients,
+                incidence_summary.num_public_rows(),
+                MRowLayout::Terminal,
+            )?
+        }
+    };
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
         &rs.tau1,
         rs.alpha,
@@ -375,65 +540,80 @@ where
         commitment_rows,
         y_rings,
     )?;
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
-    let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
-    let r_stage1 = {
-        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        stage1_verifier.verify::<F, T>(stage1, transcript)?
+    let (batching_coeff, s_claim, r_stage1) = match (&stage_input, stage1) {
+        (RootStageInput::Intermediate { .. }, Some(stage1_proof)) => {
+            let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
+            let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
+            let r_stage1 = {
+                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+                stage1_verifier.verify::<F, T>(stage1_proof, transcript)?
+            };
+            transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
+            let batching_coeff: C =
+                sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+            (batching_coeff, stage1_proof.s_claim, r_stage1)
+        }
+        (RootStageInput::Terminal { .. }, None) => {
+            // Relation-only stage-2: skip stage-1 entirely. Dummy zeros for
+            // r_stage1 + batching_coeff zero out the virtual half.
+            let r_stage1 = vec![C::zero(); rs.col_bits + rs.ring_bits];
+            (C::zero(), C::zero(), r_stage1)
+        }
+        _ => return Err(AkitaError::InvalidProof),
     };
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
-    let batching_coeff: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-    let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+    let stage2_input_claim = batching_coeff * s_claim + relation_claim;
     let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
-    let stage2_verifier = if is_last {
-        let fw = final_w.ok_or(AkitaError::InvalidProof)?;
-        AkitaStage2Verifier::new_with_direct_witness(
-            batching_coeff,
-            stage1.s_claim,
-            fw,
-            w_len,
-            r_stage1.clone(),
-            rs.alpha_evals_y,
-            row_eval_source,
-            &setup.expanded,
-            &ring_opening_points,
-            &ring_multiplier_points,
-            &rs.tau1,
-            v_typed,
-            commitment_rows,
-            y_rings,
-            Some(relation_claim),
-            rs.alpha,
-            rs.col_bits,
-            rs.ring_bits,
-        )?
-    } else {
-        AkitaStage2Verifier::new_with_claimed_w_eval(
-            batching_coeff,
-            stage1.s_claim,
-            stage2.next_w_eval,
-            r_stage1.clone(),
-            rs.alpha_evals_y,
-            row_eval_source,
-            &setup.expanded,
-            &ring_opening_points,
-            &ring_multiplier_points,
-            &rs.tau1,
-            v_typed,
-            commitment_rows,
-            y_rings,
-            Some(relation_claim),
-            rs.alpha,
-            rs.col_bits,
-            rs.ring_bits,
-        )?
+    let stage2_verifier = match &stage_input {
+        RootStageInput::Terminal { final_witness, .. } => {
+            AkitaStage2Verifier::new_with_direct_witness(
+                batching_coeff,
+                s_claim,
+                final_witness,
+                w_len,
+                r_stage1,
+                rs.alpha_evals_y,
+                row_eval_source,
+                &setup.expanded,
+                &ring_opening_points,
+                &ring_multiplier_points,
+                &rs.tau1,
+                v_typed,
+                commitment_rows,
+                y_rings,
+                Some(relation_claim),
+                rs.alpha,
+                rs.col_bits,
+                rs.ring_bits,
+            )?
+        }
+        RootStageInput::Intermediate { next_w_eval, .. } => {
+            AkitaStage2Verifier::new_with_claimed_w_eval(
+                batching_coeff,
+                s_claim,
+                *next_w_eval,
+                r_stage1,
+                rs.alpha_evals_y,
+                row_eval_source,
+                &setup.expanded,
+                &ring_opening_points,
+                &ring_multiplier_points,
+                &rs.tau1,
+                v_typed,
+                commitment_rows,
+                y_rings,
+                Some(relation_claim),
+                rs.alpha,
+                rs.col_bits,
+                rs.ring_bits,
+            )?
+        }
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
     }
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        verify_sumcheck::<F, _, C, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
+        verify_sumcheck::<F, _, C, _, _>(stage2_sumcheck, &stage2_verifier, transcript, |tr| {
             sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
         })?
     };
@@ -441,26 +621,108 @@ where
     Ok(sumcheck_challenges)
 }
 
-/// Verify one recursive fold level.
+/// Verify one intermediate recursive fold level.
 ///
-/// At the final level, `final_w` is provided and the verifier checks `w_val`
-/// from it directly. At intermediate levels, `level_proof.next_w_eval()` is
-/// used. The returned challenges become the opening point for the next level.
+/// The returned challenges become the opening point for the next level.
 ///
 /// # Errors
 ///
-/// Returns an error if the level proof shape is inconsistent, the public trace
-/// check fails, ring-switch replay fails, or either sumcheck verifier rejects.
+/// Returns an error if the level proof shape is inconsistent, the public
+/// trace check fails, ring-switch replay fails, or either sumcheck verifier
+/// rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-#[tracing::instrument(skip_all, name = "verify_one_level")]
-pub(crate) fn verify_one_level<F, L, T, const D: usize>(
+#[tracing::instrument(skip_all, name = "verify_intermediate_level")]
+pub(crate) fn verify_intermediate_level<F, L, T, const D: usize>(
     level_proof: &AkitaLevelProof<F, L>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F, L>,
-    is_last: bool,
-    final_w: Option<&DirectWitnessProof<F>>,
+    lp: &LevelParams,
+    block_order: BlockOrder,
+) -> Result<Vec<L>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    verify_one_level_inner::<F, L, T, D>(
+        FoldProofView::Intermediate(level_proof),
+        setup,
+        transcript,
+        current_state,
+        None,
+        lp,
+        block_order,
+    )
+}
+
+/// Verify one terminal recursive fold level.
+///
+/// At the terminal level the cleartext `final_witness` is absorbed via
+/// [`ABSORB_SUMCHECK_W`] in place of a next-witness commitment, stage-1 is
+/// skipped (packed-digit range is structurally enforced), and stage-2 runs
+/// in relation-only mode.
+///
+/// # Errors
+///
+/// Returns an error if the proof shape is inconsistent, the public trace
+/// check fails, ring-switch replay fails, or the stage-2 sumcheck verifier
+/// rejects.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+#[tracing::instrument(skip_all, name = "verify_terminal_level")]
+pub(crate) fn verify_terminal_level<F, L, T, const D: usize>(
+    terminal_proof: &TerminalLevelProof<F, L>,
+    final_w_len: usize,
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    current_state: &RecursiveVerifierState<'_, F, L>,
+    lp: &LevelParams,
+    block_order: BlockOrder,
+) -> Result<Vec<L>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    verify_one_level_inner::<F, L, T, D>(
+        FoldProofView::Terminal(terminal_proof),
+        setup,
+        transcript,
+        current_state,
+        Some(final_w_len),
+        lp,
+        block_order,
+    )
+}
+
+enum FoldProofView<'a, F: FieldCore, L: FieldCore> {
+    Intermediate(&'a AkitaLevelProof<F, L>),
+    Terminal(&'a TerminalLevelProof<F, L>),
+}
+
+impl<F: FieldCore, L: FieldCore> FoldProofView<'_, F, L> {
+    fn y_rings_typed<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        match self {
+            Self::Intermediate(proof) => proof.try_y_rings_typed::<D>(),
+            Self::Terminal(proof) => proof.try_y_rings_typed::<D>(),
+        }
+    }
+    fn extension_opening_reduction(&self) -> Option<&ExtensionOpeningReductionProof<L>> {
+        match self {
+            Self::Intermediate(proof) => proof.extension_opening_reduction.as_ref(),
+            Self::Terminal(proof) => proof.extension_opening_reduction.as_ref(),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_one_level_inner<F, L, T, const D: usize>(
+    proof: FoldProofView<'_, F, L>,
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    current_state: &RecursiveVerifierState<'_, F, L>,
     final_w_len: Option<usize>,
     lp: &LevelParams,
     block_order: BlockOrder,
@@ -471,8 +733,16 @@ where
     T: Transcript<F>,
 {
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
-    let y_rings = level_proof.try_y_rings_typed::<D>()?;
-    let v_typed = level_proof.v.as_ring_slice::<D>()?;
+    let is_last = matches!(proof, FoldProofView::Terminal(_));
+    let y_rings = proof.y_rings_typed::<D>()?;
+    let v_typed_owned: Vec<CyclotomicRing<F, D>>;
+    let v_typed: &[CyclotomicRing<F, D>] = match &proof {
+        FoldProofView::Intermediate(level_proof) => level_proof.v.as_ring_slice::<D>()?,
+        FoldProofView::Terminal(_) => {
+            v_typed_owned = Vec::new();
+            &v_typed_owned
+        }
+    };
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
@@ -486,14 +756,13 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let reduction_check = if <L as ExtField<F>>::EXT_DEGREE == 1 {
-        if level_proof.extension_opening_reduction.is_some() {
+        if proof.extension_opening_reduction().is_some() {
             return Err(AkitaError::InvalidProof);
         }
         None
     } else {
-        let reduction = level_proof
-            .extension_opening_reduction
-            .as_ref()
+        let reduction = proof
+            .extension_opening_reduction()
             .ok_or(AkitaError::InvalidProof)?;
         check_tensor_extension_opening_claim::<F, L>(
             &current_state.opening_point,
@@ -579,8 +848,17 @@ where
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
     let num_claims = y_rings.len();
-    let stage1_challenges =
-        derive_stage1_challenges::<F, T, D>(transcript, v_typed, lp.num_blocks * num_claims, lp)?;
+    let stage1_challenges = derive_stage1_challenges::<F, T, D>(
+        transcript,
+        v_typed,
+        lp.num_blocks * num_claims,
+        lp,
+        if is_last {
+            MRowLayout::Terminal
+        } else {
+            MRowLayout::Intermediate
+        },
+    )?;
 
     let w_len = if is_last {
         final_w_len.ok_or(AkitaError::InvalidProof)?
@@ -589,30 +867,53 @@ where
             .checked_mul(D)
             .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
     };
-    if is_last && final_w.is_none_or(|witness| witness.num_elems() != w_len) {
-        return Err(AkitaError::InvalidProof);
+    if let FoldProofView::Terminal(terminal_proof) = &proof {
+        if terminal_proof.final_witness.num_elems() != w_len {
+            return Err(AkitaError::InvalidProof);
+        }
     }
     tracing::debug!(w_len, is_last, "verify ring_switch");
     let claim_to_point = (0..num_claims).collect::<Vec<_>>();
-    let claim_to_group = vec![0usize; num_claims];
+    let claim_to_point_poly = vec![0usize; num_claims];
     let claim_poly_indices = vec![0usize; num_claims];
     let gamma = vec![L::one(); num_claims];
 
-    let rs = ring_switch_verifier::<F, L, T, { D }>(
-        &ring_opening_points,
-        &ring_multiplier_points,
-        &claim_to_point,
-        &stage1_challenges,
-        w_len,
-        level_proof.next_w_commitment(),
-        transcript,
-        lp,
-        &[1usize],
-        &claim_to_group,
-        &claim_poly_indices,
-        &gamma,
-        num_claims,
-    )?;
+    let rs = match &proof {
+        FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, { D }>(
+            &ring_opening_points,
+            &ring_multiplier_points,
+            &claim_to_point,
+            &stage1_challenges,
+            w_len,
+            level_proof.next_w_commitment(),
+            transcript,
+            lp,
+            &[1usize],
+            &claim_to_point_poly,
+            &claim_poly_indices,
+            &gamma,
+            num_claims,
+            MRowLayout::Intermediate,
+        )?,
+        FoldProofView::Terminal(terminal_proof) => {
+            transcript.append_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
+            ring_switch_verifier_after_absorb::<F, L, T, { D }>(
+                &ring_opening_points,
+                &ring_multiplier_points,
+                &claim_to_point,
+                &stage1_challenges,
+                w_len,
+                transcript,
+                lp,
+                &[1usize],
+                &claim_to_point_poly,
+                &claim_poly_indices,
+                &gamma,
+                num_claims,
+                MRowLayout::Terminal,
+            )?
+        }
+    };
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
@@ -620,27 +921,34 @@ where
         commitment_u,
         &y_rings,
     )?;
-    let stage1 = &level_proof.stage1;
-    let stage2 = &level_proof.stage2;
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
-    let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
-    let r_stage1 = {
-        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        stage1_verifier.verify::<F, T>(stage1, transcript)?
+    let (batching_coeff, s_claim, r_stage1) = match &proof {
+        FoldProofView::Intermediate(level_proof) => {
+            let stage1 = &level_proof.stage1;
+            let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
+            let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
+            let r_stage1 = {
+                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+                stage1_verifier.verify::<F, T>(stage1, transcript)?
+            };
+            transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
+            let batching_coeff: L =
+                sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+            (batching_coeff, stage1.s_claim, r_stage1)
+        }
+        FoldProofView::Terminal(_) => {
+            let r_stage1 = vec![L::zero(); rs.col_bits + rs.ring_bits];
+            (L::zero(), L::zero(), r_stage1)
+        }
     };
-
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
-    let batching_coeff: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-    let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+    let stage2_input_claim = batching_coeff * s_claim + relation_claim;
     let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
-    let stage2_verifier = if is_last {
-        let fw = final_w.ok_or(AkitaError::InvalidProof)?;
-        AkitaStage2Verifier::new_with_direct_witness(
+    let stage2_verifier = match &proof {
+        FoldProofView::Terminal(terminal_proof) => AkitaStage2Verifier::new_with_direct_witness(
             batching_coeff,
-            stage1.s_claim,
-            fw,
+            s_claim,
+            &terminal_proof.final_witness,
             w_len,
-            r_stage1.clone(),
+            r_stage1,
             rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
@@ -654,13 +962,12 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
-        )?
-    } else {
-        AkitaStage2Verifier::new_with_claimed_w_eval(
+        )?,
+        FoldProofView::Intermediate(level_proof) => AkitaStage2Verifier::new_with_claimed_w_eval(
             batching_coeff,
-            stage1.s_claim,
-            stage2.next_w_eval,
-            r_stage1.clone(),
+            s_claim,
+            level_proof.stage2.next_w_eval,
+            r_stage1,
             rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
@@ -674,15 +981,19 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
-        )?
+        )?,
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
     }
 
+    let stage2_sumcheck_ref = match &proof {
+        FoldProofView::Intermediate(level_proof) => &level_proof.stage2.sumcheck,
+        FoldProofView::Terminal(terminal_proof) => &terminal_proof.stage2_sumcheck,
+    };
     let challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        verify_sumcheck::<F, _, L, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
+        verify_sumcheck::<F, _, L, _, _>(stage2_sumcheck_ref, &stage2_verifier, transcript, |tr| {
             sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
         })?
     };
@@ -720,15 +1031,12 @@ fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
 
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn dispatch_verify_level<F, L, T>(
+fn dispatch_verify_intermediate_level<F, L, T>(
     level_d: usize,
     level_proof: &AkitaLevelProof<F, L>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F, L>,
-    is_last: bool,
-    final_w: Option<&DirectWitnessProof<F>>,
-    final_w_len: Option<usize>,
     lp: &LevelParams,
     block_order: BlockOrder,
 ) -> Result<Vec<L>, AkitaError>
@@ -737,73 +1045,66 @@ where
     L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    macro_rules! dispatch {
+        ($d:literal) => {
+            verify_intermediate_level::<F, L, T, $d>(
+                level_proof,
+                setup,
+                transcript,
+                current_state,
+                lp,
+                block_order,
+            )
+        };
+    }
     match level_d {
-        32 => verify_one_level::<F, L, T, 32>(
-            level_proof,
-            setup,
-            transcript,
-            current_state,
-            is_last,
-            final_w,
-            final_w_len,
-            lp,
-            block_order,
-        ),
-        64 => verify_one_level::<F, L, T, 64>(
-            level_proof,
-            setup,
-            transcript,
-            current_state,
-            is_last,
-            final_w,
-            final_w_len,
-            lp,
-            block_order,
-        ),
-        128 => verify_one_level::<F, L, T, 128>(
-            level_proof,
-            setup,
-            transcript,
-            current_state,
-            is_last,
-            final_w,
-            final_w_len,
-            lp,
-            block_order,
-        ),
-        256 => verify_one_level::<F, L, T, 256>(
-            level_proof,
-            setup,
-            transcript,
-            current_state,
-            is_last,
-            final_w,
-            final_w_len,
-            lp,
-            block_order,
-        ),
-        512 => verify_one_level::<F, L, T, 512>(
-            level_proof,
-            setup,
-            transcript,
-            current_state,
-            is_last,
-            final_w,
-            final_w_len,
-            lp,
-            block_order,
-        ),
-        1024 => verify_one_level::<F, L, T, 1024>(
-            level_proof,
-            setup,
-            transcript,
-            current_state,
-            is_last,
-            final_w,
-            final_w_len,
-            lp,
-            block_order,
-        ),
+        32 => dispatch!(32),
+        64 => dispatch!(64),
+        128 => dispatch!(128),
+        256 => dispatch!(256),
+        512 => dispatch!(512),
+        1024 => dispatch!(1024),
+        _ => Err(AkitaError::InvalidProof),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn dispatch_verify_terminal_level<F, L, T>(
+    level_d: usize,
+    terminal_proof: &TerminalLevelProof<F, L>,
+    final_w_len: usize,
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    current_state: &RecursiveVerifierState<'_, F, L>,
+    lp: &LevelParams,
+    block_order: BlockOrder,
+) -> Result<Vec<L>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    macro_rules! dispatch {
+        ($d:literal) => {
+            verify_terminal_level::<F, L, T, $d>(
+                terminal_proof,
+                final_w_len,
+                setup,
+                transcript,
+                current_state,
+                lp,
+                block_order,
+            )
+        };
+    }
+    match level_d {
+        32 => dispatch!(32),
+        64 => dispatch!(64),
+        128 => dispatch!(128),
+        256 => dispatch!(256),
+        512 => dispatch!(512),
+        1024 => dispatch!(1024),
         _ => Err(AkitaError::InvalidProof),
     }
 }
@@ -826,81 +1127,130 @@ pub(crate) fn verify_batched_recursive_suffix<'a, F, L, T, const D: usize>(
     transcript: &mut T,
     schedule: &Schedule,
     mut current_state: RecursiveVerifierState<'a, F, L>,
-    final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
     L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let num_levels = proof.num_fold_levels();
-    for (offset, level_proof) in proof.fold_levels().enumerate() {
+    let num_steps = proof.steps.len();
+    if num_steps == 0 {
+        // Root was itself the terminal — no suffix to verify.
+        return Ok(());
+    }
+    for (offset, step) in proof.steps.iter().enumerate() {
         let level_index = offset + 1;
-        let is_last = offset == num_levels - 1;
+        let is_last = offset == num_steps - 1;
         let (current_lp, next_w_len, scheduled_next_params) =
             scheduled_recursive_verify_level(schedule, level_index, &current_state)?;
         let level_d = current_lp.ring_dimension;
-        if !current_state.commitment.can_decode_vec(level_d)
-            || !level_proof.y_ring.can_decode_vec(level_d)
-            || !level_proof.v.can_decode_vec(level_d)
-        {
-            return Err(AkitaError::InvalidProof);
-        }
 
-        let challenges = if level_d == D {
-            verify_one_level::<F, L, T, D>(
-                level_proof,
-                setup,
-                transcript,
-                &current_state,
-                is_last,
-                if is_last { final_w } else { None },
-                if is_last { Some(next_w_len) } else { None },
-                &current_lp,
-                BlockOrder::ColumnMajor,
-            )?
-        } else {
-            dispatch_verify_level::<F, L, T>(
-                level_d,
-                level_proof,
-                setup,
-                transcript,
-                &current_state,
-                is_last,
-                if is_last { final_w } else { None },
-                if is_last { Some(next_w_len) } else { None },
-                &current_lp,
-                BlockOrder::ColumnMajor,
-            )?
-        };
+        match step {
+            AkitaProofStep::Intermediate(level_proof) => {
+                if is_last {
+                    // The terminal slot must be a Terminal variant.
+                    return Err(AkitaError::InvalidProof);
+                }
+                if !current_state.commitment.can_decode_vec(level_d)
+                    || !level_proof.y_ring.can_decode_vec(level_d)
+                    || !level_proof.v.can_decode_vec(level_d)
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
 
-        if !is_last {
-            let scheduled_next_params = scheduled_next_params.ok_or(AkitaError::InvalidProof)?;
-            let next_level_d = scheduled_next_params.ring_dimension;
-            if next_level_d == 0 || !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
-                return Err(AkitaError::InvalidProof);
+                let challenges = if level_d == D {
+                    verify_intermediate_level::<F, L, T, D>(
+                        level_proof,
+                        setup,
+                        transcript,
+                        &current_state,
+                        &current_lp,
+                        BlockOrder::ColumnMajor,
+                    )?
+                } else {
+                    dispatch_verify_intermediate_level::<F, L, T>(
+                        level_d,
+                        level_proof,
+                        setup,
+                        transcript,
+                        &current_state,
+                        &current_lp,
+                        BlockOrder::ColumnMajor,
+                    )?
+                };
+
+                let scheduled_next_params =
+                    scheduled_next_params.ok_or(AkitaError::InvalidProof)?;
+                let next_level_d = scheduled_next_params.ring_dimension;
+                if next_level_d == 0
+                    || !level_proof.next_w_commitment().can_decode_vec(next_level_d)
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let y_ring_count = level_proof.y_ring.coeff_len() / level_d;
+                let computed_next_w_len = w_ring_element_count_with_counts::<F>(
+                    &current_lp,
+                    1,
+                    1,
+                    y_ring_count,
+                    y_ring_count,
+                )?
+                .checked_mul(level_d)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("next witness length overflow".to_string())
+                })?;
+                if computed_next_w_len != next_w_len {
+                    return Err(AkitaError::InvalidProof);
+                }
+                current_state = RecursiveVerifierState {
+                    opening_point: challenges,
+                    opening: level_proof.next_w_eval(),
+                    commitment: level_proof.next_w_commitment(),
+                    basis: BasisMode::Lagrange,
+                    w_len: next_w_len,
+                    log_basis: scheduled_next_params.log_basis,
+                };
             }
-            let y_ring_count = level_proof.y_ring.coeff_len() / level_d;
-            let computed_next_w_len = w_ring_element_count_with_counts::<F>(
-                &current_lp,
-                1,
-                1,
-                y_ring_count,
-                y_ring_count,
-            )?
-            .checked_mul(level_d)
-            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?;
-            if computed_next_w_len != next_w_len {
-                return Err(AkitaError::InvalidProof);
+            AkitaProofStep::Terminal(terminal_proof) => {
+                if !is_last {
+                    return Err(AkitaError::InvalidProof);
+                }
+                if !current_state.commitment.can_decode_vec(level_d)
+                    || !terminal_proof.y_rings.can_decode_vec(level_d)
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+                if level_d == D {
+                    verify_terminal_level::<F, L, T, D>(
+                        terminal_proof,
+                        next_w_len,
+                        setup,
+                        transcript,
+                        &current_state,
+                        &current_lp,
+                        BlockOrder::ColumnMajor,
+                    )?
+                } else {
+                    dispatch_verify_terminal_level::<F, L, T>(
+                        level_d,
+                        terminal_proof,
+                        next_w_len,
+                        setup,
+                        transcript,
+                        &current_state,
+                        &current_lp,
+                        BlockOrder::ColumnMajor,
+                    )?
+                };
+                // Invariant: a terminal step implies the scheduled successor
+                // is a Direct step (not a Fold), which `scheduled_recursive_verify_level`
+                // signals by returning `None`. The trailing-`Direct` witness
+                // shape is already validated in `verify_fold_batched_proof`
+                // before this loop runs.
+                if scheduled_next_params.is_some() {
+                    return Err(AkitaError::InvalidProof);
+                }
             }
-            current_state = RecursiveVerifierState {
-                opening_point: challenges,
-                opening: level_proof.next_w_eval(),
-                commitment: level_proof.next_w_commitment(),
-                basis: BasisMode::Lagrange,
-                w_len: next_w_len,
-                log_basis: scheduled_next_params.log_basis,
-            };
         }
     }
 
@@ -946,38 +1296,7 @@ where
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         return Err(AkitaError::InvalidProof);
     };
-    let fold_root = proof.root.as_fold().ok_or(AkitaError::InvalidProof)?;
-    let expected_recursive_levels = schedule_num_fold_levels(schedule)
-        .checked_sub(1)
-        .ok_or(AkitaError::InvalidProof)?;
-    if proof.num_fold_levels() != expected_recursive_levels {
-        tracing::debug!(
-            proof_levels = proof.num_fold_levels(),
-            expected_recursive_levels,
-            "folded proof recursive level count mismatch"
-        );
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let y_coeff_len = fold_root.y_rings.coeff_len();
-    if !y_coeff_len.is_multiple_of(D) {
-        return Err(AkitaError::InvalidProof);
-    }
-    // One public y-ring per distinct opening point.
-    if y_coeff_len / D != opening_points.len() {
-        tracing::debug!(
-            y_rings = y_coeff_len / D,
-            opening_points = opening_points.len(),
-            "folded root y-ring count mismatch"
-        );
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let final_w = proof
-        .steps
-        .last()
-        .and_then(AkitaProofStep::as_direct)
-        .ok_or(AkitaError::InvalidProof)?;
+    let total_fold_levels = schedule_num_fold_levels(schedule);
     let terminal_direct = schedule
         .steps
         .last()
@@ -986,68 +1305,108 @@ where
             Step::Fold(_) => None,
         })
         .ok_or(AkitaError::InvalidProof)?;
-    if final_w.shape() != terminal_direct.witness_shape {
-        tracing::debug!(
-            actual_shape = ?final_w.shape(),
-            expected_shape = ?terminal_direct.witness_shape,
-            "folded proof terminal witness shape mismatch"
-        );
-        return Err(AkitaError::InvalidProof);
-    }
-    let final_w = Some(final_w);
 
-    let has_recursive_levels = proof.num_fold_levels() > 0;
-    let root_challenges = verify_root_level::<F, E, C, T, D>(
-        &fold_root.y_rings,
-        fold_root.extension_opening_reduction.as_ref(),
-        &fold_root.v,
-        &fold_root.stage1,
-        &fold_root.stage2,
-        setup,
-        transcript,
-        opening_points,
-        openings,
-        commitments,
-        incidence_summary,
-        basis,
-        root_lp,
-        &root_step.params,
-        !has_recursive_levels,
-        if has_recursive_levels { None } else { final_w },
-        if has_recursive_levels {
-            None
-        } else {
-            Some(root_step.next_w_len)
-        },
-    )?;
-
-    if has_recursive_levels {
-        let first_level_d = next_level_params.ring_dimension;
-        if !fold_root
-            .stage2
-            .next_w_commitment
-            .can_decode_vec(first_level_d)
-        {
-            return Err(AkitaError::InvalidProof);
+    match &proof.root {
+        akita_types::AkitaBatchedRootProof::Direct { .. } => Err(AkitaError::InvalidProof),
+        akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
+            // 1-fold case: the root itself is the terminal fold. No recursive
+            // suffix follows.
+            if total_fold_levels != 1 || !proof.steps.is_empty() {
+                return Err(AkitaError::InvalidProof);
+            }
+            if terminal.final_witness.shape() != terminal_direct.witness_shape {
+                return Err(AkitaError::InvalidProof);
+            }
+            let y_coeff_len = terminal.y_rings.coeff_len();
+            if !y_coeff_len.is_multiple_of(D) || y_coeff_len / D != opening_points.len() {
+                return Err(AkitaError::InvalidProof);
+            }
+            verify_terminal_root_level::<F, E, C, T, D>(
+                &terminal.y_rings,
+                terminal.extension_opening_reduction.as_ref(),
+                &terminal.stage2_sumcheck,
+                &terminal.final_witness,
+                root_step.next_w_len,
+                setup,
+                transcript,
+                opening_points,
+                openings,
+                commitments,
+                incidence_summary,
+                basis,
+                root_lp,
+                &root_step.params,
+            )?;
+            Ok(())
         }
+        akita_types::AkitaBatchedRootProof::Fold(fold_root) => {
+            let expected_recursive_levels = total_fold_levels
+                .checked_sub(1)
+                .ok_or(AkitaError::InvalidProof)?;
+            if proof.steps.len() != expected_recursive_levels {
+                return Err(AkitaError::InvalidProof);
+            }
+            let y_coeff_len = fold_root.y_rings.coeff_len();
+            if !y_coeff_len.is_multiple_of(D) || y_coeff_len / D != opening_points.len() {
+                return Err(AkitaError::InvalidProof);
+            }
 
-        let current_state = RecursiveVerifierState {
-            opening_point: root_challenges,
-            opening: fold_root.stage2.next_w_eval,
-            commitment: &fold_root.stage2.next_w_commitment,
-            basis: BasisMode::Lagrange,
-            w_len: root_step.next_w_len,
-            log_basis: next_level_params.log_basis,
-        };
-        verify_batched_recursive_suffix::<F, C, T, D>(
-            proof,
-            setup,
-            transcript,
-            schedule,
-            current_state,
-            final_w,
-        )?;
+            // Validate the terminal proof step's witness shape against the
+            // scheduled direct step before running heavy checks.
+            let terminal_step = proof
+                .steps
+                .last()
+                .and_then(|step| match step {
+                    AkitaProofStep::Terminal(t) => Some(t),
+                    AkitaProofStep::Intermediate(_) => None,
+                })
+                .ok_or(AkitaError::InvalidProof)?;
+            if terminal_step.final_witness.shape() != terminal_direct.witness_shape {
+                return Err(AkitaError::InvalidProof);
+            }
+
+            let root_challenges = verify_intermediate_root_level::<F, E, C, T, D>(
+                &fold_root.y_rings,
+                fold_root.extension_opening_reduction.as_ref(),
+                &fold_root.v,
+                &fold_root.stage1,
+                &fold_root.stage2,
+                setup,
+                transcript,
+                opening_points,
+                openings,
+                commitments,
+                incidence_summary,
+                basis,
+                root_lp,
+                &root_step.params,
+            )?;
+
+            let first_level_d = next_level_params.ring_dimension;
+            if !fold_root
+                .stage2
+                .next_w_commitment
+                .can_decode_vec(first_level_d)
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+
+            let current_state = RecursiveVerifierState {
+                opening_point: root_challenges,
+                opening: fold_root.stage2.next_w_eval,
+                commitment: &fold_root.stage2.next_w_commitment,
+                basis: BasisMode::Lagrange,
+                w_len: root_step.next_w_len,
+                log_basis: next_level_params.log_basis,
+            };
+            verify_batched_recursive_suffix::<F, C, T, D>(
+                proof,
+                setup,
+                transcript,
+                schedule,
+                current_state,
+            )?;
+            Ok(())
+        }
     }
-
-    Ok(())
 }
