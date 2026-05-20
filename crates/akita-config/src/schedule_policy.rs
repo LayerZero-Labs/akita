@@ -46,7 +46,7 @@ fn scale_batched_root_layout_with_config<Cfg: CommitmentConfig>(
     akita_types::scale_batched_root_layout(
         root_lp,
         num_claims,
-        Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
+        root_lp.challenge_l1_mass(),
         Cfg::decomposition().field_bits(),
     )
 }
@@ -184,7 +184,7 @@ where
         akita_types::scale_batched_root_layout(
             &root_lp,
             num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
+            root_lp.challenge_l1_mass(),
             Cfg::decomposition().field_bits(),
         )
     }

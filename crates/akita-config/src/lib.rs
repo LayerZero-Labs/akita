@@ -7,7 +7,7 @@
 //! bodies because they are not policy choices and would otherwise be
 //! duplicated verbatim across every config.
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(feature = "planner")]
@@ -134,6 +134,24 @@ pub trait CommitmentConfig:
 
     /// Sparse challenge family used at this level.
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
+
+    /// Shape of the stage-1 fold-round challenge sampled at this state.
+    ///
+    /// Defaults to [`TensorChallengeShape::Flat`], matching the historical
+    /// per-block sparse-challenge envelope used by every shipped preset.
+    /// Presets opt levels into [`TensorChallengeShape::Tensor`] by overriding
+    /// this hook; the planner's layout derivation reads the returned shape
+    /// through [`LevelParams::challenge_l1_mass`] and the runtime prover and
+    /// verifier dispatch to the matching sampler via
+    /// [`LevelParams::fold_challenge_shape`].
+    ///
+    /// The tensor shape requires the level's `num_blocks` to be a power of
+    /// two; the runtime sampler enforces this at use. The selector therefore
+    /// only requests tensor at planner states where a power-of-two
+    /// `num_blocks` will be chosen.
+    fn fold_challenge_shape_at_level(_inputs: AkitaScheduleInputs) -> TensorChallengeShape {
+        TensorChallengeShape::Flat
+    }
 
     /// SIS modulus family used by security-floor lookups for this config.
     fn sis_modulus_family() -> SisModulusFamily;
@@ -286,7 +304,7 @@ pub trait CommitmentConfig:
             akita_types::scale_batched_root_layout(
                 &split,
                 num_claims,
-                Self::stage1_challenge_config(Self::D).l1_norm(),
+                split.challenge_l1_mass(),
                 Self::decomposition().field_bits(),
             )
         }
@@ -453,6 +471,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
+    }
+
+    fn fold_challenge_shape_at_level(_inputs: AkitaScheduleInputs) -> TensorChallengeShape {
+        TensorChallengeShape::Flat
     }
 
     fn sis_modulus_family() -> SisModulusFamily {
