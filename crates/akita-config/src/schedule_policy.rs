@@ -279,8 +279,6 @@ mod tests {
         fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
         GeneratedScheduleTable,
     };
-    #[cfg(not(feature = "zk"))]
-    use akita_types::w_ring_element_count;
     #[cfg(feature = "planner")]
     use akita_types::w_ring_element_count_with_counts;
     #[cfg(any(not(feature = "zk"), feature = "planner"))]
@@ -297,17 +295,57 @@ mod tests {
 
     #[cfg(not(feature = "zk"))]
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
-        let key = AkitaScheduleLookupKey::singleton(num_vars);
+        assert_plan_matches_runtime_w_sizes_for_key::<Cfg>(AkitaScheduleLookupKey::singleton(
+            num_vars,
+        ));
+    }
+
+    #[cfg(not(feature = "zk"))]
+    fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(
+        key: AkitaScheduleLookupKey,
+    ) {
         let plan = Cfg::schedule_plan(key)
             .expect("planner should succeed")
             .expect("config should provide a planner");
-        for level in plan.fold_levels() {
-            let runtime_next_w_len = w_ring_element_count::<Cfg::Field>(&level.lp)
+        let num_fold_levels = plan.num_fold_levels();
+        for (idx, level) in plan.fold_levels().enumerate() {
+            // The last fold in a fold-then-direct schedule is the terminal
+            // recursive fold and ships its W in cleartext under
+            // MRowLayout::Terminal (drops the D-block from the per-row `r`
+            // quotients), so its `next_w_len` is smaller than what the
+            // intermediate-layout helper would report.
+            let is_terminal_fold = idx + 1 == num_fold_levels;
+            let layout = if is_terminal_fold {
+                akita_types::MRowLayout::Terminal
+            } else {
+                akita_types::MRowLayout::Intermediate
+            };
+            // Root-level batched witnesses fan out over the key's vector
+            // counts; recursive levels collapse back to singleton-by-construction.
+            let (num_points, num_t_vectors, num_w_vectors, num_public_rows) = if idx == 0 {
+                (
+                    key.num_points,
+                    key.num_t_vectors,
+                    key.num_w_vectors,
+                    key.num_z_vectors,
+                )
+            } else {
+                (1, 1, 1, 1)
+            };
+            let runtime_next_w_len =
+                akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
+                    &level.lp,
+                    num_points,
+                    num_t_vectors,
+                    num_w_vectors,
+                    num_public_rows,
+                    layout,
+                )
                 .expect("valid planned witness")
-                * level.lp.ring_dimension;
+                    * level.lp.ring_dimension;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,
-                "planner/runtime next_w_len mismatch at level {} for num_vars={num_vars}",
+                "planner/runtime next_w_len mismatch at level {} for key={key:?}",
                 level.inputs.level
             );
         }
@@ -537,6 +575,31 @@ mod tests {
         for num_vars in [15, 30, 44] {
             assert_plan_matches_runtime_w_sizes::<fp128::D64OneHot>(num_vars);
         }
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn batched_root_plan_matches_runtime_next_w_len() {
+        let table = fp128_d64_onehot_table();
+        let entry = table
+            .entries
+            .iter()
+            .find(|entry| {
+                entry.key.num_commitment_groups > 1
+                    || entry.key.num_t_vectors > 1
+                    || entry.key.num_w_vectors > 1
+                    || entry.key.num_z_vectors > 1
+            })
+            .expect("generated table should contain a non-singleton batched-root row");
+        let key = AkitaScheduleLookupKey::new_with_points(
+            entry.key.num_vars,
+            entry.key.num_commitment_groups,
+            entry.key.num_t_vectors,
+            entry.key.num_w_vectors,
+            entry.key.num_z_vectors,
+        );
+
+        assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
     }
 
     #[test]
