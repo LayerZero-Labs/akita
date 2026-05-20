@@ -423,6 +423,16 @@ where
     let w_hat = w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat = t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre = z_vectors * lp.inner_width() * lp.num_digits_fold;
+    // Tiered roots additionally commit the gadget-decomposed inner
+    // outputs `û_concat` as an explicit witness segment between `t̂`
+    // and `z_pre` (see `specs/tiered_commit.md` §9 and
+    // `w_ring_element_count_with_counts` in `akita-types`). For legacy
+    // roots (`split_factor <= 1`) this is zero.
+    let uhat = if lp.is_tiered_root() {
+        num_points * lp.b_prime_rows() * lp.split_factor * lp.num_digits_outer
+    } else {
+        0usize
+    };
     let r_rows = lp.m_row_count(num_points, z_vectors);
     let r = r_rows * r_decomp;
 
@@ -441,11 +451,11 @@ where
                 lp.log_basis,
                 fb as usize,
             );
-        Ok(w_hat + t_hat + b_blinding + d_blinding + z_pre + r)
+        Ok(w_hat + t_hat + uhat + b_blinding + d_blinding + z_pre + r)
     }
     #[cfg(not(feature = "zk"))]
     {
-        Ok(w_hat + t_hat + z_pre + r)
+        Ok(w_hat + t_hat + uhat + z_pre + r)
     }
 }
 
@@ -529,6 +539,25 @@ where
             continue;
         };
 
+        // Tiered root sizing: B' commits a contiguous slice of width
+        // `chunk_width = full_outer_width / split_factor` (one of
+        // `split_factor` slices of t̂). Legacy roots (split_factor <= 1)
+        // commit the full outer width, so `b_input_width == outer_width`.
+        let split_factor = root_lp.split_factor.max(1);
+        if split_factor > 1 && outer_width % split_factor != 0 {
+            // Cannot evenly split this (m, r) candidate into `split_factor`
+            // chunks. The planner only emits dimensionally-consistent tiered
+            // candidates; an alternative would be to relax to per-chunk
+            // widths that differ by ±1, but the current `tiered_commit`
+            // kernel assumes uniform chunks.
+            continue;
+        }
+        let b_input_width = if split_factor > 1 {
+            outer_width / split_factor
+        } else {
+            outer_width
+        };
+
         let d = root_lp.ring_dimension;
         let Ok(a_key) = AjtaiKeyParams::try_new(
             Cfg::planner_sis_modulus_family(),
@@ -542,7 +571,7 @@ where
         let Ok(b_key) = AjtaiKeyParams::try_new(
             Cfg::planner_sis_modulus_family(),
             root_lp.b_key.row_len(),
-            outer_width,
+            b_input_width,
             root_lp.b_key.collision_inf(),
             d,
         ) else {

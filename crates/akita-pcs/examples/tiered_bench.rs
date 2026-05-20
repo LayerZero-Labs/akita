@@ -4,12 +4,14 @@
 //! tiered (`split_factor = 3`) configurations on a one-hot polynomial at
 //! `nv = 32`, `D = 32`, single polynomial, single opening point.
 //!
-//! Both configurations use a single root-fold + direct-terminal schedule
-//! (no recursive recursion) with the level-0 layout shape of
-//! `fp128::D32OneHot` at `nv = 32`
-//! (see `docs/onehot-d32-nv32-matrix-sizes.md`). The single-level
-//! schedule isolates the root-level verifier work — which is where the
-//! tiered optimization moves cost (per `specs/tiered_commit.md` §10).
+//! Both configurations route through `akita_planner::find_optimal_schedule`
+//! (via the default `CommitmentConfig::get_params_for_prove` path in
+//! `akita-config`), so they share an apples-to-apples recursive schedule
+//! shape (multiple `Fold` levels + `Direct` terminal). The only
+//! protocol-level difference between the two runs is the root LP's
+//! tiering fields (`split_factor`, `outer_log_basis`, `num_digits_outer`,
+//! `f_key`); recursive levels are non-tiered in both cases (tiering is
+//! a root-only optimization per `specs/tiered_commit.md` §10).
 //!
 //! Memory note: a single onehot polynomial at `nv = 32, D = 32,
 //! onehot_k = 256` stores `2^32 / 256 = 2^24 = ~16M` `Option<u8>`
@@ -37,16 +39,21 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, CommittedPolynomials, OneHotPoly};
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
-    root_current_w_len, w_ring_element_count_with_counts, AjtaiKeyParams, AjtaiRole,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, BasisMode, ClaimIncidenceSummary,
-    CommitmentEnvelope, DecompositionParams, DirectStep, DirectWitnessShape, FoldStep, LevelParams,
-    Schedule, SisModulusFamily, Step,
+    AjtaiKeyParams, AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, BasisMode,
+    CommitmentEnvelope, DecompositionParams, LevelParams, SisModulusFamily,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::collections::HashMap;
 use std::env;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tracing::span::{Attributes, Id};
+use tracing::Subscriber;
+use tracing_subscriber::layer::{Context, Layer};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::LookupSpan;
 
 type Field = akita_config::proof_optimized::fp128::Field;
 
@@ -244,8 +251,34 @@ fn setup_matrix_size_for_lp(
     Ok((max_rows, max_stride))
 }
 
+/// Non-tiered base params used for any non-root level. The planner's DP
+/// only enumerates `(m, r)` block splits at the root; at recursive
+/// levels it consumes whatever `level_params_with_log_basis` returns
+/// and lets `recursive_level_layout_from_params` fill in the layout
+/// from `current_w_len`. So this helper only needs to be self-consistent
+/// at the params-only level — the layout is computed downstream.
+fn recursive_base_params(log_basis: u32) -> LevelParams {
+    LevelParams::params_only(
+        SisModulusFamily::Q128,
+        D,
+        log_basis,
+        N_A,
+        n_b(),
+        n_d(),
+        SparseChallengeConfig::BoundedL1Norm,
+    )
+}
+
 // One Cfg per split factor. They only differ in `make_root_lp`'s split
-// argument; everything else is identical.
+// argument; everything else is identical. With this `find_optimal_schedule`
+// flows through the standard `CommitmentConfig::get_params_for_prove`
+// default (akita-config/src/lib.rs ≈ line 301), so legacy and tiered
+// runs share an apples-to-apples recursive schedule shape (multiple
+// Fold steps + Direct terminal). For `split_factor > 1` the planner
+// inherits tiering from `root_lp()` via `derive_root_candidate`'s
+// `split_factor: root_lp.split_factor.max(1)` and re-sizes `b_key.col_len`
+// to `chunk_width = outer_width / split_factor` per
+// `akita-planner/src/schedule_params.rs`.
 macro_rules! impl_bench_cfg {
     ($name:ident, $split:expr, $label:expr) => {
         #[derive(Clone, Copy, Debug, Default)]
@@ -270,6 +303,11 @@ macro_rules! impl_bench_cfg {
             fn schedule_plan(
                 _key: AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
+                // Always force on-demand planning; never serve from an
+                // offline cache. This guarantees that both the legacy
+                // and tiered configs hit `find_optimal_schedule`, so the
+                // tiered root candidate generation in the planner DP
+                // is actually exercised.
                 Ok(None)
             }
         }
@@ -309,14 +347,22 @@ macro_rules! impl_bench_cfg {
                 _inputs: AkitaScheduleInputs,
                 _log_basis: u32,
             ) -> Result<LevelParams, AkitaError> {
+                // The planner uses this LP as the *base shape* of the
+                // root candidate (tiering fields, log_basis, ranks).
+                // It iterates `(m, r)` block splits itself, so we
+                // don't need a finalized layout here — but `root_lp()`
+                // already has one and the planner just respects it.
                 Ok(Self::root_lp())
             }
 
             fn planner_current_level_layout_with_log_basis(
-                _inputs: AkitaScheduleInputs,
-                _log_basis: u32,
+                inputs: AkitaScheduleInputs,
+                log_basis: u32,
             ) -> Result<LevelParams, AkitaError> {
-                Ok(Self::root_lp())
+                // Recursive (level > 0) candidates: derive a non-tiered
+                // layout from `current_w_len`. At level 0 this returns
+                // the tiered root LP unchanged.
+                akita_config::current_level_layout_with_log_basis::<Self>(inputs, log_basis)
             }
 
             fn planner_root_level_params_for_layout_with_log_basis(
@@ -354,8 +400,12 @@ macro_rules! impl_bench_cfg {
             }
 
             fn audited_root_rank(_role: AjtaiRole, _max_num_vars: usize) -> usize {
-                // Single-level schedule means recursive level-rank
-                // overrides don't apply.
+                // Used as a floor for the commitment envelope. The
+                // bench's root LP has n_a = N_A, n_b = n_b(), n_d = n_d();
+                // we report 1 here and rely on `envelope` covering the
+                // real ranks. Recursive levels generated by the planner
+                // are bounded by the same envelope (multi-level
+                // schedules at this nv don't need ranks > root).
                 1
             }
 
@@ -380,10 +430,17 @@ macro_rules! impl_bench_cfg {
             }
 
             fn level_params_with_log_basis(
-                _inputs: AkitaScheduleInputs,
-                _log_basis: u32,
+                inputs: AkitaScheduleInputs,
+                log_basis: u32,
             ) -> LevelParams {
-                Self::root_lp()
+                if inputs.level == 0 {
+                    Self::root_lp()
+                } else {
+                    // Recursive level: non-tiered base params (layout
+                    // is filled in by `recursive_level_layout_from_params`
+                    // from `current_w_len`).
+                    recursive_base_params(log_basis)
+                }
             }
 
             fn root_level_params_for_layout_with_log_basis(
@@ -420,39 +477,11 @@ macro_rules! impl_bench_cfg {
                 Ok(Self::root_lp())
             }
 
-            fn get_params_for_prove(
-                incidence: &ClaimIncidenceSummary,
-            ) -> Result<Schedule, AkitaError> {
-                let lp = Self::root_lp();
-                let w_ring = w_ring_element_count_with_counts::<Self::Field>(
-                    &lp,
-                    incidence.num_points(),
-                    incidence.num_polynomials(),
-                    incidence.num_claims(),
-                    incidence.num_public_rows(),
-                );
-                let next_w_len = w_ring * Self::D;
-                Ok(Schedule {
-                    steps: vec![
-                        Step::Fold(FoldStep {
-                            params: lp.clone(),
-                            current_w_len: root_current_w_len(&lp),
-                            delta_fold_per_poly: lp.num_digits_fold,
-                            w_ring,
-                            next_w_len,
-                            level_bytes: 0,
-                        }),
-                        Step::Direct(DirectStep {
-                            current_w_len: next_w_len,
-                            witness_shape: DirectWitnessShape::PackedDigits((
-                                next_w_len, LOG_BASIS,
-                            )),
-                            direct_bytes: next_w_len,
-                        }),
-                    ],
-                    total_bytes: 0,
-                })
-            }
+            // No `get_params_for_prove` override: the default in
+            // `CommitmentConfig` routes through
+            // `akita_planner::find_optimal_schedule::<Self>(key)` (see
+            // `crates/akita-config/src/lib.rs` ~ line 301). That is what
+            // we want for both legacy and tiered runs.
         }
     };
 }
@@ -460,6 +489,66 @@ macro_rules! impl_bench_cfg {
 impl_bench_cfg!(LegacyBenchCfg, 1, "legacy_f1");
 impl_bench_cfg!(Tier2BenchCfg, 2, "tier2");
 impl_bench_cfg!(Tier3BenchCfg, 3, "tier3");
+
+/// In-memory tracing layer that aggregates per-span wall-clock time
+/// across many enter/exit cycles, so we can attribute each portion of
+/// verify time to a named protocol component. Only spans actually
+/// entered (via `info_span!(...).entered()` or `#[tracing::instrument]`)
+/// contribute. Span names that appear inside multiple parents (e.g.
+/// `stage1_sumcheck` from level 0 vs a recursive level) are merged by
+/// name — the bench uses a single root-level schedule so this is
+/// unambiguous.
+#[derive(Default, Clone)]
+struct AggregateTimings {
+    inner: Arc<Mutex<HashMap<&'static str, (usize, Duration)>>>,
+}
+
+impl AggregateTimings {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn reset(&self) {
+        self.inner.lock().unwrap().clear();
+    }
+
+    /// Snapshot of `(span_name, count, total_duration)` for current trial set.
+    fn snapshot(&self) -> Vec<(&'static str, usize, Duration)> {
+        let inner = self.inner.lock().unwrap();
+        let mut out: Vec<_> = inner
+            .iter()
+            .map(|(name, (count, dur))| (*name, *count, *dur))
+            .collect();
+        out.sort_by_key(|(_, _, d)| std::cmp::Reverse(*d));
+        out
+    }
+}
+
+struct SpanStart(Instant);
+
+impl<S> Layer<S> for AggregateTimings
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_new_span(&self, _attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(id) {
+            span.extensions_mut().insert(SpanStart(Instant::now()));
+        }
+    }
+
+    fn on_close(&self, id: Id, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(&id) {
+            if let Some(start) = span.extensions().get::<SpanStart>() {
+                let elapsed = start.0.elapsed();
+                let name = span.name();
+                let mut inner = self.inner.lock().unwrap();
+                let entry = inner.entry(name).or_insert((0, Duration::ZERO));
+                entry.0 += 1;
+                entry.1 += elapsed;
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 struct Stats {
@@ -516,7 +605,13 @@ fn opening_from_onehot_indices(indices: &[Option<u8>], onehot_k: usize, point: &
     acc
 }
 
-fn run_bench<Cfg>(label: &str, nv: usize, trials: usize, rng: &mut StdRng) -> Stats
+fn run_bench<Cfg>(
+    label: &str,
+    nv: usize,
+    trials: usize,
+    rng: &mut StdRng,
+    timings: &AggregateTimings,
+) -> Stats
 where
     Cfg: CommitmentConfig<Field = Field, ClaimField = Field, ChallengeField = Field>,
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
@@ -619,9 +714,12 @@ where
         proof.size(),
     );
 
-    // Verify N times, recording timing.
+    // Verify N times, recording timing. Reset the tracing aggregator
+    // BEFORE the verify trials so we capture only verifier spans (and
+    // not setup/commit/prove span fallout).
     let openings = [opening];
     let mut stats = Stats::default();
+    timings.reset();
     println!("[{label}] running {trials} verify trials...");
     for trial in 0..trials {
         let mut verifier_transcript = Blake2bTranscript::<Field>::new(b"tiered_bench");
@@ -654,9 +752,25 @@ where
 }
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::ERROR)
-        .with_target(false)
+    // Tracing setup:
+    //   - error-level fmt layer (prints production `tracing::error!`
+    //     events such as the verifier's `verify_sumcheck MISMATCH`)
+    //   - per-name aggregating layer that captures span enter/exit
+    //     durations and lets us slice verify wall-clock by protocol
+    //     component (stage1 sumcheck, stage2 sumcheck, ring-switch
+    //     row eval, individual `t_structured` / `setup_contribution`
+    //     / `tier1_and_f_contribution` etc. sub-spans inside it).
+    //   - The bench runs the legacy phase first, snapshots the
+    //     aggregator, resets it, then runs the tiered phase and
+    //     snapshots again. The two snapshots are diffed at the end.
+    let timings = AggregateTimings::new();
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_filter(tracing_subscriber::filter::LevelFilter::ERROR),
+        )
+        .with(timings.clone())
         .init();
     let nv: usize = env::var("AKITA_BENCH_NV")
         .ok()
@@ -696,31 +810,36 @@ fn main() {
         .map(|s| s != "0")
         .unwrap_or(false);
 
-    let legacy_stats = if !only_tier {
+    let (legacy_stats, legacy_breakdown) = if !only_tier {
         let mut rng_legacy = StdRng::seed_from_u64(0xa11ce);
-        Some(run_bench::<LegacyBenchCfg>(
+        let stats = run_bench::<LegacyBenchCfg>(
             "legacy_f1",
             nv,
             trials,
             &mut rng_legacy,
-        ))
+            &timings,
+        );
+        let snapshot = timings.snapshot();
+        (Some(stats), snapshot)
     } else {
-        None
+        (None, Vec::new())
     };
 
-    let tier3_stats = if !only_legacy {
+    let (tier3_stats, tier3_breakdown) = if !only_legacy {
         let split: usize = env::var("AKITA_BENCH_SPLIT")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(3);
         let mut rng_tier = StdRng::seed_from_u64(0xb0b);
-        Some(match split {
-            2 => run_bench::<Tier2BenchCfg>("tier2_f2", nv, trials, &mut rng_tier),
-            3 => run_bench::<Tier3BenchCfg>("tier3_f3", nv, trials, &mut rng_tier),
+        let stats = match split {
+            2 => run_bench::<Tier2BenchCfg>("tier2_f2", nv, trials, &mut rng_tier, &timings),
+            3 => run_bench::<Tier3BenchCfg>("tier3_f3", nv, trials, &mut rng_tier, &timings),
             _ => panic!("only split=2 or 3 supported"),
-        })
+        };
+        let snapshot = timings.snapshot();
+        (Some(stats), snapshot)
     } else {
-        None
+        (None, Vec::new())
     };
 
     println!();
@@ -747,4 +866,124 @@ fn main() {
         let speedup = lm / tm;
         println!("  mean speedup (legacy / tiered): {:.2}x", speedup);
     }
+
+    // ------------------------------------------------------------
+    // Per-component verifier breakdown (from in-process tracing
+    // aggregator). Each row sums per-trial wall-clock of one named
+    // protocol span across all trials, divided to per-trial mean ms.
+    // The component hierarchy in the verifier (top-down):
+    //
+    //   batched_verify
+    //     stage1_sumcheck                          (sumcheck round-poly verify)
+    //       verify_eq_factored_sumcheck
+    //     stage2_sumcheck
+    //       verify_sumcheck                        (round-poly verify)
+    //         stage2_expected_output_claim         (final oracle check)
+    //           stage2_witness_eval                (witness MLE @ challenges)
+    //           stage2_ring_switch_row_eval        (M̃ row eval)
+    //             w_structured                     (W-side α-eval + structured)
+    //             t_structured                     (T-side structured-only)
+    //             setup_contribution               (D / B-α / Z-α scan)
+    //             z_structured                     (Z-side structured + A α-eval)
+    //             r_structured                     (r-tail dense slice)
+    //             tier1_and_f_contribution         (tiered only)
+    //               tier1_f_matrix_derive          (verifier rederives F)
+    //     relation_claim_from_rows_extension       (input claim)
+    //
+    // For legacy `f = 1`, `tier1_and_f_contribution` and
+    // `tier1_f_matrix_derive` are absent; `setup_contribution`
+    // includes the full B-half α-eval rectangle. For tiered `f = 3`,
+    // `setup_contribution` skips the B half and the cost moves to
+    // `tier1_and_f_contribution`. Comparing the two breakdowns shows
+    // exactly which component carries which cost.
+    fn print_breakdown(label: &str, breakdown: &[(&'static str, usize, Duration)], trials: usize) {
+        if breakdown.is_empty() {
+            return;
+        }
+        println!();
+        println!("--- {label} verifier breakdown (mean ms / trial; sorted by total time) ---");
+        println!(
+            "  {:<40} {:>10}  {:>10}  {:>8}",
+            "span", "mean ms", "total ms", "calls"
+        );
+        for (name, count, dur) in breakdown {
+            let mean_ms = (dur.as_secs_f64() * 1000.0) / (trials as f64);
+            let total_ms = dur.as_secs_f64() * 1000.0;
+            println!(
+                "  {:<40} {:>10.3}  {:>10.3}  {:>8}",
+                name, mean_ms, total_ms, count
+            );
+        }
+    }
+
+    fn lookup<'a>(
+        breakdown: &'a [(&'static str, usize, Duration)],
+        name: &str,
+    ) -> Option<&'a Duration> {
+        breakdown.iter().find(|(n, _, _)| *n == name).map(|(_, _, d)| d)
+    }
+
+    fn print_compare(
+        legacy: &[(&'static str, usize, Duration)],
+        tiered: &[(&'static str, usize, Duration)],
+        trials: usize,
+    ) {
+        if legacy.is_empty() || tiered.is_empty() {
+            return;
+        }
+        // Hierarchical print order: top-level first, then children
+        // indented by name. We just enumerate the spans we know about
+        // and skip any that didn't appear.
+        let order: &[(&str, usize)] = &[
+            ("AkitaCommitmentScheme::batched_verify", 0),
+            ("relation_claim_from_rows_extension", 1),
+            ("relation_claim_from_rows_extension_tiered", 1),
+            ("stage1_sumcheck", 1),
+            ("verify_eq_factored_sumcheck", 2),
+            ("stage2_sumcheck", 1),
+            ("verify_sumcheck", 2),
+            ("stage2_expected_output_claim", 3),
+            ("stage2_witness_eval", 4),
+            ("stage2_ring_switch_row_eval", 4),
+            ("w_structured", 5),
+            ("t_structured", 5),
+            ("setup_contribution", 5),
+            ("z_structured", 5),
+            ("r_structured", 5),
+            ("r_dense", 5),
+            ("tier1_and_f_contribution", 5),
+            ("tier1_f_matrix_derive", 6),
+        ];
+        println!();
+        println!(
+            "--- Component comparison (mean ms / trial across {trials} trials) ---"
+        );
+        println!(
+            "  {:<48} {:>12}  {:>12}  {:>10}",
+            "component", "legacy (f=1)", "tiered (f=3)", "Δ (T - L)"
+        );
+        for (name, depth) in order {
+            let l = lookup(legacy, name).copied().unwrap_or(Duration::ZERO);
+            let t = lookup(tiered, name).copied().unwrap_or(Duration::ZERO);
+            if l.is_zero() && t.is_zero() {
+                continue;
+            }
+            let l_ms = l.as_secs_f64() * 1000.0 / (trials as f64);
+            let t_ms = t.as_secs_f64() * 1000.0 / (trials as f64);
+            let delta_ms = t_ms - l_ms;
+            let indent = "  ".to_string() + &"  ".repeat(*depth);
+            println!(
+                "{indent}{:<width$} {:>12.3}  {:>12.3}  {:>+10.3}",
+                name,
+                l_ms,
+                t_ms,
+                delta_ms,
+                width = 48 - 2 * depth,
+            );
+        }
+    }
+
+    print_breakdown("legacy (f=1)", &legacy_breakdown, trials);
+    print_breakdown("tiered (f=3)", &tier3_breakdown, trials);
+    print_compare(&legacy_breakdown, &tier3_breakdown, trials);
 }

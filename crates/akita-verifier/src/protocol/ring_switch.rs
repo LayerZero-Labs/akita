@@ -644,6 +644,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // contribution covers the `(tier1 + F) × num_points` row block
         // of M.
         if self.is_tiered {
+            let _span = tracing::info_span!("tier1_and_f_contribution").entered();
             use super::slice_mle::tier1_reference::{
                 compute_tier1_and_f_contribution_optimized, BPhysicalLayout, Tier1AndFInputs,
             };
@@ -674,8 +675,10 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             // evaluation; future revisions can cache it on the
             // verifier setup once `AkitaVerifierSetup` carries
             // tiering metadata.
-            let f_flat =
-                derive_tier1_f_matrix_flat::<F, D>(n_f * f_width, &setup.seed.public_matrix_seed);
+            let f_flat = {
+                let _f_span = tracing::info_span!("tier1_f_matrix_derive").entered();
+                derive_tier1_f_matrix_flat::<F, D>(n_f * f_width, &setup.seed.public_matrix_seed)
+            };
             let f_view = f_flat.ring_view::<D>(n_f, f_width);
 
             // Row weight slices from eq_tau1. Tiered row layout from
