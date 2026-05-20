@@ -10,7 +10,7 @@
 //! aggregation path.
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::IntegerChallenge;
 use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
@@ -135,7 +135,7 @@ where
 
     fn decompose_fold(
         &self,
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -148,7 +148,7 @@ where
 
     fn decompose_fold_batched(
         polys: &[&Self],
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,

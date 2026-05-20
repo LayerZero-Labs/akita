@@ -98,7 +98,7 @@ where
 
     fn decompose_fold(
         &self,
-        challenges: &[akita_challenges::SparseChallenge],
+        challenges: &[akita_challenges::IntegerChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,

@@ -15,7 +15,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::TensorChallenges;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, LiftBase,
@@ -128,7 +128,7 @@ where
     let r = compute_r_split_eq::<F, D>(
         lp,
         setup,
-        &quad_eq.challenges,
+        &quad_eq.integer_challenges,
         w_hat.flat_digits(),
         #[cfg(feature = "zk")]
         &d_blinding_digits,
@@ -748,7 +748,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &[SparseChallenge],
+    challenges: &TensorChallenges,
     alpha: E,
     alpha_pows: &[E],
     lp: &LevelParams,
@@ -837,10 +837,10 @@ where
     let t_total_blocks = num_blocks
         .checked_mul(num_t_vectors)
         .ok_or_else(|| AkitaError::InvalidSetup("batched t block count overflow".to_string()))?;
-    if challenges.len() != total_blocks {
+    if challenges.logical_len() != total_blocks {
         return Err(AkitaError::InvalidSize {
             expected: total_blocks,
-            actual: challenges.len(),
+            actual: challenges.logical_len(),
         });
     }
     let block_len = lp.block_len;
@@ -922,10 +922,7 @@ where
     let x_len = total_cols.next_power_of_two();
     let mut out = Vec::with_capacity(x_len);
 
-    let c_alphas: Vec<E> = challenges
-        .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
-        .collect::<Result<_, _>>()?;
+    let c_alphas: Vec<E> = challenges.evals_at_pows::<F, E, D>(alpha_pows)?;
 
     let stride = setup.seed.max_stride;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride)?;

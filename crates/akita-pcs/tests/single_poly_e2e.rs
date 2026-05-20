@@ -325,3 +325,367 @@ fn single_onehot_oversized_setup_15_10() {
 fn single_onehot_oversized_setup_20_15() {
     run_single_onehot_oversized_setup(20, 15);
 }
+
+// ---------------------------------------------------------------------------
+// Tensor-shaped fold: hand-built activation via a test-only Cfg that mutates
+// the production schedule's root step to TensorChallengeShape::Tensor.
+// ---------------------------------------------------------------------------
+
+mod tensor_fold {
+    use super::*;
+    use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+    use akita_config::CommitmentConfig;
+    use akita_field::AkitaError;
+    use akita_planner::PlannerConfig;
+    use akita_types::generated::GeneratedScheduleTable;
+    use akita_types::layout::digit_math::compute_num_digits_fold_with_claims;
+    use akita_types::{
+        AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
+        ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, Schedule, ScheduleProvider,
+        Step,
+    };
+
+    /// Test-only config that tensorises the root fold of [`OneHotCfg`]'s
+    /// production schedule. Delegates every method except `get_params_for_prove`
+    /// to `OneHotCfg`; that method calls into the default impl and then walks
+    /// the returned [`Schedule`], replacing the root [`Step::Fold`]'s
+    /// `params.fold_challenge_shape` with [`TensorChallengeShape::Tensor`] and
+    /// re-deriving the dependent layout (`num_digits_fold`,
+    /// `delta_fold_per_poly`, `w_ring`, `next_w_len`, successor's
+    /// `current_w_len`).
+    #[derive(Clone, Copy, Debug)]
+    struct TensorOneHotCfg;
+
+    type TensorOneHotScheme = AkitaCommitmentScheme<ONEHOT_D, TensorOneHotCfg>;
+
+    impl ScheduleProvider for TensorOneHotCfg {
+        fn schedule_table() -> Option<GeneratedScheduleTable> {
+            OneHotCfg::schedule_table()
+        }
+        fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+            OneHotCfg::schedule_key(key)
+        }
+        fn schedule_plan(
+            key: AkitaScheduleLookupKey,
+        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+            OneHotCfg::schedule_plan(key)
+        }
+    }
+
+    impl PlannerConfig for TensorOneHotCfg {
+        const PLANNER_D: usize = OneHotCfg::D;
+        type PlannerField = <OneHotCfg as PlannerConfig>::PlannerField;
+
+        fn planner_field_bits() -> u32 {
+            <OneHotCfg as PlannerConfig>::planner_field_bits()
+        }
+        fn planner_challenge_field_bits() -> u32 {
+            <OneHotCfg as PlannerConfig>::planner_challenge_field_bits()
+        }
+        fn planner_extension_opening_width() -> usize {
+            <OneHotCfg as PlannerConfig>::planner_extension_opening_width()
+        }
+        fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
+            <OneHotCfg as PlannerConfig>::planner_sis_modulus_family()
+        }
+        fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+            <OneHotCfg as PlannerConfig>::planner_stage1_challenge_config(d)
+        }
+        fn planner_schedule_plan(
+            key: AkitaScheduleLookupKey,
+        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+            <OneHotCfg as PlannerConfig>::planner_schedule_plan(key)
+        }
+        fn planner_root_level_layout_with_log_basis(
+            inputs: AkitaScheduleInputs,
+            log_basis: u32,
+        ) -> Result<LevelParams, AkitaError> {
+            <OneHotCfg as PlannerConfig>::planner_root_level_layout_with_log_basis(
+                inputs, log_basis,
+            )
+        }
+        fn planner_current_level_layout_with_log_basis(
+            inputs: AkitaScheduleInputs,
+            log_basis: u32,
+        ) -> Result<LevelParams, AkitaError> {
+            <OneHotCfg as PlannerConfig>::planner_current_level_layout_with_log_basis(
+                inputs, log_basis,
+            )
+        }
+        fn planner_root_level_params_for_layout_with_log_basis(
+            inputs: AkitaScheduleInputs,
+            lp: &LevelParams,
+        ) -> Result<LevelParams, AkitaError> {
+            <OneHotCfg as PlannerConfig>::planner_root_level_params_for_layout_with_log_basis(
+                inputs, lp,
+            )
+        }
+        fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+            <OneHotCfg as PlannerConfig>::planner_log_basis_search_range(inputs)
+        }
+    }
+
+    impl CommitmentConfig for TensorOneHotCfg {
+        type Field = F;
+        type ClaimField = <OneHotCfg as CommitmentConfig>::ClaimField;
+        type ChallengeField = <OneHotCfg as CommitmentConfig>::ChallengeField;
+        const D: usize = ONEHOT_D;
+
+        fn sis_modulus_family() -> akita_types::SisModulusFamily {
+            <OneHotCfg as CommitmentConfig>::sis_modulus_family()
+        }
+        fn decomposition() -> DecompositionParams {
+            OneHotCfg::decomposition()
+        }
+        fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+            OneHotCfg::stage1_challenge_config(d)
+        }
+        fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
+            OneHotCfg::audited_root_rank(role, max_num_vars)
+        }
+        fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+            OneHotCfg::envelope(max_num_vars)
+        }
+        fn max_setup_matrix_size(
+            max_num_vars: usize,
+            max_num_batched_polys: usize,
+            max_num_points: usize,
+        ) -> Result<(usize, usize), AkitaError> {
+            OneHotCfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+        }
+        fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams {
+            OneHotCfg::level_params_with_log_basis(inputs, log_basis)
+        }
+        fn root_level_params_for_layout_with_log_basis(
+            inputs: AkitaScheduleInputs,
+            lp: &LevelParams,
+        ) -> Result<LevelParams, AkitaError> {
+            OneHotCfg::root_level_params_for_layout_with_log_basis(inputs, lp)
+        }
+        fn root_level_layout_with_log_basis(
+            inputs: AkitaScheduleInputs,
+            log_basis: u32,
+        ) -> Result<LevelParams, AkitaError> {
+            OneHotCfg::root_level_layout_with_log_basis(inputs, log_basis)
+        }
+        fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
+            OneHotCfg::log_basis_at_level(inputs)
+        }
+        fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+            OneHotCfg::log_basis_search_range(inputs)
+        }
+        fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, AkitaError> {
+            OneHotCfg::commitment_layout(max_num_vars)
+        }
+
+        fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
+            let mut schedule = OneHotCfg::get_params_for_prove(incidence)?;
+            tensorise_root_step::<F>(&mut schedule, Self::decomposition().field_bits())?;
+            Ok(schedule)
+        }
+    }
+
+    /// Flip the root fold step's `fold_challenge_shape` to Tensor and
+    /// re-derive every layout field that depends on the (now wider) effective
+    /// L1 mass: per-poly fold-digit count, ring width, next-witness length,
+    /// and the successor step's `current_w_len`. Singleton-incidence
+    /// schedules only (the test path), so `num_claims = 1` everywhere.
+    fn tensorise_root_step<FF: FieldCore + CanonicalField>(
+        schedule: &mut Schedule,
+        field_bits: u32,
+    ) -> Result<(), AkitaError> {
+        let next_w_len = {
+            let Some(Step::Fold(root_step)) = schedule.steps.first_mut() else {
+                return Ok(());
+            };
+            if !root_step.params.num_blocks.is_power_of_two() {
+                return Err(AkitaError::InvalidSetup(
+                    "tensor fold shape requires a power-of-two num_blocks at the root".to_string(),
+                ));
+            }
+            root_step.params = root_step
+                .params
+                .clone()
+                .with_fold_challenge_shape(TensorChallengeShape::Tensor);
+            // `with_fold_challenge_shape` only flips the shape; the wider
+            // effective L1 mass forces a fresh fold-digit count.
+            root_step.params.num_digits_fold = compute_num_digits_fold_with_claims(
+                root_step.params.r_vars,
+                root_step.params.challenge_l1_mass(),
+                root_step.params.log_basis,
+                1,
+                field_bits,
+            );
+            root_step.delta_fold_per_poly = root_step.params.num_digits_fold;
+            root_step.w_ring =
+                akita_types::w_ring_element_count_with_counts::<FF>(&root_step.params, 1, 1, 1, 1)?;
+            root_step
+                .w_ring
+                .checked_mul(root_step.params.ring_dimension)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("tensor next-w length overflow".to_string())
+                })?
+        };
+
+        if let Some(Step::Fold(root_step)) = schedule.steps.first_mut() {
+            root_step.next_w_len = next_w_len;
+        }
+
+        match schedule.steps.get_mut(1) {
+            Some(Step::Direct(direct)) => {
+                direct.current_w_len = next_w_len;
+                // The witness-shape envelope embeds the same length; keep it
+                // consistent with `current_w_len` so the prover's logical
+                // witness check doesn't trip on a stale shape.
+                direct.witness_shape = match direct.witness_shape {
+                    akita_types::DirectWitnessShape::FieldElements(_) => {
+                        akita_types::DirectWitnessShape::FieldElements(next_w_len)
+                    }
+                    akita_types::DirectWitnessShape::PackedDigits((_, bits)) => {
+                        akita_types::DirectWitnessShape::PackedDigits((next_w_len, bits))
+                    }
+                };
+                Ok(())
+            }
+            Some(Step::Fold(_)) => Err(AkitaError::InvalidSetup(
+                "tensor activation test expects root fold to hand off to a direct step".to_string(),
+            )),
+            None => Err(AkitaError::InvalidSetup(
+                "tensor activation test schedule missing root successor".to_string(),
+            )),
+        }
+    }
+
+    /// Drive the full prove/verify round-trip with the tensor-shaped root
+    /// fold and assert acceptance.
+    #[test]
+    fn onehot_tensor_fold_prove_verify() {
+        const NV: usize = 12;
+        init_rayon_pool();
+        run_on_large_stack(|| {
+            let layout = TensorOneHotCfg::commitment_layout(NV).expect("layout");
+            let poly = make_onehot_poly(&layout, 0x715e_0000 + NV as u64);
+            let pt = random_point(NV, 0x715e_f00d);
+            let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
+
+            let setup =
+                <TensorOneHotScheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(NV, 1, 1);
+            let verifier_setup =
+                <TensorOneHotScheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
+            let (commitment, hint) = <TensorOneHotScheme as CommitmentProver<F, ONEHOT_D>>::commit(
+                std::slice::from_ref(&poly),
+                &setup,
+            )
+            .expect("commit");
+
+            let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
+            let commitments = [commitment];
+            let openings = [expected_opening];
+            let opening_groups = [&openings[..]];
+            let hints = vec![hint];
+
+            let mut prover_transcript =
+                Blake2bTranscript::<F>::new(b"single_poly_e2e/tensor_onehot");
+            let proof = <TensorOneHotScheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+                &setup,
+                prove_input(
+                    &pt[..],
+                    &poly_refs[..],
+                    &commitments[0],
+                    hints.into_iter().next().unwrap(),
+                ),
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
+
+            let root = proof.root.as_fold().expect("tensor test must fold root");
+            assert!(
+                !root.stage1.stages.is_empty(),
+                "tensor test must exercise the stage-1 fold"
+            );
+
+            let mut verifier_transcript =
+                Blake2bTranscript::<F>::new(b"single_poly_e2e/tensor_onehot");
+            <TensorOneHotScheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                BasisMode::Lagrange,
+            )
+            .expect("verify");
+        });
+    }
+
+    /// Negative-path companion: tampering with the prover's stage-1 fold
+    /// message after the proof has been built must cause the verifier to
+    /// reject. Guards against transcript-binding regressions on the new
+    /// tensor sampling labels.
+    #[test]
+    fn onehot_tensor_fold_rejects_tampered_proof() {
+        const NV: usize = 12;
+        init_rayon_pool();
+        run_on_large_stack(|| {
+            let layout = TensorOneHotCfg::commitment_layout(NV).expect("layout");
+            let poly = make_onehot_poly(&layout, 0xfa11_0000 + NV as u64);
+            let pt = random_point(NV, 0xfa11_f00d);
+            let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
+
+            let setup =
+                <TensorOneHotScheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(NV, 1, 1);
+            let verifier_setup =
+                <TensorOneHotScheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
+            let (commitment, hint) = <TensorOneHotScheme as CommitmentProver<F, ONEHOT_D>>::commit(
+                std::slice::from_ref(&poly),
+                &setup,
+            )
+            .expect("commit");
+
+            let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
+            let commitments = [commitment];
+            let openings = [expected_opening];
+            let opening_groups = [&openings[..]];
+            let hints = vec![hint];
+
+            let mut prover_transcript =
+                Blake2bTranscript::<F>::new(b"single_poly_e2e/tensor_onehot_tampered");
+            let mut proof = <TensorOneHotScheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+                &setup,
+                prove_input(
+                    &pt[..],
+                    &poly_refs[..],
+                    &commitments[0],
+                    hints.into_iter().next().unwrap(),
+                ),
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
+
+            // Flip the stage-1 final `s_claim`. The verifier absorbs it
+            // before sampling the stage-2 batching coefficient, so any
+            // tamper perturbs the reconstructed stage-2 input claim and the
+            // sumcheck check must fail.
+            let root = proof
+                .root
+                .as_fold_mut()
+                .expect("tensor test must fold root");
+            root.stage1.s_claim += F::one();
+
+            let mut verifier_transcript =
+                Blake2bTranscript::<F>::new(b"single_poly_e2e/tensor_onehot_tampered");
+            let result = <TensorOneHotScheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                BasisMode::Lagrange,
+            );
+            assert!(
+                result.is_err(),
+                "verifier must reject tampered tensor stage-1 v"
+            );
+        });
+    }
+}

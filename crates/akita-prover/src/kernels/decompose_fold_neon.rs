@@ -1,21 +1,22 @@
 //! AArch64 NEON kernel for sparse-multiply-accumulate in the decompose-fold
 //! pipeline.
 //!
-//! Called from [`crate::backend::poly_helpers::sparse_mul_acc`] when NEON is available and
-//! challenge coefficients have magnitude ≤ 2.  Rotates an i8 digit plane by
-//! each challenge position and accumulates into an i32 accumulator using
-//! widening add/sub (`SADDW` / `SSUBW`).
+//! Called from [`crate::backend::poly_helpers::integer_mul_acc`] when NEON is
+//! available and challenge coefficients have magnitude ≤ 2.  Rotates an i8
+//! digit plane by each challenge position and accumulates into an i32
+//! accumulator using widening add/sub (`SADDW` / `SSUBW`).
 
 use std::arch::aarch64::*;
 
-/// NEON sparse-multiply-accumulate.
+/// NEON integer-multiply-accumulate.
 ///
 /// For each challenge term `(pos, coeff)`, rotates the `digit_plane` by `pos`
 /// positions in the negacyclic ring (X^D + 1) and adds or subtracts the
 /// widened i8 values into the i32 `acc`. Small magnitudes like `+/-2` reuse
-/// the unit add/sub kernel multiple times so two-magnitude families
-/// (e.g. exact-shell challenges with `max_abs_coeff <= 2`) stay on the NEON
-/// fast path.
+/// the unit add/sub kernel multiple times. Callers MUST gate on
+/// `|coeff| <= 2` for every term before invoking this entry point; the
+/// |coeff| > 2 fallback lives on the scalar path (see
+/// [`crate::backend::poly_helpers::integer_mul_acc_scalar`]).
 ///
 /// # Safety
 ///
@@ -23,12 +24,12 @@ use std::arch::aarch64::*;
 /// - `acc` must point to at least `d` valid i32 values.
 /// - `d` must be a multiple of 16.
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn sparse_mul_acc_neon(
+pub(crate) unsafe fn integer_mul_acc_neon(
     digit_plane: *const i8,
     acc: *mut i32,
     d: usize,
     positions: &[u32],
-    coeffs: &[i8],
+    coeffs: &[i32],
 ) {
     debug_assert!(d.is_multiple_of(16));
 
@@ -47,15 +48,7 @@ pub(crate) unsafe fn sparse_mul_acc_neon(
                 acc_rotated_sub(digit_plane, acc, d, p, split);
                 acc_rotated_sub(digit_plane, acc, d, p, split);
             }
-            _ => {
-                for _ in 0..coeff.unsigned_abs() {
-                    if coeff > 0 {
-                        acc_rotated_add(digit_plane, acc, d, p, split);
-                    } else {
-                        acc_rotated_sub(digit_plane, acc, d, p, split);
-                    }
-                }
-            }
+            _ => debug_assert!(false, "caller must gate large coeffs to scalar path"),
         }
     }
 }

@@ -1638,6 +1638,7 @@ mod tests {
                 m_vars: 0,
                 r_vars: 0,
                 stage1_config: stage1_config.clone(),
+                fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                 num_digits_commit: 1,
                 num_digits_open: 1,
                 num_digits_fold: 1,

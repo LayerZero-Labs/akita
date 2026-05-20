@@ -6,7 +6,7 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::IntegerChallenge;
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
@@ -348,7 +348,7 @@ where
     #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold")]
     fn decompose_fold(
         &self,
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
@@ -509,7 +509,7 @@ where
 
 fn sparse_accumulate<const D: usize>(
     blocks: &SparseRingBlocks,
-    challenges: &[SparseChallenge],
+    challenges: &[IntegerChallenge],
     num_blocks: usize,
     inner_width: usize,
     num_digits: usize,
@@ -529,7 +529,7 @@ fn sparse_accumulate<const D: usize>(
             }
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let mut acc = vec![[0i32; D]; pos_end - pos_start];
-            let mut rotated = vec![[0i16; D]; D];
+            let mut rotated = vec![[0i32; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = blocks.block(block_idx);
@@ -545,7 +545,7 @@ fn sparse_accumulate<const D: usize>(
                     let dst = &mut acc[local_pos];
                     let weight = entry.value as i32;
                     for k in 0..D {
-                        dst[k] += weight * i32::from(rot[k]);
+                        dst[k] += weight * rot[k];
                     }
                 }
             }

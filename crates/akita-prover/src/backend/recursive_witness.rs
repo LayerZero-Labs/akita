@@ -9,7 +9,7 @@
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::IntegerChallenge;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
@@ -216,7 +216,7 @@ where
     #[tracing::instrument(skip_all, name = "RecursiveWitnessView::decompose_fold")]
     pub fn decompose_fold(
         &self,
-        challenges: &[SparseChallenge],
+        challenges: &[IntegerChallenge],
         block_len: usize,
         num_blocks: usize,
         num_digits: usize,
