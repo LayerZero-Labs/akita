@@ -3155,8 +3155,7 @@ impl Fp32TieredRootFoldCfg {
         // lookup-table compatibility. num_digits_outer must cover
         // field_bits (32 for Fp32) with outer_log_basis.
         let outer_log_basis = log_basis;
-        let num_digits_outer =
-            ((32 + outer_log_basis - 1) / outer_log_basis) as usize;
+        let num_digits_outer = ((32 + outer_log_basis - 1) / outer_log_basis) as usize;
         let n_f = 1usize;
         let chunk_width = base.full_outer_width() / split_factor;
         let f_width = base.b_key.row_len() * split_factor * num_digits_outer;

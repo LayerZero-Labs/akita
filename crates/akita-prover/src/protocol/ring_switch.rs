@@ -993,10 +993,20 @@ where
     // row weights so the t_segment loop's per-x contribution from
     // tier-1 rows can be computed in O(n_b'). When legacy, these are
     // unused. See `specs/tiered_commit.md` §3 for the row layout.
+    //
+    // IMPORTANT: `ring_view(n_b_prime, chunk_width)` would lay out
+    // contiguously, so `row(r)` would be `shared[r * chunk_width ..
+    // (r+1) * chunk_width]` — i.e., still reading inside the FIRST
+    // physical row of the shared matrix whenever `chunk_width < stride`.
+    // The physical layout has each B row spanning `stride` columns, so
+    // we must view with the full stride and then index only the first
+    // `chunk_width` columns of each row at read time. (Bug pinpointed
+    // by the `n_b' > 1` tiered-bench failure; previously only `n_b' = 1`
+    // tests existed, hiding the issue.)
     let (b_prime_view_opt, split_factor_local) = if is_tiered {
         let b_prime_view = setup
             .shared_matrix
-            .ring_view::<D>(lp.b_prime_rows(), lp.b_prime_width());
+            .ring_view::<D>(lp.b_prime_rows(), stride);
         (Some(b_prime_view), lp.split_factor)
     } else {
         (None, 1usize)

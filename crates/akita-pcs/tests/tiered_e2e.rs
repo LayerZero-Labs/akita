@@ -315,14 +315,18 @@ fn forced_tiering_commit_and_references_compose_end_to_end() {
         .map(|i| F::from_canonical_u128_reduced(((i as u128) * 53 + 11) % 997))
         .collect();
 
+    // Stride-aligned view so `row(r)` resolves to physical row r of
+    // shared_matrix even when `chunk_width < max_stride`. The tier-1
+    // reference will index only `[0..chunk_width)` within each row.
     let b_prime_view = setup
         .expanded
         .shared_matrix
-        .ring_view::<D>(n_b_prime, chunk_width);
+        .ring_view::<D>(n_b_prime, setup.expanded.seed.max_stride);
     let f_view = f_flat.ring_view::<D>(n_f, f_width);
 
     let verifier_inputs = Tier1AndFInputs::<F, F, D> {
         b_prime_view,
+        b_prime_chunk_width: chunk_width,
         f_view,
         tier1_row_weights: &tier1_row_weights,
         f_row_weights: &f_row_weights,

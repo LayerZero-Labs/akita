@@ -2206,6 +2206,7 @@ where
         b,
         alpha: _,
     } = rs;
+
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();

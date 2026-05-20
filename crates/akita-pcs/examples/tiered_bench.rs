@@ -39,8 +39,8 @@ use akita_transcript::Blake2bTranscript;
 use akita_types::{
     root_current_w_len, w_ring_element_count_with_counts, AjtaiKeyParams, AjtaiRole,
     AkitaScheduleInputs, AkitaScheduleLookupKey, BasisMode, ClaimIncidenceSummary,
-    CommitmentEnvelope, DecompositionParams, DirectStep, DirectWitnessShape, FoldStep,
-    LevelParams, Schedule, SisModulusFamily, Step,
+    CommitmentEnvelope, DecompositionParams, DirectStep, DirectWitnessShape, FoldStep, LevelParams,
+    Schedule, SisModulusFamily, Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -66,7 +66,15 @@ fn n_b() -> usize {
             .unwrap_or(2usize)
     })
 }
-const N_D: usize = 2;
+static N_D_OVERRIDE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+fn n_d() -> usize {
+    *N_D_OVERRIDE.get_or_init(|| {
+        env::var("AKITA_BENCH_ND")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2usize)
+    })
+}
 const DEFAULT_NUM_BLOCKS: usize = 2048;
 const DEFAULT_BLOCK_LEN: usize = 65536;
 static NUM_BLOCKS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
@@ -87,18 +95,40 @@ fn block_len() -> usize {
             .unwrap_or(DEFAULT_BLOCK_LEN)
     })
 }
-// NOTE: production fp128::D32OneHot uses depth_commit=1 (since onehot
-// poly evals are binary in {0,1}). We oversize depth_commit to match
-// depth_open here as a workaround for a separate bug in the tiered
-// branch at `depth_commit=1` (the per-column M̃ matches but the full
-// sumcheck inner-product diverges; the same bug reproduces in the
-// `tiered_root_fold_full_sumcheck_e2e_roundtrips` test fixture when
-// `AKITA_TEST_DC=1`). Oversizing is safe (binary values fit in 3
-// bits) and keeps the comparison apples-to-apples between f=1 and
-// f=3 since both use the same depth_commit.
-const DEPTH_COMMIT: u32 = 12;
-const DEPTH_OPEN: u32 = 64;
-const DEPTH_FOLD: u32 = 10;
+// Matches production fp128::D32OneHot (onehot poly evals are binary
+// in {0,1}, so 1 commit digit suffices). Earlier the bench used 12
+// as a workaround for what looked like a tier-3 dc=1 bug, but it
+// turned out the real bug is upstream and oversizing dc=1 just hid
+// a separate dimension-coupling issue. Putting it back to the
+// production value.
+const DEPTH_COMMIT: u32 = 1;
+static DEPTH_OPEN_OVERRIDE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+fn depth_open() -> u32 {
+    *DEPTH_OPEN_OVERRIDE.get_or_init(|| {
+        env::var("AKITA_BENCH_DEPTH_OPEN")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(64)
+    })
+}
+static DEPTH_FOLD_OVERRIDE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+fn depth_fold() -> u32 {
+    *DEPTH_FOLD_OVERRIDE.get_or_init(|| {
+        env::var("AKITA_BENCH_DEPTH_FOLD")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10)
+    })
+}
+static TIER_NUM_DIGITS_OUTER_OVERRIDE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+fn tier_num_digits_outer() -> usize {
+    *TIER_NUM_DIGITS_OUTER_OVERRIDE.get_or_init(|| {
+        env::var("AKITA_BENCH_NUM_DIGITS_OUTER")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(65)
+    })
+}
 const NUM_RING_TAIL: usize = 0;
 const LOG_BASIS: u32 = 2;
 const LOG_COMMIT_BOUND: u32 = 1;
@@ -111,7 +141,17 @@ const LOG_OPEN_BOUND: u32 = 128;
 // gadget decomposition of `u_i` is lossless (per the gadget-identity
 // test in `crates/akita-prover/src/protocol/tiered_commit.rs`).
 const TIER_OUTER_LOG_BASIS: u32 = LOG_BASIS; // = 2
-const TIER_NUM_DIGITS_OUTER: usize = 64; // ceil(128 / 2)
+                                             // `num_digits_outer = 65` (not 64) so the balanced gadget can
+                                             // represent every `u_i` coefficient in Q128's full centered range
+                                             // `[-q/2, q/2)`. For basis `b = 2^outer_log_basis = 4`, balanced
+                                             // digits are in `[-b/2, b/2-1] = [-2, 1]`, so:
+                                             //   max positive representable = 1·(4^δ - 1)/3
+                                             //   min negative representable = -2·(4^δ - 1)/3
+                                             // At `δ = 64` the positive bound is only `~2^126.4 < 2^127 ≈ q/2`,
+                                             // so random `u_i` coefficients in `[2^126.4, 2^127)` would silently
+                                             // overflow the decomp, breaking the gadget identity
+                                             // `G·ûhat = u_i` that the tiered protocol's r_quotient relies on.
+                                             // `δ = 65` gives `~2^128.4`, comfortably above `q/2`.
 const TIER_N_F: usize = 2;
 
 fn make_root_lp(split_factor: usize) -> LevelParams {
@@ -123,15 +163,15 @@ fn make_root_lp(split_factor: usize) -> LevelParams {
         LOG_BASIS,
         N_A,
         n_b(),
-        N_D,
+        n_d(),
         SparseChallengeConfig::BoundedL1Norm,
     )
     .with_decomp(
-        block_len().trailing_zeros() as usize, // m_vars
+        block_len().trailing_zeros() as usize,  // m_vars
         num_blocks().trailing_zeros() as usize, // r_vars
         DEPTH_COMMIT as usize,
-        DEPTH_OPEN as usize,
-        DEPTH_FOLD as usize,
+        depth_open() as usize,
+        depth_fold() as usize,
         NUM_RING_TAIL,
     )
     .expect("base level params");
@@ -151,7 +191,7 @@ fn make_root_lp(split_factor: usize) -> LevelParams {
     );
     let chunk_width = full_outer / split_factor;
     let n_b_prime = n_b();
-    let f_width = n_b_prime * split_factor * TIER_NUM_DIGITS_OUTER;
+    let f_width = n_b_prime * split_factor * tier_num_digits_outer();
     let tiered_b_key = AjtaiKeyParams::new_unchecked(
         base.b_key.sis_family(),
         base.b_key.row_len(),
@@ -163,15 +203,13 @@ fn make_root_lp(split_factor: usize) -> LevelParams {
         SisModulusFamily::Q128,
         TIER_N_F,
         f_width,
-        akita_types::layout::sis_derivation::balanced_digit_delta_bound(
-            TIER_OUTER_LOG_BASIS,
-        ),
+        akita_types::layout::sis_derivation::balanced_digit_delta_bound(TIER_OUTER_LOG_BASIS),
         base.ring_dimension,
     );
     LevelParams {
         split_factor,
         outer_log_basis: TIER_OUTER_LOG_BASIS,
-        num_digits_outer: TIER_NUM_DIGITS_OUTER,
+        num_digits_outer: tier_num_digits_outer(),
         f_key,
         b_key: tiered_b_key,
         ..base
@@ -183,10 +221,16 @@ fn setup_matrix_size_for_lp(
     max_num_claims: usize,
 ) -> Result<(usize, usize), AkitaError> {
     let inner = lp.inner_width();
-    // Use full_outer_width so the shared matrix is wide enough for both
-    // legacy and tiered chunked reads (tiered only reads
-    // `chunk_width` ≤ `full_outer_width` per kernel call).
-    let outer = lp.full_outer_width();
+    // For LEGACY (`split_factor == 1`), `lp.outer_width() ==
+    // full_outer_width` (= legacy B's column count). For TIERED, the
+    // b_key stores only the column window B' actually uses
+    // (`chunk_width = full_outer / split`), so `lp.outer_width() ==
+    // chunk_width`. Using `lp.outer_width()` here lets the tiered
+    // setup envelope shrink to fit B' rather than carrying full B
+    // around — which is exactly what gives tiering its verifier
+    // speedup (`compute_setup_contribution`'s scan range collapses
+    // to `chunk_width`).
+    let outer = lp.outer_width();
     let d_matrix = lp
         .d_matrix_width()
         .checked_mul(max_num_claims.max(1))
@@ -240,8 +284,7 @@ macro_rules! impl_bench_cfg {
             }
 
             fn planner_challenge_field_bits() -> u32 {
-                Self::planner_field_bits()
-                    * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
+                Self::planner_field_bits() * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
             }
 
             fn planner_extension_opening_width() -> usize {
@@ -320,7 +363,7 @@ macro_rules! impl_bench_cfg {
                 CommitmentEnvelope {
                     max_n_a: N_A,
                     max_n_b: n_b(),
-                    max_n_d: N_D,
+                    max_n_d: n_d(),
                 }
             }
 
@@ -332,9 +375,7 @@ macro_rules! impl_bench_cfg {
                 let lp = Self::root_lp();
                 let max_num_claims = max_num_batched_polys
                     .checked_mul(max_num_points)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("claim count overflow".to_string())
-                    })?;
+                    .ok_or_else(|| AkitaError::InvalidSetup("claim count overflow".to_string()))?;
                 setup_matrix_size_for_lp(&lp, max_num_claims)
             }
 
@@ -404,8 +445,7 @@ macro_rules! impl_bench_cfg {
                         Step::Direct(DirectStep {
                             current_w_len: next_w_len,
                             witness_shape: DirectWitnessShape::PackedDigits((
-                                next_w_len,
-                                LOG_BASIS,
+                                next_w_len, LOG_BASIS,
                             )),
                             direct_bytes: next_w_len,
                         }),
@@ -463,11 +503,7 @@ fn lagrange_weight_at<E: FieldCore>(point: &[E], idx: usize) -> E {
     w
 }
 
-fn opening_from_onehot_indices(
-    indices: &[Option<u8>],
-    onehot_k: usize,
-    point: &[Field],
-) -> Field {
+fn opening_from_onehot_indices(indices: &[Option<u8>], onehot_k: usize, point: &[Field]) -> Field {
     // For a OneHot poly, `evals[chunk * onehot_k + idx] = 1`, all else 0.
     // So `<weights, evals> = Σ_chunk eq(point, chunk*onehot_k + indices[chunk])`.
     let mut acc = Field::zero();
@@ -527,12 +563,14 @@ where
         "[{label}] generated {total_chunks} onehot indices ({:.2}s)",
         t_indices.elapsed().as_secs_f64()
     );
-    let poly = OneHotPoly::<Field, D, u8>::new(ONEHOT_K_PROD, indices.clone())
-        .expect("onehot poly");
+    let poly =
+        OneHotPoly::<Field, D, u8>::new(ONEHOT_K_PROD, indices.clone()).expect("onehot poly");
 
     // Opening point + opening (computed lazily — never materialize
     // the full `2^nv` Lagrange weights table).
-    let point: Vec<Field> = (0..nv).map(|_| Field::from_u128(rng.gen::<u128>())).collect();
+    let point: Vec<Field> = (0..nv)
+        .map(|_| Field::from_u128(rng.gen::<u128>()))
+        .collect();
     let t_open = Instant::now();
     let opening = opening_from_onehot_indices(&indices, ONEHOT_K_PROD, &point);
     println!(
@@ -554,10 +592,7 @@ where
     let (commitment, hint) =
         <Scheme<D, Cfg> as CommitmentProver<Field, D>>::commit(std::slice::from_ref(&poly), &setup)
             .expect("commit");
-    println!(
-        "[{label}] commit: {:.2}s",
-        t_commit.elapsed().as_secs_f64()
-    );
+    println!("[{label}] commit: {:.2}s", t_commit.elapsed().as_secs_f64());
 
     // Prove.
     let poly_refs = [&poly];
@@ -609,7 +644,11 @@ where
         }
         let elapsed = t.elapsed().as_secs_f64();
         stats.push(elapsed);
-        println!("[{label}]   trial {:>2}: {:.4} ms", trial + 1, elapsed * 1000.0);
+        println!(
+            "[{label}]   trial {:>2}: {:.4} ms",
+            trial + 1,
+            elapsed * 1000.0
+        );
     }
     stats
 }
@@ -659,7 +698,12 @@ fn main() {
 
     let legacy_stats = if !only_tier {
         let mut rng_legacy = StdRng::seed_from_u64(0xa11ce);
-        Some(run_bench::<LegacyBenchCfg>("legacy_f1", nv, trials, &mut rng_legacy))
+        Some(run_bench::<LegacyBenchCfg>(
+            "legacy_f1",
+            nv,
+            trials,
+            &mut rng_legacy,
+        ))
     } else {
         None
     };

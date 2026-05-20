@@ -645,7 +645,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // of M.
         if self.is_tiered {
             use super::slice_mle::tier1_reference::{
-                compute_tier1_and_f_contribution_reference, BPhysicalLayout, Tier1AndFInputs,
+                compute_tier1_and_f_contribution_optimized, BPhysicalLayout, Tier1AndFInputs,
             };
             use crate::protocol::tier1_f_matrix::derive_tier1_f_matrix_flat;
 
@@ -654,9 +654,17 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             let n_f = self.n_f;
             let f_width = n_b_prime * self.split_factor * self.num_digits_outer;
 
-            // B' view: leading `chunk_width` columns of the shared B
-            // matrix, with `n_b_prime` rows.
-            let b_prime_view = setup.shared_matrix.ring_view::<D>(n_b_prime, chunk_width);
+            // B' view: the leading `chunk_width` columns of the first
+            // `n_b_prime` physical rows of the shared B matrix. We must
+            // view with the full `max_stride` width so `row(r)` reads
+            // physical row r (otherwise contiguous reading slips into
+            // row 0's tail columns when `chunk_width < stride`). The
+            // tier-1 reference below indexes only `[0..chunk_width)`
+            // within each row, matching the prover's
+            // `mat_vec_mul_ntt_single_i8_cyclic` slicing.
+            let b_prime_view = setup
+                .shared_matrix
+                .ring_view::<D>(n_b_prime, setup.seed.max_stride);
 
             // F is derived deterministically from the same public
             // matrix seed using the domain-separated label
@@ -696,6 +704,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 
             let inputs = Tier1AndFInputs::<F, E, D> {
                 b_prime_view,
+                b_prime_chunk_width: chunk_width,
                 f_view,
                 tier1_row_weights: &tier1_row_weights,
                 f_row_weights: &f_row_weights,
@@ -714,7 +723,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 },
                 num_points: self.num_points,
             };
-            let tier1_and_f = compute_tier1_and_f_contribution_reference::<F, E, D>(
+            let tier1_and_f = compute_tier1_and_f_contribution_optimized::<F, E, D>(
                 &inputs,
                 &self.num_polys_per_point,
             );

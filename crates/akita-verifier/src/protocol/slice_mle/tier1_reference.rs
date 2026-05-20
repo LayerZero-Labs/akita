@@ -33,16 +33,27 @@
 
 #![allow(dead_code)]
 
+use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_types::layout::flat_matrix::RingMatrixView;
 
 /// Inputs describing one opening point's tiered M-row contribution.
 pub struct Tier1AndFInputs<'a, F: FieldCore, E: FieldCore, const D: usize> {
-    /// `B'` view (the column-window restriction of B used by the tiered
-    /// path). `b_prime_view.num_rows() == n_b'`,
-    /// `b_prime_view.num_cols() == chunk_width`.
+    /// `B'` view of the shared B matrix. Must have
+    /// `b_prime_view.num_rows() == n_b'` and `num_cols >= chunk_width`
+    /// (the leading `chunk_width` columns of each row are what B'
+    /// physically is; the rest, if any, is unread). Callers should
+    /// view at the SHARED matrix's full `max_stride` width so
+    /// `row(r)` resolves to the r-th PHYSICAL row of the shared
+    /// matrix — a view sized exactly `(n_b', chunk_width)` would
+    /// have `row(1)` slip into the latter half of row 0's data
+    /// because `ring_view` is contiguous, not strided.
     pub b_prime_view: RingMatrixView<'a, F, D>,
+    /// Number of leading columns of each `b_prime_view` row that are
+    /// actually B'. (`b_prime_view.num_cols()` may be larger to satisfy
+    /// the stride alignment described above.)
+    pub b_prime_chunk_width: usize,
     /// `F` view. `f_view.num_rows() == n_F`,
     /// `f_view.num_cols() == n_b' · split_factor · num_digits_outer`.
     pub f_view: RingMatrixView<'a, F, D>,
@@ -130,7 +141,11 @@ where
 {
     let lp_split = inputs.split_factor;
     let n_b_prime = inputs.b_prime_view.num_rows();
-    let chunk_width = inputs.b_prime_view.num_cols();
+    let chunk_width = inputs.b_prime_chunk_width;
+    assert!(
+        chunk_width <= inputs.b_prime_view.num_cols(),
+        "b_prime_chunk_width must not exceed b_prime_view.num_cols()"
+    );
     let n_f = inputs.f_view.num_rows();
     let f_width = inputs.f_view.num_cols();
     assert_eq!(
@@ -308,6 +323,297 @@ where
     weight.mul_base(base)
 }
 
+/// Optimised production tier-1 + F evaluator per `specs/tiered_commit.md`
+/// §10. Same contract as
+/// [`compute_tier1_and_f_contribution_reference`] but reorganises the
+/// `B'` half so each `α-eval(B'[r', local_c])` is computed once and
+/// fanned out across all `f` chunks (the reference impl re-α-evaluates
+/// the same `B'` entry for every chunk, which dominates verifier cost
+/// at production scale).
+///
+/// Concretely, for the tier-1 `B'·t̂` half:
+///
+/// ```text
+/// for each (g, r'):
+///   for each local_c in [0, chunk_width):
+///     α = α-eval(B'[r', local_c])        // ← computed ONCE per (r', local_c)
+///     for each chunk_i in [0, f):
+///       m_col = b_physical_to_m_col(chunk_i * chunk_width + local_c, ...)
+///       total += tier1_row_weights[g·f·n_b' + chunk_i·n_b' + r']
+///                  · eq_eval(x_challenges, m_col) · α
+/// ```
+///
+/// All other halves (tier-1 `−G·ûhat`, F `α-eval(F)·ûhat_concat`)
+/// stay the same as the reference because they don't repeat work per
+/// chunk: the `−G·ûhat` cells are at distinct M-columns per chunk,
+/// and the F α-eval is over distinct `f_view` entries per F-row.
+///
+/// Returns the same `E` value as the reference (asserted by
+/// `tier1_and_f_optimized_matches_reference`).
+///
+/// # Panics
+///
+/// Same panic conditions as
+/// [`compute_tier1_and_f_contribution_reference`] (input length
+/// validations match).
+pub(crate) fn compute_tier1_and_f_contribution_optimized<F, E, const D: usize>(
+    inputs: &Tier1AndFInputs<'_, F, E, D>,
+    num_polys_per_point: &[usize],
+) -> E
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    let lp_split = inputs.split_factor;
+    let n_b_prime = inputs.b_prime_view.num_rows();
+    let chunk_width = inputs.b_prime_chunk_width;
+    assert!(
+        chunk_width <= inputs.b_prime_view.num_cols(),
+        "b_prime_chunk_width must not exceed b_prime_view.num_cols()"
+    );
+    let n_f = inputs.f_view.num_rows();
+    let f_width = inputs.f_view.num_cols();
+    assert_eq!(
+        f_width,
+        n_b_prime * lp_split * inputs.num_digits_outer,
+        "F width must equal n_b' · split_factor · num_digits_outer"
+    );
+    assert_eq!(
+        num_polys_per_point.len(),
+        inputs.num_points,
+        "num_polys_per_point length must match num_points"
+    );
+    assert_eq!(
+        inputs.outer_gadget.len(),
+        inputs.num_digits_outer,
+        "outer gadget vector length must match num_digits_outer"
+    );
+    assert_eq!(
+        inputs.tier1_row_weights.len(),
+        inputs.num_points * lp_split * n_b_prime,
+        "tier1_row_weights length must equal num_points · split · n_b'"
+    );
+    assert_eq!(
+        inputs.f_row_weights.len(),
+        inputs.num_points * n_f,
+        "f_row_weights length must equal num_points · n_F"
+    );
+
+    let mut t_vector_offsets = Vec::with_capacity(inputs.num_points);
+    let mut acc_off = 0usize;
+    for &k in num_polys_per_point {
+        t_vector_offsets.push(acc_off);
+        acc_off += k;
+    }
+    let num_t_vectors = inputs.b_physical.num_t_vectors;
+    assert_eq!(
+        num_t_vectors, acc_off,
+        "b_physical.num_t_vectors must match Σ num_polys_per_point",
+    );
+
+    let mut total = E::zero();
+
+    // Precompute a tensor-product eq table over the full `x_challenges`
+    // so that `eq_eval_at_index(x_challenges, idx)` collapses to two
+    // table lookups + one mul instead of O(num_x_bits) field ops per
+    // call. We split into a low half (lowest `num_blocks_low_bits` =
+    // `log2(num_blocks)` bits, matching the M-layout's natural inner
+    // index for `t̂`) and a high half over the remaining bits, so
+    //   eq(x, idx) = eq_low[idx & low_mask] * eq_high[idx >> low_bits].
+    // The two halves are independent (standard tensor product on the
+    // EqPolynomial's underlying multilinear extension).
+    //
+    // Memory: `eq_low` is `num_blocks` entries (≤ a few KB even at
+    // production scale); `eq_high` is `2^(num_x_bits - log2 num_blocks)`
+    // entries, which is `~2^10` at the bench's `nv = 32` shape (3 MB
+    // for Fp128) and stays comfortably bounded.
+    let num_x_bits = inputs.full_vec_randomness.len();
+    let num_blocks = inputs.b_physical.num_blocks;
+    let low_bits = num_blocks.trailing_zeros() as usize;
+    // num_blocks must be a power of 2 for the split to work cleanly.
+    // Production fp128::D32OneHot layouts always satisfy this; if a
+    // non-power-of-2 layout ever shows up here, fall back to per-cell
+    // `eq_eval_at_index` rather than corrupting the result silently.
+    let pow2_blocks = num_blocks.is_power_of_two() && low_bits <= num_x_bits;
+    let (eq_low, eq_high) = if pow2_blocks {
+        let low_part = &inputs.full_vec_randomness[..low_bits];
+        let high_part = &inputs.full_vec_randomness[low_bits..];
+        (
+            EqPolynomial::evals(low_part),
+            EqPolynomial::evals(high_part),
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let low_mask = if pow2_blocks { num_blocks - 1 } else { 0 };
+    let high_len = if pow2_blocks {
+        1usize << (num_x_bits - low_bits)
+    } else {
+        0
+    };
+    let eq_at = |idx: usize| -> E {
+        if pow2_blocks {
+            let high = idx >> low_bits;
+            if high >= high_len {
+                return E::zero();
+            }
+            eq_low[idx & low_mask] * eq_high[high]
+        } else {
+            akita_algebra::offset_eq::eq_eval_at_index(inputs.full_vec_randomness, idx)
+        }
+    };
+
+    // ----- tier-1 `B' · t̂` half (shared α-eval across chunks) -----
+    //
+    // Savings vs the reference impl: we materialise
+    // `α-eval(B'[r', local_c])` once per `(r', local_c)` and fan it
+    // out across `f` chunks. The reference impl recomputes the same
+    // α-eval per chunk, paying an extra `(f-1)` factor on the dominant
+    // cost (D mul-adds per cell × chunk_width × n_b'). Each `eq` lookup
+    // is also collapsed via the precomputed `eq_low × eq_high` tensor
+    // table.
+    //
+    // The inner per-`local_c` work is parallelised with rayon when the
+    // `parallel` feature is on (typical for the production verifier).
+    for (g, &bundle_size) in num_polys_per_point.iter().enumerate() {
+        let outer_width_per_point = bundle_size
+            * inputs.b_physical.n_a
+            * inputs.b_physical.num_blocks
+            * inputs.b_physical.depth_open;
+        assert_eq!(
+            outer_width_per_point,
+            lp_split * chunk_width,
+            "per-point B-physical width must equal split · chunk_width",
+        );
+
+        let g_per_chunk_row_offset = g * (lp_split * n_b_prime);
+        for r_prime in 0..n_b_prime {
+            let row = inputs.b_prime_view.row(r_prime);
+            let tier1_weights_for_row: Vec<E> = (0..lp_split)
+                .map(|chunk_i| {
+                    inputs.tier1_row_weights[g_per_chunk_row_offset + chunk_i * n_b_prime + r_prime]
+                })
+                .collect();
+            #[cfg(feature = "parallel")]
+            let row_total: E = {
+                use akita_field::parallel::*;
+                cfg_into_iter!(0..chunk_width)
+                    .map(|local_c| {
+                        let alpha_eval = eval_ring_at_pows(&row[local_c], inputs.alpha_pows);
+                        if alpha_eval.is_zero() {
+                            return E::zero();
+                        }
+                        let mut chunk_acc = E::zero();
+                        for (chunk_i, &row_weight) in
+                            tier1_weights_for_row.iter().enumerate()
+                        {
+                            let b_physical_col = chunk_i * chunk_width + local_c;
+                            let m_col = b_physical_to_m_col(
+                                b_physical_col,
+                                g,
+                                &t_vector_offsets,
+                                bundle_size,
+                                &inputs.b_physical,
+                                num_t_vectors,
+                                inputs.offset_t,
+                            );
+                            let eq_col_at = eq_at(m_col);
+                            if eq_col_at.is_zero() {
+                                continue;
+                            }
+                            chunk_acc += row_weight * eq_col_at;
+                        }
+                        chunk_acc * alpha_eval
+                    })
+                    .sum()
+            };
+            #[cfg(not(feature = "parallel"))]
+            let row_total: E = {
+                let mut row_acc = E::zero();
+                for local_c in 0..chunk_width {
+                    let alpha_eval = eval_ring_at_pows(&row[local_c], inputs.alpha_pows);
+                    if alpha_eval.is_zero() {
+                        continue;
+                    }
+                    let mut chunk_acc = E::zero();
+                    for (chunk_i, &row_weight) in tier1_weights_for_row.iter().enumerate() {
+                        let b_physical_col = chunk_i * chunk_width + local_c;
+                        let m_col = b_physical_to_m_col(
+                            b_physical_col,
+                            g,
+                            &t_vector_offsets,
+                            bundle_size,
+                            &inputs.b_physical,
+                            num_t_vectors,
+                            inputs.offset_t,
+                        );
+                        let eq_col_at = eq_at(m_col);
+                        if eq_col_at.is_zero() {
+                            continue;
+                        }
+                        chunk_acc += row_weight * eq_col_at;
+                    }
+                    row_acc += chunk_acc * alpha_eval;
+                }
+                row_acc
+            };
+            total += row_total;
+        }
+    }
+
+    // ----- tier-1 `−G · ûhat` half (per-chunk, per-row, per-digit) -----
+    //
+    // No B' sharing applies (each cell is at a distinct M-column and
+    // uses a distinct gadget weight). Keep the reference shape but
+    // fuse the row_weight / zero checks outside the digit loop and
+    // use the fast `eq_at` lookup.
+    for (g, _bundle_size) in num_polys_per_point.iter().enumerate() {
+        for chunk_i in 0..lp_split {
+            for r_prime in 0..n_b_prime {
+                let row_flat = g * (lp_split * n_b_prime) + chunk_i * n_b_prime + r_prime;
+                let row_weight = inputs.tier1_row_weights[row_flat];
+                if row_weight.is_zero() {
+                    continue;
+                }
+                for d in 0..inputs.num_digits_outer {
+                    let uhat_local = g * (lp_split * n_b_prime * inputs.num_digits_outer)
+                        + chunk_i * (n_b_prime * inputs.num_digits_outer)
+                        + r_prime * inputs.num_digits_outer
+                        + d;
+                    let m_col = inputs.offset_uhat + uhat_local;
+                    let eq_col_at = eq_at(m_col);
+                    let gadget = inputs.outer_gadget[d];
+                    total -= mul_ext_base::<F, E>(row_weight * eq_col_at, gadget);
+                }
+            }
+        }
+    }
+
+    // ----- F rows: α-eval(F[r, c]) over ûhat_concat -----
+    for g in 0..inputs.num_points {
+        for r in 0..n_f {
+            let row_flat = g * n_f + r;
+            let row_weight = inputs.f_row_weights[row_flat];
+            if row_weight.is_zero() {
+                continue;
+            }
+            let row = inputs.f_view.row(r);
+            for (c, ring_entry) in row.iter().enumerate().take(f_width) {
+                let uhat_local = g * f_width + c;
+                let m_col = inputs.offset_uhat + uhat_local;
+                let eq_col_at = eq_at(m_col);
+                if eq_col_at.is_zero() {
+                    continue;
+                }
+                let alpha_eval = eval_ring_at_pows(ring_entry, inputs.alpha_pows);
+                total += row_weight * eq_col_at * alpha_eval;
+            }
+        }
+    }
+
+    total
+}
+
 /// Decode a B-physical column `c ∈ [0, outer_width_per_point)` of point
 /// `g` to its M-layout `t̂` column index, mirroring
 /// `get_eq_indices_for_b` in `setup_contribution.rs`.
@@ -419,6 +725,7 @@ mod tests {
         let f_row_weights: Vec<F> = (0..(num_points * n_f)).map(|i| f(31 + i as u64)).collect();
 
         let inputs = Tier1AndFInputs::<F, F, D> {
+            b_prime_chunk_width: b_prime_view.num_cols(),
             b_prime_view,
             f_view,
             tier1_row_weights: &tier1_row_weights,
@@ -513,6 +820,15 @@ mod tests {
         assert_eq!(
             got, expected,
             "tier1+F reference must match the manual brute-force sum",
+        );
+
+        // Cross-check: the optimised production evaluator must match
+        // the reference impl on the same fixture.
+        let got_opt =
+            compute_tier1_and_f_contribution_optimized::<F, F, D>(&inputs, &num_polys_per_point);
+        assert_eq!(
+            got_opt, got,
+            "tier1+F optimised must match the reference impl",
         );
     }
 
