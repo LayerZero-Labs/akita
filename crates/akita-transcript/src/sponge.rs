@@ -236,6 +236,10 @@ where
         AkitaTranscript::bind_instance_bytes(self, instance_bytes);
     }
 
+    // The `Transcript` trait keeps semantic labels for logging wrappers and
+    // callsite readability. The production `AkitaTranscript` sponge is
+    // intentionally positional: labels are not absorbed, and protocol/instance
+    // separation comes from the spongefish domain separator plus replay order.
     fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {
         self.absorb_bytes(crate::label!("compat_absorb_bytes"), bytes);
     }

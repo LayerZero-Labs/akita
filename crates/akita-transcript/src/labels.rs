@@ -4,8 +4,9 @@
 //! labels in Akita core. External integrations should translate at adapter
 //! boundaries instead of introducing foreign label names here.
 //!
-//! The byte strings use short Akita-native domains to keep repeated transcript
-//! label absorbs small.
+//! Production transcripts are positional: these byte strings are diagnostics
+//! for logging builds, tests, and schedule inspection, not bytes absorbed by
+//! [`AkitaTranscript`](crate::AkitaTranscript).
 //!
 /// Top-level protocol domain label.
 pub const DOMAIN_AKITA_PROTOCOL: &[u8] = b"ak/p";
