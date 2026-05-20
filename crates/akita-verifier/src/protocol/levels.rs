@@ -368,13 +368,32 @@ where
         &row_coefficients,
         incidence_summary.num_public_rows(),
     )?;
-    let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
-        &rs.tau1,
-        rs.alpha,
-        v_typed,
-        commitment_rows,
-        y_rings,
-    );
+    // Tiered root LevelParams place `u_final` at the F-row block after
+    // `split·n_b'·num_points` tier-1 zero rows. The legacy helper would
+    // place `u_final` at the tier-1 row positions, producing a relation
+    // claim inconsistent with the actual `Σ_x M̃·w`. See
+    // `specs/tiered_commit.md` §3 and the prover-side dispatch in
+    // `crates/akita-prover/src/protocol/flow.rs::prove_root_fold_from_quadratic`.
+    let relation_claim = if batched_lp.is_tiered_root() {
+        let num_points = incidence_summary.num_points();
+        let tier1_zero_rows = batched_lp.split_factor * batched_lp.b_prime_rows() * num_points;
+        akita_types::relation_claim_from_rows_extension_tiered::<F, C, D>(
+            &rs.tau1,
+            rs.alpha,
+            v_typed,
+            commitment_rows,
+            y_rings,
+            tier1_zero_rows,
+        )
+    } else {
+        relation_claim_from_rows_extension::<F, C, D>(
+            &rs.tau1,
+            rs.alpha,
+            v_typed,
+            commitment_rows,
+            y_rings,
+        )
+    };
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {

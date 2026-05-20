@@ -2167,13 +2167,32 @@ where
         &row_coefficients,
     )?;
 
-    let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
-        &rs.tau1,
-        rs.alpha,
-        &quad_eq.v,
-        commitment_rows,
-        &y_rings,
-    );
+    // For tiered root LevelParams, `commitment_rows = u_final` sits at
+    // the F-row block AFTER `split·n_b'·num_points` tier-1 zero rows.
+    // The legacy helper iterates `u` directly after `v` (D rows),
+    // which would put `u_final` into tier-1 row positions and yield a
+    // relation claim inconsistent with `Σ_x M̃·w`. See
+    // `specs/tiered_commit.md` §3 and the Phase 4f-sumcheck fix.
+    let relation_claim = if lp.is_tiered_root() {
+        let num_points = quad_eq.num_polys_per_point().len();
+        let tier1_zero_rows = lp.split_factor * lp.b_prime_rows() * num_points;
+        akita_types::relation_claim_from_rows_extension_tiered::<F, C, D>(
+            &rs.tau1,
+            rs.alpha,
+            &quad_eq.v,
+            commitment_rows,
+            &y_rings,
+            tier1_zero_rows,
+        )
+    } else {
+        relation_claim_from_rows_extension::<F, C, D>(
+            &rs.tau1,
+            rs.alpha,
+            &quad_eq.v,
+            commitment_rows,
+            &y_rings,
+        )
+    };
 
     let RingSwitchOutput {
         w_evals_compact,

@@ -3110,12 +3110,19 @@ impl Fp32TieredRootFoldCfg {
         )
         .with_decomp(0, 0, 12, 12, 12, 0)
         .unwrap();
-        // Tiering: split_factor=2 with full-field Fp32 outer digits.
+        // Tiering: split_factor=2 with `outer_log_basis = log_basis`
+        // so the gadget-decomposed ûhat digits stay in the same
+        // `[-(b/2)..(b/2)-1]` band the stage-1/2 sumcheck lookup
+        // tables expect (the prefix-aware constructors in
+        // `two_round_prefix.rs` index a fixed `b=2^log_basis`
+        // lookup table over ALL witness cells, including ûhat).
         // Outer width = n_a · num_digits_open · num_blocks = 1·12·1 = 12;
-        // chunk_width = 6. F has shape n_F=1 × (n_b'·split·δ_outer) = 1×12.
+        // chunk_width = 6. With `outer_log_basis = 3`, full Fp32
+        // coverage needs `ceil(32/3) = 11` outer digits; F has shape
+        // n_F=1 × (n_b'·split·δ_outer) = 1×22.
         let split_factor = 2usize;
-        let outer_log_basis = 6u32;
-        let num_digits_outer = 6usize;
+        let outer_log_basis = 3u32;
+        let num_digits_outer = 11usize;
         let n_f = 1usize;
         let chunk_width = base.full_outer_width() / split_factor;
         let f_width = base.b_key.row_len() * split_factor * num_digits_outer;
@@ -3353,34 +3360,31 @@ impl CommitmentConfig for Fp32TieredRootFoldCfg {
 /// uses the `Fp32TieredRootFoldCfg` above whose root LevelParams
 /// satisfies `is_tiered_root()`.
 ///
-/// # Current status
-///
 /// Drives the full prover/verifier pipeline through
-/// `AkitaCommitmentScheme` with `split_factor = 2`. Exercises and validates:
+/// `AkitaCommitmentScheme` with `split_factor = 2`, exercising and
+/// validating end-to-end:
 ///   - `commit_with_params` auto-dispatch to `commit_tiered_with_params`
 ///     (commitment has the right shape, hint carries `outer_digits`).
-///   - `QuadraticEquation::new_prover` correctly threads
-///     per-point `outer_digits` into the combined hint
-///     (Phase 4f-int hint-flatten fix).
+///   - `QuadraticEquation::new_prover` threads per-point
+///     `outer_digits` into the combined hint.
 ///   - `w_ring_element_count_with_counts` sizes `next_w_len` to include
-///     the tiered `ûhat` segment (Phase 4f-int next-w fix).
-///   - `compute_m_evals_x` row indexing uses the tiered `a_start`
-///     (Phase 4f-int row-bounds fix) and emits a `uhat_segment` plus a
-///     B'-aware `t_segment`.
+///     the tiered `ûhat` segment.
+///   - `compute_m_evals_x` skips legacy B-row α-evals, emits the tiered
+///     `uhat_segment`, and uses the tiered A-row `a_start`.
+///   - `relation_claim_from_rows_extension_tiered` places `u_final`
+///     at the F-row positions (skipping tier-1 zero rows between D
+///     and F).
+///   - The verifier's `eval_at_point` includes the
+///     `compute_tier1_and_f_contribution_reference` addend and uses the
+///     tiered `a_start` in BOTH `compute_setup_contribution` (for the
+///     Z-half A-weight slice) and `t_structured_contribution`.
+///   - Stage-1/2 sumcheck digit-basis lookup tables stay consistent
+///     because `outer_log_basis == lp.log_basis`.
 ///
-/// The test currently panics in the stage-1 sumcheck reading an
-/// out-of-range `compact s` value: the stage-1/2 sumcheck columns are
-/// indexed assuming the legacy witness/M-table layout; with the
-/// inserted `ûhat` segment the column-to-witness mapping in
-/// `crates/akita-prover/src/protocol/sumcheck/two_round_prefix.rs`
-/// reads the wrong cells. Closing this requires teaching the
-/// stage-1/2 prefix-aware sumcheck constructors about the tiered
-/// witness layout (`ûhat` segment between `t̂` and `z_pre`). All
-/// non-tiered configs (D32Full, the legacy
-/// `fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma`, and
-/// the 110 prover unit tests) remain green and byte-identical
-/// because every change above is gated on `lp.is_tiered_root()`.
-#[ignore = "stage1/stage2 sumcheck column indexing needs tiered ûhat awareness; see Phase 4f-int handoff"]
+/// All non-tiered configs (D32Full, the legacy
+/// `fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma`, etc.)
+/// remain green and byte-identical because every change above is
+/// gated on `lp.is_tiered_root()`.
 #[test]
 fn tiered_root_fold_full_sumcheck_e2e_roundtrips() {
     type TCfg = Fp32TieredRootFoldCfg;
@@ -3394,8 +3398,8 @@ fn tiered_root_fold_full_sumcheck_e2e_roundtrips() {
     let lp = TCfg::root_lp();
     assert!(lp.is_tiered_root(), "test fixture must enable tiering");
     assert_eq!(lp.split_factor, 2);
-    assert_eq!(lp.outer_log_basis, 6);
-    assert_eq!(lp.num_digits_outer, 6);
+    assert_eq!(lp.outer_log_basis, 3);
+    assert_eq!(lp.num_digits_outer, 11);
 
     let len = 1usize << NUM_VARS;
     let evals = (0..len)
@@ -3438,7 +3442,7 @@ fn tiered_root_fold_full_sumcheck_e2e_roundtrips() {
     let poly_refs = [&poly];
     let commitments = [commitment];
     let mut prover_transcript = Blake2bTranscript::<TF>::new(b"test/tiered-root-fold-full-e2e");
-    let prove_result = <TScheme as CommitmentProver<TF, TD>>::batched_prove(
+    let proof = <TScheme as CommitmentProver<TF, TD>>::batched_prove(
         &setup,
         vec![(
             &point[..],
@@ -3450,11 +3454,8 @@ fn tiered_root_fold_full_sumcheck_e2e_roundtrips() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
-    );
-    let proof = match prove_result {
-        Ok(p) => p,
-        Err(e) => panic!("tiered batched_prove failed: {e:#?}"),
-    };
+    )
+    .expect("tiered batched_prove must succeed");
 
     assert!(proof.root.as_fold().is_some());
 
@@ -3495,4 +3496,175 @@ fn tiered_root_fold_full_sumcheck_e2e_roundtrips() {
         result.is_err(),
         "tiered verifier must reject a wrong opening",
     );
+}
+
+/// Direct comparison: for the tiered fixture, the prover's
+/// `multilinear_eval(m_evals_x, x_challenges)` must equal the
+/// verifier's `prepared.eval_at_point(x_challenges, ...)` at every
+/// column. Tiered analog of the legacy
+/// `prepared_row_eval_matches_materialized` in
+/// `crates/akita-pcs/tests/ring_switch.rs`.
+///
+/// Pinned this test as an oracle while debugging the Phase 4f-sumcheck
+/// stage-2 `verify_sumcheck MISMATCH` — a per-column bisection on this
+/// fixture located the bug in
+/// `compute_setup_contribution::a_start` (was hard-coded to the legacy
+/// `b_start + n_b · num_points` formula, slurping tier-1 row weights
+/// into the A-row weight slice and corrupting the Z-half α-eval).
+#[test]
+fn tiered_prepared_row_eval_matches_materialized() {
+    use akita_algebra::ring::scalar_powers;
+    use akita_prover::protocol::ring_switch::{compute_m_evals_x, ring_switch_build_w};
+    use akita_transcript::labels::ABSORB_COMMITMENT;
+    use akita_types::ring_opening_point_from_field;
+    use akita_types::{AppendToTranscript, RingMultiplierOpeningPoint};
+    use akita_verifier::prepare_ring_switch_row_eval;
+
+    type TCfg = Fp32TieredRootFoldCfg;
+    type TF = <TCfg as CommitmentConfig>::Field;
+    const TD: usize = TCfg::D;
+    type TScheme = AkitaCommitmentScheme<TD, TCfg>;
+    const NV: usize = 1;
+
+    let lp = TCfg::root_lp();
+    assert!(lp.is_tiered_root(), "fixture must enable tiering");
+
+    let mut rng_seed: u64 = 0xfeed_face;
+    let mut next_tf = || -> TF {
+        rng_seed = rng_seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        TF::from_u64(rng_seed)
+    };
+    let evals: Vec<TF> = (0..(1usize << NV))
+        .map(|i| TF::from_u64(7 + i as u64 * 3))
+        .collect();
+    let poly = DensePoly::<TF, TD>::from_field_evals(NV, &evals).unwrap();
+    let point: Vec<TF> = (0..NV).map(|i| TF::from_u64(11 + i as u64 * 5)).collect();
+
+    let alpha_bits = TD.trailing_zeros() as usize;
+    let outer_point: &[TF] = if alpha_bits >= point.len() {
+        &point[point.len()..]
+    } else {
+        &point[alpha_bits..]
+    };
+    let ring_opening_point = ring_opening_point_from_field(
+        outer_point,
+        lp.r_vars,
+        lp.m_vars,
+        BasisMode::Lagrange,
+        BlockOrder::RowMajor,
+    )
+    .expect("ring opening point");
+    let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
+    let (y_ring, w_folded) =
+        poly.evaluate_and_fold(&ring_opening_point.b, &ring_opening_point.a, lp.block_len);
+
+    let setup = <TScheme as CommitmentProver<TF, TD>>::setup_prover(NV, 1, 1);
+    let (commitment, batched_hint) =
+        <TScheme as CommitmentProver<TF, TD>>::commit(std::slice::from_ref(&poly), &setup).unwrap();
+
+    let mut transcript = Blake2bTranscript::<TF>::new(b"tiered-prepared-row-eval");
+    commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+    for pt in &point {
+        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    }
+    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+    let incidence_summary = single_point_group_incidence(NV, 1);
+
+    let mut quad_eq = QuadraticEquation::<TF, TD>::new_prover(
+        &setup.ntt_shared,
+        vec![ring_opening_point.clone()],
+        vec![ring_multiplier_point.clone()],
+        vec![0usize],
+        &[&poly],
+        vec![w_folded],
+        &incidence_summary,
+        lp.clone(),
+        vec![batched_hint],
+        &mut transcript,
+        std::slice::from_ref(&commitment),
+        std::slice::from_ref(&y_ring),
+        vec![CyclotomicRing::<TF, TD>::one()],
+        setup.expanded.seed.max_stride,
+    )
+    .expect("quadratic equation");
+
+    ring_switch_build_w::<TF, TD>(&mut quad_eq, &setup.expanded, &setup.ntt_shared, &lp)
+        .expect("ring-switch witness");
+
+    let alpha = TF::from_u64(101);
+    let alpha_evals_y = scalar_powers(alpha, TD);
+    let rows = lp.m_row_count(1, 1);
+    let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+    let tau1: Vec<TF> = (0..num_i).map(|_| next_tf()).collect();
+
+    let m_evals_x = compute_m_evals_x::<TF, TF, TD>(
+        &setup.expanded,
+        &[ring_opening_point.clone()],
+        std::slice::from_ref(&ring_multiplier_point),
+        &[0usize],
+        &quad_eq.challenges,
+        alpha,
+        &alpha_evals_y,
+        &lp,
+        &tau1,
+        &[1usize],
+        &[0usize],
+        &[0usize],
+        &[TF::one()],
+        1,
+    )
+    .expect("compute_m_evals_x");
+
+    let num_x_bits = m_evals_x.len().trailing_zeros() as usize;
+
+    let prepared = prepare_ring_switch_row_eval::<TF, TF, TD>(
+        &quad_eq.challenges,
+        alpha,
+        &lp,
+        &tau1,
+        &[1usize],
+        &[0usize],
+        &[0usize],
+        &[TF::one()],
+        1,
+        1,
+        std::slice::from_ref(&ring_multiplier_point),
+        &[0usize],
+    )
+    .expect("prepare_ring_switch_row_eval");
+
+    // Per-column check: for each column `k`, set
+    // `x_challenges = bin(k)` so `eq(x_challenges, x) = δ(x = k)` and
+    // `multilinear_eval(m_evals_x, x_challenges) = m_evals_x[k]`. The
+    // verifier's `eval_at_point` must agree at every column. This is a
+    // strictly stronger check than a single random-challenge equality
+    // (it catches per-column bugs that would otherwise only show up in
+    // a full-protocol sumcheck mismatch).
+    for k in 0..m_evals_x.len() {
+        let x_challenges: Vec<TF> = (0..num_x_bits)
+            .map(|i| {
+                if (k >> i) & 1 == 1 {
+                    TF::one()
+                } else {
+                    TF::zero()
+                }
+            })
+            .collect();
+        let prover_cell = m_evals_x[k];
+        let verifier_cell = prepared
+            .eval_at_point::<TF, TD>(
+                &x_challenges,
+                &setup.expanded,
+                std::slice::from_ref(&ring_opening_point),
+                std::slice::from_ref(&ring_multiplier_point),
+                alpha,
+            )
+            .expect("eval_at_point");
+        assert_eq!(
+            prover_cell, verifier_cell,
+            "tiered eval_at_point != m_evals_x[{k}]: prover={prover_cell:?} verifier={verifier_cell:?}",
+        );
+    }
 }

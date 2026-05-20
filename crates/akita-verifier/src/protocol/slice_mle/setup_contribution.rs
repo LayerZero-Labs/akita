@@ -161,7 +161,22 @@ where
 
     let b_start = 1 + prepared.num_public_rows + prepared.n_d;
     let d_start = 1 + prepared.num_public_rows;
-    let a_start = b_start + prepared.n_b * prepared.num_points;
+    // Tiered row layout (`specs/tiered_commit.md` §3) replaces the
+    // `n_b · num_points` B-row block with a `split · n_b' · num_points`
+    // tier-1 block followed by an `n_F · num_points` F block. Reading
+    // `a_weights` from the legacy `a_start` would slurp tier-1 row
+    // weights into the A-row weight slice and corrupt the Z-half α-eval
+    // (W half is OK because `d_weights` uses `d_start`, which is
+    // unchanged). Must match the prover's `compute_m_evals_x` tiered
+    // dispatch and the verifier's `t_structured_contribution` /
+    // `tier1_reference` row weight slicing.
+    let a_start = if prepared.is_tiered {
+        b_start
+            + prepared.split_factor * prepared.n_b * prepared.num_points
+            + prepared.n_f * prepared.num_points
+    } else {
+        b_start + prepared.n_b * prepared.num_points
+    };
     let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
     let a_weights = &prepared.eq_tau1[a_start..prepared.rows];
 

@@ -536,7 +536,18 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- T -------------------------------------------------------------
         let t_structured_contribution = {
             let _span = tracing::info_span!("t_structured").entered();
-            let a_start = 1 + self.num_public_rows + self.n_d + self.n_b * self.num_points;
+            // Tiered row layout (`specs/tiered_commit.md` §3) places
+            // A-rows after the tier-1 + F row blocks instead of after
+            // the legacy B rows. Per `compute_m_evals_x`'s tiered
+            // dispatch in `crates/akita-prover/src/protocol/ring_switch.rs`.
+            let a_start = if self.is_tiered {
+                1 + self.num_public_rows
+                    + self.n_d
+                    + self.split_factor * self.n_b * self.num_points
+                    + self.n_f * self.num_points
+            } else {
+                1 + self.num_public_rows + self.n_d + self.n_b * self.num_points
+            };
             TStructuredSlicesEvaluator {
                 high_challenges,
                 offset_high: offset_t >> offset_low_bits,

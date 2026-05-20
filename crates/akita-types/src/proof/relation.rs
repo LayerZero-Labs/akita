@@ -51,6 +51,72 @@ pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
     acc
 }
 
+/// Tiered variant of [`relation_claim_from_rows_extension`] for the tiered
+/// root M-row layout (`specs/tiered_commit.md` §3):
+///
+/// ```text
+/// consistency (1) | public | D (n_d) | tier1 (split·n_b'·num_points)
+///   | F (n_F·num_points) | A (n_a)
+/// ```
+///
+/// Tier-1 rows have `y = 0` and so must be SKIPPED (advancing `row_idx`)
+/// rather than contributing to the accumulator. `u_final_rows` lives at
+/// the F-row positions, AFTER the tier-1 block.
+///
+/// The legacy [`relation_claim_from_rows_extension`] iterates `u` directly
+/// after `v` and would place `u_final` at the tier-1 zero-row positions,
+/// producing a relation claim that disagrees with the actual
+/// `Σ_row eq_tau1[row] · y[row]` the sumcheck instance reconstructs from
+/// the witness. See Phase 4f-sumcheck.
+///
+/// # Panics
+///
+/// Panics if `D` is zero (cyclotomic rings require a nonzero dimension).
+#[tracing::instrument(skip_all, name = "relation_claim_from_rows_extension_tiered")]
+pub fn relation_claim_from_rows_extension_tiered<F, E, const D: usize>(
+    tau1: &[E],
+    alpha: E,
+    v: &[CyclotomicRing<F, D>],
+    u_final_rows: &[CyclotomicRing<F, D>],
+    y_rings: &[CyclotomicRing<F, D>],
+    tier1_zero_rows: usize,
+) -> E
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + MulBase<F>,
+{
+    let eq_tau1 = EqPolynomial::evals(tau1);
+    let alpha_pows = scalar_powers(alpha, D);
+    let mut acc = E::zero();
+    let mut row_idx = 1usize;
+
+    for y_ring in y_rings {
+        if row_idx >= eq_tau1.len() {
+            return acc;
+        }
+        acc += eq_tau1[row_idx] * eval_ring_at_pows(y_ring, &alpha_pows);
+        row_idx += 1;
+    }
+    for r in v {
+        if row_idx >= eq_tau1.len() {
+            return acc;
+        }
+        acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
+        row_idx += 1;
+    }
+    // Tier-1 rows have `y = 0`. Advance row_idx past them with no
+    // accumulator contribution.
+    row_idx = row_idx.saturating_add(tier1_zero_rows);
+    for r in u_final_rows {
+        if row_idx >= eq_tau1.len() {
+            return acc;
+        }
+        acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
+        row_idx += 1;
+    }
+    acc
+}
+
 /// Compute the stage-2 relation claim with an extension-field evaluation point.
 ///
 /// Ring rows remain over `F`; their coefficients are multiplied into `E`
