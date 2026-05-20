@@ -680,7 +680,9 @@ mod tests {
             .map(|idx| f(11 + idx as u128))
             .collect();
         let prepared = RingSwitchDeferredRowEval {
-            c_alphas: (0..total_blocks).map(|idx| f(41 + idx as u128)).collect(),
+            c_alphas: crate::protocol::ring_switch::PreparedChallengeEvals::Flat(
+                (0..total_blocks).map(|idx| f(41 + idx as u128)).collect(),
+            ),
             eq_tau1: eq_tau1.clone(),
             total_blocks,
             num_t_vectors: num_polys_per_point.iter().sum(),

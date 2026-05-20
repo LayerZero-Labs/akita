@@ -227,9 +227,11 @@ mod tests {
             shared_matrix: FlatMatrix::from_ring_slice::<D>(&matrix_entries),
         };
         let prepared = RingSwitchDeferredRowEval {
-            c_alphas: (0..total_blocks)
-                .map(|idx| f(2_000 + idx as u128))
-                .collect(),
+            c_alphas: crate::protocol::ring_switch::PreparedChallengeEvals::Flat(
+                (0..total_blocks)
+                    .map(|idx| f(2_000 + idx as u128))
+                    .collect(),
+            ),
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(3_000 + idx as u128))
                 .collect(),
