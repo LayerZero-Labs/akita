@@ -323,7 +323,7 @@ mod tests {
             };
             // Root-level batched witnesses fan out over the key's vector
             // counts; recursive levels collapse back to singleton-by-construction.
-            let (np, nt, nw, nz) = if idx == 0 {
+            let (num_points, num_t_vectors, num_w_vectors, num_public_rows) = if idx == 0 {
                 (
                     key.num_points,
                     key.num_t_vectors,
@@ -333,11 +333,17 @@ mod tests {
             } else {
                 (1, 1, 1, 1)
             };
-            let runtime_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<
-                Cfg::Field,
-            >(&level.lp, np, nt, nw, nz, layout)
-            .expect("valid planned witness")
-                * level.lp.ring_dimension;
+            let runtime_next_w_len =
+                akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
+                    &level.lp,
+                    num_points,
+                    num_t_vectors,
+                    num_w_vectors,
+                    num_public_rows,
+                    layout,
+                )
+                .expect("valid planned witness")
+                    * level.lp.ring_dimension;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,
                 "planner/runtime next_w_len mismatch at level {} for key={key:?}",

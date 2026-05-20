@@ -390,9 +390,9 @@ where
             "generated schedule table entry must contain at least one step".to_string(),
         ));
     }
-    if recursive_public_rows == 0 {
+    if recursive_public_rows != 1 {
         return Err(AkitaError::InvalidSetup(
-            "recursive public row count must be nonzero".to_string(),
+            "recursive generated schedules currently require exactly one public row".to_string(),
         ));
     }
     let expected_root_w_len = 1usize
@@ -471,20 +471,17 @@ where
                         )
                     })?
                 } else {
-                    w_ring_element_count_with_vector_counts_bits::<F>(
-                        field_bits,
-                        &lp,
-                        1,
-                        1,
-                        recursive_public_rows,
-                        recursive_public_rows,
-                    )?
-                    .checked_mul(lp.ring_dimension)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "generated recursive next witness length overflow".to_string(),
-                        )
-                    })?
+                    // Recursive levels are singleton-by-construction: one
+                    // carried witness, one T-vector, one W-vector, and one
+                    // public recursive opening row. Root batching is already
+                    // accounted for at fold_level == 0.
+                    w_ring_element_count_with_vector_counts_bits::<F>(field_bits, &lp, 1, 1, 1, 1)?
+                        .checked_mul(lp.ring_dimension)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "generated recursive next witness length overflow".to_string(),
+                            )
+                        })?
                 };
                 let next_inputs = AkitaScheduleInputs {
                     num_vars: key.num_vars,
@@ -520,24 +517,25 @@ where
                 // `next_w_len` for the last fold matches the prover's
                 // actual cleartext witness length.
                 let runtime_next_w_len = if is_terminal {
-                    let (np, nt, nw, nz) = if fold_level == 0 {
-                        (
-                            key.num_points,
-                            key.num_t_vectors,
-                            key.num_w_vectors,
-                            key.num_z_vectors,
-                        )
-                    } else {
-                        (1, 1, recursive_public_rows, recursive_public_rows)
-                    };
+                    let (num_points, num_t_vectors, num_w_vectors, num_public_rows) =
+                        if fold_level == 0 {
+                            (
+                                key.num_points,
+                                key.num_t_vectors,
+                                key.num_w_vectors,
+                                key.num_z_vectors,
+                            )
+                        } else {
+                            (1, 1, 1, 1)
+                        };
                     let terminal_ring_count =
                         w_ring_element_count_with_vector_counts_for_layout_bits::<F>(
                             field_bits,
                             &lp,
-                            np,
-                            nt,
-                            nw,
-                            nz,
+                            num_points,
+                            num_t_vectors,
+                            num_w_vectors,
+                            num_public_rows,
                             crate::layout::MRowLayout::Terminal,
                         )?;
                     let terminal_field_len = terminal_ring_count
@@ -560,7 +558,7 @@ where
                 let num_claims_here = if fold_level == 0 {
                     key.num_z_vectors
                 } else {
-                    recursive_public_rows
+                    1
                 };
                 let base_level_bytes = if is_terminal {
                     terminal_level_proof_bytes(

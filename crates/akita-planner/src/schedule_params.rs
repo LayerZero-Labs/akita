@@ -95,14 +95,15 @@ where
     };
 
     let fb = Cfg::planner_field_bits();
-    let recursive_rows = Cfg::planner_recursive_public_rows();
-    let w_ring_elements = w_ring_element_count_with_counts::<Cfg::PlannerField>(
-        &level_lp,
-        1,
-        1,
-        recursive_rows,
-        recursive_rows,
-    )?;
+    if Cfg::planner_recursive_public_rows() != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "recursive schedule planning currently requires exactly one public row".to_string(),
+        ));
+    }
+    // Recursive folds carry one recursive witness and open it at one prepared
+    // recursive point. Root batching is reflected only at level 0.
+    let w_ring_elements =
+        w_ring_element_count_with_counts::<Cfg::PlannerField>(&level_lp, 1, 1, 1, 1)?;
     let next_w_len = w_ring_elements
         .checked_mul(level_lp.ring_dimension)
         .and_then(|len| len.checked_mul(Cfg::planner_recursive_witness_expansion()))
@@ -274,10 +275,10 @@ fn to_direct_step<Cfg: PlannerConfig>(current_w_len: usize, log_basis: u32) -> S
 fn finalize_terminal_direct_witness_shape<Cfg: PlannerConfig>(
     suffix_steps: &mut [Step],
     candidate: &CandidateLevelParams,
-    np: usize,
-    nt: usize,
-    nw: usize,
-    nz: usize,
+    num_points: usize,
+    num_t_vectors: usize,
+    num_w_vectors: usize,
+    num_public_rows: usize,
 ) -> Result<(), AkitaError> {
     // Suffix DP invariant: this finalizer only runs for terminal-suffix
     // candidates whose suffix is exactly `[Direct]`. Any longer suffix or a
@@ -303,10 +304,10 @@ fn finalize_terminal_direct_witness_shape<Cfg: PlannerConfig>(
     };
     let ring_count = akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::PlannerField>(
         &candidate.lp,
-        np,
-        nt,
-        nw,
-        nz,
+        num_points,
+        num_t_vectors,
+        num_w_vectors,
+        num_public_rows,
         akita_types::MRowLayout::Terminal,
     )
     .expect("terminal recursive witness length overflow");
@@ -450,14 +451,13 @@ where
                     Step::Direct(direct) => direct.direct_bytes,
                     Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
                 };
-                let rec_rows = Cfg::planner_recursive_public_rows();
                 finalize_terminal_direct_witness_shape::<Cfg>(
                     &mut suffix_steps,
                     &candidate,
                     1,
                     1,
-                    rec_rows,
-                    rec_rows,
+                    1,
+                    1,
                 )?;
                 let (new_direct_bytes, terminal_field_len) =
                     match suffix_steps.first().expect("suffix non-empty") {
