@@ -27,7 +27,7 @@ use akita_types::FlatMatrix;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, CenteredCoeff, CommitInnerWitness, DecomposeFoldWitness};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DenseDigitCache<const D: usize> {
@@ -378,12 +378,12 @@ where
 
         if num_digits == 1 {
             if let Some(small_coeffs) = &self.small_i8_coeffs {
-                let coeff_accum: Vec<[i32; D]> = {
+                let coeff_accum: Vec<[CenteredCoeff; D]> = {
                     let _span =
                         tracing::info_span!("dense_single_digit_cached_accumulate").entered();
                     cfg_into_iter!(0..block_len)
                         .map(|elem_idx| {
-                            let mut z_local = [0i32; D];
+                            let mut z_local = [0 as CenteredCoeff; D];
 
                             for (block_idx, c_i) in challenges.iter().enumerate() {
                                 let global_idx = block_idx * block_len + elem_idx;
@@ -402,11 +402,11 @@ where
                 return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
             }
 
-            let coeff_accum: Vec<[i32; D]> = {
+            let coeff_accum: Vec<[CenteredCoeff; D]> = {
                 let _span = tracing::info_span!("dense_single_digit_accumulate").entered();
                 cfg_into_iter!(0..block_len)
                     .map(|elem_idx| {
-                        let mut z_local = [0i32; D];
+                        let mut z_local = [0 as CenteredCoeff; D];
                         let mut digit_plane = [0i8; D];
 
                         for (block_idx, c_i) in challenges.iter().enumerate() {
@@ -715,13 +715,13 @@ fn accumulate_cached_digit_planes<const D: usize>(
     challenges: &[IntegerChallenge],
     block_len: usize,
     num_digits: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[CenteredCoeff; D]> {
     let inner_width = block_len * num_digits;
     cfg_into_iter!(0..inner_width)
         .map(|inner_idx| {
             let elem_idx = inner_idx / num_digits;
             let digit_idx = inner_idx % num_digits;
-            let mut acc = [0i32; D];
+            let mut acc = [0 as CenteredCoeff; D];
             for (block_idx, challenge) in challenges.iter().enumerate() {
                 let ring_idx = block_idx * block_len + elem_idx;
                 let plane_idx = ring_idx * num_digits + digit_idx;

@@ -6,7 +6,7 @@
 //! implementations.
 
 use crate::kernels::linear::try_centered_i8;
-use crate::DecomposeFoldWitness;
+use crate::{CenteredCoeff, DecomposeFoldWitness};
 use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::IntegerChallenge;
@@ -214,27 +214,35 @@ fn extract_balanced_digit(c: &mut i128, p: &DecomposeParams) -> i32 {
 /// Scalar sparse-multiply-accumulate: accumulate `challenge * digit_plane`
 /// into `acc` using the rotate-and-add formulation.
 ///
-/// `digit_plane` is `[i8; D]`, `acc` is `[i32; D]`.
+/// `digit_plane` is `[i8; D]`, `acc` is `[CenteredCoeff; D]`.
 /// Each challenge term rotates the digit plane and adds/subtracts contiguously.
 #[inline(always)]
-fn sparse_mul_acc_add_scalar<const D: usize>(digit_plane: &[i8], acc: &mut [i32; D], p: usize) {
+fn sparse_mul_acc_add_scalar<const D: usize>(
+    digit_plane: &[i8],
+    acc: &mut [CenteredCoeff; D],
+    p: usize,
+) {
     let split = D - p;
     for i in 0..split {
-        acc[i + p] += digit_plane[i] as i32;
+        acc[i + p] += CenteredCoeff::from(digit_plane[i]);
     }
     for i in split..D {
-        acc[i - split] -= digit_plane[i] as i32;
+        acc[i - split] -= CenteredCoeff::from(digit_plane[i]);
     }
 }
 
 #[inline(always)]
-fn sparse_mul_acc_sub_scalar<const D: usize>(digit_plane: &[i8], acc: &mut [i32; D], p: usize) {
+fn sparse_mul_acc_sub_scalar<const D: usize>(
+    digit_plane: &[i8],
+    acc: &mut [CenteredCoeff; D],
+    p: usize,
+) {
     let split = D - p;
     for i in 0..split {
-        acc[i + p] -= digit_plane[i] as i32;
+        acc[i + p] -= CenteredCoeff::from(digit_plane[i]);
     }
     for i in split..D {
-        acc[i - split] += digit_plane[i] as i32;
+        acc[i - split] += CenteredCoeff::from(digit_plane[i]);
     }
 }
 
@@ -248,7 +256,7 @@ fn sparse_mul_acc_sub_scalar<const D: usize>(digit_plane: &[i8], acc: &mut [i32;
 pub fn integer_mul_acc_scalar<const D: usize>(
     digit_plane: &[i8],
     challenge: &IntegerChallenge,
-    acc: &mut [i32; D],
+    acc: &mut [CenteredCoeff; D],
 ) {
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
         let p = pos as usize;
@@ -266,10 +274,11 @@ pub fn integer_mul_acc_scalar<const D: usize>(
             _ => {
                 let split = D - p;
                 for i in 0..split {
-                    acc[i + p] += coeff * digit_plane[i] as i32;
+                    acc[i + p] += CenteredCoeff::from(coeff) * CenteredCoeff::from(digit_plane[i]);
                 }
                 for i in split..D {
-                    acc[i - split] -= coeff * digit_plane[i] as i32;
+                    acc[i - split] -=
+                        CenteredCoeff::from(coeff) * CenteredCoeff::from(digit_plane[i]);
                 }
             }
         }
@@ -281,7 +290,7 @@ pub fn integer_mul_acc_scalar<const D: usize>(
 pub fn integer_mul_acc<const D: usize>(
     digit_plane: &[i8],
     challenge: &IntegerChallenge,
-    acc: &mut [i32; D],
+    acc: &mut [CenteredCoeff; D],
 ) {
     #[cfg(target_arch = "aarch64")]
     {
@@ -318,15 +327,15 @@ pub fn integer_mul_acc<const D: usize>(
 /// downstream accumulator was already `i32`.
 #[inline(always)]
 pub fn fill_rotated_challenge<const D: usize>(
-    table: &mut [[i32; D]],
+    table: &mut [[CenteredCoeff; D]],
     challenge: &IntegerChallenge,
 ) {
     debug_assert!(D.is_power_of_two());
     debug_assert!(table.len() >= D);
 
-    let mut dense = [0i32; D];
+    let mut dense = [0 as CenteredCoeff; D];
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        dense[pos as usize] = coeff;
+        dense[pos as usize] = CenteredCoeff::from(coeff);
     }
 
     for (ci, row) in table.iter_mut().enumerate().take(D) {
@@ -346,7 +355,12 @@ fn should_use_rotated_challenge<const D: usize>(challenge: &IntegerChallenge) ->
 }
 
 #[inline(always)]
-fn add_scaled_rotated_row<const D: usize>(acc: &mut [i32; D], row: &[i32; D], scale: i32) {
+fn add_scaled_rotated_row<const D: usize>(
+    acc: &mut [CenteredCoeff; D],
+    row: &[CenteredCoeff; D],
+    scale: i32,
+) {
+    let scale = CenteredCoeff::from(scale);
     match scale {
         1 => {
             for k in 0..D {
@@ -378,19 +392,21 @@ fn add_scaled_rotated_row<const D: usize>(acc: &mut [i32; D], row: &[i32; D], sc
 
 #[inline(always)]
 fn add_scaled_rotated_rows_triplet<const D: usize>(
-    acc: &mut [i32; D],
-    rows: [&[i32; D]; 3],
+    acc: &mut [CenteredCoeff; D],
+    rows: [&[CenteredCoeff; D]; 3],
     scales: [i32; 3],
 ) {
     for (k, acc_coeff) in acc.iter_mut().enumerate() {
-        *acc_coeff += scales[0] * rows[0][k] + scales[1] * rows[1][k] + scales[2] * rows[2][k];
+        *acc_coeff += CenteredCoeff::from(scales[0]) * rows[0][k]
+            + CenteredCoeff::from(scales[1]) * rows[1][k]
+            + CenteredCoeff::from(scales[2]) * rows[2][k];
     }
 }
 
 fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
-    rotated: &[[i32; D]],
-    acc: &mut [[i32; D]],
+    rotated: &[[CenteredCoeff; D]],
+    acc: &mut [[CenteredCoeff; D]],
     p: &DecomposeParams,
 ) {
     if p.overflow_possible {
@@ -402,8 +418,8 @@ fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const D: usize>(
 
 fn decompose_ring_full_challenge_accumulate_fast<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
-    rotated: &[[i32; D]],
-    acc: &mut [[i32; D]],
+    rotated: &[[CenteredCoeff; D]],
+    acc: &mut [[CenteredCoeff; D]],
     p: &DecomposeParams,
 ) {
     let bulk_end = D - (D % 3);
@@ -443,8 +459,8 @@ fn decompose_ring_full_challenge_accumulate_fast<F: CanonicalField, const D: usi
 
 fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
-    rotated: &[[i32; D]],
-    acc: &mut [[i32; D]],
+    rotated: &[[CenteredCoeff; D]],
+    acc: &mut [[CenteredCoeff; D]],
     p: &DecomposeParams,
 ) {
     let (first_acc, remaining_acc) = acc
@@ -537,7 +553,7 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
 }
 
 pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
-    coeff_accum: [i32; D],
+    coeff_accum: [CenteredCoeff; D],
     modulus: u128,
 ) -> CyclotomicRing<F, D> {
     let coeffs = from_fn(|k| {
@@ -561,7 +577,7 @@ pub fn balanced_digit_decompose_fold_partitioned<const D: usize>(
     num_blocks: usize,
     num_digits: usize,
     inner_width: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[CenteredCoeff; D]> {
     debug_assert_eq!(
         num_digits, 1,
         "multi-digit decomposition is not implemented for partitioned accumulation"
@@ -574,7 +590,7 @@ pub fn balanced_digit_decompose_fold_partitioned<const D: usize>(
     let actual_threads = num_threads.min(inner_width).max(1);
     let pos_chunk = inner_width.div_ceil(actual_threads);
 
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
             if pos_start >= inner_width {
@@ -582,7 +598,7 @@ pub fn balanced_digit_decompose_fold_partitioned<const D: usize>(
             }
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let len = pos_end - pos_start;
-            let mut acc = vec![[0i32; D]; len];
+            let mut acc = vec![[0 as CenteredCoeff; D]; len];
 
             let elem_start = pos_start / num_digits;
             let elem_end = pos_end.div_ceil(num_digits);
@@ -626,7 +642,7 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
     block_len: usize,
     num_digits: usize,
     p: &DecomposeParams,
-) -> Vec<[i32; D]> {
+) -> Vec<[CenteredCoeff; D]> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -638,14 +654,14 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
         .iter()
         .map(|challenge| {
             should_use_rotated_challenge::<D>(challenge).then(|| {
-                let mut rotated = [[0i32; D]; D];
+                let mut rotated = [[0 as CenteredCoeff; D]; D];
                 fill_rotated_challenge::<D>(&mut rotated, challenge);
                 rotated
             })
         })
         .collect::<Vec<_>>();
     let has_sparse_challenge = rotated_tables.iter().any(Option::is_none);
-    let mut out = vec![[0i32; D]; block_len * num_digits];
+    let mut out = vec![[0 as CenteredCoeff; D]; block_len * num_digits];
 
     #[cfg(feature = "parallel")]
     out.par_chunks_mut(elem_chunk * num_digits)
@@ -751,7 +767,7 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
 }
 
 pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
-    centered_coeffs: Vec<[i32; D]>,
+    centered_coeffs: Vec<[CenteredCoeff; D]>,
     modulus: u128,
 ) -> DecomposeFoldWitness<F, D> {
     let centered_inf_norm = centered_coeffs
@@ -777,6 +793,7 @@ mod tests {
         decompose_ring_interleaved, fill_rotated_challenge, integer_mul_acc,
         should_use_rotated_challenge, DecomposeParams,
     };
+    use crate::CenteredCoeff;
     use akita_algebra::CyclotomicRing;
     use akita_challenges::{IntegerChallenge, SparseChallenge};
     use akita_field::CanonicalField;
@@ -822,7 +839,7 @@ mod tests {
         let challenge_int = IntegerChallenge::from_sparse(&challenge);
         let mut generic_digits = vec![[0i8; D]; num_digits];
         decompose_ring_interleaved::<F, D>(&ring, &mut generic_digits, num_digits, &params);
-        let mut generic_acc = vec![[0i32; D]; num_digits];
+        let mut generic_acc = vec![[0 as CenteredCoeff; D]; num_digits];
         for digit in 0..num_digits {
             integer_mul_acc::<D>(
                 &generic_digits[digit],
@@ -831,9 +848,9 @@ mod tests {
             );
         }
 
-        let mut rotated = vec![[0i32; D]; D];
+        let mut rotated = vec![[0 as CenteredCoeff; D]; D];
         fill_rotated_challenge::<D>(&mut rotated, &challenge_int);
-        let mut fused_acc = vec![[0i32; D]; num_digits];
+        let mut fused_acc = vec![[0 as CenteredCoeff; D]; num_digits];
         decompose_ring_full_challenge_accumulate::<F, D>(&ring, &rotated, &mut fused_acc, &params);
 
         assert_eq!(fused_acc, generic_acc);
@@ -905,7 +922,7 @@ mod tests {
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0 as CenteredCoeff; D]; block_len * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges_int.iter().enumerate() {
             let block_start = block_idx * block_len;
@@ -978,7 +995,7 @@ mod tests {
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0 as CenteredCoeff; D]; block_len * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
             let block_start = block_idx * block_len;
@@ -1052,7 +1069,7 @@ mod tests {
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0 as CenteredCoeff; D]; block_len * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
             let block_start = block_idx * block_len;
@@ -1126,7 +1143,7 @@ mod tests {
         assert_eq!(actual_digits, expected_digits);
 
         let challenge_int = IntegerChallenge::from_sparse(&challenge);
-        let mut generic_acc = vec![[0i32; D]; num_digits];
+        let mut generic_acc = vec![[0 as CenteredCoeff; D]; num_digits];
         for digit in 0..num_digits {
             integer_mul_acc::<D>(
                 &actual_digits[digit],
@@ -1135,9 +1152,9 @@ mod tests {
             );
         }
 
-        let mut rotated = vec![[0i32; D]; D];
+        let mut rotated = vec![[0 as CenteredCoeff; D]; D];
         fill_rotated_challenge::<D>(&mut rotated, &challenge_int);
-        let mut fused_acc = vec![[0i32; D]; num_digits];
+        let mut fused_acc = vec![[0 as CenteredCoeff; D]; num_digits];
         decompose_ring_full_challenge_accumulate::<F, D>(&ring, &rotated, &mut fused_acc, &params);
         assert_eq!(fused_acc, generic_acc);
     }
