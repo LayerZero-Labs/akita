@@ -9,14 +9,242 @@
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
+use std::marker::PhantomData;
 use std::path::PathBuf;
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_planner::schedule_params::find_optimal_schedule;
 use akita_types::{
-    AkitaScheduleLookupKey, ClaimIncidenceSummary, DirectStep, FoldStep, Schedule, Step,
+    AjtaiRole, AkitaScheduleLookupKey, ClaimIncidenceSummary, CommitmentEnvelope, DirectStep,
+    FoldStep, LevelParams, Schedule, Step,
 };
+
+#[derive(Clone)]
+struct FreshPlanner<Cfg>(PhantomData<Cfg>);
+
+fn fresh_envelope<Cfg: CommitmentConfig>(num_vars: usize) -> CommitmentEnvelope {
+    let inner_floor = Cfg::audited_root_rank(AjtaiRole::Inner, num_vars);
+    let outer_floor = Cfg::audited_root_rank(AjtaiRole::Outer, num_vars);
+    CommitmentEnvelope {
+        max_n_a: inner_floor,
+        max_n_b: outer_floor,
+        max_n_d: outer_floor,
+    }
+}
+
+fn fresh_level_params_with_log_basis<Cfg: CommitmentConfig>(
+    inputs: akita_types::AkitaScheduleInputs,
+    log_basis: u32,
+) -> LevelParams {
+    let envelope = fresh_envelope::<Cfg>(inputs.num_vars);
+    let d = Cfg::D;
+    let stage1_config = Cfg::stage1_challenge_config(d);
+    let fold_shape = Cfg::fold_challenge_shape_at_level(inputs);
+
+    if inputs.level > 0 {
+        let mut candidate_n_a = envelope.max_n_a.max(1);
+        for _ in 0..(akita_types::generated::sis_floor::MAX_RANK + 1) {
+            let tentative = LevelParams::params_only(
+                Cfg::sis_modulus_family(),
+                d,
+                log_basis,
+                candidate_n_a,
+                envelope.max_n_b.max(1),
+                envelope.max_n_d.max(1),
+                stage1_config.clone(),
+            )
+            .with_fold_challenge_shape(fold_shape);
+            let Ok(layout) = akita_types::recursive_level_layout_from_params(
+                &tentative,
+                inputs.current_w_len,
+                Cfg::decomposition(),
+            ) else {
+                break;
+            };
+            let Some(derived) = akita_types::sis_derived_recursive_params_for_layout(
+                Cfg::sis_modulus_family(),
+                d,
+                log_basis,
+                &stage1_config,
+                Cfg::ring_subfield_embedding_norm_bound(),
+                &envelope,
+                &layout,
+            ) else {
+                break;
+            };
+            if derived.a_key.row_len() <= candidate_n_a {
+                let mut params = derived;
+                if let Ok(a_key) = akita_types::AjtaiKeyParams::try_new(
+                    params.a_key.sis_family(),
+                    candidate_n_a,
+                    params.a_key.col_len(),
+                    params.a_key.collision_inf(),
+                    d,
+                ) {
+                    params.a_key = a_key;
+                    return params.with_layout(&layout);
+                }
+                break;
+            }
+            candidate_n_a = derived.a_key.row_len();
+        }
+    }
+
+    LevelParams::params_only(
+        Cfg::sis_modulus_family(),
+        d,
+        log_basis,
+        envelope.max_n_a,
+        envelope.max_n_b,
+        envelope.max_n_d,
+        stage1_config,
+    )
+    .with_fold_challenge_shape(fold_shape)
+}
+
+fn fresh_root_level_params_for_layout_with_log_basis<Cfg: CommitmentConfig>(
+    inputs: akita_types::AkitaScheduleInputs,
+    lp: &LevelParams,
+) -> Result<LevelParams, akita_field::AkitaError> {
+    let params = akita_types::sis_derived_root_params_for_layout(
+        Cfg::sis_modulus_family(),
+        Cfg::D,
+        Cfg::decomposition(),
+        Cfg::stage1_challenge_config(Cfg::D),
+        Cfg::ring_subfield_embedding_norm_bound(),
+        inputs,
+        lp,
+    )?;
+    Ok(params.with_layout(lp))
+}
+
+fn fresh_root_level_layout_with_log_basis<Cfg: CommitmentConfig>(
+    inputs: akita_types::AkitaScheduleInputs,
+    log_basis: u32,
+) -> Result<LevelParams, akita_field::AkitaError> {
+    let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
+    let fold_shape = Cfg::fold_challenge_shape_at_level(inputs);
+    let mut candidate_n_a = 1usize;
+    for _ in 0..(akita_types::generated::sis_floor::MAX_RANK + 1) {
+        let candidate_params = LevelParams::params_only(
+            Cfg::sis_modulus_family(),
+            Cfg::D,
+            log_basis,
+            candidate_n_a,
+            1,
+            1,
+            stage1_config.clone(),
+        )
+        .with_fold_challenge_shape(fold_shape);
+        let root_lp = akita_types::derived_root_commitment_layout_from_params(
+            inputs,
+            Cfg::decomposition(),
+            &candidate_params,
+            false,
+        )?;
+        let derived_params =
+            fresh_root_level_params_for_layout_with_log_basis::<Cfg>(inputs, &root_lp)?;
+        if derived_params.a_key.row_len() <= candidate_n_a {
+            let mut result = derived_params;
+            result.a_key = akita_types::AjtaiKeyParams::try_new(
+                result.a_key.sis_family(),
+                candidate_n_a,
+                result.a_key.col_len(),
+                result.a_key.collision_inf(),
+                Cfg::D,
+            )?;
+            return Ok(result.with_layout(&root_lp));
+        }
+        candidate_n_a = derived_params.a_key.row_len();
+    }
+    Err(akita_field::AkitaError::InvalidSetup(format!(
+        "failed to converge on self-consistent root A-row rank for D={} lb={log_basis}",
+        Cfg::D
+    )))
+}
+
+impl<Cfg> akita_planner::PlannerConfig for FreshPlanner<Cfg>
+where
+    Cfg: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    type PlannerField = Cfg::PlannerField;
+
+    const PLANNER_D: usize = Cfg::PLANNER_D;
+
+    fn planner_field_bits() -> u32 {
+        Cfg::planner_field_bits()
+    }
+
+    fn planner_challenge_field_bits() -> u32 {
+        Cfg::planner_challenge_field_bits()
+    }
+
+    fn planner_extension_opening_width() -> usize {
+        Cfg::planner_extension_opening_width()
+    }
+
+    fn planner_recursive_witness_expansion() -> usize {
+        Cfg::planner_recursive_witness_expansion()
+    }
+
+    fn planner_recursive_public_rows() -> usize {
+        Cfg::planner_recursive_public_rows()
+    }
+
+    fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
+        Cfg::planner_sis_modulus_family()
+    }
+
+    fn planner_stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
+        Cfg::planner_stage1_challenge_config(d)
+    }
+
+    fn planner_schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
+        Ok(None)
+    }
+
+    fn planner_root_level_layout_with_log_basis(
+        inputs: akita_types::AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        fresh_root_level_layout_with_log_basis::<Cfg>(inputs, log_basis)
+    }
+
+    fn planner_current_level_layout_with_log_basis(
+        inputs: akita_types::AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        if inputs.level == 0 {
+            fresh_root_level_layout_with_log_basis::<Cfg>(inputs, log_basis)
+        } else {
+            let params = fresh_level_params_with_log_basis::<Cfg>(inputs, log_basis);
+            let layout = akita_types::recursive_level_layout_from_params(
+                &params,
+                inputs.current_w_len,
+                Cfg::decomposition(),
+            )?;
+            Ok(params.with_layout(&layout))
+        }
+    }
+
+    fn planner_root_level_params_for_layout_with_log_basis(
+        inputs: akita_types::AkitaScheduleInputs,
+        lp: &akita_types::LevelParams,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        fresh_root_level_params_for_layout_with_log_basis::<Cfg>(inputs, lp)
+    }
+
+    fn planner_log_basis_search_range(inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
+        Cfg::planner_log_basis_search_range(inputs)
+    }
+
+    fn planner_fold_prover_weight() -> usize {
+        Cfg::planner_fold_prover_weight()
+    }
+}
 
 #[derive(Clone, Copy)]
 enum FamilyKind {
@@ -26,6 +254,7 @@ enum FamilyKind {
     Fp128D32OneHot,
     Fp128D64Full,
     Fp128D64OneHot,
+    Fp128D64OneHotTensor,
     Fp32D64Full,
     Fp32D64OneHot,
     Fp32D128Full,
@@ -95,6 +324,13 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         min_num_vars: 1,
         max_num_vars: 50,
         kind: FamilyKind::Fp128D64OneHot,
+    },
+    FamilySpec {
+        module_name: "fp128_d64_onehot_tensor",
+        const_name: "FP128_D64_ONEHOT_TENSOR_SCHEDULES",
+        min_num_vars: 1,
+        max_num_vars: 50,
+        kind: FamilyKind::Fp128D64OneHotTensor,
     },
     FamilySpec {
         module_name: "fp32_d64",
@@ -295,19 +531,22 @@ fn generator_command() -> &'static str {
     }
 }
 
-fn emit_family_rows<Cfg: CommitmentConfig>(
+fn emit_family_rows<Cfg>(
     spec: FamilySpec,
     incidence_for_nv: impl Fn(usize) -> ClaimIncidenceSummary,
     label_counts: (usize, usize, usize),
     out: &mut String,
-) -> Result<(), String> {
+) -> Result<(), String>
+where
+    Cfg: CommitmentConfig + akita_planner::PlannerConfig,
+{
     let (num_t_vectors, num_w_vectors, num_z_vectors) = label_counts;
 
     for nv in spec.min_num_vars..=spec.max_num_vars {
         let incidence = incidence_for_nv(nv);
         let key = AkitaScheduleLookupKey::new_from_incidence(&incidence)
             .map_err(|e| format!("build schedule key: {e}"))?;
-        let schedule = match find_optimal_schedule::<Cfg>(key) {
+        let schedule = match find_optimal_schedule::<FreshPlanner<Cfg>>(key) {
             Ok(s) => s,
             Err(e) => {
                 return Err(format!(
@@ -367,6 +606,10 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
         FamilyKind::Fp128D64OneHot => {
             emit_family_rows::<fp128::D64OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
             emit_family_rows::<fp128::D64OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
+        }
+        FamilyKind::Fp128D64OneHotTensor => {
+            emit_family_rows::<fp128::D64OneHotTensor>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D64OneHotTensor>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp32D64Full => {
             emit_family_rows::<fp32::D64Full>(spec, singleton, (1, 1, 1), &mut out)?;
