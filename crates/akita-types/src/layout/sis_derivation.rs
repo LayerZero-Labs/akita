@@ -1,6 +1,6 @@
 //! SIS-derivation primitives for config and schedule policy code.
 
-use crate::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+use crate::generated::sis_floor::min_rank_for_secure_width;
 use crate::layout::digit_math::{
     compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
 };
@@ -86,14 +86,76 @@ pub struct SisCollisionBounds {
     pub bd: u32,
 }
 
-fn a_role_collision_raw(
-    a_raw: u32,
-    stage1_config: &SparseChallengeConfig,
-    ring_subfield_embedding_norm_bound: u32,
-) -> Option<u32> {
-    a_raw
-        .checked_mul(stage1_config.infinity_norm())?
-        .checked_mul(ring_subfield_embedding_norm_bound)
+fn a_role_raw_collision(a_raw: u32, ring_subfield_embedding_norm_bound: u32) -> Option<u32> {
+    a_raw.checked_mul(ring_subfield_embedding_norm_bound)
+}
+
+/// Validate that the stored Ajtai ranks in `lp` meet the 128-bit SIS floor
+/// for the collision bucket carried in each `*_key.collision_inf`.
+///
+/// A stored `collision_inf == 0` means the role has not pinned a bucket yet
+/// and is skipped.
+///
+/// # Errors
+///
+/// Returns an error if a stored rank is below the generated SIS floor for the
+/// role's stored collision bucket and layout width.
+pub fn validate_stored_sis_ranks(lp: &LevelParams) -> Result<(), AkitaError> {
+    let check = |role: &str,
+                 sis_family: SisModulusFamily,
+                 collision_bucket: u32,
+                 stored_rank: usize,
+                 width: u64|
+     -> Result<(), AkitaError> {
+        if stored_rank == 0 || width == 0 || collision_bucket == 0 {
+            return Ok(());
+        }
+        let Some(required_rank) = min_rank_for_secure_width(
+            sis_family,
+            lp.ring_dimension as u32,
+            collision_bucket,
+            width,
+        ) else {
+            return Err(AkitaError::InvalidSetup(format!(
+                "stored rank {stored_rank} for {role} role: SIS table has no row \
+                 for (family={sis_family:?}, D={}, collision_bucket={collision_bucket}); \
+                 cannot verify 128-bit security at width {width}",
+                lp.ring_dimension
+            )));
+        };
+        if stored_rank < required_rank {
+            return Err(AkitaError::InvalidSetup(format!(
+                "stored {role}-role rank {stored_rank} is below the 128-bit SIS floor \
+                 (family={sis_family:?}, D={}, collision_bucket={collision_bucket}, \
+                 width={width}, shape={:?}, required_rank={required_rank})",
+                lp.ring_dimension, lp.fold_challenge_shape
+            )));
+        }
+        Ok(())
+    };
+
+    check(
+        "A",
+        lp.a_key.sis_family(),
+        lp.a_key.collision_inf(),
+        lp.a_key.row_len(),
+        lp.inner_width() as u64,
+    )?;
+    check(
+        "B",
+        lp.b_key.sis_family(),
+        lp.b_key.collision_inf(),
+        lp.b_key.row_len(),
+        lp.outer_width() as u64,
+    )?;
+    check(
+        "D",
+        lp.d_key.sis_family(),
+        lp.d_key.collision_inf(),
+        lp.d_key.row_len(),
+        lp.d_matrix_width() as u64,
+    )?;
+    Ok(())
 }
 
 /// Build a SIS-secure `LevelParams` from the explicit width budget.
@@ -167,9 +229,9 @@ pub fn sis_derived_recursive_params_for_layout(
 ) -> Option<LevelParams> {
     let bd_collision = (1u32 << log_basis) - 1;
     let a_raw = bd_collision;
-    let a_collision_raw =
-        a_role_collision_raw(a_raw, stage1_config, ring_subfield_embedding_norm_bound)?;
-    let a_collision = ceil_supported_collision(sis_family, d as u32, a_collision_raw)?;
+    let a_collision_raw = a_role_raw_collision(a_raw, ring_subfield_embedding_norm_bound)?;
+    let a_report = layout.stage1_sis_extraction_report(a_collision_raw).ok()?;
+    let a_collision = a_report.a_role_supported_collision_bucket;
 
     let exact_outer_width = {
         let n_a = min_rank_for_secure_width(
@@ -221,20 +283,14 @@ pub fn sis_derived_root_params_for_layout(
     } else {
         bd_collision
     };
-    let a_collision_raw =
-        a_role_collision_raw(a_raw, &stage1_config, ring_subfield_embedding_norm_bound)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "root A-role collision overflow for family={sis_family:?}, D={d}"
-                ))
-            })?;
-    let a_collision =
-        ceil_supported_collision(sis_family, d as u32, a_collision_raw).ok_or_else(|| {
+    let a_collision_raw = a_role_raw_collision(a_raw, ring_subfield_embedding_norm_bound)
+        .ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
-                "missing supported root A-role collision bucket for family={sis_family:?}, D={d} \
-                 and raw collision {a_collision_raw}"
+                "root A-role collision overflow for family={sis_family:?}, D={d}"
             ))
         })?;
+    let a_report = lp.stage1_sis_extraction_report(a_collision_raw)?;
+    let a_collision = a_report.a_role_supported_collision_bucket;
     sis_secure_level_params(
         sis_family,
         d,

@@ -38,6 +38,7 @@ pub use layout::{
     sis_derived_root_params_for_layout, sis_secure_level_params, sumcheck_rounds,
     terminal_level_proof_bytes, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix, LevelParams,
     MRowLayout, RingMatrixView, RingOpeningPoint, SisModulusFamily, SisRoleWidths,
+    validate_stored_sis_ranks,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
