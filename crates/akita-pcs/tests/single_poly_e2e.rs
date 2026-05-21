@@ -340,81 +340,223 @@ fn single_onehot_oversized_setup_20_15() {
 mod tensor_fold {
     use super::*;
     use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+    use akita_config::proof_optimized::fp128::D64OneHotTensor;
     use akita_config::CommitmentConfig;
     use akita_field::AkitaError;
     use akita_planner::PlannerConfig;
     use akita_types::generated::GeneratedScheduleTable;
     use akita_types::layout::digit_math::compute_num_digits_fold_with_claims;
     use akita_types::{
-        AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
-        ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, Schedule, ScheduleProvider,
-        Step,
+        AjtaiRole, AkitaCommitmentHint, AkitaScheduleInputs, AkitaScheduleLookupKey,
+        AkitaSchedulePlan, AkitaVerifierSetup, ClaimIncidenceSummary, CommitmentEnvelope,
+        DecompositionParams, RingCommitment, Schedule, ScheduleProvider, Step,
     };
+    use std::time::Instant;
 
-    /// Test-only config that tensorises the root fold of [`OneHotCfg`]'s
-    /// production schedule. Delegates every method except `get_params_for_prove`
-    /// to `OneHotCfg`; that method calls into the default impl and then walks
-    /// the returned [`Schedule`], replacing the root [`Step::Fold`]'s
-    /// `params.fold_challenge_shape` with [`TensorChallengeShape::Tensor`] and
-    /// re-deriving the dependent layout (`num_digits_fold`,
-    /// `delta_fold_per_poly`, `w_ring`, `next_w_len`, successor's
-    /// `current_w_len`).
+    /// Defines a test-only config that tensorises the root fold of a production
+    /// config. Every method delegates to the base config except
+    /// `get_params_for_prove`, which flips the root fold challenge shape to
+    /// [`TensorChallengeShape::Tensor`] and re-derives dependent layout fields.
+    macro_rules! tensor_cfg {
+        ($name:ident, $base:ty) => {
+            #[derive(Clone, Copy, Debug)]
+            struct $name;
+
+            impl ScheduleProvider for $name {
+                fn schedule_table() -> Option<GeneratedScheduleTable> {
+                    <$base as ScheduleProvider>::schedule_table()
+                }
+                fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+                    <$base as ScheduleProvider>::schedule_key(key)
+                }
+                fn schedule_plan(
+                    key: AkitaScheduleLookupKey,
+                ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+                    <$base as ScheduleProvider>::schedule_plan(key)
+                }
+            }
+
+            impl PlannerConfig for $name {
+                const PLANNER_D: usize = <$base as PlannerConfig>::PLANNER_D;
+                type PlannerField = <$base as PlannerConfig>::PlannerField;
+
+                fn planner_field_bits() -> u32 {
+                    <$base as PlannerConfig>::planner_field_bits()
+                }
+                fn planner_challenge_field_bits() -> u32 {
+                    <$base as PlannerConfig>::planner_challenge_field_bits()
+                }
+                fn planner_extension_opening_width() -> usize {
+                    <$base as PlannerConfig>::planner_extension_opening_width()
+                }
+                fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
+                    <$base as PlannerConfig>::planner_sis_modulus_family()
+                }
+                fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+                    <$base as PlannerConfig>::planner_stage1_challenge_config(d)
+                }
+                fn planner_schedule_plan(
+                    key: AkitaScheduleLookupKey,
+                ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+                    <$base as PlannerConfig>::planner_schedule_plan(key)
+                }
+                fn planner_root_level_layout_with_log_basis(
+                    inputs: AkitaScheduleInputs,
+                    log_basis: u32,
+                ) -> Result<LevelParams, AkitaError> {
+                    <$base as PlannerConfig>::planner_root_level_layout_with_log_basis(
+                        inputs, log_basis,
+                    )
+                }
+                fn planner_current_level_layout_with_log_basis(
+                    inputs: AkitaScheduleInputs,
+                    log_basis: u32,
+                ) -> Result<LevelParams, AkitaError> {
+                    <$base as PlannerConfig>::planner_current_level_layout_with_log_basis(
+                        inputs, log_basis,
+                    )
+                }
+                fn planner_root_level_params_for_layout_with_log_basis(
+                    inputs: AkitaScheduleInputs,
+                    lp: &LevelParams,
+                ) -> Result<LevelParams, AkitaError> {
+                    <$base as PlannerConfig>::planner_root_level_params_for_layout_with_log_basis(
+                        inputs, lp,
+                    )
+                }
+                fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+                    <$base as PlannerConfig>::planner_log_basis_search_range(inputs)
+                }
+            }
+
+            impl CommitmentConfig for $name {
+                type Field = F;
+                type ClaimField = <$base as CommitmentConfig>::ClaimField;
+                type ChallengeField = <$base as CommitmentConfig>::ChallengeField;
+                const D: usize = <$base as CommitmentConfig>::D;
+
+                fn sis_modulus_family() -> akita_types::SisModulusFamily {
+                    <$base as CommitmentConfig>::sis_modulus_family()
+                }
+                fn decomposition() -> DecompositionParams {
+                    <$base as CommitmentConfig>::decomposition()
+                }
+                fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+                    <$base as CommitmentConfig>::stage1_challenge_config(d)
+                }
+                fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
+                    <$base as CommitmentConfig>::audited_root_rank(role, max_num_vars)
+                }
+                fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+                    <$base as CommitmentConfig>::envelope(max_num_vars)
+                }
+                fn max_setup_matrix_size(
+                    max_num_vars: usize,
+                    max_num_batched_polys: usize,
+                    max_num_points: usize,
+                ) -> Result<(usize, usize), AkitaError> {
+                    <$base as CommitmentConfig>::max_setup_matrix_size(
+                        max_num_vars,
+                        max_num_batched_polys,
+                        max_num_points,
+                    )
+                }
+                fn level_params_with_log_basis(
+                    inputs: AkitaScheduleInputs,
+                    log_basis: u32,
+                ) -> LevelParams {
+                    <$base as CommitmentConfig>::level_params_with_log_basis(inputs, log_basis)
+                }
+                fn root_level_params_for_layout_with_log_basis(
+                    inputs: AkitaScheduleInputs,
+                    lp: &LevelParams,
+                ) -> Result<LevelParams, AkitaError> {
+                    <$base as CommitmentConfig>::root_level_params_for_layout_with_log_basis(
+                        inputs, lp,
+                    )
+                }
+                fn root_level_layout_with_log_basis(
+                    inputs: AkitaScheduleInputs,
+                    log_basis: u32,
+                ) -> Result<LevelParams, AkitaError> {
+                    <$base as CommitmentConfig>::root_level_layout_with_log_basis(inputs, log_basis)
+                }
+                fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
+                    <$base as CommitmentConfig>::log_basis_at_level(inputs)
+                }
+                fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+                    <$base as CommitmentConfig>::log_basis_search_range(inputs)
+                }
+                fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, AkitaError> {
+                    <$base as CommitmentConfig>::commitment_layout(max_num_vars)
+                }
+
+                fn get_params_for_prove(
+                    incidence: &ClaimIncidenceSummary,
+                ) -> Result<Schedule, AkitaError> {
+                    let mut schedule =
+                        <$base as CommitmentConfig>::get_params_for_prove(incidence)?;
+                    tensorise_root_step::<F>(&mut schedule, Self::decomposition().field_bits())?;
+                    Ok(schedule)
+                }
+            }
+        };
+    }
+
+    tensor_cfg!(TensorOneHotCfg, OneHotCfg);
+
     #[derive(Clone, Copy, Debug)]
-    struct TensorOneHotCfg;
+    struct TensorDenseCfg;
 
-    type TensorOneHotScheme = AkitaCommitmentScheme<ONEHOT_D, TensorOneHotCfg>;
-
-    impl ScheduleProvider for TensorOneHotCfg {
+    impl ScheduleProvider for TensorDenseCfg {
         fn schedule_table() -> Option<GeneratedScheduleTable> {
-            OneHotCfg::schedule_table()
+            None
         }
         fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-            OneHotCfg::schedule_key(key)
+            DenseCfg::schedule_key(key)
         }
         fn schedule_plan(
-            key: AkitaScheduleLookupKey,
+            _key: AkitaScheduleLookupKey,
         ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-            OneHotCfg::schedule_plan(key)
+            Ok(None)
         }
     }
 
-    impl PlannerConfig for TensorOneHotCfg {
-        const PLANNER_D: usize = OneHotCfg::D;
-        type PlannerField = <OneHotCfg as PlannerConfig>::PlannerField;
+    impl PlannerConfig for TensorDenseCfg {
+        const PLANNER_D: usize = DenseCfg::D;
+        type PlannerField = <DenseCfg as PlannerConfig>::PlannerField;
 
         fn planner_field_bits() -> u32 {
-            <OneHotCfg as PlannerConfig>::planner_field_bits()
+            <DenseCfg as PlannerConfig>::planner_field_bits()
         }
         fn planner_challenge_field_bits() -> u32 {
-            <OneHotCfg as PlannerConfig>::planner_challenge_field_bits()
+            <DenseCfg as PlannerConfig>::planner_challenge_field_bits()
         }
         fn planner_extension_opening_width() -> usize {
-            <OneHotCfg as PlannerConfig>::planner_extension_opening_width()
+            <DenseCfg as PlannerConfig>::planner_extension_opening_width()
         }
         fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
-            <OneHotCfg as PlannerConfig>::planner_sis_modulus_family()
+            <DenseCfg as PlannerConfig>::planner_sis_modulus_family()
         }
         fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-            <OneHotCfg as PlannerConfig>::planner_stage1_challenge_config(d)
+            <DenseCfg as PlannerConfig>::planner_stage1_challenge_config(d)
         }
         fn planner_schedule_plan(
-            key: AkitaScheduleLookupKey,
+            _key: AkitaScheduleLookupKey,
         ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-            <OneHotCfg as PlannerConfig>::planner_schedule_plan(key)
+            Ok(None)
         }
         fn planner_root_level_layout_with_log_basis(
             inputs: AkitaScheduleInputs,
             log_basis: u32,
         ) -> Result<LevelParams, AkitaError> {
-            <OneHotCfg as PlannerConfig>::planner_root_level_layout_with_log_basis(
-                inputs, log_basis,
-            )
+            <DenseCfg as PlannerConfig>::planner_root_level_layout_with_log_basis(inputs, log_basis)
         }
         fn planner_current_level_layout_with_log_basis(
             inputs: AkitaScheduleInputs,
             log_basis: u32,
         ) -> Result<LevelParams, AkitaError> {
-            <OneHotCfg as PlannerConfig>::planner_current_level_layout_with_log_basis(
+            <DenseCfg as PlannerConfig>::planner_current_level_layout_with_log_basis(
                 inputs, log_basis,
             )
         }
@@ -422,74 +564,77 @@ mod tensor_fold {
             inputs: AkitaScheduleInputs,
             lp: &LevelParams,
         ) -> Result<LevelParams, AkitaError> {
-            <OneHotCfg as PlannerConfig>::planner_root_level_params_for_layout_with_log_basis(
+            <DenseCfg as PlannerConfig>::planner_root_level_params_for_layout_with_log_basis(
                 inputs, lp,
             )
         }
         fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-            <OneHotCfg as PlannerConfig>::planner_log_basis_search_range(inputs)
+            <DenseCfg as PlannerConfig>::planner_log_basis_search_range(inputs)
         }
     }
 
-    impl CommitmentConfig for TensorOneHotCfg {
+    impl CommitmentConfig for TensorDenseCfg {
         type Field = F;
-        type ClaimField = <OneHotCfg as CommitmentConfig>::ClaimField;
-        type ChallengeField = <OneHotCfg as CommitmentConfig>::ChallengeField;
-        const D: usize = ONEHOT_D;
+        type ClaimField = <DenseCfg as CommitmentConfig>::ClaimField;
+        type ChallengeField = <DenseCfg as CommitmentConfig>::ChallengeField;
+        const D: usize = DENSE_D;
 
         fn sis_modulus_family() -> akita_types::SisModulusFamily {
-            <OneHotCfg as CommitmentConfig>::sis_modulus_family()
+            <DenseCfg as CommitmentConfig>::sis_modulus_family()
         }
         fn decomposition() -> DecompositionParams {
-            OneHotCfg::decomposition()
+            DenseCfg::decomposition()
         }
         fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-            OneHotCfg::stage1_challenge_config(d)
+            DenseCfg::stage1_challenge_config(d)
+        }
+        fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
+            if inputs.level == 0 {
+                TensorChallengeShape::Tensor
+            } else {
+                TensorChallengeShape::Flat
+            }
         }
         fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
-            OneHotCfg::audited_root_rank(role, max_num_vars)
+            DenseCfg::audited_root_rank(role, max_num_vars)
         }
         fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-            OneHotCfg::envelope(max_num_vars)
+            DenseCfg::envelope(max_num_vars)
         }
         fn max_setup_matrix_size(
             max_num_vars: usize,
             max_num_batched_polys: usize,
             max_num_points: usize,
         ) -> Result<(usize, usize), AkitaError> {
-            OneHotCfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+            DenseCfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
         }
         fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams {
-            OneHotCfg::level_params_with_log_basis(inputs, log_basis)
+            DenseCfg::level_params_with_log_basis(inputs, log_basis)
         }
         fn root_level_params_for_layout_with_log_basis(
             inputs: AkitaScheduleInputs,
             lp: &LevelParams,
         ) -> Result<LevelParams, AkitaError> {
-            OneHotCfg::root_level_params_for_layout_with_log_basis(inputs, lp)
+            DenseCfg::root_level_params_for_layout_with_log_basis(inputs, lp)
         }
         fn root_level_layout_with_log_basis(
             inputs: AkitaScheduleInputs,
             log_basis: u32,
         ) -> Result<LevelParams, AkitaError> {
-            OneHotCfg::root_level_layout_with_log_basis(inputs, log_basis)
+            DenseCfg::root_level_layout_with_log_basis(inputs, log_basis)
         }
         fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
-            OneHotCfg::log_basis_at_level(inputs)
+            DenseCfg::log_basis_at_level(inputs)
         }
         fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-            OneHotCfg::log_basis_search_range(inputs)
+            DenseCfg::log_basis_search_range(inputs)
         }
         fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, AkitaError> {
-            OneHotCfg::commitment_layout(max_num_vars)
-        }
-
-        fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
-            let mut schedule = OneHotCfg::get_params_for_prove(incidence)?;
-            tensorise_root_step::<F>(&mut schedule, Self::decomposition().field_bits())?;
-            Ok(schedule)
+            DenseCfg::commitment_layout(max_num_vars)
         }
     }
+
+    type TensorOneHotScheme = AkitaCommitmentScheme<ONEHOT_D, TensorOneHotCfg>;
 
     /// Flip the root fold step's `fold_challenge_shape` to Tensor and
     /// re-derive every layout field that depends on the (now wider) effective
@@ -621,6 +766,242 @@ mod tensor_fold {
                 BasisMode::Lagrange,
             )
             .expect("verify");
+        });
+    }
+
+    struct Measurement {
+        backend: &'static str,
+        shape: &'static str,
+        nv: usize,
+        prove_ms: f64,
+        verify_ms: f64,
+        proof_bytes: usize,
+    }
+
+    fn measure_onehot_case<Cfg>(shape: &'static str, nv: usize, iters: usize) -> Measurement
+    where
+        Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+        AkitaCommitmentScheme<ONEHOT_D, Cfg>: CommitmentProver<
+                F,
+                ONEHOT_D,
+                ClaimField = F,
+                VerifierSetup = AkitaVerifierSetup<F>,
+                Commitment = RingCommitment<F, ONEHOT_D>,
+                CommitHint = AkitaCommitmentHint<F, ONEHOT_D>,
+                BatchedProof = AkitaBatchedProof<F, F>,
+            > + CommitmentVerifier<
+                F,
+                ONEHOT_D,
+                ClaimField = F,
+                VerifierSetup = AkitaVerifierSetup<F>,
+                Commitment = RingCommitment<F, ONEHOT_D>,
+                BatchedProof = AkitaBatchedProof<F, F>,
+            >,
+    {
+        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let poly = make_onehot_poly(&layout, 0x5eed_1000 + nv as u64);
+        let pt = random_point(nv, 0x5eed_1f00 + nv as u64);
+        let expected_opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
+        let setup =
+            <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
+                nv, 1, 1,
+            );
+        let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::setup_verifier(&setup);
+        let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::commit(std::slice::from_ref(&poly), &setup)
+        .expect("commit");
+
+        let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
+        let commitments = [commitment];
+        let openings = [expected_opening];
+        let opening_groups = [&openings[..]];
+        let transcript_label = format!("single_poly_e2e/measure/onehot/{shape}/nv{nv}");
+
+        let prove_start = Instant::now();
+        let mut proof = None;
+        for _ in 0..iters {
+            let mut transcript = Blake2bTranscript::<F>::new(transcript_label.as_bytes());
+            proof = Some(
+                <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+                    &setup,
+                    prove_input(&pt[..], &poly_refs[..], &commitments[0], hint.clone()),
+                    &mut transcript,
+                    BasisMode::Lagrange,
+                )
+                .expect("prove"),
+            );
+        }
+        let prove_ms = prove_start.elapsed().as_secs_f64() * 1_000.0 / iters as f64;
+        let proof = proof.expect("measurement must run at least one prove iteration");
+        let mut serialized = Vec::new();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize proof");
+
+        let verify_start = Instant::now();
+        for _ in 0..iters {
+            let mut transcript = Blake2bTranscript::<F>::new(transcript_label.as_bytes());
+            <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut transcript,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                BasisMode::Lagrange,
+            )
+            .expect("verify");
+        }
+        let verify_ms = verify_start.elapsed().as_secs_f64() * 1_000.0 / iters as f64;
+
+        Measurement {
+            backend: "onehot",
+            shape,
+            nv,
+            prove_ms,
+            verify_ms,
+            proof_bytes: serialized.len(),
+        }
+    }
+
+    fn measure_dense_case<Cfg>(shape: &'static str, nv: usize, iters: usize) -> Measurement
+    where
+        Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+        AkitaCommitmentScheme<DENSE_D, Cfg>: CommitmentProver<
+                F,
+                DENSE_D,
+                ClaimField = F,
+                VerifierSetup = AkitaVerifierSetup<F>,
+                Commitment = RingCommitment<F, DENSE_D>,
+                CommitHint = AkitaCommitmentHint<F, DENSE_D>,
+                BatchedProof = AkitaBatchedProof<F, F>,
+            > + CommitmentVerifier<
+                F,
+                DENSE_D,
+                ClaimField = F,
+                VerifierSetup = AkitaVerifierSetup<F>,
+                Commitment = RingCommitment<F, DENSE_D>,
+                BatchedProof = AkitaBatchedProof<F, F>,
+            >,
+    {
+        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let poly = make_dense_poly(nv, 0x5eed_d000 + nv as u64);
+        let pt = random_point(nv, 0x5eed_df00 + nv as u64);
+        let expected_opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
+        let setup =
+            <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
+                nv, 1, 1,
+            );
+        let verifier_setup = <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::setup_verifier(&setup);
+        let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::commit(std::slice::from_ref(&poly), &setup)
+        .expect("commit");
+
+        let poly_refs: [&DensePoly<F, DENSE_D>; 1] = [&poly];
+        let commitments = [commitment];
+        let openings = [expected_opening];
+        let opening_groups = [&openings[..]];
+        let transcript_label = format!("single_poly_e2e/measure/dense/{shape}/nv{nv}");
+
+        let prove_start = Instant::now();
+        let mut proof = None;
+        for _ in 0..iters {
+            let mut transcript = Blake2bTranscript::<F>::new(transcript_label.as_bytes());
+            proof = Some(
+                <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
+                    &setup,
+                    prove_input(&pt[..], &poly_refs[..], &commitments[0], hint.clone()),
+                    &mut transcript,
+                    BasisMode::Lagrange,
+                )
+                .expect("prove"),
+            );
+        }
+        let prove_ms = prove_start.elapsed().as_secs_f64() * 1_000.0 / iters as f64;
+        let proof = proof.expect("measurement must run at least one prove iteration");
+        let mut serialized = Vec::new();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize proof");
+
+        let verify_start = Instant::now();
+        for _ in 0..iters {
+            let mut transcript = Blake2bTranscript::<F>::new(transcript_label.as_bytes());
+            <AkitaCommitmentScheme<DENSE_D, Cfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut transcript,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                BasisMode::Lagrange,
+            )
+            .expect("verify");
+        }
+        let verify_ms = verify_start.elapsed().as_secs_f64() * 1_000.0 / iters as f64;
+
+        Measurement {
+            backend: "dense",
+            shape,
+            nv,
+            prove_ms,
+            verify_ms,
+            proof_bytes: serialized.len(),
+        }
+    }
+
+    fn print_measurements(rows: &[Measurement]) {
+        println!(
+            "\n{:<8} {:<7} {:>4} {:>12} {:>12} {:>12}",
+            "backend", "shape", "nv", "prove_ms", "verify_ms", "proof_bytes"
+        );
+        for row in rows {
+            println!(
+                "{:<8} {:<7} {:>4} {:>12.3} {:>12.3} {:>12}",
+                row.backend, row.shape, row.nv, row.prove_ms, row.verify_ms, row.proof_bytes
+            );
+        }
+        for pair in rows.chunks_exact(2) {
+            let flat = &pair[0];
+            let tensor = &pair[1];
+            println!(
+                "{:<8} tensor/flat: prove {:.3}x, verify {:.3}x, proof {:.3}x",
+                flat.backend,
+                tensor.prove_ms / flat.prove_ms,
+                tensor.verify_ms / flat.verify_ms,
+                tensor.proof_bytes as f64 / flat.proof_bytes as f64
+            );
+        }
+    }
+
+    fn env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    }
+
+    #[test]
+    #[ignore]
+    fn tensor_vs_flat_measurements() {
+        init_rayon_pool();
+        run_on_large_stack(|| {
+            let onehot_nv = env_usize("AKITA_TENSOR_MEASURE_ONEHOT_NV", 25);
+            let dense_nv = env_usize("AKITA_TENSOR_MEASURE_DENSE_NV", 15);
+            let iters = env_usize("AKITA_TENSOR_MEASURE_ITERS", 3);
+            let rows = [
+                measure_onehot_case::<OneHotCfg>("flat", onehot_nv, iters),
+                measure_onehot_case::<D64OneHotTensor>("tensor", onehot_nv, iters),
+                measure_dense_case::<DenseCfg>("flat", dense_nv, iters),
+                measure_dense_case::<TensorDenseCfg>("tensor", dense_nv, iters),
+            ];
+            print_measurements(&rows);
         });
     }
 

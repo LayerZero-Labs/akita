@@ -8,15 +8,15 @@ use akita_algebra::ring::cyclotomic::{
     decompose_centering_threshold, BalancedDecomposePow2I8Params,
 };
 use akita_algebra::{CyclotomicRing, EqPolynomial};
-use akita_challenges::IntegerChallenge;
+use akita_challenges::{IntegerChallenge, TensorChallengeSet, TensorChallenges};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_sumcheck::tensor_opening_split;
 
 use crate::backend::poly_helpers::{
-    balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
-    decompose_ring_single_digit, integer_mul_acc, try_small_i8_cache_from_ring_coeffs,
-    DecomposeParams,
+    balanced_ring_decompose_fold_partitioned, balanced_ring_decompose_fold_tensor_partitioned,
+    build_decompose_fold_witness, decompose_ring_single_digit, integer_mul_acc,
+    try_small_i8_cache_from_ring_coeffs, DecomposeParams,
 };
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::{
@@ -239,6 +239,170 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         }
         Ok(partials)
     }
+
+    fn decompose_fold_batched_tensor_dense(
+        polys: &[&Self],
+        tensor: &TensorChallengeSet,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        if polys.is_empty() {
+            return Ok(None);
+        }
+        let q = (-F::one()).to_canonical_u128() + 1;
+        if let Some(digit_planes) = polys
+            .iter()
+            .map(|poly| poly.digit_planes_for(num_digits, log_basis))
+            .collect::<Option<Vec<_>>>()
+        {
+            let centered_coeffs = {
+                let _span = tracing::info_span!("dense_tensor_cached_digit_accumulate").entered();
+                accumulate_cached_digit_planes_tensor::<D>(
+                    &digit_planes,
+                    tensor,
+                    block_len,
+                    num_digits,
+                )?
+            };
+            let _span = tracing::info_span!("dense_tensor_cached_digit_convert").entered();
+            return Ok(Some(build_decompose_fold_witness::<F, D>(
+                centered_coeffs,
+                q,
+            )));
+        }
+
+        let threshold = decompose_centering_threshold(num_digits, log_basis, q);
+        let params = DecomposeParams {
+            threshold,
+            q,
+            mask: (1i128 << log_basis) - 1,
+            half_b: 1i128 << (log_basis - 1),
+            b_val: 1i128 << log_basis,
+            log_basis,
+            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+        };
+        let coeff_slices = polys
+            .iter()
+            .map(|poly| poly.coeffs.as_slice())
+            .collect::<Vec<_>>();
+        let centered_coeffs = {
+            let _span = tracing::info_span!("dense_tensor_accumulate").entered();
+            balanced_ring_decompose_fold_tensor_partitioned::<F, D>(
+                &coeff_slices,
+                tensor,
+                block_len,
+                num_digits,
+                &params,
+            )?
+        };
+        let _span = tracing::info_span!("dense_tensor_convert").entered();
+        Ok(Some(build_decompose_fold_witness::<F, D>(
+            centered_coeffs,
+            params.q,
+        )))
+    }
+}
+
+fn accumulate_cached_digit_planes_tensor<const D: usize>(
+    digit_planes_by_poly: &[&[[i8; D]]],
+    tensor: &TensorChallengeSet,
+    block_len: usize,
+    num_digits: usize,
+) -> Result<Vec<[CenteredCoeff; D]>, AkitaError> {
+    if block_len == 0 || num_digits == 0 {
+        return Err(AkitaError::InvalidInput(
+            "dense cached tensor decompose-fold requires non-zero block_len and num_digits"
+                .to_string(),
+        ));
+    }
+    if digit_planes_by_poly.len() != tensor.num_claims {
+        return Err(AkitaError::InvalidSize {
+            expected: tensor.num_claims,
+            actual: digit_planes_by_poly.len(),
+        });
+    }
+    let expected_left = tensor
+        .num_claims
+        .checked_mul(tensor.left_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("tensor-left count overflow".to_string()))?;
+    if tensor.left.len() != expected_left {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_left,
+            actual: tensor.left.len(),
+        });
+    }
+    let expected_right = tensor
+        .num_claims
+        .checked_mul(tensor.right_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("tensor-right count overflow".to_string()))?;
+    if tensor.right.len() != expected_right {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_right,
+            actual: tensor.right.len(),
+        });
+    }
+    let blocks_per_claim = tensor
+        .left_len
+        .checked_mul(tensor.right_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))?;
+    let total_blocks = tensor
+        .num_claims
+        .checked_mul(blocks_per_claim)
+        .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))?;
+
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(block_len.max(1)).max(1);
+    let elem_chunk = block_len.div_ceil(actual_threads);
+    let chunks = cfg_into_iter!(0..actual_threads)
+        .map(|tid| {
+            let elem_start = tid * elem_chunk;
+            if elem_start >= block_len {
+                return Ok(Vec::new());
+            }
+            let elem_end = (elem_start + elem_chunk).min(block_len);
+            let mut acc = vec![[0 as CenteredCoeff; D]; (elem_end - elem_start) * num_digits];
+
+            for block_idx in 0..total_blocks {
+                let claim_idx = block_idx / blocks_per_claim;
+                let local_block_idx = block_idx % blocks_per_claim;
+                let left_idx = claim_idx * tensor.left_len + (local_block_idx / tensor.right_len);
+                let right_idx = claim_idx * tensor.right_len + (local_block_idx % tensor.right_len);
+                let challenge = IntegerChallenge::tensor_product::<D>(
+                    &tensor.left[left_idx],
+                    &tensor.right[right_idx],
+                )?;
+                let digit_planes = digit_planes_by_poly[claim_idx];
+
+                for elem_idx in elem_start..elem_end {
+                    let ring_idx = local_block_idx * block_len + elem_idx;
+                    let plane_base = ring_idx * num_digits;
+                    if plane_base >= digit_planes.len() {
+                        continue;
+                    }
+                    let out_base = (elem_idx - elem_start) * num_digits;
+                    for digit_idx in 0..num_digits {
+                        let Some(digit_plane) = digit_planes.get(plane_base + digit_idx) else {
+                            continue;
+                        };
+                        integer_mul_acc::<D>(
+                            digit_plane,
+                            &challenge,
+                            &mut acc[out_base + digit_idx],
+                        );
+                    }
+                }
+            }
+
+            Ok(acc)
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+
+    Ok(chunks.into_iter().flatten().collect())
 }
 
 impl<F, const D: usize> AkitaPolyOps<F, D> for DensePoly<F, D>
@@ -437,6 +601,22 @@ where
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();
         build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
+    }
+
+    #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold_tensor_batched")]
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        challenges: &TensorChallenges,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        match challenges {
+            TensorChallenges::Flat(_) => Ok(None),
+            TensorChallenges::Tensor(tensor) => Self::decompose_fold_batched_tensor_dense(
+                polys, tensor, block_len, num_digits, log_basis,
+            ),
+        }
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]
@@ -785,6 +965,7 @@ pub(crate) mod test_helpers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_challenges::{SparseChallenge, TensorChallengeSet, TensorChallenges};
     use akita_field::fields::{TowerBasisFp4, TwoNr, UnitNr};
     use akita_field::Prime128OffsetA7F7 as F;
     use akita_sumcheck::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
@@ -793,6 +974,95 @@ mod tests {
         CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
             F::from_u64(offset + idx as u64 + 1)
         }))
+    }
+
+    fn dense_poly<const D: usize>(num_rings: usize, seed: u64) -> DensePoly<F, D> {
+        let coeffs = (0..num_rings)
+            .map(|ring_idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|coeff_idx| {
+                    F::from_u64(((seed + 7 * ring_idx as u64 + 11 * coeff_idx as u64) % 23) + 1)
+                }))
+            })
+            .collect::<Vec<_>>();
+        DensePoly::<F, D>::from_ring_coeffs(coeffs)
+    }
+
+    fn dense_tensor_challenges() -> TensorChallengeSet {
+        TensorChallengeSet {
+            left: vec![
+                SparseChallenge {
+                    positions: vec![0, 3],
+                    coeffs: vec![1, -1],
+                },
+                SparseChallenge {
+                    positions: vec![2],
+                    coeffs: vec![1],
+                },
+                SparseChallenge {
+                    positions: vec![1, 4],
+                    coeffs: vec![-1, 1],
+                },
+                SparseChallenge {
+                    positions: vec![3],
+                    coeffs: vec![2],
+                },
+            ],
+            right: vec![
+                SparseChallenge {
+                    positions: vec![0],
+                    coeffs: vec![1],
+                },
+                SparseChallenge {
+                    positions: vec![5, 6],
+                    coeffs: vec![1, -1],
+                },
+                SparseChallenge {
+                    positions: vec![6],
+                    coeffs: vec![-1],
+                },
+                SparseChallenge {
+                    positions: vec![2, 7],
+                    coeffs: vec![1, 1],
+                },
+            ],
+            left_len: 2,
+            right_len: 2,
+            num_claims: 2,
+        }
+    }
+
+    fn aggregate_witnesses<const D: usize>(
+        witnesses: &[DecomposeFoldWitness<F, D>],
+    ) -> DecomposeFoldWitness<F, D> {
+        let (first, rest) = witnesses
+            .split_first()
+            .expect("aggregate_witnesses requires at least one witness");
+        let mut z_pre = first.z_pre.clone();
+        let mut centered_coeffs = first.centered_coeffs.clone();
+        for witness in rest {
+            for (dst, src) in z_pre.iter_mut().zip(witness.z_pre.iter()) {
+                *dst += *src;
+            }
+            for (dst, src) in centered_coeffs
+                .iter_mut()
+                .zip(witness.centered_coeffs.iter())
+            {
+                for k in 0..D {
+                    dst[k] += src[k];
+                }
+            }
+        }
+        let centered_inf_norm = centered_coeffs
+            .iter()
+            .flat_map(|coeffs| coeffs.iter())
+            .map(|coeff| coeff.unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        DecomposeFoldWitness {
+            z_pre,
+            centered_coeffs,
+            centered_inf_norm,
+        }
     }
 
     #[test]
@@ -846,5 +1116,73 @@ mod tests {
         let expected_packed = tensor_packed_witness_evals::<F, E>(num_vars, &evals).unwrap();
         let got_packed = poly.tensor_packed_extension_evals::<E>().unwrap();
         assert_eq!(got_packed, expected_packed);
+    }
+
+    #[test]
+    fn tensor_direct_single_digit_matches_expanded_integer_reference() {
+        const D: usize = 8;
+        let block_len = 4;
+        let num_digits = 1;
+        let log_basis = 6;
+        let polys = [dense_poly::<D>(16, 3), dense_poly::<D>(16, 19)];
+        let tensor = dense_tensor_challenges();
+        let challenges = TensorChallenges::Tensor(tensor.clone());
+        let expanded = challenges.expand_integer::<D>().unwrap();
+        let expected = aggregate_witnesses(
+            &polys
+                .iter()
+                .zip(expanded.chunks(4))
+                .map(|(poly, poly_challenges)| {
+                    poly.decompose_fold(poly_challenges, block_len, num_digits, log_basis)
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        let poly_refs = polys.iter().collect::<Vec<_>>();
+        let got = <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+            &poly_refs,
+            &TensorChallenges::Tensor(tensor),
+            block_len,
+            num_digits,
+            log_basis,
+        )
+        .unwrap()
+        .expect("dense tensor path should apply");
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn tensor_direct_multi_digit_partial_blocks_match_expanded_integer_reference() {
+        const D: usize = 8;
+        let block_len = 3;
+        let num_digits = 2;
+        let log_basis = 4;
+        let polys = [dense_poly::<D>(10, 5), dense_poly::<D>(11, 23)];
+        let tensor = dense_tensor_challenges();
+        let challenges = TensorChallenges::Tensor(tensor.clone());
+        let expanded = challenges.expand_integer::<D>().unwrap();
+        let expected = aggregate_witnesses(
+            &polys
+                .iter()
+                .zip(expanded.chunks(4))
+                .map(|(poly, poly_challenges)| {
+                    poly.decompose_fold(poly_challenges, block_len, num_digits, log_basis)
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        let poly_refs = polys.iter().collect::<Vec<_>>();
+        let got = <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+            &poly_refs,
+            &TensorChallenges::Tensor(tensor),
+            block_len,
+            num_digits,
+            log_basis,
+        )
+        .unwrap()
+        .expect("dense tensor path should apply");
+
+        assert_eq!(got, expected);
     }
 }
