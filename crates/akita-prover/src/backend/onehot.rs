@@ -31,7 +31,7 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::IntegerChallenge;
+use akita_challenges::{IntegerChallenge, SparseChallenge, TensorChallengeSet, TensorChallenges};
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{
@@ -48,8 +48,8 @@ use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_ch
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{
-    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
-    SparseRingPoly,
+    AkitaPolyOps, CenteredCoeff, CommitInnerWitness, DecomposeFoldWitness,
+    RootTensorProjectionPoly, SparseRingPoly,
 };
 
 /// Types usable as one-hot position indices.
@@ -955,7 +955,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             .map(|i| single_chunk_blocks.block(i))
             .collect();
 
-        let coeff_accum_digit0: Vec<[i32; D]> = {
+        let coeff_accum_digit0: Vec<[CenteredCoeff; D]> = {
             let _span = tracing::info_span!("onehot_single_chunk_accumulate").entered();
             single_chunk_onehot_accumulate::<D>(&block_views, challenges, num_blocks, block_len)
         };
@@ -968,7 +968,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             for coeffs in coeff_accum_digit0 {
                 expanded.push(coeffs);
                 for _ in 1..num_digits {
-                    expanded.push([0i32; D]);
+                    expanded.push([0 as CenteredCoeff; D]);
                 }
             }
             expanded
@@ -1051,7 +1051,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             for coeffs in coeff_accum_digit0 {
                 expanded.push(coeffs);
                 for _ in 1..num_digits {
-                    expanded.push([0i32; D]);
+                    expanded.push([0 as CenteredCoeff; D]);
                 }
             }
             expanded
@@ -1101,6 +1101,112 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
         let _span = tracing::info_span!("onehot_multi_chunk_convert_batched").entered();
         Some(build_decompose_fold_witness::<F, D>(coeff_accum, modulus))
+    }
+
+    fn decompose_fold_batched_tensor_onehot(
+        polys: &[&Self],
+        tensor: &TensorChallengeSet,
+        block_len: usize,
+        num_digits: usize,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>
+    where
+        F: CanonicalField,
+    {
+        for poly in polys {
+            poly.blocks_for(block_len).expect(
+                "OneHotPoly::decompose_fold_batched_tensor_onehot: invalid block_len for one polynomial",
+            );
+        }
+        let Some(first) = polys.first() else {
+            return Ok(None);
+        };
+        let (_, first_blocks) = first
+            .block_cache
+            .get()
+            .expect("block cache was just built above");
+        let expected_blocks = tensor
+            .left_len
+            .checked_mul(tensor.right_len)
+            .and_then(|blocks| blocks.checked_mul(tensor.num_claims))
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".into()))?;
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+
+        let witness = match first_blocks {
+            OneHotBlocks::SingleChunk(_) => {
+                let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(expected_blocks);
+                for poly in polys {
+                    let (_, cached) = poly.block_cache.get().expect("block cache exists");
+                    let OneHotBlocks::SingleChunk(blocks) = cached else {
+                        return Ok(None);
+                    };
+                    for i in 0..blocks.num_blocks() {
+                        flat_blocks.push(blocks.block(i));
+                    }
+                }
+                if flat_blocks.len() != expected_blocks {
+                    return Err(AkitaError::InvalidSize {
+                        expected: expected_blocks,
+                        actual: flat_blocks.len(),
+                    });
+                }
+                let coeff_accum_digit0 = {
+                    let _span =
+                        tracing::info_span!("onehot_single_chunk_accumulate_tensor").entered();
+                    single_chunk_onehot_accumulate_tensor::<D>(
+                        &flat_blocks,
+                        tensor,
+                        expected_blocks,
+                        block_len,
+                    )
+                };
+                let coeff_accum = if num_digits == 1 {
+                    coeff_accum_digit0
+                } else {
+                    let _span = tracing::info_span!("onehot_single_chunk_expand_tensor").entered();
+                    let mut expanded = Vec::with_capacity(block_len * num_digits);
+                    for coeffs in coeff_accum_digit0 {
+                        expanded.push(coeffs);
+                        for _ in 1..num_digits {
+                            expanded.push([0 as CenteredCoeff; D]);
+                        }
+                    }
+                    expanded
+                };
+                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+            }
+            OneHotBlocks::MultiChunk(_) => {
+                let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(expected_blocks);
+                for poly in polys {
+                    let (_, cached) = poly.block_cache.get().expect("block cache exists");
+                    let OneHotBlocks::MultiChunk(blocks) = cached else {
+                        return Ok(None);
+                    };
+                    for i in 0..blocks.num_blocks() {
+                        flat_blocks.push(blocks.block(i));
+                    }
+                }
+                if flat_blocks.len() != expected_blocks {
+                    return Err(AkitaError::InvalidSize {
+                        expected: expected_blocks,
+                        actual: flat_blocks.len(),
+                    });
+                }
+                let inner_width = block_len * num_digits;
+                let coeff_accum = {
+                    let _span =
+                        tracing::info_span!("onehot_multi_chunk_accumulate_tensor").entered();
+                    multi_chunk_onehot_accumulate_tensor::<D>(
+                        &flat_blocks,
+                        tensor,
+                        expected_blocks,
+                        inner_width,
+                        num_digits,
+                    )
+                };
+                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+            }
+        };
+        Ok(Some(witness))
     }
 }
 
@@ -1525,6 +1631,34 @@ where
             OneHotBlocks::MultiChunk(_) => Self::decompose_fold_batched_multi_chunk_onehot(
                 polys, challenges, block_len, num_digits,
             ),
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_tensor_batched")]
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        challenges: &TensorChallenges,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        match challenges {
+            TensorChallenges::Flat(flat) => {
+                let integer_challenges = flat
+                    .iter()
+                    .map(IntegerChallenge::from_sparse)
+                    .collect::<Vec<_>>();
+                Ok(Self::decompose_fold_batched(
+                    polys,
+                    &integer_challenges,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                ))
+            }
+            TensorChallenges::Tensor(tensor) => {
+                Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
+            }
         }
     }
 
@@ -2090,7 +2224,7 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
     num_blocks: usize,
     inner_width: usize,
     num_digits: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[CenteredCoeff; D]> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -2099,7 +2233,7 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
     let actual_threads = num_threads.min(inner_width.max(1));
     let pos_chunk = inner_width.div_ceil(actual_threads);
 
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
             if pos_start >= inner_width {
@@ -2107,8 +2241,8 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
             }
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let len = pos_end - pos_start;
-            let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i32; D]; D];
+            let mut acc = vec![[0 as CenteredCoeff; D]; len];
+            let mut rotated = vec![[0 as CenteredCoeff; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = multi_chunk_blocks[block_idx];
@@ -2139,6 +2273,104 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
     chunks.into_iter().flatten().collect()
 }
 
+#[inline]
+fn tensor_challenges_for_block(
+    tensor: &TensorChallengeSet,
+    block_idx: usize,
+) -> (&SparseChallenge, &SparseChallenge) {
+    let blocks_per_claim = tensor.left_len * tensor.right_len;
+    let claim_idx = block_idx / blocks_per_claim;
+    let local_idx = block_idx % blocks_per_claim;
+    let left_idx = claim_idx * tensor.left_len + (local_idx / tensor.right_len);
+    let right_idx = claim_idx * tensor.right_len + (local_idx % tensor.right_len);
+    (&tensor.left[left_idx], &tensor.right[right_idx])
+}
+
+fn fill_rotated_tensor_challenge<const D: usize>(
+    table: &mut [[CenteredCoeff; D]],
+    left: &SparseChallenge,
+    right: &SparseChallenge,
+) {
+    debug_assert!(D.is_power_of_two());
+    debug_assert!(table.len() >= D);
+    let mut dense = [0 as CenteredCoeff; D];
+    for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
+        for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
+            let degree = left_pos as usize + right_pos as usize;
+            let (base_pos, base_sign) = if degree < D {
+                (degree, 1 as CenteredCoeff)
+            } else {
+                (degree - D, -1 as CenteredCoeff)
+            };
+            let coeff =
+                CenteredCoeff::from(left_coeff) * CenteredCoeff::from(right_coeff) * base_sign;
+            dense[base_pos] += coeff;
+        }
+    }
+
+    for (shift, row) in table.iter_mut().enumerate().take(D) {
+        row[shift..D].copy_from_slice(&dense[..D - shift]);
+        for (dst, src) in row[..shift].iter_mut().zip(dense[D - shift..].iter()) {
+            *dst = -*src;
+        }
+    }
+}
+
+pub(super) fn multi_chunk_onehot_accumulate_tensor<const D: usize>(
+    multi_chunk_blocks: &[&[MultiChunkEntry]],
+    tensor: &TensorChallengeSet,
+    num_blocks: usize,
+    inner_width: usize,
+    num_digits: usize,
+) -> Vec<[CenteredCoeff; D]> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(inner_width.max(1));
+    let pos_chunk = inner_width.div_ceil(actual_threads);
+
+    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
+        .map(|tid| {
+            let pos_start = tid * pos_chunk;
+            if pos_start >= inner_width {
+                return Vec::new();
+            }
+            let pos_end = (pos_start + pos_chunk).min(inner_width);
+            let len = pos_end - pos_start;
+            let mut acc = vec![[0 as CenteredCoeff; D]; len];
+            let mut rotated = vec![[0 as CenteredCoeff; D]; D];
+
+            for (block_idx, entries) in multi_chunk_blocks.iter().enumerate().take(num_blocks) {
+                let lo = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_start);
+                let hi = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_end);
+                if lo >= hi {
+                    continue;
+                }
+
+                let (left, right) = tensor_challenges_for_block(tensor, block_idx);
+                fill_rotated_tensor_challenge::<D>(&mut rotated, left, right);
+
+                for entry in &entries[lo..hi] {
+                    let local_pos = entry.pos_in_block() * num_digits - pos_start;
+                    for &ci in entry.nonzero_coeffs() {
+                        let rot = &rotated[ci as usize];
+                        let dst = &mut acc[local_pos];
+                        for k in 0..D {
+                            dst[k] += rot[k];
+                        }
+                    }
+                }
+            }
+
+            acc
+        })
+        .collect();
+
+    chunks.into_iter().flatten().collect()
+}
+
 /// Position-partitioned accumulation for single-chunk one-hot witnesses,
 /// where each nonzero ring element carries exactly one hot coefficient.
 ///
@@ -2148,7 +2380,7 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
     challenges: &[IntegerChallenge],
     num_blocks: usize,
     block_len: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[CenteredCoeff; D]> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -2157,13 +2389,13 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
     let actual_threads = num_threads.min(block_len).max(1);
     let pos_chunk = block_len.div_ceil(actual_threads);
 
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
             let pos_end = (pos_start + pos_chunk).min(block_len);
             let len = pos_end - pos_start;
-            let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i32; D]; D];
+            let mut acc = vec![[0 as CenteredCoeff; D]; len];
+            let mut rotated = vec![[0 as CenteredCoeff; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = single_chunk_blocks[block_idx];
@@ -2174,6 +2406,54 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
                 }
 
                 fill_rotated_challenge::<D>(&mut rotated, challenge);
+                for entry in &entries[lo..hi] {
+                    let dst = &mut acc[entry.pos_in_block() - pos_start];
+                    let rot = &rotated[entry.coeff_idx()];
+                    for k in 0..D {
+                        dst[k] += rot[k];
+                    }
+                }
+            }
+
+            acc
+        })
+        .collect();
+
+    chunks.into_iter().flatten().collect()
+}
+
+pub(super) fn single_chunk_onehot_accumulate_tensor<const D: usize>(
+    single_chunk_blocks: &[&[SingleChunkEntry]],
+    tensor: &TensorChallengeSet,
+    num_blocks: usize,
+    block_len: usize,
+) -> Vec<[CenteredCoeff; D]> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(block_len).max(1);
+    let pos_chunk = block_len.div_ceil(actual_threads);
+
+    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
+        .map(|tid| {
+            let pos_start = tid * pos_chunk;
+            let pos_end = (pos_start + pos_chunk).min(block_len);
+            let len = pos_end - pos_start;
+            let mut acc = vec![[0 as CenteredCoeff; D]; len];
+            let mut rotated = vec![[0 as CenteredCoeff; D]; D];
+
+            for (block_idx, entries) in single_chunk_blocks.iter().enumerate().take(num_blocks) {
+                let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
+                let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
+                if lo >= hi {
+                    continue;
+                }
+
+                let (left, right) = tensor_challenges_for_block(tensor, block_idx);
+                fill_rotated_tensor_challenge::<D>(&mut rotated, left, right);
+
                 for entry in &entries[lo..hi] {
                     let dst = &mut acc[entry.pos_in_block() - pos_start];
                     let rot = &rotated[entry.coeff_idx()];
@@ -2873,6 +3153,178 @@ mod tests {
             0,
         )
         .expect("onehot batched path should apply");
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn tensor_direct_single_chunk_onehot_matches_integer_fallback() {
+        type F = Prime24Offset3;
+        const D: usize = 64;
+
+        let block_len = 64;
+        let mut indices0 = vec![None; 256];
+        indices0[0] = Some(1usize);
+        indices0[77] = Some(5usize);
+        indices0[128] = Some(9usize);
+        indices0[219] = Some(33usize);
+        let mut indices1 = vec![None; 256];
+        indices1[3] = Some(7usize);
+        indices1[93] = Some(11usize);
+        indices1[164] = Some(19usize);
+        indices1[244] = Some(21usize);
+        let polys = [
+            OneHotPoly::<F, D>::new(block_len, indices0).unwrap(),
+            OneHotPoly::<F, D>::new(block_len, indices1).unwrap(),
+        ];
+        let tensor = TensorChallengeSet {
+            left: vec![
+                SparseChallenge {
+                    positions: vec![0, 5],
+                    coeffs: vec![1, -1],
+                },
+                SparseChallenge {
+                    positions: vec![2],
+                    coeffs: vec![1],
+                },
+                SparseChallenge {
+                    positions: vec![1, 4],
+                    coeffs: vec![-1, 1],
+                },
+                SparseChallenge {
+                    positions: vec![3],
+                    coeffs: vec![2],
+                },
+            ],
+            right: vec![
+                SparseChallenge {
+                    positions: vec![0],
+                    coeffs: vec![1],
+                },
+                SparseChallenge {
+                    positions: vec![7, 9],
+                    coeffs: vec![1, -1],
+                },
+                SparseChallenge {
+                    positions: vec![6],
+                    coeffs: vec![-1],
+                },
+                SparseChallenge {
+                    positions: vec![8, 13],
+                    coeffs: vec![1, 1],
+                },
+            ],
+            left_len: 2,
+            right_len: 2,
+            num_claims: 2,
+        };
+        let challenges = TensorChallenges::Tensor(tensor.clone());
+        let expanded = challenges.expand_integer::<D>().unwrap();
+        let expected = aggregate_witnesses(
+            &polys
+                .iter()
+                .zip(expanded.chunks(4))
+                .map(|(poly, poly_challenges)| {
+                    poly.decompose_fold(poly_challenges, block_len, 1, 0)
+                })
+                .collect::<Vec<_>>(),
+        );
+        let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
+        let got = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+            &poly_refs,
+            &TensorChallenges::Tensor(tensor),
+            block_len,
+            1,
+            0,
+        )
+        .unwrap()
+        .expect("tensor onehot path should apply");
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn tensor_direct_multi_chunk_onehot_matches_integer_fallback() {
+        type F = Prime24Offset3;
+        const D: usize = 64;
+
+        let block_len = 2;
+        let mut indices0 = vec![None; 16];
+        indices0[0] = Some(1usize);
+        indices0[3] = Some(5usize);
+        indices0[8] = Some(9usize);
+        indices0[13] = Some(17usize);
+        let mut indices1 = vec![None; 16];
+        indices1[1] = Some(7usize);
+        indices1[4] = Some(11usize);
+        indices1[10] = Some(19usize);
+        indices1[15] = Some(21usize);
+        let polys = [
+            OneHotPoly::<F, D>::new(32, indices0).unwrap(),
+            OneHotPoly::<F, D>::new(32, indices1).unwrap(),
+        ];
+        let tensor = TensorChallengeSet {
+            left: vec![
+                SparseChallenge {
+                    positions: vec![0, 5],
+                    coeffs: vec![1, -1],
+                },
+                SparseChallenge {
+                    positions: vec![2],
+                    coeffs: vec![1],
+                },
+                SparseChallenge {
+                    positions: vec![1, 4],
+                    coeffs: vec![-1, 1],
+                },
+                SparseChallenge {
+                    positions: vec![3],
+                    coeffs: vec![2],
+                },
+            ],
+            right: vec![
+                SparseChallenge {
+                    positions: vec![0],
+                    coeffs: vec![1],
+                },
+                SparseChallenge {
+                    positions: vec![7, 9],
+                    coeffs: vec![1, -1],
+                },
+                SparseChallenge {
+                    positions: vec![6],
+                    coeffs: vec![-1],
+                },
+                SparseChallenge {
+                    positions: vec![8, 13],
+                    coeffs: vec![1, 1],
+                },
+            ],
+            left_len: 2,
+            right_len: 2,
+            num_claims: 2,
+        };
+        let challenges = TensorChallenges::Tensor(tensor.clone());
+        let expanded = challenges.expand_integer::<D>().unwrap();
+        let expected = aggregate_witnesses(
+            &polys
+                .iter()
+                .zip(expanded.chunks(4))
+                .map(|(poly, poly_challenges)| {
+                    poly.decompose_fold(poly_challenges, block_len, 2, 0)
+                })
+                .collect::<Vec<_>>(),
+        );
+        let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
+        let got = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+            &poly_refs,
+            &TensorChallenges::Tensor(tensor),
+            block_len,
+            2,
+            0,
+        )
+        .unwrap()
+        .expect("tensor onehot path should apply");
 
         assert_eq!(got, expected);
     }
