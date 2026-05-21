@@ -19,7 +19,7 @@ use std::io::{Read, Write};
 ///
 /// The fold point `k` and offset `c = 2^k − p` are computed at compile time
 /// from the const-generic `P`.  Instantiating with a modulus that does not
-/// satisfy the Solinas conditions is a compile-time error.
+/// satisfy the prime Solinas conditions is a compile-time error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Fp32<const P: u32>(pub(crate) u32);
 
@@ -36,12 +36,30 @@ impl<const P: u32> Fp32<P> {
         };
         assert!(P != 0, "modulus must be nonzero");
         assert!(P & 1 == 1, "modulus must be odd");
+        assert!(Self::is_prime_modulus(P), "modulus must be prime");
         assert!(
             (c as u64) * (c as u64 + 1) < P as u64,
             "C(C+1) < P required for fused canonicalize"
         );
         c
     };
+
+    const fn is_prime_modulus(n: u32) -> bool {
+        if n < 2 {
+            return false;
+        }
+        if n.is_multiple_of(2) {
+            return n == 2;
+        }
+        let mut d = 3u32;
+        while (d as u64) * (d as u64) <= n as u64 {
+            if n.is_multiple_of(d) {
+                return false;
+            }
+            d += 2;
+        }
+        true
+    }
 
     /// Mask for extracting the low `BITS` bits from a u64.
     const MASK: u64 = if Self::BITS == 32 {
@@ -462,7 +480,7 @@ impl<const P: u32> PseudoMersenneField for Fp32<P> {
     const MODULUS_OFFSET: u128 = Self::C as u128;
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use rand::rngs::StdRng;
@@ -538,6 +556,40 @@ mod tests {
             G::from_u64(u64::MAX).to_canonical_u32() as u64,
             u64::MAX % (P31 as u64)
         );
+    }
+
+    #[test]
+    fn fp31_u128_reduction_matches_modulus() {
+        fn check<const P: u32>(inputs: &[u128]) {
+            for &input in inputs {
+                assert_eq!(
+                    Fp32::<P>::from_canonical_u128_reduced(input).to_canonical_u32() as u128,
+                    input % (P as u128),
+                    "u128 reduction mismatch for P={P}, input={input}"
+                );
+            }
+        }
+
+        const PRIME31: u32 = (1u32 << 31) - 19;
+        const MERSENNE31: u32 = (1u32 << 31) - 1;
+        const GENERIC30: u32 = (1u32 << 30) - 16_397;
+        const GENERIC31: u32 = (1u32 << 31) - 32_787;
+        let inputs = [
+            0,
+            1,
+            PRIME31 as u128 - 1,
+            PRIME31 as u128,
+            PRIME31 as u128 + 1,
+            (PRIME31 as u128) * (PRIME31 as u128) - 1,
+            1u128 << 63,
+            (1u128 << 96) + 123_456_789,
+            u128::MAX,
+        ];
+
+        check::<PRIME31>(&inputs);
+        check::<MERSENNE31>(&inputs);
+        check::<GENERIC30>(&inputs);
+        check::<GENERIC31>(&inputs);
     }
 
     #[test]

@@ -705,7 +705,7 @@ where
     type Packing = PackedRingSubfieldFp4<F, F::Packing>;
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::fields::ext::{Ext2, PowerBasisFp4, RingSubfieldFp4, TowerBasisFp4, TwoNr, UnitNr};
