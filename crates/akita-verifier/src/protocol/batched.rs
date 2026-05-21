@@ -630,8 +630,26 @@ where
 
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
     let num_vars = prepared_claims.incidence_summary.num_vars();
-    let mut schedule = select_schedule(&prepared_claims.incidence_summary)
-        .map_err(|_| AkitaError::InvalidProof)?;
+    // Caching is keyed by the public incidence-summary lookup key, which is
+    // the same key the planner / generated tables use, so a cached schedule
+    // is byte-identical to what `select_schedule` would have returned. For
+    // wrapper configs without a generated table this turns the per-verify
+    // planner DP into a one-off cost amortised across every reuse of the
+    // verifier setup.
+    let mut schedule = if let Ok(schedule_key) =
+        akita_types::AkitaScheduleLookupKey::new_from_incidence(&prepared_claims.incidence_summary)
+    {
+        if let Some(cached) = setup.cached_schedule(schedule_key) {
+            cached
+        } else {
+            let computed = select_schedule(&prepared_claims.incidence_summary)
+                .map_err(|_| AkitaError::InvalidProof)?;
+            setup.store_schedule(schedule_key, computed.clone());
+            computed
+        }
+    } else {
+        select_schedule(&prepared_claims.incidence_summary).map_err(|_| AkitaError::InvalidProof)?
+    };
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<F, E, C, D>(
