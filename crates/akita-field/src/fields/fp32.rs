@@ -50,6 +50,18 @@ impl<const P: u32> Fp32<P> {
         (1u64 << Self::BITS) - 1
     };
 
+    #[inline(always)]
+    fn canonicalize_folded(v: u64) -> u32 {
+        if Self::BITS <= 31 {
+            let x = v as u32;
+            x.min(x.wrapping_sub(P))
+        } else {
+            let reduced = v.wrapping_sub(P as u64);
+            let borrow = reduced >> 63;
+            reduced.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
+        }
+    }
+
     /// Create from a canonical representative in `[0, P)`.
     #[inline]
     pub fn from_canonical_u32(x: u32) -> Self {
@@ -122,9 +134,7 @@ impl<const P: u32> Fp32<P> {
         while v >> Self::BITS != 0 {
             v = (v & Self::MASK) + c * (v >> Self::BITS);
         }
-        let reduced = v.wrapping_sub(P as u64);
-        let borrow = reduced >> 63;
-        reduced.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
+        Self::canonicalize_folded(v)
     }
 
     /// Reduce a `u128` to canonical form (for `from_canonical_u128_reduced`).
@@ -141,10 +151,7 @@ impl<const P: u32> Fp32<P> {
         while v >> bits != 0 {
             v = (v & mask) + c * (v >> bits);
         }
-        let f = v as u64;
-        let reduced = f.wrapping_sub(P as u64);
-        let borrow = reduced >> 63;
-        reduced.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
+        Self::canonicalize_folded(v as u64)
     }
 
     /// Two-fold Solinas reduction for multiplication products.
@@ -156,24 +163,32 @@ impl<const P: u32> Fp32<P> {
         let c = Self::C as u64;
         let f1 = (x & Self::MASK) + c * (x >> Self::BITS);
         let f2 = (f1 & Self::MASK) + c * (f1 >> Self::BITS);
-        let reduced = f2.wrapping_sub(P as u64);
-        let borrow = reduced >> 63;
-        reduced.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
+        Self::canonicalize_folded(f2)
     }
 
     #[inline(always)]
     fn add_raw(a: u32, b: u32) -> u32 {
-        let s = (a as u64) + (b as u64);
-        let reduced = s.wrapping_sub(P as u64);
-        let borrow = reduced >> 63;
-        reduced.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
+        if Self::BITS <= 31 {
+            let sum = a.wrapping_add(b);
+            sum.min(sum.wrapping_sub(P))
+        } else {
+            let s = (a as u64) + (b as u64);
+            let reduced = s.wrapping_sub(P as u64);
+            let borrow = reduced >> 63;
+            reduced.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
+        }
     }
 
     #[inline(always)]
     fn sub_raw(a: u32, b: u32) -> u32 {
-        let diff = (a as u64).wrapping_sub(b as u64);
-        let borrow = diff >> 63;
-        diff.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
+        if Self::BITS <= 31 {
+            let diff = a.wrapping_sub(b);
+            diff.min(diff.wrapping_add(P))
+        } else {
+            let diff = (a as u64).wrapping_sub(b as u64);
+            let borrow = diff >> 63;
+            diff.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
+        }
     }
 
     #[inline(always)]
@@ -474,6 +489,55 @@ mod tests {
         assert_eq!((a * b).to_canonical_u32(), (100 * 200) % 251);
         assert_eq!((b - a).to_canonical_u32(), 100);
         assert_eq!((-a).to_canonical_u32(), 251 - 100);
+    }
+
+    #[test]
+    fn prime31_fast_path_edges() {
+        const P31: u32 = (1u32 << 31) - 19;
+        type G = Fp32<P31>;
+
+        assert_eq!(G::BITS, 31);
+        assert_eq!(G::C, 19);
+
+        let zero = G::zero();
+        let one = G::one();
+        let p_minus_one = G::from_canonical_u32(P31 - 1);
+        let p_minus_two = G::from_canonical_u32(P31 - 2);
+
+        assert_eq!((p_minus_one + one).to_canonical_u32(), 0);
+        assert_eq!((p_minus_one + p_minus_one).to_canonical_u32(), P31 - 2);
+        assert_eq!((zero - one).to_canonical_u32(), P31 - 1);
+        assert_eq!((one - p_minus_one).to_canonical_u32(), 2);
+        assert_eq!((-zero).to_canonical_u32(), 0);
+        assert_eq!((-one).to_canonical_u32(), P31 - 1);
+        assert_eq!((p_minus_one * p_minus_one).to_canonical_u32(), 1);
+        assert_eq!((p_minus_two * p_minus_two).to_canonical_u32(), 4);
+    }
+
+    #[test]
+    fn prime31_random_arithmetic_matches_u64_modulus() {
+        const P31: u32 = (1u32 << 31) - 19;
+        type G = Fp32<P31>;
+
+        let mut rng = StdRng::seed_from_u64(0x31_31_31_31);
+        for _ in 0..1000 {
+            let a_raw = rng.next_u32() & ((1u32 << 31) - 1);
+            let b_raw = rng.next_u32() & ((1u32 << 31) - 1);
+            let a = G::from_u64(a_raw as u64);
+            let b = G::from_u64(b_raw as u64);
+            let p = P31 as u64;
+            let a_can = (a_raw as u64) % p;
+            let b_can = (b_raw as u64) % p;
+
+            assert_eq!((a + b).to_canonical_u32() as u64, (a_can + b_can) % p);
+            assert_eq!((a - b).to_canonical_u32() as u64, (a_can + p - b_can) % p);
+            assert_eq!((a * b).to_canonical_u32() as u64, (a_can * b_can) % p);
+        }
+
+        assert_eq!(
+            G::from_u64(u64::MAX).to_canonical_u32() as u64,
+            u64::MAX % (P31 as u64)
+        );
     }
 
     #[test]
