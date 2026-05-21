@@ -671,10 +671,10 @@ mod tests {
                 let row_flat = g * n_f + r;
                 let w = f_row_weights[row_flat];
                 let f_row = inputs.f_view.row(r).expect("test F row");
-                for c in 0..f_width {
+                for (c, f_cell) in f_row.iter().take(f_width).enumerate() {
                     let uhat_local = g * f_width + c;
                     let m_col = offset_uhat + uhat_local;
-                    let alpha_eval = eval_ring_at_pows(&f_row[c], &alpha_pows);
+                    let alpha_eval = eval_ring_at_pows(f_cell, &alpha_pows);
                     expected += w * eq_full[m_col] * alpha_eval;
                 }
             }

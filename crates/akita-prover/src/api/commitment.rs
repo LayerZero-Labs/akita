@@ -5,6 +5,7 @@ use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 use crate::kernels::matrix::derive_tier1_f_matrix_flat;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
+#[cfg(not(feature = "zk"))]
 use crate::protocol::tiered_commit::{tiered_commit, TieredCommitParams};
 use crate::{AkitaPolyOps, AkitaProverSetup};
 use akita_algebra::CyclotomicRing;
@@ -191,10 +192,45 @@ where
 /// # Errors
 ///
 /// Returns an error when `params.split_factor < 2`, when any other
-/// tiered-commit shape validation fails (see [`TieredCommitParams::validate`]
-/// via [`crate::protocol::tiered_commit::tiered_commit`]), or when an
-/// inner commitment fails.
+/// tiered-commit shape validation fails (see
+/// `crate::protocol::tiered_commit::TieredCommitParams::validate`),
+/// or when an inner commitment fails.
 pub fn commit_tiered_with_params<F, const D: usize, P>(
+    polys: &[P],
+    setup: &AkitaProverSetup<F, D>,
+    params: &LevelParams,
+    f_ntt_cache: &NttSlotCache<D>,
+    f_max_stride: usize,
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+{
+    // Spec §7: tiering under `--features zk` is intentionally out
+    // of scope for the first landing — the planner must not emit
+    // `split_factor > 1` candidates when `zk` is on until a follow-
+    // up resolves the ûhat blinding question. We reject loudly at
+    // the function boundary (rather than partway through the body)
+    // so the rest of the function is unambiguously dead code under
+    // `--features zk` and clippy can stop warning about
+    // unreachable variable bindings.
+    #[cfg(feature = "zk")]
+    {
+        let _ = (polys, setup, params, f_ntt_cache, f_max_stride);
+        Err(AkitaError::InvalidSetup(
+            "tiered commit path is not enabled under `--features zk` in this revision; \
+             see specs/tiered_commit.md §7"
+                .to_string(),
+        ))
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        commit_tiered_with_params_inner(polys, setup, params, f_ntt_cache, f_max_stride)
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+fn commit_tiered_with_params_inner<F, const D: usize, P>(
     polys: &[P],
     setup: &AkitaProverSetup<F, D>,
     params: &LevelParams,
@@ -266,27 +302,6 @@ where
                 Ok(())
             },
         )?;
-    #[cfg(feature = "zk")]
-    let b_blinding_digits = {
-        // Spec §7: tiering under `--features zk` is intentionally out of
-        // scope for the first landing — the planner must not emit
-        // `split_factor > 1` candidates when `zk` is on until a follow-up
-        // resolves the uhat blinding question. Surface this as an error
-        // here so accidental wiring is loud rather than silent.
-        return Err(AkitaError::InvalidSetup(
-            "tiered commit path is not enabled under `--features zk` in this revision; \
-             see specs/tiered_commit.md §7"
-                .to_string(),
-        ));
-        // unreachable — the function returns above. Type the binding so
-        // the cfg block stays well-formed if the early-return is ever
-        // dropped in a future revision.
-        #[allow(unreachable_code)]
-        sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?
-    };
-    #[cfg(feature = "zk")]
-    let _ = b_blinding_digits;
-
     // Stage 2: feed t̂ into the closure-based tiered kernel. The B' arm
     // calls the existing NTT kernel on the shared matrix with a chunk-
     // length input; the F arm uses the caller-supplied F NTT cache.
@@ -320,23 +335,11 @@ where
     // Stage 3: assemble the hint. `outer_digits` carries `uhat_concat`
     // as one entry (this is a per-opening-point hint; the batched commit
     // surface above this function flattens per-point entries).
-    let hint = {
-        #[cfg(not(feature = "zk"))]
-        {
-            AkitaCommitmentHint::with_recomposed_inner_rows(
-                decomposed_inner_rows,
-                recomposed_inner_rows,
-            )
-            .with_outer_digits(vec![out.uhat_concat])
-        }
-        // ZK + tiered is rejected above; this branch is reachable only
-        // if the early return is removed in a follow-up that adds an
-        // uhat blinding tier.
-        #[cfg(feature = "zk")]
-        {
-            unreachable!("zk + tiered already rejected above")
-        }
-    };
+    let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
+        decomposed_inner_rows,
+        recomposed_inner_rows,
+    )
+    .with_outer_digits(vec![out.uhat_concat]);
 
     Ok((RingCommitment { u: out.u_final }, hint))
 }

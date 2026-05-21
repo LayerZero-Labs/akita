@@ -21,7 +21,7 @@ use akita_field::AkitaError;
 /// Inputs describing one tiered candidate's verifier-cost shape.
 ///
 /// `n_b_prime` and `n_f` are the SIS ranks chosen by
-/// [`tiered_b_prime_rank`] /
+/// [`tiered_b_prime_rank`](akita_types::layout::sis_derivation::tiered_b_prime_rank) /
 /// [`tiered_f_rank`](akita_types::layout::sis_derivation::tiered_f_rank)
 /// at the candidate's `(split_factor, outer_log_basis, num_digits_outer)`.
 /// The cost model takes them as inputs so the planner can supply them
