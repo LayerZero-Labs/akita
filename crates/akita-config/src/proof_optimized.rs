@@ -232,8 +232,16 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
         let root_lp =
             derived_root_commitment_layout_from_params::<Cfg>(inputs, &candidate_params, false)?;
         let derived_params = sis_derived_root_params_for_layout::<Cfg>(inputs, &root_lp)?;
-        if derived_params.a_key.row_len() == candidate_n_a {
-            return Ok(derived_params.with_layout(&root_lp));
+        if derived_params.a_key.row_len() <= candidate_n_a {
+            let mut result = derived_params;
+            result.a_key = akita_types::AjtaiKeyParams::try_new(
+                result.a_key.sis_family(),
+                candidate_n_a,
+                result.a_key.col_len(),
+                result.a_key.collision_inf(),
+                Cfg::D,
+            )?;
+            return Ok(result.with_layout(&root_lp));
         }
         candidate_n_a = derived_params.a_key.row_len();
     }
@@ -399,12 +407,16 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     let fallback = fallback_batched_root_split::<Cfg>(incidence.num_vars(), num_polys)?;
 
     let setup_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
-        setup_level_params_from_plan(&plan)
+        setup_level_params_from_plan::<Cfg>(&plan)
     } else {
         #[cfg(feature = "planner")]
         {
             let schedule = akita_planner::find_optimal_schedule::<Cfg>(cached_key)?;
-            setup_level_params_from_runtime_schedule(schedule.steps, setup_envelope)
+            setup_level_params_from_runtime_schedule::<Cfg>(
+                schedule.steps,
+                incidence.num_vars(),
+                setup_envelope,
+            )
         }
 
         #[cfg(not(feature = "planner"))]
@@ -420,28 +432,47 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     )?))
 }
 
-fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
-    plan.steps
-        .iter()
-        .filter_map(|step| match step {
-            AkitaPlannedStep::Fold(level) => Some(level.lp.clone()),
-            AkitaPlannedStep::Direct(_) => None,
-        })
-        .collect()
+fn setup_level_params_from_plan<Cfg: CommitmentConfig>(
+    plan: &AkitaSchedulePlan,
+) -> Vec<LevelParams> {
+    let mut levels = Vec::new();
+    for step in &plan.steps {
+        if let AkitaPlannedStep::Fold(level) = step {
+            levels.push(level.lp.clone());
+            levels.push(Cfg::level_params_with_log_basis(
+                level.next_inputs,
+                level.next_level_log_basis,
+            ));
+        }
+    }
+    levels
 }
 
 #[cfg(feature = "planner")]
-fn setup_level_params_from_runtime_schedule(
+fn setup_level_params_from_runtime_schedule<Cfg: CommitmentConfig>(
     steps: Vec<Step>,
+    num_vars: usize,
     _setup_envelope: &CommitmentEnvelope,
 ) -> Vec<LevelParams> {
-    steps
-        .into_iter()
-        .filter_map(|step| match step {
-            Step::Fold(fold_step) => Some(fold_step.params),
-            Step::Direct(_) => None,
-        })
-        .collect()
+    let mut levels = Vec::new();
+    let mut fold_level = 0usize;
+    for step in steps {
+        if let Step::Fold(fold_step) = step {
+            let next_inputs = AkitaScheduleInputs {
+                num_vars,
+                level: fold_level + 1,
+                current_w_len: fold_step.next_w_len,
+            };
+            let next_log_basis = fold_step.params.log_basis;
+            levels.push(fold_step.params);
+            levels.push(Cfg::level_params_with_log_basis(
+                next_inputs,
+                next_log_basis,
+            ));
+            fold_level += 1;
+        }
+    }
+    levels
 }
 
 fn matrix_envelope_for_levels<Cfg>(
@@ -1059,67 +1090,12 @@ pub mod fp128 {
 
     /// Binary onehot `D=64` preset that samples a tensor-shaped stage-1
     /// fold challenge at the root level.
-    ///
-    /// The preset mirrors [`D64OneHot`]'s decomposition, SIS family, and
-    /// per-ring-dimension stage-1 challenge family, and reuses every
-    /// `proof_optimized_*` helper for SIS-rank and layout derivation. The
-    /// only behavioural differences are:
-    ///
-    /// * [`CommitmentConfig::fold_challenge_shape_at_level`] returns
-    ///   [`akita_challenges::TensorChallengeShape::Tensor`] at the root
-    ///   level (`inputs.level == 0`) and [`akita_challenges::TensorChallengeShape::Flat`]
-    ///   at every recursive level.
-    /// * The preset ships no generated schedule table, so every
-    ///   commitment / prove / verify request routes through the planner.
-    ///   The planner reads the requested fold shape through
-    ///   [`akita_types::LevelParams::challenge_l1_mass`] when sizing
-    ///   `num_digits_fold`, and bakes the shape into the produced
-    ///   `LevelParams` so the runtime samplers dispatch correctly.
-    ///
-    /// The planner is responsible for selecting a root `(m, r)` split whose
-    /// `num_blocks = 2^r` is a power of two (the only shape the tensor
-    /// sampler accepts); every fold candidate produced by
-    /// [`derive_root_candidate`] satisfies this by construction.
-    ///
-    /// # Security status: preview, not production
-    ///
-    /// The SIS-rank derivation in `sis_derived_root_params_for_layout`
-    /// computes the A-role collision bucket from the per-challenge
-    /// `infinity_norm` proxy (which equals the stage-1 `infinity_norm` in
-    /// the flat sampler). Tensor sampling materialises per-block
-    /// coefficients as the product `left[p] · right[q]` of two flat sparse
-    /// challenges, and the two-level CWSS extractor pays an additional
-    /// `4 · omega` degradation in the A-role collision bound that the
-    /// current derivation does not account for. For the `D64OneHotTensor`
-    /// shape (`omega = 54`, `infinity_norm = 2`) the under-provisioned
-    /// A-role collision is ~216x smaller than the analysed tensor bound,
-    /// so the rank lookup may pick a row that is below the 128-bit SIS
-    /// floor under tensor extraction.
-    ///
-    /// Two pieces are required to close this gap, both deliberately out of
-    /// scope for the technique-1 wiring series:
-    ///
-    /// * `LevelParams::stage1_sis_extraction_report` (and the related
-    ///   `stage1_extraction_*` helpers) returning a shape-aware A-role
-    ///   collision bucket, plumbed through `sis_derived_*_params_for_layout`.
-    /// * A regenerated `generated::sis_floor` table covering the wider
-    ///   collision buckets the tensor analysis lands in (up to `8191` for
-    ///   `D=64` in the current SIS estimator), with a fresh
-    ///   `specs/security_analysis.md` re-audit.
-    ///
-    /// Use `D64OneHotTensor` for correctness validation of the tensor
-    /// stage-1 wiring (it round-trips end-to-end through the planner,
-    /// prover, and verifier and matches the flat verifier wall-clock once
-    /// the schedule cache warms). Do **not** use it as the SIS-secure
-    /// production preset until the two items above land.
-    ///
-    /// [`derive_root_candidate`]: akita_planner::schedule_params
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D64OneHotTensor;
 
     impl akita_types::ScheduleProvider for D64OneHotTensor {
         fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-            None
+            Some(akita_types::generated::fp128_d64_onehot_tensor_table())
         }
 
         fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
@@ -1277,6 +1253,10 @@ pub mod fp128 {
 
         fn planner_log_basis_search_range(inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
             <Self as crate::CommitmentConfig>::log_basis_search_range(inputs)
+        }
+
+        fn planner_fold_prover_weight() -> usize {
+            3
         }
     }
 

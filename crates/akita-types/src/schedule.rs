@@ -7,8 +7,8 @@ use crate::generated::{
 use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_layout_from_params,
     level_proof_bytes, recursive_level_decomposition_from_root, root_extension_opening_partials,
-    terminal_level_proof_bytes, ClaimIncidenceSummary, DecompositionParams, DirectWitnessShape,
-    validate_stored_sis_ranks, LevelParams, RingOpeningPoint, SisModulusFamily,
+    terminal_level_proof_bytes, validate_stored_sis_ranks, ClaimIncidenceSummary,
+    DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint, SisModulusFamily,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
