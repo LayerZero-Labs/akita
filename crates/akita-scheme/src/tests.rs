@@ -3314,7 +3314,7 @@ impl Fp32TieredRootFoldCfg {
         // lookup-table compatibility. num_digits_outer must cover
         // field_bits (32 for Fp32) with outer_log_basis.
         let outer_log_basis = log_basis;
-        let num_digits_outer = ((32 + outer_log_basis - 1) / outer_log_basis) as usize;
+        let num_digits_outer = 32u32.div_ceil(outer_log_basis) as usize;
         let n_f = 1usize;
         let chunk_width = base.full_outer_width() / split_factor;
         let f_width = base.b_key.row_len() * split_factor * num_digits_outer;
@@ -3745,7 +3745,6 @@ fn tiered_prepared_row_eval_matches_materialized() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0usize);
     let nv: usize = (TD.trailing_zeros() as usize + r_vars).max(1);
-    let NV = nv;
 
     let lp = TCfg::root_lp();
     assert!(lp.is_tiered_root(), "fixture must enable tiering");
@@ -3757,11 +3756,11 @@ fn tiered_prepared_row_eval_matches_materialized() {
             .wrapping_add(1442695040888963407);
         TF::from_u64(rng_seed)
     };
-    let evals: Vec<TF> = (0..(1usize << NV))
+    let evals: Vec<TF> = (0..(1usize << nv))
         .map(|i| TF::from_u64(7 + i as u64 * 3))
         .collect();
-    let poly = DensePoly::<TF, TD>::from_field_evals(NV, &evals).unwrap();
-    let point: Vec<TF> = (0..NV).map(|i| TF::from_u64(11 + i as u64 * 5)).collect();
+    let poly = DensePoly::<TF, TD>::from_field_evals(nv, &evals).unwrap();
+    let point: Vec<TF> = (0..nv).map(|i| TF::from_u64(11 + i as u64 * 5)).collect();
 
     let alpha_bits = TD.trailing_zeros() as usize;
     let outer_point: &[TF] = if alpha_bits >= point.len() {
@@ -3781,7 +3780,7 @@ fn tiered_prepared_row_eval_matches_materialized() {
     let (y_ring, w_folded) =
         poly.evaluate_and_fold(&ring_opening_point.b, &ring_opening_point.a, lp.block_len);
 
-    let setup = <TScheme as CommitmentProver<TF, TD>>::setup_prover(NV, 1, 1);
+    let setup = <TScheme as CommitmentProver<TF, TD>>::setup_prover(nv, 1, 1);
     let (commitment, batched_hint) =
         <TScheme as CommitmentProver<TF, TD>>::commit(std::slice::from_ref(&poly), &setup).unwrap();
 
@@ -3791,7 +3790,7 @@ fn tiered_prepared_row_eval_matches_materialized() {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
-    let incidence_summary = single_point_group_incidence(NV, 1);
+    let incidence_summary = single_point_group_incidence(nv, 1);
 
     let mut quad_eq = QuadraticEquation::<TF, TD>::new_prover(
         &setup.ntt_shared,
@@ -3866,7 +3865,7 @@ fn tiered_prepared_row_eval_matches_materialized() {
     // strictly stronger check than a single random-challenge equality
     // (it catches per-column bugs that would otherwise only show up in
     // a full-protocol sumcheck mismatch).
-    for k in 0..m_evals_x.len() {
+    for (k, &prover_cell) in m_evals_x.iter().enumerate() {
         let x_challenges: Vec<TF> = (0..num_x_bits)
             .map(|i| {
                 if (k >> i) & 1 == 1 {
@@ -3876,7 +3875,6 @@ fn tiered_prepared_row_eval_matches_materialized() {
                 }
             })
             .collect();
-        let prover_cell = m_evals_x[k];
         let verifier_cell = prepared
             .eval_at_point::<TF, TD>(
                 &x_challenges,

@@ -403,9 +403,9 @@ fn forced_tiering_commit_and_references_compose_end_to_end() {
         let row_flat = r;
         let w = f_row_weights[row_flat];
         let f_row_data = f_view.row(r).expect("f row in range");
-        for c in 0..f_width {
+        for (c, f_cell) in f_row_data.iter().take(f_width).enumerate() {
             let m_col = offset_uhat + c;
-            let alpha_eval = eval_ring_at_pows(&f_row_data[c], &alpha_pows);
+            let alpha_eval = eval_ring_at_pows(f_cell, &alpha_pows);
             expected += w * eq_full[m_col] * alpha_eval;
         }
     }

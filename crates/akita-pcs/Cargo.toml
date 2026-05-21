@@ -101,6 +101,13 @@ path = "examples/profile/main.rs"
 [[example]]
 name = "tiered_bench"
 path = "examples/tiered_bench.rs"
+# Uses `akita_planner::PlannerConfig` to drive on-the-fly schedule
+# generation for the bench's hand-rolled `LegacyBenchCfg`/`Tier{2,3}BenchCfg`
+# types, so it can't compile under `--no-default-features` (which
+# turns off the `planner` feature). The production-preset
+# `portable_bench` example next door reads offline schedule tables
+# directly and stays buildable in all feature combos.
+required-features = ["planner"]
 
 [[example]]
 name = "portable_bench"
