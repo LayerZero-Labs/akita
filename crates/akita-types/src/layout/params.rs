@@ -9,6 +9,25 @@ use akita_field::AkitaError;
 
 pub use crate::generated::sis_floor::SisModulusFamily;
 
+/// Shape-aware SIS extraction accounting for one fold level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage1SisExtractionReport {
+    /// Honest logical challenge L1 mass used for fold witness bounds.
+    pub honest_challenge_l1_mass: usize,
+    /// Base sparse challenge coefficient L-infinity bound.
+    pub base_challenge_linf: u32,
+    /// Relative extraction degradation for the configured challenge shape.
+    pub extraction_relative_msis_degradation: u128,
+    /// Shape-aware challenge coefficient bound used by A-role SIS sizing.
+    pub extraction_linf: u32,
+    /// Raw A-role collision bound before challenge extraction scaling.
+    pub a_role_raw_collision: u32,
+    /// Raw A-role collision multiplied by `extraction_linf`.
+    pub a_role_extraction_collision: u32,
+    /// Supported SIS collision bucket used for the A role.
+    pub a_role_supported_collision_bucket: u32,
+}
+
 /// Parameters for a single Ajtai commitment matrix.
 ///
 /// Each matrix in the protocol (A, B, D) is characterised by its row count
@@ -280,6 +299,92 @@ impl LevelParams {
             .effective_l1_mass(&self.stage1_config)
     }
 
+    /// Relative SIS-extraction degradation for the configured fold challenge shape.
+    ///
+    /// This is intentionally separate from [`Self::challenge_l1_mass`]. Tensor
+    /// folding uses the product challenge's honest mass for witness bounds,
+    /// while A-role SIS extraction pays the mixed-difference degradation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the degradation factor overflows.
+    pub fn stage1_extraction_relative_msis_degradation(&self) -> Result<u128, AkitaError> {
+        match self.fold_challenge_shape {
+            TensorChallengeShape::Flat => Ok(1),
+            TensorChallengeShape::Tensor => (self.stage1_config.l1_norm() as u128)
+                .checked_mul(4)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "tensor fold extraction degradation overflow".to_string(),
+                    )
+                }),
+        }
+    }
+
+    /// Shape-aware challenge coefficient bound used for A-role SIS extraction.
+    ///
+    /// Flat mode preserves the existing `SparseChallengeConfig::infinity_norm`
+    /// proxy. Tensor mode multiplies that proxy by the configured extraction
+    /// degradation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the conservative extraction bound does not fit `u32`.
+    pub fn stage1_extraction_infinity_norm(&self) -> Result<u32, AkitaError> {
+        let bound = self
+            .stage1_extraction_relative_msis_degradation()?
+            .checked_mul(self.stage1_config.infinity_norm() as u128)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("fold extraction infinity bound overflow".to_string())
+            })?;
+        u32::try_from(bound).map_err(|_| {
+            AkitaError::InvalidSetup("fold extraction infinity bound exceeds u32".to_string())
+        })
+    }
+
+    /// Return shape-aware SIS extraction accounting for planner/report output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the shape-aware collision bound overflows or is not
+    /// covered by the generated SIS collision buckets.
+    pub fn stage1_sis_extraction_report(
+        &self,
+        a_role_raw_collision: u32,
+    ) -> Result<Stage1SisExtractionReport, AkitaError> {
+        let extraction_relative_msis_degradation =
+            self.stage1_extraction_relative_msis_degradation()?;
+        let extraction_linf = self.stage1_extraction_infinity_norm()?;
+        let a_role_extraction_collision = a_role_raw_collision
+            .checked_mul(extraction_linf)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "fold A-role extraction collision overflow: raw={a_role_raw_collision}, extraction_linf={extraction_linf}"
+                ))
+            })?;
+        let a_role_supported_collision_bucket =
+            crate::generated::sis_floor::ceil_supported_collision(
+                self.a_key.sis_family,
+                self.ring_dimension as u32,
+                a_role_extraction_collision,
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "missing supported fold A-role collision bucket for family={:?}, D={} and collision {}",
+                    self.a_key.sis_family, self.ring_dimension, a_role_extraction_collision
+                ))
+            })?;
+        Ok(Stage1SisExtractionReport {
+            honest_challenge_l1_mass: self.challenge_l1_mass(),
+            base_challenge_linf: self.stage1_config.infinity_norm(),
+            extraction_relative_msis_degradation,
+            extraction_linf,
+            a_role_raw_collision,
+            a_role_extraction_collision,
+            a_role_supported_collision_bucket,
+        })
+    }
+
     /// Replace the fold-round challenge shape, returning the updated params.
     #[inline]
     #[must_use]
@@ -430,8 +535,14 @@ impl LevelParams {
         })
     }
 
-    /// Build a new `LevelParams` that keeps rank/ring info from `self` but
+    /// Build a new `LevelParams` that keeps rank info from `self` but
     /// replaces all layout-derived fields with those from `other`.
+    ///
+    /// The Ajtai matrix `collision_inf` is taken from `self` when `self`
+    /// supplies a non-zero value, otherwise from `other`. This preserves the
+    /// SIS-secured collision bound that `sis_secure_level_params` stores on
+    /// `self` while still letting params-only layouts carry their default
+    /// placeholder through intermediate construction.
     ///
     /// `fold_challenge_shape` is part of the layout: it determines block
     /// partitioning for stage-1 challenge sampling and is propagated from
@@ -439,6 +550,13 @@ impl LevelParams {
     /// layout they are paired with.
     pub fn with_layout(&self, other: &LevelParams) -> Self {
         let d = self.ring_dimension;
+        let merge_collision = |self_v: u32, other_v: u32| {
+            if self_v != 0 {
+                self_v
+            } else {
+                other_v
+            }
+        };
         Self {
             ring_dimension: d,
             log_basis: other.log_basis,
@@ -446,21 +564,21 @@ impl LevelParams {
                 self.a_key.sis_family,
                 self.a_key.row_len,
                 other.a_key.col_len,
-                other.a_key.collision_inf,
+                merge_collision(self.a_key.collision_inf, other.a_key.collision_inf),
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
                 self.b_key.sis_family,
                 self.b_key.row_len,
                 other.b_key.col_len,
-                other.b_key.collision_inf,
+                merge_collision(self.b_key.collision_inf, other.b_key.collision_inf),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
                 self.d_key.sis_family,
                 self.d_key.row_len,
                 other.d_key.col_len,
-                other.d_key.collision_inf,
+                merge_collision(self.d_key.collision_inf, other.d_key.collision_inf),
                 d,
             ),
             num_blocks: other.num_blocks,
@@ -536,6 +654,32 @@ mod tests {
         assert_eq!(lp.log_num_blocks(), layout_lp.r_vars);
         assert_eq!(lp.log_block_len(), layout_lp.m_vars);
         assert_eq!(lp.outer_vars(), layout_lp.m_vars + layout_lp.r_vars);
+    }
+
+    #[test]
+    fn tensor_extraction_report_uses_shape_aware_bucket() {
+        let lp = sample_layout_lp().with_fold_challenge_shape(TensorChallengeShape::Tensor);
+        let report = lp.stage1_sis_extraction_report(3).unwrap();
+
+        assert_eq!(report.honest_challenge_l1_mass, 9);
+        assert_eq!(report.base_challenge_linf, 1);
+        assert_eq!(report.extraction_relative_msis_degradation, 12);
+        assert_eq!(report.extraction_linf, 12);
+        assert_eq!(report.a_role_raw_collision, 3);
+        assert_eq!(report.a_role_extraction_collision, 36);
+        assert_eq!(report.a_role_supported_collision_bucket, 63);
+    }
+
+    #[test]
+    fn flat_extraction_report_preserves_existing_collision_bound() {
+        let lp = sample_layout_lp();
+        let report = lp.stage1_sis_extraction_report(3).unwrap();
+
+        assert_eq!(report.honest_challenge_l1_mass, 3);
+        assert_eq!(report.extraction_relative_msis_degradation, 1);
+        assert_eq!(report.extraction_linf, 1);
+        assert_eq!(report.a_role_extraction_collision, 3);
+        assert_eq!(report.a_role_supported_collision_bucket, 3);
     }
 
     #[test]

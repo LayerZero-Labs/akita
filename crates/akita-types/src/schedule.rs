@@ -6,8 +6,9 @@ use crate::generated::{
 };
 use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_layout_from_params,
-    level_proof_bytes, recursive_level_decomposition_from_root, ClaimIncidenceSummary,
-    DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint, SisModulusFamily,
+    level_proof_bytes, recursive_level_decomposition_from_root, validate_stored_sis_ranks,
+    ClaimIncidenceSummary, DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint,
+    SisModulusFamily,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -186,14 +187,18 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
 
 fn generated_level_params<Stage1Config>(
     sis_family: SisModulusFamily,
+    root_decomp: DecompositionParams,
+    inputs: AkitaScheduleInputs,
     step: GeneratedFoldStep,
     stage1_challenge_config: &Stage1Config,
-) -> LevelParams
+    fold_challenge_shape: akita_challenges::TensorChallengeShape,
+    ring_subfield_embedding_norm_bound: u32,
+) -> Result<LevelParams, AkitaError>
 where
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
 {
     let stage1_config = stage1_challenge_config(step.ring_d as usize);
-    LevelParams::params_only(
+    let mut params = LevelParams::params_only(
         sis_family,
         step.ring_d as usize,
         step.log_basis,
@@ -202,6 +207,56 @@ where
         step.n_d as usize,
         stage1_config,
     )
+    .with_fold_challenge_shape(fold_challenge_shape);
+
+    let bd_collision = (1u32 << step.log_basis) - 1;
+    let a_raw = if inputs.level == 0 && root_decomp.log_commit_bound == 1 {
+        2
+    } else {
+        bd_collision
+    };
+    let a_raw = a_raw
+        .checked_mul(ring_subfield_embedding_norm_bound)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("generated schedule A-role collision overflow".to_string())
+        })?;
+    let a_bucket = params
+        .stage1_sis_extraction_report(a_raw)?
+        .a_role_supported_collision_bucket;
+    let bd_bucket = crate::generated::sis_floor::ceil_supported_collision(
+        sis_family,
+        step.ring_d,
+        bd_collision,
+    )
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "generated schedule missing B/D collision bucket for family={sis_family:?}, \
+             D={}, collision={bd_collision}",
+            step.ring_d
+        ))
+    })?;
+    params.a_key = crate::AjtaiKeyParams::new_unchecked(
+        sis_family,
+        step.n_a as usize,
+        0,
+        a_bucket,
+        step.ring_d as usize,
+    );
+    params.b_key = crate::AjtaiKeyParams::new_unchecked(
+        sis_family,
+        step.n_b as usize,
+        0,
+        bd_bucket,
+        step.ring_d as usize,
+    );
+    params.d_key = crate::AjtaiKeyParams::new_unchecked(
+        sis_family,
+        step.n_d as usize,
+        0,
+        bd_bucket,
+        step.ring_d as usize,
+    );
+    Ok(params)
 }
 
 fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
@@ -269,7 +324,12 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
 
 /// Config-specific policy hooks needed to materialize generated schedule-table
 /// entries into runtime schedules.
-pub struct GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams> {
+pub struct GeneratedSchedulePlanPolicy<
+    Stage1Config,
+    FoldChallengeShape,
+    ScaleBatchedRoot,
+    DirectLevelParams,
+> {
     /// SIS modulus family used by generated fold levels.
     pub sis_family: SisModulusFamily,
     /// Root-level digit decomposition used to interpret generated entries.
@@ -281,8 +341,13 @@ pub struct GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLev
     /// Base-field width of the logical extension opening. This is `1` for the
     /// ordinary base-field path, which has no extension-opening reduction.
     pub extension_opening_width: usize,
+    /// Claim-field-to-ring embedding L-infinity expansion for A-role SIS
+    /// collision pricing.
+    pub ring_subfield_embedding_norm_bound: u32,
     /// Stage-1 sparse challenge policy for each ring dimension.
     pub stage1_challenge_config: Stage1Config,
+    /// Fold challenge shape policy for each schedule level.
+    pub fold_challenge_shape_at_level: FoldChallengeShape,
     /// Root-layout scaler for batched committed openings.
     pub scale_batched_root_layout: ScaleBatchedRoot,
     /// Direct terminal layout policy for a schedule state and log-basis.
@@ -339,14 +404,26 @@ fn extension_opening_reduction_level_bytes(
 ///
 /// Returns an error if the generated entry is structurally invalid, does not
 /// match `key`, or does not agree with the supplied config policy callbacks.
-pub fn schedule_plan_from_generated_entry<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
+pub fn schedule_plan_from_generated_entry<
+    F,
+    Stage1Config,
+    FoldChallengeShape,
+    ScaleBatchedRoot,
+    DirectLevelParams,
+>(
     key: AkitaScheduleLookupKey,
     entry: &GeneratedScheduleTableEntry,
-    policy: GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>,
+    policy: GeneratedSchedulePlanPolicy<
+        Stage1Config,
+        FoldChallengeShape,
+        ScaleBatchedRoot,
+        DirectLevelParams,
+    >,
 ) -> Result<AkitaSchedulePlan, AkitaError>
 where
     F: CanonicalField,
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
+    FoldChallengeShape: Fn(AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
@@ -356,7 +433,9 @@ where
         challenge_field_bits,
         recursive_public_rows,
         extension_opening_width,
+        ring_subfield_embedding_norm_bound,
         stage1_challenge_config,
+        fold_challenge_shape_at_level,
         scale_batched_root_layout,
         direct_level_params,
     } = policy;
@@ -399,7 +478,15 @@ where
                     level: fold_level,
                     current_w_len,
                 };
-                let params = generated_level_params(sis_family, *level, &stage1_challenge_config);
+                let params = generated_level_params(
+                    sis_family,
+                    root_decomp,
+                    inputs,
+                    *level,
+                    &stage1_challenge_config,
+                    fold_challenge_shape_at_level(inputs),
+                    ring_subfield_embedding_norm_bound,
+                )?;
                 let level_decomp = if fold_level == 0 {
                     DecompositionParams {
                         log_basis: level.log_basis,
@@ -424,6 +511,7 @@ where
                 if root_is_batched {
                     lp = scale_batched_root_layout(&lp, key.num_t_vectors)?;
                 }
+                validate_stored_sis_ranks(&lp)?;
                 let runtime_next_w_len = if fold_level == 0 {
                     let next_w_ring = w_ring_element_count_with_vector_counts_bits::<F>(
                         field_bits,
@@ -464,9 +552,13 @@ where
                     GeneratedStep::Fold(next_level) => {
                         let next_level_params = generated_level_params(
                             sis_family,
+                            root_decomp,
+                            next_inputs,
                             *next_level,
                             &stage1_challenge_config,
-                        );
+                            fold_challenge_shape_at_level(next_inputs),
+                            ring_subfield_embedding_norm_bound,
+                        )?;
                         let coeffs =
                             next_level_params.b_key.row_len() * next_level_params.ring_dimension;
                         (next_level_params, coeffs)
@@ -567,14 +659,26 @@ where
 ///
 /// Returns an error if a matching generated entry exists but fails validation
 /// against the supplied config policy callbacks.
-pub fn generated_schedule_plan_from_table<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
+pub fn generated_schedule_plan_from_table<
+    F,
+    Stage1Config,
+    FoldChallengeShape,
+    ScaleBatchedRoot,
+    DirectLevelParams,
+>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
-    policy: GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>,
+    policy: GeneratedSchedulePlanPolicy<
+        Stage1Config,
+        FoldChallengeShape,
+        ScaleBatchedRoot,
+        DirectLevelParams,
+    >,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
     F: CanonicalField,
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
+    FoldChallengeShape: Fn(AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
@@ -586,7 +690,7 @@ where
     }
     match table_entry(table, generated_schedule_lookup_key(key)) {
         Some(entry) => {
-            schedule_plan_from_generated_entry::<F, _, _, _>(key, entry, policy).map(Some)
+            schedule_plan_from_generated_entry::<F, _, _, _, _>(key, entry, policy).map(Some)
         }
         None => Ok(None),
     }
@@ -1077,27 +1181,56 @@ pub fn scale_batched_root_layout(
 
     let mut scaled = root_lp.clone();
     let d = scaled.ring_dimension;
-    scaled.b_key = crate::AjtaiKeyParams::try_new(
-        scaled.b_key.sis_family(),
-        scaled.b_key.row_len(),
+
+    let bumped_key = |role: &str,
+                      key: &crate::AjtaiKeyParams,
+                      col_len: usize|
+     -> Result<crate::AjtaiKeyParams, AkitaError> {
+        let required = if col_len > 0 && key.collision_inf() > 0 {
+            crate::generated::sis_floor::min_rank_for_secure_width(
+                key.sis_family(),
+                d as u32,
+                key.collision_inf(),
+                col_len as u64,
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "scale_batched_root_layout {role}-role: SIS table has no row for \
+                     (family={:?}, D={d}, collision_inf={}); cannot bump rank to cover \
+                     batched width {col_len}",
+                    key.sis_family(),
+                    key.collision_inf()
+                ))
+            })?
+        } else {
+            key.row_len()
+        };
+        crate::AjtaiKeyParams::try_new(
+            key.sis_family(),
+            key.row_len().max(required),
+            col_len,
+            key.collision_inf(),
+            d,
+        )
+    };
+
+    scaled.b_key = bumped_key(
+        "B",
+        &scaled.b_key,
         root_lp
             .b_key
             .col_len()
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("batched outer width overflow".to_string()))?,
-        scaled.b_key.collision_inf(),
-        d,
     )?;
-    scaled.d_key = crate::AjtaiKeyParams::try_new(
-        scaled.d_key.sis_family(),
-        scaled.d_key.row_len(),
+    scaled.d_key = bumped_key(
+        "D",
+        &scaled.d_key,
         root_lp
             .d_key
             .col_len()
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?,
-        scaled.d_key.collision_inf(),
-        d,
     )?;
     scaled.num_digits_fold = root_lp.num_digits_fold.max(
         crate::layout::digit_math::compute_num_digits_fold_with_claims(

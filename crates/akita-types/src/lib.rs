@@ -29,8 +29,9 @@ pub use layout::{
     recursive_level_decomposition_from_root, recursive_level_layout_from_params,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
-    sis_secure_level_params, sumcheck_rounds, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix,
-    LevelParams, RingMatrixView, RingOpeningPoint, SisModulusFamily, SisRoleWidths,
+    sis_secure_level_params, sumcheck_rounds, validate_stored_sis_ranks, AjtaiKeyParams, BasisMode,
+    BlockOrder, FlatMatrix, LevelParams, RingMatrixView, RingOpeningPoint, SisModulusFamily,
+    SisRoleWidths,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
