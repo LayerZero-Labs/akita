@@ -135,6 +135,7 @@ dependencies = [
  "aes",
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",
@@ -233,6 +234,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",

@@ -60,15 +60,21 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         level: 0,
         current_w_len: single_layout.num_blocks * single_layout.block_len * D,
     };
-    let single_params =
-        Cfg::level_params_with_log_basis(single_inputs, Cfg::log_basis_at_level(single_inputs));
+    let single_params = Cfg::level_params_with_log_basis(
+        single_inputs,
+        Cfg::log_basis_at_level(single_inputs).expect("single log_basis_at_level"),
+    )
+    .expect("single level_params_with_log_basis");
     let batch_inputs = AkitaScheduleInputs {
         num_vars: BATCH_NUM_VARS,
         level: 0,
         current_w_len: batch_layout.num_blocks * batch_layout.block_len * D,
     };
-    let batch_params =
-        Cfg::level_params_with_log_basis(batch_inputs, Cfg::log_basis_at_level(batch_inputs));
+    let batch_params = Cfg::level_params_with_log_basis(
+        batch_inputs,
+        Cfg::log_basis_at_level(batch_inputs).expect("batch log_basis_at_level"),
+    )
+    .expect("batch level_params_with_log_basis");
 
     let single_inner = single_poly
         .commit_inner_witness(

@@ -2,18 +2,13 @@
 //!
 //! Each config is a plain unit struct that wires its required
 //! [`CommitmentConfig`] hooks to the policy-agnostic SIS primitives in
-//! the crate-internal `config::sis_policy` module and the
-//! generated schedule tables in `akita-types`. A preset only
-//! declares its `(D, LOG_COMMIT_BOUND)` decomposition, its sparse stage-1
-//! family, the generated schedule table that backs it, and (when applicable)
-//! the audited root-rank floor.
+//! [`akita_planner`] and the generated schedule tables in [`akita_types`].
+//! A preset only declares its `(D, LOG_COMMIT_BOUND)` decomposition, its
+//! sparse stage-1 family, the generated schedule table that backs it, and
+//! (when applicable) the audited root-rank floor.
 
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
-use crate::schedule_policy::{fallback_batched_root_split, generated_schedule_plan_from_table};
-use crate::sis_policy::{
-    derived_root_commitment_layout_from_params, sis_derived_recursive_params,
-    sis_derived_root_params_for_layout,
-};
+use crate::schedule_policy::{fallback_batched_root_split, sis_derived_recursive_params};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_field::{
@@ -54,18 +49,20 @@ pub(crate) fn fp128_decomposition(log_commit_bound: u32, log_basis: u32) -> Deco
 }
 
 /// Sparse stage-1 challenge family for a given fp128 ring degree.
-pub(crate) fn fp128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+pub(crate) fn fp128_stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
     match d {
-        32 => SparseChallengeConfig::BoundedL1Norm,
-        64 => SparseChallengeConfig::ExactShell {
+        32 => Ok(SparseChallengeConfig::BoundedL1Norm),
+        64 => Ok(SparseChallengeConfig::ExactShell {
             count_mag1: 30,
             count_mag2: 12,
-        },
-        128 => SparseChallengeConfig::Uniform {
+        }),
+        128 => Ok(SparseChallengeConfig::Uniform {
             weight: 31,
             nonzero_coeffs: vec![-1, 1],
-        },
-        _ => panic!("unsupported fp128 ring dim {d}"),
+        }),
+        _ => Err(AkitaError::InvalidSetup(format!(
+            "unsupported fp128 ring dim {d}"
+        ))),
     }
 }
 
@@ -95,7 +92,7 @@ pub(crate) fn fp128_audited_root_rank<Cfg: CommitmentConfig>(
 //
 // Each wrapper implements one required `CommitmentConfig` method by routing
 // through the planned schedule table when available and falling back to the
-// SIS primitives in `config::sis_policy` otherwise.
+// `akita_planner` SIS primitives otherwise.
 // ---------------------------------------------------------------------------
 
 /// Inclusive `(min, max)` log-basis search range used by every fp128 preset.
@@ -104,6 +101,10 @@ pub(crate) fn proof_optimized_log_basis_search_range() -> (u32, u32) {
 }
 
 /// Proof-optimized `schedule_plan` impl.
+///
+/// Materializes the matching entry from `Cfg::schedule_table()` through the
+/// planner's `schedule_plan_from_table` materializer with a `PlanPolicy`
+/// derived directly from the config hooks.
 pub(crate) fn proof_optimized_schedule_plan<Cfg>(
     key: AkitaScheduleLookupKey,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
@@ -113,7 +114,21 @@ where
     let Some(table) = Cfg::schedule_table() else {
         return Ok(None);
     };
-    generated_schedule_plan_from_table::<Cfg>(key, table)
+    akita_planner::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _>(
+        key,
+        table,
+        akita_planner::PlanPolicy {
+            sis_family: Cfg::sis_modulus_family(),
+            root_decomp: Cfg::decomposition(),
+            challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
+            recursive_public_rows: 1,
+            extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
+            stage1_challenge_config: Cfg::stage1_challenge_config,
+            scale_batched_root_layout:
+                crate::schedule_policy::scale_batched_root_layout_with_config::<Cfg>,
+            direct_level_params: crate::schedule_policy::direct_level_params_with_log_basis::<Cfg>,
+        },
+    )
 }
 
 /// Proof-optimized `schedule_key` impl: derive a stable identifier from the
@@ -139,12 +154,11 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
 /// when available; otherwise fall back to the root decomposition's basis.
 pub(crate) fn proof_optimized_log_basis_at_level<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
-) -> u32 {
+) -> Result<u32, AkitaError> {
     let key = AkitaScheduleLookupKey::singleton(inputs.num_vars);
-    match proof_optimized_schedule_plan::<Cfg>(key) {
-        Ok(Some(plan)) => planned_log_basis_at_level_from_schedule(&plan, inputs)
-            .expect("generated proof-optimized schedule must be derivable from public inputs"),
-        _ => Cfg::decomposition().log_basis,
+    match proof_optimized_schedule_plan::<Cfg>(key)? {
+        Some(plan) => planned_log_basis_at_level_from_schedule(&plan, inputs),
+        None => Ok(Cfg::decomposition().log_basis),
     }
 }
 
@@ -154,18 +168,18 @@ pub(crate) fn proof_optimized_log_basis_at_level<Cfg: CommitmentConfig>(
 pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
-) -> LevelParams {
+) -> Result<LevelParams, AkitaError> {
     let singleton_key = AkitaScheduleLookupKey::singleton(inputs.num_vars);
-    if let Ok(Some(plan)) = proof_optimized_schedule_plan::<Cfg>(singleton_key) {
-        if let Ok(Some(planned_level)) =
-            exact_planned_level_execution(&plan, inputs, log_basis, Cfg::stage1_challenge_config)
+    if let Some(plan) = proof_optimized_schedule_plan::<Cfg>(singleton_key)? {
+        if let Some(planned_level) =
+            exact_planned_level_execution(&plan, inputs, log_basis, Cfg::stage1_challenge_config)?
         {
-            return planned_level.level.lp.clone();
+            return Ok(planned_level.level.lp.clone());
         }
     }
     let envelope = Cfg::envelope(inputs.num_vars);
     let d = Cfg::D;
-    let stage1_config = Cfg::stage1_challenge_config(d);
+    let stage1_config = Cfg::stage1_challenge_config(d)?;
 
     if inputs.level > 0 {
         if let Some(params) = sis_derived_recursive_params::<Cfg>(
@@ -180,13 +194,13 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
                 inputs.current_w_len,
                 Cfg::decomposition(),
             ) {
-                return lp;
+                return Ok(lp);
             }
-            return params;
+            return Ok(params);
         }
     }
 
-    LevelParams::params_only(
+    Ok(LevelParams::params_only(
         Cfg::sis_modulus_family(),
         d,
         log_basis,
@@ -194,7 +208,7 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
         envelope.max_n_b,
         envelope.max_n_d,
         stage1_config,
-    )
+    ))
 }
 
 /// Proof-optimized `root_level_params_for_layout_with_log_basis` impl.
@@ -202,7 +216,15 @@ pub(crate) fn proof_optimized_root_level_params_for_layout_with_log_basis<Cfg: C
     inputs: AkitaScheduleInputs,
     lp: &LevelParams,
 ) -> Result<LevelParams, AkitaError> {
-    let params = sis_derived_root_params_for_layout::<Cfg>(inputs, lp)?;
+    let params = akita_planner::sis_derived_root_params_for_layout(
+        Cfg::sis_modulus_family(),
+        Cfg::D,
+        Cfg::decomposition(),
+        Cfg::stage1_challenge_config(Cfg::D)?,
+        Cfg::ring_subfield_embedding_norm_bound(),
+        inputs,
+        lp,
+    )?;
     Ok(params.with_layout(lp))
 }
 
@@ -211,7 +233,7 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
-    let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
+    let stage1_config = Cfg::stage1_challenge_config(Cfg::D)?;
     let mut candidate_n_a = 1usize;
     let rank_cap = proof_optimized_root_a_rank_cap::<Cfg>(inputs, log_basis, &stage1_config)?;
     for _ in 0..rank_cap {
@@ -224,9 +246,21 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
             1,
             stage1_config.clone(),
         );
-        let root_lp =
-            derived_root_commitment_layout_from_params::<Cfg>(inputs, &candidate_params, false)?;
-        let derived_params = sis_derived_root_params_for_layout::<Cfg>(inputs, &root_lp)?;
+        let root_lp = akita_planner::derived_root_commitment_layout_from_params(
+            inputs,
+            Cfg::decomposition(),
+            &candidate_params,
+            false,
+        )?;
+        let derived_params = akita_planner::sis_derived_root_params_for_layout(
+            Cfg::sis_modulus_family(),
+            Cfg::D,
+            Cfg::decomposition(),
+            stage1_config.clone(),
+            Cfg::ring_subfield_embedding_norm_bound(),
+            inputs,
+            &root_lp,
+        )?;
         if derived_params.a_key.row_len() == candidate_n_a {
             return Ok(derived_params.with_layout(&root_lp));
         }
@@ -398,7 +432,9 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     } else {
         #[cfg(feature = "planner")]
         {
-            let schedule = akita_planner::find_optimal_schedule::<Cfg>(cached_key)?;
+            let schedule = akita_planner::find_optimal_schedule(
+                &crate::schedule_policy::search_options_for_cfg::<Cfg>(cached_key),
+            )?;
             setup_level_params_from_runtime_schedule(schedule.steps, setup_envelope)
         }
 
@@ -508,7 +544,26 @@ where
 /// delegation to the proof-optimized helpers above.
 macro_rules! impl_fp128_preset {
     ($cfg:ident, $d:expr, $log_commit_bound:expr, $table:expr) => {
-        impl akita_types::ScheduleProvider for $cfg {
+        impl $crate::CommitmentConfig for $cfg {
+            type Field = Field;
+            type ClaimField = Field;
+            type ChallengeField = Field;
+            const D: usize = $d;
+
+            fn decomposition() -> akita_types::DecompositionParams {
+                $crate::proof_optimized::fp128_decomposition($log_commit_bound, 3)
+            }
+
+            fn stage1_challenge_config(
+                d: usize,
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+                $crate::proof_optimized::fp128_stage1_challenge_config(d)
+            }
+
+            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+                akita_types::SisModulusFamily::Q128
+            }
+
             fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
                 $table
             }
@@ -521,25 +576,6 @@ macro_rules! impl_fp128_preset {
                 key: akita_types::AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
-            }
-        }
-
-        impl $crate::CommitmentConfig for $cfg {
-            type Field = Field;
-            type ClaimField = Field;
-            type ChallengeField = Field;
-            const D: usize = $d;
-
-            fn decomposition() -> akita_types::DecompositionParams {
-                $crate::proof_optimized::fp128_decomposition($log_commit_bound, 3)
-            }
-
-            fn stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
-                $crate::proof_optimized::fp128_stage1_challenge_config(d)
-            }
-
-            fn sis_modulus_family() -> akita_types::SisModulusFamily {
-                akita_types::SisModulusFamily::Q128
             }
 
             fn audited_root_rank(
@@ -575,7 +611,7 @@ macro_rules! impl_fp128_preset {
             fn level_params_with_log_basis(
                 inputs: akita_types::AkitaScheduleInputs,
                 log_basis: u32,
-            ) -> akita_types::LevelParams {
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_level_params_with_log_basis::<Self>(
                     inputs,
                     log_basis,
@@ -602,7 +638,7 @@ macro_rules! impl_fp128_preset {
 
             fn log_basis_at_level(
                 inputs: akita_types::AkitaScheduleInputs,
-            ) -> u32 {
+            ) -> Result<u32, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_log_basis_at_level::<Self>(inputs)
             }
 
@@ -613,117 +649,12 @@ macro_rules! impl_fp128_preset {
             }
         }
 
-        #[cfg(feature = "planner")]
-        impl akita_planner::PlannerConfig for $cfg {
-            type PlannerField = Field;
-
-            const PLANNER_D: usize = $d;
-
-            fn planner_field_bits() -> u32 {
-                <Self as $crate::CommitmentConfig>::decomposition().field_bits()
-            }
-
-            fn planner_challenge_field_bits() -> u32 {
-                <Self as $crate::CommitmentConfig>::decomposition().field_bits()
-                    * (<Self as $crate::CommitmentConfig>::CHAL_EXT_DEGREE as u32)
-            }
-
-            fn planner_extension_opening_width() -> usize {
-                <Self as $crate::CommitmentConfig>::CLAIM_EXT_DEGREE
-            }
-
-            fn planner_recursive_witness_expansion() -> usize {
-                1
-            }
-
-            fn planner_recursive_public_rows() -> usize {
-                1
-            }
-
-            fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
-                <Self as $crate::CommitmentConfig>::sis_modulus_family()
-            }
-
-            fn planner_stage1_challenge_config(
-                d: usize,
-            ) -> akita_challenges::SparseChallengeConfig {
-                <Self as $crate::CommitmentConfig>::stage1_challenge_config(d)
-            }
-
-            fn planner_schedule_plan(
-                key: akita_types::AkitaScheduleLookupKey,
-            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                <Self as akita_types::ScheduleProvider>::schedule_plan(key)
-            }
-
-            fn planner_root_level_layout_with_log_basis(
-                inputs: akita_types::AkitaScheduleInputs,
-                log_basis: u32,
-            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-                <Self as $crate::CommitmentConfig>::root_level_layout_with_log_basis(
-                    inputs,
-                    log_basis,
-                )
-            }
-
-            fn planner_current_level_layout_with_log_basis(
-                inputs: akita_types::AkitaScheduleInputs,
-                log_basis: u32,
-            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-                $crate::current_level_layout_with_log_basis::<Self>(
-                    inputs,
-                    log_basis,
-                )
-            }
-
-            fn planner_direct_level_params_with_log_basis(
-                inputs: akita_types::AkitaScheduleInputs,
-                log_basis: u32,
-            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-                $crate::schedule_policy::direct_level_params_with_log_basis::<Self>(
-                    inputs,
-                    log_basis,
-                )
-            }
-
-            fn planner_root_level_params_for_layout_with_log_basis(
-                inputs: akita_types::AkitaScheduleInputs,
-                lp: &akita_types::LevelParams,
-            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-                <Self as $crate::CommitmentConfig>::root_level_params_for_layout_with_log_basis(
-                    inputs,
-                    lp,
-                )
-            }
-
-            fn planner_log_basis_search_range(
-                inputs: akita_types::AkitaScheduleInputs,
-            ) -> (u32, u32) {
-                <Self as $crate::CommitmentConfig>::log_basis_search_range(inputs)
-            }
-        }
     };
 }
 pub(crate) use impl_fp128_preset;
 
 macro_rules! impl_small_field_preset {
     ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $log_basis:expr, $weight:expr, $coeffs:expr, $table:expr) => {
-        impl akita_types::ScheduleProvider for $cfg {
-            fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-                $table
-            }
-
-            fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
-                $crate::proof_optimized::proof_optimized_schedule_key::<Self>(key)
-            }
-
-            fn schedule_plan(
-                key: akita_types::AkitaScheduleLookupKey,
-            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
-            }
-        }
-
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ClaimField = $claim_field;
@@ -742,16 +673,38 @@ macro_rules! impl_small_field_preset {
                 }
             }
 
-            fn stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
-                assert_eq!(d, Self::D);
-                akita_challenges::SparseChallengeConfig::Uniform {
+            fn stage1_challenge_config(
+                d: usize,
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+                if d != Self::D {
+                    return Err(akita_field::AkitaError::InvalidSetup(format!(
+                        "unsupported D={} for small-field preset (expected {})",
+                        d,
+                        Self::D,
+                    )));
+                }
+                Ok(akita_challenges::SparseChallengeConfig::Uniform {
                     weight: $weight,
                     nonzero_coeffs: $coeffs,
-                }
+                })
             }
 
             fn sis_modulus_family() -> akita_types::SisModulusFamily {
                 $family
+            }
+
+            fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+                $table
+            }
+
+            fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
+                $crate::proof_optimized::proof_optimized_schedule_key::<Self>(key)
+            }
+
+            fn schedule_plan(
+                key: akita_types::AkitaScheduleLookupKey,
+            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
             }
 
             fn audited_root_rank(
@@ -785,7 +738,7 @@ macro_rules! impl_small_field_preset {
             fn level_params_with_log_basis(
                 inputs: akita_types::AkitaScheduleInputs,
                 log_basis: u32,
-            ) -> akita_types::LevelParams {
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_level_params_with_log_basis::<Self>(
                     inputs,
                     log_basis,
@@ -812,7 +765,7 @@ macro_rules! impl_small_field_preset {
 
             fn log_basis_at_level(
                 inputs: akita_types::AkitaScheduleInputs,
-            ) -> u32 {
+            ) -> Result<u32, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_log_basis_at_level::<Self>(inputs)
             }
 
@@ -823,95 +776,6 @@ macro_rules! impl_small_field_preset {
             }
         }
 
-        #[cfg(feature = "planner")]
-        impl akita_planner::PlannerConfig for $cfg {
-            type PlannerField = $field;
-
-            const PLANNER_D: usize = $d;
-
-            fn planner_field_bits() -> u32 {
-                <Self as $crate::CommitmentConfig>::decomposition().field_bits()
-            }
-
-            fn planner_challenge_field_bits() -> u32 {
-                <Self as $crate::CommitmentConfig>::decomposition().field_bits()
-                    * (<Self as $crate::CommitmentConfig>::CHAL_EXT_DEGREE as u32)
-            }
-
-            fn planner_extension_opening_width() -> usize {
-                <Self as $crate::CommitmentConfig>::CLAIM_EXT_DEGREE
-            }
-
-            fn planner_recursive_witness_expansion() -> usize {
-                1
-            }
-
-            fn planner_recursive_public_rows() -> usize {
-                1
-            }
-
-            fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
-                <Self as $crate::CommitmentConfig>::sis_modulus_family()
-            }
-
-            fn planner_stage1_challenge_config(
-                d: usize,
-            ) -> akita_challenges::SparseChallengeConfig {
-                <Self as $crate::CommitmentConfig>::stage1_challenge_config(d)
-            }
-
-            fn planner_schedule_plan(
-                key: akita_types::AkitaScheduleLookupKey,
-            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                <Self as akita_types::ScheduleProvider>::schedule_plan(key)
-            }
-
-            fn planner_root_level_layout_with_log_basis(
-                inputs: akita_types::AkitaScheduleInputs,
-                log_basis: u32,
-            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-                <Self as $crate::CommitmentConfig>::root_level_layout_with_log_basis(
-                    inputs,
-                    log_basis,
-                )
-            }
-
-            fn planner_current_level_layout_with_log_basis(
-                inputs: akita_types::AkitaScheduleInputs,
-                log_basis: u32,
-            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-                $crate::current_level_layout_with_log_basis::<Self>(
-                    inputs,
-                    log_basis,
-                )
-            }
-
-            fn planner_direct_level_params_with_log_basis(
-                inputs: akita_types::AkitaScheduleInputs,
-                log_basis: u32,
-            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-                $crate::schedule_policy::direct_level_params_with_log_basis::<Self>(
-                    inputs,
-                    log_basis,
-                )
-            }
-
-            fn planner_root_level_params_for_layout_with_log_basis(
-                inputs: akita_types::AkitaScheduleInputs,
-                lp: &akita_types::LevelParams,
-            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-                <Self as $crate::CommitmentConfig>::root_level_params_for_layout_with_log_basis(
-                    inputs,
-                    lp,
-                )
-            }
-
-            fn planner_log_basis_search_range(
-                inputs: akita_types::AkitaScheduleInputs,
-            ) -> (u32, u32) {
-                <Self as $crate::CommitmentConfig>::log_basis_search_range(inputs)
-            }
-        }
     };
 }
 
@@ -959,14 +823,13 @@ mod tests {
     #[test]
     fn fp16_generated_schedule_tables_are_wired() {
         let onehot_key = AkitaScheduleLookupKey::singleton(32);
-        let onehot_plan =
-            <fp16::D32OneHot as akita_types::ScheduleProvider>::schedule_plan(onehot_key)
-                .unwrap()
-                .expect("fp16 D32 onehot nv32 schedule should be generated");
+        let onehot_plan = <fp16::D32OneHot as crate::CommitmentConfig>::schedule_plan(onehot_key)
+            .unwrap()
+            .expect("fp16 D32 onehot nv32 schedule should be generated");
         assert!(!onehot_plan.steps.is_empty());
 
         let dense_key = AkitaScheduleLookupKey::singleton(27);
-        let dense_plan = <fp16::D32Full as akita_types::ScheduleProvider>::schedule_plan(dense_key)
+        let dense_plan = <fp16::D32Full as crate::CommitmentConfig>::schedule_plan(dense_key)
             .unwrap()
             .expect("fp16 D32 full nv27 schedule should be generated");
         assert!(!dense_plan.steps.is_empty());
@@ -975,14 +838,13 @@ mod tests {
     #[test]
     fn fp32_d32_generated_schedule_tables_are_wired() {
         let onehot_key = AkitaScheduleLookupKey::singleton(32);
-        let onehot_plan =
-            <fp32::D32OneHot as akita_types::ScheduleProvider>::schedule_plan(onehot_key)
-                .unwrap()
-                .expect("fp32 D32 onehot nv32 schedule should be generated");
+        let onehot_plan = <fp32::D32OneHot as crate::CommitmentConfig>::schedule_plan(onehot_key)
+            .unwrap()
+            .expect("fp32 D32 onehot nv32 schedule should be generated");
         assert!(!onehot_plan.steps.is_empty());
 
         let dense_key = AkitaScheduleLookupKey::singleton(26);
-        let dense_plan = <fp32::D32Full as akita_types::ScheduleProvider>::schedule_plan(dense_key)
+        let dense_plan = <fp32::D32Full as crate::CommitmentConfig>::schedule_plan(dense_key)
             .unwrap()
             .expect("fp32 D32 full nv26 schedule should be generated");
         assert!(!dense_plan.steps.is_empty());

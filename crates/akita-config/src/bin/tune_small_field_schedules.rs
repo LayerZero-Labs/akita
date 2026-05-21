@@ -7,7 +7,7 @@
 use std::env;
 
 use akita_config::proof_optimized::{fp16, fp32, fp64};
-use akita_config::CommitmentConfig;
+use akita_config::{search_options_for_cfg, CommitmentConfig};
 use akita_planner::schedule_params::find_optimal_schedule;
 use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, Schedule, Step};
 
@@ -91,7 +91,7 @@ fn report_cfg<Cfg: CommitmentConfig>(family: &str, d_label: &str, shape: &str, n
                     continue;
                 }
             };
-            match find_optimal_schedule::<Cfg>(key) {
+            match find_optimal_schedule(&search_options_for_cfg::<Cfg>(key)) {
                 Ok(schedule) => println!(
                     "{family},{d_label},{shape},{},{nv},OK,total_bytes={},{}",
                     workload.name(),

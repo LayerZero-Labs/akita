@@ -1,15 +1,33 @@
-//! Commitment-config trait and concrete protocol configs.
+//! The single user-facing commitment-config trait and concrete protocol
+//! configs.
 //!
-//! The trait [`CommitmentConfig`] is intentionally slim: presets must
-//! implement every runtime hook explicitly (no thin delegating defaults).
+//! The trait [`CommitmentConfig`] is the only `<Cfg>` parameter consumed by
+//! `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`. It
+//! replaces the previous three-trait split (`CommitmentConfig`,
+//! `ScheduleProvider`, `PlannerConfig`). Verifier-reachable hooks — namely
+//! [`CommitmentConfig::level_params_with_log_basis`],
+//! [`CommitmentConfig::log_basis_at_level`], and
+//! [`CommitmentConfig::stage1_challenge_config`] — return `Result` so
+//! malformed inputs surface as `AkitaError` instead of panicking on the
+//! verifier replay path.
+//!
+//! Presets must implement every required (no-default) hook explicitly.
 //! Substantive helpers that encode protocol logic — `commitment_layout`,
-//! `get_params_for_commitment`, `get_params_for_prove` — keep default
-//! bodies because they are not policy choices and would otherwise be
-//! duplicated verbatim across every config.
+//! `get_params_for_commitment`, `get_params_for_prove`,
+//! `get_params_for_batched_commitment` — keep default bodies because they
+//! are not policy choices and would otherwise be duplicated verbatim across
+//! every config. Under the `planner` feature these defaults route table
+//! misses through `akita_planner::find_optimal_schedule`; without the
+//! feature they return [`AkitaError::InvalidSetup`] on table miss and
+//! callers can override every default to provide a planner-free `Cfg`.
+//!
+//! [`WCommitmentConfig`] is the derived recursive-w config that
+//! `<Cfg>`-generic dispatch helpers use for ring-degree dispatch.
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use akita_types::generated::GeneratedScheduleTable;
 #[cfg(feature = "planner")]
 use akita_types::schedule_root_fold_params;
 use akita_types::{
@@ -17,17 +35,18 @@ use akita_types::{
     LevelParams, SisModulusFamily,
 };
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary,
-    Schedule, ScheduleProvider,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary, Schedule,
 };
 use std::marker::PhantomData;
 
 pub mod proof_optimized;
 pub(crate) mod schedule_policy;
-pub(crate) mod sis_policy;
-
-pub use schedule_policy::{akita_batched_root_layout, current_level_layout_with_log_basis};
+mod transcript_binding;
+pub use schedule_policy::{
+    akita_batched_root_layout, current_level_layout_with_log_basis, search_options_for_cfg,
+};
 use schedule_policy::{akita_root_commitment_layout, fallback_batched_root_split};
+pub use transcript_binding::bind_transcript_instance_descriptor;
 
 #[cfg(not(feature = "planner"))]
 pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookupKey) -> AkitaError {
@@ -35,20 +54,6 @@ pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookup
         "{context} requires a generated schedule for key {key:?}; enable the akita-config `planner` feature to allow offline planner fallback"
     ))
 }
-
-/// Extra config bound needed only when planner-backed fallbacks are enabled.
-#[cfg(feature = "planner")]
-pub trait PlannerFallbackConfig: akita_planner::PlannerConfig {}
-
-#[cfg(feature = "planner")]
-impl<T: akita_planner::PlannerConfig> PlannerFallbackConfig for T {}
-
-/// Empty marker when runtime configs are restricted to generated schedules.
-#[cfg(not(feature = "planner"))]
-pub trait PlannerFallbackConfig {}
-
-#[cfg(not(feature = "planner"))]
-impl<T> PlannerFallbackConfig for T {}
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
 ///
@@ -75,9 +80,7 @@ impl<T> PlannerFallbackConfig for T {}
 /// specialization `Field = ClaimField = ChallengeField` is the current
 /// production fp128 path; the only non-trivial concrete chain so far is
 /// `F ⊆ Fp2 ⊆ TowerBasisFp4`.
-pub trait CommitmentConfig:
-    ScheduleProvider + PlannerFallbackConfig + Clone + Send + Sync + 'static
-{
+pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
     type Field: CanonicalField + FieldCore;
 
@@ -133,10 +136,29 @@ pub trait CommitmentConfig:
     fn decomposition() -> DecompositionParams;
 
     /// Sparse challenge family used at this level.
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `d` is not supported by this config.
+    fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
 
     /// SIS modulus family used by security-floor lookups for this config.
     fn sis_modulus_family() -> SisModulusFamily;
+
+    // -- inlined former `ScheduleProvider` methods --
+
+    /// Pre-computed schedule table backing this config, if any.
+    fn schedule_table() -> Option<GeneratedScheduleTable>;
+
+    /// Stable identity for the active schedule at `key`.
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String;
+
+    /// Optional full schedule plan for configs with an explicit provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the provider cannot materialize a valid schedule.
+    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError>;
 
     /// Infinity-norm expansion introduced when claim-field coordinates are
     /// embedded into the ring subfield via `psi`.
@@ -174,8 +196,16 @@ pub trait CommitmentConfig:
     ) -> Result<(usize, usize), AkitaError>;
 
     /// Active level params for one level under an explicit basis.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the requested level/basis combination is
+    /// invalid for this config (verifier-reachable; must not panic).
     #[doc(hidden)]
-    fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams;
+    fn level_params_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, AkitaError>;
 
     /// Active root params for a concrete root layout.
     ///
@@ -202,8 +232,13 @@ pub trait CommitmentConfig:
     ) -> Result<LevelParams, AkitaError>;
 
     /// Active basis for one level from public inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the requested public inputs are invalid for
+    /// this config (verifier-reachable; must not panic).
     #[doc(hidden)]
-    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32;
+    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> Result<u32, AkitaError>;
 
     /// Inclusive `(min, max)` log-basis search range at one state.
     #[doc(hidden)]
@@ -224,7 +259,8 @@ pub trait CommitmentConfig:
         }
         #[cfg(feature = "planner")]
         {
-            let schedule = akita_planner::find_optimal_schedule::<Self>(key)?;
+            let schedule =
+                akita_planner::find_optimal_schedule(&search_options_for_cfg::<Self>(key))?;
             if let Some(root_params) = schedule_root_fold_params(&schedule) {
                 return Ok(root_params.clone());
             }
@@ -272,7 +308,8 @@ pub trait CommitmentConfig:
 
         #[cfg(feature = "planner")]
         {
-            let schedule = akita_planner::find_optimal_schedule::<Self>(lookup_key)?;
+            let schedule =
+                akita_planner::find_optimal_schedule(&search_options_for_cfg::<Self>(lookup_key))?;
             if let Some(root_params) = schedule_root_fold_params(&schedule) {
                 Ok(root_params.clone())
             } else {
@@ -286,7 +323,7 @@ pub trait CommitmentConfig:
             akita_types::scale_batched_root_layout(
                 &split,
                 num_claims,
-                Self::stage1_challenge_config(Self::D).l1_norm(),
+                Self::stage1_challenge_config(Self::D)?.l1_norm(),
                 Self::decomposition().field_bits(),
             )
         }
@@ -308,7 +345,7 @@ pub trait CommitmentConfig:
 
         #[cfg(feature = "planner")]
         {
-            akita_planner::find_optimal_schedule::<Self>(key)
+            akita_planner::find_optimal_schedule(&search_options_for_cfg::<Self>(key))
         }
 
         #[cfg(not(feature = "planner"))]
@@ -355,89 +392,6 @@ pub struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
 }
 
-impl<const D: usize, Cfg: CommitmentConfig> ScheduleProvider for WCommitmentConfig<D, Cfg> {
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        Cfg::schedule_table()
-    }
-
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        Cfg::schedule_key(key)
-    }
-
-    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-        Cfg::schedule_plan(key)
-    }
-}
-
-#[cfg(feature = "planner")]
-impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
-    for WCommitmentConfig<D, Cfg>
-{
-    type PlannerField = Cfg::Field;
-
-    const PLANNER_D: usize = D;
-
-    fn planner_field_bits() -> u32 {
-        <Self as CommitmentConfig>::decomposition().field_bits()
-    }
-
-    fn planner_challenge_field_bits() -> u32 {
-        <Self as CommitmentConfig>::decomposition().field_bits()
-            * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
-    }
-
-    fn planner_extension_opening_width() -> usize {
-        <Self as CommitmentConfig>::CLAIM_EXT_DEGREE
-    }
-
-    fn planner_recursive_witness_expansion() -> usize {
-        1
-    }
-
-    fn planner_recursive_public_rows() -> usize {
-        1
-    }
-
-    fn planner_sis_modulus_family() -> SisModulusFamily {
-        <Self as CommitmentConfig>::sis_modulus_family()
-    }
-
-    fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-        <Self as CommitmentConfig>::stage1_challenge_config(d)
-    }
-
-    fn planner_schedule_plan(
-        key: AkitaScheduleLookupKey,
-    ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-        <Self as ScheduleProvider>::schedule_plan(key)
-    }
-
-    fn planner_root_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        <Self as CommitmentConfig>::root_level_layout_with_log_basis(inputs, log_basis)
-    }
-
-    fn planner_current_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        current_level_layout_with_log_basis::<Self>(inputs, log_basis)
-    }
-
-    fn planner_root_level_params_for_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, AkitaError> {
-        <Self as CommitmentConfig>::root_level_params_for_layout_with_log_basis(inputs, lp)
-    }
-
-    fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-        <Self as CommitmentConfig>::log_basis_search_range(inputs)
-    }
-}
-
 impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
     type Field = Cfg::Field;
     type ClaimField = Cfg::ClaimField;
@@ -451,12 +405,24 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         )
     }
 
-    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+    fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
         Cfg::stage1_challenge_config(d)
     }
 
     fn sis_modulus_family() -> SisModulusFamily {
         Cfg::sis_modulus_family()
+    }
+
+    fn schedule_table() -> Option<GeneratedScheduleTable> {
+        Cfg::schedule_table()
+    }
+
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+        Cfg::schedule_key(key)
+    }
+
+    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+        Cfg::schedule_plan(key)
     }
 
     fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
@@ -475,10 +441,13 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
-    fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams {
-        let params = Cfg::level_params_with_log_basis(inputs, log_basis);
+    fn level_params_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, AkitaError> {
+        let params = Cfg::level_params_with_log_basis(inputs, log_basis)?;
         debug_assert_eq!(params.ring_dimension, D);
-        params
+        Ok(params)
     }
 
     fn root_level_params_for_layout_with_log_basis(
@@ -495,7 +464,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::root_level_layout_with_log_basis(inputs, log_basis)
     }
 
-    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
+    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
         Cfg::log_basis_at_level(inputs)
     }
 
@@ -525,88 +494,6 @@ mod tests {
     #[derive(Clone)]
     struct ExtensionRoleConfig;
 
-    impl ScheduleProvider for ExtensionRoleConfig {
-        fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-            None
-        }
-
-        fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-            format!("extension-role-test/{key:?}")
-        }
-
-        fn schedule_plan(
-            _key: AkitaScheduleLookupKey,
-        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-            Ok(None)
-        }
-    }
-
-    #[cfg(feature = "planner")]
-    impl akita_planner::PlannerConfig for ExtensionRoleConfig {
-        type PlannerField = Base;
-
-        const PLANNER_D: usize = 8;
-
-        fn planner_field_bits() -> u32 {
-            8
-        }
-
-        fn planner_challenge_field_bits() -> u32 {
-            8 * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
-        }
-
-        fn planner_extension_opening_width() -> usize {
-            <Self as CommitmentConfig>::CLAIM_EXT_DEGREE
-        }
-
-        fn planner_recursive_witness_expansion() -> usize {
-            1
-        }
-
-        fn planner_recursive_public_rows() -> usize {
-            1
-        }
-
-        fn planner_sis_modulus_family() -> SisModulusFamily {
-            Self::sis_modulus_family()
-        }
-
-        fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-            Self::stage1_challenge_config(d)
-        }
-
-        fn planner_schedule_plan(
-            key: AkitaScheduleLookupKey,
-        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-            Self::schedule_plan(key)
-        }
-
-        fn planner_root_level_layout_with_log_basis(
-            inputs: AkitaScheduleInputs,
-            log_basis: u32,
-        ) -> Result<LevelParams, AkitaError> {
-            Self::root_level_layout_with_log_basis(inputs, log_basis)
-        }
-
-        fn planner_current_level_layout_with_log_basis(
-            inputs: AkitaScheduleInputs,
-            log_basis: u32,
-        ) -> Result<LevelParams, AkitaError> {
-            Ok(Self::level_params_with_log_basis(inputs, log_basis))
-        }
-
-        fn planner_root_level_params_for_layout_with_log_basis(
-            inputs: AkitaScheduleInputs,
-            lp: &LevelParams,
-        ) -> Result<LevelParams, AkitaError> {
-            Self::root_level_params_for_layout_with_log_basis(inputs, lp)
-        }
-
-        fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-            Self::log_basis_search_range(inputs)
-        }
-    }
-
     impl CommitmentConfig for ExtensionRoleConfig {
         type Field = Base;
         type ClaimField = BaseFp2;
@@ -622,16 +509,35 @@ mod tests {
             }
         }
 
-        fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
-            assert_eq!(d, Self::D);
-            SparseChallengeConfig::Uniform {
+        fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+            if d != Self::D {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "unsupported D={d} for ExtensionRoleConfig (expected {})",
+                    Self::D
+                )));
+            }
+            Ok(SparseChallengeConfig::Uniform {
                 weight: 1,
                 nonzero_coeffs: vec![-1, 1],
-            }
+            })
         }
 
         fn sis_modulus_family() -> SisModulusFamily {
             SisModulusFamily::Q32
+        }
+
+        fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+            None
+        }
+
+        fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+            format!("extension-role-test/{key:?}")
+        }
+
+        fn schedule_plan(
+            _key: AkitaScheduleLookupKey,
+        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+            Ok(None)
         }
 
         fn audited_root_rank(_role: AjtaiRole, _max_num_vars: usize) -> usize {
@@ -657,34 +563,34 @@ mod tests {
         fn level_params_with_log_basis(
             _inputs: AkitaScheduleInputs,
             log_basis: u32,
-        ) -> LevelParams {
-            LevelParams::params_only(
+        ) -> Result<LevelParams, AkitaError> {
+            Ok(LevelParams::params_only(
                 Self::sis_modulus_family(),
                 Self::D,
                 log_basis,
                 1,
                 1,
                 1,
-                Self::stage1_challenge_config(Self::D),
-            )
+                Self::stage1_challenge_config(Self::D)?,
+            ))
         }
 
         fn root_level_params_for_layout_with_log_basis(
             inputs: AkitaScheduleInputs,
             lp: &LevelParams,
         ) -> Result<LevelParams, AkitaError> {
-            Ok(Self::level_params_with_log_basis(inputs, lp.log_basis).with_layout(lp))
+            Ok(Self::level_params_with_log_basis(inputs, lp.log_basis)?.with_layout(lp))
         }
 
         fn root_level_layout_with_log_basis(
             inputs: AkitaScheduleInputs,
             log_basis: u32,
         ) -> Result<LevelParams, AkitaError> {
-            Ok(Self::level_params_with_log_basis(inputs, log_basis))
+            Self::level_params_with_log_basis(inputs, log_basis)
         }
 
-        fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> u32 {
-            Self::decomposition().log_basis
+        fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
+            Ok(Self::decomposition().log_basis)
         }
 
         fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
@@ -713,16 +619,6 @@ mod tests {
             <BaseFp2 as ExtField<Base>>::EXT_DEGREE
         );
         assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
-    }
-
-    #[cfg(feature = "planner")]
-    #[test]
-    fn planner_extension_width_matches_claim_ext_degree() {
-        assert_eq!(
-            <ExtensionRoleConfig as akita_planner::PlannerConfig>::planner_extension_opening_width(
-            ),
-            ExtensionRoleConfig::CLAIM_EXT_DEGREE
-        );
     }
 
     #[test]
@@ -936,7 +832,9 @@ mod fp128_policy_tests {
         let expected = akita_types::scale_batched_root_layout(
             &singleton,
             num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
+            Cfg::stage1_challenge_config(Cfg::D)
+                .expect("stage1 challenge config")
+                .l1_norm(),
             Cfg::decomposition().field_bits(),
         )
         .expect("scaled layout");
@@ -968,7 +866,8 @@ mod fp128_policy_tests {
             max_num_points,
         );
         let schedule =
-            akita_planner::find_optimal_schedule::<Cfg>(lookup_key).expect("planner schedule");
+            akita_planner::find_optimal_schedule(&search_options_for_cfg::<Cfg>(lookup_key))
+                .expect("planner schedule");
         let Some(akita_types::Step::Fold(root_step)) = schedule.steps.first() else {
             panic!("batched commitment planner schedule should start with a root fold");
         };

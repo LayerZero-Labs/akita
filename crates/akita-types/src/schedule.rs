@@ -1,15 +1,7 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
-use crate::generated::{
-    table_entry, GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTable,
-    GeneratedScheduleTableEntry, GeneratedStep,
-};
-use crate::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_layout_from_params,
-    level_proof_bytes, recursive_level_decomposition_from_root, root_extension_opening_partials,
-    terminal_level_proof_bytes, ClaimIncidenceSummary, DecompositionParams, DirectWitnessShape,
-    LevelParams, RingOpeningPoint, SisModulusFamily,
-};
+use crate::generated::GeneratedScheduleKey;
+use crate::{ClaimIncidenceSummary, DirectWitnessShape, LevelParams, RingOpeningPoint};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use std::fmt::Write;
@@ -182,496 +174,6 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
         num_t_vectors: key.num_t_vectors,
         num_w_vectors: key.num_w_vectors,
         num_z_vectors: key.num_z_vectors,
-    }
-}
-
-fn generated_level_params<Stage1Config>(
-    sis_family: SisModulusFamily,
-    step: GeneratedFoldStep,
-    stage1_challenge_config: &Stage1Config,
-) -> LevelParams
-where
-    Stage1Config: Fn(usize) -> SparseChallengeConfig,
-{
-    let stage1_config = stage1_challenge_config(step.ring_d as usize);
-    LevelParams::params_only(
-        sis_family,
-        step.ring_d as usize,
-        step.log_basis,
-        step.n_a as usize,
-        step.n_b as usize,
-        step.n_d as usize,
-        stage1_config,
-    )
-}
-
-fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
-    field_bits: u32,
-    lp: &LevelParams,
-    num_points: usize,
-    num_t_vectors: usize,
-    num_w_vectors: usize,
-    num_z_vectors: usize,
-) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_vector_counts_for_layout_bits::<F>(
-        field_bits,
-        lp,
-        num_points,
-        num_t_vectors,
-        num_w_vectors,
-        num_z_vectors,
-        crate::layout::MRowLayout::Intermediate,
-    )
-}
-
-fn w_ring_element_count_with_vector_counts_for_layout_bits<F: CanonicalField>(
-    field_bits: u32,
-    lp: &LevelParams,
-    num_points: usize,
-    num_t_vectors: usize,
-    num_w_vectors: usize,
-    num_z_vectors: usize,
-    layout: crate::layout::MRowLayout,
-) -> Result<usize, AkitaError> {
-    let _field_marker = core::marker::PhantomData::<F>;
-    let w_hat_count = num_w_vectors
-        .checked_mul(lp.num_blocks)
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
-    let t_hat_count = num_t_vectors
-        .checked_mul(lp.num_blocks)
-        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    let z_pre_count = num_z_vectors
-        .checked_mul(lp.inner_width())
-        .and_then(|n| n.checked_mul(lp.num_digits_fold))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    let r_rows = lp.m_row_count_for(num_points, num_z_vectors, layout)?;
-    let r_count = r_rows
-        .checked_mul(crate::layout::digit_math::compute_num_digits_full_field(
-            field_bits,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
-    #[cfg(feature = "zk")]
-    {
-        let d_blinding_count = match layout {
-            crate::layout::MRowLayout::Intermediate => crate::zk::blinding_column_count_from_bits(
-                lp.d_key.row_len(),
-                lp.ring_dimension,
-                lp.log_basis,
-                field_bits as usize,
-            ),
-            crate::layout::MRowLayout::Terminal => 0,
-        };
-        let b_blinding_count = num_points
-            .checked_mul(crate::zk::blinding_column_count_from_bits(
-                lp.b_key.row_len(),
-                lp.ring_dimension,
-                lp.log_basis,
-                field_bits as usize,
-            ))
-            .ok_or_else(|| AkitaError::InvalidSetup("ZK B-blinding width overflow".to_string()))?;
-        w_hat_count
-            .checked_add(t_hat_count)
-            .and_then(|n| n.checked_add(b_blinding_count))
-            .and_then(|n| n.checked_add(d_blinding_count))
-            .and_then(|n| n.checked_add(z_pre_count))
-            .and_then(|n| n.checked_add(r_count))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        w_hat_count
-            .checked_add(t_hat_count)
-            .and_then(|n| n.checked_add(z_pre_count))
-            .and_then(|n| n.checked_add(r_count))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
-    }
-}
-
-/// Config-specific policy hooks needed to materialize generated schedule-table
-/// entries into runtime schedules.
-pub struct GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams> {
-    /// SIS modulus family used by generated fold levels.
-    pub sis_family: SisModulusFamily,
-    /// Root-level digit decomposition used to interpret generated entries.
-    pub root_decomp: DecompositionParams,
-    /// Challenge-field width used for verifier challenges and proof-byte accounting.
-    pub challenge_field_bits: u32,
-    /// Number of public rows in recursive fold levels.
-    pub recursive_public_rows: usize,
-    /// Base-field width of the logical extension opening. This is `1` for the
-    /// ordinary base-field path, which has no extension-opening reduction.
-    pub extension_opening_width: usize,
-    /// Stage-1 sparse challenge policy for each ring dimension.
-    pub stage1_challenge_config: Stage1Config,
-    /// Root-layout scaler for batched committed openings.
-    pub scale_batched_root_layout: ScaleBatchedRoot,
-    /// Direct terminal layout policy for a schedule state and log-basis.
-    pub direct_level_params: DirectLevelParams,
-}
-
-fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
-    let padded = len
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("opening witness length overflow".to_string()))?;
-    Ok(padded.trailing_zeros() as usize)
-}
-
-fn extension_opening_reduction_level_bytes(
-    challenge_field_bits: u32,
-    extension_opening_width: usize,
-    fold_level: usize,
-    key: AkitaScheduleLookupKey,
-    current_w_len: usize,
-) -> Result<usize, AkitaError> {
-    if extension_opening_width <= 1 {
-        return Ok(0);
-    }
-    let (partials, opening_vars) = if fold_level == 0 {
-        (
-            root_extension_opening_partials(extension_opening_width, key.num_w_vectors),
-            key.num_vars,
-        )
-    } else {
-        (extension_opening_width, padded_boolean_vars(current_w_len)?)
-    };
-    extension_opening_reduction_proof_bytes(
-        challenge_field_bits,
-        partials,
-        opening_vars,
-        extension_opening_width,
-    )
-}
-
-/// Materialize and validate a generated schedule-table entry into a planned
-/// runtime schedule.
-///
-/// The policy hooks are the only config-specific inputs: generated table
-/// validation, direct witness sizing, level layout assembly, next-witness sizing,
-/// and proof-byte sizing are shared by `akita-types`.
-///
-/// # Errors
-///
-/// Returns an error if the generated entry is structurally invalid, does not
-/// match `key`, or does not agree with the supplied config policy callbacks.
-pub fn schedule_plan_from_generated_entry<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
-    key: AkitaScheduleLookupKey,
-    entry: &GeneratedScheduleTableEntry,
-    policy: GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>,
-) -> Result<AkitaSchedulePlan, AkitaError>
-where
-    F: CanonicalField,
-    Stage1Config: Fn(usize) -> SparseChallengeConfig,
-    ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
-    DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
-{
-    let GeneratedSchedulePlanPolicy {
-        sis_family,
-        root_decomp,
-        challenge_field_bits,
-        recursive_public_rows,
-        extension_opening_width,
-        stage1_challenge_config,
-        scale_batched_root_layout,
-        direct_level_params,
-    } = policy;
-
-    if entry.steps.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "generated schedule table entry must contain at least one step".to_string(),
-        ));
-    }
-    if recursive_public_rows != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "recursive generated schedules currently require exactly one public row".to_string(),
-        ));
-    }
-    let expected_root_w_len = 1usize
-        .checked_shl(key.num_vars as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
-
-    let field_bits = root_decomp.field_bits();
-    let mut steps = Vec::with_capacity(entry.steps.len().max(1));
-    let mut fold_level = 0usize;
-    let mut current_w_len = expected_root_w_len;
-    let mut current_log_basis = root_decomp.log_basis;
-    // When the next step after a fold is a terminal Direct, the prover at
-    // the terminal level builds a NEW W via ring_switch with
-    // `MRowLayout::Terminal` (drops the D-block from the M-matrix). That
-    // witness is what gets shipped in cleartext, and its field-element
-    // length is computed from the terminal level's `lp` under the terminal
-    // layout, not from the previous fold's `next_w_len` (which is sized for
-    // the intermediate layout).
-    let mut terminal_witness_field_len: Option<usize> = None;
-
-    for (step_index, generated_step) in entry.steps.iter().enumerate() {
-        match generated_step {
-            GeneratedStep::Fold(level) => {
-                let Some(next_generated_step) = entry.steps.get(step_index + 1) else {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "generated schedule ended with a fold step at level {fold_level}"
-                    )));
-                };
-                let next_log_basis = match next_generated_step {
-                    GeneratedStep::Fold(next_level) => next_level.log_basis,
-                    GeneratedStep::Direct(_) => level.log_basis,
-                };
-
-                let inputs = AkitaScheduleInputs {
-                    num_vars: key.num_vars,
-                    level: fold_level,
-                    current_w_len,
-                };
-                let params = generated_level_params(sis_family, *level, &stage1_challenge_config);
-                let level_decomp = if fold_level == 0 {
-                    DecompositionParams {
-                        log_basis: level.log_basis,
-                        ..root_decomp
-                    }
-                } else {
-                    recursive_level_decomposition_from_root(root_decomp, level.log_basis)
-                };
-                let layout = level_layout_from_params(
-                    level.m_vars as usize,
-                    level.r_vars as usize,
-                    &params,
-                    level_decomp,
-                    current_w_len / level.ring_d as usize,
-                )?;
-                let root_is_batched = fold_level == 0
-                    && (key.num_points != 1
-                        || key.num_t_vectors != 1
-                        || key.num_w_vectors != 1
-                        || key.num_z_vectors != 1);
-                let mut lp = params.with_layout(&layout);
-                if root_is_batched {
-                    lp = scale_batched_root_layout(&lp, key.num_t_vectors)?;
-                }
-                let runtime_next_w_len = if fold_level == 0 {
-                    let next_w_ring = w_ring_element_count_with_vector_counts_bits::<F>(
-                        field_bits,
-                        &lp,
-                        key.num_points,
-                        key.num_t_vectors,
-                        key.num_w_vectors,
-                        key.num_z_vectors,
-                    )?;
-                    next_w_ring.checked_mul(lp.ring_dimension).ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "generated root next witness length overflow".to_string(),
-                        )
-                    })?
-                } else {
-                    // Recursive levels are singleton-by-construction: one
-                    // carried witness, one T-vector, one W-vector, and one
-                    // public recursive opening row. Root batching is already
-                    // accounted for at fold_level == 0.
-                    w_ring_element_count_with_vector_counts_bits::<F>(field_bits, &lp, 1, 1, 1, 1)?
-                        .checked_mul(lp.ring_dimension)
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "generated recursive next witness length overflow".to_string(),
-                            )
-                        })?
-                };
-                let next_inputs = AkitaScheduleInputs {
-                    num_vars: key.num_vars,
-                    level: fold_level + 1,
-                    current_w_len: runtime_next_w_len,
-                };
-
-                let (next_level_params, next_commit_coeffs) = match next_generated_step {
-                    GeneratedStep::Fold(next_level) => {
-                        let next_level_params = generated_level_params(
-                            sis_family,
-                            *next_level,
-                            &stage1_challenge_config,
-                        );
-                        let coeffs =
-                            next_level_params.b_key.row_len() * next_level_params.ring_dimension;
-                        (next_level_params, coeffs)
-                    }
-                    GeneratedStep::Direct(_) => {
-                        let next_level_params = direct_level_params(next_inputs, next_log_basis)?;
-                        let coeffs =
-                            next_level_params.b_key.row_len() * next_level_params.ring_dimension;
-                        (next_level_params, coeffs)
-                    }
-                };
-                let is_terminal = matches!(next_generated_step, GeneratedStep::Direct(_));
-                // For a terminal fold, the W shipped in cleartext is built
-                // under MRowLayout::Terminal which drops the D-block from
-                // the per-row `r` quotients. Override `runtime_next_w_len`
-                // (and the downstream next_inputs / current_w_len used for
-                // both terminal-level proof-size accounting and the next-
-                // iteration's `current_w_len`) so the schedule's recorded
-                // `next_w_len` for the last fold matches the prover's
-                // actual cleartext witness length.
-                let runtime_next_w_len = if is_terminal {
-                    let (num_points, num_t_vectors, num_w_vectors, num_public_rows) =
-                        if fold_level == 0 {
-                            (
-                                key.num_points,
-                                key.num_t_vectors,
-                                key.num_w_vectors,
-                                key.num_z_vectors,
-                            )
-                        } else {
-                            (1, 1, 1, 1)
-                        };
-                    let terminal_ring_count =
-                        w_ring_element_count_with_vector_counts_for_layout_bits::<F>(
-                            field_bits,
-                            &lp,
-                            num_points,
-                            num_t_vectors,
-                            num_w_vectors,
-                            num_public_rows,
-                            crate::layout::MRowLayout::Terminal,
-                        )?;
-                    let terminal_field_len = terminal_ring_count
-                        .checked_mul(lp.ring_dimension)
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "terminal recursive witness length overflow".to_string(),
-                            )
-                        })?;
-                    terminal_witness_field_len = Some(terminal_field_len);
-                    terminal_field_len
-                } else {
-                    runtime_next_w_len
-                };
-                let next_inputs = AkitaScheduleInputs {
-                    num_vars: key.num_vars,
-                    level: fold_level + 1,
-                    current_w_len: runtime_next_w_len,
-                };
-                let num_claims_here = if fold_level == 0 {
-                    key.num_z_vectors
-                } else {
-                    1
-                };
-                let base_level_bytes = if is_terminal {
-                    terminal_level_proof_bytes(
-                        field_bits,
-                        challenge_field_bits,
-                        &lp,
-                        next_inputs.current_w_len,
-                        num_claims_here,
-                    )
-                } else {
-                    level_proof_bytes(
-                        field_bits,
-                        challenge_field_bits,
-                        &lp,
-                        &lp,
-                        &next_level_params,
-                        next_inputs.current_w_len,
-                        num_claims_here,
-                    )
-                };
-                let runtime_level_bytes = base_level_bytes
-                    + extension_opening_reduction_level_bytes(
-                        challenge_field_bits,
-                        extension_opening_width,
-                        fold_level,
-                        key,
-                        current_w_len,
-                    )?;
-
-                steps.push(AkitaPlannedStep::Fold(Box::new(AkitaPlannedLevel {
-                    inputs,
-                    lp,
-                    next_inputs,
-                    next_level_log_basis: next_log_basis,
-                    next_commit_coeffs,
-                    level_bytes: runtime_level_bytes,
-                })));
-                fold_level += 1;
-                current_w_len = runtime_next_w_len;
-                current_log_basis = next_log_basis;
-            }
-            GeneratedStep::Direct(_) => {
-                if step_index + 1 != entry.steps.len() {
-                    return Err(AkitaError::InvalidSetup(
-                        "generated direct step must be terminal".to_string(),
-                    ));
-                }
-                let witness_shape = if fold_level == 0 {
-                    DirectWitnessShape::FieldElements(current_w_len)
-                } else {
-                    let terminal_field_len = terminal_witness_field_len.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "terminal direct step missing precomputed witness length".to_string(),
-                        )
-                    })?;
-                    DirectWitnessShape::PackedDigits((terminal_field_len, current_log_basis))
-                };
-                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-
-                let direct_current_w_len = match &witness_shape {
-                    DirectWitnessShape::PackedDigits((len, _)) => *len,
-                    DirectWitnessShape::FieldElements(len) => *len,
-                };
-                let state = AkitaPlannedState {
-                    level: fold_level,
-                    current_w_len: direct_current_w_len,
-                    log_basis: current_log_basis,
-                };
-                steps.push(AkitaPlannedStep::Direct(AkitaPlannedDirectStep {
-                    state,
-                    witness_shape,
-                    direct_bytes,
-                }));
-            }
-        }
-    }
-
-    let no_wrapper_bytes = steps
-        .iter()
-        .map(|step| match step {
-            AkitaPlannedStep::Fold(level) => level.level_bytes,
-            AkitaPlannedStep::Direct(step) => step.direct_bytes,
-        })
-        .sum();
-    Ok(AkitaSchedulePlan {
-        steps,
-        no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes,
-    })
-}
-
-/// Look up and materialize a generated schedule-table entry.
-///
-/// # Errors
-///
-/// Returns an error if a matching generated entry exists but fails validation
-/// against the supplied config policy callbacks.
-pub fn generated_schedule_plan_from_table<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
-    key: AkitaScheduleLookupKey,
-    table: GeneratedScheduleTable,
-    policy: GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>,
-) -> Result<Option<AkitaSchedulePlan>, AkitaError>
-where
-    F: CanonicalField,
-    Stage1Config: Fn(usize) -> SparseChallengeConfig,
-    ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
-    DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
-{
-    if table.sis_family != policy.sis_family {
-        return Err(AkitaError::InvalidSetup(format!(
-            "generated schedule SIS family mismatch: table={:?}, config={:?}",
-            table.sis_family, policy.sis_family
-        )));
-    }
-    match table_entry(table, generated_schedule_lookup_key(key)) {
-        Some(entry) => {
-            schedule_plan_from_generated_entry::<F, _, _, _>(key, entry, policy).map(Some)
-        }
-        None => Ok(None),
     }
 }
 
@@ -911,7 +413,7 @@ pub fn exact_planned_level_execution<Stage1Config>(
     stage1_challenge_config: Stage1Config,
 ) -> Result<Option<AkitaPlannedLevelExecution>, AkitaError>
 where
-    Stage1Config: Fn(usize) -> SparseChallengeConfig,
+    Stage1Config: Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 {
     let Some(state_index) = schedule.exact_state_index(inputs, Some(log_basis)) else {
         return Ok(None);
@@ -945,7 +447,7 @@ where
                 0,
                 n_b,
                 0,
-                stage1_challenge_config(d),
+                stage1_challenge_config(d)?,
             )
         }
     };
@@ -953,26 +455,6 @@ where
         level: current_level.as_ref().clone(),
         next_level_params,
     }))
-}
-
-/// Provider interface for generated or externally supplied schedule plans.
-///
-/// Runtime prover/verifier crates should depend on this provider-shaped
-/// contract rather than on planner search. `akita-planner` can implement the
-/// search side separately and publish generated tables or explicit plans.
-pub trait ScheduleProvider {
-    /// Pre-computed schedule table backing this provider, if any.
-    fn schedule_table() -> Option<GeneratedScheduleTable>;
-
-    /// Stable identity for the active schedule at `key`.
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String;
-
-    /// Optional full schedule plan for configs with an explicit provider.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the provider cannot materialize a valid schedule.
-    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError>;
 }
 
 /// Number of gadget decomposition levels needed for `r` over field `F`.
@@ -1026,6 +508,52 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     num_public_rows: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
+    let modulus = detect_field_modulus::<F>();
+    let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
+    w_ring_element_count_with_counts_for_layout_bits(
+        field_bits,
+        lp,
+        num_points,
+        num_t_vectors,
+        num_w_vectors,
+        num_public_rows,
+        layout,
+    )
+}
+
+/// Non-generic variant of [`w_ring_element_count_with_counts`] for callers
+/// that already know the effective field bit width.
+pub fn w_ring_element_count_with_counts_bits(
+    field_bits: u32,
+    lp: &LevelParams,
+    num_points: usize,
+    num_t_vectors: usize,
+    num_w_vectors: usize,
+    num_public_rows: usize,
+) -> Result<usize, AkitaError> {
+    w_ring_element_count_with_counts_for_layout_bits(
+        field_bits,
+        lp,
+        num_points,
+        num_t_vectors,
+        num_w_vectors,
+        num_public_rows,
+        crate::layout::MRowLayout::Intermediate,
+    )
+}
+
+/// Non-generic variant of [`w_ring_element_count_with_counts_for_layout`] for
+/// callers that already know the effective field bit width. The planner
+/// search uses this to keep its API free of a base-field type parameter.
+pub fn w_ring_element_count_with_counts_for_layout_bits(
+    field_bits: u32,
+    lp: &LevelParams,
+    num_points: usize,
+    num_t_vectors: usize,
+    num_w_vectors: usize,
+    num_public_rows: usize,
+    layout: crate::layout::MRowLayout,
+) -> Result<usize, AkitaError> {
     let w_hat_count = num_w_vectors
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
@@ -1042,7 +570,10 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     // One public y-row per packaged public opening row.
     let r_rows = lp.m_row_count_for(num_points, num_public_rows, layout)?;
     let r_count = r_rows
-        .checked_mul(r_decomp_levels::<F>(lp.log_basis))
+        .checked_mul(crate::layout::digit_math::compute_num_digits_full_field(
+            field_bits,
+            lp.log_basis,
+        ))
         .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
     #[cfg(feature = "zk")]
     {
@@ -1050,18 +581,20 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
         // its per-row blinding is also unused. Intermediate layout keeps the
         // D-block blinding as before.
         let d_blinding_count = match layout {
-            crate::layout::MRowLayout::Intermediate => crate::zk::blinding_column_count::<F>(
+            crate::layout::MRowLayout::Intermediate => crate::zk::blinding_column_count_from_bits(
                 lp.d_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
+                field_bits as usize,
             ),
             crate::layout::MRowLayout::Terminal => 0,
         };
         let b_blinding_count = num_points
-            .checked_mul(crate::zk::blinding_column_count::<F>(
+            .checked_mul(crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
+                field_bits as usize,
             ))
             .ok_or_else(|| AkitaError::InvalidSetup("ZK B-blinding width overflow".to_string()))?;
         w_hat_count
@@ -1335,13 +868,13 @@ pub fn scheduled_next_level_params<DirectParams>(
     direct_params: DirectParams,
 ) -> Result<LevelParams, AkitaError>
 where
-    DirectParams: FnOnce(AkitaScheduleInputs, u32) -> LevelParams,
+    DirectParams: FnOnce(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
         Some(Step::Direct(step)) => match step.witness_shape {
             DirectWitnessShape::PackedDigits((_, bits_per_elem)) => {
-                Ok(direct_params(inputs, bits_per_elem))
+                direct_params(inputs, bits_per_elem)
             }
             DirectWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
                 "recursive schedule cannot transition into a field-element direct step".to_string(),
@@ -1370,7 +903,7 @@ pub fn scheduled_fold_execution<DirectParams>(
     direct_params: DirectParams,
 ) -> Result<(LevelParams, LevelParams), AkitaError>
 where
-    DirectParams: FnOnce(AkitaScheduleInputs, u32) -> LevelParams,
+    DirectParams: FnOnce(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
     let Some(Step::Fold(step)) = schedule.steps.get(level) else {
         return Err(AkitaError::InvalidSetup(format!(
@@ -1398,10 +931,11 @@ where
 mod tests {
     use super::*;
     use crate::{
-        direct_witness_bytes, stage1_tree_stage_shapes, sumcheck_rounds, AjtaiKeyParams,
-        AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, DirectWitnessProof, DirectWitnessShape, FlatRingVec, PackedDigits,
-        TerminalLevelProof,
+        direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+        root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
+        terminal_level_proof_bytes, AjtaiKeyParams, AkitaBatchedRootProof, AkitaLevelProof,
+        AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, DirectWitnessProof,
+        DirectWitnessShape, FlatRingVec, PackedDigits, SisModulusFamily, TerminalLevelProof,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;

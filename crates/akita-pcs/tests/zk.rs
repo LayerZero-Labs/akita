@@ -15,7 +15,7 @@ use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleInputs, AkitaScheduleLookupKey,
     AkitaSchedulePlan, AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary,
     CommitmentEnvelope, DecompositionParams, MRowLayout, RingCommitment,
-    RingMultiplierOpeningPoint, ScheduleProvider, SisModulusFamily,
+    RingMultiplierOpeningPoint, SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -25,79 +25,6 @@ type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
 #[derive(Clone, Copy, Debug)]
 struct RuntimePlanned<Cfg>(PhantomData<Cfg>);
-
-impl<Cfg: CommitmentConfig> ScheduleProvider for RuntimePlanned<Cfg> {
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        format!("zk-runtime-planned/{key:?}")
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-        Ok(None)
-    }
-}
-
-impl<Cfg: CommitmentConfig> akita_planner::PlannerConfig for RuntimePlanned<Cfg> {
-    type PlannerField = Cfg::Field;
-
-    const PLANNER_D: usize = Cfg::D;
-
-    fn planner_field_bits() -> u32 {
-        Cfg::decomposition().field_bits()
-    }
-
-    fn planner_challenge_field_bits() -> u32 {
-        Cfg::decomposition().field_bits() * (Cfg::CHAL_EXT_DEGREE as u32)
-    }
-
-    fn planner_extension_opening_width() -> usize {
-        Cfg::CLAIM_EXT_DEGREE
-    }
-
-    fn planner_sis_modulus_family() -> SisModulusFamily {
-        Cfg::sis_modulus_family()
-    }
-
-    fn planner_stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
-        <Self as CommitmentConfig>::stage1_challenge_config(d)
-    }
-
-    fn planner_schedule_plan(
-        key: AkitaScheduleLookupKey,
-    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-        <Self as ScheduleProvider>::schedule_plan(key)
-    }
-
-    fn planner_root_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        <Self as CommitmentConfig>::root_level_layout_with_log_basis(inputs, log_basis)
-    }
-
-    fn planner_current_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        akita_config::current_level_layout_with_log_basis::<Self>(inputs, log_basis)
-    }
-
-    fn planner_root_level_params_for_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        <Self as CommitmentConfig>::root_level_params_for_layout_with_log_basis(inputs, lp)
-    }
-
-    fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-        <Self as CommitmentConfig>::log_basis_search_range(inputs)
-    }
-}
 
 impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
     type Field = Cfg::Field;
@@ -110,12 +37,28 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Cfg::decomposition()
     }
 
-    fn stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
+    fn stage1_challenge_config(
+        d: usize,
+    ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
         Cfg::stage1_challenge_config(d)
     }
 
     fn sis_modulus_family() -> SisModulusFamily {
         Cfg::sis_modulus_family()
+    }
+
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        None
+    }
+
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+        format!("zk-runtime-planned/{key:?}")
+    }
+
+    fn schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
+        Ok(None)
     }
 
     fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
@@ -140,7 +83,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Ok((rows, 16_384))
     }
 
-    fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams {
+    fn level_params_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, akita_field::AkitaError> {
         Cfg::level_params_with_log_basis(inputs, log_basis)
     }
 
@@ -158,7 +104,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Cfg::root_level_layout_with_log_basis(inputs, log_basis)
     }
 
-    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
+    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> Result<u32, akita_field::AkitaError> {
         Cfg::log_basis_at_level(inputs)
     }
 

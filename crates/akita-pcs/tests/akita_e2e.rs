@@ -16,13 +16,13 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 #[cfg(not(feature = "zk"))]
 use akita_types::AkitaScheduleInputs;
+use akita_types::AkitaScheduleLookupKey;
 use akita_types::{lagrange_weights, LevelParams, RingSubfieldEncoding};
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
     RingCommitment,
 };
-use akita_types::{AkitaScheduleLookupKey, ScheduleProvider};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -1187,8 +1187,9 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
             };
             let params = Cfg::level_params_with_log_basis(
                 level_inputs,
-                Cfg::log_basis_at_level(level_inputs),
-            );
+                Cfg::log_basis_at_level(level_inputs).expect("log basis"),
+            )
+            .expect("level params");
             let recursive_layout = akita_types::recursive_level_layout_from_params(
                 &params,
                 state.current_w_len,

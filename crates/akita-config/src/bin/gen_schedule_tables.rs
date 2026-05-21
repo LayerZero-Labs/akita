@@ -12,7 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
-use akita_config::CommitmentConfig;
+use akita_config::{search_options_for_cfg, CommitmentConfig};
 use akita_planner::schedule_params::find_optimal_schedule_from_scratch;
 use akita_types::{
     AkitaScheduleLookupKey, ClaimIncidenceSummary, DirectStep, FoldStep, Schedule, Step,
@@ -259,7 +259,8 @@ fn emit_family_rows<Cfg: CommitmentConfig>(
         let incidence = incidence_for_nv(nv);
         let key = AkitaScheduleLookupKey::new_from_incidence(&incidence)
             .map_err(|e| format!("build schedule key: {e}"))?;
-        let schedule = match find_optimal_schedule_from_scratch::<Cfg>(key) {
+        let schedule = match find_optimal_schedule_from_scratch(&search_options_for_cfg::<Cfg>(key))
+        {
             Ok(s) => s,
             Err(e) => {
                 return Err(format!(

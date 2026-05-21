@@ -4,11 +4,12 @@ use super::*;
 use akita_algebra::CyclotomicRing;
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, WCommitmentConfig};
 use akita_field::LiftBase;
 use akita_prover::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize};
 use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly, QuadraticEquation,
+    AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, MultiDNttCaches, OneHotPoly,
+    QuadraticEquation,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::labels::{
@@ -25,6 +26,7 @@ use akita_types::{
     ring_opening_point_from_field, MRowLayout,
 };
 use akita_types::{r_decomp_levels, w_ring_element_count, w_ring_element_count_with_counts};
+use akita_types::{scheduled_fold_execution, scheduled_next_level_params, LevelParams};
 use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
     TerminalLevelProofShape,
@@ -487,7 +489,9 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let batched_root_lp = akita_types::scale_batched_root_layout(
             &batch_layout,
             BATCH_SIZE,
-            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_norm(),
+            OneHotCfg::stage1_challenge_config(OneHotCfg::D)
+                .expect("stage1 challenge config")
+                .l1_norm(),
             OneHotCfg::decomposition().field_bits(),
         )
         .expect("batched debug root layout");
@@ -498,8 +502,9 @@ fn debug_batched_root_relation_claim_matches_tables() {
         };
         let batch_root_params = OneHotCfg::level_params_with_log_basis(
             batch_root_inputs,
-            OneHotCfg::log_basis_at_level(batch_root_inputs),
-        );
+            OneHotCfg::log_basis_at_level(batch_root_inputs).expect("log basis"),
+        )
+        .expect("level params");
 
         let batch_polys: Vec<OneHotPoly<OneHotF, ONEHOT_D, u8>> = (0..BATCH_SIZE)
             .map(|idx| debug_make_onehot_poly(&batch_layout, 0x0bee_fcaf_e000_2900 + idx as u64))
@@ -619,26 +624,19 @@ fn debug_batched_root_relation_claim_matches_tables() {
         };
         let commit_params = OneHotCfg::level_params_with_log_basis(
             commit_inputs,
-            OneHotCfg::log_basis_at_level(commit_inputs),
-        );
+            OneHotCfg::log_basis_at_level(commit_inputs).expect("log basis"),
+        )
+        .expect("level params");
         let mut commit_ntt_cache = MultiDNttCaches::default();
-        let next_commitment =
-            akita_prover::commit_next_w_with_policy::<OneHotF, OneHotF, _, _, ONEHOT_D>(
-                &commit_params,
-                &batch_setup.ntt_shared,
-                &mut commit_ntt_cache,
-                &batch_setup.expanded,
-                &w,
-                |params, current_w_len| {
-                    akita_types::recursive_level_layout_from_params(
-                        params,
-                        current_w_len,
-                        WCommitmentConfig::<{ ONEHOT_D }, OneHotCfg>::decomposition(),
-                    )
-                },
-                recursive_w_commit_layout_for_d::<OneHotCfg>,
-            )
-            .expect("debug batched w commit");
+        let next_commitment = akita_prover::commit_next_w::<OneHotF, OneHotCfg, ONEHOT_D>(
+            &commit_params,
+            &batch_setup.ntt_shared,
+            &mut commit_ntt_cache,
+            &batch_setup.expanded,
+            &w,
+            WCommitmentConfig::<{ ONEHOT_D }, OneHotCfg>::decomposition(),
+        )
+        .expect("debug batched w commit");
         let w_commitment_proof = next_commitment.commitment.clone();
         let rs = ring_switch_finalize::<OneHotF, OneHotF, _, { ONEHOT_D }>(
             &quad_eq,
@@ -1194,7 +1192,9 @@ fn debug_onehot_batched_profile_compare() {
         let batched_root_lp = akita_types::scale_batched_root_layout(
             &batch_layout,
             BATCH_SIZE,
-            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_norm(),
+            OneHotCfg::stage1_challenge_config(OneHotCfg::D)
+                .expect("stage1 challenge config")
+                .l1_norm(),
             OneHotCfg::decomposition().field_bits(),
         )
         .expect("batched debug root layout");
@@ -1206,8 +1206,9 @@ fn debug_onehot_batched_profile_compare() {
         };
         let single_root_params = OneHotCfg::level_params_with_log_basis(
             single_root_inputs,
-            OneHotCfg::log_basis_at_level(single_root_inputs),
-        );
+            OneHotCfg::log_basis_at_level(single_root_inputs).expect("log basis"),
+        )
+        .expect("level params");
         let _batch_root_inputs = AkitaScheduleInputs {
             num_vars: BATCH_NUM_VARS,
             level: 0,
@@ -1215,8 +1216,9 @@ fn debug_onehot_batched_profile_compare() {
         };
         let _batch_root_params = OneHotCfg::level_params_with_log_basis(
             _batch_root_inputs,
-            OneHotCfg::log_basis_at_level(_batch_root_inputs),
-        );
+            OneHotCfg::log_basis_at_level(_batch_root_inputs).expect("log basis"),
+        )
+        .expect("level params");
 
         let single_root_w_ring = w_ring_element_count::<OneHotF>(&single_root_params).unwrap();
         let batched_root_w_ring = w_ring_element_count_with_counts::<OneHotF>(
@@ -2316,22 +2318,6 @@ struct Fp32RingSubfieldRootFoldCfg;
 #[derive(Clone)]
 struct Fp32RingSubfieldOuterFallbackCfg;
 
-impl akita_types::ScheduleProvider for Fp32RingSubfieldRootFoldCfg {
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        format!("test/fp32-ring-subfield-root-fold/{key:?}")
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
-        Ok(None)
-    }
-}
-
 impl Fp32RingSubfieldRootFoldCfg {
     fn root_lp() -> LevelParams {
         LevelParams::params_only(
@@ -2384,66 +2370,6 @@ where
     ))
 }
 
-impl akita_planner::PlannerConfig for Fp32RingSubfieldRootFoldCfg {
-    type PlannerField = akita_field::Prime32Offset99;
-
-    const PLANNER_D: usize = 16;
-
-    fn planner_field_bits() -> u32 {
-        32
-    }
-
-    fn planner_challenge_field_bits() -> u32 {
-        32 * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
-    }
-
-    fn planner_extension_opening_width() -> usize {
-        <Self as CommitmentConfig>::CLAIM_EXT_DEGREE
-    }
-
-    fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
-        akita_types::SisModulusFamily::Q32
-    }
-
-    fn planner_stage1_challenge_config(_d: usize) -> akita_challenges::SparseChallengeConfig {
-        akita_challenges::SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![-1, 1],
-        }
-    }
-
-    fn planner_schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
-        Ok(None)
-    }
-
-    fn planner_root_level_layout_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        _log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
-    fn planner_current_level_layout_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        _log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
-    fn planner_root_level_params_for_layout_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp().with_layout(lp))
-    }
-
-    fn planner_log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
-        (3, 3)
-    }
-}
-
 impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     type Field = akita_field::Prime32Offset99;
     type ClaimField = akita_field::RingSubfieldFp4<Self::Field>;
@@ -2459,15 +2385,31 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         }
     }
 
-    fn stage1_challenge_config(_d: usize) -> akita_challenges::SparseChallengeConfig {
-        akita_challenges::SparseChallengeConfig::Uniform {
+    fn stage1_challenge_config(
+        _d: usize,
+    ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+        Ok(akita_challenges::SparseChallengeConfig::Uniform {
             weight: 1,
             nonzero_coeffs: vec![-1, 1],
-        }
+        })
     }
 
     fn sis_modulus_family() -> akita_types::SisModulusFamily {
         akita_types::SisModulusFamily::Q32
+    }
+
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        None
+    }
+
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+        format!("test/fp32-ring-subfield/{key:?}")
+    }
+
+    fn schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
+        Ok(None)
     }
 
     fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {
@@ -2494,8 +2436,11 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
-    fn level_params_with_log_basis(_inputs: AkitaScheduleInputs, _log_basis: u32) -> LevelParams {
-        Self::root_lp()
+    fn level_params_with_log_basis(
+        _inputs: AkitaScheduleInputs,
+        _log_basis: u32,
+    ) -> Result<LevelParams, AkitaError> {
+        Ok(Self::root_lp())
     }
 
     fn root_level_params_for_layout_with_log_basis(
@@ -2512,8 +2457,8 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         Ok(Self::root_lp())
     }
 
-    fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> u32 {
-        3
+    fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
+        Ok(3)
     }
 
     fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
@@ -2538,7 +2483,9 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         let lp = akita_types::scale_batched_root_layout(
             &Self::root_lp(),
             incidence.num_claims(),
-            Self::stage1_challenge_config(Self::D).l1_norm(),
+            Self::stage1_challenge_config(Self::D)
+                .expect("stage1 challenge config")
+                .l1_norm(),
             Self::decomposition().field_bits(),
         )?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
@@ -2574,22 +2521,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     }
 }
 
-impl akita_types::ScheduleProvider for Fp32RingSubfieldOuterFallbackCfg {
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        format!("test/fp32-ring-subfield-outer-fallback/{key:?}")
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
-        Ok(None)
-    }
-}
-
 impl Fp32RingSubfieldOuterFallbackCfg {
     fn root_lp() -> LevelParams {
         LevelParams::params_only(
@@ -2609,66 +2540,6 @@ impl Fp32RingSubfieldOuterFallbackCfg {
     }
 }
 
-impl akita_planner::PlannerConfig for Fp32RingSubfieldOuterFallbackCfg {
-    type PlannerField = akita_field::Prime32Offset99;
-
-    const PLANNER_D: usize = 16;
-
-    fn planner_field_bits() -> u32 {
-        32
-    }
-
-    fn planner_challenge_field_bits() -> u32 {
-        32 * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
-    }
-
-    fn planner_extension_opening_width() -> usize {
-        <Self as CommitmentConfig>::CLAIM_EXT_DEGREE
-    }
-
-    fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
-        akita_types::SisModulusFamily::Q32
-    }
-
-    fn planner_stage1_challenge_config(_d: usize) -> akita_challenges::SparseChallengeConfig {
-        akita_challenges::SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![-1, 1],
-        }
-    }
-
-    fn planner_schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
-        Ok(None)
-    }
-
-    fn planner_root_level_layout_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        _log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
-    fn planner_current_level_layout_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        _log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
-    fn planner_root_level_params_for_layout_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp().with_layout(lp))
-    }
-
-    fn planner_log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
-        (3, 3)
-    }
-}
-
 impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     type Field = akita_field::Prime32Offset99;
     type ClaimField = akita_field::RingSubfieldFp4<Self::Field>;
@@ -2684,15 +2555,31 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         }
     }
 
-    fn stage1_challenge_config(_d: usize) -> akita_challenges::SparseChallengeConfig {
-        akita_challenges::SparseChallengeConfig::Uniform {
+    fn stage1_challenge_config(
+        _d: usize,
+    ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+        Ok(akita_challenges::SparseChallengeConfig::Uniform {
             weight: 1,
             nonzero_coeffs: vec![-1, 1],
-        }
+        })
     }
 
     fn sis_modulus_family() -> akita_types::SisModulusFamily {
         akita_types::SisModulusFamily::Q32
+    }
+
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        None
+    }
+
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+        format!("test/fp32-ring-subfield/{key:?}")
+    }
+
+    fn schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
+        Ok(None)
     }
 
     fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {
@@ -2719,8 +2606,11 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
-    fn level_params_with_log_basis(_inputs: AkitaScheduleInputs, _log_basis: u32) -> LevelParams {
-        Self::root_lp()
+    fn level_params_with_log_basis(
+        _inputs: AkitaScheduleInputs,
+        _log_basis: u32,
+    ) -> Result<LevelParams, AkitaError> {
+        Ok(Self::root_lp())
     }
 
     fn root_level_params_for_layout_with_log_basis(
@@ -2737,8 +2627,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         Ok(Self::root_lp())
     }
 
-    fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> u32 {
-        3
+    fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
+        Ok(3)
     }
 
     fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
@@ -2763,7 +2653,9 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         let lp = akita_types::scale_batched_root_layout(
             &Self::root_lp(),
             incidence.num_claims(),
-            Self::stage1_challenge_config(Self::D).l1_norm(),
+            Self::stage1_challenge_config(Self::D)
+                .expect("stage1 challenge config")
+                .l1_norm(),
             Self::decomposition().field_bits(),
         )?;
         // Single-fold schedule: the root IS the terminal fold, so its

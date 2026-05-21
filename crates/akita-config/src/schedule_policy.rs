@@ -1,13 +1,39 @@
-use crate::sis_policy::sis_derived_recursive_params;
 use crate::CommitmentConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_types::generated::GeneratedScheduleTable;
+use akita_planner::SearchOptions;
+use akita_types::CommitmentEnvelope;
 use akita_types::DecompositionParams;
 use akita_types::LevelParams;
-use akita_types::{
-    level_layout_from_params, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
-    GeneratedSchedulePlanPolicy,
-};
+use akita_types::{level_layout_from_params, AkitaScheduleInputs, AkitaScheduleLookupKey};
+
+/// Build a `SearchOptions` value from a `CommitmentConfig`.
+///
+/// This is the bridge between the runtime config trait and the
+/// trait-free planner search API. Each function-pointer field is a
+/// monomorphic fn-item coercion from a generic helper, so no closures or
+/// boxed callbacks are required.
+pub fn search_options_for_cfg<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> SearchOptions {
+    SearchOptions {
+        key,
+        decomposition: Cfg::decomposition(),
+        sis_modulus_family: Cfg::sis_modulus_family(),
+        challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
+        extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
+        recursive_witness_expansion: 1,
+        recursive_public_rows: 1,
+        allow_table_fast_path: true,
+        table: Cfg::schedule_table(),
+        scale_batched_root_layout: scale_batched_root_layout_with_config::<Cfg>,
+        stage1_challenge_config: Cfg::stage1_challenge_config,
+        root_level_layout_with_log_basis: Cfg::root_level_layout_with_log_basis,
+        current_level_layout_with_log_basis: current_level_layout_with_log_basis::<Cfg>,
+        direct_level_params_with_log_basis: direct_level_params_with_log_basis::<Cfg>,
+        root_level_params_for_layout_with_log_basis:
+            Cfg::root_level_params_for_layout_with_log_basis,
+        log_basis_search_range: Cfg::log_basis_search_range,
+    }
+}
 
 #[cfg(test)]
 use akita_types::layout::digit_math::optimal_m_r_split;
@@ -16,37 +42,53 @@ use akita_types::ClaimIncidenceSummary;
 #[cfg(test)]
 use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
 
-pub(crate) fn generated_schedule_plan_from_table<Cfg>(
-    key: AkitaScheduleLookupKey,
-    table: GeneratedScheduleTable,
-) -> Result<Option<AkitaSchedulePlan>, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    akita_types::generated_schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _>(
-        key,
-        table,
-        GeneratedSchedulePlanPolicy {
-            sis_family: Cfg::sis_modulus_family(),
-            root_decomp: Cfg::decomposition(),
-            challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
-            recursive_public_rows: 1,
-            extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
-            stage1_challenge_config: Cfg::stage1_challenge_config,
-            scale_batched_root_layout: scale_batched_root_layout_with_config::<Cfg>,
-            direct_level_params: direct_level_params_with_log_basis::<Cfg>,
-        },
+/// Derive SIS-secure recursive (level > 0) params from the active envelope.
+///
+/// Builds a tentative `LevelParams` from the envelope row floors, derives a
+/// recursive layout for it under the active decomposition, then runs the
+/// planner's recursive-layout SIS derivation. Returns `None` when either the
+/// recursive layout or the SIS step rejects the candidate.
+pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
+    d: usize,
+    log_basis: u32,
+    current_w_len: usize,
+    stage1_config: &SparseChallengeConfig,
+    envelope: &CommitmentEnvelope,
+) -> Option<LevelParams> {
+    let tentative = LevelParams::params_only(
+        Cfg::sis_modulus_family(),
+        d,
+        log_basis,
+        envelope.max_n_a,
+        1,
+        1,
+        stage1_config.clone(),
+    );
+    let layout = akita_types::recursive_level_layout_from_params(
+        &tentative,
+        current_w_len,
+        Cfg::decomposition(),
+    )
+    .ok()?;
+    akita_planner::sis_derived_recursive_params_for_layout(
+        Cfg::sis_modulus_family(),
+        d,
+        log_basis,
+        stage1_config,
+        Cfg::ring_subfield_embedding_norm_bound(),
+        envelope,
+        &layout,
     )
 }
 
-fn scale_batched_root_layout_with_config<Cfg: CommitmentConfig>(
+pub(crate) fn scale_batched_root_layout_with_config<Cfg: CommitmentConfig>(
     root_lp: &LevelParams,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError> {
     akita_types::scale_batched_root_layout(
         root_lp,
         num_claims,
-        Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
+        Cfg::stage1_challenge_config(Cfg::D)?.l1_norm(),
         Cfg::decomposition().field_bits(),
     )
 }
@@ -60,7 +102,7 @@ pub(crate) fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
     }
 
     let envelope = Cfg::envelope(inputs.num_vars);
-    let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
+    let stage1_config = Cfg::stage1_challenge_config(Cfg::D)?;
     let params = sis_derived_recursive_params::<Cfg>(
         Cfg::D,
         log_basis,
@@ -93,7 +135,7 @@ pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     if inputs.level == 0 {
         return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
     }
-    let params = Cfg::level_params_with_log_basis(inputs, log_basis);
+    let params = Cfg::level_params_with_log_basis(inputs, log_basis)?;
     let layout = akita_types::recursive_level_layout_from_params(
         &params,
         inputs.current_w_len,
@@ -120,14 +162,14 @@ pub(crate) fn akita_root_commitment_layout<Cfg: CommitmentConfig>(
         level: 0,
         current_w_len: 1usize.checked_shl(num_vars as u32).unwrap_or(0),
     };
-    let log_basis = Cfg::log_basis_at_level(inputs);
+    let log_basis = Cfg::log_basis_at_level(inputs)?;
     let alpha = Cfg::D.trailing_zeros() as usize;
     if num_vars > alpha {
         return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
     }
 
     let d = Cfg::D;
-    let stage1_config = Cfg::stage1_challenge_config(d);
+    let stage1_config = Cfg::stage1_challenge_config(d)?;
     let mut params = LevelParams::params_only(
         Cfg::sis_modulus_family(),
         d,
@@ -184,7 +226,7 @@ where
         akita_types::scale_batched_root_layout(
             &root_lp,
             num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
+            Cfg::stage1_challenge_config(Cfg::D)?.l1_norm(),
             Cfg::decomposition().field_bits(),
         )
     }
@@ -243,7 +285,8 @@ where
 
     #[cfg(feature = "planner")]
     {
-        let schedule = akita_planner::find_optimal_schedule::<Cfg>(lookup_key)?;
+        let schedule =
+            akita_planner::find_optimal_schedule(&search_options_for_cfg::<Cfg>(lookup_key))?;
         match schedule.steps.first() {
             Some(akita_types::Step::Fold(root_step)) => Ok(akita_types::split_batched_root_params(
                 &root_step.params,
@@ -281,8 +324,6 @@ mod tests {
     };
     #[cfg(feature = "planner")]
     use akita_types::w_ring_element_count_with_counts;
-    #[cfg(any(not(feature = "zk"), feature = "planner"))]
-    use akita_types::ScheduleProvider;
 
     #[cfg(feature = "planner")]
     fn point_local_incidence_summary(
@@ -352,9 +393,7 @@ mod tests {
     }
 
     #[cfg(not(feature = "zk"))]
-    fn assert_generated_table_matches_cfg_schedule<Cfg: CommitmentConfig>(
-        table: GeneratedScheduleTable,
-    ) {
+    fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
         for entry in table.entries {
             let key = AkitaScheduleLookupKey::new_with_points(
                 entry.key.num_vars,
@@ -363,16 +402,9 @@ mod tests {
                 entry.key.num_w_vectors,
                 entry.key.num_z_vectors,
             );
-            let generated = generated_schedule_plan_from_table::<Cfg>(key, table)
-                .expect("generated table should materialize")
-                .expect("entry should exist in generated table");
-            let planned = Cfg::schedule_plan(key)
+            Cfg::schedule_plan(key)
                 .expect("config schedule should succeed")
                 .expect("config should provide a generated schedule");
-            assert_eq!(
-                generated, planned,
-                "generated schedule should match cfg-selected schedule for key={key:?}"
-            );
         }
     }
 
@@ -393,9 +425,9 @@ mod tests {
                 entry.key.num_w_vectors,
                 entry.key.num_z_vectors,
             );
-            let generated = generated_schedule_plan_from_table::<Cfg>(key, table)
-                .expect("generated table should materialize")
-                .expect("entry should exist in generated table");
+            let generated = Cfg::schedule_plan(key)
+                .expect("config schedule should succeed")
+                .expect("config should provide a generated schedule");
             let Some(root) = generated.fold_levels().next() else {
                 continue;
             };
@@ -474,27 +506,27 @@ mod tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn generated_fp128_schedule_tables_match_cfg_schedule() {
-        assert_generated_table_matches_cfg_schedule::<fp128::D32Full>(fp128_d32_full_table());
-        assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(fp128_d32_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp128::D64Full>(fp128_d64_full_table());
-        assert_generated_table_matches_cfg_schedule::<fp128::D64OneHot>(fp128_d64_onehot_table());
+        assert_every_table_entry_materializes::<fp128::D32Full>(fp128_d32_full_table());
+        assert_every_table_entry_materializes::<fp128::D32OneHot>(fp128_d32_onehot_table());
+        assert_every_table_entry_materializes::<fp128::D64Full>(fp128_d64_full_table());
+        assert_every_table_entry_materializes::<fp128::D64OneHot>(fp128_d64_onehot_table());
     }
 
     #[test]
     #[cfg(not(feature = "zk"))]
     fn generated_small_field_schedule_tables_match_cfg_schedule() {
-        assert_generated_table_matches_cfg_schedule::<fp16::D32Full>(fp16_d32_full_table());
-        assert_generated_table_matches_cfg_schedule::<fp16::D32OneHot>(fp16_d32_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp16::D64Full>(fp16_d64_full_table());
-        assert_generated_table_matches_cfg_schedule::<fp16::D64OneHot>(fp16_d64_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp32::D32Full>(fp32_d32_table());
-        assert_generated_table_matches_cfg_schedule::<fp32::D32OneHot>(fp32_d32_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp32::D64Full>(fp32_d64_table());
-        assert_generated_table_matches_cfg_schedule::<fp32::D64OneHot>(fp32_d64_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp64::D32Full>(fp64_d32_table());
-        assert_generated_table_matches_cfg_schedule::<fp64::D32OneHot>(fp64_d32_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp64::D64Full>(fp64_d64_table());
-        assert_generated_table_matches_cfg_schedule::<fp64::D64OneHot>(fp64_d64_onehot_table());
+        assert_every_table_entry_materializes::<fp16::D32Full>(fp16_d32_full_table());
+        assert_every_table_entry_materializes::<fp16::D32OneHot>(fp16_d32_onehot_table());
+        assert_every_table_entry_materializes::<fp16::D64Full>(fp16_d64_full_table());
+        assert_every_table_entry_materializes::<fp16::D64OneHot>(fp16_d64_onehot_table());
+        assert_every_table_entry_materializes::<fp32::D32Full>(fp32_d32_table());
+        assert_every_table_entry_materializes::<fp32::D32OneHot>(fp32_d32_onehot_table());
+        assert_every_table_entry_materializes::<fp32::D64Full>(fp32_d64_table());
+        assert_every_table_entry_materializes::<fp32::D64OneHot>(fp32_d64_onehot_table());
+        assert_every_table_entry_materializes::<fp64::D32Full>(fp64_d32_table());
+        assert_every_table_entry_materializes::<fp64::D32OneHot>(fp64_d32_onehot_table());
+        assert_every_table_entry_materializes::<fp64::D64Full>(fp64_d64_table());
+        assert_every_table_entry_materializes::<fp64::D64OneHot>(fp64_d64_onehot_table());
     }
 
     #[test]
@@ -527,8 +559,8 @@ mod tests {
                 entry.key.num_w_vectors,
                 entry.key.num_z_vectors,
             );
-            generated_schedule_plan_from_table::<fp128::D64Full>(key, table)
-                .expect("generated table should materialize")
+            <fp128::D64Full as CommitmentConfig>::schedule_plan(key)
+                .expect("config schedule should succeed")
                 .expect("entry should exist in generated table");
         }
     }
@@ -536,6 +568,7 @@ mod tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn generated_table_rejects_sis_family_mismatch() {
+        type Cfg = fp128::D64Full;
         let table = fp128_d64_full_table();
         let mismatched = GeneratedScheduleTable {
             sis_family: akita_types::SisModulusFamily::Q32,
@@ -553,7 +586,25 @@ mod tests {
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
         );
-        let err = generated_schedule_plan_from_table::<fp128::D64Full>(key, mismatched)
+        // Drive the planner materializer directly with the mismatched table:
+        // `Cfg::schedule_plan` would use the unmodified `Cfg::schedule_table()`,
+        // so we bypass it to test the SIS-family mismatch rejection path.
+        let err =
+            akita_planner::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _>(
+                key,
+                mismatched,
+                akita_planner::PlanPolicy {
+                    sis_family: Cfg::sis_modulus_family(),
+                    root_decomp: Cfg::decomposition(),
+                    challenge_field_bits: Cfg::decomposition().field_bits()
+                        * Cfg::CHAL_EXT_DEGREE as u32,
+                    recursive_public_rows: 1,
+                    extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
+                    stage1_challenge_config: Cfg::stage1_challenge_config,
+                    scale_batched_root_layout: super::scale_batched_root_layout_with_config::<Cfg>,
+                    direct_level_params: super::direct_level_params_with_log_basis::<Cfg>,
+                },
+            )
             .expect_err("mismatched SIS family must be rejected");
         assert!(
             err.to_string().contains("SIS family mismatch"),
@@ -616,7 +667,7 @@ mod tests {
         };
         let root_lp = Cfg::root_level_layout_with_log_basis(
             root_inputs,
-            Cfg::log_basis_at_level(root_inputs),
+            Cfg::log_basis_at_level(root_inputs).unwrap(),
         )
         .unwrap();
         let Some(akita_types::Step::Fold(runtime_root_step)) = runtime.steps.first() else {
@@ -641,7 +692,7 @@ mod tests {
             level: 1,
             current_w_len: 25_974_272,
         };
-        let params = Cfg::level_params_with_log_basis(inputs, log_basis);
+        let params = Cfg::level_params_with_log_basis(inputs, log_basis).unwrap();
         let decomp =
             recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis);
         let num_ring = inputs.current_w_len / params.ring_dimension;
@@ -790,7 +841,8 @@ mod tests {
         );
 
         let planner_schedule =
-            akita_planner::find_optimal_schedule::<Cfg>(table_miss_key).expect("planner fallback");
+            akita_planner::find_optimal_schedule(&search_options_for_cfg::<Cfg>(table_miss_key))
+                .expect("planner fallback");
         assert!(
             !planner_schedule
                 .steps

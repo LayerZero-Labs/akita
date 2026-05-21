@@ -30,9 +30,5 @@ default = []
 parallel = ["akita-algebra/parallel", "akita-field/parallel"]
 zk = ["akita-types/zk"]
 
-[[bin]]
-name = "akita-planner"
-path = "src/bin/akita-planner.rs"
-
 [lints]
 workspace = true

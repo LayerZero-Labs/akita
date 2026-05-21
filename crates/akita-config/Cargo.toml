@@ -19,16 +19,19 @@ readme = "../../README.md"
 ignored = ["akita-algebra"]
 
 [features]
-default = ["parallel"]
-parallel = ["akita-planner?/parallel"]
-planner = ["dep:akita-planner"]
-zk = ["akita-planner?/zk", "akita-types/zk"]
+default = ["parallel", "planner"]
+parallel = ["akita-planner/parallel"]
+# The `planner` feature gates the planner-DP fallback at runtime config
+# selection time. SIS-derivation and table-materialization always live in
+# `akita-planner`, so the dependency itself is unconditional.
+planner = []
+zk = ["akita-planner/zk", "akita-types/zk"]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
-akita-planner = { version = "0.1.0", path = "../akita-planner", optional = true }
+akita-planner = { version = "0.1.0", path = "../akita-planner" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
