@@ -21,7 +21,7 @@ Workspace members under `crates/`:
 - `akita-field` — field traits, prime/extension fields, wide/packed helpers, FFT, parallel macros
 - `akita-serialization` — serialization/validation/compression traits
 - `akita-algebra` — modules/vectors, NTTs, cyclotomic rings, sparse challenges, polynomials
-- `akita-transcript` — Fiat-Shamir transcript traits + hash impls + labels
+- `akita-transcript` — spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks
 - `akita-challenges` — Fiat-Shamir challenge sampling helpers
 - `akita-sumcheck` — sumcheck proofs, drivers, compact folding, batching, accumulation
 - `akita-types` — proof, setup, schedule, layout, commitment, transcript-append, PRG shapes
@@ -40,12 +40,36 @@ Workspace members under `crates/`:
 - `DensePoly`, `OneHotPoly`, `AkitaPolyOps` — polynomial backends consumed by the scheme
 - `BlockOrder` — explicit root-vs-recursive opening split convention
 - `AkitaBatchedProof`, `AkitaBatchedRootProof`, `AkitaLevelProof`, `AkitaProofStep` — serialized proof structure (singleton openings are the 1x1 special case of the batched proof)
-- `Blake2bTranscript`, `Transcript` — Fiat-Shamir layer
+- `AkitaTranscript`, `Transcript` — spongefish-backed Fiat-Shamir layer
+- `AkitaInstanceDescriptor` — canonical transcript preamble binding algebra, setup, plan, and call shape
+
+## Verifier No-Panic Contract
+
+Verifier-reachable execution is a no-panic boundary.
+Any malformed verifier-facing proof, setup, schedule, public claim, opening point, commitment, direct witness, or transcript input must be rejected with `AkitaError` or `SerializationError`, not by panicking.
+
+This applies to `akita-verifier` and any verifier-reachable code in `akita-types`, `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, and verifier-used `akita-field` paths.
+Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing/slicing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier verifier boundary has clearly validated the invariant.
+
+Prefer strengthening existing validation at deserialization, setup construction, schedule selection, `LevelParams` construction, and verifier API entry points.
+Keep hot verifier arithmetic paths fast: do not add slow fallback evaluators, compatibility shims, or repeated defensive checks inside tight loops when the invariant can be enforced once at the boundary.
+Prover-only panics are acceptable for now if they are not reachable from verifier paths.
 
 ## Feature Flags
 
 - `parallel` — Rayon parallelization (default)
 - `disk-persistence` — disk-backed persistence paths used by some commitment flows
+- `logging-transcript` — enables `LoggingTranscript` schedule events and smell checks in transcript tests
+
+## Transcript Hardening
+
+The active transcript-hardening pillars are:
+
+- P0: bind canonical `AkitaInstanceDescriptor` bytes through spongefish `DomainSeparator.instance(...)` before protocol replay.
+- P2: use `AkitaTranscript` plus production-ZST labels; labels are diagnostics and must not enter production sponge bytes.
+- P3: use `LoggingTranscript` tests for prover/verifier event-stream equality and wire-before-squeeze smell checks.
+
+Deferred items are in [`specs/transcript-hardening.md`](specs/transcript-hardening.md): prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, and NARG migration.
 
 ## Profiling
 

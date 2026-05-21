@@ -273,19 +273,39 @@ where
 ///
 /// # Errors
 ///
-/// Propagates errors from verifier `expected_output_claim` calls.
+/// Returns an error if batching metadata is inconsistent, or propagates errors
+/// from verifier `expected_output_claim` calls.
 pub fn compute_batched_expected_output_claim<E: FieldCore>(
     verifiers: Vec<&dyn SumcheckInstanceVerifier<E>>,
     batching_coeffs: &[E],
     max_num_rounds: usize,
     r_sumcheck: &[E],
 ) -> Result<E, AkitaError> {
+    if batching_coeffs.len() != verifiers.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: verifiers.len(),
+            actual: batching_coeffs.len(),
+        });
+    }
+    if r_sumcheck.len() != max_num_rounds {
+        return Err(AkitaError::InvalidSize {
+            expected: max_num_rounds,
+            actual: r_sumcheck.len(),
+        });
+    }
     let expected_output_claim: E = verifiers
         .iter()
         .zip(batching_coeffs.iter())
         .map(|(v, coeff)| {
-            let offset = max_num_rounds - v.num_rounds();
-            let r_slice = &r_sumcheck[offset..offset + v.num_rounds()];
+            let verifier_rounds = v.num_rounds();
+            if verifier_rounds > max_num_rounds {
+                return Err(AkitaError::InvalidSize {
+                    expected: max_num_rounds,
+                    actual: verifier_rounds,
+                });
+            }
+            let offset = max_num_rounds - verifier_rounds;
+            let r_slice = &r_sumcheck[offset..offset + verifier_rounds];
             v.expected_output_claim(r_slice).map(|val| val * *coeff)
         })
         .try_fold(E::zero(), |a, v| v.map(|val| a + val))?;
@@ -345,4 +365,48 @@ where
     )?;
     check_batched_output_claim(round_result.output_claim, expected_output_claim)?;
     Ok(round_result.r_sumcheck)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Fp64;
+
+    type F = Fp64<4294967197>;
+
+    struct DummyVerifier {
+        rounds: usize,
+    }
+
+    impl SumcheckInstanceVerifier<F> for DummyVerifier {
+        fn num_rounds(&self) -> usize {
+            self.rounds
+        }
+
+        fn degree_bound(&self) -> usize {
+            2
+        }
+
+        fn input_claim(&self) -> F {
+            F::zero()
+        }
+
+        fn expected_output_claim(&self, _challenges: &[F]) -> Result<F, AkitaError> {
+            Ok(F::one())
+        }
+    }
+
+    #[test]
+    fn batched_expected_claim_rejects_malformed_shapes() {
+        let verifier = DummyVerifier { rounds: 3 };
+        let verifiers: Vec<&dyn SumcheckInstanceVerifier<F>> = vec![&verifier];
+        assert!(
+            compute_batched_expected_output_claim(verifiers.clone(), &[], 2, &[F::zero(); 2])
+                .is_err()
+        );
+        assert!(
+            compute_batched_expected_output_claim(verifiers, &[F::one()], 2, &[F::zero(); 2],)
+                .is_err()
+        );
+    }
 }

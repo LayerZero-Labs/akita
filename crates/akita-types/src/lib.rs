@@ -7,6 +7,7 @@
 pub mod config;
 pub mod field_reduction;
 pub mod generated;
+pub mod instance_descriptor;
 pub mod layout;
 pub mod proof;
 pub mod schedule;
@@ -21,6 +22,11 @@ pub use field_reduction::{
     recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role,
     RingSubfieldEncoding, SubfieldParams,
 };
+pub use instance_descriptor::{
+    digest_effective_schedule, digest_incidence, digest_level_params, digest_serializable,
+    AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet,
+    SetupArtifactDigests, SetupSection,
+};
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
     extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
@@ -28,9 +34,10 @@ pub use layout::{
     planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
     recursive_level_decomposition_from_root, recursive_level_layout_from_params,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
-    sis_secure_level_params, sumcheck_rounds, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix,
-    LevelParams, RingMatrixView, RingOpeningPoint, SisModulusFamily, SisRoleWidths,
+    root_extension_opening_partials, sis_derived_recursive_params_for_layout,
+    sis_derived_root_params_for_layout, sis_secure_level_params, sumcheck_rounds,
+    terminal_level_proof_bytes, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix, LevelParams,
+    MRowLayout, RingMatrixView, RingOpeningPoint, SisModulusFamily, SisRoleWidths,
 };
 #[cfg(feature = "zk")]
 pub use proof::ZkHidingProof;
@@ -58,7 +65,8 @@ pub use proof::{
     ExtensionOpeningReductionShape, FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec,
     IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits, PreparedRecursiveOpeningPoint,
     PreparedRootOpeningPoint, PublicMatrixSeed, PublicOpeningRow, RingCommitment,
-    RingMultiplierOpeningPoint, RingSliceSerializer, VerifierClaims,
+    RingMultiplierOpeningPoint, RingSliceSerializer, TerminalLevelProof, TerminalLevelProofShape,
+    VerifierClaims,
 };
 pub use schedule::{
     detect_field_modulus, exact_planned_level_execution, generated_schedule_lookup_key,
@@ -69,8 +77,9 @@ pub use schedule::{
     schedule_root_fold_step, scheduled_fold_execution, scheduled_next_level_params,
     split_batched_root_params, split_batched_root_params_from_schedule_plan,
     validate_opening_points_for_claims, w_ring_element_count, w_ring_element_count_with_counts,
-    AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState,
-    AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep,
-    FoldStep, GeneratedSchedulePlanPolicy, Schedule, ScheduleProvider, Step,
+    w_ring_element_count_with_counts_for_layout, AkitaPlannedDirectStep, AkitaPlannedLevel,
+    AkitaPlannedLevelExecution, AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep, FoldStep, GeneratedSchedulePlanPolicy,
+    Schedule, ScheduleProvider, Step,
 };
 pub use transcript::AppendToTranscript;

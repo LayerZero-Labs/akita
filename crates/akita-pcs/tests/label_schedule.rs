@@ -2,7 +2,7 @@
 #![cfg(not(feature = "zk"))]
 
 use akita_field::Fp64;
-use akita_transcript::{labels, Blake2bTranscript, Transcript};
+use akita_transcript::{labels, AkitaTranscript, Transcript};
 
 type F = Fp64<4294967197>;
 
@@ -38,8 +38,8 @@ fn run_akita_schedule<T: Transcript<F>>(transcript: &mut T) -> (F, F, F) {
 
 #[test]
 fn schedule_is_replayable_with_akita_labels() {
-    let mut prover = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let mut verifier = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut prover = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut verifier = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     assert_eq!(
         run_akita_schedule(&mut prover),
         run_akita_schedule(&mut verifier)
@@ -48,8 +48,8 @@ fn schedule_is_replayable_with_akita_labels() {
 
 #[test]
 fn schedule_detects_reordered_round_messages() {
-    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t1 = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     t1.append_bytes(labels::ABSORB_COMMITMENT, b"C");
     t1.append_bytes(labels::ABSORB_EVALUATION_CLAIMS, b"O");

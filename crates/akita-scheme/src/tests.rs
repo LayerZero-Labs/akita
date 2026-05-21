@@ -14,7 +14,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::labels::{
     ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD, CHALLENGE_EVAL_BATCH,
 };
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::BlockOrder;
 use akita_types::ClaimIncidenceSummary;
@@ -22,10 +22,13 @@ use akita_types::ExtensionOpeningReductionProof;
 use akita_types::{
     append_batched_commitments_to_transcript, flatten_batched_commitment_rows, lagrange_weights,
     monomial_weights, reduce_inner_opening_to_ring_element, relation_claim_from_rows,
-    ring_opening_point_from_field,
+    ring_opening_point_from_field, MRowLayout,
 };
 use akita_types::{r_decomp_levels, w_ring_element_count, w_ring_element_count_with_counts};
-use akita_types::{AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape};
+use akita_types::{
+    AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
+    TerminalLevelProofShape,
+};
 use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, Step};
 use akita_verifier::direct_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
@@ -98,7 +101,7 @@ fn same_point_batched_root_preserves_opening_geometry() {
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
-    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
+    _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let incidence = akita_types::ClaimIncidenceSummary::same_point(max_num_vars, num_claims)
         .expect("incidence");
@@ -106,6 +109,7 @@ fn expected_same_point_batched_shape(
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         panic!("batched schedule should start with a fold");
     };
+    let num_fold_levels = akita_types::schedule_num_fold_levels(&schedule);
     let root_inputs = AkitaScheduleInputs {
         num_vars: max_num_vars,
         level: 0,
@@ -114,6 +118,37 @@ fn expected_same_point_batched_shape(
     let level_lp = &root_step.params;
     let root_lp =
         OneHotCfg::root_level_params_for_layout_with_log_basis(root_inputs, level_lp).unwrap();
+    let root_w_len = root_step.next_w_len;
+    let root_rounds = batched_shape_rounds(root_lp.ring_dimension, root_w_len);
+
+    // 1-fold schedule: the root IS the terminal fold. Emit a terminal-rooted
+    // shape with no recursive-suffix steps.
+    if num_fold_levels == 1 {
+        // The terminal fold's `next` parameters live at `schedule.steps[1]`,
+        // which is a `Direct` step encoding the final packed-digit basis.
+        let next_inputs = AkitaScheduleInputs {
+            num_vars: max_num_vars,
+            level: 1,
+            current_w_len: root_w_len,
+        };
+        let terminal_next_params = scheduled_next_level_params(
+            &schedule,
+            1,
+            next_inputs,
+            OneHotCfg::level_params_with_log_basis,
+        )
+        .expect("terminal next params");
+        return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
+            y_rings_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
+            extension_opening_reduction: None,
+            stage2_sumcheck: vec![3; root_rounds],
+            final_witness: akita_types::DirectWitnessShape::PackedDigits((
+                root_w_len,
+                terminal_next_params.log_basis,
+            )),
+        });
+    }
+
     let next_inputs = AkitaScheduleInputs {
         num_vars: max_num_vars,
         level: 1,
@@ -126,23 +161,25 @@ fn expected_same_point_batched_shape(
         OneHotCfg::level_params_with_log_basis,
     )
     .unwrap();
-    let root_w_len = next_inputs.current_w_len;
-    let root_rounds = batched_shape_rounds(root_lp.ring_dimension, root_w_len);
     let root_shape = LevelProofShape {
         y_ring_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
         extension_opening_reduction: None,
         v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
-        stage2_sumcheck_proof: (root_rounds, 3),
+        stage2_sumcheck_proof: vec![3; root_rounds],
         next_commit_coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
     };
     let first_level_params = next_level_params.clone();
 
-    let mut step_shapes = Vec::with_capacity(proof.num_fold_levels() + 1);
+    // After Phase 1, the recursive suffix has `num_fold_levels - 1` steps in
+    // total: `num_fold_levels - 2` intermediate steps followed by exactly one
+    // terminal step. (We've already consumed the root.)
+    let num_intermediate_after_root = num_fold_levels.saturating_sub(2);
+    let mut step_shapes = Vec::with_capacity(num_fold_levels - 1);
     let mut current_w_len = root_w_len;
     let mut current_log_basis = first_level_params.log_basis;
     let mut current_level = 1usize;
-    for _ in proof.fold_levels() {
+    for _ in 0..num_intermediate_after_root {
         let inputs = AkitaScheduleInputs {
             num_vars: max_num_vars,
             level: current_level,
@@ -162,14 +199,15 @@ fn expected_same_point_batched_shape(
             OneHotCfg::decomposition(),
         )
         .expect("recursive layout");
-        let next_w_len = w_ring_element_count::<OneHotF>(&current_lp) * current_lp.ring_dimension;
+        let next_w_len =
+            w_ring_element_count::<OneHotF>(&current_lp).unwrap() * current_lp.ring_dimension;
         let rounds = batched_shape_rounds(current_lp.ring_dimension, next_w_len);
-        step_shapes.push(AkitaProofStepShape::Fold(LevelProofShape {
+        step_shapes.push(AkitaProofStepShape::Intermediate(LevelProofShape {
             y_ring_coeffs: current_lp.ring_dimension,
             extension_opening_reduction: None,
             v_coeffs: current_lp.d_key.row_len() * current_lp.ring_dimension,
             stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << current_lp.log_basis),
-            stage2_sumcheck_proof: (rounds, 3),
+            stage2_sumcheck_proof: vec![3; rounds],
             next_commit_coeffs: next_level_params.b_key.row_len()
                 * next_level_params.ring_dimension,
         }));
@@ -177,9 +215,53 @@ fn expected_same_point_batched_shape(
         current_log_basis = next_level_params.log_basis;
         current_level += 1;
     }
-    step_shapes.push(AkitaProofStepShape::Direct(
-        akita_types::DirectWitnessShape::PackedDigits((current_w_len, current_log_basis)),
-    ));
+
+    // Terminal fold step (always present in the multi-fold case): its params
+    // live at `schedule.steps[current_level]` (still a `Step::Fold`); the
+    // immediately following Direct step encodes the final packed-digit basis.
+    let terminal_inputs = AkitaScheduleInputs {
+        num_vars: max_num_vars,
+        level: current_level,
+        current_w_len,
+    };
+    let (terminal_params, terminal_next_params) = scheduled_fold_execution(
+        &schedule,
+        current_level,
+        terminal_inputs,
+        current_log_basis,
+        OneHotCfg::level_params_with_log_basis,
+    )
+    .expect("scheduled terminal fold");
+    let terminal_lp = akita_types::recursive_level_layout_from_params(
+        &terminal_params,
+        current_w_len,
+        OneHotCfg::decomposition(),
+    )
+    .expect("terminal layout");
+    // The terminal recursive fold ships its `w` in cleartext under
+    // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
+    // the expected packed-digit witness shape uses the terminal-layout ring
+    // count instead of the intermediate-layout `w_ring_element_count`.
+    let terminal_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<OneHotF>(
+        &terminal_lp,
+        1,
+        1,
+        1,
+        1,
+        akita_types::MRowLayout::Terminal,
+    )
+    .expect("terminal-layout witness count")
+        * terminal_lp.ring_dimension;
+    let terminal_rounds = batched_shape_rounds(terminal_lp.ring_dimension, terminal_next_w_len);
+    step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
+        y_rings_coeffs: terminal_lp.ring_dimension,
+        extension_opening_reduction: None,
+        stage2_sumcheck: vec![3; terminal_rounds],
+        final_witness: akita_types::DirectWitnessShape::PackedDigits((
+            terminal_next_w_len,
+            terminal_next_params.log_basis,
+        )),
+    }));
 
     AkitaBatchedProofShape::Fold {
         root_shape,
@@ -226,7 +308,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))
         .collect();
-    let lw = lagrange_weights(&opening_point);
+    let lw = lagrange_weights(&opening_point).unwrap();
     let opening: F = evals
         .iter()
         .zip(lw.iter())
@@ -235,7 +317,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
     let commitments = [commitment];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -263,7 +345,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 }
 
 fn dense_opening(evals: &[F], point: &[F]) -> F {
-    let lw = lagrange_weights(point);
+    let lw = lagrange_weights(point).unwrap();
     evals
         .iter()
         .zip(lw.iter())
@@ -469,7 +551,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             })
             .unzip();
 
-        let mut transcript = Blake2bTranscript::<OneHotF>::new(b"debug/relation-claim/batched");
+        let mut transcript = AkitaTranscript::<OneHotF>::new(b"debug/relation-claim/batched");
         append_batched_commitments_to_transcript(&batch_commitments, &mut transcript);
         for pt in &padded_point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
@@ -519,6 +601,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &batched_y_rings,
                 batch_gamma_rings,
                 batch_setup.expanded.seed.max_stride,
+                MRowLayout::Intermediate,
             )
             .expect("debug batched quadratic equation"),
         );
@@ -564,6 +647,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             &w,
             &w_commitment_proof,
             &batched_root_lp,
+            MRowLayout::Intermediate,
         )
         .expect("debug batched ring switch");
 
@@ -573,7 +657,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
             &quad_eq.v,
             &batch_commitment_rows,
             &batched_y_rings,
-        );
+        )
+        .unwrap();
         let relation_sum = debug_relation_sum_from_tables(
             &rs.w_evals_compact,
             rs.live_x_cols,
@@ -602,8 +687,10 @@ fn debug_batched_root_relation_claim_matches_tables() {
             * BATCH_SIZE;
         let z_pre_len = batched_root_lp.inner_width() * batched_root_lp.num_digits_fold;
         let num_points = 1usize;
-        let num_public_eval_rows = 1usize;
-        let m_rows = batch_root_params.m_row_count(num_points, num_public_eval_rows);
+        let num_public_rows = 1usize;
+        let m_rows = batch_root_params
+            .m_row_count(num_points, num_public_rows)
+            .unwrap();
         let r_tail_len = m_rows * r_decomp_levels::<OneHotF>(batched_root_lp.log_basis);
         let w_hat_relation_sum = debug_relation_sum_from_tables(
             &rs.w_evals_compact,
@@ -637,7 +724,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             w_hat_len + t_hat_len + z_pre_len,
             w_hat_len + t_hat_len + z_pre_len + r_tail_len,
         );
-        let eq_tau1 = akita_algebra::eq_poly::EqPolynomial::evals(&rs.tau1);
+        let eq_tau1 = akita_algebra::eq_poly::EqPolynomial::evals(&rs.tau1).unwrap();
         // Row layout: consistency (1) | public (1) | D (n_d) |
         //             B (n_b * num_points) | A (n_a)
         let consistency_weight = eq_tau1[0];
@@ -684,15 +771,18 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let d_view = batch_setup
             .expanded
             .shared_matrix
-            .ring_view::<ONEHOT_D>(batch_root_params.d_key.row_len(), debug_stride);
+            .ring_view::<ONEHOT_D>(batch_root_params.d_key.row_len(), debug_stride)
+            .unwrap();
         let b_view = batch_setup
             .expanded
             .shared_matrix
-            .ring_view::<ONEHOT_D>(batch_root_params.b_key.row_len(), debug_stride);
+            .ring_view::<ONEHOT_D>(batch_root_params.b_key.row_len(), debug_stride)
+            .unwrap();
         let a_view = batch_setup
             .expanded
             .shared_matrix
-            .ring_view::<ONEHOT_D>(batch_root_params.a_key.row_len(), debug_stride);
+            .ring_view::<ONEHOT_D>(batch_root_params.a_key.row_len(), debug_stride)
+            .unwrap();
         let denom = alpha_pows[ONEHOT_D - 1] * rs.alpha + OneHotF::one();
         let expected_d_sum = quad_eq
             .v
@@ -824,6 +914,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 batched_root_lp.inner_width(),
                 batch_setup.expanded.seed.max_stride,
                 &batch_setup.ntt_shared,
+                MRowLayout::Intermediate,
             )
             .expect("debug batched r");
         // Local sparse-mul-accumulate: dispatches `+1` / `-1` / generic fast
@@ -876,7 +967,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let reduced_a_z = debug_z.z_pre.iter().enumerate().fold(
             CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
             |mut acc, (k, z_ring)| {
-                a_view.row(0)[k].mul_accumulate_into(z_ring, &mut acc);
+                a_view.row(0).unwrap()[k].mul_accumulate_into(z_ring, &mut acc);
                 acc
             },
         );
@@ -893,7 +984,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 .iter()
                 .enumerate()
                 .fold(OneHotF::zero(), |acc, (k, z_ring)| {
-                    acc - eval_ring_at_pows_local(&a_view.row(0)[k], alpha_pows)
+                    acc - eval_ring_at_pows_local(&a_view.row(0).unwrap()[k], alpha_pows)
                         * akita_algebra::ring::eval_ring_at(z_ring, &rs.alpha)
                 });
         let direct_raw_a_r =
@@ -906,7 +997,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                     inner
                         + eq_tau1[d_start + di]
                             * eval_ring_at_pows_local(
-                                &d_view.row(di)[x % d_matrix_width],
+                                &d_view.row(di).unwrap()[x % d_matrix_width],
                                 alpha_pows,
                             )
                 });
@@ -927,7 +1018,10 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 (0..batch_root_params.b_key.row_len()).fold(OneHotF::zero(), |inner, bi| {
                     inner
                         + eq_tau1[b_start + bi]
-                            * eval_ring_at_pows_local(&b_view.row(bi)[x % outer_width], alpha_pows)
+                            * eval_ring_at_pows_local(
+                                &b_view.row(bi).unwrap()[x % outer_width],
+                                alpha_pows,
+                            )
                 });
             acc + w_alpha_evals[w_hat_len + x] * coeff
         });
@@ -1019,7 +1113,12 @@ fn debug_batched_root_relation_claim_matches_tables() {
                     .iter()
                     .enumerate()
                     .fold(OneHotF::zero(), |inner, (a_idx, eq_i)| {
-                        inner + *eq_i * eval_ring_at_pows_local(&a_view.row(a_idx)[k], alpha_pows)
+                        inner
+                            + *eq_i
+                                * eval_ring_at_pows_local(
+                                    &a_view.row(a_idx).unwrap()[k],
+                                    alpha_pows,
+                                )
                     });
             let _ = block_idx;
             acc + w_alpha_evals[w_hat_len + t_hat_len + idx] * (-(coeff * fold_gadget[fold_idx]))
@@ -1119,14 +1218,15 @@ fn debug_onehot_batched_profile_compare() {
             OneHotCfg::log_basis_at_level(_batch_root_inputs),
         );
 
-        let single_root_w_ring = w_ring_element_count::<OneHotF>(&single_root_params);
+        let single_root_w_ring = w_ring_element_count::<OneHotF>(&single_root_params).unwrap();
         let batched_root_w_ring = w_ring_element_count_with_counts::<OneHotF>(
             &batched_root_lp,
             BATCH_COMMITMENT_GROUPS,
             BATCH_SIZE,
             BATCH_SIZE,
             1,
-        );
+        )
+        .unwrap();
 
         tracing::info!(
             ?single_layout,
@@ -1174,8 +1274,7 @@ fn debug_onehot_batched_profile_compare() {
         let single_opening_groups = [&single_openings[..]];
 
         let _single_prove_span = tracing::info_span!("debug_single_prove").entered();
-        let mut single_prover_transcript =
-            Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single");
+        let mut single_prover_transcript = AkitaTranscript::<OneHotF>::new(b"debug/onehot/single");
         let single_proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
             &single_setup,
             vec![(
@@ -1196,7 +1295,7 @@ fn debug_onehot_batched_profile_compare() {
         <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
             &single_proof,
             &single_verifier_setup,
-            &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single"),
+            &mut AkitaTranscript::<OneHotF>::new(b"debug/onehot/single"),
             vec![(
                 &single_point[..],
                 CommittedOpenings {
@@ -1225,8 +1324,7 @@ fn debug_onehot_batched_profile_compare() {
         let batch_hints = vec![batch_hint];
 
         let _batched_prove_span = tracing::info_span!("debug_batched_prove").entered();
-        let mut batch_prover_transcript =
-            Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched");
+        let mut batch_prover_transcript = AkitaTranscript::<OneHotF>::new(b"debug/onehot/batched");
         let batch_proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
             &batch_setup,
             vec![(
@@ -1248,7 +1346,7 @@ fn debug_onehot_batched_profile_compare() {
         <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
             &batch_proof,
             &batch_verifier_setup,
-            &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched"),
+            &mut AkitaTranscript::<OneHotF>::new(b"debug/onehot/batched"),
             vec![(
                 &batch_point[..],
                 CommittedOpenings {
@@ -1345,7 +1443,7 @@ fn batched_root_direct_fast_path_round_trip() {
                 }
                 evals[base..base + take].copy_from_slice(&ring.coefficients()[..take]);
             }
-            let lw = lagrange_weights(&opening_point);
+            let lw = lagrange_weights(&opening_point).unwrap();
             evals
                 .iter()
                 .zip(lw.iter())
@@ -1355,7 +1453,7 @@ fn batched_root_direct_fast_path_round_trip() {
 
     let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-root-direct");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1392,7 +1490,7 @@ fn batched_root_direct_fast_path_round_trip() {
     let round_trip = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
     assert_eq!(round_trip, proof);
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-root-direct");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
     let opening_groups = [&openings[..]];
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &round_trip,
@@ -1443,8 +1541,7 @@ fn batched_root_direct_rejects_wrong_opening() {
 
     let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
-    let mut prover_transcript =
-        Blake2bTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1462,7 +1559,7 @@ fn batched_root_direct_rejects_wrong_opening() {
     assert!(proof.is_root_direct());
 
     let mut verifier_transcript =
-        Blake2bTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
+        AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
     let opening_groups = [&openings[..]];
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
@@ -1508,7 +1605,7 @@ fn batched_verify_passes_for_consistent_openings() {
         dense_opening(&evals_b, &opening_point),
     ];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1529,7 +1626,7 @@ fn batched_verify_passes_for_consistent_openings() {
     proof.serialize_uncompressed(&mut bytes).unwrap();
     let proof = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove");
     let opening_groups = [&openings[..]];
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
@@ -1554,7 +1651,12 @@ fn batched_verify_passes_for_consistent_openings() {
     ignore = "requires planner fallback for generated schedule misses"
 )]
 fn batched_onehot_roundtrip_matches_public_shape_context() {
-    const NV: usize = 15;
+    // NV chosen large enough that the runtime schedule yields at least two
+    // fold steps so the proof is fold-rooted (not terminal-rooted). Under
+    // the post-soundness-fix proof shape, a single-fold schedule emits a
+    // `Terminal` root with no recursive suffix, which this test does not
+    // exercise.
+    const NV: usize = 20;
     const BATCH_SIZE: usize = 2;
 
     let layout = akita_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("layout");
@@ -1584,7 +1686,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let commitments = [commitment];
     let hints = vec![hint];
 
-    let mut prover_transcript = Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
+    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     let proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
         &setup,
         vec![(
@@ -1602,31 +1704,42 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 
     let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
     let actual_shape = proof.shape();
-    let (
-        AkitaBatchedProofShape::Fold {
-            root_shape: expected_root,
-            step_shapes: expected_steps,
-        },
-        AkitaBatchedProofShape::Fold {
-            root_shape: actual_root,
-            step_shapes: actual_steps,
-        },
-    ) = (&expected_shape, &actual_shape)
-    else {
-        panic!("this test exercises a fold-rooted batched proof");
-    };
-    assert_eq!(expected_root.y_ring_coeffs, actual_root.y_ring_coeffs);
-    assert_eq!(expected_root.v_coeffs, actual_root.v_coeffs);
-    assert_eq!(expected_root.stage1_stages, actual_root.stage1_stages);
-    assert_eq!(
-        expected_root.stage2_sumcheck_proof,
-        actual_root.stage2_sumcheck_proof
-    );
-    assert_eq!(
-        expected_root.next_commit_coeffs,
-        actual_root.next_commit_coeffs
-    );
-    assert_eq!(expected_steps, actual_steps);
+    // The expected and actual shapes must match in their root variant: either
+    // both `Fold` (multi-fold schedules) or both `Terminal` (1-fold schedules).
+    match (&expected_shape, &actual_shape) {
+        (
+            AkitaBatchedProofShape::Fold {
+                root_shape: expected_root,
+                step_shapes: expected_steps,
+            },
+            AkitaBatchedProofShape::Fold {
+                root_shape: actual_root,
+                step_shapes: actual_steps,
+            },
+        ) => {
+            assert_eq!(expected_root.y_ring_coeffs, actual_root.y_ring_coeffs);
+            assert_eq!(expected_root.v_coeffs, actual_root.v_coeffs);
+            assert_eq!(expected_root.stage1_stages, actual_root.stage1_stages);
+            assert_eq!(
+                expected_root.stage2_sumcheck_proof,
+                actual_root.stage2_sumcheck_proof
+            );
+            assert_eq!(
+                expected_root.next_commit_coeffs,
+                actual_root.next_commit_coeffs
+            );
+            assert_eq!(expected_steps, actual_steps);
+        }
+        (
+            AkitaBatchedProofShape::Terminal(expected_terminal),
+            AkitaBatchedProofShape::Terminal(actual_terminal),
+        ) => {
+            assert_eq!(expected_terminal, actual_terminal);
+        }
+        _ => panic!(
+            "expected and actual shape root variants disagree: expected={expected_shape:?}, actual={actual_shape:?}"
+        ),
+    }
     let mut bytes = Vec::new();
     proof.serialize_uncompressed(&mut bytes).unwrap();
     let decoded =
@@ -1635,7 +1748,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     assert_eq!(decoded, proof);
 
     let opening_groups = [&openings[..]];
-    let mut verifier_transcript = Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
+    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
         &decoded,
         &verifier_setup,
@@ -1681,7 +1794,7 @@ fn batched_verify_rejects_wrong_opening() {
     ];
     openings[1] += F::one();
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/bad");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1697,7 +1810,7 @@ fn batched_verify_rejects_wrong_opening() {
     )
     .unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/bad");
     let opening_groups = [&openings[..]];
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
@@ -1744,7 +1857,7 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
         dense_opening(&evals_b, &opening_point),
     ];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/oversized");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1775,7 +1888,7 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
     oversized_openings.push(F::zero());
     let oversized_opening_groups = [&oversized_openings[..]];
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/oversized");
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &oversized_proof,
         &verifier_setup,
@@ -1808,7 +1921,7 @@ fn verify_passes_for_consistent_opening() {
         <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup).unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
-    let lw = lagrange_weights(&opening_point);
+    let lw = lagrange_weights(&opening_point).unwrap();
     let opening: F = evals
         .iter()
         .zip(lw.iter())
@@ -1819,7 +1932,7 @@ fn verify_passes_for_consistent_opening() {
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1835,7 +1948,7 @@ fn verify_passes_for_consistent_opening() {
     )
     .unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -1868,7 +1981,7 @@ fn verify_rejects_wrong_opening() {
         <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup).unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
-    let lw = lagrange_weights(&opening_point);
+    let lw = lagrange_weights(&opening_point).unwrap();
     let opening: F = evals
         .iter()
         .zip(lw.iter())
@@ -1877,7 +1990,7 @@ fn verify_rejects_wrong_opening() {
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
     let commitments = [commitment];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1896,7 +2009,7 @@ fn verify_rejects_wrong_opening() {
     let wrong_opening = opening + F::one();
     let wrong_openings = [wrong_opening];
     let wrong_opening_groups = [&wrong_openings[..]];
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -1934,7 +2047,7 @@ fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
     let opening_groups = [&openings[..]];
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
         <Scheme as CommitmentVerifier<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
@@ -1979,7 +2092,7 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
     let commitments = [commitment];
     let openings = [opening];
     let opening_groups = [&openings[..]];
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &decoded,
         &verifier_setup,
@@ -2040,7 +2153,7 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
 
     let openings = [opening];
     let commitments = [commitment];
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let err = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2076,7 +2189,7 @@ fn monomial_basis_prove_verify_round_trip() {
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
 
-    let mw = monomial_weights(&opening_point);
+    let mw = monomial_weights(&opening_point).unwrap();
     let opening: F = coeffs
         .iter()
         .zip(mw.iter())
@@ -2087,7 +2200,7 @@ fn monomial_basis_prove_verify_round_trip() {
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/monomial");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -2103,7 +2216,7 @@ fn monomial_basis_prove_verify_round_trip() {
     )
     .unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/monomial");
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2153,7 +2266,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
+    let mut prover_transcript = AkitaTranscript::<DirectF>::new(b"test/tiny-direct");
     let proof = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::batched_prove(
         &setup,
         vec![(
@@ -2184,7 +2297,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     )
     .unwrap());
 
-    let mut verifier_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
+    let mut verifier_transcript = AkitaTranscript::<DirectF>::new(b"test/tiny-direct");
     <DirectScheme as CommitmentVerifier<DirectF, DIRECT_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2377,10 +2490,10 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         max_num_batched_polys: usize,
         max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError> {
-        let lp = Self::root_lp();
         let max_num_claims = max_num_batched_polys
             .checked_mul(max_num_points)
             .ok_or_else(|| AkitaError::InvalidSetup("claim count overflow".to_string()))?;
+        let lp = Self::root_lp();
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
@@ -2425,14 +2538,20 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = Self::root_lp();
-        let w_ring = w_ring_element_count_with_counts::<Self::Field>(
+        let lp = akita_types::scale_batched_root_layout(
+            &Self::root_lp(),
+            incidence.num_claims(),
+            Self::stage1_challenge_config(Self::D).l1_norm(),
+            Self::decomposition().field_bits(),
+        )?;
+        let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
             incidence.num_points(),
             incidence.num_polynomials(),
             incidence.num_claims(),
             incidence.num_public_rows(),
-        );
+            akita_types::MRowLayout::Terminal,
+        )?;
         let compact_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
             steps: vec![
@@ -2596,10 +2715,10 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         max_num_batched_polys: usize,
         max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError> {
-        let lp = Self::root_lp();
         let max_num_claims = max_num_batched_polys
             .checked_mul(max_num_points)
             .ok_or_else(|| AkitaError::InvalidSetup("claim count overflow".to_string()))?;
+        let lp = Self::root_lp();
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
@@ -2644,14 +2763,25 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = Self::root_lp();
-        let w_ring = w_ring_element_count_with_counts::<Self::Field>(
+        let lp = akita_types::scale_batched_root_layout(
+            &Self::root_lp(),
+            incidence.num_claims(),
+            Self::stage1_challenge_config(Self::D).l1_norm(),
+            Self::decomposition().field_bits(),
+        )?;
+        // Single-fold schedule: the root IS the terminal fold, so its
+        // shipped `w` is built under MRowLayout::Terminal (no D-block in
+        // the per-row `r` quotients). The schedule's `next_w_len` and the
+        // following Direct step's witness shape must match that reduced
+        // length.
+        let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
             incidence.num_points(),
             incidence.num_polynomials(),
             incidence.num_claims(),
             incidence.num_public_rows(),
-        );
+            akita_types::MRowLayout::Terminal,
+        )?;
         let next_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
             steps: vec![
@@ -2698,7 +2828,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
             ])
         })
         .collect::<Vec<_>>();
-    let weights = lagrange_weights(&point);
+    let weights = lagrange_weights(&point).unwrap();
     let opening = evals
         .iter()
         .zip(weights.iter())
@@ -2717,7 +2847,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     let poly_refs = [&poly];
     let commitments = [commitment];
     let mut prover_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
         vec![(
@@ -2733,20 +2863,27 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     )
     .unwrap();
 
-    assert!(proof.root.as_fold().is_some());
+    // After Phase 1, a tiny `NUM_VARS=1` schedule has a single fold level so
+    // the root is the `Terminal` variant (not `Fold`). Both shapes carry an
+    // optional extension-opening reduction payload; this test asserts the
+    // payload is absent at the root in the degree-1 extension case.
+    let root_extension_opening_reduction = match &proof.root {
+        akita_types::AkitaBatchedRootProof::Fold(fold) => fold.extension_opening_reduction.as_ref(),
+        akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
+            terminal.extension_opening_reduction.as_ref()
+        }
+        akita_types::AkitaBatchedRootProof::Direct { .. } => {
+            panic!("root-direct proof has no folded root extension-opening reduction")
+        }
+    };
     assert!(
-        proof
-            .root
-            .as_fold()
-            .expect("root fold expected")
-            .extension_opening_reduction
-            .is_none(),
+        root_extension_opening_reduction.is_none(),
         "root fold must not carry an unchecked extension-opening reduction payload"
     );
 
     let openings = [opening];
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2764,7 +2901,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
 
     let wrong_openings = [opening + SmallE::one()];
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2782,7 +2919,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
 
     let wrong_point = [point[0] + SmallE::one()];
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2827,7 +2964,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
             ])
         })
         .collect::<Vec<_>>();
-    let weights = lagrange_weights(&point);
+    let weights = lagrange_weights(&point).unwrap();
     let opening_a = evals_a
         .iter()
         .zip(weights.iter())
@@ -2850,7 +2987,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
     let openings = [opening_a, opening_b];
 
     let mut prover_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
         vec![(
@@ -2865,14 +3002,25 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         BasisMode::Lagrange,
     )
     .unwrap();
-    let root = proof.root.as_fold().expect("root tensor projection folds");
+    // After Phase 1, the root variant depends on the schedule: multi-fold
+    // produces `Fold`, single-fold produces `Terminal`. Both carry the
+    // extension-opening reduction payload as `Option`.
+    let root_extension_opening_reduction = match &proof.root {
+        akita_types::AkitaBatchedRootProof::Fold(fold) => fold.extension_opening_reduction.as_ref(),
+        akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
+            terminal.extension_opening_reduction.as_ref()
+        }
+        akita_types::AkitaBatchedRootProof::Direct { .. } => {
+            panic!("root-direct proof has no folded root extension-opening reduction")
+        }
+    };
     assert!(
-        root.extension_opening_reduction.is_some(),
+        root_extension_opening_reduction.is_some(),
         "root tensor projection must prove the extension-opening reduction"
     );
 
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2890,7 +3038,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
 
     let wrong_openings = [opening_a, opening_b + SmallE::one()];
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2942,7 +3090,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
         })
         .collect::<Vec<_>>();
     let opening_at = |point: &[SmallE]| {
-        let weights = lagrange_weights(point);
+        let weights = lagrange_weights(point).unwrap();
         evals
             .iter()
             .zip(weights.iter())
@@ -2963,7 +3111,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     let openings_b = [opening_b];
 
     let mut prover_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
         vec![
@@ -2988,14 +3136,25 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
         BasisMode::Lagrange,
     )
     .unwrap();
-    let root = proof.root.as_fold().expect("root tensor projection folds");
+    // After Phase 1, the root variant depends on the schedule: multi-fold
+    // produces `Fold`, single-fold produces `Terminal`. Both carry the
+    // extension-opening reduction payload as `Option`.
+    let root_extension_opening_reduction = match &proof.root {
+        akita_types::AkitaBatchedRootProof::Fold(fold) => fold.extension_opening_reduction.as_ref(),
+        akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
+            terminal.extension_opening_reduction.as_ref()
+        }
+        akita_types::AkitaBatchedRootProof::Direct { .. } => {
+            panic!("root-direct proof has no folded root extension-opening reduction")
+        }
+    };
     assert!(
-        root.extension_opening_reduction.is_some(),
+        root_extension_opening_reduction.is_some(),
         "root tensor projection must prove the extension-opening reduction"
     );
 
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
     <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -3022,7 +3181,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
 
     let wrong_openings_b = [opening_b + SmallE::one()];
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,

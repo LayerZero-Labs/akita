@@ -150,7 +150,7 @@ where
 
     let tail_point = &logical_point[split_bits..];
     let tail_len = 1usize << tail_point.len();
-    let tail_eq = EqPolynomial::evals(tail_point);
+    let tail_eq = EqPolynomial::evals(tail_point)?;
     let mut partials = vec![E::zero(); width];
     for (tail, &weight) in tail_eq.iter().enumerate().take(tail_len) {
         let base = tail * width;
@@ -253,7 +253,7 @@ where
             actual: column_partials.len(),
         });
     }
-    let head_weights = EqPolynomial::evals(&logical_point[..split_bits]);
+    let head_weights = EqPolynomial::evals(&logical_point[..split_bits])?;
     Ok(head_weights
         .into_iter()
         .zip(column_partials.iter().copied())
@@ -308,7 +308,7 @@ where
             actual: row_partials.len(),
         });
     }
-    Ok(EqPolynomial::evals(eta)
+    Ok(EqPolynomial::evals(eta)?
         .into_iter()
         .zip(row_partials.iter().copied())
         .fold(E::zero(), |acc, (weight, partial)| acc + weight * partial))
@@ -357,8 +357,8 @@ where
             actual: eta.len(),
         });
     }
-    let eta_weights = EqPolynomial::evals(eta);
-    let mut out = EqPolynomial::evals(tail_point);
+    let eta_weights = EqPolynomial::evals(eta)?;
+    let mut out = EqPolynomial::evals(tail_point)?;
     let project = |value: &mut E| {
         *value = project_tensor_factor_value::<F, E>(*value, &eta_weights, width)?;
         Ok::<(), AkitaError>(())
@@ -404,7 +404,7 @@ where
         });
     }
 
-    let eta_weights = EqPolynomial::evals(eta);
+    let eta_weights = EqPolynomial::evals(eta)?;
     let one_coords = E::one().to_base_vec();
     if one_coords.len() != eta_weights.len() {
         return Err(AkitaError::InvalidSize {
@@ -538,15 +538,19 @@ impl<E: FieldCore> ExtensionOpeningReductionFactor<E> {
     }
 
     /// Compute the transparent factor evaluation table.
-    pub fn evals(&self) -> Vec<E> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the factor point arity overflows the equality table.
+    pub fn evals(&self) -> Result<Vec<E>, AkitaError> {
         let mut out = vec![E::zero(); 1usize << self.num_vars];
         for term in &self.terms {
-            let term_evals = EqPolynomial::evals_with_scaling(&term.point, Some(term.coeff));
+            let term_evals = EqPolynomial::evals_with_scaling(&term.point, Some(term.coeff))?;
             for (dst, value) in out.iter_mut().zip(term_evals) {
                 *dst += value;
             }
         }
-        out
+        Ok(out)
     }
 
     /// Evaluate the transparent factor at an arbitrary point.
@@ -561,9 +565,11 @@ impl<E: FieldCore> ExtensionOpeningReductionFactor<E> {
                 actual: point.len(),
             });
         }
-        Ok(self.terms.iter().fold(E::zero(), |acc, term| {
-            acc + term.coeff * EqPolynomial::mle(&term.point, point)
-        }))
+        let mut acc = E::zero();
+        for term in &self.terms {
+            acc += term.coeff * EqPolynomial::mle(&term.point, point)?;
+        }
+        Ok(acc)
     }
 
     /// Compute the reduction claim induced by this factor and witness table.
@@ -579,7 +585,7 @@ impl<E: FieldCore> ExtensionOpeningReductionFactor<E> {
                 actual: witness_evals.len(),
             });
         }
-        extension_opening_reduction_claim(witness_evals, &self.evals())
+        extension_opening_reduction_claim(witness_evals, &self.evals()?)
     }
 }
 
@@ -1315,7 +1321,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         checked_table_len(tail_point.len())?;
         checked_table_len(tail_point.len() - materialize_at)?;
 
-        let eta_weights = EqPolynomial::evals(&eta);
+        let eta_weights = EqPolynomial::evals(&eta)?;
         let basis = (0..width)
             .map(|idx| {
                 let mut coords = vec![F::zero(); width];
@@ -1337,7 +1343,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
             .copied()
             .map(|tail| Self::transition::<F>(&basis, tail, width))
             .collect::<Result<Vec<_>, _>>()?;
-        let suffix_eq = EqPolynomial::evals(&tail_point[materialize_at..]);
+        let suffix_eq = EqPolynomial::evals(&tail_point[materialize_at..])?;
         let suffix_tables = basis
             .iter()
             .map(|&basis_elem| {

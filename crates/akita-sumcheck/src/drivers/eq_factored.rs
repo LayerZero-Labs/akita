@@ -360,7 +360,7 @@ where
         let mut masked_scaled_claim = scaled_claim;
         let mut masked_claim_scale = E::one();
         let mut challenges = Vec::with_capacity(num_rounds);
-        let mut round_state = self.start_round_state();
+        let mut round_state = self.start_round_state()?;
         let mut handoff_mask = ZkR1csLinearCombination::zero();
 
         transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &scaled_claim);
@@ -501,7 +501,7 @@ where
         let mut scaled_claim = self.input_claim();
         let mut claim_scale = E::one();
         let mut challenges = Vec::with_capacity(num_rounds);
-        let mut round_state = self.start_round_state();
+        let mut round_state = self.start_round_state()?;
 
         transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &scaled_claim);
 

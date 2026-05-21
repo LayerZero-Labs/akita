@@ -11,7 +11,7 @@ use akita_sumcheck::{
     SumcheckInstanceVerifierExt, SumcheckProof, UniPoly,
 };
 use akita_transcript::labels;
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::{AkitaTranscript, Transcript};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;
@@ -67,7 +67,7 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
     let claim0 = F::random(&mut rng);
 
     // Verifier run.
-    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t1 = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (final_claim_1, r_1) = proof
         .verify::<F, _, _>(claim0, num_rounds, degree_bound, &mut t1, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -75,7 +75,7 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
         .unwrap();
 
     // Manual replay with a fresh transcript (must match).
-    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let mut claim = claim0;
     let mut r_manual = Vec::with_capacity(num_rounds);
     for poly in &proof.round_polys {
@@ -165,7 +165,7 @@ fn prove_and_verify_single_sumcheck() {
         num_vars,
     };
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let (proof, prover_challenges, _final_claim) = prover
         .prove::<F, _, _>(&mut prover_transcript, |tr| {
@@ -179,7 +179,7 @@ fn prove_and_verify_single_sumcheck() {
         claim,
     };
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let verifier_challenges = verifier
         .verify::<F, _, _>(&proof, &mut verifier_transcript, |tr| {
@@ -204,7 +204,7 @@ fn verify_rejects_wrong_claim() {
         evals: evals.clone(),
         num_vars,
     };
-    let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut pt = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let (proof, _, _) = prover
         .prove::<F, _, _>(&mut pt, |tr| {
@@ -218,7 +218,7 @@ fn verify_rejects_wrong_claim() {
         num_vars,
         claim: wrong_claim,
     };
-    let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut vt = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let result = verifier.verify::<F, _, _>(&proof, &mut vt, |tr| {
         tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -247,7 +247,7 @@ fn e2e_sumcheck_2_pow_20() {
         evals: evals.clone(),
         num_vars,
     };
-    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let (proof, prover_challenges, final_claim) = prover
         .prove::<F, _, _>(&mut prover_transcript, |tr| {
@@ -271,7 +271,7 @@ fn e2e_sumcheck_2_pow_20() {
         num_vars,
         claim,
     };
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let verifier_challenges = verifier
         .verify::<F, _, _>(&proof, &mut verifier_transcript, |tr| {

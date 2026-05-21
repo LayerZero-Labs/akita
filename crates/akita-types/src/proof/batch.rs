@@ -233,12 +233,12 @@ where
 
     let (a_weights, b_weights) = match block_order {
         BlockOrder::ColumnMajor => (
-            basis_weights(&opening_point[r_vars..], basis),
-            basis_weights(&opening_point[..r_vars], basis),
+            basis_weights(&opening_point[r_vars..], basis)?,
+            basis_weights(&opening_point[..r_vars], basis)?,
         ),
         BlockOrder::RowMajor => (
-            basis_weights(&opening_point[..m_vars], basis),
-            basis_weights(&opening_point[m_vars..], basis),
+            basis_weights(&opening_point[..m_vars], basis)?,
+            basis_weights(&opening_point[m_vars..], basis)?,
         ),
     };
     let error = AkitaError::InvalidInput(
@@ -573,7 +573,7 @@ where
         .map(L::lift_base)
         .collect::<Vec<_>>();
     inner_point.resize(packed_inner_bits, L::zero());
-    let inner_weights = basis_weights(&inner_point, basis);
+    let inner_weights = basis_weights(&inner_point, basis)?;
     let inner_reduction = embed_ring_subfield_vector::<F, L, D>(
         &inner_weights,
         AkitaError::InvalidInput(
@@ -672,7 +672,7 @@ where
             .copied()
             .map(L::lift_base)
             .collect::<Vec<_>>();
-        let inner_weights = basis_weights(&inner_weights, basis);
+        let inner_weights = basis_weights(&inner_weights, basis)?;
         return Ok(PreparedRecursiveOpeningPoint {
             padded_point,
             inner_weights,
@@ -690,7 +690,7 @@ where
     }
 
     let inner_point = &padded_point[..alpha_bits];
-    let inner_weights = basis_weights(inner_point, basis);
+    let inner_weights = basis_weights(inner_point, basis)?;
     let trace_inner_point_len = (D / L::EXT_DEGREE).trailing_zeros() as usize;
     if padded_point[trace_inner_point_len..alpha_bits]
         .iter()
@@ -700,7 +700,7 @@ where
             "inactive extension inner coordinates must be zero after psi packing".to_string(),
         ));
     }
-    let trace_inner_weights = basis_weights(&padded_point[..trace_inner_point_len], basis);
+    let trace_inner_weights = basis_weights(&padded_point[..trace_inner_point_len], basis)?;
     let inner_reduction = embed_ring_subfield_vector::<F, L, D>(
         &trace_inner_weights,
         AkitaError::InvalidInput(
@@ -879,16 +879,17 @@ mod tests {
     type L = RingSubfieldFp4<F>;
 
     fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup {
-            seed: AkitaSetupSeed {
+        AkitaExpandedSetup::from_parts(
+            AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 8,
                 max_num_points: 2,
                 max_stride: 1,
                 public_matrix_seed: [0u8; 32],
             },
-            shared_matrix: FlatMatrix::from_flat_data(vec![F::zero()], 1),
-        }
+            FlatMatrix::from_flat_data(vec![F::zero()], 1),
+        )
+        .unwrap()
     }
 
     #[test]

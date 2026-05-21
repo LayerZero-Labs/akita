@@ -10,15 +10,15 @@ use akita_sumcheck::{
     UniPoly,
 };
 use akita_transcript::labels as tr_labels;
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::{AkitaTranscript, Transcript};
 
 type F = Prime128Offset275;
 
-fn new_transcript() -> Blake2bTranscript<F> {
-    <Blake2bTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
+fn new_transcript() -> AkitaTranscript<F> {
+    <AkitaTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
 }
 
-fn sample_round(tr: &mut Blake2bTranscript<F>) -> F {
+fn sample_round(tr: &mut AkitaTranscript<F>) -> F {
     tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND)
 }
 
@@ -32,7 +32,7 @@ impl ToyEqFactoredInstance {
     fn new(tau: F, q_coeffs: Vec<F>) -> Self {
         Self {
             tau,
-            split_eq: GruenSplitEq::new(&[tau]),
+            split_eq: GruenSplitEq::new(&[tau]).unwrap(),
             q_coeffs,
         }
     }
@@ -42,7 +42,9 @@ impl ToyEqFactoredInstance {
     }
 
     fn input_claim_from_tau(&self) -> F {
-        let g = GruenSplitEq::new(&[self.tau]).gruen_mul(&self.q_poly());
+        let g = GruenSplitEq::new(&[self.tau])
+            .unwrap()
+            .gruen_mul(&self.q_poly());
         g.evaluate(&F::zero()) + g.evaluate(&F::one())
     }
 }
@@ -88,7 +90,7 @@ impl EqFactoredSumcheckInstanceVerifier<F> for ToyEqFactoredInstance {
         self.input_claim_from_tau()
     }
 
-    fn start_round_state(&self) -> Self::RoundState {
+    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
         GruenSplitEq::new(&[self.tau])
     }
 

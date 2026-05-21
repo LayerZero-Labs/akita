@@ -1,0 +1,39 @@
+name: Portability
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**", main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable-x86:
+    name: Portable x86 verifier check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - name: Check verifier with portable CPU target
+        run: RUSTFLAGS="-D warnings -C target-cpu=x86-64" cargo check -p akita-verifier --no-default-features
+
+  wasm-serialization:
+    name: Wasm serialization check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Check serialization on wasm
+        run: cargo check -p akita-serialization --target wasm32-unknown-unknown

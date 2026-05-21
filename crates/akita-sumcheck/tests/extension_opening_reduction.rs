@@ -14,15 +14,15 @@ use akita_sumcheck::{
     SumcheckInstanceVerifierExt, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_transcript::labels as tr_labels;
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::{AkitaTranscript, Transcript};
 
 type F = Prime128Offset275;
 
-fn new_transcript() -> Blake2bTranscript<F> {
-    <Blake2bTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
+fn new_transcript() -> AkitaTranscript<F> {
+    <AkitaTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
 }
 
-fn sample_round(tr: &mut Blake2bTranscript<F>) -> F {
+fn sample_round(tr: &mut AkitaTranscript<F>) -> F {
     tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND)
 }
 
@@ -180,7 +180,7 @@ fn singleton_factor_claim_matches_multilinear_opening() {
     assert_eq!(claim, expected);
 
     let rho = vec![F::from_u64(2), F::from_u64(9), F::from_u64(6)];
-    let factor_evals = factor.evals();
+    let factor_evals = factor.evals().unwrap();
     let folded_factor = akita_sumcheck::multilinear_eval(&factor_evals, &rho).unwrap();
     assert_eq!(folded_factor, factor.evaluate(&rho).unwrap());
 }
@@ -221,7 +221,7 @@ fn row_factor_batches_multiple_opening_points() {
         F::from_u64(37),
         F::from_u64(41),
     ];
-    let factor_evals = factor.evals();
+    let factor_evals = factor.evals().unwrap();
     assert_eq!(
         akita_sumcheck::multilinear_eval(&factor_evals, &rho).unwrap(),
         factor.evaluate(&rho).unwrap()
@@ -419,7 +419,7 @@ fn extension_opening_reduction_proves_transparent_factor_claim() {
         ),
     ])
     .unwrap();
-    let factor_evals = factor.evals();
+    let factor_evals = factor.evals().unwrap();
     let expected_claim = factor.claim_for_witness(&witness_evals).unwrap();
 
     let mut prover =
@@ -460,7 +460,7 @@ fn detached_verifier_checks_transparent_factor_against_opened_witness() {
         F::from_u64(11),
     ])
     .unwrap();
-    let factor_evals = factor.evals();
+    let factor_evals = factor.evals().unwrap();
     let input_claim = factor.claim_for_witness(&witness_evals).unwrap();
 
     let mut prover =

@@ -100,6 +100,71 @@ pub struct ClaimIncidenceSummary {
 }
 
 impl ClaimIncidenceSummary {
+    /// Validate that routing and count tables are internally consistent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any routing/count vector has the wrong length,
+    /// routes outside the declared point shape, references a missing
+    /// polynomial slot, or disagrees with the derived claim counts.
+    pub fn check(&self) -> Result<(), AkitaError> {
+        let num_points = self.num_points();
+        let num_claims = self.num_claims();
+        if num_points == 0 || num_claims == 0 {
+            return Err(AkitaError::InvalidProof);
+        }
+        if self.claim_poly_indices.len() != num_claims
+            || self.num_polys_per_point.len() != num_points
+            || self.public_rows.len() != num_points
+            || self.num_polys_per_point.contains(&0)
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+
+        let mut point_claim_counts = vec![0usize; num_points];
+        let mut point_poly_sets = vec![BTreeSet::new(); num_points];
+        for claim_idx in 0..num_claims {
+            let point_idx = self.claim_to_point[claim_idx];
+            if point_idx >= num_points {
+                return Err(AkitaError::InvalidProof);
+            }
+            let poly_idx = self.claim_poly_indices[claim_idx];
+            if poly_idx >= self.num_polys_per_point[point_idx] {
+                return Err(AkitaError::InvalidProof);
+            }
+            point_claim_counts[point_idx] = point_claim_counts[point_idx]
+                .checked_add(1)
+                .ok_or(AkitaError::InvalidProof)?;
+            if !point_poly_sets[point_idx].insert(poly_idx) {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        if point_claim_counts != self.num_polys_per_point {
+            return Err(AkitaError::InvalidProof);
+        }
+
+        let mut row_claims = BTreeSet::new();
+        for row in &self.public_rows {
+            if row.point_idx >= num_points
+                || row.claim_indices.len() != self.num_polys_per_point[row.point_idx]
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            for &claim_idx in &row.claim_indices {
+                if claim_idx >= num_claims
+                    || self.claim_to_point[claim_idx] != row.point_idx
+                    || !row_claims.insert(claim_idx)
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+            }
+        }
+        if row_claims.len() != num_claims {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
+    }
+
     /// Build an incidence summary from per-point polynomial counts.
     ///
     /// `num_polys_per_point[p]` is the number of polynomials opened at point
@@ -365,10 +430,13 @@ impl<'a, F> ClaimIncidence<'a, F> {
 pub fn append_claim_incidence_shape_to_transcript<F, T>(
     summary: &ClaimIncidenceSummary,
     transcript: &mut T,
-) where
-    F: FieldCore + CanonicalField,
+) -> Result<(), AkitaError>
+where
+    F: akita_field::FieldCore + akita_field::CanonicalField,
     T: Transcript<F>,
 {
+    summary.check()?;
+
     transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.num_vars());
     transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.num_points());
     transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.num_claims());
@@ -379,6 +447,7 @@ pub fn append_claim_incidence_shape_to_transcript<F, T>(
         transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.claim_to_point()[claim_idx]);
         transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.claim_poly_indices()[claim_idx]);
     }
+    Ok(())
 }
 
 /// Sample row-local public-row batching coefficients.
@@ -438,7 +507,7 @@ mod tests {
     use super::super::CommittedOpenings;
     use super::*;
     use akita_field::{Fp2, Fp64, NegOneNr};
-    use akita_transcript::{labels, Blake2bTranscript, Transcript};
+    use akita_transcript::{labels, AkitaTranscript, Transcript};
 
     type TranscriptField = Fp64<4294967197>;
 
@@ -451,9 +520,8 @@ mod tests {
     }
 
     fn incidence_shape_challenge(summary: &ClaimIncidenceSummary) -> TranscriptField {
-        let mut transcript =
-            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        append_claim_incidence_shape_to_transcript(summary, &mut transcript);
+        let mut transcript = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        append_claim_incidence_shape_to_transcript(summary, &mut transcript).unwrap();
         transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION)
     }
 
@@ -592,9 +660,8 @@ mod tests {
     fn row_local_coefficients_sample_only_for_non_singleton_rows() {
         let summary =
             ClaimIncidenceSummary::from_point_polys(1, vec![2, 1]).expect("valid incidence");
-        let mut transcript =
-            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        append_claim_incidence_shape_to_transcript(&summary, &mut transcript);
+        let mut transcript = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        append_claim_incidence_shape_to_transcript(&summary, &mut transcript).unwrap();
 
         let coeffs = sample_public_row_coefficients::<TranscriptField, TranscriptField, _>(
             &summary,
@@ -716,8 +783,7 @@ mod tests {
     fn extension_row_coefficients_sample_for_non_singleton_rows() {
         type E = Fp2<TranscriptField, NegOneNr>;
         let summary = ClaimIncidenceSummary::same_point(1, 2).expect("valid same-point incidence");
-        let mut transcript =
-            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut transcript = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
         let coeffs =
             sample_public_row_coefficients::<TranscriptField, E, _>(&summary, &mut transcript)

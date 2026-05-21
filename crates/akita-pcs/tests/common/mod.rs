@@ -134,6 +134,15 @@ pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
     point: &[F],
     layout: &LevelParams,
 ) -> F {
+    opening_from_poly_with_basis(poly, point, layout, BasisMode::Lagrange)
+}
+
+pub(super) fn opening_from_poly_with_basis<const D: usize, P: AkitaPolyOps<F, D>>(
+    poly: &P,
+    point: &[F],
+    layout: &LevelParams,
+    basis_mode: BasisMode,
+) -> F {
     let alpha_bits = D.trailing_zeros() as usize;
     assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
 
@@ -143,7 +152,7 @@ pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
         reduced_point,
         layout.r_vars,
         layout.m_vars,
-        BasisMode::Lagrange,
+        basis_mode,
         BlockOrder::RowMajor,
     )
     .expect("opening point shape should match layout");
@@ -153,7 +162,7 @@ pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
         &ring_opening_point.a,
         layout.block_len,
     );
-    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, BasisMode::Lagrange)
+    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis_mode)
         .expect("inner opening point should match ring dimension");
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
@@ -173,4 +182,15 @@ pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F, DENSE_D> {
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
     DensePoly::<F, DENSE_D>::from_field_evals(nv, &evals).expect("dense poly")
+}
+
+#[cfg(feature = "logging-transcript")]
+pub(super) fn public_transcript_events(
+    events: &[akita_transcript::TranscriptEvent],
+) -> Vec<akita_transcript::TranscriptEvent> {
+    events
+        .iter()
+        .filter(|event| !matches!(event, akita_transcript::TranscriptEvent::Wire { .. }))
+        .cloned()
+        .collect()
 }

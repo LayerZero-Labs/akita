@@ -1,7 +1,7 @@
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
 /// Number of carry buckets per outer index produced by
 /// [`StructuredSliceMleEvaluator::compute_inner_sum`].
@@ -300,7 +300,7 @@ where
     E: ExtField<F>,
 {
     /// Evaluate the dense materialized Z segment.
-    pub(crate) fn evaluate(&self) -> E {
+    pub(crate) fn evaluate(&self) -> Result<E, AkitaError> {
         let z_total_blocks = self.a_evals_by_point.len() * self.block_len;
         let z_len = self.fold_gadget.len() * self.g1_commit.len() * z_total_blocks;
         let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
@@ -335,7 +335,7 @@ pub(crate) fn compute_r_contribution<F, E>(
     offset_r: usize,
     denom: E,
     r_gadget: &[F],
-) -> E
+) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
@@ -376,7 +376,7 @@ mod tests {
     use akita_algebra::offset_eq::summarize_pow2_block_carries;
     use akita_algebra::ring::scalar_powers;
     use akita_field::Prime128OffsetA7F7;
-    use akita_types::{gadget_row_scalars, r_decomp_levels, RingOpeningPoint};
+    use akita_types::{gadget_row_scalars, r_decomp_levels, MRowLayout, RingOpeningPoint};
 
     use crate::protocol::ring_switch::summarize_pow2_block_carries_base;
 
@@ -467,6 +467,7 @@ mod tests {
             log_basis,
             n_a,
             n_d,
+            m_row_layout: MRowLayout::Intermediate,
             n_b,
             num_points,
             rows,
@@ -511,7 +512,7 @@ mod tests {
         let w_len = p.depth_open * p.total_blocks;
         let eq = eq_evals(fx.offset_w + w_len, &fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
-        let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]);
+        let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_w & (p.num_blocks - 1);
 
         let public_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
@@ -521,12 +522,13 @@ mod tests {
                     &eq_low,
                     block_offset_low,
                     &fx.opening_points[point_idx].b,
-                );
+                )?;
                 summary[0] *= p.gamma[claim_idx];
                 summary[1] *= p.gamma[claim_idx];
-                summary
+                Ok::<[F; 2], AkitaError>(summary)
             })
-            .collect();
+            .collect::<Result<_, _>>()
+            .unwrap();
         let public_row_weights_by_claim: Vec<F> = p
             .claim_to_point
             .iter()
@@ -541,7 +543,8 @@ mod tests {
                     &p.c_alphas[start..(start + p.num_blocks)],
                 )
             })
-            .collect();
+            .collect::<Result<_, _>>()
+            .unwrap();
         let got = WStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
             offset_high: fx.offset_w >> offset_low_bits,
@@ -577,7 +580,7 @@ mod tests {
         let t_len = p.depth_open * p.n_a * p.total_blocks;
         let eq = eq_evals(fx.offset_t + t_len, &fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
-        let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]);
+        let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_t & (p.num_blocks - 1);
 
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
@@ -589,8 +592,9 @@ mod tests {
                     &p.c_alphas[start..(start + p.num_blocks)],
                 )
             })
-            .collect();
-        let a_start = 1 + p.num_public_rows + p.n_d + p.n_b * p.num_points;
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let a_start = 1 + p.num_public_rows + p.n_d_active() + p.n_b * p.num_points;
         let got = TStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
             offset_high: fx.offset_t >> offset_low_bits,
@@ -619,7 +623,8 @@ mod tests {
         let z_len = p.depth_fold * p.depth_commit * p.num_points * p.block_len;
         let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
         let z_offset_low_bits = p.block_len.trailing_zeros() as usize;
-        let z_block_low_eq = EqPolynomial::evals(&fx.full_vec_randomness[..z_offset_low_bits]);
+        let z_block_low_eq =
+            EqPolynomial::evals(&fx.full_vec_randomness[..z_offset_low_bits]).unwrap();
         let z_offset_low = fx.offset_z & (p.block_len - 1);
 
         let a_block_summary: Vec<[F; 2]> = fx
@@ -632,7 +637,8 @@ mod tests {
                     &point.a[..p.block_len],
                 )
             })
-            .collect();
+            .collect::<Result<_, _>>()
+            .unwrap();
         let got = ZStructuredPow2SlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[z_offset_low_bits..],
             offset_high: fx.offset_z >> z_offset_low_bits,
@@ -685,7 +691,8 @@ mod tests {
             offset_z: fx.offset_z,
             block_len: p.block_len,
         }
-        .evaluate();
+        .evaluate()
+        .unwrap();
 
         let mut expected = F::zero();
         let z_total_blocks = p.num_points * p.block_len;
@@ -721,7 +728,8 @@ mod tests {
             fx.offset_r,
             denom,
             &fx.r_gadget,
-        );
+        )
+        .unwrap();
         let mut expected = F::zero();
         for idx in 0..r_len {
             let row_idx = idx / fx.r_gadget.len();

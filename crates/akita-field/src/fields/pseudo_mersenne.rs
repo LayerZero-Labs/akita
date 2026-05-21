@@ -4,7 +4,7 @@
 //! another prime at the same bit width does not create an implicit canonical
 //! choice.
 
-use super::{Fp32, Fp64};
+use super::{Fp16, Fp32, Fp64};
 
 /// Maximum supported offset in this `2^k - offset` specialization.
 pub const PRIME_OFFSET_MAX: u128 = 1u128 << 16;
@@ -56,6 +56,8 @@ pub const fn is_registered_prime_offset(bits: u32, offset: u128) -> bool {
     registered_prime_offset_spec(bits, offset).is_some()
 }
 
+/// `offset` for `k = 16`.
+pub const PRIME16_OFFSET99_OFFSET: u16 = 99;
 /// `offset` for `k = 24`.
 pub const PRIME24_OFFSET3_OFFSET: u16 = 3;
 /// `offset` for `k = 30`.
@@ -75,6 +77,9 @@ pub const PRIME64_OFFSET59_OFFSET: u16 = 59;
 /// `offset` for `k = 128`.
 pub const PRIME128_OFFSET275_OFFSET: u16 = 275;
 
+/// `2^16 - 99`.
+pub const PRIME16_OFFSET99_MODULUS: u32 =
+    ((1u128 << 16) - (PRIME16_OFFSET99_OFFSET as u128)) as u32;
 /// `2^24 - 3`.
 pub const PRIME24_OFFSET3_MODULUS: u32 = ((1u128 << 24) - (PRIME24_OFFSET3_OFFSET as u128)) as u32;
 /// `2^30 - 35`.
@@ -100,6 +105,8 @@ pub const PRIME64_OFFSET59_MODULUS: u64 = u64::MAX - ((PRIME64_OFFSET59_OFFSET a
 /// `2^128 - 275`.
 pub const PRIME128_OFFSET275_MODULUS: u128 = u128::MAX - (PRIME128_OFFSET275_OFFSET as u128 - 1);
 
+/// Prime field for `2^16 - 99`.
+pub type Prime16Offset99 = Fp16<PRIME16_OFFSET99_MODULUS>;
 /// Prime field for `2^24 - 3`.
 pub type Prime24Offset3 = Fp32<PRIME24_OFFSET3_MODULUS>;
 /// Prime field for `2^30 - 35`.
@@ -120,7 +127,12 @@ pub type Prime64Offset59 = Fp64<PRIME64_OFFSET59_MODULUS>;
 /// `2^k - offset` profiles currently enabled in-code.
 ///
 /// Every enabled entry satisfies the current in-code `2^k - offset` policy.
-pub const PRIME_OFFSET_SPECS: [PrimeOffsetSpec; 9] = [
+pub const PRIME_OFFSET_SPECS: [PrimeOffsetSpec; 10] = [
+    PrimeOffsetSpec {
+        bits: 16,
+        offset: PRIME16_OFFSET99_OFFSET,
+        modulus: PRIME16_OFFSET99_MODULUS as u128,
+    },
     PrimeOffsetSpec {
         bits: 24,
         offset: PRIME24_OFFSET3_OFFSET,

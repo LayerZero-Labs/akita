@@ -18,7 +18,7 @@ mod common;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::AkitaBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -58,7 +58,7 @@ fn run_single_onehot(nv: usize) {
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
         let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
@@ -81,7 +81,7 @@ fn run_single_onehot(nv: usize) {
         )
         .expect("deserialize");
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
         let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
             F,
             ONEHOT_D,
@@ -140,7 +140,7 @@ fn run_single_dense(nv: usize) {
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/dense");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/dense");
         let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
@@ -163,7 +163,7 @@ fn run_single_dense(nv: usize) {
         )
         .expect("deserialize");
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/dense");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/dense");
         let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<
             F,
             DENSE_D,
@@ -271,8 +271,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
-        let mut prover_transcript =
-            Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
         let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
@@ -296,7 +295,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         .expect("deserialize");
 
         let mut verifier_transcript =
-            Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
+            AkitaTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
         let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
             F,
             ONEHOT_D,
