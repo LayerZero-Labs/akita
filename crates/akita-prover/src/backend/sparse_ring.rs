@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, CenteredCoeff, CommitInnerWitness, DecomposeFoldWitness};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SparseRingCoeff {
@@ -513,7 +513,7 @@ fn sparse_accumulate<const D: usize>(
     num_blocks: usize,
     inner_width: usize,
     num_digits: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[CenteredCoeff; D]> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -521,15 +521,15 @@ fn sparse_accumulate<const D: usize>(
 
     let actual_threads = num_threads.min(inner_width.max(1));
     let pos_chunk = inner_width.div_ceil(actual_threads);
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
             if pos_start >= inner_width {
                 return Vec::new();
             }
             let pos_end = (pos_start + pos_chunk).min(inner_width);
-            let mut acc = vec![[0i32; D]; pos_end - pos_start];
-            let mut rotated = vec![[0i32; D]; D];
+            let mut acc = vec![[0 as CenteredCoeff; D]; pos_end - pos_start];
+            let mut rotated = vec![[0 as CenteredCoeff; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = blocks.block(block_idx);
@@ -543,7 +543,7 @@ fn sparse_accumulate<const D: usize>(
                     let local_pos = entry.pos_in_block() * num_digits - pos_start;
                     let rot = &rotated[entry.coeff_idx()];
                     let dst = &mut acc[local_pos];
-                    let weight = entry.value as i32;
+                    let weight = CenteredCoeff::from(entry.value);
                     for k in 0..D {
                         dst[k] += weight * rot[k];
                     }

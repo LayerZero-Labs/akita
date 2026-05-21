@@ -7,7 +7,7 @@ use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{
-    tensor_pack_recursive_witness, MultiDNttCaches, RecursiveCommitmentHintCache,
+    tensor_pack_recursive_witness, CenteredCoeff, MultiDNttCaches, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
 };
 use akita_algebra::eq_poly::EqPolynomial;
@@ -1037,8 +1037,8 @@ where
     Ok(out)
 }
 
-fn balanced_decompose_centered_i32_i8_into<const D: usize>(
-    centered: &[i32; D],
+fn balanced_decompose_centered_i64_i8_into<const D: usize>(
+    centered: &[CenteredCoeff; D],
     out: &mut [[i8; D]],
     log_basis: u32,
 ) {
@@ -1112,7 +1112,7 @@ fn emit_blinding_planes<const D: usize>(
 /// the global block index `point * block_len + blk` innermost.
 fn emit_z_pre_block_inner<const D: usize>(
     out: &mut Vec<i8>,
-    z_pre_centered: &[[i32; D]],
+    z_pre_centered: &[[CenteredCoeff; D]],
     block_len: usize,
     depth_commit: usize,
     num_digits_fold: usize,
@@ -1129,7 +1129,7 @@ fn emit_z_pre_block_inner<const D: usize>(
 
     let mut all_planes = vec![[0i8; D]; total_elems * num_digits_fold];
     for (k, z_j) in z_pre_centered.iter().enumerate() {
-        balanced_decompose_centered_i32_i8_into(
+        balanced_decompose_centered_i64_i8_into(
             z_j,
             &mut all_planes[k * num_digits_fold..(k + 1) * num_digits_fold],
             log_basis,
@@ -1177,7 +1177,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
-    z_pre_centered: &[[i32; D]],
+    z_pre_centered: &[[CenteredCoeff; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
 ) -> RecursiveWitnessFlat {
@@ -1302,19 +1302,18 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
 #[cfg(test)]
 mod tests {
-    use super::balanced_decompose_centered_i32_i8_into;
+    use super::balanced_decompose_centered_i64_i8_into;
     use akita_algebra::CyclotomicRing;
     use akita_field::Prime128OffsetA7F7;
     use std::array::from_fn;
 
     #[test]
-    fn centered_i32_decompose_matches_ring_decompose() {
+    fn centered_i64_decompose_matches_ring_decompose() {
         type F = Prime128OffsetA7F7;
         const D: usize = 128;
 
-        let centered = from_fn(|i| ((37 * i as i32 + 11) % 95) - 47);
-        let ring =
-            CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| F::from_i64(centered[i] as i64)));
+        let centered = from_fn(|i| i64::from(((37 * i as i32 + 11) % 95) - 47));
+        let ring = CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| F::from_i64(centered[i])));
 
         for (num_digits, log_basis) in [
             (7usize, 3u32),
@@ -1323,13 +1322,13 @@ mod tests {
             (4usize, 6u32),
         ] {
             let mut got = vec![[0i8; D]; num_digits];
-            balanced_decompose_centered_i32_i8_into(&centered, &mut got, log_basis);
+            balanced_decompose_centered_i64_i8_into(&centered, &mut got, log_basis);
 
             let mut expected = vec![[0i8; D]; num_digits];
             ring.balanced_decompose_pow2_i8_into(&mut expected, log_basis);
             assert_eq!(
                 got, expected,
-                "centered i32 decomposition mismatch for num_digits={num_digits} log_basis={log_basis}"
+            "centered i64 decomposition mismatch for num_digits={num_digits} log_basis={log_basis}"
             );
         }
     }
