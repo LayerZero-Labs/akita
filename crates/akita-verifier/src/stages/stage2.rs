@@ -43,7 +43,7 @@ where
     if !packed_witness.num_elems.is_multiple_of(y_len) {
         return Err(AkitaError::InvalidProof);
     }
-    if physical_w_len % D != 0 {
+    if !physical_w_len.is_multiple_of(D) {
         return Err(AkitaError::InvalidProof);
     }
 

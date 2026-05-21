@@ -409,11 +409,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// Returns 0 when `ring_dim` is unknown (compact mode).
     pub fn count(&self) -> usize {
-        if self.ring_dim == 0 {
-            0
-        } else {
-            self.coeffs.len() / self.ring_dim
-        }
+        self.coeffs.len().checked_div(self.ring_dim).unwrap_or(0)
     }
 
     /// Raw coefficient slice.

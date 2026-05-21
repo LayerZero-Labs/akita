@@ -2,7 +2,7 @@
 name = "akita-recursion-glue"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = ["Omid Bodaghi <omibo@layerzero.foundation>"]
 license = "Apache-2.0 OR MIT"
 description = "Shared blob format for shipping Akita verifier inputs to a Jolt guest program."

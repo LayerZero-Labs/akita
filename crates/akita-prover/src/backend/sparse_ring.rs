@@ -588,11 +588,9 @@ where
 {
     let num_blocks = blocks.len();
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
-    let block_tile = if accum_bytes > 0 {
-        (L2_TILE_BUDGET / accum_bytes).max(1)
-    } else {
-        num_blocks
-    };
+    let block_tile = L2_TILE_BUDGET
+        .checked_div(accum_bytes)
+        .map_or(num_blocks, |tile| tile.max(1));
 
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads().min(num_blocks).max(1);

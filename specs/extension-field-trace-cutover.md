@@ -212,7 +212,7 @@ The companion completion spec now deliberately brings that work into #71.
 Rejected because the no-backward-compat policy in this repo says to remove dead bridges, and there are zero remaining callers after the trace-check cutover.
 
 **Use `feature(generic_const_exprs)` so the verifier can pass `<E as ExtField<F>>::EXT_DEGREE` directly as a const generic argument to `check_trace_inner_product`.**
-Rejected because the workspace pins stable Rust 1.88. The runtime-K dispatcher with a small `match` is the stable workaround and has no measurable cost.
+Rejected because the workspace pins stable Rust 1.95. The runtime-K dispatcher with a small `match` is the stable workaround and has no measurable cost.
 
 **Defer the verifier surface tightening to a separate PR.**
 Rejected because the trace-check work touches the same files (`verify_root_level`, `verify_one_level`, the surrounding imports). Tightening the surface in the same PR avoids growing the surface during the trace cutover and then having to re-shrink it.
