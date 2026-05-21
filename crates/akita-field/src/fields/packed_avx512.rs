@@ -187,20 +187,36 @@ impl<const P: u32> Mul for PackedFp32Avx512<P> {
 
             // Fold 1
             let evn_lo = _mm512_and_si512(prod_evn, mask);
-            let evn_hi = _mm512_srl_epi64(prod_evn, shift);
+            let evn_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(prod_evn)
+            } else {
+                _mm512_srl_epi64(prod_evn, shift)
+            };
             let evn_f1 = _mm512_add_epi64(evn_lo, _mm512_mul_epu32(evn_hi, c_vec));
 
             let odd_lo = _mm512_and_si512(prod_odd, mask);
-            let odd_hi = _mm512_srl_epi64(prod_odd, shift);
+            let odd_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(prod_odd)
+            } else {
+                _mm512_srl_epi64(prod_odd, shift)
+            };
             let odd_f1 = _mm512_add_epi64(odd_lo, _mm512_mul_epu32(odd_hi, c_vec));
 
             // Fold 2
             let evn_f1_lo = _mm512_and_si512(evn_f1, mask);
-            let evn_f1_hi = _mm512_srl_epi64(evn_f1, shift);
+            let evn_f1_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(evn_f1)
+            } else {
+                _mm512_srl_epi64(evn_f1, shift)
+            };
             let evn_f2 = _mm512_add_epi64(evn_f1_lo, _mm512_mul_epu32(evn_f1_hi, c_vec));
 
             let odd_f1_lo = _mm512_and_si512(odd_f1, mask);
-            let odd_f1_hi = _mm512_srl_epi64(odd_f1, shift);
+            let odd_f1_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(odd_f1)
+            } else {
+                _mm512_srl_epi64(odd_f1, shift)
+            };
             let odd_f2 = _mm512_add_epi64(odd_f1_lo, _mm512_mul_epu32(odd_f1_hi, c_vec));
 
             // Recombine even/odd

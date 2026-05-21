@@ -7,8 +7,8 @@ use crate::Invertible;
 use core::arch::aarch64::{
     uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u32, vandq_u64, vbslq_u64,
     vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64, vdupq_n_u32, vdupq_n_u64,
-    vget_low_u32, vminq_u32, vmovn_u64, vmull_high_u32, vmull_u32, vorrq_u64, vshlq_u64, vsubq_u32,
-    vsubq_u64,
+    vget_low_u32, vminq_u32, vmovn_u64, vmull_high_u32, vmull_u32, vorrq_u64, vshlq_u64,
+    vshrq_n_u64, vsubq_u32, vsubq_u64,
 };
 use core::fmt;
 use core::mem::transmute;
@@ -540,6 +540,10 @@ impl<const P: u32> PackedFp32Neon<P> {
     #[inline(always)]
     fn solinas_reduce(prod_lo: uint64x2_t, prod_hi: uint64x2_t) -> uint32x4_t {
         unsafe {
+            if Self::BITS == 31 {
+                return Self::solinas_reduce_bits31(prod_lo, prod_hi);
+            }
+
             let mask = vdupq_n_u64(Self::MASK_U64);
             let neg_bits = vdupq_n_s64(-(Self::BITS as i64));
             let c = vdup_n_u32(Self::C);
@@ -583,6 +587,36 @@ impl<const P: u32> PackedFp32Neon<P> {
     }
 
     #[inline(always)]
+    fn solinas_reduce_bits31(prod_lo: uint64x2_t, prod_hi: uint64x2_t) -> uint32x4_t {
+        unsafe {
+            let mask = vdupq_n_u64((1u64 << 31) - 1);
+            let c = vdup_n_u32(Self::C);
+
+            let f1_lo = vaddq_u64(
+                vandq_u64(prod_lo, mask),
+                Self::mul_c_u64(vshrq_n_u64::<31>(prod_lo), c),
+            );
+            let f1_hi = vaddq_u64(
+                vandq_u64(prod_hi, mask),
+                Self::mul_c_u64(vshrq_n_u64::<31>(prod_hi), c),
+            );
+
+            let f2_lo = vaddq_u64(
+                vandq_u64(f1_lo, mask),
+                Self::mul_c_u64(vshrq_n_u64::<31>(f1_lo), c),
+            );
+            let f2_hi = vaddq_u64(
+                vandq_u64(f1_hi, mask),
+                Self::mul_c_u64(vshrq_n_u64::<31>(f1_hi), c),
+            );
+
+            let result = vcombine_u32(vmovn_u64(f2_lo), vmovn_u64(f2_hi));
+            let p = vdupq_n_u32(P);
+            vminq_u32(result, vsubq_u32(result, p))
+        }
+    }
+
+    #[inline(always)]
     fn solinas_reduce_with_carry(
         prod_lo: uint64x2_t,
         prod_hi: uint64x2_t,
@@ -590,6 +624,12 @@ impl<const P: u32> PackedFp32Neon<P> {
         carry_hi: uint64x2_t,
     ) -> uint32x4_t {
         unsafe {
+            if Self::BITS == 31 {
+                return Self::solinas_reduce_with_carry_bits31(
+                    prod_lo, prod_hi, carry_lo, carry_hi,
+                );
+            }
+
             let mask = vdupq_n_u64(Self::MASK_U64);
             let neg_bits = vdupq_n_s64(-(Self::BITS as i64));
             let c = vdup_n_u32(Self::C);
@@ -635,6 +675,47 @@ impl<const P: u32> PackedFp32Neon<P> {
 
                 vcombine_u32(vmovn_u64(out_lo), vmovn_u64(out_hi))
             }
+        }
+    }
+
+    #[inline(always)]
+    fn solinas_reduce_with_carry_bits31(
+        prod_lo: uint64x2_t,
+        prod_hi: uint64x2_t,
+        carry_lo: uint64x2_t,
+        carry_hi: uint64x2_t,
+    ) -> uint32x4_t {
+        unsafe {
+            let mask = vdupq_n_u64((1u64 << 31) - 1);
+            let c = vdup_n_u32(Self::C);
+
+            let f1_lo = vaddq_u64(
+                vaddq_u64(
+                    vandq_u64(prod_lo, mask),
+                    Self::mul_c_u64(vshrq_n_u64::<31>(prod_lo), c),
+                ),
+                Self::carry_correction(carry_lo),
+            );
+            let f1_hi = vaddq_u64(
+                vaddq_u64(
+                    vandq_u64(prod_hi, mask),
+                    Self::mul_c_u64(vshrq_n_u64::<31>(prod_hi), c),
+                ),
+                Self::carry_correction(carry_hi),
+            );
+
+            let f2_lo = vaddq_u64(
+                vandq_u64(f1_lo, mask),
+                Self::mul_c_u64(vshrq_n_u64::<31>(f1_lo), c),
+            );
+            let f2_hi = vaddq_u64(
+                vandq_u64(f1_hi, mask),
+                Self::mul_c_u64(vshrq_n_u64::<31>(f1_hi), c),
+            );
+
+            let result = vcombine_u32(vmovn_u64(f2_lo), vmovn_u64(f2_hi));
+            let p = vdupq_n_u32(P);
+            vminq_u32(result, vsubq_u32(result, p))
         }
     }
 }
