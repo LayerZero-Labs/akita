@@ -48,9 +48,9 @@ pub mod fp128_d32_full_zk;
 #[cfg(not(feature = "zk"))]
 pub mod fp128_d32_onehot;
 #[cfg(not(feature = "zk"))]
-pub mod fp128_d32_onehot_tier3;
+pub mod fp128_d32_onehot_fast_verify;
 #[cfg(feature = "zk")]
-pub mod fp128_d32_onehot_tier3_zk;
+pub mod fp128_d32_onehot_fast_verify_zk;
 #[cfg(feature = "zk")]
 pub mod fp128_d32_onehot_zk;
 #[cfg(not(feature = "zk"))]
@@ -175,21 +175,21 @@ pub fn fp128_d32_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
-/// Generated schedule table for the tier-3 onehot `D=32` preset
-/// (`fp128::D32OneHotTier3`). Produced by
+/// Generated schedule table for the fast-verify onehot `D=32` preset
+/// (`fp128::D32OneHotFastVerify`). Produced by
 /// `cargo run -p akita-config --features planner --bin gen_schedule_tables`.
-pub fn fp128_d32_onehot_tier3_table() -> GeneratedScheduleTable {
+pub fn fp128_d32_onehot_fast_verify_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q128,
-            entries: fp128_d32_onehot_tier3_zk::FP128_D32_ONEHOT_TIER3_ZK_SCHEDULES,
+            entries: fp128_d32_onehot_fast_verify_zk::FP128_D32_ONEHOT_FAST_VERIFY_ZK_SCHEDULES,
         }
     }
     #[cfg(not(feature = "zk"))]
     GeneratedScheduleTable {
         sis_family: SisModulusFamily::Q128,
-        entries: fp128_d32_onehot_tier3::FP128_D32_ONEHOT_TIER3_SCHEDULES,
+        entries: fp128_d32_onehot_fast_verify::FP128_D32_ONEHOT_FAST_VERIFY_SCHEDULES,
     }
 }
 

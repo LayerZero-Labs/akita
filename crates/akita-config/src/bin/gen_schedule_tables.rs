@@ -22,7 +22,7 @@ use akita_types::{
 enum FamilyKind {
     Fp128D32Full,
     Fp128D32OneHot,
-    Fp128D32OneHotTier3,
+    Fp128D32OneHotFastVerify,
     Fp128D64Full,
     Fp128D64OneHot,
     Fp32D32Full,
@@ -63,20 +63,15 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         max_num_vars: 50,
         kind: FamilyKind::Fp128D32OneHot,
     },
-    // Tier-3 onehot D=32. The tiered root requires `outer_width %
-    // split_factor == 0`, which only holds when the legacy
-    // `(n_a, num_blocks, depth_open)` shape has a factor of 3.
-    // For fp128::D32OneHot this happens to be satisfied at
-    // `nv ≥ 16` (the planner picks `n_a = 3` from there on).
-    // Tighter than the legacy range to avoid planner-failure at
-    // small nv where the legacy root picks `n_a = 1` and no `(m,
-    // r)` split is tier-3-feasible.
+    // TODO: support smaller `num_vars` ranges (<16) once the
+    // fast-verify root admits a tier-feasible `(n_a, r_vars,
+    // depth_open)` split there.
     FamilySpec {
-        module_name: "fp128_d32_onehot_tier3",
-        const_name: "FP128_D32_ONEHOT_TIER3_SCHEDULES",
+        module_name: "fp128_d32_onehot_fast_verify",
+        const_name: "FP128_D32_ONEHOT_FAST_VERIFY_SCHEDULES",
         min_num_vars: 16,
         max_num_vars: 50,
-        kind: FamilyKind::Fp128D32OneHotTier3,
+        kind: FamilyKind::Fp128D32OneHotFastVerify,
     },
     FamilySpec {
         module_name: "fp128_d64_full",
@@ -320,13 +315,10 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
             emit_family_rows::<fp128::D32OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
             emit_family_rows::<fp128::D32OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
-        FamilyKind::Fp128D32OneHotTier3 => {
-            // Tier-3 currently exercises only the singleton-claim
-            // shape (1 poly, 1 point) — the bench's target. Batched
-            // shapes can be added once the prover-side batched-tier3
-            // wiring (`generate_y_tiered` over multi-claim hint
-            // flattening) is exercised end-to-end.
-            emit_family_rows::<fp128::D32OneHotTier3>(spec, singleton, (1, 1, 1), &mut out)?;
+        FamilyKind::Fp128D32OneHotFastVerify => {
+            // TODO: support batched shapes (`num_polys > 1`,
+            // `num_points > 1`).
+            emit_family_rows::<fp128::D32OneHotFastVerify>(spec, singleton, (1, 1, 1), &mut out)?;
         }
         FamilyKind::Fp128D64Full => {
             emit_family_rows::<fp128::D64Full>(spec, singleton, (1, 1, 1), &mut out)?;

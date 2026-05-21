@@ -208,11 +208,11 @@ fn main() {
     );
     println!("=========================================================");
 
-    // Run BOTH the legacy production preset and the new tier-3
+    // Run BOTH the legacy production preset and the new fast-verify
     // production preset on the same workload (same point, same
     // indices) so we compare apples-to-apples across phases.
     let legacy = run_one_cfg::<fp128::D32OneHot>("fp128::D32OneHot (legacy)", nv, trials);
-    let tier3 = run_one_cfg::<fp128::D32OneHotTier3>("fp128::D32OneHotTier3", nv, trials);
+    let fast = run_one_cfg::<fp128::D32OneHotFastVerify>("fp128::D32OneHotFastVerify", nv, trials);
 
     println!();
     println!("=========================================================");
@@ -220,7 +220,7 @@ fn main() {
     println!("=========================================================");
     println!(
         "  {:<28} {:>16} {:>16} {:>16}",
-        "metric", "D32OneHot", "D32OneHotTier3", "Δ (tier3 - legacy)"
+        "metric", "D32OneHot", "D32OneHotFastVerify", "Δ (fast - legacy)"
     );
     let row_secs = |name: &str, l: f64, t: f64| {
         println!(
@@ -249,16 +249,16 @@ fn main() {
             t as i64 - l as i64
         );
     };
-    row_secs("setup", legacy.setup_secs, tier3.setup_secs);
-    row_secs("commit", legacy.commit_secs, tier3.commit_secs);
-    row_secs("prove", legacy.prove_secs, tier3.prove_secs);
-    row_ms("verify (mean)", legacy.verify_mean_ms, tier3.verify_mean_ms);
+    row_secs("setup", legacy.setup_secs, fast.setup_secs);
+    row_secs("commit", legacy.commit_secs, fast.commit_secs);
+    row_secs("prove", legacy.prove_secs, fast.prove_secs);
+    row_ms("verify (mean)", legacy.verify_mean_ms, fast.verify_mean_ms);
     row_ms(
         "verify (median)",
         legacy.verify_median_ms,
-        tier3.verify_median_ms,
+        fast.verify_median_ms,
     );
-    row_ms("verify (min)", legacy.verify_min_ms, tier3.verify_min_ms);
-    row_ms("verify (max)", legacy.verify_max_ms, tier3.verify_max_ms);
-    row_bytes("proof size", legacy.proof_bytes, tier3.proof_bytes);
+    row_ms("verify (min)", legacy.verify_min_ms, fast.verify_min_ms);
+    row_ms("verify (max)", legacy.verify_max_ms, fast.verify_max_ms);
+    row_bytes("proof size", legacy.proof_bytes, fast.proof_bytes);
 }
