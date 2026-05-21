@@ -944,6 +944,38 @@ pub mod fp128 {
     /// sampler accepts); every fold candidate produced by
     /// [`derive_root_candidate`] satisfies this by construction.
     ///
+    /// # Security status: preview, not production
+    ///
+    /// The SIS-rank derivation in `sis_derived_root_params_for_layout`
+    /// computes the A-role collision bucket from the per-challenge
+    /// `infinity_norm` proxy (which equals the stage-1 `infinity_norm` in
+    /// the flat sampler). Tensor sampling materialises per-block
+    /// coefficients as the product `left[p] · right[q]` of two flat sparse
+    /// challenges, and the two-level CWSS extractor pays an additional
+    /// `4 · omega` degradation in the A-role collision bound that the
+    /// current derivation does not account for. For the `D64OneHotTensor`
+    /// shape (`omega = 54`, `infinity_norm = 2`) the under-provisioned
+    /// A-role collision is ~216x smaller than the analysed tensor bound,
+    /// so the rank lookup may pick a row that is below the 128-bit SIS
+    /// floor under tensor extraction.
+    ///
+    /// Two pieces are required to close this gap, both deliberately out of
+    /// scope for the technique-1 wiring series:
+    ///
+    /// * `LevelParams::stage1_sis_extraction_report` (and the related
+    ///   `stage1_extraction_*` helpers) returning a shape-aware A-role
+    ///   collision bucket, plumbed through `sis_derived_*_params_for_layout`.
+    /// * A regenerated `generated::sis_floor` table covering the wider
+    ///   collision buckets the tensor analysis lands in (up to `8191` for
+    ///   `D=64` in the current SIS estimator), with a fresh
+    ///   `specs/security_analysis.md` re-audit.
+    ///
+    /// Use `D64OneHotTensor` for correctness validation of the tensor
+    /// stage-1 wiring (it round-trips end-to-end through the planner,
+    /// prover, and verifier and matches the flat verifier wall-clock once
+    /// the schedule cache warms). Do **not** use it as the SIS-secure
+    /// production preset until the two items above land.
+    ///
     /// [`derive_root_candidate`]: akita_planner::schedule_params
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D64OneHotTensor;
