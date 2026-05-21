@@ -17,9 +17,10 @@ use akita_types::layout::digit_math::{
 };
 use akita_types::schedule_from_plan;
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
-    root_current_w_len, scale_batched_root_layout, AjtaiKeyParams, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, DirectStep, DirectWitnessShape, FoldStep, LevelParams, Schedule, Step,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+    root_current_w_len, scale_batched_root_layout, w_ring_element_count_with_counts,
+    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape,
+    FoldStep, LevelParams, Schedule, Step,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -92,8 +93,19 @@ where
     };
 
     let fb = Cfg::planner_field_bits();
-    let w_ring = planned_w_ring_element_count::<Cfg::PlannerField>(fb, &level_lp);
-    let next_w_len = planned_next_w_len::<Cfg::PlannerField>(fb, &level_lp);
+    let recursive_rows = Cfg::planner_recursive_public_rows();
+    let next_w_len = w_ring_element_count_with_counts::<Cfg::PlannerField>(
+        &level_lp,
+        1,
+        1,
+        recursive_rows,
+        recursive_rows,
+    )
+    .checked_mul(level_lp.ring_dimension)
+    .expect("recursive witness length overflow")
+    .checked_mul(Cfg::planner_recursive_witness_expansion())
+    .expect("recursive witness expansion overflow");
+    let w_ring = next_w_len / level_lp.ring_dimension;
 
     let input_elem_bits = if level == 0 {
         fb as usize
@@ -118,14 +130,50 @@ fn compute_level_proof_size<Cfg: PlannerConfig>(
     next_level_params: &LevelParams,
     num_public_outputs: usize,
 ) -> usize {
-    let fb = Cfg::planner_field_bits();
     level_proof_bytes(
-        fb,
+        Cfg::planner_field_bits(),
+        Cfg::planner_challenge_field_bits(),
         &candidate.proof_lp,
         &candidate.lp,
         next_level_params,
         candidate.next_w_len,
         num_public_outputs,
+    )
+}
+
+fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
+    let padded = len
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("opening witness length overflow".to_string()))?;
+    Ok(padded.trailing_zeros() as usize)
+}
+
+fn extension_opening_reduction_level_bytes<Cfg: PlannerConfig>(
+    key: AkitaScheduleLookupKey,
+    fold_level: usize,
+    current_w_len: usize,
+) -> Result<usize, AkitaError> {
+    let width = Cfg::planner_extension_opening_width();
+    if width <= 1 {
+        return Ok(0);
+    }
+    let (partials, opening_vars) = if fold_level == 0 {
+        (
+            key.num_w_vectors.checked_mul(width).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "root extension-opening partial count overflow".to_string(),
+                )
+            })?,
+            key.num_vars,
+        )
+    } else {
+        (width, padded_boolean_vars(current_w_len)?)
+    };
+    extension_opening_reduction_proof_bytes(
+        Cfg::planner_challenge_field_bits(),
+        partials,
+        opening_vars,
+        width,
     )
 }
 
@@ -156,11 +204,31 @@ fn to_fold_step(
     })
 }
 
-fn to_direct_step(current_w_len: usize, log_basis: u32) -> Step {
+fn terminal_direct_witness_len<Cfg: PlannerConfig>(current_w_len: usize) -> usize {
+    let expansion = Cfg::planner_recursive_witness_expansion();
+    assert!(expansion > 0, "recursive witness expansion must be nonzero");
+    assert_eq!(
+        current_w_len % expansion,
+        0,
+        "terminal recursive witness length must be divisible by the extension expansion"
+    );
+    current_w_len / expansion
+}
+
+fn terminal_direct_witness_shape<Cfg: PlannerConfig>(
+    current_w_len: usize,
+    log_basis: u32,
+) -> DirectWitnessShape {
+    DirectWitnessShape::PackedDigits((terminal_direct_witness_len::<Cfg>(current_w_len), log_basis))
+}
+
+fn to_direct_step<Cfg: PlannerConfig>(current_w_len: usize, log_basis: u32) -> Step {
+    let witness_shape = terminal_direct_witness_shape::<Cfg>(current_w_len, log_basis);
+    let direct_bytes = direct_witness_bytes(Cfg::planner_field_bits(), &witness_shape);
     Step::Direct(DirectStep {
         current_w_len,
-        bits_per_elem: log_basis,
-        direct_bytes: (current_w_len * log_basis as usize).div_ceil(8),
+        witness_shape,
+        direct_bytes,
     })
 }
 
@@ -203,7 +271,7 @@ fn successor_level_params_from_schedule<Cfg: PlannerConfig>(
                 level,
                 current_w_len,
             },
-            step.bits_per_elem,
+            step.log_basis(Cfg::planner_field_bits()),
         ),
     }
 }
@@ -235,14 +303,30 @@ where
         }
     }
 
-    // Baseline: send the witness directly without folding.
+    // Baseline: send the witness directly without folding. Recursive terminal
+    // direct steps still need a derivable level layout because the previous
+    // fold commits to this terminal witness.
     let fb = Cfg::planner_field_bits();
-    let direct_bytes = direct_witness_bytes(
-        fb,
-        &DirectWitnessShape::PackedDigits((current_w_len, current_lb)),
-    );
-    let mut best_cost = direct_bytes;
-    let mut best_schedule = vec![to_direct_step(current_w_len, current_lb)];
+    let direct_allowed = level == 0
+        || Cfg::planner_current_level_layout_with_log_basis(
+            AkitaScheduleInputs {
+                num_vars,
+                level,
+                current_w_len,
+            },
+            current_lb,
+        )
+        .is_ok();
+    let mut best_cost = usize::MAX;
+    let mut best_schedule = Vec::new();
+    if direct_allowed {
+        let direct_bytes = direct_witness_bytes(
+            fb,
+            &terminal_direct_witness_shape::<Cfg>(current_w_len, current_lb),
+        );
+        best_cost = direct_bytes;
+        best_schedule = vec![to_direct_step::<Cfg>(current_w_len, current_lb)];
+    }
 
     // Try each feasible basis for one more fold level.
     if depth <= MAX_RECURSION_DEPTH {
@@ -264,6 +348,9 @@ where
                 lb,
                 depth + 1,
             );
+            if suffix_steps.is_empty() {
+                continue;
+            }
             let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
                 num_vars,
                 level + 1,
@@ -272,8 +359,18 @@ where
             ) else {
                 continue;
             };
-            let level_proof_size =
-                compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
+            let Ok(eor_bytes) = extension_opening_reduction_level_bytes::<Cfg>(
+                AkitaScheduleLookupKey::singleton(num_vars),
+                level,
+                current_w_len,
+            ) else {
+                continue;
+            };
+            let level_proof_size = compute_level_proof_size::<Cfg>(
+                &candidate,
+                &next_level_params,
+                Cfg::planner_recursive_public_rows(),
+            ) + eor_bytes;
 
             let total = level_proof_size + suffix_cost;
             if total < best_cost {
@@ -306,7 +403,7 @@ where
 ///   W(lp; key) = W · 2^r · δ_open
 ///              + T · 2^r · n_A · δ_open
 ///              + Z · 2^m · δ_commit · δ_fold
-///              + (n_D + n_B·Z + Z + 1 + n_A) · δ_R(b)
+///              + (n_D + n_B·C + Z + 1 + n_A) · δ_R(b)
 /// ```
 fn root_w_ring_element_count<Cfg>(
     lp: &LevelParams,
@@ -321,11 +418,12 @@ where
     let t_vectors = key.num_t_vectors;
     let w_vectors = key.num_w_vectors;
     let z_vectors = num_z_vectors(key);
+    let num_points = key.num_points;
 
     let w_hat = w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat = t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre = z_vectors * lp.inner_width() * lp.num_digits_fold;
-    let r_rows = lp.m_row_count(z_vectors, z_vectors);
+    let r_rows = lp.m_row_count(num_points, z_vectors);
     let r = r_rows * r_decomp;
 
     #[cfg(feature = "zk")]
@@ -336,7 +434,7 @@ where
             lp.log_basis,
             fb as usize,
         );
-        let b_blinding = z_vectors
+        let b_blinding = num_points
             * akita_types::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
@@ -433,6 +531,7 @@ where
 
         let d = root_lp.ring_dimension;
         let Ok(a_key) = AjtaiKeyParams::try_new(
+            Cfg::planner_sis_modulus_family(),
             root_lp.a_key.row_len(),
             inner_width,
             root_lp.a_key.collision_inf(),
@@ -441,6 +540,7 @@ where
             continue;
         };
         let Ok(b_key) = AjtaiKeyParams::try_new(
+            Cfg::planner_sis_modulus_family(),
             root_lp.b_key.row_len(),
             outer_width,
             root_lp.b_key.collision_inf(),
@@ -449,6 +549,7 @@ where
             continue;
         };
         let Ok(d_key) = AjtaiKeyParams::try_new(
+            Cfg::planner_sis_modulus_family(),
             root_lp.d_key.row_len(),
             d_matrix_width,
             root_lp.d_key.collision_inf(),
@@ -478,8 +579,12 @@ where
         else {
             continue;
         };
-        let w_ring = root_w_ring_element_count::<Cfg>(&level_lp, key)?;
-        let next_w_len = w_ring * level_lp.ring_dimension;
+        let raw_w_ring = root_w_ring_element_count::<Cfg>(&level_lp, key)?;
+        let next_w_len = raw_w_ring
+            .checked_mul(level_lp.ring_dimension)
+            .and_then(|len| len.checked_mul(Cfg::planner_recursive_witness_expansion()))
+            .expect("root recursive witness expansion overflow");
+        let w_ring = next_w_len / level_lp.ring_dimension;
 
         if next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
             continue;
@@ -530,9 +635,15 @@ where
     let t_vectors = key.num_t_vectors;
     let w_vectors = key.num_w_vectors;
     let z_vectors = num_z_vectors(key);
-    if t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
+    let num_points = key.num_points;
+    if num_points == 0 || t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
         return Err(AkitaError::InvalidSetup(
             "schedule key planner dimensions must be at least 1".into(),
+        ));
+    }
+    if num_points > t_vectors || num_points > w_vectors {
+        return Err(AkitaError::InvalidSetup(
+            "schedule key opening-point count cannot exceed t or w vector counts".into(),
         ));
     }
     let num_vars = key.num_vars;
@@ -540,6 +651,7 @@ where
     if let Some(schedule) = offline_schedule_for_key::<Cfg>(key)? {
         tracing::debug!(
             num_vars,
+            num_points,
             num_t_vectors = t_vectors,
             num_w_vectors = w_vectors,
             num_z_vectors = z_vectors,
@@ -554,8 +666,13 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let fb = Cfg::planner_field_bits();
-    let mut best_cost = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
-    let mut best_steps: Vec<Step> = vec![to_direct_step(root_w_len, fb)];
+    let root_direct_shape = DirectWitnessShape::FieldElements(root_w_len);
+    let mut best_cost = direct_witness_bytes(fb, &root_direct_shape);
+    let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
+        current_w_len: root_w_len,
+        witness_shape: root_direct_shape,
+        direct_bytes: best_cost,
+    })];
     let mut memo = ScheduleMemo::new();
 
     for root_lb in basis_range::<Cfg>(num_vars, 0, root_w_len) {
@@ -571,6 +688,9 @@ where
             root_lb,
             0,
         );
+        if suffix_steps.is_empty() {
+            continue;
+        }
         let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
             num_vars,
             1,
@@ -579,8 +699,12 @@ where
         ) else {
             continue;
         };
+        let Ok(eor_bytes) = extension_opening_reduction_level_bytes::<Cfg>(key, 0, root_w_len)
+        else {
+            continue;
+        };
         let root_proof_size =
-            compute_level_proof_size::<Cfg>(&candidate, &next_level_params, z_vectors);
+            compute_level_proof_size::<Cfg>(&candidate, &next_level_params, z_vectors) + eor_bytes;
 
         let total = root_proof_size + suffix_cost;
         if total < best_cost {
@@ -603,6 +727,7 @@ where
         .count();
     tracing::info!(
         num_vars,
+        num_points,
         num_t_vectors = t_vectors,
         num_w_vectors = w_vectors,
         num_z_vectors = z_vectors,
@@ -624,6 +749,7 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         AkitaPlannedDirectStep, AkitaPlannedState, AkitaPlannedStep, AkitaSchedulePlan,
+        SisModulusFamily,
     };
 
     #[test]
@@ -645,6 +771,18 @@ mod tests {
 
         fn planner_field_bits() -> u32 {
             128
+        }
+
+        fn planner_challenge_field_bits() -> u32 {
+            128
+        }
+
+        fn planner_extension_opening_width() -> usize {
+            1
+        }
+
+        fn planner_sis_modulus_family() -> SisModulusFamily {
+            SisModulusFamily::Q128
         }
 
         fn planner_stage1_challenge_config(_d: usize) -> SparseChallengeConfig {

@@ -4,9 +4,9 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-05-02 |
-| Status | implementation |
+| Status | landed; historical scaffolding spec |
 | PR | #60 (`quang/general-fields`) |
-| Follow-up | `specs/extension-field-opening-batching.md` |
+| Follow-up | `specs/extension-claim-incidence-cutover.md` (#69), then `specs/extension-field-trace-cutover.md` (#71), then `specs/extension-field-opening-batching.md` (next) |
 
 ## Summary
 
@@ -14,14 +14,32 @@ Akita should support base fields beyond the current fp128 production field,
 starting with 32-bit and 64-bit prime-field profiles. This PR implements the
 scaffolding needed for that generalization while deliberately stopping before
 the native extension-opening and batching cutover. It splits field roles,
-threads extension-aware transcript helpers, adds Hachi field-reduction
+threads extension-aware transcript helpers, adds ring-subfield field-reduction
 reference utilities, makes planner/proof-size accounting field-width-aware, adds
 static fp32/fp64 configs and E2E coverage, and preserves the existing fp128
 verifier behavior.
 
 The next PR owns native small-field commitments opened at extension-field
-points, including the batching generalization needed for one committed group
-opened at many Frobenius-conjugate points.
+points, including the batching generalization and recursive extension-opening
+reduction needed to keep the folded proof-size small.
+
+As of PR #71, most items that were deferred from this scaffolding PR have
+landed in follow-up commits: proof payloads are generic over `F, L`, root and
+recursive extension openings use explicit ring-subfield field-reduction
+boundaries, terminal recursive witnesses serialize as compact packed digits,
+SIS sizing is keyed by `Q32`/`Q64`/`Q128` families with larger small-field D
+candidates, and the small-field path now uses tensor-algebra
+extension-opening reduction instead of the superseded Frobenius-conjugate
+multipoint route. The root tensor-projection slice moved the transformed
+witness to the root commitment boundary for supported same-width `E = L`
+small-field roots, so those roots no longer rely on the huge root-direct
+fallback. Generated production fp32/fp64 schedule tables are now family-bound
+by SIS modulus, include extension-opening-reduction proof bytes in planned
+accounting, price the small-field `psi` embedding norm bound in SIS A-role
+collisions, and cover separate full-field and one-hot configs for fp32
+`D = 64,128,256,512` plus fp64 `D = 32,64,128,256` through `num_vars <= 32`
+for singleton and same-point `np=4` shapes. fp32 `D=32` remains a tuning-only
+candidate under the current rank-4 SIS floor table.
 
 ## Intent
 
@@ -48,6 +66,9 @@ extension-opening cutover.
 
 - Ring commitments, setup matrices, digit decomposition, CRT/NTT work, and SIS
   bounds remain over `Cfg::Field`.
+- In the original scaffolding PR, SIS bounds were still served by the existing
+  fp128-calibrated registry. The follow-up completion work moved generated SIS
+  floors and schedule tables to explicit `Q32`/`Q64`/`Q128` families.
 - Existing fp128 presets continue to use
   `Field = ClaimField = ChallengeField`.
 - Extension absorption is coordinate-order sensitive and deterministic.
@@ -57,20 +78,25 @@ extension-opening cutover.
   subgroup trace relation and stays constant time in the hot path.
 - Planner digit counts and proof-size estimates respect the configured field
   bit width instead of assuming 128-bit elements.
-- Static fp32/fp64 configs are scaffolding profiles, not generated production
-  schedules.
+- The original static fp32/fp64 configs were scaffolding profiles. The follow-up
+  completion work replaced the production surface with full-field and one-hot
+  generated small-field configs.
 - Local scratch notes and generated planning scripts remain untracked and are
   not part of this PR.
 
 ### Non-Goals
 
-- This does not complete extension-valued public opening claims in the
-  production prover/verifier API.
-- This does not implement the real `k > 1` Hachi embedding in the proof path.
-- This does not implement the Frobenius-conjugate optimized base/ext opening
-  path.
-- This does not generalize the public batched-claim input model.
-- This does not regenerate production fp32/fp64 schedule tables.
+- The original scaffolding PR did not complete extension-valued public opening
+  claims in the production prover/verifier API. PR #71 now has the baseline
+  extension path, incidence model, and tensor-algebra extension-opening
+  reduction; remaining hardening is tracked in
+  `specs/extension-field-opening-batching.md`.
+- This spec no longer owns the `k > 1` ring-subfield embedding,
+  recursive base/ext opening reduction, or public batched-claim incidence
+  model. Those moved into the PR #71 completion spec.
+- The original scaffolding PR did not regenerate production fp32/fp64 schedule
+  tables or security-calibrate their SIS sizing. Those items moved into
+  `specs/extension-field-opening-batching.md` and have now landed there.
 - This does not replace every protocol challenge with `Cfg::ChallengeField`.
 - This does not benchmark or tune extension-field arithmetic.
 - This does not change the default fp128 production preset or its security
@@ -109,9 +135,10 @@ extension-opening cutover.
 - [x] Transcript tests cover extension absorption, limb-order divergence, and
   extension challenge replay.
 - [x] Bugbot findings on extension labels and subgroup validation are addressed.
-- [ ] Final PR head has green GitHub CI after the latest spec-only commits.
-- [ ] Human review accepts the scoped boundary: batching and native extension
-  openings are deferred to the follow-up spec.
+- [ ] Final PR head has green GitHub CI after the latest commits.
+- [x] Human review accepted folding the native extension-opening baseline into
+  PR #71; the tensor reduction route now lives there too. Generated
+  small-prime schedule defaults remain deferred.
 
 ### Testing Strategy
 
@@ -221,7 +248,7 @@ collisions between extension limbs.
 
 ### Field Reduction Reference Utilities
 
-`SubfieldParams<D>::new(k)` models the Hachi subgroup
+`SubfieldParams<D>::new(k)` models the ring-subfield subgroup
 `H = <sigma_-1, sigma_(4k+1)>` modulo `2D`.
 
 It rejects malformed parameters before exponent enumeration:
@@ -236,7 +263,7 @@ It rejects malformed parameters before exponent enumeration:
 `h_exponents()` enumerates distinct odd exponents in `H`.
 `trace_h(params, x)` computes `sum_{sigma in H} sigma(x)`.
 `psi_pack(params, values)` implements the coefficient-placement part of
-Hachi's `psi` map:
+The ring-subfield `psi` map:
 
 ```text
 values[0 .. D/(2k))       -> coeffs[0 .. D/(2k))
@@ -257,8 +284,15 @@ Proof-size and layout helpers take `field_bits` or derive it from
 - stage-1 proof-size estimates;
 - batched root-layout scaling.
 
-The important behavior is not that fp32/fp64 schedules are optimized, but that
-they no longer pay fp128 byte accounting by construction.
+The important behavior is not that fp32/fp64 schedules are optimized or
+security-calibrated, but that they no longer pay fp128 byte accounting by
+construction. SIS rank floors and ring-dimension ladders remain a separate
+modulus-family registry issue: fp32/fp64 must eventually use Q32/Q64 SIS tables
+and larger candidate ring dimensions, while fp128 should use a Q128
+representative such as `2^128 - (2^32 - 22537)` rather than silently reusing a
+larger `2^128 - 275` table. A rough sizing intuition is
+`fp128 D=32 ~ fp64 D=64 ~ fp32 D=128`, with D=256/D=512 candidates reserved for
+small-field planning and profiling.
 
 ### Static Small-Field Profiles
 
@@ -363,25 +397,39 @@ Bugbot and review fixes:
 - [x] Avoid extension limb label collisions.
 - [x] Avoid base-field projection in extension challenge replay.
 - [x] Validate subgroup generator invertibility.
-- [x] Validate power-of-two `D` for Hachi subgroup cardinality.
+- [x] Validate power-of-two `D` for ring-subfield subgroup cardinality.
 
 Remaining for this PR:
 
-- [ ] Wait for CI on the latest spec-only commit.
+- [ ] Wait for CI on the latest PR #71 head.
 - [ ] Address any new review or Bugbot comments that land on the final PR head.
 - [ ] Confirm reviewers agree that batching generalization is deferred to
   `specs/extension-field-opening-batching.md`.
 
 Explicitly deferred to follow-up:
 
-- [ ] Generalize public batched claims into a point/group/claim incidence graph.
-- [ ] Migrate public opening points and claimed evaluations to
-  `Cfg::ClaimField`.
-- [ ] Implement the full `k > 1` Hachi embedding in the proof path.
-- [ ] Implement Frobenius-conjugate optimized base/ext openings.
-- [ ] Add extension-point dense and one-hot E2E tests.
-- [ ] Add redistribution-attack regression tests.
-- [ ] Teach the planner the base/ext split-parameter tradeoff.
+- [x] Generalize public batched claims into a point/group/claim incidence graph.
+- [x] Migrate public opening points and claimed evaluations to
+  `Cfg::ClaimField` for the PR #71 extension paths.
+- [x] Implement the `k > 1` ring-subfield embedding used by the baseline
+  extension opening path.
+- [x] Implement tensor-algebra extension-opening reduction for recursive
+  base/ext openings.
+- [x] Add focused one-hot extension-point E2E tests.
+- [x] Add extension-opening reduction negative tests.
+- [ ] Finish generated planner table selection for the base/ext split-parameter
+  tradeoff. Runtime/profile schedule selection now prices the tensor-reduced
+  recursive path with one carried opening row plus tensor partial and sumcheck
+  bytes; tiny direct-only root shapes keep the generic direct path.
+- [x] Replace the single fp128 SIS floor registry with modulus-family-specific
+  Q32/Q64/Q128 SIS floor tables before generating fp32/fp64 schedule tables.
+- [x] Add larger small-field ring-dimension candidates, including D=256 and
+  D=512 where appropriate, and select defaults from profile data rather than
+  assuming the larger rings are faster or slower.
+- [x] Add stack-backed sparse challenge sampler tiers through D=512 so larger
+  small-field candidates do not use a heap-backed fallback.
+- [x] Fix all-features zk setup sizing for extension-root-fold tests by
+  reserving B-blinding columns in hand-rolled test configs.
 
 ### Files Modified In This PR
 
@@ -405,7 +453,7 @@ Explicitly deferred to follow-up:
 
 ## References
 
-- Hachi field-reduction implementation:
+- Ring-subfield field-reduction implementation:
   `crates/akita-types/src/field_reduction.rs`
 - Config field roles:
   `crates/akita-config/src/lib.rs`

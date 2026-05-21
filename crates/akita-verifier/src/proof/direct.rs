@@ -8,7 +8,7 @@ use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, DirectWitness
 /// # Errors
 ///
 /// Returns an error if the witness is not encoded as field elements.
-pub fn direct_witness_field_elements<F: FieldCore>(
+pub(crate) fn direct_witness_field_elements<F: FieldCore>(
     direct_witness: &DirectWitnessProof<F>,
 ) -> Result<&[F], AkitaError> {
     direct_witness
@@ -59,6 +59,11 @@ where
 
 /// Verify all root-direct witness/opening claims using normalized incidence.
 ///
+/// Direct witnesses are stored once per committed polynomial in group order,
+/// while openings are stored once per claim. Multipoint openings of the same
+/// committed polynomial therefore reuse the same witness through the
+/// claim's `(group_idx, poly_idx)` route.
+///
 /// This is the direct-root counterpart to incidence-driven schedule lookup:
 /// claim-to-point routing comes from [`ClaimIncidenceSummary`] rather than the
 /// temporary legacy batch-shape adapter.
@@ -68,7 +73,7 @@ where
 /// Returns an error if the incidence summary is inconsistent with the flattened
 /// witnesses/openings, routes a claim to a missing opening point, or any direct
 /// witness does not match its opening.
-pub fn verify_root_direct_openings_with_incidence<F, E>(
+pub(crate) fn verify_root_direct_openings_with_incidence<F, E>(
     witnesses: &[DirectWitnessProof<F>],
     opening_points: &[&[E]],
     openings: &[E],
@@ -79,21 +84,43 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let num_claims = incidence_summary.num_claims;
-    if witnesses.len() != num_claims
+    let num_claims = incidence_summary.num_claims();
+    let num_polynomials = incidence_summary.num_polynomials();
+    if witnesses.len() != num_polynomials
         || openings.len() != num_claims
-        || incidence_summary.claim_to_point.len() != num_claims
+        || incidence_summary.claim_to_point().len() != num_claims
+        || incidence_summary.claim_poly_indices().len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
     }
 
-    for (claim_idx, witness) in witnesses.iter().enumerate() {
-        let point_idx = incidence_summary.claim_to_point[claim_idx];
+    let mut point_offsets = Vec::with_capacity(incidence_summary.num_polys_per_point().len());
+    let mut next_offset = 0usize;
+    for &polys_at_point in incidence_summary.num_polys_per_point() {
+        point_offsets.push(next_offset);
+        next_offset = next_offset
+            .checked_add(polys_at_point)
+            .ok_or(AkitaError::InvalidProof)?;
+    }
+    if next_offset != witnesses.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    for (claim_idx, opening) in openings.iter().enumerate().take(num_claims) {
+        let point_idx = incidence_summary.claim_to_point()[claim_idx];
         if point_idx >= opening_points.len() {
             return Err(AkitaError::InvalidProof);
         }
+        let poly_idx = incidence_summary.claim_poly_indices()[claim_idx];
+        let point_offset = *point_offsets
+            .get(point_idx)
+            .ok_or(AkitaError::InvalidProof)?;
+        let witness_idx = point_offset
+            .checked_add(poly_idx)
+            .ok_or(AkitaError::InvalidProof)?;
+        let witness = witnesses.get(witness_idx).ok_or(AkitaError::InvalidProof)?;
         let opening_point = opening_points[point_idx];
-        if !direct_witness_opening_matches(witness, opening_point, &openings[claim_idx], basis)? {
+        if !direct_witness_opening_matches(witness, opening_point, opening, basis)? {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -132,19 +159,8 @@ mod tests {
         ))];
         let point = [E::new(F::from_u64(3), F::from_u64(4))];
         let opening = [E::new(F::from_u64(4), F::from_u64(4))];
-        let incidence_summary = ClaimIncidenceSummary {
-            num_vars: 1,
-            num_points: 1,
-            num_groups: 1,
-            num_claims: 1,
-            claim_to_point: vec![0],
-            claim_to_group: vec![0],
-            claim_poly_indices: vec![0],
-            group_poly_counts: vec![1],
-            group_claim_counts: vec![1],
-            point_claim_counts: vec![1],
-            point_group_counts: vec![1],
-        };
+        let incidence_summary =
+            ClaimIncidenceSummary::same_point(1, 1).expect("valid single-point incidence");
 
         verify_root_direct_openings_with_incidence(
             &witnesses,
@@ -154,5 +170,33 @@ mod tests {
             BasisMode::Lagrange,
         )
         .expect("extension-valued root-direct incidence claim should verify");
+    }
+
+    #[test]
+    fn root_direct_multipoint_each_point_has_its_own_witness() {
+        // One-commitment-per-point: each point cites its own commitment and
+        // contributes its own witness, even when the polynomial is identical.
+        let raw_poly = vec![F::from_u64(1), F::from_u64(2)];
+        let witnesses = vec![
+            DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly.clone())),
+            DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly)),
+        ];
+        let point_a = [E::new(F::from_u64(3), F::from_u64(4))];
+        let point_b = [E::new(F::from_u64(5), F::from_u64(6))];
+        let openings = [
+            E::new(F::from_u64(4), F::from_u64(4)),
+            E::new(F::from_u64(6), F::from_u64(6)),
+        ];
+        let incidence_summary = ClaimIncidenceSummary::from_point_polys(1, vec![1, 1])
+            .expect("valid multipoint incidence");
+
+        verify_root_direct_openings_with_incidence(
+            &witnesses,
+            &[&point_a[..], &point_b[..]],
+            &openings,
+            &incidence_summary,
+            BasisMode::Lagrange,
+        )
+        .expect("multipoint root-direct incidence should verify with per-point witnesses");
     }
 }

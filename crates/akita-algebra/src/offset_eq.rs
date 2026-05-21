@@ -201,7 +201,7 @@ pub fn eval_offset_eq_tensor<F: FieldCore>(
 }
 
 /// Evaluate `eq(r, index)` for a single hypercube index in little-endian order.
-fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
+pub fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
     if x_challenges.len() < usize::BITS as usize && index >= (1usize << x_challenges.len()) {
         return F::zero();
     }

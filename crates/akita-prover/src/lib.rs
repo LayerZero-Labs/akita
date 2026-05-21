@@ -11,9 +11,11 @@ pub mod protocol;
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
-    CommitmentGroupOccurrence, DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints,
+    embed_ring_subfield_vector, DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints,
+    RingSubfieldEncoding,
 };
 
 pub use api::{
@@ -21,8 +23,9 @@ pub use api::{
     prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
 };
 pub use backend::{
-    DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat, RecursiveWitnessView,
+    tensor_pack_recursive_witness, DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    RootTensorProjectionPoly, SparseRingPoly,
 };
 pub use kernels::MultiDNttCaches;
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
@@ -32,18 +35,18 @@ pub use protocol::{
     prepare_batched_prove_inputs, prove_batched_with_policy, prove_fold_level_from_quadratic,
     prove_folded_batched_with_policy, prove_recursive_fold_with_params,
     prove_recursive_level_with_policy, prove_recursive_suffix_with_policy, prove_root_direct,
-    prove_root_fold_from_quadratic, prove_root_fold_with_params, resolve_final_log_basis,
+    prove_root_fold_from_quadratic, prove_root_fold_with_params, resolve_final_direct_step,
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
     RingSwitchOutput, RootLevelRawOutput,
 };
-/// One committed polynomial group opened at an opening point.
+/// One commitment plus the polynomials it bundles, opened at one point.
 ///
-/// The `polynomials` slice is the exact group committed together by the prover
+/// `polynomials` is the exact bundle committed together by the prover
 /// commitment API; `commitment` and `hint` are the corresponding outputs for
-/// that group.
+/// that bundle. Each opening point cites exactly one `CommittedPolynomials`.
 #[derive(Debug, Clone)]
 pub struct CommittedPolynomials<'a, P, C, H> {
-    /// Polynomials that were committed together as one group.
+    /// Polynomials addressable by claim `poly_idx` values at this point.
     pub polynomials: &'a [P],
     /// Commitment for `polynomials`.
     pub commitment: &'a C,
@@ -51,90 +54,16 @@ pub struct CommittedPolynomials<'a, P, C, H> {
     pub hint: H,
 }
 
-/// One prover-owned committed group in a normalized opening incidence graph.
-///
-/// This is the prover-side counterpart to [`CommitmentGroupOccurrence`]: it keeps the
-/// group commitment visible to the verifier while retaining the polynomial
-/// slice and hint needed to produce each referenced opening.
-#[derive(Debug, Clone)]
-pub struct ProverCommitmentGroupOccurrence<'a, P, C, H> {
-    /// Polynomials addressable by claim `poly_idx` values in this group.
-    pub polynomials: &'a [P],
-    /// Commitment for `polynomials`.
-    pub commitment: &'a C,
-    /// Prover-side hint for `commitment`.
-    pub hint: H,
-}
-
-impl<'a, P, C, H> ProverCommitmentGroupOccurrence<'a, P, C, H> {
-    /// Number of polynomials addressable by incidence claims for this group.
+impl<'a, P, C, H> CommittedPolynomials<'a, P, C, H> {
+    /// Number of polynomials addressable by incidence claims at this point.
     pub fn poly_count(&self) -> usize {
         self.polynomials.len()
     }
-
-    /// Verifier-visible group metadata for shared incidence validation.
-    pub fn incidence_group(&self) -> CommitmentGroupOccurrence<'a, C> {
-        CommitmentGroupOccurrence {
-            commitment: self.commitment,
-            poly_count: self.poly_count(),
-        }
-    }
 }
 
-impl<'a, P, C, H> From<CommittedPolynomials<'a, P, C, H>>
-    for ProverCommitmentGroupOccurrence<'a, P, C, H>
-{
-    fn from(group: CommittedPolynomials<'a, P, C, H>) -> Self {
-        Self {
-            polynomials: group.polynomials,
-            commitment: group.commitment,
-            hint: group.hint,
-        }
-    }
-}
-
-/// Batched prover input grouped by opening point.
+/// Batched prover input: one commitment plus its polynomials per point.
 pub type ProverClaims<'a, F, P, C, H> =
-    Vec<(OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>)>;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prover_incidence_group_exposes_verifier_metadata() {
-        let polynomials = [1u64, 2, 3];
-        let commitment = "commitment";
-        let group = ProverCommitmentGroupOccurrence {
-            polynomials: &polynomials,
-            commitment: &commitment,
-            hint: "hint",
-        };
-
-        let incidence_group = group.incidence_group();
-
-        assert_eq!(group.poly_count(), 3);
-        assert_eq!(incidence_group.commitment, &commitment);
-        assert_eq!(incidence_group.poly_count, 3);
-    }
-
-    #[test]
-    fn committed_polynomials_convert_to_prover_incidence_group() {
-        let polynomials = [5u64, 6];
-        let commitment = "commitment";
-        let committed = CommittedPolynomials {
-            polynomials: &polynomials,
-            commitment: &commitment,
-            hint: "hint",
-        };
-
-        let group = ProverCommitmentGroupOccurrence::from(committed);
-
-        assert_eq!(group.polynomials, &polynomials);
-        assert_eq!(group.commitment, &commitment);
-        assert_eq!(group.hint, "hint");
-    }
-}
+    Vec<(OpeningPoints<'a, F>, CommittedPolynomials<'a, P, C, H>)>;
 
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,6 +151,20 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// `sum_j scalars[j] * self[i * block_len + j]`.
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>>;
 
+    /// Prover per-block fold with ring multipliers.
+    ///
+    /// This is the extension-field baseline path: extension opening weights are
+    /// embedded into the ring-subfield of `R_F`, then act on witness rings by
+    /// ordinary ring multiplication. Degree-one openings use constant ring
+    /// multipliers and specialize to [`Self::fold_blocks`].
+    fn fold_blocks_ring(
+        &self,
+        _scalars: &[CyclotomicRing<F, D>],
+        _block_len: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        panic!("backend must override fold_blocks_ring")
+    }
+
     /// Fused fold + evaluation in one pass over the polynomial.
     fn evaluate_and_fold(
         &self,
@@ -237,6 +180,259 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
                 acc + f_i.scale(s_i)
             });
         (eval, folded)
+    }
+
+    /// Fused ring-multiplier fold + evaluation in one pass over the polynomial.
+    fn evaluate_and_fold_ring(
+        &self,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        let folded = self.fold_blocks_ring(fold_scalars, block_len);
+        let eval = folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + (*f_i * *s_i)
+            });
+        (eval, folded)
+    }
+
+    /// Evaluate the root polynomial at an extension-field point.
+    ///
+    /// Backends with sparse structure should override this method. The default
+    /// materializes the direct root witness and folds it as a dense
+    /// multilinear table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the point has the wrong arity or if the backend
+    /// cannot expose a field-element root witness.
+    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        if point.len() != num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: num_vars,
+                actual: point.len(),
+            });
+        }
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root extension evaluation requires field-element root witness".to_string(),
+            )
+        })?;
+        let expected_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidInput("root extension evaluation table length overflow".to_string())
+        })?;
+        if field_elems.coeff_len() != expected_len {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_len,
+                actual: field_elems.coeff_len(),
+            });
+        }
+        let mut layer = field_elems
+            .coeffs()
+            .iter()
+            .copied()
+            .map(E::lift_base)
+            .collect::<Vec<_>>();
+        for &r in point {
+            let one_minus_r = E::one() - r;
+            let next_len = layer.len() / 2;
+            for i in 0..next_len {
+                layer[i] = layer[2 * i] * one_minus_r + layer[2 * i + 1] * r;
+            }
+            layer.truncate(next_len);
+        }
+        Ok(layer[0])
+    }
+
+    /// Compute the tensor-column partials used by root extension-opening
+    /// reduction.
+    ///
+    /// Backends with sparse structure should override this method. The default
+    /// materializes the direct root witness and evaluates all tensor heads in
+    /// one pass over the tail equality table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the point has the wrong arity, if the backend
+    /// cannot expose a field-element root witness, or if the tensor shape is
+    /// invalid.
+    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        if logical_point.len() != num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: num_vars,
+                actual: logical_point.len(),
+            });
+        }
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root tensor partials require field-element root witness".to_string(),
+            )
+        })?;
+        akita_sumcheck::tensor_column_partials_from_base_evals::<F, E>(
+            num_vars,
+            field_elems.coeffs(),
+            logical_point,
+        )
+    }
+
+    /// Compute tensor-column partials for several polynomials at one point.
+    ///
+    /// Backends may override this to share point-dependent work across a
+    /// same-point batch. The default preserves the scalar method behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any polynomial rejects the point or tensor shape.
+    fn tensor_extension_column_partials_batch<E>(
+        polys: &[&Self],
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        polys
+            .iter()
+            .map(|poly| poly.tensor_extension_column_partials(logical_point))
+            .collect()
+    }
+
+    /// Materialize the tensor-packed root witness table used by extension
+    /// opening reduction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend cannot expose a field-element root
+    /// witness or if the tensor-packing shape is invalid.
+    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root tensor projection requires field-element root witness".to_string(),
+            )
+        })?;
+        akita_sumcheck::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
+    }
+
+    /// Materialize a sparse tensor-packed root witness when the backend can
+    /// preserve sparsity through extension-opening reduction.
+    ///
+    /// Dense backends return `Ok(None)` and use
+    /// [`Self::tensor_packed_extension_evals`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend's sparse tensor-packed shape is
+    /// malformed.
+    fn tensor_packed_extension_sparse_evals<E>(
+        &self,
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        Ok(None)
+    }
+
+    /// Build a sparse linear combination of tensor-packed root witnesses.
+    ///
+    /// Backends that can combine sparse transformed roots directly should
+    /// override this method. The default preserves the same sparse/dense
+    /// fallback contract as [`Self::tensor_packed_extension_sparse_evals`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the coefficient list does not match `polys`, or if
+    /// any sparse tensor-packed witness is malformed.
+    fn tensor_packed_extension_sparse_linear_combination<E>(
+        polys: &[&Self],
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        if polys.len() != coeffs.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: polys.len(),
+                actual: coeffs.len(),
+            });
+        }
+        let mut witnesses = Vec::with_capacity(polys.len());
+        for poly in polys {
+            let Some(witness) = poly.tensor_packed_extension_sparse_evals::<E>()? else {
+                return Ok(None);
+            };
+            witnesses.push(witness);
+        }
+        Ok(Some(SparseExtensionOpeningWitness::linear_combination(
+            coeffs.iter().copied().zip(witnesses.iter()),
+        )?))
+    }
+
+    /// Materialize the tensor-packed root polynomial committed for extension
+    /// opening reduction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source witness cannot be tensor-packed or if
+    /// the ring-subfield embedding rejects the transformed root shape.
+    fn tensor_packed_extension_poly<E>(&self) -> Result<DensePoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        let evals = self.tensor_packed_extension_evals::<E>()?;
+        let packed_len = D / E::EXT_DEGREE;
+        if packed_len == 0 {
+            return Err(AkitaError::InvalidInput(
+                "extension degree exceeds root ring dimension".to_string(),
+            ));
+        }
+        let mut rings = Vec::with_capacity(evals.len().div_ceil(packed_len));
+        for chunk in evals.chunks(packed_len) {
+            let mut values = chunk.to_vec();
+            values.resize(packed_len, E::zero());
+            rings.push(embed_ring_subfield_vector::<F, E, D>(
+                &values,
+                AkitaError::InvalidInput(
+                    "root transformed witness does not encode in the ring-subfield basis"
+                        .to_string(),
+                ),
+            )?);
+        }
+        Ok(DensePoly::<F, D>::from_ring_coeffs(rings))
+    }
+
+    /// Materialize the committed tensor-projected root polynomial while
+    /// preserving sparse transformed roots when available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tensor packing or ring-subfield embedding rejects
+    /// the transformed root shape.
+    fn tensor_packed_extension_root_poly<E>(
+        &self,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        Ok(self.tensor_packed_extension_poly::<E>()?.into())
     }
 
     /// Prover decompose + challenge-fold step.
@@ -342,6 +538,14 @@ where
         <P as AkitaPolyOps<F, D>>::fold_blocks(*self, scalars, block_len)
     }
 
+    fn fold_blocks_ring(
+        &self,
+        scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        <P as AkitaPolyOps<F, D>>::fold_blocks_ring(*self, scalars, block_len)
+    }
+
     fn evaluate_and_fold(
         &self,
         eval_outer_scalars: &[F],
@@ -354,6 +558,90 @@ where
             fold_scalars,
             block_len,
         )
+    }
+
+    fn evaluate_and_fold_ring(
+        &self,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        <P as AkitaPolyOps<F, D>>::evaluate_and_fold_ring(
+            *self,
+            eval_outer_scalars,
+            fold_scalars,
+            block_len,
+        )
+    }
+
+    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::evaluate_extension::<E>(*self, point)
+    }
+
+    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_extension_column_partials::<E>(*self, logical_point)
+    }
+
+    fn tensor_extension_column_partials_batch<E>(
+        polys: &[&Self],
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
+        P::tensor_extension_column_partials_batch(&inner_refs, logical_point)
+    }
+
+    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_packed_extension_evals::<E>(*self)
+    }
+
+    fn tensor_packed_extension_sparse_evals<E>(
+        &self,
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_evals::<E>(*self)
+    }
+
+    fn tensor_packed_extension_sparse_linear_combination<E>(
+        polys: &[&Self],
+        coeffs: &[E],
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
+        P::tensor_packed_extension_sparse_linear_combination(&inner_refs, coeffs)
+    }
+
+    fn tensor_packed_extension_poly<E>(&self) -> Result<DensePoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_packed_extension_poly::<E>(*self)
+    }
+
+    fn tensor_packed_extension_root_poly<E>(
+        &self,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_packed_extension_root_poly::<E>(*self)
     }
 
     fn decompose_fold(

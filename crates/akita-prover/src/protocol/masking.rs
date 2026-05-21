@@ -1,9 +1,6 @@
 //! Prover-side sampling for commitment masking.
 
 use akita_field::{AkitaError, CanonicalField};
-use akita_field::{FieldCore, RandomSampling};
-use akita_sumcheck::{EqFactoredUniPoly, FullUniPoly};
-use akita_types::stage1_tree_stage_shapes;
 use akita_types::{zk, FlatDigitBlocks};
 use rand_core::{OsRng, RngCore};
 
@@ -48,30 +45,4 @@ where
         }
     }
     Ok(out)
-}
-
-/// Sample hiding-witness slots for all Akita sumcheck pads at one fold level.
-///
-/// The returned pool is collected into the proof-level hiding witness before the
-/// folded batch opening transcript begins.
-pub(crate) fn sample_sumcheck_pad_pool<F>(
-    rounds: usize,
-    b: usize,
-) -> (Vec<EqFactoredUniPoly<F>>, Vec<FullUniPoly<F>>)
-where
-    F: FieldCore + RandomSampling,
-{
-    let mut rng = OsRng;
-    let mut eq_factored_round_pads = Vec::new();
-    for shape in stage1_tree_stage_shapes(rounds, b) {
-        let stored_coeffs =
-            EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(shape.sumcheck_proof.1);
-        eq_factored_round_pads.extend((0..shape.sumcheck_proof.0).map(|_| EqFactoredUniPoly {
-            coeffs_except_linear_term: (0..stored_coeffs).map(|_| F::random(&mut rng)).collect(),
-        }));
-    }
-    let full_round_pads = (0..rounds)
-        .map(|_| FullUniPoly::from_coeffs((0..=3).map(|_| F::random(&mut rng)).collect()))
-        .collect();
-    (eq_factored_round_pads, full_round_pads)
 }

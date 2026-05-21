@@ -12,7 +12,7 @@ authors = [
 ]
 license = "Apache-2.0 OR MIT"
 description = "Verifier-facing API surface for the Akita polynomial commitment scheme"
-repository = "https://github.com/LayerZero-Labs/hachi"
+repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
@@ -20,6 +20,7 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-r1cs = { version = "0.1.0", path = "../akita-r1cs", optional = true }
+akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
@@ -27,7 +28,7 @@ tracing = "0.1"
 
 [features]
 default = []
-parallel = ["akita-algebra/parallel", "akita-field/parallel"]
+parallel = ["akita-algebra/parallel", "akita-field/parallel", "akita-sumcheck/parallel"]
 zk = ["dep:akita-r1cs", "akita-r1cs/zk", "akita-sumcheck/zk", "akita-types/zk"]
 
 [lints.rust]

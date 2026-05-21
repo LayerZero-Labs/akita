@@ -4,11 +4,14 @@
 //! dense algorithms — balanced-digit decomposition, NTT-based matrix-vector
 //! multiply, and parallel block folds.
 
-use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
-use akita_algebra::CyclotomicRing;
+use akita_algebra::ring::cyclotomic::{
+    decompose_centering_threshold, BalancedDecomposePow2I8Params,
+};
+use akita_algebra::{CyclotomicRing, EqPolynomial};
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_sumcheck::tensor_opening_split;
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -17,23 +20,53 @@ use crate::backend::poly_helpers::{
 };
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::{
-    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
-    try_centered_i8,
+    decompose_rows_i8_into, mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_i8_dense,
+    mat_vec_mul_ntt_i8_dense_single_row, try_centered_i8,
 };
 use akita_types::FlatMatrix;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
+use std::sync::OnceLock;
 
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
-/// Dense polynomial: all ring coefficients materialized in memory.
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct DenseDigitCache<const D: usize> {
+    num_digits: usize,
+    log_basis: u32,
+    planes: Vec<[i8; D]>,
+}
+
+/// Dense polynomial: all ring coefficients materialized in memory.
+#[derive(Debug)]
 pub struct DensePoly<F: FieldCore, const D: usize> {
     /// Actual multilinear variable count of the source witness.
     num_vars: usize,
     /// Ring coefficients in sequential block order.
     pub coeffs: Vec<CyclotomicRing<F, D>>,
     small_i8_coeffs: Option<Vec<[i8; D]>>,
+    digit_cache: OnceLock<DenseDigitCache<D>>,
 }
+
+impl<F: FieldCore + Clone, const D: usize> Clone for DensePoly<F, D> {
+    fn clone(&self) -> Self {
+        Self {
+            num_vars: self.num_vars,
+            coeffs: self.coeffs.clone(),
+            small_i8_coeffs: self.small_i8_coeffs.clone(),
+            digit_cache: OnceLock::new(),
+        }
+    }
+}
+
+impl<F: FieldCore + PartialEq, const D: usize> PartialEq for DensePoly<F, D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.num_vars == other.num_vars
+            && self.coeffs == other.coeffs
+            && self.small_i8_coeffs == other.small_i8_coeffs
+    }
+}
+
+impl<F: FieldCore + Eq, const D: usize> Eq for DensePoly<F, D> {}
 
 impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
     /// Pack field-element evaluations into ring elements.
@@ -98,6 +131,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
             num_vars,
             coeffs,
             small_i8_coeffs: all_small_i8.then_some(small_i8_coeffs),
+            digit_cache: OnceLock::new(),
         })
     }
 
@@ -116,7 +150,94 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
             num_vars: total.trailing_zeros() as usize,
             coeffs,
             small_i8_coeffs,
+            digit_cache: OnceLock::new(),
         }
+    }
+
+    fn digit_planes_for(&self, num_digits: usize, log_basis: u32) -> Option<&[[i8; D]]> {
+        if let Some(cache) = self.digit_cache.get() {
+            return (cache.num_digits == num_digits && cache.log_basis == log_basis)
+                .then_some(cache.planes.as_slice());
+        }
+
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+        let mut planes = vec![[0i8; D]; self.coeffs.len() * num_digits];
+        cfg_chunks_mut!(planes, num_digits)
+            .zip(cfg_iter!(self.coeffs))
+            .for_each(|(dst, ring)| {
+                ring.balanced_decompose_pow2_i8_into_with_params(dst, &params);
+            });
+        let _ = self.digit_cache.set(DenseDigitCache {
+            num_digits,
+            log_basis,
+            planes,
+        });
+        let cache = self.digit_cache.get()?;
+        (cache.num_digits == num_digits && cache.log_basis == log_basis)
+            .then_some(cache.planes.as_slice())
+    }
+
+    fn live_coeff_len(&self) -> Result<usize, AkitaError> {
+        1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })
+    }
+
+    fn tensor_shape<E>(&self, logical_point: Option<&[E]>) -> Result<(usize, usize), AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let (split_bits, width) = tensor_opening_split::<F, E>()?;
+        if split_bits > self.num_vars {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening tensor split exceeds polynomial arity".to_string(),
+            ));
+        }
+        if width > D || D % width != 0 {
+            return Err(AkitaError::InvalidInput(format!(
+                "extension degree {width} does not evenly pack into dense ring degree {D}"
+            )));
+        }
+        if let Some(point) = logical_point {
+            if point.len() != self.num_vars {
+                return Err(AkitaError::InvalidPointDimension {
+                    expected: self.num_vars,
+                    actual: point.len(),
+                });
+            }
+        }
+        Ok((split_bits, width))
+    }
+
+    fn tensor_extension_column_partials_with_tail_eq<E>(
+        &self,
+        width: usize,
+        tail_eq: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let live_len = self.live_coeff_len()?;
+        let expected_tail_len = live_len / width;
+        if tail_eq.len() != expected_tail_len {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_tail_len,
+                actual: tail_eq.len(),
+            });
+        }
+
+        let mut partials = vec![E::zero(); width];
+        for (tail, &weight) in tail_eq.iter().enumerate() {
+            let flat_idx = tail * width;
+            let ring_idx = flat_idx / D;
+            let coeff_idx = flat_idx % D;
+            let coeffs = &self.coeffs[ring_idx].coefficients()[coeff_idx..coeff_idx + width];
+            for (partial, &coeff) in partials.iter_mut().zip(coeffs.iter()) {
+                *partial += weight.mul_base(coeff);
+            }
+        }
+        Ok(partials)
     }
 }
 
@@ -151,6 +272,78 @@ where
             .collect()
     }
 
+    fn fold_blocks_ring(
+        &self,
+        scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        let n = self.coeffs.len();
+        let num_blocks = n.div_ceil(block_len);
+        cfg_into_iter!(0..num_blocks)
+            .map(|i| {
+                let start = i * block_len;
+                let end = (start + block_len).min(n);
+                let block = &self.coeffs[start..end];
+                let mut acc = CyclotomicRing::<F, D>::zero();
+                for (b_j, &a_j) in block.iter().zip(scalars.iter()) {
+                    b_j.mul_accumulate_sparse_rhs_into(&a_j, &mut acc);
+                }
+                acc
+            })
+            .collect()
+    }
+
+    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let (split_bits, width) = self.tensor_shape::<E>(Some(logical_point))?;
+        let tail_eq = EqPolynomial::evals(&logical_point[split_bits..]);
+        self.tensor_extension_column_partials_with_tail_eq(width, &tail_eq)
+    }
+
+    fn tensor_extension_column_partials_batch<E>(
+        polys: &[&Self],
+        logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let Some(first) = polys.first() else {
+            return Ok(Vec::new());
+        };
+        let (split_bits, width) = first.tensor_shape::<E>(Some(logical_point))?;
+        let tail_eq = EqPolynomial::evals(&logical_point[split_bits..]);
+        polys
+            .iter()
+            .map(|poly| {
+                poly.tensor_shape::<E>(Some(logical_point))?;
+                poly.tensor_extension_column_partials_with_tail_eq(width, &tail_eq)
+            })
+            .collect()
+    }
+
+    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let (_split_bits, width) = self.tensor_shape::<E>(None)?;
+        let live_len = self.live_coeff_len()?;
+        let mut evals = Vec::with_capacity(live_len / width);
+        let mut remaining = live_len;
+        for ring in &self.coeffs {
+            let take = remaining.min(D);
+            for coeffs in ring.coefficients()[..take].chunks_exact(width) {
+                evals.push(E::from_base_slice(coeffs));
+            }
+            remaining -= take;
+            if remaining == 0 {
+                break;
+            }
+        }
+        Ok(evals)
+    }
+
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]
     fn decompose_fold(
         &self,
@@ -161,6 +354,15 @@ where
     ) -> DecomposeFoldWitness<F, D> {
         let n = self.coeffs.len();
         let coeffs = &self.coeffs;
+
+        if let Some(digit_planes) = self.digit_planes_for(num_digits, log_basis) {
+            let coeff_accum = {
+                let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
+                accumulate_cached_digit_planes::<D>(digit_planes, challenges, block_len, num_digits)
+            };
+            let modulus = (-F::one()).to_canonical_u128() + 1;
+            return build_decompose_fold_witness::<F, D>(coeff_accum, modulus);
+        }
 
         let q = (-F::one()).to_canonical_u128() + 1;
         let threshold = decompose_centering_threshold(num_digits, log_basis, q);
@@ -252,6 +454,38 @@ where
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
 
+        if let Some(digit_planes) = self.digit_planes_for(num_digits_commit, log_basis) {
+            let digit_block_slices =
+                digit_block_slices(digit_planes, n, block_len, num_digits_commit);
+            let t_all = mat_vec_mul_ntt_dense_digits_i8::<F, D>(
+                ntt_a,
+                n_a,
+                matrix_stride,
+                &digit_block_slices,
+            );
+            let block_sizes: Vec<usize> = t_all
+                .iter()
+                .map(|t_i| t_i.len() * num_digits_open)
+                .collect();
+            let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+            let dst_blocks = t_hat.split_blocks_mut();
+            #[cfg(feature = "parallel")]
+            cfg_into_iter!(dst_blocks)
+                .zip(cfg_iter!(t_all))
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis)
+                });
+            #[cfg(not(feature = "parallel"))]
+            dst_blocks
+                .into_iter()
+                .zip(t_all.iter())
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis)
+                });
+
+            return Ok(t_hat);
+        }
+
         let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
             .map(|i| {
                 let start = i * block_len;
@@ -332,6 +566,34 @@ where
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
+
+        if let Some(digit_planes) = self.digit_planes_for(num_digits_commit, log_basis) {
+            let digit_block_slices =
+                digit_block_slices(digit_planes, n, block_len, num_digits_commit);
+            let t = mat_vec_mul_ntt_dense_digits_i8::<F, D>(
+                ntt_a,
+                n_a,
+                matrix_stride,
+                &digit_block_slices,
+            );
+            let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
+            let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+            let dst_blocks = t_hat.split_blocks_mut();
+            #[cfg(feature = "parallel")]
+            cfg_into_iter!(dst_blocks)
+                .zip(cfg_iter!(t))
+                .for_each(|(dst, t_i)| {
+                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis)
+                });
+            #[cfg(not(feature = "parallel"))]
+            dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
+                decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis)
+            });
+            return Ok(CommitInnerWitness {
+                recomposed_inner_rows: t,
+                decomposed_inner_rows: t_hat,
+            });
+        }
 
         let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
             .map(|i| {
@@ -430,6 +692,49 @@ where
     }
 }
 
+fn digit_block_slices<const D: usize>(
+    digit_planes: &[[i8; D]],
+    num_rings: usize,
+    block_len: usize,
+    num_digits: usize,
+) -> Vec<&[[i8; D]]> {
+    let num_blocks = num_rings.div_ceil(block_len);
+    (0..num_blocks)
+        .map(|block_idx| {
+            let ring_start = block_idx * block_len;
+            let ring_end = (ring_start + block_len).min(num_rings);
+            let digit_start = ring_start * num_digits;
+            let digit_end = ring_end * num_digits;
+            &digit_planes[digit_start..digit_end]
+        })
+        .collect()
+}
+
+fn accumulate_cached_digit_planes<const D: usize>(
+    digit_planes: &[[i8; D]],
+    challenges: &[SparseChallenge],
+    block_len: usize,
+    num_digits: usize,
+) -> Vec<[i32; D]> {
+    let inner_width = block_len * num_digits;
+    cfg_into_iter!(0..inner_width)
+        .map(|inner_idx| {
+            let elem_idx = inner_idx / num_digits;
+            let digit_idx = inner_idx % num_digits;
+            let mut acc = [0i32; D];
+            for (block_idx, challenge) in challenges.iter().enumerate() {
+                let ring_idx = block_idx * block_len + elem_idx;
+                let plane_idx = ring_idx * num_digits + digit_idx;
+                let Some(digit_plane) = digit_planes.get(plane_idx) else {
+                    continue;
+                };
+                sparse_mul_acc::<D>(digit_plane, challenge, &mut acc);
+            }
+            acc
+        })
+        .collect()
+}
+
 /// Test-only helpers for [`DensePoly`].
 ///
 /// These live outside the production `AkitaPolyOps` trait because they are
@@ -474,5 +779,72 @@ pub(crate) mod test_helpers {
                     acc + f_i.scale(w_i)
                 })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::fields::{TowerBasisFp4, TwoNr, UnitNr};
+    use akita_field::Prime128OffsetA7F7 as F;
+    use akita_sumcheck::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
+
+    fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
+            F::from_u64(offset + idx as u64 + 1)
+        }))
+    }
+
+    #[test]
+    fn ring_fold_matches_dense_multiplication_reference() {
+        const D: usize = 8;
+        let coeffs = (0..4).map(|idx| ring::<D>(10 * idx)).collect::<Vec<_>>();
+        let poly = DensePoly::<F, D>::from_ring_coeffs(coeffs.clone());
+        let scalars = vec![ring::<D>(100), ring::<D>(200)];
+        let got = poly.fold_blocks_ring(&scalars, 2);
+        let expected = coeffs
+            .chunks(2)
+            .map(|block| {
+                block
+                    .iter()
+                    .zip(scalars.iter())
+                    .fold(CyclotomicRing::<F, D>::zero(), |acc, (coeff, scalar)| {
+                        acc + (*coeff * *scalar)
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn dense_tensor_opening_methods_match_flat_reference() {
+        const D: usize = 8;
+        type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+
+        let num_vars = 5;
+        let evals = (0..(1usize << num_vars))
+            .map(|idx| F::from_u64(17 * idx as u64 + 9))
+            .collect::<Vec<_>>();
+        let point = (0..num_vars)
+            .map(|idx| {
+                E::from_base_slice(&[
+                    F::from_u64(idx as u64 + 2),
+                    F::from_u64(3 * idx as u64 + 4),
+                    F::from_u64(5 * idx as u64 + 6),
+                    F::from_u64(7 * idx as u64 + 8),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).unwrap();
+
+        let expected_partials =
+            tensor_column_partials_from_base_evals::<F, E>(num_vars, &evals, &point).unwrap();
+        let got_partials = poly.tensor_extension_column_partials::<E>(&point).unwrap();
+        assert_eq!(got_partials, expected_partials);
+
+        let expected_packed = tensor_packed_witness_evals::<F, E>(num_vars, &evals).unwrap();
+        let got_packed = poly.tensor_packed_extension_evals::<E>().unwrap();
+        assert_eq!(got_packed, expected_packed);
     }
 }

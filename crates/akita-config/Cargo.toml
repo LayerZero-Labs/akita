@@ -12,7 +12,7 @@ authors = [
 ]
 license = "Apache-2.0 OR MIT"
 description = "Runtime configuration presets and schedule policy for the Akita polynomial commitment scheme"
-repository = "https://github.com/LayerZero-Labs/hachi"
+repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
@@ -32,6 +32,10 @@ tracing = "0.1"
 
 [[bin]]
 name = "gen_schedule_tables"
+required-features = ["planner"]
+
+[[bin]]
+name = "tune_small_field_schedules"
 required-features = ["planner"]
 
 [lints.rust]

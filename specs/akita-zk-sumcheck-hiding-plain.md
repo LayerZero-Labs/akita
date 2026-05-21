@@ -4,7 +4,7 @@
 | --------- | ---------------------- |
 | Author(s) | Amirhossein Khajehpour |
 | Created   | 2026-05-12             |
-| Updated   | 2026-05-19             |
+| Updated   | 2026-05-21             |
 | Status    | implemented in branch  |
 | PR        |                        |
 
@@ -12,7 +12,7 @@
 
 This branch implements a plain-opening version of Akita's sumcheck-hiding ZK
 path. The proof carries a separate hiding-factor commitment `u_blind`, reveals
-the committed `hiding_witness`, and verifies deferred R1CS rows from the
+the `hiding_witness`, and verifies deferred R1CS rows from the
 `akita-r1cs` crate directly against that revealed witness.
 
 This is not the final zero-knowledge protocol. It fixes the transcript shape and
@@ -43,6 +43,12 @@ pads stored in `hiding_witness`.
 - Do not implement Spartan, LNP22, or the final joint tail sigma protocol.
 - Do not remove the plain opening of `hiding_witness`.
 - Do not change transparent proof shapes.
+- Do not enforce the hiding-factor commitment opening inside this plain R1CS
+  inventory; `u_blind = Commit(hiding_witness; r_B_h)` remains a future
+  commitment-opening proof.
+- Do not bind the terminal direct-witness `next_w_eval_masked` field inside the
+  R1CS inventory; terminal direct witnesses are checked directly from the
+  revealed terminal payload.
 
 ## Proof Objects
 
@@ -125,9 +131,9 @@ contains four coefficients.
 The prover currently allocates a scalar `next_w_eval` mask for every fold level,
 including the last fold. The verifier consumes that scalar only when the level's
 output evaluation is used as the opening claim for another recursive level. At a
-terminal direct-witness level, the stage-2 final relation uses the direct witness
-instead, so the terminal `next_w_eval_masked` field and its final mask slot are
-not referenced by the current R1CS inventory.
+terminal direct-witness level, the stage-2 final oracle uses the direct witness
+payload instead, so the terminal `next_w_eval_masked` field and its final mask
+slot are not referenced by the current R1CS inventory.
 
 The verifier consumes the same cursor order for every slot it references, but it
 finishes folded verification by requiring:
@@ -355,8 +361,8 @@ final_claim_true =
 This final-claim unmasking is represented as a symbolic linear combination and
 inlined into the final oracle check; it is not emitted as a standalone R1CS row.
 Then `AkitaStage2Verifier::record_final_relation` records the final oracle as an
-R1CS row. If the level output is recursive, it also unpacks the true witness
-evaluation from `next_w_eval_masked`:
+R1CS row. If the level output feeds another recursive level, it unpacks the true
+witness evaluation from `next_w_eval_masked`:
 
 ```text
 w_lc = next_w_eval_masked - eta_w
@@ -373,7 +379,10 @@ final_claim_true - alpha_eval(r_y) * row_eval(r_x) * w_lc
 
 For terminal levels, `w_lc` is the direct witness evaluation computed by the
 verifier from the final packed witness payload. In that case, the serialized
-`next_w_eval_masked` field is not the source of the final oracle value.
+`next_w_eval_masked` field is not the source of the final oracle value and no
+R1CS row binds it to the direct witness. This is one of the two intentional
+missing relation classes in this branch; the other is the relation that opens
+`u_blind` as a commitment to `hiding_witness`.
 
 ## Relation Accumulator
 
@@ -396,7 +405,10 @@ zk_relations.verify_all(&proof.zk_hiding.hiding_witness)
 
 The current plain verifier checks every accumulated row it records. It does not
 skip R1CS rows with auxiliary variables; those auxiliaries are synthesized during
-`verify_all`. The sumcheck crates use the accumulator only behind
+`verify_all`. The accumulator does not enforce a minimum private-variable
+support per row. Single-mask linear equations are therefore allowed by the
+container, although the terminal direct-witness binding is intentionally omitted
+from the current inventory. The sumcheck crates use the accumulator only behind
 `feature = "zk"`; transparent sumcheck drivers do not depend on the R1CS API.
 Future work is to prove this same row inventory without revealing
 `hiding_witness`.
@@ -404,8 +416,8 @@ Future work is to prove this same row inventory without revealing
 ## Transcript Rules
 
 Transparent builds keep the existing proof shapes. Folded transparent and ZK
-builds both absorb the stage-2 next-witness evaluation handoff; the ZK build
-absorbs the masked wire value.
+builds both serialize the stage-2 next-witness evaluation handoff in the proof;
+the ZK build serializes the masked wire value.
 
 In folded ZK builds:
 
@@ -420,12 +432,12 @@ In folded ZK builds:
 - Stage-2 absorbs masked full round polynomials.
 - `AkitaStage2Proof::next_w_eval_masked` is the ZK proof field for recursive
   handoffs, accessed through `next_w_eval()`.
-- Each fold level absorbs the stage-2 next-witness evaluation wire value under
-  `ABSORB_STAGE2_NEXT_W_EVAL` after the stage-2 sumcheck. In ZK builds this is
-  `next_w_eval_masked`; in transparent builds it is the true `next_w_eval`.
 
-This binds the recursive opening claim before the transcript is used for any
-successor fold level.
+For non-terminal fold levels, the verifier carries `next_w_eval()` and the
+corresponding hidden mask slot into the successor `RecursiveVerifierState`. The
+successor level's opening, y-ring, and stage-2 relations then bind that recursive
+handoff. Terminal direct-witness levels do not bind the serialized
+`next_w_eval_masked` field in R1CS.
 
 The revealed `hiding_witness`, `b_blinding_digits`, and unmasked true values are
 not absorbed before the masked messages they support are fixed.
@@ -491,8 +503,6 @@ not absorbed before the masked messages they support are fixed.
 - Stage 2 calls `prove_zk` with precommitted full-univariate pads, overrides the
   transcript-visible input claim to the masked wire expression, and stores
   `next_w_eval + eta_w` in ZK builds.
-- After Stage 2, the prover absorbs the `next_w_eval()` wire value under
-  `ABSORB_STAGE2_NEXT_W_EVAL` before recursion continues.
 
 ### `akita-verifier`
 
@@ -503,8 +513,8 @@ not absorbed before the masked messages they support are fixed.
 - The recursive verifier unpacks both the current opening mask and current
   y-ring mask before recording recursive trace-pin rows.
 - Stage-1 and stage-2 verification consume only masked proof types in ZK builds.
-- After each fold-level Stage-2 verification, the verifier absorbs
-  `stage2.next_w_eval()` under `ABSORB_STAGE2_NEXT_W_EVAL`.
+- After each non-terminal fold-level Stage-2 verification, the verifier carries
+  `stage2.next_w_eval()` and its mask into the next recursive opening state.
 - Nonlinear final oracle checks are recorded as R1CS rows and checked by the
   plain verifier using revealed `hiding_witness` plus verifier-local
   auxiliaries.
@@ -518,19 +528,22 @@ not absorbed before the masked messages they support are fixed.
 - Real commitments and hiding-factor commitments use dedicated B-side Ajtai
   blinding digits.
 - Root and recursive `y_ring` proof fields are masked in ZK builds.
-- Stage-1 and stage-2 sumcheck proof messages are masked by committed
-  `hiding_witness` pads.
+- Stage-1 and stage-2 sumcheck proof messages are masked by `hiding_witness`
+  pads.
 - Stage-1 tree child claims are masked.
 - `AkitaStage1Proof::s_claim` is masked in ZK builds.
 - `AkitaStage2Proof` uses `next_w_eval_masked` in ZK builds; recursive handoffs
   are interpreted as masked wire values.
-- Stage-2 next-witness evaluation handoffs are absorbed under
-  `ABSORB_STAGE2_NEXT_W_EVAL` before successor recursive challenges.
+- Recursive Stage-2 next-witness evaluation handoffs are carried with their mask
+  into the successor recursive verifier state.
 - The ZK proof path does not carry redundant transparent sumcheck proofs.
 - The plain verifier checks the currently recorded R1CS inventory against the
   revealed `hiding_witness`.
 - The folded verifier rejects extra trailing `hiding_witness` slots beyond the
   one terminal mask slot allocated by the prover layout.
+- The only intentionally unproven relation classes in this branch are the
+  `u_blind` commitment-opening relation and the terminal direct-witness binding
+  for `next_w_eval_masked`.
 - The spec does not claim full zero-knowledge until the plain opening is
   replaced by a proof of the same relation inventory.
 
@@ -542,5 +555,4 @@ not absorbed before the masked messages they support are fixed.
    verification over the same relation inventory.
 3. Remove `hiding_witness` and Ajtai blinding material from the serialized proof
    once those relations are proven.
-4. Avoid allocating or serializing unused terminal `next_w_eval` masks, or make
-   terminal handling explicitly prove/use the field.
+4. Avoid allocating or serializing unused terminal `next_w_eval` masks.

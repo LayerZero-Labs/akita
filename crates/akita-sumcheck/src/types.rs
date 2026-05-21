@@ -157,8 +157,9 @@ pub struct SumcheckProof<E: FieldCore> {
 
 /// Full univariate polynomial in fixed-width proof form.
 ///
-/// Unlike [`UniPoly`]'s generic serialization, this type is encoded without a
-/// length prefix. The surrounding proof shape supplies the expected degree.
+/// Unlike [`akita_algebra::uni_poly::UniPoly`]'s generic serialization, this
+/// type is encoded without a length prefix. The surrounding proof shape supplies
+/// the expected degree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FullUniPoly<E: FieldCore> {
     /// Coefficients from low degree to high degree.

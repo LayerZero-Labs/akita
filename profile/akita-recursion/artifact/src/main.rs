@@ -204,11 +204,11 @@ fn main() {
         &prover_setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitment,
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -229,10 +229,10 @@ fn main() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitment,
-            }],
+            },
         )],
         BasisMode::Lagrange,
     )
@@ -292,10 +292,10 @@ fn main() {
         &mut roundtrip_transcript,
         vec![(
             &decoded.opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups_rt[0],
                 commitment: &decoded.commitment,
-            }],
+            },
         )],
         BasisMode::Lagrange,
     )

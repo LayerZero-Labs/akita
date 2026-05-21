@@ -2,17 +2,17 @@
 
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    validate_batched_inputs, verifier_claims_to_incidence, AkitaExpandedSetup,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, VerifierClaims,
+    validate_batched_inputs, AkitaExpandedSetup, ClaimIncidenceSummary, VerifierClaims,
 };
 
 /// Flattened and validated verifier claims.
-pub struct PreparedVerifierClaims<'a, E: FieldCore, C> {
+pub(crate) struct PreparedVerifierClaims<'a, E: FieldCore, C> {
     /// Distinct opening points in caller order.
     pub opening_points: Vec<&'a [E]>,
-    /// Commitments flattened by opening point and commitment group.
+    /// Commitments in opening-point order (one per point under the
+    /// one-commitment-per-point invariant).
     pub commitments: Vec<C>,
-    /// Claimed openings flattened by opening point, group, then claim.
+    /// Claimed openings flattened by opening point, then by polynomial index.
     pub openings: Vec<E>,
     /// Normalized incidence summary that owns canonical root claim routing.
     pub incidence_summary: ClaimIncidenceSummary,
@@ -23,9 +23,9 @@ pub struct PreparedVerifierClaims<'a, E: FieldCore, C> {
 /// # Errors
 ///
 /// Returns an error if the claims are empty, exceed setup capacity, use
-/// inconsistent opening-point dimensions, contain empty groups, or overflow
-/// flattened claim counts.
-pub fn prepare_verifier_claims<'a, F, E, C>(
+/// inconsistent opening-point dimensions, contain empty point payloads, or
+/// overflow flattened claim counts.
+pub(crate) fn prepare_verifier_claims<'a, F, E, C>(
     setup: &AkitaExpandedSetup<F>,
     claims: &VerifierClaims<'a, E, C>,
 ) -> Result<PreparedVerifierClaims<'a, E, C>, AkitaError>
@@ -34,27 +34,26 @@ where
     E: FieldCore,
     C: Clone,
 {
-    validate_batched_inputs(setup, claims, |group| group.openings.len(), false)?;
+    validate_batched_inputs(setup, claims, |payload| payload.openings.len(), false)?;
 
-    let incidence = verifier_claims_to_incidence(claims);
-    let summary = incidence
-        .validate(ClaimIncidenceLimits {
-            max_num_vars: setup.seed.max_num_vars,
-            max_num_points: setup.seed.max_num_points,
-            max_num_claims: setup.seed.max_num_batched_polys,
-        })
+    // `validate_batched_inputs` already enforces the same limits and shape
+    // constraints that `ClaimIncidence::validate` would, and verifier claims
+    // are canonical by construction (each point lists its polys 0..k dense,
+    // no duplicate edges), so skip the generic edge-set validation and
+    // build the routing summary directly from per-point counts.
+    let num_vars = claims[0].0.len();
+    let num_polys_per_point: Vec<usize> = claims.iter().map(|(_, p)| p.openings.len()).collect();
+    let summary = ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
         .map_err(|_| AkitaError::InvalidProof)?;
 
-    let opening_points = incidence.points;
-    let commitments = incidence
-        .groups
+    let opening_points: Vec<&'a [E]> = claims.iter().map(|(point, _)| *point).collect();
+    let commitments = claims
         .iter()
-        .map(|group| (*group.commitment).clone())
+        .map(|(_, payload)| (*payload.commitment).clone())
         .collect();
-    let openings = incidence
-        .claims
+    let openings = claims
         .iter()
-        .map(|claim| claim.claimed_eval)
+        .flat_map(|(_, payload)| payload.openings.iter().copied())
         .collect();
 
     Ok(PreparedVerifierClaims {
@@ -100,10 +99,10 @@ mod tests {
         let commitment = 11usize;
         let claims = vec![(
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitment,
-            }],
+            },
         )];
 
         let prepared = prepare_verifier_claims(&setup(), &claims)
@@ -112,8 +111,7 @@ mod tests {
         assert_eq!(prepared.opening_points, vec![&point[..]]);
         assert_eq!(prepared.openings, openings);
         assert_eq!(prepared.commitments, vec![11usize]);
-        assert_eq!(prepared.incidence_summary.num_claims, 2);
-        assert_eq!(prepared.incidence_summary.num_groups, 1);
-        assert_eq!(prepared.incidence_summary.num_points, 1);
+        assert_eq!(prepared.incidence_summary.num_claims(), 2);
+        assert_eq!(prepared.incidence_summary.num_points(), 1);
     }
 }

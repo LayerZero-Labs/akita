@@ -8,6 +8,8 @@ use crate::traits::{
 use crate::types::EqFactoredSumcheckProofMasked;
 use crate::types::{EqFactoredSumcheckProof, EqFactoredUniPoly};
 use akita_field::AkitaError;
+#[cfg(feature = "zk")]
+use akita_field::ExtField;
 use akita_field::{CanonicalField, FieldCore};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
@@ -217,6 +219,36 @@ where
     fn prove_zk<F, T, S>(
         &mut self,
         transcript: &mut T,
+        sample_challenge: S,
+        pre_sampled_pads: Vec<EqFactoredUniPoly<E>>,
+    ) -> Result<EqFactoredMaskedProveOutput<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+        E: AkitaSerialize,
+        S: FnMut(&mut T) -> E,
+    {
+        self.prove_zk_with_public_claim::<F, T, S>(
+            self.input_claim(),
+            transcript,
+            sample_challenge,
+            pre_sampled_pads,
+        )
+    }
+
+    /// Prove with a transcript-visible masked input claim while keeping the
+    /// instance's private input claim for omitted-linear-coefficient updates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if pad shape is invalid or a round exceeds the degree
+    /// bound.
+    #[tracing::instrument(skip_all, name = "prove_zk_eq_factored_sumcheck_public_claim")]
+    #[inline(never)]
+    fn prove_zk_with_public_claim<F, T, S>(
+        &mut self,
+        public_input_claim: E,
+        transcript: &mut T,
         mut sample_challenge: S,
         pre_sampled_pads: Vec<EqFactoredUniPoly<E>>,
     ) -> Result<EqFactoredMaskedProveOutput<E>, AkitaError>
@@ -240,7 +272,7 @@ where
         let mut masked_round_polys = Vec::with_capacity(num_rounds);
         let mut challenges = Vec::with_capacity(num_rounds);
 
-        transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &input_claim);
+        transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &public_input_claim);
 
         for (round, pad_poly) in pre_sampled_pads.into_iter().enumerate() {
             let poly = self.compute_round_eq_factored(round);
@@ -310,7 +342,7 @@ where
     where
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
-        E: AkitaSerialize,
+        E: AkitaSerialize + ExtField<F>,
         S: FnMut(&mut T) -> E,
     {
         let num_rounds = self.num_rounds();
@@ -382,7 +414,7 @@ where
             // known part of q_i(r_i), used by stage-specific final relations
             // when this round's folded witness value is handed off.
             let (next_claim_mask, round_handoff_mask) = relations
-                .push_masked_eq_factored_round_relation(
+                .push_masked_eq_factored_round_relation::<F>(
                     previous_masked_claim,
                     &scaled_claim_mask,
                     previous_coeff,

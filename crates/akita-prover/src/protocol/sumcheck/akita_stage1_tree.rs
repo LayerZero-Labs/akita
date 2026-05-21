@@ -17,18 +17,19 @@ use super::akita_stage1 as single_stage_backend;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_serialization::AkitaSerialize;
 #[cfg(not(feature = "zk"))]
 use akita_sumcheck::EqFactoredSumcheckInstanceProverExt;
 #[cfg(feature = "zk")]
 use akita_sumcheck::ZkEqFactoredSumcheckInstanceProverExt;
 use akita_sumcheck::{fold_evals_in_place, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 use akita_transcript::labels;
-use akita_transcript::Transcript;
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
-    stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_tree_product_stage_arities,
-    validate_stage1_tree_basis, AkitaStage1Proof, AkitaStage1StageProof,
+    combine_polys, eval_poly, linear_combination, stage1_interstage_batch_weights,
+    stage1_leaf_coeffs, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
+    AkitaStage1Proof, AkitaStage1StageProof,
 };
 
 #[cfg(feature = "zk")]
@@ -450,19 +451,38 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaStage1Prover<E> {
     /// Produce the full stage-1 tree proof and return the final `r_stage1`.
     ///
     /// # Errors
     ///
     /// Propagates any transcript or sumcheck failure from the internal root
     /// and leaf-stage proofs.
-    pub fn prove<T: Transcript<E>>(
+    pub fn prove<F, T>(
         self,
         transcript: &mut T,
         #[cfg(feature = "zk")] mut precommitted_stage_pads: Vec<Vec<EqFactoredUniPoly<E>>>,
         #[cfg(feature = "zk")] mut precommitted_child_claim_masks: Vec<Vec<E>>,
-    ) -> Result<Stage1ProveOutput<E>, AkitaError> {
+    ) -> Result<Stage1ProveOutput<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: ExtField<F>,
+        T: Transcript<F>,
+    {
+        fn absorb_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
+        where
+            F: FieldCore + CanonicalField,
+            E: ExtField<F>,
+            T: Transcript<F>,
+        {
+            for claim in claims {
+                append_ext_field::<F, E, T>(
+                    transcript,
+                    labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
+                    claim,
+                );
+            }
+        }
         let Self {
             witness,
             tau0,
@@ -493,9 +513,9 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
                     }
                     let round_pads = precommitted_stage_pads.remove(0);
                     let final_pad = round_pads.last().cloned().ok_or(AkitaError::InvalidProof)?;
-                    let (sumcheck_proof_masked, challenges) = leaf_stage.prove_zk::<E, _, _>(
+                    let (sumcheck_proof_masked, challenges) = leaf_stage.prove_zk::<F, T, _>(
                         transcript,
-                        |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                        |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
                         round_pads,
                     )?;
                     let handoff_mask = eq_factored_pad_eval(&final_pad, &challenges);
@@ -503,8 +523,8 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
                 };
                 #[cfg(not(feature = "zk"))]
                 let (sumcheck, r_stage1, _final_claim) = leaf_stage
-                    .prove::<E, _, _>(transcript, |tr| {
-                        tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+                    .prove::<F, T, _>(transcript, |tr| {
+                        sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
                     })?;
                 let true_s_claim = leaf_stage.final_s_claim();
                 let proof = AkitaStage1Proof {
@@ -540,6 +560,8 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
         let mut stage_proofs = Vec::with_capacity(product_layers.len() + 1);
         let mut current_tau = tau0;
         let mut current_claim = E::zero();
+        #[cfg(feature = "zk")]
+        let mut current_public_claim = E::zero();
         let mut current_weights = vec![E::one()];
 
         for layer in product_layers {
@@ -555,34 +577,38 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
                     return Err(AkitaError::InvalidProof);
                 }
                 let round_pads = precommitted_stage_pads.remove(0);
-                let (sumcheck_proof_masked, next_tau) = product_stage.prove_zk::<E, _, _>(
-                    transcript,
-                    |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
-                    round_pads,
-                )?;
+                let (sumcheck_proof_masked, next_tau) = product_stage
+                    .prove_zk_with_public_claim::<F, T, _>(
+                        current_public_claim,
+                        transcript,
+                        |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
+                        round_pads,
+                    )?;
                 (sumcheck_proof_masked, next_tau)
             };
             #[cfg(not(feature = "zk"))]
             let (sumcheck, next_tau, _final_claim) = product_stage
-                .prove::<E, _, _>(transcript, |tr| {
-                    tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+                .prove::<F, T, _>(transcript, |tr| {
+                    sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
                 })?;
-            let child_claims = product_stage.final_child_claims();
+            let true_child_claims = product_stage.final_child_claims();
             #[cfg(feature = "zk")]
             let child_claims = {
                 if precommitted_child_claim_masks.is_empty() {
                     return Err(AkitaError::InvalidProof);
                 }
                 let child_claim_masks = precommitted_child_claim_masks.remove(0);
-                if child_claim_masks.len() != child_claims.len() {
+                if child_claim_masks.len() != true_child_claims.len() {
                     return Err(AkitaError::InvalidProof);
                 }
-                child_claims
+                true_child_claims
                     .iter()
                     .zip(child_claim_masks.iter())
                     .map(|(&claim, &mask)| claim + mask)
                     .collect::<Vec<_>>()
             };
+            #[cfg(not(feature = "zk"))]
+            let child_claims = true_child_claims;
             stage_proofs.push(AkitaStage1StageProof {
                 #[cfg(not(feature = "zk"))]
                 sumcheck_proof: sumcheck,
@@ -591,10 +617,21 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
                 child_claims: child_claims.clone(),
             });
 
-            absorb_interstage_claims(&child_claims, transcript);
-            let gamma = transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH);
+            absorb_child_claims::<F, E, T>(&child_claims, transcript);
+            let gamma = sample_ext_challenge::<F, E, T>(
+                transcript,
+                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
+            );
             current_weights = stage1_interstage_batch_weights(gamma, child_claims.len());
-            current_claim = linear_combination(&current_weights, &child_claims);
+            #[cfg(not(feature = "zk"))]
+            {
+                current_claim = linear_combination(&current_weights, &child_claims);
+            }
+            #[cfg(feature = "zk")]
+            {
+                current_claim = linear_combination(&current_weights, &true_child_claims);
+                current_public_claim = linear_combination(&current_weights, &child_claims);
+            }
             current_tau = next_tau;
         }
         #[cfg(feature = "zk")]
@@ -616,18 +653,20 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
             }
             let round_pads = precommitted_stage_pads.remove(0);
             let final_pad = round_pads.last().cloned().ok_or(AkitaError::InvalidProof)?;
-            let (sumcheck_proof_masked, challenges) = leaf_stage.prove_zk::<E, _, _>(
-                transcript,
-                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
-                round_pads,
-            )?;
+            let (sumcheck_proof_masked, challenges) = leaf_stage
+                .prove_zk_with_public_claim::<F, T, _>(
+                    current_public_claim,
+                    transcript,
+                    |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
+                    round_pads,
+                )?;
             let handoff_mask = eq_factored_pad_eval(&final_pad, &challenges);
             (sumcheck_proof_masked, challenges, handoff_mask)
         };
         #[cfg(not(feature = "zk"))]
         let (leaf_sumcheck, r_stage1, _leaf_final_claim) = leaf_stage
-            .prove::<E, _, _>(transcript, |tr| {
-                tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            .prove::<F, T, _>(transcript, |tr| {
+                sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
             })?;
         stage_proofs.push(AkitaStage1StageProof {
             #[cfg(not(feature = "zk"))]

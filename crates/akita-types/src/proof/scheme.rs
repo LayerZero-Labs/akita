@@ -7,17 +7,21 @@ use akita_transcript::Transcript;
 /// Opening-point coordinates used by batched verification inputs.
 pub type OpeningPoints<'a, F> = &'a [F];
 
-/// One committed opening group verified at an opening point.
+/// Commitment plus its claimed openings at one opening point.
+///
+/// Every opening point cites exactly one commitment. The commitment may bundle
+/// multiple polynomials, and `openings[i]` is the claimed evaluation of the
+/// i-th polynomial in that bundle at the opening point.
 #[derive(Debug, Clone)]
 pub struct CommittedOpenings<'a, F, C> {
-    /// Claimed openings for the committed polynomial group.
+    /// Claimed openings for the bundled polynomials.
     pub openings: &'a [F],
     /// Commitment for `openings`.
     pub commitment: &'a C,
 }
 
-/// Batched verifier input grouped by opening point.
-pub type VerifierClaims<'a, F, C> = Vec<(OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>)>;
+/// Batched verifier input: one commitment plus its claimed openings per point.
+pub type VerifierClaims<'a, F, C> = Vec<(OpeningPoints<'a, F>, CommittedOpenings<'a, F, C>)>;
 
 /// Verifier-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -39,7 +43,7 @@ where
     /// Batched (potentially multi-point) evaluation/opening proof object.
     ///
     /// A "singleton" opening is the 1x1 special case: a single polynomial,
-    /// a single commitment group, and a single opening point.
+    /// a single commitment, and a single opening point.
     type BatchedProof: Clone + Send + Sync;
 
     /// Verify a fused batched opening proof over one or more opening points.

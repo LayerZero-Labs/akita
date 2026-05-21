@@ -9,9 +9,10 @@ use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::sample_sparse_challenges;
 use akita_challenges::SparseChallenge;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkR1csTerm, ZkR1csVariable, ZkRelationAccumulator};
+use akita_serialization::AkitaSerialize;
 use akita_sumcheck::EqFactoredSumcheckInstanceVerifier;
 #[cfg(not(feature = "zk"))]
 use akita_sumcheck::EqFactoredSumcheckInstanceVerifierExt;
@@ -20,11 +21,11 @@ use akita_sumcheck::EqFactoredUniPoly;
 #[cfg(feature = "zk")]
 use akita_sumcheck::{ZkEqFactoredFinalRelation, ZkEqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
-use akita_transcript::Transcript;
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    absorb_interstage_claims, combine_polys, linear_combination, stage1_interstage_batch_weights,
-    stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
-    validate_stage1_tree_basis, AkitaStage1Proof, LevelParams, RingSliceSerializer,
+    combine_polys, linear_combination, stage1_interstage_batch_weights, stage1_leaf_coeffs,
+    stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
+    AkitaStage1Proof, LevelParams, RingSliceSerializer,
 };
 #[cfg(not(feature = "zk"))]
 use akita_types::{eval_poly, range_check_eval_from_s};
@@ -40,7 +41,7 @@ type Stage1VerifyOutput<E> = Vec<E>;
 /// # Errors
 ///
 /// Returns an error if sparse challenge sampling fails.
-pub fn derive_stage1_challenges<F, T, const D: usize>(
+pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     transcript: &mut T,
     v: &[CyclotomicRing<F, D>],
     num_blocks: usize,
@@ -181,6 +182,38 @@ impl<F: FieldCore + FromPrimitiveInt> ZkEqFactoredFinalRelation<F> for SingleSta
     }
 }
 
+#[cfg(feature = "zk")]
+fn hidden_ext_mask_lc<F, E>(start: usize) -> ZkR1csLinearCombination<E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let mut out = ZkR1csLinearCombination::zero();
+    for idx in 0..<E as ExtField<F>>::EXT_DEGREE {
+        let mut coeffs = vec![F::zero(); <E as ExtField<F>>::EXT_DEGREE];
+        coeffs[idx] = F::one();
+        out.add_scaled(
+            E::from_base_slice(&coeffs),
+            &ZkR1csLinearCombination::variable(
+                ZkR1csVariable::HiddenWitness(start + idx),
+                E::one(),
+            ),
+        );
+    }
+    out
+}
+
+#[cfg(feature = "zk")]
+fn hidden_ext_mask_lcs<F, E>(start: usize, count: usize) -> Vec<ZkR1csLinearCombination<E>>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    (0..count)
+        .map(|idx| hidden_ext_mask_lc::<F, E>(start + idx * <E as ExtField<F>>::EXT_DEGREE))
+        .collect()
+}
+
 struct ProductStageVerifier<E: FieldCore> {
     tau: Vec<E>,
     input_claim: E,
@@ -297,7 +330,11 @@ impl<E: FieldCore> ZkEqFactoredFinalRelation<E> for ProductStageVerifier<E> {
         //
         //   O * (claim_scale * current_eq_scalar) = final_scaled_claim.
         relations.push_r1cs(
-            "stage-1 product-stage final oracle",
+            if self.arity == 2 {
+                "stage-1 product-stage final oracle arity-2"
+            } else {
+                "stage-1 product-stage final oracle arity-4"
+            },
             output,
             ZkR1csLinearCombination::constant(claim_scale * round_state.current_scalar()),
             scaled_claim,
@@ -425,20 +462,39 @@ impl<E: FieldCore> AkitaStage1Verifier<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
+impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
     /// Verify the full stage-1 tree proof and return the final `r_stage1`.
     ///
     /// # Errors
     ///
     /// Returns an error if the staged proof shape is inconsistent with `b`, if
     /// any internal stage sumcheck fails, or if the final oracle check fails.
-    pub fn verify<T: Transcript<E>>(
+    pub fn verify<F, T>(
         &self,
         proof: &AkitaStage1Proof<E>,
         transcript: &mut T,
         #[cfg(feature = "zk")] relations: &mut ZkRelationAccumulator<E>,
         #[cfg(feature = "zk")] hiding_cursor: &mut usize,
-    ) -> Result<Stage1VerifyOutput<E>, AkitaError> {
+    ) -> Result<Stage1VerifyOutput<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: ExtField<F>,
+        T: Transcript<F>,
+    {
+        fn absorb_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
+        where
+            F: FieldCore + CanonicalField,
+            E: ExtField<F>,
+            T: Transcript<F>,
+        {
+            for claim in claims {
+                append_ext_field::<F, E, T>(
+                    transcript,
+                    labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
+                    claim,
+                );
+            }
+        }
         validate_stage1_tree_basis(self.b)?;
         let expected_stage_count = stage1_stage_count(self.b);
         if proof.stages.len() != expected_stage_count {
@@ -455,18 +511,18 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
             }
             let leaf_verifier = SingleStageVerifier::new(self.tau0.clone(), proof.s_claim, self.b);
             #[cfg(feature = "zk")]
-            return leaf_verifier.verify_zk::<E, _, _>(
+            return leaf_verifier.verify_zk::<F, T, _>(
                 &proof.stages[0].sumcheck_proof_masked,
                 transcript,
                 relations,
                 hiding_cursor,
-                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
             );
             #[cfg(not(feature = "zk"))]
-            return leaf_verifier.verify::<E, _, _>(
+            return leaf_verifier.verify::<F, T, _>(
                 &proof.stages[0].sumcheck_proof,
                 transcript,
-                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
             );
         }
 
@@ -499,18 +555,12 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
             #[cfg(feature = "zk")]
             let child_claim_masks = {
                 let round_mask_count = current_tau.len()
-                    * EqFactoredUniPoly::<E>::stored_coeff_count_for_degree(arity);
+                    * EqFactoredUniPoly::<E>::stored_coeff_count_for_degree(arity)
+                    * <E as ExtField<F>>::EXT_DEGREE;
                 let child_mask_start = (*hiding_cursor)
                     .checked_add(round_mask_count)
                     .ok_or(AkitaError::InvalidProof)?;
-                (0..expected_child_claims)
-                    .map(|idx| {
-                        ZkR1csLinearCombination::variable(
-                            ZkR1csVariable::HiddenWitness(child_mask_start + idx),
-                            E::one(),
-                        )
-                    })
-                    .collect::<Vec<_>>()
+                hidden_ext_mask_lcs::<F, E>(child_mask_start, expected_child_claims)
             };
             let product_verifier = ProductStageVerifier::new(
                 current_tau,
@@ -525,29 +575,32 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
             );
             #[cfg(feature = "zk")]
             {
-                let (next_tau, _stage_handoff_mask) = product_verifier.verify_zk::<E, _, _>(
+                let (next_tau, _stage_handoff_mask) = product_verifier.verify_zk::<F, T, _>(
                     &stage_proof.sumcheck_proof_masked,
                     transcript,
                     relations,
                     hiding_cursor,
-                    |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                    |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
                 )?;
                 current_tau = next_tau;
                 *hiding_cursor = (*hiding_cursor)
-                    .checked_add(expected_child_claims)
+                    .checked_add(expected_child_claims * <E as ExtField<F>>::EXT_DEGREE)
                     .ok_or(AkitaError::InvalidProof)?;
             }
             #[cfg(not(feature = "zk"))]
             {
-                current_tau = product_verifier.verify::<E, _, _>(
+                current_tau = product_verifier.verify::<F, T, _>(
                     &stage_proof.sumcheck_proof,
                     transcript,
-                    |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                    |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
                 )?;
             }
 
-            absorb_interstage_claims(&stage_proof.child_claims, transcript);
-            let gamma = transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH);
+            absorb_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
+            let gamma = sample_ext_challenge::<F, E, T>(
+                transcript,
+                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
+            );
             current_weights =
                 stage1_interstage_batch_weights(gamma, stage_proof.child_claims.len());
             current_claim = linear_combination(&current_weights, &stage_proof.child_claims);
@@ -577,18 +630,18 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
         );
         #[cfg(feature = "zk")]
         {
-            leaf_verifier.verify_zk::<E, _, _>(
+            leaf_verifier.verify_zk::<F, T, _>(
                 &leaf_stage_proof.sumcheck_proof_masked,
                 transcript,
                 relations,
                 hiding_cursor,
-                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
             )
         }
         #[cfg(not(feature = "zk"))]
         {
-            leaf_verifier.verify::<E, _, _>(&leaf_stage_proof.sumcheck_proof, transcript, |tr| {
-                tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            leaf_verifier.verify::<F, T, _>(&leaf_stage_proof.sumcheck_proof, transcript, |tr| {
+                sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
             })
         }
     }

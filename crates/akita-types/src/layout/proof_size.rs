@@ -1,6 +1,7 @@
 //! Header-stripped proof-size and planned-witness sizing formulas.
 
-use akita_field::CanonicalField;
+use akita_field::{AkitaError, CanonicalField};
+use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
 
 use crate::layout::digit_math::compute_num_digits_full_field;
 use crate::stage1_tree_stage_shapes;
@@ -49,6 +50,47 @@ fn eq_factored_round_mask_bytes(rounds: usize, degree: usize, elem_bytes: usize)
 #[cfg(feature = "zk")]
 fn full_round_mask_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * (degree + 1) * elem_bytes
+}
+
+/// Header-stripped byte size of an extension-opening reduction proof.
+///
+/// The reduction proof serializes `partials` challenge-field elements followed
+/// by a fixed degree-two sumcheck over `opening_vars - log2(extension_width)`
+/// rounds. `extension_width = 1` means the claim field is already the base
+/// field and contributes zero bytes.
+///
+/// # Errors
+///
+/// Returns an error when `extension_width` is not a power of two or when the
+/// tensor split is wider than the opened Boolean cube.
+pub fn extension_opening_reduction_proof_bytes(
+    challenge_field_bits: u32,
+    partials: usize,
+    opening_vars: usize,
+    extension_width: usize,
+) -> Result<usize, AkitaError> {
+    if extension_width <= 1 {
+        return Ok(0);
+    }
+    if !extension_width.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "extension opening width must be a power of two, got {extension_width}"
+        )));
+    }
+    let split_bits = extension_width.trailing_zeros() as usize;
+    if split_bits > opening_vars {
+        return Err(AkitaError::InvalidSetup(format!(
+            "extension opening split ({split_bits}) exceeds opening variables ({opening_vars})"
+        )));
+    }
+    let elem_bytes = field_bytes(challenge_field_bits);
+    Ok(partials
+        .saturating_mul(elem_bytes)
+        .saturating_add(sumcheck_bytes(
+            opening_vars - split_bits,
+            EXTENSION_OPENING_REDUCTION_DEGREE,
+            elem_bytes,
+        )))
 }
 
 fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
@@ -114,23 +156,33 @@ pub fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
 }
 
 /// Header-stripped byte size of one folded proof level.
+///
+/// Ring-valued objects (`y`, `v`, and the next witness commitment) serialize
+/// over the base SIS field. Sumcheck objects and scalar evaluations serialize
+/// over the challenge field, which may be a non-trivial extension of the base
+/// field for small-prime configurations.
 pub fn level_proof_bytes(
-    field_bits: u32,
+    base_field_bits: u32,
+    challenge_field_bits: u32,
     lp: &LevelParams,
     level_lp: &LevelParams,
     next_lp: &LevelParams,
     next_w_len: usize,
     num_claims: usize,
 ) -> usize {
-    let elem_bytes = field_bytes(field_bits);
-    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, elem_bytes);
-    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, elem_bytes);
-    let next_commit_bytes =
-        proof_ring_vec_bytes(next_lp.b_key.row_len(), next_lp.ring_dimension, elem_bytes);
-    let next_eval_bytes = elem_bytes;
+    let base_elem_bytes = field_bytes(base_field_bits);
+    let challenge_elem_bytes = field_bytes(challenge_field_bits);
+    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, base_elem_bytes);
+    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
+    let next_commit_bytes = proof_ring_vec_bytes(
+        next_lp.b_key.row_len(),
+        next_lp.ring_dimension,
+        base_elem_bytes,
+    );
+    let next_eval_bytes = challenge_elem_bytes;
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
     let b = 1usize << level_lp.log_basis;
-    let stage1_bytes = stage1_proof_bytes(rounds, b, elem_bytes);
+    let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
 
     y_bytes
         + v_bytes
@@ -138,11 +190,11 @@ pub fn level_proof_bytes(
         + {
             #[cfg(feature = "zk")]
             {
-                full_round_mask_bytes(rounds, 3, elem_bytes)
+                full_round_mask_bytes(rounds, 3, challenge_elem_bytes)
             }
             #[cfg(not(feature = "zk"))]
             {
-                sumcheck_bytes(rounds, 3, elem_bytes)
+                sumcheck_bytes(rounds, 3, challenge_elem_bytes)
             }
         }
         + next_commit_bytes

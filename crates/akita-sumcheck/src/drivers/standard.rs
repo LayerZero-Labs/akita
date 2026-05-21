@@ -7,6 +7,8 @@ use crate::types::{FullUniPoly, SumcheckProofMasked};
 #[cfg(feature = "zk")]
 use akita_algebra::uni_poly::UniPoly;
 use akita_field::AkitaError;
+#[cfg(feature = "zk")]
+use akita_field::ExtField;
 use akita_field::{CanonicalField, FieldCore};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
@@ -35,6 +37,21 @@ pub trait ZkSumcheckFinalRelation<E: FieldCore>: SumcheckInstanceVerifier<E> {
         _relations: &mut ZkRelationAccumulator<E>,
     ) -> Result<ZkR1csLinearCombination<E>, AkitaError> {
         Ok(ZkR1csLinearCombination::zero())
+    }
+
+    /// Record the semantic relation for a masked input claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the implementation cannot record its handoff rows.
+    fn record_input_relation(
+        &self,
+        _masked_input_claim: E,
+        _masked_round_sum: E,
+        _round_sum_mask: &ZkR1csLinearCombination<E>,
+        _relations: &mut ZkRelationAccumulator<E>,
+    ) -> Result<(), AkitaError> {
+        Ok(())
     }
 
     /// Record the instance-specific final check as deferred relations.
@@ -281,6 +298,36 @@ where
     fn prove_zk<F, T, S>(
         &mut self,
         transcript: &mut T,
+        sample_challenge: S,
+        pre_sampled_pads: Vec<FullUniPoly<E>>,
+    ) -> Result<MaskedProveOutput<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+        E: AkitaSerialize,
+        S: FnMut(&mut T) -> E,
+    {
+        self.prove_zk_with_public_claim::<F, T, S>(
+            self.input_claim(),
+            transcript,
+            sample_challenge,
+            pre_sampled_pads,
+        )
+    }
+
+    /// Prove with a transcript-visible masked input claim while retaining the
+    /// instance's private true input claim for round-polynomial construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if pad shape is invalid or a round exceeds the degree
+    /// bound.
+    #[tracing::instrument(skip_all, name = "prove_zk_sumcheck_public_claim")]
+    #[inline(never)]
+    fn prove_zk_with_public_claim<F, T, S>(
+        &mut self,
+        public_input_claim: E,
+        transcript: &mut T,
         mut sample_challenge: S,
         pre_sampled_pads: Vec<FullUniPoly<E>>,
     ) -> Result<MaskedProveOutput<E>, AkitaError>
@@ -298,7 +345,7 @@ where
             });
         }
         let mut claim = self.input_claim();
-        transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+        transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &public_input_claim);
 
         let degree_bound = self.degree_bound();
         let mut masked_round_polys = Vec::with_capacity(num_rounds);
@@ -306,7 +353,6 @@ where
 
         for (round, pad_poly) in pre_sampled_pads.into_iter().enumerate() {
             let g = self.compute_round_univariate(round, claim);
-
             let compressed = g.compress();
             if compressed.degree() > degree_bound {
                 return Err(AkitaError::InvalidInput(format!(
@@ -316,7 +362,6 @@ where
                 )));
             }
             let masked_poly = mask_full_poly(&g, pad_poly, degree_bound)?;
-
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &masked_poly);
             let r_i = sample_challenge(transcript);
             r.push(r_i);
@@ -365,7 +410,7 @@ where
     where
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
-        E: AkitaSerialize,
+        E: AkitaSerialize + ExtField<F>,
         S: FnMut(&mut T) -> E,
     {
         let num_rounds = self.num_rounds();
@@ -398,7 +443,9 @@ where
             } else {
                 "masked sumcheck round chain"
             };
-            let next_claim_mask = relations.push_masked_full_round_relation(
+            let masked_round_sum =
+                masked_poly.evaluate(&E::zero()) + masked_poly.evaluate(&E::one());
+            let (next_claim_mask, round_sum_mask) = relations.push_masked_full_round_relation::<F>(
                 description,
                 masked_claim_handle,
                 &claim_mask,
@@ -406,6 +453,14 @@ where
                 r_i,
                 hiding_cursor,
             );
+            if round == 0 {
+                self.record_input_relation(
+                    initial_claim,
+                    masked_round_sum,
+                    &round_sum_mask,
+                    relations,
+                )?;
+            }
             masked_claim_handle = masked_poly.evaluate(&r_i);
             claim_mask = next_claim_mask;
         }

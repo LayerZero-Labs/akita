@@ -1,6 +1,6 @@
 //! Deferred R1CS relations used by Akita ZK plain-opening checks.
 
-use akita_field::{AkitaError, FieldCore};
+use akita_field::{AkitaError, ExtField, FieldCore};
 
 /// A witness cursor referenced by a deferred R1CS row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,10 +142,238 @@ fn add_scaled_lc<E: FieldCore>(
     target.add_scaled(scale, source);
 }
 
-fn zk_hiding_lc<E: FieldCore>(hiding_cursor: &mut usize) -> ZkR1csLinearCombination<E> {
+/// Consume one hiding-witness slot as a linear combination over `E`.
+pub fn zk_base_mask_lc<E: FieldCore>(hiding_cursor: &mut usize) -> ZkR1csLinearCombination<E> {
     let variable = ZkR1csVariable::HiddenWitness(*hiding_cursor);
     *hiding_cursor += 1;
     ZkR1csLinearCombination::variable(variable, E::one())
+}
+
+/// Consume `E::EXT_DEGREE` hiding-witness slots as one extension-field mask.
+pub fn zk_ext_mask_lc<F, E>(hiding_cursor: &mut usize) -> ZkR1csLinearCombination<E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let mask = zk_ext_mask_lc_at::<F, E>(*hiding_cursor);
+    *hiding_cursor += <E as ExtField<F>>::EXT_DEGREE;
+    mask
+}
+
+/// Build an extension-field mask from hiding-witness slots starting at `start`.
+pub fn zk_ext_mask_lc_at<F, E>(start: usize) -> ZkR1csLinearCombination<E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let mut out = ZkR1csLinearCombination::zero();
+    for idx in 0..<E as ExtField<F>>::EXT_DEGREE {
+        let mut coeffs = vec![F::zero(); <E as ExtField<F>>::EXT_DEGREE];
+        coeffs[idx] = F::one();
+        out.add_scaled(
+            E::from_base_slice(&coeffs),
+            &ZkR1csLinearCombination::variable(
+                ZkR1csVariable::HiddenWitness(start + idx),
+                E::one(),
+            ),
+        );
+    }
+    out
+}
+
+/// Consume `count` base-field hiding-witness slots as linear combinations.
+pub fn zk_base_mask_lcs<E: FieldCore>(
+    count: usize,
+    hiding_cursor: &mut usize,
+) -> Vec<ZkR1csLinearCombination<E>> {
+    (0..count)
+        .map(|_| zk_base_mask_lc::<E>(hiding_cursor))
+        .collect()
+}
+
+/// Lift a base-field hiding witness into the verifier's relation field.
+pub fn lift_hiding_witness<F, E>(hiding_witness: &[F]) -> Vec<E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    hiding_witness.iter().copied().map(E::lift_base).collect()
+}
+
+/// Transpose extension-field column masks into row-basis masks.
+///
+/// If `column_masks[v]` masks an extension scalar decomposed in the fixed
+/// `F`-basis of `E`, the returned row `u` is
+/// `sum_v coeff_{u,v} * column_masks[v]`.
+///
+/// # Errors
+///
+/// Returns an error if `[E:F]` is zero, not a power of two, or the column count
+/// does not match `[E:F]`.
+pub fn zk_row_masks_from_column_masks<F, E>(
+    column_masks: &[ZkR1csLinearCombination<E>],
+) -> Result<Vec<ZkR1csLinearCombination<E>>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let width = <E as ExtField<F>>::EXT_DEGREE;
+    if width == 0 || !width.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(format!(
+            "extension-opening tensor reduction requires power-of-two extension degree, got {width}"
+        )));
+    }
+    if column_masks.len() != width {
+        return Err(AkitaError::InvalidSize {
+            expected: width,
+            actual: column_masks.len(),
+        });
+    }
+
+    let mut row_masks = vec![ZkR1csLinearCombination::zero(); width];
+    for (col_idx, col_mask) in column_masks.iter().enumerate() {
+        let mut basis = vec![E::zero(); width];
+        basis[col_idx] = E::one();
+        let row_coeffs = transpose_extension_columns::<F, E>(&basis)?;
+        for (row_mask, coeff) in row_masks.iter_mut().zip(row_coeffs) {
+            row_mask.add_scaled(coeff, col_mask);
+        }
+    }
+    Ok(row_masks)
+}
+
+fn transpose_extension_columns<F, E>(column_partials: &[E]) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let width = <E as ExtField<F>>::EXT_DEGREE;
+    if column_partials.len() != width {
+        return Err(AkitaError::InvalidSize {
+            expected: width,
+            actual: column_partials.len(),
+        });
+    }
+
+    let mut rows = vec![vec![F::zero(); width]; width];
+    for (column, partial) in column_partials.iter().enumerate() {
+        let coords = partial.to_base_vec();
+        if coords.len() != width {
+            return Err(AkitaError::InvalidSize {
+                expected: width,
+                actual: coords.len(),
+            });
+        }
+        for (row, coord) in coords.into_iter().enumerate() {
+            rows[row][column] = coord;
+        }
+    }
+    Ok(rows
+        .into_iter()
+        .map(|coords| E::from_base_slice(&coords))
+        .collect())
+}
+
+/// Return a masked linear value with base masks subtracted symbolically.
+///
+/// This represents `masked_value - sum_i mask_coeffs[i] * masks[i]`.
+///
+/// # Errors
+///
+/// Returns an error if the mask and coefficient slices have different lengths.
+pub fn zk_masked_linear_value_lc<E>(
+    masked_value: E,
+    masks: &[ZkR1csLinearCombination<E>],
+    mask_coeffs: &[E],
+) -> Result<ZkR1csLinearCombination<E>, AkitaError>
+where
+    E: FieldCore,
+{
+    if masks.len() != mask_coeffs.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: mask_coeffs.len(),
+            actual: masks.len(),
+        });
+    }
+    let mut value = ZkR1csLinearCombination::constant(masked_value);
+    for (mask, &mask_coeff) in masks.iter().zip(mask_coeffs) {
+        value.add_scaled(-mask_coeff, mask);
+    }
+    Ok(value)
+}
+
+fn eq_evals<E: FieldCore>(point: &[E]) -> Result<Vec<E>, AkitaError> {
+    let size = 1usize
+        .checked_shl(point.len() as u32)
+        .ok_or_else(|| AkitaError::InvalidInput("eq table length overflow".to_string()))?;
+    let mut evals = vec![E::zero(); size];
+    evals[0] = E::one();
+    let mut len = 1usize;
+    for &t in point.iter().rev() {
+        let one_minus_t = E::one() - t;
+        for j in (0..len).rev() {
+            evals[2 * j + 1] = evals[j] * t;
+            evals[2 * j] = evals[j] * one_minus_t;
+        }
+        len *= 2;
+    }
+    Ok(evals)
+}
+
+/// Combine per-coefficient `y` masks into the stage-2 relation-claim mask.
+///
+/// # Errors
+///
+/// Returns an error if the equality table or mask indexing would overflow, or
+/// if `y_masks` does not contain `y_count * D` masks.
+pub fn zk_relation_claim_mask_from_y_masks<E, const D: usize>(
+    tau1: &[E],
+    alpha: E,
+    y_count: usize,
+    y_masks: &[ZkR1csLinearCombination<E>],
+) -> Result<ZkR1csLinearCombination<E>, AkitaError>
+where
+    E: FieldCore,
+{
+    let expected_masks = y_count.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
+    if y_masks.len() != expected_masks {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_masks,
+            actual: y_masks.len(),
+        });
+    }
+
+    let eq_tau1 = eq_evals(tau1)?;
+    let mut alpha_pows = Vec::with_capacity(D);
+    let mut alpha_power = E::one();
+    for _ in 0..D {
+        alpha_pows.push(alpha_power);
+        alpha_power *= alpha;
+    }
+
+    let mut out = ZkR1csLinearCombination::zero();
+    for y_idx in 0..y_count {
+        let row_coeff = eq_tau1.get(1 + y_idx).copied().unwrap_or_else(E::zero);
+        for coeff_idx in 0..D {
+            let coeff = row_coeff * alpha_pows[coeff_idx];
+            out.add_scaled(coeff, &y_masks[y_idx * D + coeff_idx]);
+        }
+    }
+    Ok(out)
+}
+
+/// Push a linear zero relation `residual = 0`.
+pub fn zk_push_linear_zero<E: FieldCore>(
+    relations: &mut ZkRelationAccumulator<E>,
+    description: &'static str,
+    residual: ZkR1csLinearCombination<E>,
+) {
+    relations.push_r1cs(
+        description,
+        residual,
+        ZkR1csLinearCombination::one(),
+        ZkR1csLinearCombination::zero(),
+    );
 }
 
 /// Accumulates ZK plain-opening R1CS rows for one verifier level.
@@ -244,7 +472,8 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
 
     /// Record one masked standard sumcheck round relation.
     #[doc(hidden)]
-    pub fn push_masked_full_round_relation(
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_masked_full_round_relation<F>(
         &mut self,
         description: &'static str,
         previous_masked_claim: E,
@@ -252,7 +481,11 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         public_coeffs: &[E],
         r_round: E,
         hiding_cursor: &mut usize,
-    ) -> ZkR1csLinearCombination<E> {
+    ) -> (ZkR1csLinearCombination<E>, ZkR1csLinearCombination<E>)
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
         // Current round message:
         //
         //   G~_i(X) = G_i(X) + rho_i(X)
@@ -262,7 +495,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         // `hiding_witness`, and this verifier cursor points at those slots.
         let mut mask_coeffs = Vec::with_capacity(public_coeffs.len());
         for &_public_coeff in public_coeffs {
-            let mask_coeff = zk_hiding_lc(hiding_cursor);
+            let mask_coeff = zk_ext_mask_lc::<F, E>(hiding_cursor);
             mask_coeffs.push(mask_coeff);
         }
 
@@ -312,7 +545,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
             r_power *= r_round;
         }
 
-        next_mask
+        (next_mask, round_sum_mask)
     }
 
     /// Record one masked eq-factored sumcheck round relation.
@@ -329,7 +562,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
     /// `C~_i = previous_coeff * C~_{i-1} + sum_j coeff_j * q~_j`.
     #[doc(hidden)]
     #[allow(clippy::too_many_arguments)]
-    pub fn push_masked_eq_factored_round_relation(
+    pub fn push_masked_eq_factored_round_relation<F>(
         &mut self,
         previous_masked_claim: E,
         previous_mask: &ZkR1csLinearCombination<E>,
@@ -339,7 +572,11 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         public_coeffs_except_linear: &[E],
         transition_coeffs: &[E],
         hiding_cursor: &mut usize,
-    ) -> Result<(ZkR1csLinearCombination<E>, ZkR1csLinearCombination<E>), AkitaError> {
+    ) -> Result<(ZkR1csLinearCombination<E>, ZkR1csLinearCombination<E>), AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
         // The mask part follows the identical transition:
         //
         //   eta_i = previous_coeff * eta_{i-1} + sum_j coeff_j * rho_j.
@@ -361,7 +598,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
             .zip(transition_coeffs.iter())
             .enumerate()
         {
-            let mask_coeff = zk_hiding_lc(hiding_cursor);
+            let mask_coeff = zk_ext_mask_lc::<F, E>(hiding_cursor);
             add_scaled_lc(&mut next_mask_transition, transition_coeff, &mask_coeff);
             let known_weight = if idx == 0 {
                 E::one()
@@ -430,7 +667,9 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
                     };
                     if a_value * b_value != c_value {
                         tracing::error!(description, "deferred ZK plain-opening relation failed");
-                        return Err(AkitaError::InvalidProof);
+                        return Err(AkitaError::InvalidInput(format!(
+                            "deferred ZK relation failed: {description}"
+                        )));
                     }
                 }
                 ZkR1csRelation::GenerateAuxiliary {
@@ -467,30 +706,17 @@ mod tests {
     type F = Prime128Offset275;
 
     #[test]
-    fn r1cs_equality_relation_accepts_matching_scalars() {
-        let mut relations = ZkRelationAccumulator::<F>::new();
-        relations.push_r1cs(
-            "test equality",
-            ZkR1csLinearCombination::constant(F::zero()),
-            ZkR1csLinearCombination::one(),
-            ZkR1csLinearCombination::zero(),
-        );
-
-        relations.verify_all(&[]).expect("matching R1CS row");
-    }
-
-    #[test]
     fn r1cs_relation_checks_hiding_witness_terms() {
         let mut relations = ZkRelationAccumulator::<F>::new();
         relations.push_r1cs(
-            "test square",
+            "test product",
             ZkR1csLinearCombination::variable(ZkR1csVariable::HiddenWitness(0), F::one()),
-            ZkR1csLinearCombination::variable(ZkR1csVariable::HiddenWitness(0), F::one()),
-            ZkR1csLinearCombination::constant(F::from_u64(9)),
+            ZkR1csLinearCombination::variable(ZkR1csVariable::HiddenWitness(1), F::one()),
+            ZkR1csLinearCombination::constant(F::from_u64(12)),
         );
 
         relations
-            .verify_all(&[F::from_u64(3)])
+            .verify_all(&[F::from_u64(3), F::from_u64(4)])
             .expect("valid hiding-backed R1CS row");
     }
 }
