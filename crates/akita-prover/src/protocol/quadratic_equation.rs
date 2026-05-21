@@ -9,11 +9,12 @@ use crate::kernels::linear::{
 };
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
-use crate::{AkitaPolyOps, DecomposeFoldWitness, RecursiveWitnessView};
+use crate::{AkitaPolyOps, CenteredCoeff, DecomposeFoldWitness, RecursiveWitnessView};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{
     sample_folding_challenges, stage1_fold_challenge_labels, FoldingChallenges, IntegerChallenge,
+    TensorChallenges,
 };
 use akita_field::parallel::*;
 use akita_field::AkitaError;
@@ -131,6 +132,71 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
         centered_coeffs,
         centered_inf_norm,
     })
+}
+
+fn select_fold_challenges_for_claims(
+    challenges: &FoldingChallenges,
+    claim_indices: &[usize],
+    num_blocks: usize,
+) -> Result<FoldingChallenges, AkitaError> {
+    match challenges {
+        FoldingChallenges::Flat(flat) => {
+            let mut selected = Vec::with_capacity(claim_indices.len() * num_blocks);
+            for &claim_idx in claim_indices {
+                let start = claim_idx.checked_mul(num_blocks).ok_or_else(|| {
+                    AkitaError::InvalidSetup("flat challenge offset overflow".to_string())
+                })?;
+                let end = start.checked_add(num_blocks).ok_or_else(|| {
+                    AkitaError::InvalidSetup("flat challenge offset overflow".to_string())
+                })?;
+                selected.extend_from_slice(flat.get(start..end).ok_or(
+                    AkitaError::InvalidSize {
+                        expected: end,
+                        actual: flat.len(),
+                    },
+                )?);
+            }
+            Ok(FoldingChallenges::Flat(selected))
+        }
+        FoldingChallenges::Tensor(tensor) => {
+            let mut left = Vec::with_capacity(claim_indices.len() * tensor.left_len);
+            let mut right = Vec::with_capacity(claim_indices.len() * tensor.right_len);
+            for &claim_idx in claim_indices {
+                let left_start = claim_idx.checked_mul(tensor.left_len).ok_or_else(|| {
+                    AkitaError::InvalidSetup("tensor-left challenge offset overflow".to_string())
+                })?;
+                let left_end = left_start.checked_add(tensor.left_len).ok_or_else(|| {
+                    AkitaError::InvalidSetup("tensor-left challenge offset overflow".to_string())
+                })?;
+                left.extend_from_slice(tensor.left.get(left_start..left_end).ok_or(
+                    AkitaError::InvalidSize {
+                        expected: left_end,
+                        actual: tensor.left.len(),
+                    },
+                )?);
+
+                let right_start = claim_idx.checked_mul(tensor.right_len).ok_or_else(|| {
+                    AkitaError::InvalidSetup("tensor-right challenge offset overflow".to_string())
+                })?;
+                let right_end = right_start.checked_add(tensor.right_len).ok_or_else(|| {
+                    AkitaError::InvalidSetup("tensor-right challenge offset overflow".to_string())
+                })?;
+                right.extend_from_slice(tensor.right.get(right_start..right_end).ok_or(
+                    AkitaError::InvalidSize {
+                        expected: right_end,
+                        actual: tensor.right.len(),
+                    },
+                )?);
+            }
+            Ok(FoldingChallenges::Tensor(TensorChallenges {
+                left,
+                right,
+                left_len: tensor.left_len,
+                right_len: tensor.right_len,
+                num_claims: claim_indices.len(),
+            }))
+        }
+    }
 }
 
 /// Stage-1 quadratic equation state for the Akita protocol.
@@ -469,45 +535,41 @@ where
             &lp.fold_challenge_shape,
             stage1_fold_challenge_labels(),
         )?;
-        let integer_challenges = stage1_challenges.expand_integer::<D>()?;
-
         let z_pre = {
             let num_points = opening_points.len();
             let _span =
                 tracing::info_span!("compute_batched_z_pre", num_points = num_points).entered();
             let mut polys_by_point: Vec<Vec<&P>> = vec![Vec::new(); num_points];
-            let mut challenges_by_point: Vec<Vec<IntegerChallenge>> = vec![Vec::new(); num_points];
+            let mut claims_by_point: Vec<Vec<usize>> = vec![Vec::new(); num_points];
             for (claim_idx, poly) in polys.iter().enumerate() {
                 let point_idx = claim_to_point[claim_idx];
                 polys_by_point[point_idx].push(*poly);
-                let challenge_offset = claim_idx.checked_mul(lp.num_blocks).ok_or_else(|| {
-                    AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
-                })?;
-                let next_offset = challenge_offset.checked_add(lp.num_blocks).ok_or_else(|| {
-                    AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
-                })?;
-                challenges_by_point[point_idx]
-                    .extend_from_slice(&integer_challenges[challenge_offset..next_offset]);
+                claims_by_point[point_idx].push(claim_idx);
             }
 
             let mut z_pre = Vec::new();
             let mut centered_coeffs = Vec::new();
-            let mut centered_inf_norm = 0u32;
+            let mut centered_inf_norm = 0u64;
             for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
-                let point_challenges = &challenges_by_point[point_idx];
                 let point_claim_count = point_polys.len();
-                let witness = if let Some(z_point) = P::decompose_fold_batched(
+                let point_challenges = select_fold_challenges_for_claims(
+                    &stage1_challenges,
+                    &claims_by_point[point_idx],
+                    lp.num_blocks,
+                )?;
+                let witness = if let Some(z_point) = P::decompose_fold_tensor_batched(
                     point_polys,
-                    point_challenges,
+                    &point_challenges,
                     lp.block_len,
                     lp.num_digits_commit,
                     lp.log_basis,
-                ) {
+                )? {
                     z_point
                 } else {
+                    let integer_challenges = point_challenges.expand_integer::<D>()?;
                     let witnesses: Vec<DecomposeFoldWitness<F, D>> = point_polys
                         .iter()
-                        .zip(point_challenges.chunks(lp.num_blocks))
+                        .zip(integer_challenges.chunks(lp.num_blocks))
                         .map(|(poly, poly_challenges)| {
                             poly.decompose_fold(
                                 poly_challenges,
@@ -531,6 +593,7 @@ where
                 centered_inf_norm,
             }
         };
+        let integer_challenges = stage1_challenges.expand_integer::<D>()?;
 
         let commitment_rows: Vec<CyclotomicRing<F, D>> = commitments
             .iter()
@@ -695,8 +758,6 @@ where
             &lp.fold_challenge_shape,
             stage1_fold_challenge_labels(),
         )?;
-        let integer_challenges = stage1_challenges.expand_integer::<D>()?;
-
         let z_pre = {
             let _span = tracing::info_span!(
                 "compute_recursive_multipoint_z_pre",
@@ -705,25 +766,32 @@ where
             .entered();
             let mut z_pre = Vec::new();
             let mut centered_coeffs = Vec::new();
-            let mut centered_inf_norm = 0u32;
+            let mut centered_inf_norm = 0u64;
             for claim_idx in 0..num_claims {
-                let challenge_offset = claim_idx.checked_mul(lp.num_blocks).ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "recursive multipoint challenge offset overflow".into(),
-                    )
-                })?;
-                let next_offset = challenge_offset.checked_add(lp.num_blocks).ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "recursive multipoint challenge offset overflow".into(),
-                    )
-                })?;
-                let witness_part = witness.decompose_fold(
-                    &integer_challenges[challenge_offset..next_offset],
-                    lp.block_len,
+                let claim_challenges = select_fold_challenges_for_claims(
+                    &stage1_challenges,
+                    &[claim_idx],
                     lp.num_blocks,
-                    lp.num_digits_commit,
-                    lp.log_basis,
-                );
+                )?;
+                let witness_part = if let Some(witness_part) = witness
+                    .decompose_fold_tensor_batched(
+                        &claim_challenges,
+                        lp.block_len,
+                        lp.num_blocks,
+                        lp.num_digits_commit,
+                        lp.log_basis,
+                    )? {
+                    witness_part
+                } else {
+                    let integer_challenges = claim_challenges.expand_integer::<D>()?;
+                    witness.decompose_fold(
+                        &integer_challenges,
+                        lp.block_len,
+                        lp.num_blocks,
+                        lp.num_digits_commit,
+                        lp.log_basis,
+                    )
+                };
                 let witness_part = validate_decompose_fold(witness_part, &lp, 1)?;
                 centered_inf_norm = centered_inf_norm.max(witness_part.centered_inf_norm);
                 z_pre.extend(witness_part.z_pre);
@@ -735,6 +803,7 @@ where
                 centered_inf_norm,
             }
         };
+        let integer_challenges = stage1_challenges.expand_integer::<D>()?;
 
         let (y_v_slice, n_d_active) = match m_row_layout {
             MRowLayout::Intermediate => (v.as_slice(), lp.d_key.row_len()),
@@ -852,14 +921,14 @@ where
     }
 
     /// Get centered coefficients for each `z_pre` row (prover only).
-    pub fn z_pre_centered(&self) -> Option<&[[i32; D]]> {
+    pub fn z_pre_centered(&self) -> Option<&[[CenteredCoeff; D]]> {
         self.z_pre
             .as_ref()
             .map(|witness| witness.centered_coeffs.as_slice())
     }
 
     /// Get `||z_pre||_inf` from the centered witness representation.
-    pub fn z_pre_centered_inf_norm(&self) -> Option<u32> {
+    pub fn z_pre_centered_inf_norm(&self) -> Option<u64> {
         self.z_pre.as_ref().map(|witness| witness.centered_inf_norm)
     }
 
@@ -1046,15 +1115,15 @@ fn ring_is_constant<F: FieldCore, const D: usize>(ring: &CyclotomicRing<F, D>) -
     ring.coefficients()[1..].iter().all(|coeff| coeff.is_zero())
 }
 
-fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
-    coeffs: &[i32; D],
+fn centered_coeff_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
+    coeffs: &[CenteredCoeff; D],
 ) -> CyclotomicRing<F, D> {
-    CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx] as i64)))
+    CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx])))
 }
 
 fn cyclic_consistency_z_product<F, const D: usize>(
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
-    z_pre_centered: &[[i32; D]],
+    z_pre_centered: &[[CenteredCoeff; D]],
     block_len: usize,
     depth_commit: usize,
     log_basis: u32,
@@ -1096,7 +1165,7 @@ where
             let mut z_block = CyclotomicRing::<F, D>::zero();
             for (digit_idx, &g) in g_commit.iter().enumerate() {
                 let z_idx = point_idx * inner_width + block_idx * depth_commit + digit_idx;
-                z_block += centered_i32_ring::<F, D>(&z_pre_centered[z_idx]).scale(&g);
+                z_block += centered_coeff_ring::<F, D>(&z_pre_centered[z_idx]).scale(&g);
             }
             if let Some(scalar) = opening_point.a_constant_coeff(block_idx) {
                 add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
@@ -1251,8 +1320,8 @@ pub fn compute_r_split_eq<F, const D: usize>(
     claim_to_point_poly: &[usize],
     claim_poly_indices: &[usize],
     row_coefficient_rings: &[CyclotomicRing<F, D>],
-    z_pre_centered: &[[i32; D]],
-    z_pre_centered_inf_norm: u32,
+    z_pre_centered: &[[CenteredCoeff; D]],
+    z_pre_centered_inf_norm: u64,
     y: &[CyclotomicRing<F, D>],
     num_polys_per_point: &[usize],
     num_public_outputs: usize,

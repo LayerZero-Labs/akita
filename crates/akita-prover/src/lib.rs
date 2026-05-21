@@ -10,7 +10,7 @@ pub mod kernels;
 pub mod protocol;
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::IntegerChallenge;
+use akita_challenges::{IntegerChallenge, TensorChallenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
@@ -68,15 +68,20 @@ impl<'a, P, C, H> CommittedPolynomials<'a, P, C, H> {
 pub type ProverClaims<'a, F, P, C, H> =
     Vec<(OpeningPoints<'a, F>, CommittedPolynomials<'a, P, C, H>)>;
 
+/// Centered integer coefficient type for folded witnesses.
+pub type CenteredCoeff = i64;
+/// Infinity norm type for centered folded coefficients.
+pub type CenteredInfNorm = u64;
+
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
     /// Folded witness rows in ring form.
     pub z_pre: Vec<CyclotomicRing<F, D>>,
     /// Centered integer coefficients for each `z_pre` row.
-    pub centered_coeffs: Vec<[i32; D]>,
+    pub centered_coeffs: Vec<[CenteredCoeff; D]>,
     /// Infinity norm of `centered_coeffs`.
-    pub centered_inf_norm: u32,
+    pub centered_inf_norm: CenteredInfNorm,
 }
 
 /// Prover-side output of the inner Ajtai commit step.
@@ -462,6 +467,18 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         None
     }
 
+    /// Optional fused batched variant that can consume tensor-shaped fold
+    /// challenges without first materialising every logical block challenge.
+    fn decompose_fold_tensor_batched(
+        _polys: &[&Self],
+        _challenges: &TensorChallenges,
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        Ok(None)
+    }
+
     /// Inner Ajtai commit step.
     ///
     /// # Errors
@@ -672,6 +689,17 @@ where
     ) -> Option<DecomposeFoldWitness<F, D>> {
         let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
         P::decompose_fold_batched(&inner_refs, challenges, block_len, num_digits, log_basis)
+    }
+
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        challenges: &TensorChallenges,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
+        P::decompose_fold_tensor_batched(&inner_refs, challenges, block_len, num_digits, log_basis)
     }
 
     fn commit_inner(
