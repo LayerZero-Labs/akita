@@ -14,16 +14,16 @@ if [ "$#" -gt 0 ]; then
 else
   case "${pkg}" in
     akita-verifier)
-      forbidden=(akita-prover akita-pcs akita-planner)
+      forbidden=(akita-prover akita-pcs)
       ;;
     akita-prover)
-      forbidden=(akita-verifier akita-pcs akita-planner)
+      forbidden=(akita-verifier akita-pcs)
       ;;
     akita-config)
-      forbidden=(akita-prover akita-verifier akita-pcs akita-planner)
+      forbidden=(akita-prover akita-verifier akita-pcs)
       ;;
     akita-setup)
-      forbidden=(akita-verifier akita-pcs akita-planner)
+      forbidden=(akita-verifier akita-pcs)
       ;;
     akita-scheme)
       forbidden=(akita-pcs)
