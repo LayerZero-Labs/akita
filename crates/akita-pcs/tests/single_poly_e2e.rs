@@ -330,8 +330,13 @@ fn single_onehot_oversized_setup_20_15() {
 // ---------------------------------------------------------------------------
 // Tensor-shaped fold: hand-built activation via a test-only Cfg that mutates
 // the production schedule's root step to TensorChallengeShape::Tensor.
+// Gated on `planner` because the test cfg's `PlannerConfig` impl delegates
+// through `OneHotCfg`'s `PlannerConfig`, which only exists under that
+// feature; without it the `--no-default-features` build can't resolve the
+// trait.
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "planner")]
 mod tensor_fold {
     use super::*;
     use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
