@@ -100,6 +100,31 @@ impl<const P: u32> PackedFp32Avx512<P> {
             _mm512_mul_epu32(x, c_vec)
         }
     }
+
+    #[inline(always)]
+    unsafe fn mul_mersenne31_vec(a: __m512i, b: __m512i) -> __m512i {
+        unsafe {
+            const EVENS: __mmask16 = 0b0101_0101_0101_0101;
+            const ODDS: __mmask16 = 0b1010_1010_1010_1010;
+
+            let lhs_evn_dbl = _mm512_add_epi32(a, a);
+            let rhs_odd = movehdup_epi32_512(b);
+            let lhs_odd_dbl = _mm512_srli_epi64::<31>(a);
+
+            let prod_odd_dbl = _mm512_mul_epu32(lhs_odd_dbl, rhs_odd);
+            let prod_evn_dbl = _mm512_mul_epu32(lhs_evn_dbl, b);
+
+            let prod_lo_dbl =
+                _mm512_mask_blend_epi32(ODDS, prod_evn_dbl, moveldup_epi32_512(prod_odd_dbl));
+            let prod_hi =
+                _mm512_mask_blend_epi32(EVENS, prod_odd_dbl, movehdup_epi32_512(prod_evn_dbl));
+            let prod_lo = _mm512_srli_epi32::<1>(prod_lo_dbl);
+
+            let p = _mm512_set1_epi32(P as i32);
+            let folded = _mm512_add_epi32(prod_lo, prod_hi);
+            _mm512_min_epu32(folded, _mm512_sub_epi32(folded, p))
+        }
+    }
 }
 
 impl<const P: u32> Default for PackedFp32Avx512<P> {
@@ -184,6 +209,10 @@ impl<const P: u32> Mul for PackedFp32Avx512<P> {
         unsafe {
             let a = self.to_vec();
             let b = rhs.to_vec();
+
+            if Self::BITS == 31 && Self::C == 1 {
+                return Self::from_vec(Self::mul_mersenne31_vec(a, b));
+            }
 
             let prod_evn = _mm512_mul_epu32(a, b);
             let a_odd = movehdup_epi32_512(a);

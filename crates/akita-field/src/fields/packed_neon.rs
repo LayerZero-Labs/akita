@@ -7,8 +7,9 @@ use crate::Invertible;
 use core::arch::aarch64::{
     uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u32, vandq_u64, vbslq_u64,
     vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64, vdupq_n_u32, vdupq_n_u64,
-    vget_low_u32, vminq_u32, vmovn_u64, vmull_high_u32, vmull_u32, vorrq_u64, vshlq_n_u64,
-    vshlq_u64, vshrq_n_u64, vsubq_u32, vsubq_u64,
+    vget_low_u32, vminq_u32, vmlsq_u32, vmovn_u64, vmull_high_u32, vmull_u32, vmulq_u32, vorrq_u64,
+    vqdmulhq_s32, vreinterpretq_s32_u32, vreinterpretq_u32_s32, vshlq_n_u64, vshlq_u64,
+    vshrq_n_u64, vsubq_u32, vsubq_u64,
 };
 use core::fmt;
 use core::mem::transmute;
@@ -392,24 +393,6 @@ impl<const P: u32> PackedFp32Neon<P> {
         4 * c * c + 3 * c <= (1u64 << Self::BITS)
     };
 
-    const SHIFT64_MOD_P: u32 = {
-        let c = Self::C as u128;
-        let bits = Self::BITS;
-        let mask = if bits == 32 {
-            u32::MAX as u128
-        } else {
-            (1u128 << bits) - 1
-        };
-        let mut v = 1u128 << 64;
-        while v >> bits != 0 {
-            v = (v & mask) + c * (v >> bits);
-        }
-        let f = v as u64;
-        let reduced = f.wrapping_sub(P as u64);
-        let borrow = reduced >> 63;
-        reduced.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
-    };
-
     #[inline(always)]
     fn to_vec(self) -> uint32x4_t {
         to_vec32(self.vals)
@@ -457,9 +440,26 @@ impl<const P: u32> PackedFp32Neon<P> {
     #[inline(always)]
     fn mul_vec(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
         unsafe {
+            if Self::BITS == 31 && Self::C == 1 {
+                return Self::mul_mersenne31_vec(a, b);
+            }
             let prod_lo = vmull_u32(vget_low_u32(a), vget_low_u32(b));
             let prod_hi = vmull_high_u32(a, b);
             Self::solinas_reduce(prod_lo, prod_hi)
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn mul_mersenne31_vec(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
+        unsafe {
+            let p = vdupq_n_u32(P);
+            let prod_hi31 = vreinterpretq_u32_s32(vqdmulhq_s32(
+                vreinterpretq_s32_u32(a),
+                vreinterpretq_s32_u32(b),
+            ));
+            let prod_lo32 = vmulq_u32(a, b);
+            let folded = vmlsq_u32(prod_lo32, prod_hi31, p);
+            vminq_u32(folded, vsubq_u32(folded, p))
         }
     }
 
@@ -478,7 +478,7 @@ impl<const P: u32> PackedFp32Neon<P> {
 
     #[inline(always)]
     fn carry_correction(carry: uint64x2_t) -> uint64x2_t {
-        unsafe { vmull_u32(vmovn_u64(carry), vdup_n_u32(Self::SHIFT64_MOD_P)) }
+        unsafe { vmull_u32(vmovn_u64(carry), vdup_n_u32(Fp32::<P>::SHIFT64_MOD_P)) }
     }
 
     #[inline(always)]

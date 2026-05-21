@@ -68,6 +68,23 @@ impl<const P: u32> Fp32<P> {
         (1u64 << Self::BITS) - 1
     };
 
+    pub(crate) const SHIFT64_MOD_P: u32 = {
+        let c = Self::C as u128;
+        let bits = Self::BITS;
+        let mask = if bits == 32 {
+            u32::MAX as u128
+        } else {
+            (1u128 << bits) - 1
+        };
+        let mut v = 1u128 << 64;
+        while v >> bits != 0 {
+            v = (v & mask) + c * (v >> bits);
+        }
+        let reduced = (v as u64).wrapping_sub(P as u64);
+        let borrow = reduced >> 63;
+        reduced.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
+    };
+
     #[inline(always)]
     fn canonicalize_folded(v: u64) -> u32 {
         if Self::BITS <= 31 {
@@ -413,8 +430,13 @@ impl<const P: u32> Invertible for Fp32<P> {
 impl<const P: u32> HalvingField for Fp32<P> {
     #[inline]
     fn half(self) -> Self {
-        let x = self.0 as u64;
-        Self(((x + (x & 1) * P as u64) >> 1) as u32)
+        if Self::BITS == 31 && Self::C == 1 {
+            Self((self.0 >> 1) | ((self.0 & 1) << 30))
+        } else {
+            let half_p_plus_one = (P >> 1) + 1;
+            let correction = 0u32.wrapping_sub(self.0 & 1) & half_p_plus_one;
+            Self((self.0 >> 1) + correction)
+        }
     }
 }
 
@@ -530,6 +552,20 @@ mod tests {
         assert_eq!((-one).to_canonical_u32(), P31 - 1);
         assert_eq!((p_minus_one * p_minus_one).to_canonical_u32(), 1);
         assert_eq!((p_minus_two * p_minus_two).to_canonical_u32(), 4);
+
+        for x in [zero, one, p_minus_two, p_minus_one] {
+            assert_eq!(x.half() + x.half(), x);
+        }
+
+        type M = Fp32<{ (1u32 << 31) - 1 }>;
+        for x in [
+            M::zero(),
+            M::one(),
+            M::from_canonical_u32((1u32 << 31) - 3),
+            M::from_canonical_u32((1u32 << 31) - 2),
+        ] {
+            assert_eq!(x.half() + x.half(), x);
+        }
     }
 
     #[test]

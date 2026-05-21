@@ -101,6 +101,28 @@ impl<const P: u32> PackedFp32Avx2<P> {
             _mm256_mul_epu32(x, c_vec)
         }
     }
+
+    #[inline(always)]
+    unsafe fn mul_mersenne31_vec(a: __m256i, b: __m256i) -> __m256i {
+        unsafe {
+            let lhs_odd_dbl = _mm256_srli_epi64::<31>(a);
+            let rhs_odd = movehdup_epi32(b);
+
+            let prod_odd_dbl = _mm256_mul_epu32(rhs_odd, lhs_odd_dbl);
+            let prod_evn = _mm256_mul_epu32(b, a);
+
+            let prod_odd_lo_dirty = _mm256_slli_epi64::<31>(prod_odd_dbl);
+            let prod_evn_hi = _mm256_srli_epi64::<31>(prod_evn);
+
+            let prod_lo_dirty = _mm256_blend_epi32::<0b1010_1010>(prod_evn, prod_odd_lo_dirty);
+            let prod_hi = _mm256_blend_epi32::<0b1010_1010>(prod_evn_hi, prod_odd_dbl);
+
+            let p = _mm256_set1_epi32(P as i32);
+            let prod_lo = _mm256_and_si256(prod_lo_dirty, p);
+            let folded = _mm256_add_epi32(prod_lo, prod_hi);
+            _mm256_min_epu32(folded, _mm256_sub_epi32(folded, p))
+        }
+    }
 }
 
 impl<const P: u32> Default for PackedFp32Avx2<P> {
@@ -191,6 +213,10 @@ impl<const P: u32> Mul for PackedFp32Avx2<P> {
         unsafe {
             let a = self.to_vec();
             let b = rhs.to_vec();
+
+            if Self::BITS == 31 && Self::C == 1 {
+                return Self::from_vec(Self::mul_mersenne31_vec(a, b));
+            }
 
             let prod_evn = _mm256_mul_epu32(a, b);
             let a_odd = movehdup_epi32(a);
