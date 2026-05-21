@@ -16,7 +16,6 @@ pub mod proof_size;
 pub mod schedule_params;
 pub mod search;
 pub mod sis_security;
-pub mod tiered_cost;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField};
