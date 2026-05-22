@@ -122,10 +122,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
         Ok((max_rows, max_stride))
     }
 
-    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
-        Cfg::log_basis_at_level(inputs)
-    }
-
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
         Cfg::log_basis_search_range(inputs)
     }

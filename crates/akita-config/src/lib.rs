@@ -4,16 +4,15 @@
 //! The trait [`CommitmentConfig`] is the only `<Cfg>` parameter consumed by
 //! `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`. It
 //! replaces the previous three-trait split (`CommitmentConfig`,
-//! `ScheduleProvider`, `PlannerConfig`). Verifier-reachable hooks — namely
-//! [`CommitmentConfig::log_basis_at_level`] and
-//! [`CommitmentConfig::stage1_challenge_config`] — return `Result` so
+//! `ScheduleProvider`, `PlannerConfig`). The remaining verifier-reachable
+//! hook [`CommitmentConfig::stage1_challenge_config`] returns `Result` so
 //! malformed inputs surface as `AkitaError` instead of panicking on the
 //! verifier replay path.
 //!
 //! Pure-derivation layout helpers (`level_params_with_log_basis` plus
-//! the root-layout pair) used to be trait methods too; they now live as
-//! free functions in [`proof_optimized`] / [`akita_derive`] so the trait
-//! stays focused on configuration knobs, not derivation rules.
+//! the root-layout pair) used to be trait methods too; they now live
+//! as free functions in [`proof_optimized`] / [`akita_derive`] so the
+//! trait stays focused on configuration knobs, not derivation rules.
 //!
 //! Presets must implement every required (no-default) hook explicitly.
 //! Substantive helpers that encode protocol logic — `get_params_for_prove`
@@ -201,15 +200,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError>;
 
-    /// Active basis for one level from public inputs.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the requested public inputs are invalid for
-    /// this config (verifier-reachable; must not panic).
-    #[doc(hidden)]
-    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> Result<u32, AkitaError>;
-
     /// Inclusive `(min, max)` log-basis search range at one state.
     #[doc(hidden)]
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32);
@@ -324,10 +314,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
-    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
-        Cfg::log_basis_at_level(inputs)
-    }
-
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
         Cfg::log_basis_search_range(inputs)
     }
@@ -412,10 +398,6 @@ mod tests {
             _max_num_points: usize,
         ) -> Result<(usize, usize), AkitaError> {
             Ok((1, 1))
-        }
-
-        fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
-            Ok(Self::decomposition().log_basis)
         }
 
         fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {

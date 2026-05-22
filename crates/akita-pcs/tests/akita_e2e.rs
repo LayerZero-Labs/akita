@@ -14,8 +14,6 @@ use akita_prover::OneHotPoly;
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-#[cfg(not(feature = "zk"))]
-use akita_types::AkitaScheduleInputs;
 use akita_types::AkitaScheduleLookupKey;
 use akita_types::{lagrange_weights, LevelParams, RingSubfieldEncoding};
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
@@ -1174,64 +1172,6 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             truncated_result.is_err(),
             "proof with a truncated scheduled recursive suffix must be rejected"
         );
-    });
-}
-
-#[test]
-#[cfg(not(feature = "zk"))]
-fn adaptive_full_setup_covers_planned_schedule_envelope() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = fp128::D64Full;
-        const D: usize = Cfg::D;
-
-        let nv = FULL_TEST_NV;
-        let layout = Cfg::get_params_for_batched_commitment(
-            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
-        )
-        .expect("layout");
-        let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
-            .expect("schedule plan")
-            .expect("adaptive full config should expose a schedule plan");
-
-        let mut max_inner = layout.inner_width();
-        let mut max_outer = layout.outer_width();
-        let mut max_d_width = layout.d_matrix_width();
-
-        for state in plan.states().skip(1) {
-            let level_inputs = AkitaScheduleInputs {
-                num_vars: nv,
-                level: state.level,
-                current_w_len: state.current_w_len,
-            };
-            let params = akita_config::proof_optimized::level_params_with_log_basis::<Cfg>(
-                level_inputs,
-                Cfg::log_basis_at_level(level_inputs).expect("log basis"),
-            )
-            .expect("level params");
-            let recursive_layout = akita_types::recursive_level_layout_from_params(
-                &params,
-                state.current_w_len,
-                Cfg::decomposition(),
-            )
-            .expect("recursive layout");
-            max_inner = max_inner.max(recursive_layout.inner_width());
-            max_outer = max_outer.max(recursive_layout.outer_width());
-            max_d_width = max_d_width.max(recursive_layout.d_matrix_width());
-        }
-
-        let envelope = Cfg::envelope(nv);
-        let total = setup
-            .expanded
-            .shared_matrix
-            .total_ring_elements_at::<D>()
-            .unwrap();
-        assert!(total >= envelope.max_n_a * max_inner);
-        assert!(total >= envelope.max_n_b * max_outer);
-        assert!(total >= envelope.max_n_d * max_d_width);
     });
 }
 

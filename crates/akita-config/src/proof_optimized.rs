@@ -16,8 +16,8 @@ use akita_field::{
 use akita_types::generated::table_entry_envelope_up_to_num_vars;
 use akita_types::ClaimIncidenceSummary;
 use akita_types::{
-    planned_log_basis_at_level_from_schedule, planned_schedule_key_from_schedule, AkitaPlannedStep,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
+    planned_schedule_key_from_schedule, AkitaPlannedStep, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
 };
 
 /// Inclusive minimum of the proof-optimized log-basis search range used by
@@ -96,18 +96,6 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
             key.num_w_vectors,
             key.num_z_vectors,
         ),
-    }
-}
-
-/// Proof-optimized `log_basis_at_level` impl: read from the planned schedule
-/// when available; otherwise fall back to the root decomposition's basis.
-pub(crate) fn proof_optimized_log_basis_at_level<Cfg: CommitmentConfig>(
-    inputs: AkitaScheduleInputs,
-) -> Result<u32, AkitaError> {
-    let key = AkitaScheduleLookupKey::singleton(inputs.num_vars);
-    match proof_optimized_schedule_plan::<Cfg>(key)? {
-        Some(plan) => planned_log_basis_at_level_from_schedule(&plan, inputs),
-        None => Ok(Cfg::decomposition().log_basis),
     }
 }
 
@@ -447,12 +435,6 @@ macro_rules! impl_fp128_preset {
                 )
             }
 
-            fn log_basis_at_level(
-                inputs: akita_types::AkitaScheduleInputs,
-            ) -> Result<u32, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_log_basis_at_level::<Self>(inputs)
-            }
-
             fn log_basis_search_range(_inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
                 (
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
@@ -537,12 +519,6 @@ macro_rules! impl_small_field_preset {
                     max_num_batched_polys,
                     max_num_points,
                 )
-            }
-
-            fn log_basis_at_level(
-                inputs: akita_types::AkitaScheduleInputs,
-            ) -> Result<u32, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_log_basis_at_level::<Self>(inputs)
             }
 
             fn log_basis_search_range(_inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
@@ -962,37 +938,6 @@ mod tests {
         );
 
         assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
-    }
-
-    #[test]
-    #[cfg(not(feature = "zk"))]
-    fn singleton_root_runtime_plan_matches_existing_root_layout() {
-        type Cfg = fp128::D64OneHot;
-
-        let incidence = ClaimIncidenceSummary::same_point(30, 1).expect("singleton incidence");
-        let runtime = Cfg::get_params_for_prove(&incidence).expect("singleton runtime plan");
-        let root_inputs = AkitaScheduleInputs {
-            num_vars: 30,
-            level: 0,
-            current_w_len: 1usize << 30,
-        };
-        let root_lp = akita_derive::root_level_layout_with_log_basis(
-            Cfg::sis_modulus_family(),
-            Cfg::D,
-            Cfg::decomposition(),
-            Cfg::stage1_challenge_config(Cfg::D).unwrap(),
-            Cfg::ring_subfield_embedding_norm_bound(),
-            root_inputs,
-            Cfg::log_basis_at_level(root_inputs).unwrap(),
-        )
-        .unwrap();
-        let Some(akita_types::Step::Fold(runtime_root_step)) = runtime.steps.first() else {
-            panic!("singleton schedule should start with a fold");
-        };
-
-        assert_eq!(runtime_root_step.params, root_lp);
-        assert_eq!(runtime_root_step.current_w_len, 1usize << 30);
-        assert_eq!(runtime_root_step.next_w_len % Cfg::D, 0);
     }
 
     #[test]

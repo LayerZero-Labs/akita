@@ -540,7 +540,14 @@ pub fn root_direct_commit_layout(
 
     if num_vars > alpha {
         // Normal root: iterate A-row rank against the SIS-floor table.
-        let rank_cap = root_a_rank_cap(sis_family, d, &decomp, &stage1, ring_subfield_norm_bound)?;
+        let rank_cap = root_a_rank_cap(
+            sis_family,
+            d,
+            &decomp,
+            log_basis,
+            &stage1,
+            ring_subfield_norm_bound,
+        )?;
         let mut candidate_n_a = 1usize;
         for _ in 0..rank_cap {
             let candidate_params = LevelParams::params_only(
@@ -636,7 +643,14 @@ pub fn root_level_layout_with_log_basis(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
-    let rank_cap = root_a_rank_cap(sis_family, d, &decomp, &stage1, ring_subfield_norm_bound)?;
+    let rank_cap = root_a_rank_cap(
+        sis_family,
+        d,
+        &decomp,
+        log_basis,
+        &stage1,
+        ring_subfield_norm_bound,
+    )?;
     let mut candidate_n_a = 1usize;
     for _ in 0..rank_cap {
         let candidate_params = LevelParams::params_only(
@@ -702,16 +716,23 @@ pub fn root_level_params_for_layout_with_log_basis(
 }
 
 /// Number of audited A-row SIS-rank buckets available for the root A role
-/// at this `(sis_family, d, decomp, stage1, ring_subfield_norm_bound)`. Used
-/// as the iteration cap when probing self-consistent root A-row ranks.
+/// at this `(sis_family, d, log_basis, decomp.log_commit_bound, stage1,
+/// ring_subfield_norm_bound)`. Used as the iteration cap when probing
+/// self-consistent root A-row ranks.
+///
+/// `log_basis` is the candidate basis being evaluated (which the planner
+/// DP varies independently of `decomp.log_basis`), NOT `decomp.log_basis`
+/// — the rank cap depends on the candidate's collision bound, so reading
+/// it off the default decomposition would understate the cap and produce
+/// spurious "failed to converge" errors at non-default bases.
 fn root_a_rank_cap(
     sis_family: SisModulusFamily,
     d: usize,
     decomp: &DecompositionParams,
+    log_basis: u32,
     stage1: &SparseChallengeConfig,
     ring_subfield_norm_bound: u32,
 ) -> Result<usize, AkitaError> {
-    let log_basis = decomp.log_basis;
     let bd_collision = 1u32
         .checked_shl(log_basis)
         .and_then(|bound| bound.checked_sub(1))

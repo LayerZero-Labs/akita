@@ -110,14 +110,6 @@ name = "akita_e2e"
 harness = false
 
 [[bench]]
-name = "onehot_batched_commit"
-harness = false
-
-[[bench]]
-name = "onehot_batched_opening"
-harness = false
-
-[[bench]]
 name = "root_kernels"
 harness = false
 
