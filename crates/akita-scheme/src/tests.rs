@@ -669,11 +669,11 @@ fn debug_batched_root_relation_claim_matches_tables() {
                         acc + *coeff * *alpha_pow
                     })
             };
-        let c_alphas: Vec<OneHotF> = quad_eq
-            .integer_challenges
-            .iter()
-            .map(eval_sparse_alpha)
-            .collect();
+        let integer_challenges = quad_eq
+            .challenges
+            .expand_integer::<ONEHOT_D>()
+            .expect("debug challenge expansion");
+        let c_alphas: Vec<OneHotF> = integer_challenges.iter().map(eval_sparse_alpha).collect();
         let gadget_scalars = |levels: usize| -> Vec<OneHotF> {
             let base = OneHotF::from_canonical_u128_reduced(1u128 << batched_root_lp.log_basis);
             let mut out = Vec::with_capacity(levels);
@@ -768,11 +768,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             .expect("debug batched D-blinding digits");
         let mut debug_z_witnesses = batch_polys
             .iter()
-            .zip(
-                quad_eq
-                    .integer_challenges
-                    .chunks(batched_root_lp.num_blocks),
-            )
+            .zip(integer_challenges.chunks(batched_root_lp.num_blocks))
             .map(|(poly, poly_challenges)| {
                 poly.decompose_fold(
                     poly_challenges,
@@ -816,7 +812,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             akita_prover::protocol::quadratic_equation::compute_r_split_eq::<OneHotF, ONEHOT_D>(
                 &batched_root_lp,
                 &batch_setup.expanded,
-                &quad_eq.integer_challenges,
+                &integer_challenges,
                 &debug_w_hat_flat,
                 #[cfg(feature = "zk")]
                 debug_d_blinding_digits,
@@ -866,8 +862,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             .flatten()
             .cloned()
             .collect();
-        let stored_a_inner_rows = quad_eq
-            .integer_challenges
+        let stored_a_inner_rows = integer_challenges
             .iter()
             .zip(stored_inner_rows_flat.iter())
             .fold(
@@ -877,8 +872,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                     acc
                 },
             );
-        let reduced_a_inner_rows = quad_eq
-            .integer_challenges
+        let reduced_a_inner_rows = integer_challenges
             .iter()
             .zip(debug_recomposed_inner_rows.iter())
             .fold(

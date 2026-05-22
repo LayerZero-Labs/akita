@@ -13,8 +13,7 @@ use crate::{AkitaPolyOps, CenteredCoeff, DecomposeFoldWitness, RecursiveWitnessV
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{
-    sample_tensor_challenges, IntegerChallenge, TensorChallengeLabels, TensorChallengeSet,
-    TensorChallenges,
+    sample_tensor_challenges, IntegerChallenge, TensorChallengeLabels, TensorChallenges,
 };
 
 /// Stage-1 fold label bundle for [`sample_tensor_challenges`].
@@ -171,44 +170,9 @@ fn select_fold_challenges_for_claims(
             }
             Ok(TensorChallenges::Flat(selected))
         }
-        TensorChallenges::Tensor(tensor) => {
-            let mut left = Vec::with_capacity(claim_indices.len() * tensor.left_len);
-            let mut right = Vec::with_capacity(claim_indices.len() * tensor.right_len);
-            for &claim_idx in claim_indices {
-                let left_start = claim_idx.checked_mul(tensor.left_len).ok_or_else(|| {
-                    AkitaError::InvalidSetup("tensor-left challenge offset overflow".to_string())
-                })?;
-                let left_end = left_start.checked_add(tensor.left_len).ok_or_else(|| {
-                    AkitaError::InvalidSetup("tensor-left challenge offset overflow".to_string())
-                })?;
-                left.extend_from_slice(tensor.left.get(left_start..left_end).ok_or(
-                    AkitaError::InvalidSize {
-                        expected: left_end,
-                        actual: tensor.left.len(),
-                    },
-                )?);
-
-                let right_start = claim_idx.checked_mul(tensor.right_len).ok_or_else(|| {
-                    AkitaError::InvalidSetup("tensor-right challenge offset overflow".to_string())
-                })?;
-                let right_end = right_start.checked_add(tensor.right_len).ok_or_else(|| {
-                    AkitaError::InvalidSetup("tensor-right challenge offset overflow".to_string())
-                })?;
-                right.extend_from_slice(tensor.right.get(right_start..right_end).ok_or(
-                    AkitaError::InvalidSize {
-                        expected: right_end,
-                        actual: tensor.right.len(),
-                    },
-                )?);
-            }
-            Ok(TensorChallenges::Tensor(TensorChallengeSet {
-                left,
-                right,
-                left_len: tensor.left_len,
-                right_len: tensor.right_len,
-                num_claims: claim_indices.len(),
-            }))
-        }
+        TensorChallenges::Tensor(tensor) => tensor
+            .select_claims(claim_indices)
+            .map(TensorChallenges::Tensor),
     }
 }
 
@@ -226,10 +190,6 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     /// Sampled stage-1 fold challenges; either flat (one per logical block)
     /// or tensor-shaped (left/right factors per claim).
     pub challenges: TensorChallenges,
-    /// Logical flat expansion of [`Self::challenges`] used by the prover
-    /// fold/decompose kernels. Re-derived once from `challenges` at
-    /// construction time.
-    pub integer_challenges: Vec<IntegerChallenge>,
     /// Vector `y`.
     y: Vec<CyclotomicRing<F, D>>,
     /// Public-row opening points `(a_j, b_j)` used by the root relation.
@@ -585,8 +545,6 @@ where
                 centered_inf_norm,
             }
         };
-        let integer_challenges = stage1_challenges.expand_integer::<D>()?;
-
         let commitment_rows: Vec<CyclotomicRing<F, D>> = commitments
             .iter()
             .flat_map(|commitment| commitment.u.iter().copied())
@@ -604,7 +562,6 @@ where
         Ok(Self {
             v,
             challenges: stage1_challenges,
-            integer_challenges,
             y,
             opening_points,
             ring_multiplier_points,
@@ -775,8 +732,6 @@ where
                 centered_inf_norm,
             }
         };
-        let integer_challenges = stage1_challenges.expand_integer::<D>()?;
-
         let y = generate_y::<F, D>(
             &v,
             commitment,
@@ -790,7 +745,6 @@ where
         Ok(Self {
             v,
             challenges: stage1_challenges,
-            integer_challenges,
             y,
             opening_points: ring_opening_points,
             ring_multiplier_points,

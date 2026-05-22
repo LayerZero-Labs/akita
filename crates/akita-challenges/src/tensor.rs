@@ -16,6 +16,7 @@ use crate::{sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseC
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase};
 use akita_transcript::Transcript;
 use sha3::{Digest, Sha3_256};
+use std::ops::Range;
 
 const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/tensor-left-digest/v1";
 
@@ -55,15 +56,71 @@ impl TensorChallengeShape {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TensorChallengeSet {
     /// Left vector entries, grouped by claim.
-    pub left: Vec<SparseChallenge>,
+    left: Vec<SparseChallenge>,
     /// Right vector entries, grouped by claim.
-    pub right: Vec<SparseChallenge>,
+    right: Vec<SparseChallenge>,
+    /// Number of left entries per claim.
+    left_len: usize,
+    /// Number of right entries per claim.
+    right_len: usize,
+    /// Number of claims represented by this tensor challenge set.
+    num_claims: usize,
+}
+
+/// Canonical dimensions for a [`TensorChallengeSet`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TensorChallengeDims {
     /// Number of left entries per claim.
     pub left_len: usize,
     /// Number of right entries per claim.
     pub right_len: usize,
-    /// Number of claims represented by this tensor challenge set.
+    /// Number of claims represented by the set.
     pub num_claims: usize,
+}
+
+impl TensorChallengeDims {
+    /// Number of logical blocks per claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the dimension product overflows.
+    #[inline]
+    pub fn blocks_per_claim(&self) -> Result<usize, AkitaError> {
+        self.left_len
+            .checked_mul(self.right_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))
+    }
+
+    /// Total number of logical blocks across every claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the block count overflows.
+    #[inline]
+    pub fn total_blocks(&self) -> Result<usize, AkitaError> {
+        self.num_claims
+            .checked_mul(self.blocks_per_claim()?)
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))
+    }
+
+    /// Split a claim-local block index into `(left_idx, right_idx)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `local_block_idx` is outside the logical block range.
+    #[inline]
+    pub fn factor_indices(&self, local_block_idx: usize) -> Result<(usize, usize), AkitaError> {
+        let blocks_per_claim = self.blocks_per_claim()?;
+        if local_block_idx >= blocks_per_claim {
+            return Err(AkitaError::InvalidInput(format!(
+                "tensor local block index {local_block_idx} out of range for {blocks_per_claim} blocks"
+            )));
+        }
+        Ok((
+            local_block_idx / self.right_len,
+            local_block_idx % self.right_len,
+        ))
+    }
 }
 
 /// Folding challenges, either flat or tensor-structured.
@@ -96,11 +153,10 @@ pub struct TensorChallengeLabels<'a> {
 impl TensorChallenges {
     /// Number of logical flat challenges represented by this value.
     #[inline]
-    #[must_use]
-    pub fn logical_len(&self) -> usize {
+    pub fn logical_len(&self) -> Result<usize, AkitaError> {
         match self {
-            Self::Flat(challenges) => challenges.len(),
-            Self::Tensor(tensor) => tensor.num_claims * tensor.left_len * tensor.right_len,
+            Self::Flat(challenges) => Ok(challenges.len()),
+            Self::Tensor(tensor) => tensor.total_blocks(),
         }
     }
 
@@ -147,6 +203,244 @@ impl TensorChallenges {
 }
 
 impl TensorChallengeSet {
+    /// Build a tensor challenge set and validate its factor counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `left`/`right` lengths do not match the declared
+    /// dimensions or if count arithmetic overflows.
+    pub fn new(
+        left: Vec<SparseChallenge>,
+        right: Vec<SparseChallenge>,
+        left_len: usize,
+        right_len: usize,
+        num_claims: usize,
+    ) -> Result<Self, AkitaError> {
+        let out = Self {
+            left,
+            right,
+            left_len,
+            right_len,
+            num_claims,
+        };
+        out.validate_lengths()?;
+        out.total_blocks()?;
+        Ok(out)
+    }
+
+    /// Left vector entries, grouped by claim.
+    #[inline]
+    #[must_use]
+    pub fn left(&self) -> &[SparseChallenge] {
+        &self.left
+    }
+
+    /// Right vector entries, grouped by claim.
+    #[inline]
+    #[must_use]
+    pub fn right(&self) -> &[SparseChallenge] {
+        &self.right
+    }
+
+    /// Number of left entries per claim.
+    #[inline]
+    #[must_use]
+    pub fn left_len(&self) -> usize {
+        self.left_len
+    }
+
+    /// Number of right entries per claim.
+    #[inline]
+    #[must_use]
+    pub fn right_len(&self) -> usize {
+        self.right_len
+    }
+
+    /// Number of claims represented by this set.
+    #[inline]
+    #[must_use]
+    pub fn num_claims(&self) -> usize {
+        self.num_claims
+    }
+
+    /// Return the canonical dimensions for this tensor set.
+    #[inline]
+    #[must_use]
+    pub fn dims(&self) -> TensorChallengeDims {
+        TensorChallengeDims {
+            left_len: self.left_len,
+            right_len: self.right_len,
+            num_claims: self.num_claims,
+        }
+    }
+
+    /// Number of logical blocks represented per claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the dimension product overflows.
+    #[inline]
+    pub fn blocks_per_claim(&self) -> Result<usize, AkitaError> {
+        self.dims().blocks_per_claim()
+    }
+
+    /// Total number of logical blocks represented by this set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the dimension product overflows.
+    #[inline]
+    pub fn total_blocks(&self) -> Result<usize, AkitaError> {
+        self.dims().total_blocks()
+    }
+
+    /// Validate factor counts and all sparse factor structural invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any tensor factor is malformed for ring dimension `D`.
+    pub fn validate<const D: usize>(&self) -> Result<(), AkitaError> {
+        self.validate_lengths()?;
+        for challenge in self.left.iter().chain(self.right.iter()) {
+            validate_sparse_factor::<D>(challenge)?;
+        }
+        Ok(())
+    }
+
+    /// Return the flat expanded range owned by `claim_idx`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `claim_idx` is out of range or arithmetic overflows.
+    pub fn claim_logical_range(&self, claim_idx: usize) -> Result<Range<usize>, AkitaError> {
+        let blocks_per_claim = self.blocks_per_claim()?;
+        if claim_idx >= self.num_claims {
+            return Err(AkitaError::InvalidInput(format!(
+                "tensor claim index {claim_idx} out of range for {} claims",
+                self.num_claims
+            )));
+        }
+        let start = claim_idx.checked_mul(blocks_per_claim).ok_or_else(|| {
+            AkitaError::InvalidSetup("tensor logical claim offset overflow".to_string())
+        })?;
+        let end = start.checked_add(blocks_per_claim).ok_or_else(|| {
+            AkitaError::InvalidSetup("tensor logical claim end overflow".to_string())
+        })?;
+        Ok(start..end)
+    }
+
+    /// Return the left/right factor slices for one claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the claim is out of range, lengths are inconsistent,
+    /// or slice arithmetic overflows.
+    pub fn factor_slices_for_claim(
+        &self,
+        claim_idx: usize,
+    ) -> Result<(&[SparseChallenge], &[SparseChallenge]), AkitaError> {
+        let left_range = self.factor_range(claim_idx, self.left_len, "tensor-left")?;
+        let right_range = self.factor_range(claim_idx, self.right_len, "tensor-right")?;
+        Ok((
+            self.left
+                .get(left_range.clone())
+                .ok_or(AkitaError::InvalidSize {
+                    expected: left_range.end,
+                    actual: self.left.len(),
+                })?,
+            self.right
+                .get(right_range.clone())
+                .ok_or(AkitaError::InvalidSize {
+                    expected: right_range.end,
+                    actual: self.right.len(),
+                })?,
+        ))
+    }
+
+    /// Return tensor factors for a global logical block index.
+    ///
+    /// The returned indices are `(claim_idx, local_block_idx, left_factor, right_factor)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `block_idx` is outside the represented logical range
+    /// or if factor lengths are inconsistent.
+    pub fn factors_for_logical_block(
+        &self,
+        block_idx: usize,
+    ) -> Result<(usize, usize, &SparseChallenge, &SparseChallenge), AkitaError> {
+        let dims = self.dims();
+        let blocks_per_claim = dims.blocks_per_claim()?;
+        let total_blocks = dims.total_blocks()?;
+        if block_idx >= total_blocks {
+            return Err(AkitaError::InvalidInput(format!(
+                "tensor block index {block_idx} out of range for {total_blocks} blocks"
+            )));
+        }
+        let claim_idx = block_idx / blocks_per_claim;
+        let local_block_idx = block_idx % blocks_per_claim;
+        let (left_idx, right_idx) = dims.factor_indices(local_block_idx)?;
+        let (left, right) = self.factor_slices_for_claim(claim_idx)?;
+        Ok((
+            claim_idx,
+            local_block_idx,
+            &left[left_idx],
+            &right[right_idx],
+        ))
+    }
+
+    /// Return a new set containing the selected claims in the requested order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any claim index is out of range or if this set's
+    /// factor lengths are inconsistent.
+    pub fn select_claims(&self, claim_indices: &[usize]) -> Result<Self, AkitaError> {
+        let mut left = Vec::with_capacity(claim_indices.len().saturating_mul(self.left_len));
+        let mut right = Vec::with_capacity(claim_indices.len().saturating_mul(self.right_len));
+        for &claim_idx in claim_indices {
+            let (left_slice, right_slice) = self.factor_slices_for_claim(claim_idx)?;
+            left.extend_from_slice(left_slice);
+            right.extend_from_slice(right_slice);
+        }
+        Self::new(
+            left,
+            right,
+            self.left_len,
+            self.right_len,
+            claim_indices.len(),
+        )
+    }
+
+    /// Validate tensor dimensions against an expected block count and return
+    /// `(left_bits, right_bits)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if dimensions are not power-of-two, do not multiply to
+    /// `num_blocks`, or if count arithmetic overflows.
+    pub fn validate_power_of_two_dimensions(
+        &self,
+        num_blocks: usize,
+    ) -> Result<(usize, usize), AkitaError> {
+        let blocks_per_claim = self.blocks_per_claim()?;
+        if blocks_per_claim != num_blocks {
+            return Err(AkitaError::InvalidSize {
+                expected: num_blocks,
+                actual: blocks_per_claim,
+            });
+        }
+        if !self.left_len.is_power_of_two() || !self.right_len.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(
+                "tensor challenge dimensions must be powers of two".to_string(),
+            ));
+        }
+        Ok((
+            self.left_len.trailing_zeros() as usize,
+            self.right_len.trailing_zeros() as usize,
+        ))
+    }
+
     /// Expand tensor products into logical flat order.
     ///
     /// # Errors
@@ -155,15 +449,15 @@ impl TensorChallengeSet {
     /// its integer coefficient representation.
     pub fn expand_integer<const D: usize>(&self) -> Result<Vec<IntegerChallenge>, AkitaError> {
         self.validate_lengths()?;
-        let mut out = Vec::with_capacity(self.num_claims * self.left_len * self.right_len);
+        let mut out = Vec::with_capacity(self.total_blocks()?);
         for claim_idx in 0..self.num_claims {
-            let left_start = claim_idx * self.left_len;
-            let right_start = claim_idx * self.right_len;
-            for p in 0..self.left_len {
-                let left = &self.left[left_start + p];
-                for q in 0..self.right_len {
-                    let right = &self.right[right_start + q];
-                    out.push(IntegerChallenge::tensor_product::<D>(left, right)?);
+            let (left, right) = self.factor_slices_for_claim(claim_idx)?;
+            for left_factor in left {
+                for right_factor in right {
+                    out.push(IntegerChallenge::tensor_product::<D>(
+                        left_factor,
+                        right_factor,
+                    )?);
                 }
             }
         }
@@ -200,12 +494,9 @@ impl TensorChallengeSet {
         // Tensor products commute with this reduction up to subtraction of a
         // quotient contribution; we precompute the scalar once and reuse it.
         let alpha_pow_d_plus_one = alpha_pows[D - 1] * alpha_pows[1] + E::one();
-        let mut out = Vec::with_capacity(self.num_claims * self.left_len * self.right_len);
+        let mut out = Vec::with_capacity(self.total_blocks()?);
         for claim_idx in 0..self.num_claims {
-            let left_start = claim_idx * self.left_len;
-            let right_start = claim_idx * self.right_len;
-            let left = &self.left[left_start..left_start + self.left_len];
-            let right = &self.right[right_start..right_start + self.right_len];
+            let (left, right) = self.factor_slices_for_claim(claim_idx)?;
             let left_evals = left
                 .iter()
                 .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
@@ -283,8 +574,7 @@ impl TensorChallengeSet {
         }
         self.validate_lengths()?;
 
-        let left_start = claim_idx * self.left_len;
-        let right_start = claim_idx * self.right_len;
+        let (left, right) = self.factor_slices_for_claim(claim_idx)?;
 
         // Build the weighted dense factors in E directly so the product
         // evaluation never materialises a length-O(left_len · right_len) buffer.
@@ -293,20 +583,12 @@ impl TensorChallengeSet {
 
         for (p, &weight) in u_weights.iter().enumerate() {
             if !weight.is_zero() {
-                accumulate_sparse_scaled::<F, E, D>(
-                    &mut left_bar,
-                    &self.left[left_start + p],
-                    weight,
-                )?;
+                accumulate_sparse_scaled::<F, E, D>(&mut left_bar, &left[p], weight)?;
             }
         }
         for (q, &weight) in v_weights.iter().enumerate() {
             if !weight.is_zero() {
-                accumulate_sparse_scaled::<F, E, D>(
-                    &mut right_bar,
-                    &self.right[right_start + q],
-                    weight,
-                )?;
+                accumulate_sparse_scaled::<F, E, D>(&mut right_bar, &right[q], weight)?;
             }
         }
 
@@ -328,6 +610,27 @@ impl TensorChallengeSet {
         }
 
         Ok(product_eval - alpha_pow_d_plus_one * quotient_eval)
+    }
+
+    fn factor_range(
+        &self,
+        claim_idx: usize,
+        factor_len: usize,
+        label: &str,
+    ) -> Result<Range<usize>, AkitaError> {
+        if claim_idx >= self.num_claims {
+            return Err(AkitaError::InvalidInput(format!(
+                "tensor claim index {claim_idx} out of range for {} claims",
+                self.num_claims
+            )));
+        }
+        let start = claim_idx
+            .checked_mul(factor_len)
+            .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} offset overflow")))?;
+        let end = start
+            .checked_add(factor_len)
+            .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} end overflow")))?;
+        Ok(start..end)
     }
 
     fn validate_lengths(&self) -> Result<(), AkitaError> {
@@ -389,6 +692,41 @@ where
             ));
         }
         out[idx] += scale.mul_base(F::from_i64(coeff as i64));
+    }
+    Ok(())
+}
+
+fn validate_sparse_factor<const D: usize>(challenge: &SparseChallenge) -> Result<(), AkitaError> {
+    if challenge.positions.len() != challenge.coeffs.len() {
+        return Err(AkitaError::InvalidInput(
+            "sparse challenge positions/coeffs length mismatch".to_string(),
+        ));
+    }
+    let mut terms = challenge
+        .positions
+        .iter()
+        .copied()
+        .zip(challenge.coeffs.iter().copied())
+        .collect::<Vec<_>>();
+    terms.sort_by_key(|&(pos, _)| pos);
+    let mut previous_pos = None;
+    for (pos, coeff) in terms {
+        if pos as usize >= D {
+            return Err(AkitaError::InvalidInput(format!(
+                "sparse challenge position {pos} out of range for D={D}"
+            )));
+        }
+        if coeff == 0 {
+            return Err(AkitaError::InvalidInput(
+                "sparse challenge coefficients must be non-zero".to_string(),
+            ));
+        }
+        if previous_pos == Some(pos) {
+            return Err(AkitaError::InvalidInput(
+                "sparse challenge positions must be unique".to_string(),
+            ));
+        }
+        previous_pos = Some(pos);
     }
     Ok(())
 }
@@ -588,13 +926,8 @@ where
                 right_total,
                 cfg,
             )?;
-            Ok(TensorChallenges::Tensor(TensorChallengeSet {
-                left,
-                right,
-                left_len,
-                right_len,
-                num_claims,
-            }))
+            TensorChallengeSet::new(left, right, left_len, right_len, num_claims)
+                .map(TensorChallenges::Tensor)
         }
     }
 }
