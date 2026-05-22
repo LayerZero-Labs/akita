@@ -7,14 +7,13 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{sample_folding_challenges, ChallengeLabels, FoldingChallenges};
+use akita_challenges::{
+    sample_folding_challenges, stage1_fold_challenge_labels, FoldingChallenges,
+};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
-use akita_transcript::labels::{
-    self, ABSORB_PROVER_V, ABSORB_TENSOR_FOLD_LEFT, CHALLENGE_STAGE1_FOLD,
-    CHALLENGE_TENSOR_FOLD_LEFT, CHALLENGE_TENSOR_FOLD_RIGHT,
-};
+use akita_transcript::labels::{self, ABSORB_PROVER_V};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     combine_polys, eval_poly, linear_combination, range_check_eval_from_s,
@@ -22,17 +21,6 @@ use akita_types::{
     stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
     MRowLayout, RingSliceSerializer,
 };
-
-/// Stage-1 fold label bundle used by both the flat and tensor samplers.
-#[inline]
-pub(crate) fn fold_challenge_labels() -> ChallengeLabels<'static> {
-    ChallengeLabels {
-        flat: CHALLENGE_STAGE1_FOLD,
-        tensor_left: CHALLENGE_TENSOR_FOLD_LEFT,
-        tensor_left_digest: ABSORB_TENSOR_FOLD_LEFT,
-        tensor_right: CHALLENGE_TENSOR_FOLD_RIGHT,
-    }
-}
 
 /// Absorb the prover's `v` rows and sample the stage-1 fold challenges in the
 /// shape declared by `lp.fold_challenge_shape` (flat per-block or tensor
@@ -67,7 +55,7 @@ where
         num_claims,
         &lp.stage1_config,
         &lp.fold_challenge_shape,
-        fold_challenge_labels(),
+        stage1_fold_challenge_labels(),
     )
 }
 

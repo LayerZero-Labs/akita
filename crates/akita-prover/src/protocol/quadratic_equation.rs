@@ -13,26 +13,12 @@ use crate::{AkitaPolyOps, DecomposeFoldWitness, RecursiveWitnessView};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{
-    sample_folding_challenges, ChallengeLabels, FoldingChallenges, IntegerChallenge,
+    sample_folding_challenges, stage1_fold_challenge_labels, FoldingChallenges, IntegerChallenge,
 };
-
-/// Stage-1 fold label bundle for [`sample_folding_challenges`].
-#[inline]
-fn fold_challenge_labels() -> ChallengeLabels<'static> {
-    ChallengeLabels {
-        flat: CHALLENGE_STAGE1_FOLD,
-        tensor_left: CHALLENGE_TENSOR_FOLD_LEFT,
-        tensor_left_digest: ABSORB_TENSOR_FOLD_LEFT,
-        tensor_right: CHALLENGE_TENSOR_FOLD_RIGHT,
-    }
-}
 use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
-use akita_transcript::labels::{
-    ABSORB_PROVER_V, ABSORB_TENSOR_FOLD_LEFT, CHALLENGE_STAGE1_FOLD, CHALLENGE_TENSOR_FOLD_LEFT,
-    CHALLENGE_TENSOR_FOLD_RIGHT,
-};
+use akita_transcript::labels::ABSORB_PROVER_V;
 use akita_transcript::Transcript;
 use akita_types::{
     gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
@@ -481,7 +467,7 @@ where
             num_claims,
             &lp.stage1_config,
             &lp.fold_challenge_shape,
-            fold_challenge_labels(),
+            stage1_fold_challenge_labels(),
         )?;
         let integer_challenges = stage1_challenges.expand_integer::<D>()?;
 
@@ -707,7 +693,7 @@ where
             num_claims,
             &lp.stage1_config,
             &lp.fold_challenge_shape,
-            fold_challenge_labels(),
+            stage1_fold_challenge_labels(),
         )?;
         let integer_challenges = stage1_challenges.expand_integer::<D>()?;
 

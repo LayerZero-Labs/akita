@@ -9,8 +9,8 @@
 //! uniform flat view through [`FoldingChallenges::expand_integer`] /
 //! [`FoldingChallenges::evals_at_pows`].
 //!
-//! Sampling labels are taken as a [`ChallengeLabels`] parameter so this
-//! module is not coupled to any specific protocol stage.
+//! Sampling labels are taken as a [`ChallengeLabels`] parameter so callers can
+//! choose stage-specific transcript wiring explicitly.
 //!
 //! The public types are split by protocol role:
 //! [`ChallengeShape`] is only the flat-vs-tensor selector,
@@ -23,7 +23,7 @@
 
 use crate::{sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase};
-use akita_transcript::Transcript;
+use akita_transcript::{labels, Transcript};
 use sha3::{Digest, Sha3_256};
 
 const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/tensor-left-digest/v1";
@@ -111,6 +111,18 @@ pub struct ChallengeLabels<'a> {
     pub tensor_left_digest: &'a [u8],
     /// Label used for sampling the tensor shape's right factor.
     pub tensor_right: &'a [u8],
+}
+
+/// Canonical stage-1 fold challenge transcript labels.
+#[inline]
+#[must_use]
+pub fn stage1_fold_challenge_labels() -> ChallengeLabels<'static> {
+    ChallengeLabels {
+        flat: labels::CHALLENGE_STAGE1_FOLD,
+        tensor_left: labels::CHALLENGE_TENSOR_FOLD_LEFT,
+        tensor_left_digest: labels::ABSORB_TENSOR_FOLD_LEFT,
+        tensor_right: labels::CHALLENGE_TENSOR_FOLD_RIGHT,
+    }
 }
 
 impl FoldingChallenges {
