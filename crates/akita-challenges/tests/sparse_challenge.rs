@@ -3,7 +3,7 @@
 
 use akita_algebra::ring::CyclotomicRing;
 use akita_challenges::{
-    sample_sparse_challenges, sample_tensor_challenges, tensor_left_digest, ChallengeLabels,
+    sample_folding_challenges, sample_sparse_challenges, tensor_left_digest, ChallengeLabels,
     ChallengeShape, FoldingChallenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig,
     TensorChallenges,
 };
@@ -351,7 +351,7 @@ fn tensor_sampling_uses_two_vectors() {
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(7));
 
-    let challenges = sample_tensor_challenges::<F, _, TD>(
+    let challenges = sample_folding_challenges::<F, _, TD>(
         &mut transcript,
         8,
         2,
@@ -381,7 +381,7 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
 
     let mut sampled_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     sampled_transcript.append_field(b"seed", &F::from_u64(0x5151));
-    let sampled = sample_tensor_challenges::<F, _, TD>(
+    let sampled = sample_folding_challenges::<F, _, TD>(
         &mut sampled_transcript,
         8,
         2,
@@ -452,7 +452,7 @@ fn tensor_lazy_evals_match_expanded_products() {
     };
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(99));
-    let challenges = sample_tensor_challenges::<F, _, TD>(
+    let challenges = sample_folding_challenges::<F, _, TD>(
         &mut transcript,
         8,
         1,

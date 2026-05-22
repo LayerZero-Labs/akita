@@ -31,6 +31,6 @@ pub use challenge::{IntegerChallenge, SparseChallenge};
 pub use config::SparseChallengeConfig;
 pub use sampler::sample_sparse_challenges;
 pub use tensor::{
-    sample_tensor_challenges, tensor_left_digest, tensor_split, ChallengeLabels, ChallengeShape,
+    sample_folding_challenges, tensor_left_digest, tensor_split, ChallengeLabels, ChallengeShape,
     FoldingChallenges, TensorChallenges,
 };

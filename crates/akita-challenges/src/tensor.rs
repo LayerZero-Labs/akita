@@ -14,6 +14,7 @@
 //!
 //! The public types are split by protocol role:
 //! [`ChallengeShape`] is only the flat-vs-tensor selector,
+//! [`ChallengeLabels`] is the transcript metadata for one sampling round,
 //! [`FoldingChallenges`] is the sampled runtime container, and
 //! [`TensorChallenges`] is the factored tensor state whose left/right lengths
 //! are part of the invariant. Materialized logical challenges use
@@ -94,7 +95,7 @@ pub enum FoldingChallenges {
     Tensor(TensorChallenges),
 }
 
-/// Transcript labels consumed by [`sample_tensor_challenges`].
+/// Transcript labels consumed by [`sample_folding_challenges`].
 ///
 /// Bundling them in a struct keeps the call sites self-describing and prevents
 /// accidental left/right swaps. Callers pick label byte strings appropriate
@@ -113,7 +114,7 @@ pub struct ChallengeLabels<'a> {
 }
 
 impl FoldingChallenges {
-    /// Number of logical flat challenges represented by this value.
+    /// Number of logical block challenges represented by this value.
     #[inline]
     #[must_use]
     pub fn logical_len(&self) -> usize {
@@ -146,7 +147,7 @@ impl FoldingChallenges {
 
     /// Evaluate all logical challenges at a ring-switch point, in flat order.
     ///
-    /// This is the logical flat-view API: it returns one evaluation per block
+    /// This is the logical per-block API: it returns one evaluation per block
     /// regardless of whether the challenges were sampled flat or factored.
     ///
     /// # Errors
@@ -171,7 +172,7 @@ impl FoldingChallenges {
 }
 
 impl TensorChallenges {
-    /// Materialize tensor products into logical flat order.
+    /// Materialize tensor products into logical block order.
     ///
     /// This expansion is intentionally separate from the evaluation helpers
     /// below: it produces the widened integer polynomials consumed by fold
@@ -198,7 +199,7 @@ impl TensorChallenges {
         Ok(out)
     }
 
-    /// Evaluate reduced tensor products in logical flat order.
+    /// Evaluate reduced tensor products in logical block order.
     ///
     /// This mirrors [`FoldingChallenges::evals_at_pows`] for the tensor payload:
     /// it produces one field element per logical block without returning the
@@ -391,53 +392,9 @@ impl TensorChallenges {
     }
 }
 
-// Evaluation helpers used by the factored aggregate path.
-fn accumulate_sparse_scaled<F, E, const D: usize>(
-    out: &mut [E],
-    challenge: &SparseChallenge,
-    scale: E,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + MulBase<F>,
-{
-    if out.len() != D {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: out.len(),
-        });
-    }
-    if challenge.positions.len() != challenge.coeffs.len() {
-        return Err(AkitaError::InvalidInput(
-            "sparse challenge positions/coeffs length mismatch".to_string(),
-        ));
-    }
-
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let idx = pos as usize;
-        if idx >= D {
-            return Err(AkitaError::InvalidInput(format!(
-                "sparse challenge position {idx} out of range for D={D}"
-            )));
-        }
-        if coeff == 0 {
-            return Err(AkitaError::InvalidInput(
-                "sparse challenge coefficients must be non-zero".to_string(),
-            ));
-        }
-        out[idx] += scale.mul_base(F::from_i64(coeff as i64));
-    }
-    Ok(())
-}
-
-fn eval_dense_at_pows<E: FieldCore>(coeffs: &[E], alpha_pows: &[E]) -> E {
-    coeffs
-        .iter()
-        .zip(alpha_pows.iter())
-        .fold(E::zero(), |acc, (&coeff, &power)| acc + coeff * power)
-}
-
-// Evaluation helper used by the logical flat-view tensor path.
+// Helper for `TensorChallenges::evals_at_pows`. This computes only the
+// negacyclic wrap correction for one left/right pair; the caller combines it
+// with `eval(left) * eval(right)` to produce one logical block evaluation.
 fn tensor_product_quotient_eval<F, E, const D: usize>(
     left: &SparseChallenge,
     right: &SparseChallenge,
@@ -485,6 +442,53 @@ where
         }
     }
     Ok(quotient_eval)
+}
+
+// Helpers for `eval_factored_aggregate_at_pows`, which evaluates one weighted
+// claim aggregate directly from the left/right tensor factors.
+fn accumulate_sparse_scaled<F, E, const D: usize>(
+    out: &mut [E],
+    challenge: &SparseChallenge,
+    scale: E,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FieldCore + MulBase<F>,
+{
+    if out.len() != D {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: out.len(),
+        });
+    }
+    if challenge.positions.len() != challenge.coeffs.len() {
+        return Err(AkitaError::InvalidInput(
+            "sparse challenge positions/coeffs length mismatch".to_string(),
+        ));
+    }
+
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let idx = pos as usize;
+        if idx >= D {
+            return Err(AkitaError::InvalidInput(format!(
+                "sparse challenge position {idx} out of range for D={D}"
+            )));
+        }
+        if coeff == 0 {
+            return Err(AkitaError::InvalidInput(
+                "sparse challenge coefficients must be non-zero".to_string(),
+            ));
+        }
+        out[idx] += scale.mul_base(F::from_i64(coeff as i64));
+    }
+    Ok(())
+}
+
+fn eval_dense_at_pows<E: FieldCore>(coeffs: &[E], alpha_pows: &[E]) -> E {
+    coeffs
+        .iter()
+        .zip(alpha_pows.iter())
+        .fold(E::zero(), |acc, (&coeff, &power)| acc + coeff * power)
 }
 
 /// Split `num_blocks = 2^r` into balanced tensor dimensions.
@@ -584,7 +588,7 @@ pub fn tensor_left_digest<const D: usize>(
 ///
 /// Returns an error if count arithmetic overflows, if tensor splitting is
 /// invalid, or if sparse challenge sampling fails.
-pub fn sample_tensor_challenges<F, T, const D: usize>(
+pub fn sample_folding_challenges<F, T, const D: usize>(
     transcript: &mut T,
     num_blocks: usize,
     num_claims: usize,
