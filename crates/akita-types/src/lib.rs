@@ -66,15 +66,15 @@ pub use proof::{
 };
 pub use schedule::{
     detect_field_modulus, exact_planned_level_execution, generated_schedule_lookup_key,
-    planned_log_basis_at_level_from_schedule, planned_schedule_key_from_schedule, r_decomp_levels,
-    root_current_w_len, root_direct_schedule, scale_batched_root_layout, schedule_from_plan,
-    schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_params,
-    schedule_root_fold_step, scheduled_fold_execution, scheduled_next_level_params,
-    split_batched_root_params, split_batched_root_params_from_schedule_plan,
-    validate_opening_points_for_claims, w_ring_element_count, w_ring_element_count_with_counts,
-    w_ring_element_count_with_counts_bits, w_ring_element_count_with_counts_for_layout,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaPlannedDirectStep, AkitaPlannedLevel,
-    AkitaPlannedLevelExecution, AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep, FoldStep, Schedule, Step,
+    planned_schedule_key_from_schedule, r_decomp_levels, root_current_w_len, root_direct_schedule,
+    scale_batched_root_layout, schedule_from_plan, schedule_is_root_direct,
+    schedule_num_fold_levels, schedule_root_fold_step, scheduled_fold_execution,
+    scheduled_next_level_params, split_batched_root_params,
+    split_batched_root_params_from_schedule_plan, validate_opening_points_for_claims,
+    w_ring_element_count, w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
+    w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState,
+    AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep,
+    FoldStep, Schedule, Step,
 };
 pub use transcript::AppendToTranscript;

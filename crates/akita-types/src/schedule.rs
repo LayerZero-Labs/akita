@@ -368,27 +368,6 @@ impl AkitaSchedulePlan {
     }
 }
 
-/// Resolve the active planned log-basis for public schedule inputs.
-///
-/// # Errors
-///
-/// Returns an error when the schedule does not include the requested public
-/// state.
-pub fn planned_log_basis_at_level_from_schedule(
-    schedule: &AkitaSchedulePlan,
-    inputs: AkitaScheduleInputs,
-) -> Result<u32, AkitaError> {
-    if let Some(state) = schedule
-        .exact_state_index(inputs, None)
-        .and_then(|state_index| schedule.state_after_prefix(state_index))
-    {
-        return Ok(state.log_basis);
-    }
-    Err(AkitaError::InvalidSetup(format!(
-        "no planned log basis for inputs={inputs:?}: schedule does not include this state"
-    )))
-}
-
 /// Render a stable identity for a planned schedule selected by public inputs.
 pub fn planned_schedule_key_from_schedule(
     lookup_key: AkitaScheduleLookupKey,
@@ -876,11 +855,6 @@ pub fn schedule_root_fold_step(schedule: &Schedule) -> Option<&FoldStep> {
         Some(Step::Fold(step)) => Some(step),
         Some(Step::Direct(_)) | None => None,
     }
-}
-
-/// Return the root fold params when a runtime schedule starts with a fold.
-pub fn schedule_root_fold_params(schedule: &Schedule) -> Option<&LevelParams> {
-    schedule_root_fold_step(schedule).map(|step| &step.params)
 }
 
 /// Resolve one scheduled level's active Akita params.
