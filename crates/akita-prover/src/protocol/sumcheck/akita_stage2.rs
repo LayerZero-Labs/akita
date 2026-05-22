@@ -308,14 +308,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         })
     }
 
-    /// Override the transcript-visible input claim while retaining the true
-    /// stage-1 claim for prover-local witness polynomial construction.
-    #[cfg(feature = "zk")]
-    pub fn with_input_claim(mut self, input_claim: E) -> Self {
-        self.input_claim = input_claim;
-        self
-    }
-
     /// Return the fully folded witness evaluation after the final round.
     ///
     /// # Panics

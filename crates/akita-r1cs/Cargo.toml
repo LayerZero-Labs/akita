@@ -12,7 +12,7 @@ authors = [
 ]
 license = "Apache-2.0 OR MIT"
 description = "Deferred R1CS relation helpers for Akita ZK verification"
-repository = "https://github.com/LayerZero-Labs/hachi"
+repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]

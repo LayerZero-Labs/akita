@@ -881,6 +881,16 @@ pub struct ZkHidingProof<F: FieldCore> {
 }
 
 #[cfg(feature = "zk")]
+impl<F: FieldCore> ZkHidingProof<F> {
+    /// True when this proof carries no top-level hiding commitment or opening.
+    pub fn is_empty(&self) -> bool {
+        self.u_blind.is_empty()
+            && self.hiding_witness.is_empty()
+            && self.b_blinding_digits.is_empty()
+    }
+}
+
+#[cfg(feature = "zk")]
 impl<F: FieldCore + AkitaSerialize> AkitaSerialize for ZkHidingProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -3142,6 +3152,12 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
                 }
             }
             AkitaBatchedRootProof::Direct { .. } => {
+                #[cfg(feature = "zk")]
+                if !self.zk_hiding.is_empty() {
+                    return Err(SerializationError::InvalidData(
+                        "root-direct ZK hiding payload must be empty".to_string(),
+                    ));
+                }
                 if !self.steps.is_empty() {
                     return Err(SerializationError::InvalidData(
                         "root-direct batched proof must not carry recursive-suffix steps"

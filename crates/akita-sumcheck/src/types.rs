@@ -408,7 +408,14 @@ impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
         ctx: &EqFactoredSumcheckProofShape,
     ) -> Result<Self, SerializationError> {
         let (num_rounds, degree) = *ctx;
-        let mut masked_round_polys = Vec::with_capacity(num_rounds);
+        let mut masked_round_polys = Vec::new();
+        masked_round_polys
+            .try_reserve_exact(num_rounds)
+            .map_err(|_| {
+                SerializationError::InvalidData(
+                    "masked eq-factored sumcheck proof allocation failed".to_string(),
+                )
+            })?;
         for _ in 0..num_rounds {
             masked_round_polys.push(EqFactoredUniPoly::deserialize_with_mode(
                 &mut reader,

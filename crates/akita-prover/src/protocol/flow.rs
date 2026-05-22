@@ -46,8 +46,8 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, ABSORB_SUMCHECK_W,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
+    ABSORB_SUMCHECK_S_CLAIM, ABSORB_SUMCHECK_W, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -1534,6 +1534,7 @@ where
     let proof_w_eval = w_eval;
     #[cfg(feature = "zk")]
     let proof_w_eval = w_eval_masked;
+    transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     #[cfg(not(feature = "zk"))]
     let proof_y_rings = y_rings;
     let (level_proof, sumcheck_challenges) = (
@@ -4000,6 +4001,7 @@ where
     let proof_w_eval = w_eval;
     #[cfg(feature = "zk")]
     let proof_w_eval = w_eval_masked;
+    transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
 
     Ok(RootLevelRawOutput {
         #[cfg(feature = "zk")]

@@ -36,8 +36,8 @@ use akita_sumcheck::{
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, ABSORB_SUMCHECK_W,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
+    ABSORB_SUMCHECK_S_CLAIM, ABSORB_SUMCHECK_W, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
@@ -876,6 +876,10 @@ where
             challenges
         }
     };
+    if let RootStageInput::Intermediate { next_w_eval, .. } = &stage_input {
+        transcript.record_wire_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
+        transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
+    }
     Ok(sumcheck_challenges)
 }
 
@@ -1427,6 +1431,11 @@ where
             challenges
         }
     };
+    if let FoldProofView::Intermediate(level_proof) = &proof {
+        let next_w_eval = level_proof.stage2.next_w_eval();
+        transcript.record_wire_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
+        transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
+    }
     Ok(challenges)
 }
 

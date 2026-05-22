@@ -504,6 +504,10 @@ where
 
     match &proof.root {
         AkitaBatchedRootProof::Direct { witnesses, .. } => {
+            #[cfg(feature = "zk")]
+            if !proof.zk_hiding.is_empty() {
+                return Err(AkitaError::InvalidProof);
+            }
             if !proof.steps.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
