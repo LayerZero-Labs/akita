@@ -11,6 +11,14 @@
 //!
 //! Sampling labels are taken as a [`TensorChallengeLabels`] parameter so this
 //! module is not coupled to any specific protocol stage.
+//!
+//! The public types are split by protocol role:
+//! [`TensorChallengeShape`] is only the flat-vs-tensor selector,
+//! [`TensorChallenges`] is the sampled runtime container, and
+//! [`TensorChallengeSet`] is the factored tensor state whose left/right lengths
+//! are part of the invariant. Materialized logical challenges use
+//! [`IntegerChallenge`], because tensor products can widen coefficients beyond
+//! the sampled [`SparseChallenge`] range.
 
 use crate::{sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase};
@@ -19,7 +27,11 @@ use sha3::{Digest, Sha3_256};
 
 const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/tensor-left-digest/v1";
 
-/// Shape of a tensor-vs-flat sparse-challenge round.
+/// Configuration selector for a tensor-vs-flat sparse-challenge round.
+///
+/// This type intentionally carries no sampled challenges; it is used when
+/// choosing transcript labels, challenge counts, and L1 envelopes before a
+/// runtime container exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TensorChallengeShape {
     /// Sample one independent challenge for every logical block.
@@ -46,12 +58,14 @@ impl TensorChallengeShape {
     }
 }
 
-/// Tensor-structured sparse challenges for one folding round.
+/// Factored tensor sparse challenges for one folding round.
 ///
 /// `left` and `right` are laid out per claim: claim `c`'s left factor occupies
 /// `left[c * left_len .. (c + 1) * left_len]` and similarly for `right`. The
 /// logical challenge at block `(p, q)` of claim `c` is the tensor product
-/// `left[c, p] · right[c, q]`.
+/// `left[c, p] · right[c, q]`. Keeping this as the tensor-only payload makes
+/// the factorization invariant explicit for callers that can evaluate weighted
+/// aggregates without expanding every logical block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TensorChallengeSet {
     /// Left vector entries, grouped by claim.
@@ -66,7 +80,12 @@ pub struct TensorChallengeSet {
     pub num_claims: usize,
 }
 
-/// Folding challenges, either flat or tensor-structured.
+/// Sampled folding challenges, either already flat or tensor-structured.
+///
+/// This enum preserves the runtime representation chosen by
+/// [`TensorChallengeShape`]. Callers that need ordinary per-block polynomials
+/// can use [`TensorChallenges::expand_integer`]; callers that can exploit the
+/// factorization can match the tensor variant directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TensorChallenges {
     /// Flat challenge vector indexed as `claim * num_blocks + block`.
@@ -104,10 +123,12 @@ impl TensorChallenges {
         }
     }
 
-    /// Expand to integer ring challenges for prover-side fold kernels.
+    /// Materialize logical ring challenges for prover-side fold kernels.
     ///
     /// Flat challenges widen coefficients without changing the distribution;
-    /// tensor challenges materialise `left[p] · right[q]` per logical block.
+    /// tensor challenges materialize `left[p] · right[q]` per logical block.
+    /// This is the boundary where a sampled challenge container becomes an
+    /// [`IntegerChallenge`].
     ///
     /// # Errors
     ///
@@ -124,6 +145,9 @@ impl TensorChallenges {
     }
 
     /// Evaluate all logical challenges at a ring-switch point, in flat order.
+    ///
+    /// This is the logical flat-view API: it returns one evaluation per block
+    /// regardless of whether the challenges were sampled flat or factored.
     ///
     /// # Errors
     ///
@@ -147,7 +171,11 @@ impl TensorChallenges {
 }
 
 impl TensorChallengeSet {
-    /// Expand tensor products into logical flat order.
+    /// Materialize tensor products into logical flat order.
+    ///
+    /// This expansion is intentionally separate from the evaluation helpers
+    /// below: it produces the widened integer polynomials consumed by fold
+    /// kernels, while the evaluation helpers produce field evaluations.
     ///
     /// # Errors
     ///
@@ -171,6 +199,10 @@ impl TensorChallengeSet {
     }
 
     /// Evaluate reduced tensor products in logical flat order.
+    ///
+    /// This mirrors [`TensorChallenges::evals_at_pows`] for the tensor payload:
+    /// it produces one field element per logical block without returning the
+    /// intermediate [`IntegerChallenge`] values.
     ///
     /// # Errors
     ///
@@ -231,6 +263,10 @@ impl TensorChallengeSet {
 
     /// Evaluate one weighted tensor aggregate exactly at a ring-switch point.
     ///
+    /// This is the factored aggregate API. Unlike
+    /// [`Self::evals_at_pows`], it consumes separable left/right weights and
+    /// returns a single aggregate for one claim.
+    ///
     /// Computes
     ///
     /// ```text
@@ -287,7 +323,7 @@ impl TensorChallengeSet {
         let right_start = claim_idx * self.right_len;
 
         // Build the weighted dense factors in E directly so the product
-        // evaluation never materialises a length-O(left_len · right_len) buffer.
+        // evaluation never materializes a length-O(left_len · right_len) buffer.
         let mut left_bar = [E::zero(); D];
         let mut right_bar = [E::zero(); D];
 
@@ -355,6 +391,7 @@ impl TensorChallengeSet {
     }
 }
 
+// Evaluation helpers used by the factored aggregate path.
 fn accumulate_sparse_scaled<F, E, const D: usize>(
     out: &mut [E],
     challenge: &SparseChallenge,
@@ -400,6 +437,7 @@ fn eval_dense_at_pows<E: FieldCore>(coeffs: &[E], alpha_pows: &[E]) -> E {
         .fold(E::zero(), |acc, (&coeff, &power)| acc + coeff * power)
 }
 
+// Evaluation helper used by the logical flat-view tensor path.
 fn tensor_product_quotient_eval<F, E, const D: usize>(
     left: &SparseChallenge,
     right: &SparseChallenge,

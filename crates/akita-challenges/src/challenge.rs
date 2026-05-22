@@ -35,14 +35,15 @@ pub struct SparseChallenge {
     pub coeffs: Vec<i8>,
 }
 
-/// Sparse polynomial in `Z[X]/(X^D+1)` with wider integer coefficients than
-/// [`SparseChallenge`].
+/// Materialized sparse polynomial in `Z[X]/(X^D+1)` with wider integer
+/// coefficients than [`SparseChallenge`].
 ///
 /// Composing sparse challenges (for example forming `c_{p,q} = α_p · β_q`
 /// for tensor-shaped stage-1 folding) can blow past the `i8` envelope of the
 /// individual samples. `IntegerChallenge` is the wider-coefficient form used
-/// for those composed objects so prover-side digit accumulation can stay in
-/// the integer domain.
+/// for those composed objects so prover-side digit accumulation can stay in the
+/// integer domain. It is deliberately independent of the flat-vs-tensor
+/// sampling containers: both shapes expand into this same materialized form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntegerChallenge {
     /// Coefficient indices (powers of `X`) where the polynomial is non-zero.

@@ -15,7 +15,7 @@ use akita_transcript::labels::{
 use akita_transcript::{Blake2bTranscript, Transcript};
 
 /// Stage-1 fold label bundle reused by every tensor-vs-flat sampling test.
-fn stage1_tensor_labels() -> TensorChallengeLabels<'static> {
+fn fold_challenge_labels() -> TensorChallengeLabels<'static> {
     TensorChallengeLabels {
         flat: CHALLENGE_STAGE1_FOLD,
         tensor_left: CHALLENGE_TENSOR_FOLD_LEFT,
@@ -357,7 +357,7 @@ fn tensor_sampling_uses_two_vectors() {
         2,
         &cfg,
         &TensorChallengeShape::Tensor,
-        stage1_tensor_labels(),
+        fold_challenge_labels(),
     )
     .unwrap();
 
@@ -387,7 +387,7 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
         2,
         &cfg,
         &TensorChallengeShape::Tensor,
-        stage1_tensor_labels(),
+        fold_challenge_labels(),
     )
     .unwrap();
     let TensorChallenges::Tensor(sampled) = sampled else {
@@ -458,7 +458,7 @@ fn tensor_lazy_evals_match_expanded_products() {
         1,
         &cfg,
         &TensorChallengeShape::Tensor,
-        stage1_tensor_labels(),
+        fold_challenge_labels(),
     )
     .unwrap();
 
