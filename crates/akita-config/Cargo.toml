@@ -15,16 +15,11 @@ description = "Runtime configuration presets and schedule policy for the Akita p
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
-[package.metadata.cargo-machete]
-ignored = ["akita-algebra"]
-
 [features]
-default = ["parallel"]
-parallel = []
+default = []
 zk = ["akita-derive/zk", "akita-types/zk"]
 
 [dependencies]
-akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-derive = { version = "0.1.0", path = "../akita-derive" }
 akita-field = { version = "0.1.0", path = "../akita-field" }

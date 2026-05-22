@@ -30,7 +30,6 @@ tracing = "0.1"
 default = []
 parallel = [
   "akita-algebra/parallel",
-  "akita-config/parallel",
   "akita-field/parallel",
   "akita-sumcheck/parallel",
 ]

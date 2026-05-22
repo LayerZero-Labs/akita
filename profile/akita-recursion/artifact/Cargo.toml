@@ -33,7 +33,6 @@ default = ["parallel"]
 parallel = [
   "dep:rayon",
   "akita-pcs/parallel",
-  "akita-config/parallel",
   "akita-field/parallel",
   "akita-prover/parallel",
 ]

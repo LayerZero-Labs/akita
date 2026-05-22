@@ -38,7 +38,6 @@ default = ["parallel", "planner"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
-  "akita-config/parallel",
   "akita-field/parallel",
   "akita-prover/parallel",
   "akita-scheme/parallel",

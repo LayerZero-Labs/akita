@@ -193,15 +193,13 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     let mut max_rows: usize = 1;
     let mut max_stride: usize = 1;
     let mut saw_supported_shape = false;
-    let setup_envelope = Cfg::envelope(max_num_vars);
     for num_vars in 1..=max_num_vars {
         for num_polys in 1..=max_num_batched_polys {
             let upper_pts = num_polys.min(max_num_points);
             for num_points in 1..=upper_pts {
                 let incidence =
                     ClaimIncidenceSummary::from_counts(num_vars, num_polys, num_points)?;
-                let Some((rows, stride)) =
-                    setup_matrix_envelope_for_shape::<Cfg>(&incidence, &setup_envelope)?
+                let Some((rows, stride)) = setup_matrix_envelope_for_shape::<Cfg>(&incidence)?
                 else {
                     continue;
                 };
@@ -223,10 +221,8 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     incidence: &ClaimIncidenceSummary,
-    setup_envelope: &CommitmentEnvelope,
 ) -> Result<Option<(usize, usize)>, AkitaError> {
     let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
-    let _ = setup_envelope;
 
     // Table-only: configs that want a runtime DP fallback override the
     // `max_setup_matrix_size` trait method directly (see `PlannerCfg`).
@@ -541,11 +537,8 @@ mod tests {
         fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
         GeneratedScheduleTable,
     };
-    #[cfg(test)]
     use akita_types::layout::digit_math::optimal_m_r_split;
-    #[cfg(test)]
     use akita_types::level_layout_from_params;
-    #[cfg(test)]
     use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
 
     #[test]
@@ -553,11 +546,9 @@ mod tests {
     fn setup_matrix_envelope_covers_grouped_batch_schedules() {
         let incidence =
             ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
-        let envelope = fp128::D32Full::envelope(30);
-        let grouped_same_point =
-            setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence, &envelope)
-                .unwrap()
-                .expect("D32 full table must contain the grouped same-point schedule");
+        let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence)
+            .unwrap()
+            .expect("D32 full table must contain the grouped same-point schedule");
 
         let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
             .expect("setup envelope should cover generated grouped batch schedules");

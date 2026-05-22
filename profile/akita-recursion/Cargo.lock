@@ -81,7 +81,6 @@ dependencies = [
 name = "akita-config"
 version = "0.1.0"
 dependencies = [
- "akita-algebra",
  "akita-challenges",
  "akita-derive",
  "akita-field",
