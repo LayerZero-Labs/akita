@@ -711,6 +711,7 @@ mod tensor_fold {
 // the root fold step's `params.fold_challenge_shape`.
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "planner")]
 mod planner_tensor_fold {
     use super::*;
     use akita_challenges::TensorChallengeShape;
@@ -787,7 +788,7 @@ mod planner_tensor_fold {
             let opening_groups = [&openings[..]];
             let hints = vec![hint];
 
-            let mut prover_transcript = Blake2bTranscript::<F>::new(&label);
+            let mut prover_transcript = AkitaTranscript::<F>::new(&label);
             let proof = <TensorPresetScheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
                 prove_input(
@@ -807,7 +808,7 @@ mod planner_tensor_fold {
                 "preset must exercise the stage-1 fold"
             );
 
-            let mut verifier_transcript = Blake2bTranscript::<F>::new(&label);
+            let mut verifier_transcript = AkitaTranscript::<F>::new(&label);
             <TensorPresetScheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
                 &proof,
                 &verifier_setup,
@@ -826,7 +827,7 @@ mod planner_tensor_fold {
 
     #[test]
     fn d64_onehot_tensor_rejects_tampered_proof() {
-        const NV: usize = 12;
+        const NV: usize = 20;
         init_rayon_pool();
         run_on_large_stack(|| {
             let layout = D64OneHotTensor::commitment_layout(NV).expect("layout");
@@ -851,7 +852,7 @@ mod planner_tensor_fold {
             let hints = vec![hint];
 
             let mut prover_transcript =
-                Blake2bTranscript::<F>::new(b"single_poly_e2e/d64_onehot_tensor_tampered");
+                AkitaTranscript::<F>::new(b"single_poly_e2e/d64_onehot_tensor_tampered");
             let mut proof = <TensorPresetScheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
                 prove_input(
@@ -873,7 +874,7 @@ mod planner_tensor_fold {
             root.stage1.s_claim += F::one();
 
             let mut verifier_transcript =
-                Blake2bTranscript::<F>::new(b"single_poly_e2e/d64_onehot_tensor_tampered");
+                AkitaTranscript::<F>::new(b"single_poly_e2e/d64_onehot_tensor_tampered");
             let result = <TensorPresetScheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
                 &proof,
                 &verifier_setup,
