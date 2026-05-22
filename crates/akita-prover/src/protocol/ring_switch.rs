@@ -120,10 +120,11 @@ where
         .take_w_folded()
         .ok_or_else(|| AkitaError::InvalidInput("missing w_folded in prover".to_string()))?;
 
+    let integer_challenges = quad_eq.challenges.expand_integer::<D>()?;
     let r = compute_r_split_eq::<F, D>(
         lp,
         setup,
-        &quad_eq.integer_challenges,
+        &integer_challenges,
         w_hat.flat_digits(),
         #[cfg(feature = "zk")]
         &d_blinding_digits,
@@ -734,10 +735,11 @@ where
     let t_total_blocks = num_blocks
         .checked_mul(num_t_vectors)
         .ok_or_else(|| AkitaError::InvalidSetup("batched t block count overflow".to_string()))?;
-    if challenges.logical_len() != total_blocks {
+    let actual_blocks = challenges.logical_len()?;
+    if actual_blocks != total_blocks {
         return Err(AkitaError::InvalidSize {
             expected: total_blocks,
-            actual: challenges.logical_len(),
+            actual: actual_blocks,
         });
     }
     let block_len = lp.block_len;

@@ -9,9 +9,9 @@ use crate::kernels::linear::try_centered_i8;
 use crate::{CenteredCoeff, DecomposeFoldWitness};
 use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{IntegerChallenge, SparseChallenge, TensorChallengeSet};
+use akita_challenges::IntegerChallenge;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField};
+use akita_field::CanonicalField;
 use std::array::from_fn;
 
 const D32_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 24;
@@ -295,19 +295,24 @@ pub fn integer_mul_acc<const D: usize>(
     #[cfg(target_arch = "aarch64")]
     {
         if neon::use_neon_ntt()
+            && D.is_multiple_of(16)
             && challenge
                 .coeffs
                 .iter()
                 .all(|&coeff| coeff.unsigned_abs() <= 2)
         {
+            let mut neon_acc = [0i32; D];
             unsafe {
                 decompose_fold_neon::integer_mul_acc_neon(
                     digit_plane.as_ptr(),
-                    acc.as_mut_ptr(),
+                    neon_acc.as_mut_ptr(),
                     D,
                     &challenge.positions,
                     &challenge.coeffs,
                 );
+            }
+            for (dst, src) in acc.iter_mut().zip(neon_acc) {
+                *dst += CenteredCoeff::from(src);
             }
             return;
         }
@@ -403,7 +408,7 @@ fn add_scaled_rotated_rows_triplet<const D: usize>(
     }
 }
 
-fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const D: usize>(
+pub(super) fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     rotated: &[[CenteredCoeff; D]],
     acc: &mut [[CenteredCoeff; D]],
@@ -764,187 +769,6 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
         });
 
     out
-}
-
-pub fn balanced_ring_decompose_fold_tensor_partitioned<F: CanonicalField, const D: usize>(
-    poly_coeffs: &[&[CyclotomicRing<F, D>]],
-    tensor: &TensorChallengeSet,
-    block_len: usize,
-    num_digits: usize,
-    p: &DecomposeParams,
-) -> Result<Vec<[CenteredCoeff; D]>, AkitaError> {
-    if block_len == 0 || num_digits == 0 {
-        return Err(AkitaError::InvalidInput(
-            "dense tensor decompose-fold requires non-zero block_len and num_digits".to_string(),
-        ));
-    }
-    validate_tensor_challenge_set::<D>(tensor)?;
-    if poly_coeffs.len() != tensor.num_claims {
-        return Err(AkitaError::InvalidSize {
-            expected: tensor.num_claims,
-            actual: poly_coeffs.len(),
-        });
-    }
-
-    let blocks_per_claim = tensor
-        .left_len
-        .checked_mul(tensor.right_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))?;
-    let total_blocks = tensor
-        .num_claims
-        .checked_mul(blocks_per_claim)
-        .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))?;
-
-    #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads();
-    #[cfg(not(feature = "parallel"))]
-    let num_threads = 1;
-
-    let actual_threads = num_threads.min(block_len.max(1)).max(1);
-    let elem_chunk = block_len.div_ceil(actual_threads);
-    let chunks = cfg_into_iter!(0..actual_threads)
-        .map(|tid| {
-            let elem_start = tid * elem_chunk;
-            if elem_start >= block_len {
-                return Ok(Vec::new());
-            }
-            let elem_end = (elem_start + elem_chunk).min(block_len);
-            let mut acc = vec![[0 as CenteredCoeff; D]; (elem_end - elem_start) * num_digits];
-            let mut rotated = [[0 as CenteredCoeff; D]; D];
-
-            for block_idx in 0..total_blocks {
-                let claim_idx = block_idx / blocks_per_claim;
-                let local_block_idx = block_idx % blocks_per_claim;
-                let coeff_start = local_block_idx * block_len + elem_start;
-                let coeffs = poly_coeffs[claim_idx];
-                if coeff_start >= coeffs.len() {
-                    continue;
-                }
-                let coeff_end = (local_block_idx * block_len + elem_end).min(coeffs.len());
-                if coeff_start >= coeff_end {
-                    continue;
-                }
-
-                let (left, right) = tensor_challenges_for_block(tensor, block_idx);
-                fill_rotated_tensor_challenge::<D>(&mut rotated, left, right)?;
-                for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate() {
-                    let base = local_elem_idx * num_digits;
-                    decompose_ring_full_challenge_accumulate::<F, D>(
-                        ring,
-                        &rotated,
-                        &mut acc[base..base + num_digits],
-                        p,
-                    );
-                }
-            }
-
-            Ok(acc)
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-
-    Ok(chunks.into_iter().flatten().collect())
-}
-
-fn validate_tensor_challenge_set<const D: usize>(
-    tensor: &TensorChallengeSet,
-) -> Result<(), AkitaError> {
-    let expected_left = tensor
-        .num_claims
-        .checked_mul(tensor.left_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("tensor-left count overflow".to_string()))?;
-    if tensor.left.len() != expected_left {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_left,
-            actual: tensor.left.len(),
-        });
-    }
-    let expected_right = tensor
-        .num_claims
-        .checked_mul(tensor.right_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("tensor-right count overflow".to_string()))?;
-    if tensor.right.len() != expected_right {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_right,
-            actual: tensor.right.len(),
-        });
-    }
-    for challenge in tensor.left.iter().chain(tensor.right.iter()) {
-        validate_sparse_challenge::<D>(challenge)?;
-    }
-    Ok(())
-}
-
-fn validate_sparse_challenge<const D: usize>(
-    challenge: &SparseChallenge,
-) -> Result<(), AkitaError> {
-    if challenge.positions.len() != challenge.coeffs.len() {
-        return Err(AkitaError::InvalidInput(
-            "sparse challenge positions/coeffs length mismatch".to_string(),
-        ));
-    }
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        if pos as usize >= D {
-            return Err(AkitaError::InvalidInput(format!(
-                "sparse challenge position {pos} out of range for D={D}"
-            )));
-        }
-        if coeff == 0 {
-            return Err(AkitaError::InvalidInput(
-                "sparse challenge coefficients must be non-zero".to_string(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[inline]
-fn tensor_challenges_for_block(
-    tensor: &TensorChallengeSet,
-    block_idx: usize,
-) -> (&SparseChallenge, &SparseChallenge) {
-    let blocks_per_claim = tensor.left_len * tensor.right_len;
-    let claim_idx = block_idx / blocks_per_claim;
-    let local_idx = block_idx % blocks_per_claim;
-    let left_idx = claim_idx * tensor.left_len + (local_idx / tensor.right_len);
-    let right_idx = claim_idx * tensor.right_len + (local_idx % tensor.right_len);
-    (&tensor.left[left_idx], &tensor.right[right_idx])
-}
-
-fn fill_rotated_tensor_challenge<const D: usize>(
-    table: &mut [[CenteredCoeff; D]],
-    left: &SparseChallenge,
-    right: &SparseChallenge,
-) -> Result<(), AkitaError> {
-    debug_assert!(D.is_power_of_two());
-    debug_assert!(table.len() >= D);
-    let mut dense = [0 as CenteredCoeff; D];
-    for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
-        for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
-            let degree = left_pos as usize + right_pos as usize;
-            let (base_pos, base_sign) = if degree < D {
-                (degree, 1 as CenteredCoeff)
-            } else {
-                (degree - D, -1 as CenteredCoeff)
-            };
-            let coeff = CenteredCoeff::from(left_coeff)
-                .checked_mul(CenteredCoeff::from(right_coeff))
-                .and_then(|coeff| coeff.checked_mul(base_sign))
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("tensor challenge coefficient overflow".to_string())
-                })?;
-            dense[base_pos] = dense[base_pos].checked_add(coeff).ok_or_else(|| {
-                AkitaError::InvalidInput("tensor challenge coefficient overflow".to_string())
-            })?;
-        }
-    }
-
-    for (shift, row) in table.iter_mut().enumerate().take(D) {
-        row[shift..D].copy_from_slice(&dense[..D - shift]);
-        for (dst, src) in row[..shift].iter_mut().zip(dense[D - shift..].iter()) {
-            *dst = -*src;
-        }
-    }
-    Ok(())
 }
 
 pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(

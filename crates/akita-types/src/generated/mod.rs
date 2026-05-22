@@ -249,7 +249,7 @@ pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q128,
-            entries: fp128_d64_onehot_tensor_zk::FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES,
+            entries: fp128_d64_onehot_zk::FP128_D64_ONEHOT_ZK_SCHEDULES,
         }
     }
     #[cfg(not(feature = "zk"))]
@@ -264,7 +264,7 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
     {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q128,
-            entries: fp128_d64_onehot_zk::FP128_D64_ONEHOT_ZK_SCHEDULES,
+            entries: fp128_d64_onehot_tensor_zk::FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES,
         }
     }
     #[cfg(not(feature = "zk"))]
@@ -421,3 +421,20 @@ small_field_table_fn!(
     FP64_D256_ONEHOT_SCHEDULES,
     FP64_D256_ONEHOT_ZK_SCHEDULES
 );
+
+#[cfg(all(test, feature = "zk"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn d64_onehot_zk_accessors_do_not_cross_wire_tensor_table() {
+        assert!(std::ptr::eq(
+            fp128_d64_onehot_table().entries,
+            fp128_d64_onehot_zk::FP128_D64_ONEHOT_ZK_SCHEDULES,
+        ));
+        assert!(std::ptr::eq(
+            fp128_d64_onehot_tensor_table().entries,
+            fp128_d64_onehot_tensor_zk::FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES,
+        ));
+    }
+}
