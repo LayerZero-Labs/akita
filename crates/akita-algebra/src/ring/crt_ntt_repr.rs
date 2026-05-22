@@ -1,20 +1,14 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
 use std::array::from_fn;
-#[cfg(any(
-    target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "avx2")
-))]
+#[cfg(target_arch = "aarch64")]
 use std::mem::size_of;
 
 use crate::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt_cyclic, NttTwiddles};
 use crate::ntt::crt::GarnerData;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
-#[cfg(any(
-    target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "avx2")
-))]
+#[cfg(target_arch = "aarch64")]
 use crate::ntt::{simd, use_simd_ntt};
 use crate::{CanonicalField, FieldCore};
 
@@ -330,10 +324,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         lut: &DigitMontLut<W, K>,
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
-        #[cfg(any(
-            target_arch = "aarch64",
-            all(target_arch = "x86_64", target_feature = "avx2")
-        ))]
+        #[cfg(target_arch = "aarch64")]
         if use_simd_ntt() {
             for (k, (scratch_limb, tw)) in
                 scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
@@ -398,10 +389,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         let [acc0, acc1] = accs;
         let [lhs0, lhs1] = lhs;
 
-        #[cfg(any(
-            target_arch = "aarch64",
-            all(target_arch = "x86_64", target_feature = "avx2")
-        ))]
+        #[cfg(target_arch = "aarch64")]
         if use_simd_ntt() {
             for (k, (scratch_limb, tw)) in
                 scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
@@ -498,10 +486,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         let [acc0, acc1, acc2] = accs;
         let [lhs0, lhs1, lhs2] = lhs;
 
-        #[cfg(any(
-            target_arch = "aarch64",
-            all(target_arch = "x86_64", target_feature = "avx2")
-        ))]
+        #[cfg(target_arch = "aarch64")]
         if use_simd_ntt() {
             for (k, (scratch_limb, tw)) in
                 scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
@@ -1017,10 +1002,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         rhs: &Self,
         params: &CrtNttParamSet<W, K, D>,
     ) {
-        #[cfg(any(
-            target_arch = "aarch64",
-            all(target_arch = "x86_64", target_feature = "avx2")
-        ))]
+        #[cfg(target_arch = "aarch64")]
         if use_simd_ntt() {
             for k in 0..K {
                 let prime = params.primes[k];

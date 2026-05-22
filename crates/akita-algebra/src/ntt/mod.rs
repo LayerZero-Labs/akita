@@ -18,50 +18,18 @@ pub fn use_simd_ntt() -> bool {
     *ENABLED.get_or_init(|| std::env::var("AKITA_SCALAR_NTT").map_or(true, |v| v != "1"))
 }
 
-// SIMD backends. Each backend's `pub mod` declaration and unified `simd`
-// alias share a cfg gate. Precedence mirrors `fields::packed`: AVX-512 wins
-// on x86 if all required features are present, then AVX2, then NEON on
-// aarch64. Dispatch sites refer to `super::simd::*` regardless of arch.
+// SIMD NTT backend. Only NEON is currently wired into the dispatch sites
+// (`butterfly.rs`, `crt_ntt_repr.rs`, `kernels/linear.rs`). A draft AVX2 /
+// AVX-512 NTT port was reverted because it regressed `commit` and `setup`
+// at the e2e level — LLVM's auto-vectorization of the simple scalar
+// butterfly / pointwise-mul-acc loops turned out to be competitive with
+// hand-written intrinsics for the typical small `D ≤ 64` NTT sizes. The
+// `pub use ... as simd` alias is kept arch-agnostic so future SIMD
+// backends can plug in without touching every dispatch site.
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
 #[cfg(target_arch = "aarch64")]
 pub use neon as simd;
-
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx512f",
-    target_feature = "avx512dq",
-    target_feature = "avx512bw",
-))]
-pub mod avx512;
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx512f",
-    target_feature = "avx512dq",
-    target_feature = "avx512bw",
-))]
-pub use avx512 as simd;
-
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx2",
-    not(all(
-        target_feature = "avx512f",
-        target_feature = "avx512dq",
-        target_feature = "avx512bw"
-    ))
-))]
-pub mod avx2;
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx2",
-    not(all(
-        target_feature = "avx512f",
-        target_feature = "avx512dq",
-        target_feature = "avx512bw"
-    ))
-))]
-pub use avx2 as simd;
 
 #[cfg(all(test, not(feature = "zk")))]
 mod simd_tests;

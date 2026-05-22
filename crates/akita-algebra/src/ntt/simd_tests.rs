@@ -1,14 +1,12 @@
 //! Cross-backend SIMD NTT parity tests.
 //!
-//! Exercises whichever SIMD backend is active at compile time (NEON on
-//! aarch64, AVX2 on x86_64 baseline, AVX-512F+DQ+BW on x86_64 if available)
-//! against the scalar reference. Lifted from the NEON-only test module in
-//! [`super::neon`] so AVX2 / AVX-512 get the same coverage for free.
+//! Currently only NEON is plugged into the `simd` alias; an earlier AVX2 /
+//! AVX-512 NTT port was reverted (see `ntt/mod.rs` for the rationale).
+//! This module is written against `super::simd::*` rather than `super::neon::*`
+//! so the tests automatically extend to any future SIMD backend that
+//! re-introduces the `simd` alias on x86.
 
-#![cfg(any(
-    target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "avx2")
-))]
+#![cfg(target_arch = "aarch64")]
 
 use super::butterfly::{
     forward_ntt as scalar_forward_ntt, forward_ntt_cyclic as scalar_forward_ntt_cyclic,

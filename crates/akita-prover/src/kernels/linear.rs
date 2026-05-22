@@ -2,13 +2,7 @@
 
 use akita_algebra::ntt::MontCoeff;
 use akita_algebra::ntt::PrimeWidth;
-#[cfg(all(
-    any(
-        target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "avx2")
-    ),
-    feature = "parallel"
-))]
+#[cfg(all(target_arch = "aarch64", feature = "parallel"))]
 use akita_algebra::ntt::{simd, use_simd_ntt};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::{
@@ -528,10 +522,7 @@ fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
     other: &CyclotomicCrtNtt<W, K, D>,
     params: &CrtNttParamSet<W, K, D>,
 ) {
-    #[cfg(any(
-        target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "avx2")
-    ))]
+    #[cfg(target_arch = "aarch64")]
     if use_simd_ntt() {
         for k in 0..K {
             let prime = params.primes[k];

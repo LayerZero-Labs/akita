@@ -134,10 +134,7 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
-    #[cfg(any(
-        target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "avx2")
-    ))]
+    #[cfg(target_arch = "aarch64")]
     if super::use_simd_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
             unsafe {
@@ -196,10 +193,7 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
-    #[cfg(any(
-        target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "avx2")
-    ))]
+    #[cfg(target_arch = "aarch64")]
     if super::use_simd_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
             unsafe {
@@ -257,10 +251,7 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
-    #[cfg(any(
-        target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "avx2")
-    ))]
+    #[cfg(target_arch = "aarch64")]
     if super::use_simd_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
             unsafe {
@@ -314,10 +305,7 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
-    #[cfg(any(
-        target_arch = "aarch64",
-        all(target_arch = "x86_64", target_feature = "avx2")
-    ))]
+    #[cfg(target_arch = "aarch64")]
     if super::use_simd_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
             unsafe {
