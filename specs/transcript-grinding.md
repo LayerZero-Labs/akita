@@ -833,10 +833,10 @@ Risk areas:
 - `crates/akita-prover/src/protocol/ring_switch.rs`
 - `crates/akita-verifier/src/protocol/ring_switch.rs`
 - `crates/akita-types/src/proof/mod.rs`
-- `/Users/quang.dao/Documents/SNARKs/plonky3/challenger/src/grinding_challenger.rs`
-- `/Users/quang.dao/Documents/SNARKs/plonky3/fri/src/config.rs`
-- `/Users/quang.dao/Documents/SNARKs/spongefish/pow/src/lib.rs`
-- `/Users/quang.dao/Documents/SNARKs/spongefish/pow/README.md`
-- `/Users/quang.dao/Documents/SNARKs/openvm-stark-backend/crates/stark-backend/src/prover/cpu/mod.rs`
-- `/Users/quang.dao/Documents/SNARKs/whir-p3/src/whir/prover/mod.rs`
-- `/Users/quang.dao/Documents/SNARKs/stwo/crates/stwo/src/core/proof_of_work.rs`
+- [Plonky3 `GrindingChallenger`](https://github.com/Plonky3/Plonky3/blob/1b65d2327f2a9272eb72cb84b332f2c19bd73e4e/challenger/src/grinding_challenger.rs)
+- [Plonky3 FRI config](https://github.com/Plonky3/Plonky3/blob/1b65d2327f2a9272eb72cb84b332f2c19bd73e4e/fri/src/config.rs)
+- [Spongefish PoW implementation](https://github.com/arkworks-rs/spongefish/blob/d2d190b1329d35ac9577438d05aed4f17a57b9f9/pow/src/lib.rs)
+- [Spongefish PoW README](https://github.com/arkworks-rs/spongefish/blob/d2d190b1329d35ac9577438d05aed4f17a57b9f9/pow/README.md)
+- [OpenVM STARK backend prover PoW reference](https://github.com/openvm-org/stark-backend/blob/d0c1693c90d8aa84f6299d6fd53a60f0cf57f9f4/crates/stark-backend/src/prover/cpu/mod.rs)
+- [whir-p3 prover reference](https://github.com/tcoratger/whir-p3/blob/a755a26ae41c52e3a1695ac4c443af627c96fe77/src/whir/prover/mod.rs)
+- [Stwo proof-of-work reference](https://github.com/starkware-libs/stwo/blob/aeceb74c58184d7886ebd7f34a7453fee714ca40/crates/stwo/src/core/proof_of_work.rs)
