@@ -53,6 +53,43 @@ pub struct IntegerChallenge {
 }
 
 impl SparseChallenge {
+    /// Validate the sampler invariants for ring dimension `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if positions/coefficients have mismatched lengths, if a
+    /// position is outside `0..D`, if a coefficient is zero, or if a position is
+    /// repeated.
+    pub fn validate<const D: usize>(&self) -> Result<(), AkitaError> {
+        if self.positions.len() != self.coeffs.len() {
+            return Err(AkitaError::InvalidInput(
+                "sparse challenge positions/coeffs length mismatch".to_string(),
+            ));
+        }
+
+        let mut seen = [false; D];
+        for (&pos, &coeff) in self.positions.iter().zip(self.coeffs.iter()) {
+            let idx = pos as usize;
+            if idx >= D {
+                return Err(AkitaError::InvalidInput(format!(
+                    "sparse challenge position {pos} out of range for D={D}"
+                )));
+            }
+            if coeff == 0 {
+                return Err(AkitaError::InvalidInput(
+                    "sparse challenge coefficients must be non-zero".to_string(),
+                ));
+            }
+            if seen[idx] {
+                return Err(AkitaError::InvalidInput(
+                    "sparse challenge positions must be unique".to_string(),
+                ));
+            }
+            seen[idx] = true;
+        }
+        Ok(())
+    }
+
     /// Evaluate this challenge against precomputed scalar powers.
     ///
     /// The small integer coefficients are first embedded into the base field
@@ -145,8 +182,8 @@ impl IntegerChallenge {
         left: &SparseChallenge,
         right: &SparseChallenge,
     ) -> Result<Self, AkitaError> {
-        validate_sparse::<D>(left)?;
-        validate_sparse::<D>(right)?;
+        left.validate::<D>()?;
+        right.validate::<D>()?;
 
         let mut coeffs = BTreeMap::<u32, i32>::new();
         for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
@@ -222,27 +259,6 @@ impl IntegerChallenge {
         }
         Ok(acc)
     }
-}
-
-fn validate_sparse<const D: usize>(challenge: &SparseChallenge) -> Result<(), AkitaError> {
-    if challenge.positions.len() != challenge.coeffs.len() {
-        return Err(AkitaError::InvalidInput(
-            "sparse challenge positions/coeffs length mismatch".to_string(),
-        ));
-    }
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        if pos as usize >= D {
-            return Err(AkitaError::InvalidInput(format!(
-                "sparse challenge position {pos} out of range for D={D}"
-            )));
-        }
-        if coeff == 0 {
-            return Err(AkitaError::InvalidInput(
-                "sparse challenge coefficients must be non-zero".to_string(),
-            ));
-        }
-    }
-    Ok(())
 }
 
 #[cfg(all(test, not(feature = "zk")))]
@@ -324,6 +340,18 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_duplicate_positions() {
+        let challenge = SparseChallenge {
+            positions: vec![1, 1],
+            coeffs: vec![1, -1],
+        };
+
+        let err = challenge.validate::<D>().unwrap_err();
+
+        assert!(matches!(err, AkitaError::InvalidInput(msg) if msg.contains("unique")));
+    }
+
+    #[test]
     fn integer_challenge_from_sparse_round_trips() {
         let sparse = SparseChallenge {
             positions: vec![0, 3],
@@ -380,6 +408,22 @@ mod tests {
         // pos D = wrap to 0 with sign flip: 1*1*(-1) = -1, cancels pos 0 term.
         assert_eq!(product.positions, vec![1, D as u32 - 1]);
         assert_eq!(product.coeffs, vec![1, 1]);
+    }
+
+    #[test]
+    fn integer_challenge_tensor_product_rejects_duplicate_positions() {
+        let left = SparseChallenge {
+            positions: vec![0, 0],
+            coeffs: vec![1, 1],
+        };
+        let right = SparseChallenge {
+            positions: vec![1],
+            coeffs: vec![1],
+        };
+
+        let err = IntegerChallenge::tensor_product::<D>(&left, &right).unwrap_err();
+
+        assert!(matches!(err, AkitaError::InvalidInput(msg) if msg.contains("unique")));
     }
 
     #[test]

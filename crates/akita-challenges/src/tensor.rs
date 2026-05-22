@@ -409,36 +409,13 @@ where
     F: FieldCore + FromPrimitiveInt,
     E: FieldCore + MulBase<F>,
 {
-    if left.positions.len() != left.coeffs.len() || right.positions.len() != right.coeffs.len() {
-        return Err(AkitaError::InvalidInput(
-            "tensor challenge positions/coeffs length mismatch".to_string(),
-        ));
-    }
+    left.validate::<D>()?;
+    right.validate::<D>()?;
     let mut quotient_eval = E::zero();
     for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
         let left_idx = left_pos as usize;
-        if left_idx >= D {
-            return Err(AkitaError::InvalidInput(format!(
-                "tensor-left challenge position {left_idx} out of range for D={D}"
-            )));
-        }
-        if left_coeff == 0 {
-            return Err(AkitaError::InvalidInput(
-                "tensor-left challenge coefficients must be non-zero".to_string(),
-            ));
-        }
         for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
             let right_idx = right_pos as usize;
-            if right_idx >= D {
-                return Err(AkitaError::InvalidInput(format!(
-                    "tensor-right challenge position {right_idx} out of range for D={D}"
-                )));
-            }
-            if right_coeff == 0 {
-                return Err(AkitaError::InvalidInput(
-                    "tensor-right challenge coefficients must be non-zero".to_string(),
-                ));
-            }
             let degree = left_idx + right_idx;
             if degree >= D {
                 let term = i64::from(left_coeff) * i64::from(right_coeff);
@@ -466,24 +443,10 @@ where
             actual: out.len(),
         });
     }
-    if challenge.positions.len() != challenge.coeffs.len() {
-        return Err(AkitaError::InvalidInput(
-            "sparse challenge positions/coeffs length mismatch".to_string(),
-        ));
-    }
+    challenge.validate::<D>()?;
 
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
         let idx = pos as usize;
-        if idx >= D {
-            return Err(AkitaError::InvalidInput(format!(
-                "sparse challenge position {idx} out of range for D={D}"
-            )));
-        }
-        if coeff == 0 {
-            return Err(AkitaError::InvalidInput(
-                "sparse challenge coefficients must be non-zero".to_string(),
-            ));
-        }
         out[idx] += scale.mul_base(F::from_i64(coeff as i64));
     }
     Ok(())
@@ -547,11 +510,7 @@ pub fn tensor_left_digest<const D: usize>(
     hasher.update((left.len() as u64).to_le_bytes());
 
     for challenge in left {
-        if challenge.positions.len() != challenge.coeffs.len() {
-            return Err(AkitaError::InvalidInput(
-                "tensor-left digest positions/coeffs length mismatch".to_string(),
-            ));
-        }
+        challenge.validate::<D>()?;
         hasher.update((challenge.positions.len() as u64).to_le_bytes());
 
         let mut terms: Vec<(u32, i8)> = challenge
@@ -561,24 +520,7 @@ pub fn tensor_left_digest<const D: usize>(
             .zip(challenge.coeffs.iter().copied())
             .collect();
         terms.sort_by_key(|&(pos, _)| pos);
-        let mut previous_pos = None;
         for (pos, coeff) in terms {
-            if pos as usize >= D {
-                return Err(AkitaError::InvalidInput(format!(
-                    "tensor-left digest position {pos} out of range for D={D}"
-                )));
-            }
-            if coeff == 0 {
-                return Err(AkitaError::InvalidInput(
-                    "tensor-left digest coefficients must be non-zero".to_string(),
-                ));
-            }
-            if previous_pos == Some(pos) {
-                return Err(AkitaError::InvalidInput(
-                    "tensor-left digest positions must be unique".to_string(),
-                ));
-            }
-            previous_pos = Some(pos);
             hasher.update(pos.to_le_bytes());
             hasher.update(coeff.to_le_bytes());
         }

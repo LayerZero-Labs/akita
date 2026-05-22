@@ -444,6 +444,19 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
 }
 
 #[test]
+fn tensor_left_digest_rejects_duplicate_positions() {
+    const TD: usize = 8;
+    let left = vec![SparseChallenge {
+        positions: vec![0, 0],
+        coeffs: vec![1, -1],
+    }];
+
+    let err = tensor_left_digest::<TD>(&left, 1, 1).unwrap_err();
+
+    assert!(matches!(err, akita_field::AkitaError::InvalidInput(msg) if msg.contains("unique")));
+}
+
+#[test]
 fn tensor_lazy_evals_match_expanded_products() {
     const TD: usize = 8;
     let cfg = SparseChallengeConfig::Uniform {
