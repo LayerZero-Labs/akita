@@ -275,8 +275,8 @@ impl TensorChallenges {
     /// ```
     ///
     /// without materializing every reduced tensor product. The negacyclic
-    /// correction term is explicit, so the result is exact at every
-    /// ring-switch point where `α^D + 1` is non-zero.
+    /// correction term is derived from `alpha_pows`, so the result is exact at
+    /// every ring-switch point where `α^D + 1` is non-zero.
     ///
     /// # Errors
     ///
@@ -288,7 +288,6 @@ impl TensorChallenges {
         u_weights: &[E],
         v_weights: &[E],
         alpha_pows: &[E],
-        alpha_pow_d_plus_one: E,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + FromPrimitiveInt,
@@ -299,6 +298,11 @@ impl TensorChallenges {
                 expected: D,
                 actual: alpha_pows.len(),
             });
+        }
+        if D < 2 {
+            return Err(AkitaError::InvalidInput(
+                "tensor evaluation requires D >= 2".to_string(),
+            ));
         }
         if u_weights.len() != self.left_len {
             return Err(AkitaError::InvalidSize {
@@ -320,6 +324,7 @@ impl TensorChallenges {
         }
         self.validate_lengths()?;
 
+        let alpha_pow_d_plus_one = alpha_pows[D - 1] * alpha_pows[1] + E::one();
         let left_start = claim_idx * self.left_len;
         let right_start = claim_idx * self.right_len;
 
