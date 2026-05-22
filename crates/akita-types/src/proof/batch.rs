@@ -879,16 +879,17 @@ mod tests {
     type L = RingSubfieldFp4<F>;
 
     fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup {
-            seed: AkitaSetupSeed {
+        AkitaExpandedSetup::from_parts(
+            AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 8,
                 max_num_points: 2,
                 max_stride: 1,
                 public_matrix_seed: [0u8; 32],
             },
-            shared_matrix: FlatMatrix::from_flat_data(vec![F::zero()], 1),
-        }
+            FlatMatrix::from_flat_data(vec![F::zero()], 1),
+        )
+        .unwrap()
     }
 
     #[test]

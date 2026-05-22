@@ -28,8 +28,8 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
-    FlatRingVec, LevelParams, RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingSubfieldEncoding,
+    FlatRingVec, LevelParams, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingSubfieldEncoding,
 };
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -76,6 +76,11 @@ pub struct NextWitnessCommitment<F: FieldCore> {
 /// # Errors
 ///
 /// Returns an error if the quadratic equation is missing prover-side data.
+///
+/// # Panics
+///
+/// Panics with `feature = "zk"` enabled if the zero-length `FlatDigitBlocks`
+/// constructor rejects an empty vector (an invariant of the type).
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
@@ -146,13 +151,24 @@ where
         lp.inner_width(),
         setup.seed.max_stride,
         ntt_shared,
+        quad_eq.m_row_layout(),
     )?;
+    // Terminal layout drops the D-block from M and from the witness; the
+    // d-blinding column segment must also disappear so the prover witness
+    // matches the verifier's column offsets.
+    #[cfg(feature = "zk")]
+    let d_blinding_for_w: FlatDigitBlocks<D> = match quad_eq.m_row_layout() {
+        MRowLayout::Intermediate => d_blinding_digits,
+        MRowLayout::Terminal => {
+            FlatDigitBlocks::zeroed(Vec::new()).expect("empty FlatDigitBlocks always valid")
+        }
+    };
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(
             &w_hat,
             #[cfg(feature = "zk")]
-            &d_blinding_digits,
+            &d_blinding_for_w,
             &decomposed_inner_rows,
             #[cfg(feature = "zk")]
             &b_blinding_digits,
@@ -187,6 +203,7 @@ pub fn ring_switch_finalize<F, E, T, const D: usize>(
     w: &RecursiveWitnessFlat,
     w_commitment_proof: &FlatRingVec<F>,
     lp: &LevelParams,
+    m_row_layout: MRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -200,6 +217,7 @@ where
         w,
         w_commitment_proof,
         lp,
+        m_row_layout,
     )
 }
 
@@ -217,6 +235,7 @@ pub fn ring_switch_finalize_with_claim_groups<F, E, T, const D: usize>(
     w: &RecursiveWitnessFlat,
     w_commitment_proof: &FlatRingVec<F>,
     lp: &LevelParams,
+    m_row_layout: MRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -237,6 +256,48 @@ where
         w_commitment_proof,
         lp,
         &gamma,
+        m_row_layout,
+    )
+}
+
+/// Variant of [`ring_switch_finalize`] that assumes the caller has already
+/// absorbed the `ABSORB_SUMCHECK_W` bytes into `transcript`.
+///
+/// Used by terminal fold levels, which absorb the cleartext `final_witness`
+/// in place of the recursive `next_w_commitment`.
+///
+/// # Errors
+///
+/// Returns an error if matrix expansion or evaluation-table construction fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_after_absorb<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: &RecursiveWitnessFlat,
+    lp: &LevelParams,
+    m_row_layout: MRowLayout,
+) -> Result<RingSwitchOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
+    let gamma = quad_eq
+        .gamma()
+        .iter()
+        .copied()
+        .map(E::lift_base)
+        .collect::<Vec<_>>();
+    ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        lp,
+        &gamma,
+        m_row_layout,
     )
 }
 
@@ -262,6 +323,7 @@ pub fn ring_switch_finalize_with_gamma<F, E, T, const D: usize>(
     w_commitment_proof: &FlatRingVec<F>,
     lp: &LevelParams,
     gamma: &[E],
+    m_row_layout: MRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -269,7 +331,45 @@ where
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
+    ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        lp,
+        gamma,
+        m_row_layout,
+    )
+}
 
+/// Variant of [`ring_switch_finalize_with_gamma`] that assumes the caller has
+/// already absorbed the `ABSORB_SUMCHECK_W` bytes into `transcript`.
+///
+/// Intermediate fold levels absorb `next_w_commitment` before calling this;
+/// terminal fold levels absorb the cleartext `final_witness` instead. Keeping
+/// the absorb in the caller lets the protocol bind whichever payload is
+/// shipped at this step without needing a duality flag here.
+///
+/// # Errors
+///
+/// Returns an error if the supplied gamma vector does not match the claim
+/// count or if matrix expansion or evaluation-table construction fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_with_gamma_after_absorb<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: &RecursiveWitnessFlat,
+    lp: &LevelParams,
+    gamma: &[E],
+    m_row_layout: MRowLayout,
+) -> Result<RingSwitchOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let num_polys_per_point = quad_eq.num_polys_per_point();
@@ -283,7 +383,7 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch column count overflow".to_string()))?
         .trailing_zeros() as usize;
     let ring_bits = D.trailing_zeros() as usize;
-    let m_rows = lp.m_row_count(num_points, num_public_rows)?;
+    let m_rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows
         .checked_next_power_of_two()
@@ -329,6 +429,7 @@ where
                 claim_poly_indices,
                 gamma,
                 num_public_rows,
+                m_row_layout,
             )
         },
         || build_w_evals_compact(w.as_i8_digits(), D, 1),
@@ -350,6 +451,7 @@ where
             claim_poly_indices,
             gamma,
             num_public_rows,
+            m_row_layout,
         )?;
         let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1);
         (Ok(m_evals_x), w_compact)
@@ -656,6 +758,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     claim_poly_indices: &[usize],
     gamma: &[E],
     num_public_rows: usize,
+    m_row_layout: MRowLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -745,10 +848,21 @@ where
     let n_a = lp.a_key.row_len();
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
+    // Terminal layout drops the D-block from the M-matrix entirely; offsets
+    // and per-row gates must use 0 for the n_d position.
+    let n_d_active = match m_row_layout {
+        MRowLayout::Intermediate => n_d,
+        MRowLayout::Terminal => 0,
+    };
     let t_len = depth_open * n_a * t_total_blocks;
     #[cfg(feature = "zk")]
-    let d_blinding_segment_len =
-        akita_types::zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
+    let d_blinding_segment_len = match m_row_layout {
+        MRowLayout::Intermediate => {
+            akita_types::zk::blinding_digit_plane_count::<F>(n_d, D, log_basis)
+        }
+        // Terminal omits the D-block, so its blinding columns vanish too.
+        MRowLayout::Terminal => 0,
+    };
     #[cfg(feature = "zk")]
     let b_blinding_digit_planes_per_point =
         akita_types::zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
@@ -764,7 +878,7 @@ where
     let z_len = depth_fold
         .checked_mul(z_base_len)
         .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
-    let rows = lp.m_row_count(num_points, num_public_rows)?;
+    let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
     let levels = r_decomp_levels::<F>(log_basis);
     #[cfg(feature = "zk")]
     let total_cols = w_len
@@ -821,13 +935,14 @@ where
     let b_rows: Vec<_> = b_view.rows().collect();
     let a_rows: Vec<_> = a_view.rows().collect();
 
-    // Row layout: consistency (1) | public (num_public_rows) | D (n_d) |
-    //             B (n_b * num_points) | A (n_a)
+    // Row layout: consistency (1) | public (num_public_rows) | D (n_d_active)
+    //             | B (n_b * num_points) | A (n_a). At terminal layout
+    // `n_d_active == 0`, collapsing the D-block out of the offset chain.
     let commitment_row_count = n_b * num_points;
     let consistency_weight = eq_tau1[0];
     let public_weights = &eq_tau1[1..(1 + num_public_rows)];
     let d_start = 1 + num_public_rows;
-    let b_start = d_start + n_d;
+    let b_start = d_start + n_d_active;
     let a_start = b_start + commitment_row_count;
     let a_weights = &eq_tau1[a_start..rows];
     let t_compound_per_block = n_a * depth_open;
@@ -885,7 +1000,9 @@ where
             let b_eval = public_b_evals[claim_idx][block_idx];
             let mut acc = (public_weights[point_idx] * b_eval + consistency_weight * c_alphas[blk])
                 * g1_open[dig];
-            for (di, eq_i) in eq_tau1[d_start..(d_start + n_d)].iter().enumerate() {
+            // Terminal layout: `n_d_active == 0`, so this loop is empty and
+            // the D-block contribution is omitted.
+            for (di, eq_i) in eq_tau1[d_start..(d_start + n_d_active)].iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&d_rows[di][d_phys_col], alpha_pows);
                 }
@@ -898,7 +1015,7 @@ where
     let d_blinding_segment: Vec<E> = if d_blinding_segment_len == 0 {
         Vec::new()
     } else {
-        let d_weights = &eq_tau1[d_start..(d_start + n_d)];
+        let d_weights = &eq_tau1[d_start..(d_start + n_d_active)];
         cfg_into_iter!(0..d_blinding_segment_len)
             .map(|local| {
                 let local_col = w_len + local;

@@ -4,12 +4,10 @@
 //! labels in Akita core. External integrations should translate at adapter
 //! boundaries instead of introducing foreign label names here.
 //!
-//! The byte strings use short Akita-native domains to keep repeated transcript
-//! label absorbs small.
+//! Production transcripts are positional: these byte strings are diagnostics
+//! for logging builds, tests, and schedule inspection, not bytes absorbed by
+//! [`AkitaTranscript`](crate::AkitaTranscript).
 //!
-//! NOTE: eventually we will switch to spongefish and drop the per-operation label,
-//! instead appending a full, exact description of the entire verifier as a beginning digest.
-
 /// Top-level protocol domain label.
 pub const DOMAIN_AKITA_PROTOCOL: &[u8] = b"ak/p";
 
@@ -83,36 +81,39 @@ pub const CHALLENGE_TAU0: &[u8] = b"ak/c/t0";
 /// Challenge for sampling `τ₁` (F_α evaluation-relation batching point, paper §4.3).
 pub const CHALLENGE_TAU1: &[u8] = b"ak/c/t1";
 
+/// All Akita-core transcript labels.
+pub const ALL_LABELS: &[&[u8]] = &[
+    DOMAIN_AKITA_PROTOCOL,
+    ABSORB_COMMITMENT,
+    ABSORB_EVALUATION_CLAIMS,
+    ABSORB_BATCH_SHAPE,
+    CHALLENGE_LINEAR_RELATION,
+    ABSORB_RING_SWITCH_MESSAGE,
+    CHALLENGE_RING_SWITCH,
+    ABSORB_SPARSE_CHALLENGE,
+    CHALLENGE_SPARSE_CHALLENGE,
+    ABSORB_SUMCHECK_CLAIM,
+    ABSORB_SUMCHECK_ROUND,
+    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_SUMCHECK_S_CLAIM,
+    ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
+    CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
+    ABSORB_STOP_CONDITION,
+    CHALLENGE_STOP_CONDITION,
+    ABSORB_PROVER_V,
+    CHALLENGE_STAGE1_FOLD,
+    CHALLENGE_TENSOR_FOLD_LEFT,
+    ABSORB_TENSOR_FOLD_LEFT,
+    CHALLENGE_TENSOR_FOLD_RIGHT,
+    ABSORB_EVAL_OPENINGS_FIELD,
+    CHALLENGE_EVAL_BATCH,
+    ABSORB_SUMCHECK_W,
+    CHALLENGE_TAU0,
+    CHALLENGE_TAU1,
+];
+
 /// Return all Akita-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
-    &[
-        DOMAIN_AKITA_PROTOCOL,
-        ABSORB_COMMITMENT,
-        ABSORB_EVALUATION_CLAIMS,
-        ABSORB_BATCH_SHAPE,
-        CHALLENGE_LINEAR_RELATION,
-        ABSORB_RING_SWITCH_MESSAGE,
-        CHALLENGE_RING_SWITCH,
-        ABSORB_SPARSE_CHALLENGE,
-        CHALLENGE_SPARSE_CHALLENGE,
-        ABSORB_SUMCHECK_CLAIM,
-        ABSORB_SUMCHECK_ROUND,
-        CHALLENGE_SUMCHECK_ROUND,
-        ABSORB_SUMCHECK_S_CLAIM,
-        ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
-        CHALLENGE_SUMCHECK_BATCH,
-        CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
-        ABSORB_STOP_CONDITION,
-        CHALLENGE_STOP_CONDITION,
-        ABSORB_PROVER_V,
-        CHALLENGE_STAGE1_FOLD,
-        CHALLENGE_TENSOR_FOLD_LEFT,
-        ABSORB_TENSOR_FOLD_LEFT,
-        CHALLENGE_TENSOR_FOLD_RIGHT,
-        ABSORB_EVAL_OPENINGS_FIELD,
-        CHALLENGE_EVAL_BATCH,
-        ABSORB_SUMCHECK_W,
-        CHALLENGE_TAU0,
-        CHALLENGE_TAU1,
-    ]
+    ALL_LABELS
 }

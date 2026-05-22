@@ -181,11 +181,12 @@ where
     let z_used = prepared.n_a > 0 && z_range > 0;
     let z_dims_pow2 = prepared.block_len.is_power_of_two();
 
+    let n_d_active = prepared.n_d_active();
     let d_start = 1usize
         .checked_add(prepared.num_public_rows)
         .ok_or_else(|| AkitaError::InvalidSetup("D row start overflow".to_string()))?;
     let b_start = d_start
-        .checked_add(prepared.n_d)
+        .checked_add(n_d_active)
         .ok_or_else(|| AkitaError::InvalidSetup("B row start overflow".to_string()))?;
     let a_start = b_start
         .checked_add(
@@ -196,7 +197,7 @@ where
         )
         .ok_or_else(|| AkitaError::InvalidSetup("A row start overflow".to_string()))?;
     if d_start
-        .checked_add(prepared.n_d)
+        .checked_add(n_d_active)
         .is_none_or(|end| end > prepared.eq_tau1.len())
         || a_start > prepared.rows
         || prepared.rows > prepared.eq_tau1.len()
@@ -205,7 +206,7 @@ where
             "M-row weights are inconsistent with verifier layout".to_string(),
         ));
     }
-    let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
+    let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
     let a_weights = &prepared.eq_tau1[a_start..prepared.rows];
 
     let stride_t = prepared
@@ -248,9 +249,9 @@ where
     // it to `n_a` when active, so Z-only rows participate inside the loop
     // — no separate post-loop matrix-A scan.
     let r_max = if z_used {
-        prepared.n_d.max(prepared.n_b).max(prepared.n_a)
+        n_d_active.max(prepared.n_b).max(prepared.n_a)
     } else {
-        prepared.n_d.max(prepared.n_b)
+        n_d_active.max(prepared.n_b)
     };
     let n_cols_total = n_cols_w.max(n_cols_t).max(if z_used { z_range } else { 0 });
     if n_cols_total == 0 {
@@ -473,7 +474,7 @@ where
             let row_start = row * shared_stride;
             let row_slice = &shared_flat[row_start..row_start + shared_stride];
 
-            let e_w = if row < prepared.n_d { n_cols_w } else { 0 };
+            let e_w = if row < n_d_active { n_cols_w } else { 0 };
             let e_t = if row < prepared.n_b { n_cols_t } else { 0 };
             let e_z = if row < prepared.n_a && z_used {
                 z_range
@@ -498,17 +499,27 @@ where
             } else {
                 &[]
             };
+            let d_weight = if row < n_d_active {
+                d_weights[row]
+            } else {
+                E::zero()
+            };
+            let a_weight = if row < prepared.n_a && z_used {
+                a_weights[row]
+            } else {
+                E::zero()
+            };
 
             let s1 = if e1 > 0 {
                 slice_inner_sum::<F, E, true, true, true>(
                     0..e1,
                     &r_eval,
-                    d_weights[row],
+                    d_weight,
                     &w_eq_slice,
                     b_w_for_groups,
                     &t_eq_slice_per_group,
                     prepared.num_points,
-                    a_weights[row],
+                    a_weight,
                     &z_eq_slice,
                 )
             } else {
@@ -525,24 +536,24 @@ where
                         b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_points,
-                        a_weights[row],
+                        a_weight,
                         &z_eq_slice,
                     ),
                     Pat::T => slice_inner_sum::<F, E, true, false, true>(
                         e1..e2,
                         &r_eval,
-                        d_weights[row],
+                        d_weight,
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_points,
-                        a_weights[row],
+                        a_weight,
                         &z_eq_slice,
                     ),
                     Pat::Z => slice_inner_sum::<F, E, true, true, false>(
                         e1..e2,
                         &r_eval,
-                        d_weights[row],
+                        d_weight,
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
@@ -560,7 +571,7 @@ where
                     Pat::W => slice_inner_sum::<F, E, true, false, false>(
                         e2..e3,
                         &r_eval,
-                        d_weights[row],
+                        d_weight,
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
@@ -587,7 +598,7 @@ where
                         b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_points,
-                        a_weights[row],
+                        a_weight,
                         &z_eq_slice,
                     ),
                 }
@@ -609,7 +620,7 @@ mod tests {
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_field::Prime128OffsetA7F7;
-    use akita_types::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix};
+    use akita_types::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix, MRowLayout};
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
@@ -665,16 +676,17 @@ mod tests {
                 }))
             })
             .collect();
-        let setup = AkitaExpandedSetup {
-            seed: AkitaSetupSeed {
+        let setup = AkitaExpandedSetup::from_parts(
+            AkitaSetupSeed {
                 max_num_vars: 32,
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
                 max_stride,
                 public_matrix_seed: [7u8; 32],
             },
-            shared_matrix: FlatMatrix::from_ring_slice::<D>(&matrix_entries),
-        };
+            FlatMatrix::from_ring_slice::<D>(&matrix_entries),
+        )
+        .unwrap();
 
         let eq_tau1: Vec<F> = (0..rows.next_power_of_two())
             .map(|idx| f(11 + idx as u128))
@@ -700,6 +712,7 @@ mod tests {
             log_basis,
             n_a,
             n_d,
+            m_row_layout: MRowLayout::Intermediate,
             n_b,
             num_points,
             rows,

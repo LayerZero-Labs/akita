@@ -42,11 +42,16 @@ where
             let Some((last, rest)) = proof.steps.split_last() else {
                 return Err(AkitaError::InvalidProof);
             };
-            if !matches!(last, AkitaProofStep::Direct(_))
+            if !matches!(last, AkitaProofStep::Terminal(_))
                 || rest
                     .iter()
-                    .any(|step| !matches!(step, AkitaProofStep::Fold(_)))
+                    .any(|step| !matches!(step, AkitaProofStep::Intermediate(_)))
             {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        AkitaBatchedRootProof::Terminal(_) => {
+            if !proof.steps.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
         }
@@ -528,7 +533,7 @@ where
                 direct_commitment_payload,
             )?;
         }
-        AkitaBatchedRootProof::Fold(_) => {
+        AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
             let BatchedVerifierScheduleContext::Fold(layouts) = schedule_context else {
                 return Err(AkitaError::InvalidProof);
             };
@@ -582,6 +587,7 @@ pub fn verify_batched_with_policy<
     SelectSchedule,
     NextParams,
     DirectParams,
+    BindTranscript,
     DirectCommitmentCheck,
 >(
     proof: &AkitaBatchedProof<F, C>,
@@ -592,6 +598,7 @@ pub fn verify_batched_with_policy<
     select_schedule: SelectSchedule,
     next_params: NextParams,
     direct_params: DirectParams,
+    bind_transcript: BindTranscript,
     verify_direct_commitments: DirectCommitmentCheck,
 ) -> Result<(), AkitaError>
 where
@@ -606,6 +613,8 @@ where
     SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     NextParams: FnMut(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
     DirectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
+    BindTranscript:
+        FnOnce(&mut T, &ClaimIncidenceSummary, &Schedule, BasisMode) -> Result<(), AkitaError>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
         &AkitaVerifierSetup<F>,
@@ -634,6 +643,13 @@ where
             schedule = root_direct_schedule(num_vars).map_err(|_| AkitaError::InvalidProof)?;
         }
     }
+
+    bind_transcript(
+        transcript,
+        &prepared_claims.incidence_summary,
+        &schedule,
+        basis,
+    )?;
 
     let mut next_params = next_params;
     let schedule_context =

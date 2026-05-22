@@ -1,6 +1,6 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
-use crate::FlatMatrix;
+use crate::{FlatMatrix, SetupArtifactDigests};
 use akita_field::FieldCore;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -39,6 +39,8 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
     pub seed: AkitaSetupSeed,
     /// Shared 1D flat backing vector.
     pub shared_matrix: FlatMatrix<F>,
+    /// Cached descriptor digests for the setup artifacts.
+    pub descriptor_digests: SetupArtifactDigests,
 }
 
 /// Verifier setup artifact derived from prover setup.
@@ -46,6 +48,29 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 pub struct AkitaVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
+}
+
+impl<F> AkitaExpandedSetup<F>
+where
+    F: FieldCore + AkitaSerialize,
+{
+    /// Build an expanded setup and compute its cached descriptor digests.
+    ///
+    /// # Errors
+    ///
+    /// Returns a serialization error if the setup seed or shared matrix cannot
+    /// be canonically serialized for descriptor hashing.
+    pub fn from_parts(
+        seed: AkitaSetupSeed,
+        shared_matrix: FlatMatrix<F>,
+    ) -> Result<Self, SerializationError> {
+        let descriptor_digests = SetupArtifactDigests::from_parts(&seed, &shared_matrix)?;
+        Ok(Self {
+            seed,
+            shared_matrix,
+            descriptor_digests,
+        })
+    }
 }
 
 impl Valid for AkitaSetupSeed {
@@ -124,10 +149,12 @@ impl AkitaDeserialize for AkitaSetupSeed {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for AkitaExpandedSetup<F> {
+impl<F: FieldCore + Valid + AkitaSerialize> Valid for AkitaExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
         self.shared_matrix.check()?;
+        self.descriptor_digests
+            .check_parts(&self.seed, &self.shared_matrix)?;
         Ok(())
     }
 }
@@ -151,6 +178,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
 
 impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     for AkitaExpandedSetup<F>
+where
+    F: AkitaSerialize,
 {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
@@ -159,10 +188,10 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let out = Self {
-            seed: AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            shared_matrix: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        };
+        let seed = AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let shared_matrix =
+            FlatMatrix::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let out = Self::from_parts(seed, shared_matrix)?;
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }
@@ -170,7 +199,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
-impl<F: FieldCore + Valid> Valid for AkitaVerifierSetup<F> {
+impl<F: FieldCore + Valid + AkitaSerialize> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()
     }
@@ -192,6 +221,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
 
 impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     for AkitaVerifierSetup<F>
+where
+    F: AkitaSerialize,
 {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
