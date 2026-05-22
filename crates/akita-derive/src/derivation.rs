@@ -349,7 +349,10 @@ pub fn sis_derived_recursive_params_for_layout(
     envelope: &CommitmentEnvelope,
     layout: &LevelParams,
 ) -> Option<LevelParams> {
-    let bd_collision = (1u32 << log_basis) - 1;
+    // Checked: malformed inputs (e.g. `log_basis >= 32`) reach this
+    // function transitively from `schedule_plan_from_table_entry` on the
+    // verifier replay path, so the shift must not panic.
+    let bd_collision = 1u32.checked_shl(log_basis).and_then(|b| b.checked_sub(1))?;
     let a_raw = bd_collision;
     let a_collision_raw =
         a_role_collision_raw(a_raw, stage1_config, ring_subfield_embedding_norm_bound)?;
@@ -399,7 +402,17 @@ pub fn sis_derived_root_params_for_layout(
     inputs: AkitaScheduleInputs,
     lp: &LevelParams,
 ) -> Result<LevelParams, AkitaError> {
-    let bd_collision = (1u32 << lp.log_basis) - 1;
+    // Checked: malformed verifier-reachable inputs (e.g. `log_basis >= 32`)
+    // must surface as `AkitaError`, not a panic. Matches `root_a_rank_cap`.
+    let bd_collision = 1u32
+        .checked_shl(lp.log_basis)
+        .and_then(|bound| bound.checked_sub(1))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "root collision bound overflow for D={d} lb={}",
+                lp.log_basis
+            ))
+        })?;
     let a_raw = if inputs.level == 0 && decomp.log_commit_bound == 1 {
         2
     } else {

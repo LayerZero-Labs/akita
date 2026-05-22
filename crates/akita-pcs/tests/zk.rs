@@ -215,8 +215,9 @@ fn assert_folded_v_hiding<const D: usize>(
 fn run_zk_dense_commitment_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
     BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
-    Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
+    akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>:
+        CommitmentConfig<Field = F, ClaimField = F>,
+    Scheme<D, akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
@@ -234,7 +235,7 @@ where
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    type Cfg<Base> = RuntimePlanned<Base>;
+    type Cfg<Base> = akita_planner::test_utils::PlannerCfg<RuntimePlanned<Base>>;
 
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
@@ -306,8 +307,9 @@ where
 fn run_zk_dense_v_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
     BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
-    Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
+    akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>:
+        CommitmentConfig<Field = F, ClaimField = F>,
+    Scheme<D, akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
@@ -325,7 +327,7 @@ where
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    type Cfg<Base> = RuntimePlanned<Base>;
+    type Cfg<Base> = akita_planner::test_utils::PlannerCfg<RuntimePlanned<Base>>;
 
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();

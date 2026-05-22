@@ -15,8 +15,8 @@
 //! malformed inputs and never panics on the verifier replay path.
 //!
 //! The offline DP search and the table-emitter binaries live in
-//! [`akita_planner`], a separate crate that sits *above* `akita-config` in
-//! the dependency graph.
+//! `akita-planner`, a separate crate that sits *above* `akita-config` in
+//! the dependency graph (so it can't be linked from here).
 
 pub mod derivation;
 pub mod materialize;

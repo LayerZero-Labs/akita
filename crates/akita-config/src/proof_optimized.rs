@@ -2,7 +2,7 @@
 //!
 //! Each config is a plain unit struct that wires its required
 //! [`CommitmentConfig`] hooks to the policy-agnostic SIS primitives in
-//! [`akita_planner`] and the generated schedule tables in [`akita_types`].
+//! [`akita_derive`] and the generated schedule tables in [`akita_types`].
 //! A preset only declares its `(D, LOG_COMMIT_BOUND)` decomposition, its
 //! sparse stage-1 family, the generated schedule table that backs it, and
 //! (when applicable) the audited root-rank floor.
