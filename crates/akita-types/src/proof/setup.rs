@@ -303,16 +303,19 @@ mod schedule_cache_tests {
     type F = Prime128OffsetA7F7;
 
     fn dummy_setup() -> AkitaVerifierSetup<F> {
-        AkitaVerifierSetup::new(Arc::new(AkitaExpandedSetup {
-            seed: AkitaSetupSeed {
-                max_num_vars: 4,
-                max_num_batched_polys: 1,
-                max_num_points: 1,
-                max_stride: 1,
-                public_matrix_seed: [0u8; 32],
-            },
-            shared_matrix: FlatMatrix::from_flat_data(vec![F::default()], 1),
-        }))
+        AkitaVerifierSetup::new(Arc::new(
+            AkitaExpandedSetup::from_parts(
+                AkitaSetupSeed {
+                    max_num_vars: 4,
+                    max_num_batched_polys: 1,
+                    max_num_points: 1,
+                    max_stride: 1,
+                    public_matrix_seed: [0u8; 32],
+                },
+                FlatMatrix::from_flat_data(vec![F::default()], 1),
+            )
+            .expect("dummy setup descriptor digests"),
+        ))
     }
 
     #[test]
