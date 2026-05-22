@@ -10,7 +10,7 @@ pub mod kernels;
 pub mod protocol;
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{IntegerChallenge, TensorChallenges};
+use akita_challenges::{FoldingChallenges, IntegerChallenge};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
@@ -471,7 +471,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// challenges without first materialising every logical block challenge.
     fn decompose_fold_tensor_batched(
         _polys: &[&Self],
-        _challenges: &TensorChallenges,
+        _challenges: &FoldingChallenges,
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,
@@ -693,7 +693,7 @@ where
 
     fn decompose_fold_tensor_batched(
         polys: &[&Self],
-        challenges: &TensorChallenges,
+        challenges: &FoldingChallenges,
         block_len: usize,
         num_digits: usize,
         log_basis: u32,

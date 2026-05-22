@@ -10,7 +10,7 @@
 //! aggregation path.
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{IntegerChallenge, TensorChallenges};
+use akita_challenges::{FoldingChallenges, IntegerChallenge};
 use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
@@ -192,7 +192,7 @@ where
 
     fn decompose_fold_tensor_batched(
         polys: &[&Self],
-        challenges: &TensorChallenges,
+        challenges: &FoldingChallenges,
         block_len: usize,
         num_digits: usize,
         log_basis: u32,

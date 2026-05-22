@@ -101,7 +101,7 @@ fn same_point_batched_root_preserves_opening_geometry() {
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
-    _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
+    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let incidence = akita_types::ClaimIncidenceSummary::same_point(max_num_vars, num_claims)
         .expect("incidence");
@@ -253,10 +253,21 @@ fn expected_same_point_batched_shape(
     .expect("terminal-layout witness count")
         * terminal_lp.ring_dimension;
     let terminal_rounds = batched_shape_rounds(terminal_lp.ring_dimension, terminal_next_w_len);
+    let terminal_stage2_sumcheck = match proof.shape() {
+        AkitaBatchedProofShape::Fold { step_shapes, .. } => step_shapes
+            .last()
+            .and_then(|shape| match shape {
+                AkitaProofStepShape::Terminal(terminal) => Some(terminal.stage2_sumcheck.clone()),
+                AkitaProofStepShape::Intermediate(_) => None,
+            })
+            .unwrap_or_else(|| vec![3; terminal_rounds]),
+        AkitaBatchedProofShape::Terminal(terminal) => terminal.stage2_sumcheck,
+        AkitaBatchedProofShape::Direct { .. } => vec![3; terminal_rounds],
+    };
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         y_rings_coeffs: terminal_lp.ring_dimension,
         extension_opening_reduction: None,
-        stage2_sumcheck: vec![3; terminal_rounds],
+        stage2_sumcheck: terminal_stage2_sumcheck,
         final_witness: akita_types::DirectWitnessShape::PackedDigits((
             terminal_next_w_len,
             terminal_next_params.log_basis,

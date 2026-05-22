@@ -449,6 +449,22 @@ fn setup_level_params_from_plan<Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "planner")]
+fn next_runtime_log_basis(steps: &[Step], current_idx: usize, current_log_basis: u32) -> u32 {
+    steps
+        .iter()
+        .skip(current_idx + 1)
+        .map(|step| match step {
+            Step::Fold(next) => next.params.log_basis,
+            Step::Direct(direct) => match &direct.witness_shape {
+                akita_types::DirectWitnessShape::PackedDigits((_, bits)) => *bits,
+                akita_types::DirectWitnessShape::FieldElements(_) => current_log_basis,
+            },
+        })
+        .next()
+        .unwrap_or(current_log_basis)
+}
+
+#[cfg(feature = "planner")]
 fn setup_level_params_from_runtime_schedule<Cfg: CommitmentConfig>(
     steps: Vec<Step>,
     num_vars: usize,
@@ -456,15 +472,15 @@ fn setup_level_params_from_runtime_schedule<Cfg: CommitmentConfig>(
 ) -> Vec<LevelParams> {
     let mut levels = Vec::new();
     let mut fold_level = 0usize;
-    for step in steps {
+    for (idx, step) in steps.iter().enumerate() {
         if let Step::Fold(fold_step) = step {
             let next_inputs = AkitaScheduleInputs {
                 num_vars,
                 level: fold_level + 1,
                 current_w_len: fold_step.next_w_len,
             };
-            let next_log_basis = fold_step.params.log_basis;
-            levels.push(fold_step.params);
+            let next_log_basis = next_runtime_log_basis(&steps, idx, fold_step.params.log_basis);
+            levels.push(fold_step.params.clone());
             levels.push(Cfg::level_params_with_log_basis(
                 next_inputs,
                 next_log_basis,
@@ -954,6 +970,48 @@ macro_rules! impl_small_field_preset {
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(feature = "planner")]
+    fn runtime_schedule_successor_log_basis_comes_from_next_step() {
+        let params_with_log_basis = |log_basis| {
+            LevelParams::params_only(
+                akita_types::SisModulusFamily::Q128,
+                64,
+                log_basis,
+                1,
+                1,
+                1,
+                SparseChallengeConfig::Uniform {
+                    weight: 1,
+                    nonzero_coeffs: vec![1],
+                },
+            )
+        };
+        let fold_step = |log_basis, next_w_len| {
+            Step::Fold(akita_types::FoldStep {
+                params: params_with_log_basis(log_basis),
+                current_w_len: 64,
+                delta_fold_per_poly: 1,
+                w_ring: next_w_len / 64,
+                next_w_len,
+                level_bytes: 0,
+            })
+        };
+
+        let fold_successor = vec![fold_step(3, 128), fold_step(5, 64)];
+        assert_eq!(next_runtime_log_basis(&fold_successor, 0, 3), 5);
+
+        let direct_successor = vec![
+            fold_step(3, 64),
+            Step::Direct(akita_types::DirectStep {
+                current_w_len: 64,
+                witness_shape: akita_types::DirectWitnessShape::PackedDigits((64, 7)),
+                direct_bytes: 0,
+            }),
+        ];
+        assert_eq!(next_runtime_log_basis(&direct_successor, 0, 3), 7);
+    }
 
     #[test]
     #[cfg(not(feature = "zk"))]

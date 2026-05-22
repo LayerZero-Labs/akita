@@ -20,6 +20,8 @@ use akita_types::{
     FoldStep, LevelParams, Schedule, Step,
 };
 
+const FRESH_RANK_CONVERGENCE_LIMIT: usize = 1024;
+
 #[derive(Clone)]
 struct FreshPlanner<Cfg>(PhantomData<Cfg>);
 
@@ -44,7 +46,7 @@ fn fresh_level_params_with_log_basis<Cfg: CommitmentConfig>(
 
     if inputs.level > 0 {
         let mut candidate_n_a = envelope.max_n_a.max(1);
-        for _ in 0..(akita_types::generated::sis_floor::MAX_RANK + 1) {
+        for _ in 0..FRESH_RANK_CONVERGENCE_LIMIT {
             let tentative = LevelParams::params_only(
                 Cfg::sis_modulus_family(),
                 d,
@@ -126,7 +128,7 @@ fn fresh_root_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let fold_shape = Cfg::fold_challenge_shape_at_level(inputs);
     let mut candidate_n_a = 1usize;
-    for _ in 0..(akita_types::generated::sis_floor::MAX_RANK + 1) {
+    for _ in 0..FRESH_RANK_CONVERGENCE_LIMIT {
         let candidate_params = LevelParams::params_only(
             Cfg::sis_modulus_family(),
             Cfg::D,

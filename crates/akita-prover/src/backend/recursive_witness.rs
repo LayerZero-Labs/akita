@@ -9,7 +9,7 @@
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{IntegerChallenge, TensorChallenges};
+use akita_challenges::{FoldingChallenges, IntegerChallenge};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
@@ -241,7 +241,7 @@ where
 
     pub fn decompose_fold_tensor_batched(
         &self,
-        _challenges: &TensorChallenges,
+        _challenges: &FoldingChallenges,
         _block_len: usize,
         _num_blocks: usize,
         _num_digits: usize,

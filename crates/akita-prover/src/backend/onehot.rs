@@ -31,7 +31,9 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{IntegerChallenge, SparseChallenge, TensorChallengeSet, TensorChallenges};
+use akita_challenges::{
+    FoldingChallenges, IntegerChallenge, SparseChallenge, TensorChallenges as TensorChallengeSet,
+};
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{
@@ -1637,13 +1639,13 @@ where
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_tensor_batched")]
     fn decompose_fold_tensor_batched(
         polys: &[&Self],
-        challenges: &TensorChallenges,
+        challenges: &FoldingChallenges,
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         match challenges {
-            TensorChallenges::Flat(flat) => {
+            FoldingChallenges::Flat(flat) => {
                 let integer_challenges = flat
                     .iter()
                     .map(IntegerChallenge::from_sparse)
@@ -1656,7 +1658,7 @@ where
                     log_basis,
                 ))
             }
-            TensorChallenges::Tensor(tensor) => {
+            FoldingChallenges::Tensor(tensor) => {
                 Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
             }
         }
@@ -3218,7 +3220,7 @@ mod tests {
             right_len: 2,
             num_claims: 2,
         };
-        let challenges = TensorChallenges::Tensor(tensor.clone());
+        let challenges = FoldingChallenges::Tensor(tensor.clone());
         let expanded = challenges.expand_integer::<D>().unwrap();
         let expected = aggregate_witnesses(
             &polys
@@ -3232,7 +3234,7 @@ mod tests {
         let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
         let got = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
             &poly_refs,
-            &TensorChallenges::Tensor(tensor),
+            &FoldingChallenges::Tensor(tensor),
             block_len,
             1,
             0,
@@ -3304,7 +3306,7 @@ mod tests {
             right_len: 2,
             num_claims: 2,
         };
-        let challenges = TensorChallenges::Tensor(tensor.clone());
+        let challenges = FoldingChallenges::Tensor(tensor.clone());
         let expanded = challenges.expand_integer::<D>().unwrap();
         let expected = aggregate_witnesses(
             &polys
@@ -3318,7 +3320,7 @@ mod tests {
         let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
         let got = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
             &poly_refs,
-            &TensorChallenges::Tensor(tensor),
+            &FoldingChallenges::Tensor(tensor),
             block_len,
             2,
             0,
