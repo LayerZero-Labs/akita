@@ -30,7 +30,6 @@ akita-derive = { version = "0.1.0", path = "../akita-derive" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
-tracing = "0.1"
 
 [lints]
 workspace = true

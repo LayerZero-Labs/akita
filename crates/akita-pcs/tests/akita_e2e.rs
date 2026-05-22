@@ -1,13 +1,13 @@
 #![allow(missing_docs)]
 
-#[cfg(feature = "planner")]
-use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 #[cfg(feature = "planner")]
 use akita_config::proof_optimized::{fp16, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
+#[cfg(feature = "planner")]
+use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::AkitaPolyOps;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
@@ -184,7 +184,10 @@ where
     Cfg::ClaimField: RingSubfieldEncoding<FField> + AkitaSerialize,
     Cfg::ChallengeField: RingSubfieldEncoding<FField> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
-    let layout = Cfg::commitment_layout(nv).expect("layout");
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+    )
+    .expect("layout");
 
     let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
     let evals: Vec<FField> = (0..1usize << nv)
@@ -323,7 +326,11 @@ fn full_d64_prove_verify() {
         type Cfg = fp128::D64Full;
         const D: usize = Cfg::D;
 
-        let layout = Cfg::commitment_layout(FULL_TEST_NV).expect("layout");
+        let layout = Cfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(FULL_TEST_NV, 1)
+                .expect("singleton incidence"),
+        )
+        .expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..1usize << FULL_TEST_NV)
@@ -574,7 +581,10 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             plan
         };
 
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = Cfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        )
+        .expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
         let evals: Vec<F> = (0..1usize << nv)
@@ -742,7 +752,10 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = Cfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        )
+        .expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -865,7 +878,8 @@ fn batched_onehot_same_point_round_trip() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = Cfg::get_params_for_commitment(nv, 2, 1).expect("layout");
+        let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, 2).expect("incidence");
+        let layout = Cfg::get_params_for_batched_commitment(&incidence).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -954,7 +968,8 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = Cfg::get_params_for_commitment(nv, 2, 1).expect("layout");
+        let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, 2).expect("incidence");
+        let layout = Cfg::get_params_for_batched_commitment(&incidence).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -1172,7 +1187,10 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = Cfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        )
+        .expect("layout");
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
         let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))

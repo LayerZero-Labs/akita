@@ -424,7 +424,11 @@ mod tests {
                 let disk_setup =
                     AkitaProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
 
-                let lp = Cfg::commitment_layout(MAX_VARS).unwrap();
+                let lp = Cfg::get_params_for_batched_commitment(
+                    &akita_types::ClaimIncidenceSummary::same_point(MAX_VARS, 1)
+                        .expect("singleton incidence"),
+                )
+                .unwrap();
                 let num_coeffs = lp.num_blocks * lp.block_len;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);

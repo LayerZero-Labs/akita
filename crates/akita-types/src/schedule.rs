@@ -234,6 +234,9 @@ pub struct AkitaPlannedDirectStep {
     pub witness_shape: DirectWitnessShape,
     /// Exact bytes contributed by the packed direct witness.
     pub direct_bytes: usize,
+    /// Commit-layout params for root-direct schedules (planned root step is
+    /// `Direct`). `None` for terminal Direct steps that follow a fold.
+    pub commit_params: Option<LevelParams>,
 }
 
 /// Exact current-step execution data recovered from a pinned schedule.
@@ -250,8 +253,10 @@ pub struct AkitaPlannedLevelExecution {
 pub enum AkitaPlannedStep {
     /// An Akita fold level with an explicit next-state handoff.
     Fold(Box<AkitaPlannedLevel>),
-    /// The terminal packed-witness direct handoff.
-    Direct(AkitaPlannedDirectStep),
+    /// The terminal packed-witness direct handoff. Boxed so the variant
+    /// stays small after `AkitaPlannedDirectStep` gained a
+    /// root-direct `commit_params: Option<LevelParams>` field.
+    Direct(Box<AkitaPlannedDirectStep>),
 }
 
 /// Deterministic level-by-level schedule selected from public inputs.
@@ -644,6 +649,10 @@ pub struct DirectStep {
     pub witness_shape: DirectWitnessShape,
     /// Direct witness bytes.
     pub direct_bytes: usize,
+    /// Commit-layout params for root-direct schedules (the schedule's first
+    /// step is this `Direct`). `None` for terminal Direct steps that follow
+    /// a fold, where the root commit is sized by the first fold's params.
+    pub commit_params: Option<LevelParams>,
 }
 
 impl DirectStep {
@@ -684,10 +693,16 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
 
 /// Build the root-direct schedule for roots that do not admit a fold step.
 ///
+/// `commit_params` carries the root commit layout that
+/// `Cfg::get_params_for_batched_commitment` returns for this schedule shape.
+///
 /// # Errors
 ///
 /// Returns an error if `num_vars` cannot be represented as a witness length.
-pub fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
+pub fn root_direct_schedule(
+    num_vars: usize,
+    commit_params: LevelParams,
+) -> Result<Schedule, AkitaError> {
     let current_w_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
         AkitaError::InvalidSetup("root-direct witness length overflow".to_string())
     })?;
@@ -696,6 +711,7 @@ pub fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
             current_w_len,
             witness_shape: DirectWitnessShape::FieldElements(current_w_len),
             direct_bytes: 0,
+            commit_params: Some(commit_params),
         })],
         total_bytes: 0,
     })
@@ -815,6 +831,7 @@ pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule
                     current_w_len: direct.state.current_w_len,
                     witness_shape: direct.witness_shape.clone(),
                     direct_bytes: direct.direct_bytes,
+                    commit_params: direct.commit_params.clone(),
                 }));
             }
         }
@@ -953,7 +970,20 @@ mod tests {
 
     #[test]
     fn root_direct_schedule_uses_field_element_payload() {
-        let schedule = root_direct_schedule(3).expect("root-direct schedule");
+        let dummy_commit_params = LevelParams::params_only(
+            crate::SisModulusFamily::Q128,
+            64,
+            3,
+            1,
+            1,
+            1,
+            akita_challenges::SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        );
+        let schedule =
+            root_direct_schedule(3, dummy_commit_params.clone()).expect("root-direct schedule");
         assert_eq!(schedule.total_bytes, 0);
 
         let [Step::Direct(step)] = schedule.steps.as_slice() else {
@@ -962,6 +992,7 @@ mod tests {
         assert_eq!(step.current_w_len, 8);
         assert_eq!(step.witness_shape, DirectWitnessShape::FieldElements(8));
         assert_eq!(step.direct_bytes, 0);
+        assert_eq!(step.commit_params.as_ref(), Some(&dummy_commit_params));
     }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {

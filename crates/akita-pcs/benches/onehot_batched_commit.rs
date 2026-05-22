@@ -1,9 +1,9 @@
 #![allow(missing_docs)]
 
-use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
+use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::kernels::linear::{decompose_rows_i8, mat_vec_mul_ntt_single_i8};
 use akita_prover::{AkitaPolyOps, CommitmentProver, OneHotPoly};
 use akita_types::{AkitaScheduleInputs, LevelParams};
@@ -36,7 +36,11 @@ fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, D, u8> {
 }
 
 fn bench_commit_breakdown(c: &mut Criterion) {
-    let single_layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
+    let single_layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(SINGLE_NUM_VARS, 1)
+            .expect("singleton incidence"),
+    )
+    .expect("single layout");
     let batch_layout =
         akita_batched_root_layout::<Cfg>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
 

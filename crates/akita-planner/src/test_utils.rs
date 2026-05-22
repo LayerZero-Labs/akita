@@ -25,9 +25,9 @@ use akita_config::{
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
-    schedule_from_plan, schedule_root_fold_params, AjtaiRole, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary, CommitmentEnvelope,
-    DecompositionParams, LevelParams, Schedule, SisModulusFamily,
+    schedule_from_plan, AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
+    ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, LevelParams, Schedule,
+    SisModulusFamily,
 };
 
 use crate::find_optimal_schedule;
@@ -160,57 +160,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
 
     // ---- DP-aware parameter accessors ----------------------------------
 
-    fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, AkitaError> {
-        let key = AkitaScheduleLookupKey::singleton(max_num_vars);
-        if let Some(plan) = Cfg::schedule_plan(key)? {
-            if let Some(root_fold) = plan.fold_levels().next() {
-                return Ok(root_fold.lp.clone());
-            }
-        }
-        let schedule = find_optimal_schedule::<Self>(key, true)?;
-        if let Some(root_params) = schedule_root_fold_params(&schedule) {
-            return Ok(root_params.clone());
-        }
-        // Tiny-root fallback: defer to the inner cfg's table-only path.
-        Cfg::commitment_layout(max_num_vars)
-    }
-
-    fn get_params_for_commitment(
-        num_vars: usize,
-        num_polys_per_point: usize,
-        max_num_points: usize,
-    ) -> Result<LevelParams, AkitaError> {
-        if num_polys_per_point == 0 || max_num_points == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "commitment shape counts must be nonzero".to_string(),
-            ));
-        }
-        let num_claims = num_polys_per_point
-            .checked_mul(max_num_points)
-            .ok_or_else(|| AkitaError::InvalidSetup("commitment claim count overflow".into()))?;
-        if num_claims == 1 {
-            return Self::commitment_layout(num_vars);
-        }
-        let lookup_key = AkitaScheduleLookupKey::new_with_points(
-            num_vars,
-            1,
-            num_polys_per_point,
-            num_claims,
-            max_num_points,
-        );
-        if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
-            if let Some(root_fold) = plan.fold_levels().next() {
-                return Ok(root_fold.lp.clone());
-            }
-        }
-        let schedule = find_optimal_schedule::<Self>(lookup_key, true)?;
-        if let Some(root_params) = schedule_root_fold_params(&schedule) {
-            return Ok(root_params.clone());
-        }
-        // Fall back to the inner cfg's same-method (singleton-derived split).
-        Cfg::get_params_for_commitment(num_vars, num_polys_per_point, max_num_points)
-    }
-
     fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
         let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
         if let Some(plan) = Cfg::schedule_plan(key)? {
@@ -218,4 +167,62 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
         }
         find_optimal_schedule::<Self>(key, true)
     }
+}
+
+/// Derive the per-polynomial commitment layout optimized for a batch of
+/// `num_claims` polynomials with `num_vars` variables.
+///
+/// First checks the pre-computed generated tables. When no table entry exists
+/// (or the entry is root-direct), it falls back to the singleton-derived root
+/// split. The returned layout has per-polynomial `B`/`D` widths and
+/// per-polynomial `num_digits_fold`; callers that want the batched (scaled)
+/// root layout scale it themselves via
+/// [`akita_types::scale_batched_root_layout`].
+///
+/// This helper is only useful for tests, benches, and the `profile` example
+/// — they pre-size per-poly inputs (e.g. `OneHotPoly`) so the
+/// `block_len`/`num_blocks` line up with what `Scheme::commit` will use under
+/// the batched layout. Production callers always go through
+/// `Cfg::get_params_for_batched_commitment(&incidence)` instead.
+///
+/// # Errors
+///
+/// Returns an error if the layout parameters overflow or are invalid.
+pub fn akita_batched_root_layout<Cfg>(
+    num_vars: usize,
+    num_claims: usize,
+) -> Result<LevelParams, AkitaError>
+where
+    Cfg: CommitmentConfig,
+{
+    let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_claims, num_claims, 1);
+    if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
+        if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(
+            &plan,
+            Cfg::decomposition().field_bits(),
+        ) {
+            tracing::info!(
+                num_vars,
+                num_claims,
+                total_bytes = plan.exact_proof_bytes,
+                root_m = split.log_block_len(),
+                root_r = split.log_num_blocks(),
+                root_lb = split.log_basis,
+                "batched root split: read from pre-computed table"
+            );
+            return Ok(split);
+        }
+        tracing::info!(
+            num_vars,
+            num_claims,
+            "batched root split: schedule is direct-only, falling back to config root layout"
+        );
+        return fallback_batched_root_split::<Cfg>(num_vars, 1);
+    }
+    tracing::info!(
+        num_vars,
+        num_claims,
+        "batched root split: generated table miss, using singleton-derived fallback"
+    );
+    fallback_batched_root_split::<Cfg>(num_vars, 1)
 }

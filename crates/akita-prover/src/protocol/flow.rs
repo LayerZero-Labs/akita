@@ -3169,7 +3169,9 @@ where
         ) && !root_tensor_projection_enabled::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(
             num_vars,
         ) {
-            schedule = root_direct_schedule(num_vars)?;
+            let direct_incidence = akita_types::ClaimIncidenceSummary::same_point(num_vars, 1)?;
+            let commit_params = Cfg::get_params_for_batched_commitment(&direct_incidence)?;
+            schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
 

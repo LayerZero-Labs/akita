@@ -1,10 +1,10 @@
 #![allow(missing_docs)]
 
-use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
+use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, OneHotPoly};
 use akita_transcript::AkitaTranscript;
 use akita_types::LevelParams;
@@ -86,7 +86,11 @@ fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
 }
 
 fn bench_single_case(c: &mut Criterion) {
-    let layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(SINGLE_NUM_VARS, 1)
+            .expect("singleton incidence"),
+    )
+    .expect("single layout");
     let poly = make_onehot_poly(&layout, 0x0bee_fcaf_e000_0034);
     let point = random_point(SINGLE_NUM_VARS);
     let opening = opening_from_poly(&poly, &point, &layout);

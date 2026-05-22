@@ -12,11 +12,10 @@
 //! verifier replay path.
 //!
 //! Presets must implement every required (no-default) hook explicitly.
-//! Substantive helpers that encode protocol logic — `commitment_layout`,
-//! `get_params_for_commitment`, `get_params_for_prove`,
-//! `get_params_for_batched_commitment` — keep default bodies because they
-//! are not policy choices and would otherwise be duplicated verbatim across
-//! every config.
+//! Substantive helpers that encode protocol logic — `get_params_for_prove`
+//! and `get_params_for_batched_commitment` — keep default bodies because
+//! they are not policy choices and would otherwise be duplicated verbatim
+//! across every config.
 //!
 //! The defaults are **table-only**: on a generated-schedule-table hit they
 //! materialize the plan through [`akita_derive::schedule_plan_from_table`];
@@ -49,11 +48,10 @@ pub use proof_optimized::{
     matrix_envelope_for_levels, setup_level_params_from_plan,
     setup_level_params_from_runtime_schedule,
 };
-use schedule_policy::akita_root_commitment_layout;
 pub use schedule_policy::{
-    akita_batched_root_layout, current_level_layout_with_log_basis,
-    direct_level_params_with_log_basis, fallback_batched_root_split,
-    scale_batched_root_layout_with_config, sis_derived_recursive_params,
+    current_level_layout_with_log_basis, direct_level_params_with_log_basis,
+    fallback_batched_root_split, scale_batched_root_layout_with_config,
+    sis_derived_recursive_params,
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
@@ -70,9 +68,9 @@ pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookup
 /// Concrete presets must implement every runtime hook below: the trait
 /// intentionally provides no default bodies for the delegating hooks so
 /// that each preset is fully explicit about which planner-backed helper
-/// it uses. The substantive helpers (`commitment_layout`,
-/// `get_params_for_commitment`, `get_params_for_prove`) keep defaults
-/// because they encode protocol logic rather than per-config policy.
+/// it uses. The substantive helpers (`get_params_for_prove`,
+/// `get_params_for_batched_commitment`) keep default bodies that route
+/// through `Self::schedule_plan` and return an error on table miss.
 ///
 /// # Field convention
 ///
@@ -254,74 +252,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32);
 
-    /// Choose the runtime commitment layout for `max_num_vars` (singleton
-    /// case: one polynomial per opening point).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `max_num_vars` does not admit a valid layout.
-    fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, AkitaError> {
-        let key = AkitaScheduleLookupKey::singleton(max_num_vars);
-        if let Some(plan) = Self::schedule_plan(key)? {
-            if let Some(root_fold) = plan.fold_levels().next() {
-                return Ok(root_fold.lp.clone());
-            }
-        }
-        // Tiny-root fallback: roots that don't admit any fold step.
-        // (Configs that want a DP fallback on table miss override this hook
-        //  and call `akita_planner::find_optimal_schedule` themselves.)
-        akita_root_commitment_layout::<Self>(max_num_vars)
-    }
-
-    /// Choose the root parameters consumed by the commitment path.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the batch summary, schedule lookup, or derived
-    /// layout is invalid for the requested commitment shape.
-    fn get_params_for_commitment(
-        num_vars: usize,
-        num_polys_per_point: usize,
-        max_num_points: usize,
-    ) -> Result<LevelParams, AkitaError> {
-        if num_polys_per_point == 0 || max_num_points == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "commitment shape counts must be nonzero".to_string(),
-            ));
-        }
-        let num_claims = num_polys_per_point
-            .checked_mul(max_num_points)
-            .ok_or_else(|| AkitaError::InvalidSetup("commitment claim count overflow".into()))?;
-        if num_claims == 1 {
-            return Self::commitment_layout(num_vars);
-        }
-
-        let lookup_key = AkitaScheduleLookupKey::new_with_points(
-            num_vars,
-            1,
-            num_polys_per_point,
-            num_claims,
-            max_num_points,
-        );
-        if let Some(plan) = Self::schedule_plan(lookup_key)? {
-            if let Some(root_fold) = plan.fold_levels().next() {
-                return Ok(root_fold.lp.clone());
-            }
-            return fallback_batched_root_split::<Self>(num_vars, num_claims);
-        }
-
-        // No table entry for `lookup_key`. Build the singleton-derived split
-        // and scale it for `num_claims`. Configs that want planner-DP routing
-        // on table miss override this hook directly.
-        let split = akita_batched_root_layout::<Self>(num_vars, num_claims)?;
-        akita_types::scale_batched_root_layout(
-            &split,
-            num_claims,
-            Self::stage1_challenge_config(Self::D)?.l1_norm(),
-            Self::decomposition().field_bits(),
-        )
-    }
-
     /// Choose the root parameters consumed by the prove/verify root path.
     ///
     /// # Errors
@@ -344,13 +274,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// incidence, so that every per-point commitment produced under this
     /// layout is compatible with the batched prove root. The default
     /// implementation pulls the first fold step's params from
-    /// [`Self::get_params_for_prove`], or falls back to the singleton
+    /// [`Self::get_params_for_prove`], or falls back to the tiny-root
     /// commitment layout when the schedule starts directly with the root
     /// `Direct` step.
     ///
     /// # Errors
     ///
-    /// Returns an error if `get_params_for_prove` fails or the layout
+    /// Returns an error if `get_params_for_prove` fails or the tiny-root
     /// fallback for root-direct schedules does not admit a valid commitment
     /// layout.
     fn get_params_for_batched_commitment(
@@ -359,7 +289,16 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         let schedule = Self::get_params_for_prove(incidence)?;
         match schedule.steps.first() {
             Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            _ => Self::commitment_layout(incidence.num_vars()),
+            Some(akita_types::Step::Direct(direct)) => {
+                direct.commit_params.clone().ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "root-direct schedule is missing commit params".to_string(),
+                    )
+                })
+            }
+            None => Err(AkitaError::InvalidSetup(
+                "schedule has no steps".to_string(),
+            )),
         }
     }
 }
@@ -452,12 +391,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
         Cfg::log_basis_search_range(inputs)
-    }
-
-    fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, AkitaError> {
-        Err(AkitaError::InvalidSetup(
-            "recursive w layout requires active level params".to_string(),
-        ))
     }
 }
 
@@ -801,35 +734,6 @@ mod fp128_policy_tests {
     fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
         // D-row rank=1 at num_vars>=36 level=2 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 35);
-    }
-
-    #[test]
-    #[cfg(not(feature = "zk"))]
-    fn batched_commitment_direct_fallback_scales_root_layout() {
-        type Cfg = fp128::D64OneHot;
-
-        let num_vars = 10;
-        let num_claims = 4;
-        let singleton = Cfg::commitment_layout(num_vars).expect("singleton layout");
-        let expected = akita_types::scale_batched_root_layout(
-            &singleton,
-            num_claims,
-            Cfg::stage1_challenge_config(Cfg::D)
-                .expect("stage1 challenge config")
-                .l1_norm(),
-            Cfg::decomposition().field_bits(),
-        )
-        .expect("scaled layout");
-        let actual =
-            Cfg::get_params_for_commitment(num_vars, num_claims, 1).expect("batched layout");
-
-        assert_eq!(actual, expected);
-        assert_eq!(actual.outer_width(), singleton.outer_width() * num_claims);
-        assert_eq!(
-            actual.d_matrix_width(),
-            singleton.d_matrix_width() * num_claims
-        );
-        assert!(actual.num_digits_fold >= singleton.num_digits_fold);
     }
 
     #[test]

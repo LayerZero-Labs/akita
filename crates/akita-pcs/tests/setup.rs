@@ -103,7 +103,10 @@ where
     assert_eq!(Cfg::D, D);
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
-    let layout = Cfg::commitment_layout(poly_nv).expect("layout");
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1).expect("singleton incidence"),
+    )
+    .expect("layout");
 
     let mut rng = StdRng::seed_from_u64(0xdead_beef_0000 + poly_nv as u64);
     let evals: Vec<F> = (0..1usize << poly_nv)
@@ -169,7 +172,10 @@ where
     assert_eq!(Cfg::D, D);
 
     let k = D;
-    let layout = Cfg::commitment_layout(poly_nv).expect("layout");
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1).expect("singleton incidence"),
+    )
+    .expect("layout");
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(
         total_ring * k,
@@ -245,7 +251,10 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     assert_eq!(Cfg::D, D);
     assert!(commit_batch >= 1);
 
-    let layout = Cfg::commitment_layout(poly_nv).expect("layout");
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1).expect("singleton incidence"),
+    )
+    .expect("layout");
     let polys: Vec<DensePoly<F, D>> = (0..commit_batch)
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe_0000 + idx as u64);
@@ -325,7 +334,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     assert!(commit_batch >= 1);
 
     let k = D;
-    let layout = akita_config::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
+    let layout = akita_planner::test_utils::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
         .expect("batched layout");
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(total_ring * k, 1usize << poly_nv);

@@ -13,11 +13,13 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+use akita_types::generated::sis_floor::{
+    ceil_supported_collision, min_rank_for_secure_width, sis_max_widths,
+};
 use akita_types::layout::digit_math::{compute_num_digits_fold_with_claims, optimal_m_r_split};
 use akita_types::{
-    decomp_depths, AjtaiKeyParams, AkitaScheduleInputs, CommitmentEnvelope, DecompositionParams,
-    LevelParams, SisModulusFamily,
+    decomp_depths, level_layout_from_params, AjtaiKeyParams, AkitaScheduleInputs,
+    CommitmentEnvelope, DecompositionParams, LevelParams, SisModulusFamily,
 };
 
 /// SIS-secure rank derivation inputs, bundled to keep
@@ -255,6 +257,171 @@ pub fn derived_root_commitment_layout_from_params(
         decomp.field_bits(),
     );
     params.with_decomp(m_vars, r_vars, depth_commit, depth_open, depth_fold, 0)
+}
+
+/// Derive the root commit layout for a root-direct schedule at `num_vars`.
+///
+/// Used by both the planner DP and the schedule-table materializer to fill
+/// `DirectStep.commit_params` when the schedule emits a root-direct step.
+/// Consumers (`Cfg::get_params_for_batched_commitment`, prover/verifier
+/// commit paths) then read commit params straight off the schedule, with
+/// no out-of-band fallback derivation.
+///
+/// Handles two regimes:
+///
+/// - `num_vars > trailing_zeros(d)` (normal root): iterates root A-row rank
+///   against the audited SIS-floor table, computing layout via
+///   [`derived_root_commitment_layout_from_params`] and reproving via
+///   [`sis_derived_root_params_for_layout`].
+/// - `num_vars <= trailing_zeros(d)` (tiny root): fixed-point convergence
+///   over the SIS-derived params, allowing a zero-outer layout that fits
+///   inside one padded ring element.
+///
+/// # Errors
+///
+/// Returns an error if no SIS-floor row covers the candidate widths, the
+/// rank-cap iteration does not converge, or the layout arithmetic
+/// overflows.
+pub fn root_direct_commit_layout(
+    sis_family: SisModulusFamily,
+    d: usize,
+    decomp: DecompositionParams,
+    stage1: SparseChallengeConfig,
+    ring_subfield_norm_bound: u32,
+    num_vars: usize,
+    log_basis: u32,
+) -> Result<LevelParams, AkitaError> {
+    let inputs = AkitaScheduleInputs {
+        num_vars,
+        level: 0,
+        current_w_len: 1usize.checked_shl(num_vars as u32).unwrap_or(0),
+    };
+    let alpha = (d as u32).trailing_zeros() as usize;
+
+    if num_vars > alpha {
+        // Normal root: iterate A-row rank against the SIS-floor table.
+        let rank_cap = root_a_rank_cap(sis_family, d, &decomp, &stage1, ring_subfield_norm_bound)?;
+        let mut candidate_n_a = 1usize;
+        for _ in 0..rank_cap {
+            let candidate_params = LevelParams::params_only(
+                sis_family,
+                d,
+                log_basis,
+                candidate_n_a,
+                1,
+                1,
+                stage1.clone(),
+            );
+            let root_lp = derived_root_commitment_layout_from_params(
+                inputs,
+                decomp,
+                &candidate_params,
+                false,
+            )?;
+            let derived_params = sis_derived_root_params_for_layout(
+                sis_family,
+                d,
+                decomp,
+                stage1.clone(),
+                ring_subfield_norm_bound,
+                inputs,
+                &root_lp,
+            )?;
+            if derived_params.a_key.row_len() == candidate_n_a {
+                return Ok(derived_params.with_layout(&root_lp));
+            }
+            candidate_n_a = derived_params.a_key.row_len();
+        }
+        return Err(AkitaError::InvalidSetup(format!(
+            "failed to converge on self-consistent root A-row rank for D={d} lb={log_basis}"
+        )));
+    }
+
+    // Tiny-root: fits in one padded ring element, allow zero-outer layout.
+    let mut params = LevelParams::params_only(sis_family, d, log_basis, 1, 1, 1, stage1.clone());
+    let layout_decomp = DecompositionParams {
+        log_basis,
+        ..decomp
+    };
+    for _ in 0..4 {
+        let layout = level_layout_from_params(0, 0, &params, layout_decomp, 0)?;
+        let derived_params = sis_derived_root_params_for_layout(
+            sis_family,
+            d,
+            decomp,
+            stage1.clone(),
+            ring_subfield_norm_bound,
+            inputs,
+            &layout,
+        )?
+        .with_layout(&layout);
+        if (
+            derived_params.a_key.row_len(),
+            derived_params.b_key.row_len(),
+            derived_params.d_key.row_len(),
+        ) == (
+            params.a_key.row_len(),
+            params.b_key.row_len(),
+            params.d_key.row_len(),
+        ) {
+            return Ok(derived_params);
+        }
+        params = derived_params;
+    }
+    Err(AkitaError::InvalidSetup(format!(
+        "failed to converge on tiny-root params for D={d} at num_vars={num_vars}"
+    )))
+}
+
+/// Number of audited A-row SIS-rank buckets available for the root A role
+/// at this `(sis_family, d, decomp, stage1, ring_subfield_norm_bound)`. Used
+/// as the iteration cap when probing self-consistent root A-row ranks.
+fn root_a_rank_cap(
+    sis_family: SisModulusFamily,
+    d: usize,
+    decomp: &DecompositionParams,
+    stage1: &SparseChallengeConfig,
+    ring_subfield_norm_bound: u32,
+) -> Result<usize, AkitaError> {
+    let log_basis = decomp.log_basis;
+    let bd_collision = 1u32
+        .checked_shl(log_basis)
+        .and_then(|bound| bound.checked_sub(1))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "root collision bound overflow for D={d} lb={log_basis}"
+            ))
+        })?;
+    // Root level (level == 0); for `log_commit_bound == 1` the A-role bound
+    // is the tight constant `2`, otherwise it equals the B/D collision bound.
+    let a_raw = if decomp.log_commit_bound == 1 {
+        2
+    } else {
+        bd_collision
+    };
+    let a_collision_raw = a_raw
+        .checked_mul(stage1.infinity_norm())
+        .and_then(|collision| collision.checked_mul(ring_subfield_norm_bound))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "root A-role collision overflow for family={sis_family:?}, D={d}"
+            ))
+        })?;
+    let a_collision =
+        ceil_supported_collision(sis_family, d as u32, a_collision_raw).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "missing supported root A-role collision bucket for family={sis_family:?}, D={d} \
+                 and raw collision {a_collision_raw}"
+            ))
+        })?;
+    sis_max_widths(sis_family, d as u32, a_collision)
+        .map(<[u64]>::len)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "missing root A-role SIS rank table for family={sis_family:?}, D={d}, \
+                 collision_inf={a_collision}"
+            ))
+        })
 }
 
 #[cfg(test)]

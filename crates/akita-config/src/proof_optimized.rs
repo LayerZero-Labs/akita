@@ -7,7 +7,7 @@
 //! sparse stage-1 family, the generated schedule table that backs it, and
 //! (when applicable) the audited root-rank floor.
 
-use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
+use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope};
 use crate::schedule_policy::{fallback_batched_root_split, sis_derived_recursive_params};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
@@ -23,80 +23,22 @@ use akita_types::{
     AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
 };
 
-// ---------------------------------------------------------------------------
-// fp128 family policy
-// ---------------------------------------------------------------------------
-
-/// Inclusive minimum of the proof-optimized log-basis search range.
-const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 2;
-/// Inclusive maximum of the proof-optimized log-basis search range.
-const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
-
-/// Decomposition parameters used by every fp128 preset, keyed by
-/// `LOG_COMMIT_BOUND`.
-pub(crate) fn fp128_decomposition(log_commit_bound: u32, log_basis: u32) -> DecompositionParams {
-    DecompositionParams {
-        log_basis,
-        log_commit_bound,
-        log_open_bound: if log_commit_bound < 128 {
-            Some(128)
-        } else {
-            None
-        },
-    }
-}
-
-/// Sparse stage-1 challenge family for a given fp128 ring degree.
-pub(crate) fn fp128_stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
-    match d {
-        32 => Ok(SparseChallengeConfig::BoundedL1Norm),
-        64 => Ok(SparseChallengeConfig::ExactShell {
-            count_mag1: 30,
-            count_mag2: 12,
-        }),
-        128 => Ok(SparseChallengeConfig::Uniform {
-            weight: 31,
-            nonzero_coeffs: vec![-1, 1],
-        }),
-        _ => Err(AkitaError::InvalidSetup(format!(
-            "unsupported fp128 ring dim {d}"
-        ))),
-    }
-}
-
-/// Audited root-rank policy used by every fp128 preset.
-///
-/// Returns `1`, escalating to `2` once `max_num_vars` crosses the threshold
-/// for the audited `(D, log_commit_bound, role)` cell.
-pub(crate) fn fp128_audited_root_rank<Cfg: CommitmentConfig>(
-    role: AjtaiRole,
-    max_num_vars: usize,
-) -> usize {
-    let log_commit_bound = Cfg::decomposition().log_commit_bound;
-    let threshold: Option<usize> = match (Cfg::D, log_commit_bound, role) {
-        // `D=128` full-field A escalates to 2 from `max_num_vars=59` onward.
-        (128, lcb, AjtaiRole::Inner) if lcb != 1 => Some(59),
-        // `D=128` outer (B/D) escalates from `max_num_vars=54` onward.
-        (128, _, AjtaiRole::Outer) => Some(54),
-        // `D=64` onehot outer (B/D) escalates from `max_num_vars=38` onward.
-        (64, 1, AjtaiRole::Outer) => Some(38),
-        _ => None,
-    };
-    1 + usize::from(threshold.is_some_and(|t| max_num_vars >= t))
-}
+/// Inclusive minimum of the proof-optimized log-basis search range used by
+/// every preset.
+pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 2;
+/// Inclusive maximum of the proof-optimized log-basis search range used by
+/// every preset.
+pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 
 // ---------------------------------------------------------------------------
-// Trait-shaped wrappers consumed by the macro below.
+// Trait-shaped wrappers consumed by the macros below.
 //
 // Each wrapper implements one required `CommitmentConfig` method by routing
 // through the planned schedule table when available and falling back to the
-// `akita_planner` SIS primitives otherwise.
+// `akita_derive` SIS primitives otherwise. Per-preset constants (decomposition,
+// stage-1 challenge family, audited root-rank floor) are inlined into the
+// macros rather than living as separate helpers.
 // ---------------------------------------------------------------------------
-
-/// Inclusive `(min, max)` log-basis search range used by every fp128 preset.
-pub(crate) fn proof_optimized_log_basis_search_range() -> (u32, u32) {
-    (PROOF_OPTIMIZED_LOG_BASIS_MIN, PROOF_OPTIMIZED_LOG_BASIS_MAX)
-}
 
 /// Proof-optimized `schedule_plan` impl.
 ///
@@ -117,6 +59,7 @@ where
         table,
         akita_derive::PlanPolicy {
             sis_family: Cfg::sis_modulus_family(),
+            ring_dimension: Cfg::D,
             root_decomp: Cfg::decomposition(),
             challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
             recursive_public_rows: 1,
@@ -125,6 +68,7 @@ where
             scale_batched_root_layout:
                 crate::schedule_policy::scale_batched_root_layout_with_config::<Cfg>,
             direct_level_params: crate::schedule_policy::direct_level_params_with_log_basis::<Cfg>,
+            ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         },
     )
 }
@@ -521,13 +465,38 @@ macro_rules! impl_fp128_preset {
             const D: usize = $d;
 
             fn decomposition() -> akita_types::DecompositionParams {
-                $crate::proof_optimized::fp128_decomposition($log_commit_bound, 3)
+                // Every fp128 preset uses `log_basis = 3` and sets
+                // `log_open_bound = Some(128)` unless the gadget already
+                // saturates the field (`log_commit_bound == 128`).
+                akita_types::DecompositionParams {
+                    log_basis: 3,
+                    log_commit_bound: $log_commit_bound,
+                    log_open_bound: if $log_commit_bound < 128 {
+                        Some(128)
+                    } else {
+                        None
+                    },
+                }
             }
 
             fn stage1_challenge_config(
                 d: usize,
             ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
-                $crate::proof_optimized::fp128_stage1_challenge_config(d)
+                // Sparse stage-1 challenge family for a given fp128 ring degree.
+                match d {
+                    32 => Ok(akita_challenges::SparseChallengeConfig::BoundedL1Norm),
+                    64 => Ok(akita_challenges::SparseChallengeConfig::ExactShell {
+                        count_mag1: 30,
+                        count_mag2: 12,
+                    }),
+                    128 => Ok(akita_challenges::SparseChallengeConfig::Uniform {
+                        weight: 31,
+                        nonzero_coeffs: vec![-1, 1],
+                    }),
+                    _ => Err(akita_field::AkitaError::InvalidSetup(format!(
+                        "unsupported fp128 ring dim {d}"
+                    ))),
+                }
             }
 
             fn sis_modulus_family() -> akita_types::SisModulusFamily {
@@ -549,7 +518,24 @@ macro_rules! impl_fp128_preset {
             }
 
             fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
-                $crate::proof_optimized::fp128_audited_root_rank::<Self>(role, max_num_vars)
+                // Returns `1`, escalating to `2` once `max_num_vars` crosses the
+                // threshold for the audited `(D, log_commit_bound, role)` cell.
+                let log_commit_bound =
+                    <Self as $crate::CommitmentConfig>::decomposition().log_commit_bound;
+                let threshold: Option<usize> = match (
+                    <Self as $crate::CommitmentConfig>::D,
+                    log_commit_bound,
+                    role,
+                ) {
+                    // `D=128` full-field A escalates to 2 from `max_num_vars=59` onward.
+                    (128, lcb, akita_types::AjtaiRole::Inner) if lcb != 1 => Some(59),
+                    // `D=128` outer (B/D) escalates from `max_num_vars=54` onward.
+                    (128, _, akita_types::AjtaiRole::Outer) => Some(54),
+                    // `D=64` onehot outer (B/D) escalates from `max_num_vars=38` onward.
+                    (64, 1, akita_types::AjtaiRole::Outer) => Some(38),
+                    _ => None,
+                };
+                1 + usize::from(threshold.is_some_and(|t| max_num_vars >= t))
             }
 
             fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
@@ -609,7 +595,10 @@ macro_rules! impl_fp128_preset {
             }
 
             fn log_basis_search_range(_inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
-                $crate::proof_optimized::proof_optimized_log_basis_search_range()
+                (
+                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
+                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
+                )
             }
         }
     };
@@ -732,7 +721,10 @@ macro_rules! impl_small_field_preset {
             }
 
             fn log_basis_search_range(_inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
-                $crate::proof_optimized::proof_optimized_log_basis_search_range()
+                (
+                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
+                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
+                )
             }
         }
     };

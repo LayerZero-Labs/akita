@@ -1,15 +1,17 @@
 use crate::CommitmentConfig;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
+use akita_types::AkitaScheduleInputs;
+use akita_types::ClaimIncidenceSummary;
 use akita_types::CommitmentEnvelope;
-use akita_types::DecompositionParams;
 use akita_types::LevelParams;
-use akita_types::{level_layout_from_params, AkitaScheduleInputs, AkitaScheduleLookupKey};
 
 #[cfg(test)]
 use akita_types::layout::digit_math::optimal_m_r_split;
+#[cfg(test)]
+use akita_types::level_layout_from_params;
 #[cfg(all(test, not(feature = "zk")))]
-use akita_types::ClaimIncidenceSummary;
+use akita_types::AkitaScheduleLookupKey;
 #[cfg(test)]
 use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
 
@@ -115,67 +117,6 @@ pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     Ok(params.with_layout(&layout))
 }
 
-/// Derive the root commitment layout, allowing a zero-outer direct root.
-///
-/// This helper is for the commitment surface rather than the fold surface,
-/// so it permits tiny roots that fit entirely inside one padded ring
-/// element.
-///
-/// # Errors
-///
-/// Returns an error if `num_vars` underflows `alpha` or if the derived
-/// layout overflows.
-pub(crate) fn akita_root_commitment_layout<Cfg: CommitmentConfig>(
-    num_vars: usize,
-) -> Result<LevelParams, AkitaError> {
-    let inputs = AkitaScheduleInputs {
-        num_vars,
-        level: 0,
-        current_w_len: 1usize.checked_shl(num_vars as u32).unwrap_or(0),
-    };
-    let log_basis = Cfg::log_basis_at_level(inputs)?;
-    let alpha = Cfg::D.trailing_zeros() as usize;
-    if num_vars > alpha {
-        return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
-    }
-
-    let d = Cfg::D;
-    let stage1_config = Cfg::stage1_challenge_config(d)?;
-    let mut params = LevelParams::params_only(
-        Cfg::sis_modulus_family(),
-        d,
-        log_basis,
-        1,
-        1,
-        1,
-        stage1_config,
-    );
-    let decomp = DecompositionParams {
-        log_basis,
-        ..Cfg::decomposition()
-    };
-    for _ in 0..4 {
-        let layout = level_layout_from_params(0, 0, &params, decomp, 0)?;
-        let derived_params = Cfg::root_level_params_for_layout_with_log_basis(inputs, &layout)?;
-        if (
-            derived_params.a_key.row_len(),
-            derived_params.b_key.row_len(),
-            derived_params.d_key.row_len(),
-        ) == (
-            params.a_key.row_len(),
-            params.b_key.row_len(),
-            params.d_key.row_len(),
-        ) {
-            return Ok(derived_params.with_layout(&layout));
-        }
-        params = derived_params;
-    }
-    Err(AkitaError::InvalidSetup(format!(
-        "failed to converge on tiny-root params for {} at num_vars={num_vars}",
-        std::any::type_name::<Cfg>()
-    )))
-}
-
 // Ring-native §4.1 commitment layout helpers.
 //
 // These helpers used to back a `RingCommitmentScheme` trait that materialised
@@ -190,7 +131,12 @@ pub fn fallback_batched_root_split<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let root_lp = Cfg::commitment_layout(num_vars)?;
+    // Pull the singleton commit layout straight from the schedule, then
+    // scale for `num_claims > 1`. Reading commit params from the schedule
+    // means production presets and `PlannerCfg` (tests/tools) share the
+    // same code path — no out-of-band root-commitment-layout fallback.
+    let singleton_incidence = ClaimIncidenceSummary::same_point(num_vars, 1)?;
+    let root_lp = Cfg::get_params_for_batched_commitment(&singleton_incidence)?;
     if num_claims <= 1 {
         Ok(root_lp)
     } else {
@@ -201,61 +147,6 @@ where
             Cfg::decomposition().field_bits(),
         )
     }
-}
-
-/// Derive the per-polynomial commitment layout optimized for a batch of
-/// `num_claims` polynomials with `num_vars` variables.
-///
-/// First checks the pre-computed generated tables. When no table entry exists,
-/// it falls back to the config-derived root split without running offline
-/// planner search in the runtime crate. The returned layout has per-polynomial
-/// `B`/`D` widths and per-polynomial `num_digits_fold`; callers that want the
-/// batched root layout scale it themselves (internally via
-/// `akita_types::scale_batched_root_layout`).
-///
-/// # Errors
-///
-/// Returns an error if the layout parameters overflow or are invalid.
-pub fn akita_batched_root_layout<Cfg>(
-    num_vars: usize,
-    num_claims: usize,
-) -> Result<LevelParams, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_claims, num_claims, 1);
-    if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
-        if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(
-            &plan,
-            Cfg::decomposition().field_bits(),
-        ) {
-            tracing::info!(
-                num_vars,
-                num_claims,
-                total_bytes = plan.exact_proof_bytes,
-                root_m = split.log_block_len(),
-                root_r = split.log_num_blocks(),
-                root_lb = split.log_basis,
-                "batched root split: read from pre-computed table"
-            );
-            return Ok(split);
-        }
-        tracing::info!(
-            num_vars,
-            num_claims,
-            "batched root split: schedule is direct-only, falling back to config root layout"
-        );
-        return fallback_batched_root_split::<Cfg>(num_vars, 1);
-    }
-
-    tracing::info!(
-        num_vars,
-        num_claims,
-        "batched root split: generated table miss, using singleton-derived fallback"
-    );
-
-    let _ = lookup_key;
-    fallback_batched_root_split::<Cfg>(num_vars, 1)
 }
 
 #[cfg(test)]
@@ -533,6 +424,7 @@ mod tests {
                 mismatched,
                 akita_derive::PlanPolicy {
                     sis_family: Cfg::sis_modulus_family(),
+                    ring_dimension: Cfg::D,
                     root_decomp: Cfg::decomposition(),
                     challenge_field_bits: Cfg::decomposition().field_bits()
                         * Cfg::CHAL_EXT_DEGREE as u32,
@@ -541,6 +433,7 @@ mod tests {
                     stage1_challenge_config: Cfg::stage1_challenge_config,
                     scale_batched_root_layout: super::scale_batched_root_layout_with_config::<Cfg>,
                     direct_level_params: super::direct_level_params_with_log_basis::<Cfg>,
+                    ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
                 },
             )
             .expect_err("mismatched SIS family must be rejected");

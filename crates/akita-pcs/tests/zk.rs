@@ -260,7 +260,10 @@ where
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = Cfg::<BaseCfg>::commitment_layout(nv).expect("zk layout");
+        let layout = Cfg::<BaseCfg>::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        )
+        .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
         let evals: Vec<F> = (0..1usize << nv)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -348,7 +351,10 @@ where
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = Cfg::<BaseCfg>::commitment_layout(nv).expect("zk layout");
+        let layout = Cfg::<BaseCfg>::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        )
+        .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
         let evals: Vec<F> = (0..1usize << nv)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))

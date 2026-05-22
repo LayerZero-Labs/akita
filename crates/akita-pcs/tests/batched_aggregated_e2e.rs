@@ -30,7 +30,7 @@ use akita_prover::CommitmentProver;
 use akita_prover::MultilinearPolynomial;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::AkitaBatchedProof;
+use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
@@ -56,7 +56,8 @@ mod non_zk_aggregated_cases {
     fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         init_rayon_pool();
         run_on_large_stack(move || {
-            let layout = OneHotCfg::get_params_for_commitment(nv, batch_size, 1).expect("layout");
+            let incidence = ClaimIncidenceSummary::same_point(nv, batch_size).expect("incidence");
+            let layout = OneHotCfg::get_params_for_batched_commitment(&incidence).expect("layout");
 
             let polys: Vec<OneHotPoly<F, ONEHOT_D, u8>> = (0..batch_size)
                 .map(|idx| make_onehot_poly(&layout, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
@@ -144,7 +145,8 @@ mod non_zk_aggregated_cases {
     fn run_aggregated_dense(nv: usize, batch_size: usize) {
         init_rayon_pool();
         run_on_large_stack(move || {
-            let layout = DenseCfg::get_params_for_commitment(nv, batch_size, 1).expect("layout");
+            let incidence = ClaimIncidenceSummary::same_point(nv, batch_size).expect("incidence");
+            let layout = DenseCfg::get_params_for_batched_commitment(&incidence).expect("layout");
 
             let polys: Vec<DensePoly<F, DENSE_D>> = (0..batch_size)
                 .map(|idx| make_dense_poly(nv, 0xd3e5_0000 + (nv as u64) * 100 + idx as u64))
@@ -264,7 +266,8 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         const NV: usize = 20;
         const BATCH_SIZE: usize = 4;
 
-        let layout = DenseCfg::get_params_for_commitment(NV, BATCH_SIZE, 1).expect("layout");
+        let incidence = ClaimIncidenceSummary::same_point(NV, BATCH_SIZE).expect("incidence");
+        let layout = DenseCfg::get_params_for_batched_commitment(&incidence).expect("layout");
         let dense_a = make_dense_poly(NV, 0x4d10_0001);
         let dense_b = make_dense_poly(NV, 0x4d10_0002);
         let onehot_a = make_dense_cfg_onehot_poly(&layout, 0x4d10_1001);

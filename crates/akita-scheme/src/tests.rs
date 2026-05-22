@@ -2,10 +2,10 @@
 
 use super::*;
 use akita_algebra::CyclotomicRing;
-use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, WCommitmentConfig};
 use akita_field::LiftBase;
+use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize};
 use akita_prover::{
     AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, MultiDNttCaches, OneHotPoly,
@@ -294,7 +294,10 @@ type VerifyFixture = (
 
 fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(num_vars).unwrap();
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(num_vars, 1).expect("singleton incidence"),
+    )
+    .unwrap();
     let full_num_vars = layout.m_vars + layout.r_vars + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
@@ -459,7 +462,10 @@ fn debug_relation_sum_from_tables(
 #[test]
 fn commit_singleton_group_returns_single_claim_hint() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(16, 1).expect("singleton incidence"),
+    )
+    .unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let (poly, _) = make_dense_poly(num_vars);
     let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1);
@@ -1181,8 +1187,11 @@ fn debug_onehot_batched_profile_compare() {
         const BATCH_SIZE: usize = 1 << 5;
         const BATCH_COMMITMENT_GROUPS: usize = 1;
 
-        let single_layout =
-            OneHotCfg::commitment_layout(SINGLE_NUM_VARS).expect("single debug layout");
+        let single_layout = OneHotCfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(SINGLE_NUM_VARS, 1)
+                .expect("singleton incidence"),
+        )
+        .expect("single debug layout");
         let batch_layout = akita_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
             .expect("batch debug layout");
         let batched_root_lp = akita_types::scale_batched_root_layout(
@@ -1363,7 +1372,10 @@ fn debug_onehot_batched_profile_compare() {
 #[cfg(not(feature = "zk"))]
 fn batched_commit_matches_individual_commits() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(16, 1).expect("singleton incidence"),
+    )
+    .unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 1) as u64)).collect();
@@ -1566,7 +1578,10 @@ fn batched_root_direct_rejects_wrong_opening() {
 #[test]
 fn batched_verify_passes_for_consistent_openings() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(16, 1).expect("singleton incidence"),
+    )
+    .unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 5) as u64)).collect();
@@ -1743,7 +1758,10 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 #[test]
 fn batched_verify_rejects_wrong_opening() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(16, 1).expect("singleton incidence"),
+    )
+    .unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 11) as u64)).collect();
@@ -1803,7 +1821,10 @@ fn batched_verify_rejects_wrong_opening() {
 #[test]
 fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(16, 1).expect("singleton incidence"),
+    )
+    .unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 17) as u64)).collect();
@@ -1876,7 +1897,10 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
 #[test]
 fn verify_passes_for_consistent_opening() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(16, 1).expect("singleton incidence"),
+    )
+    .unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
 
     let (poly, evals) = make_dense_poly(num_vars);
@@ -1936,7 +1960,10 @@ fn verify_passes_for_consistent_opening() {
 #[test]
 fn verify_rejects_wrong_opening() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(16, 1).expect("singleton incidence"),
+    )
+    .unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
 
     let (poly, evals) = make_dense_poly(num_vars);
@@ -2141,7 +2168,10 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
 #[test]
 fn monomial_basis_prove_verify_round_trip() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(16, 1).expect("singleton incidence"),
+    )
+    .unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let len = 1usize << num_vars;
 
@@ -2433,18 +2463,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         (3, 3)
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
-    fn get_params_for_commitment(
-        _num_vars: usize,
-        _num_polys_per_point: usize,
-        _max_num_points: usize,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
@@ -2482,6 +2500,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                         3,
                     )),
                     direct_bytes: compact_w_len,
+                    commit_params: None,
                 }),
             ],
             total_bytes: 0,
@@ -2603,18 +2622,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         (3, 3)
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
-    fn get_params_for_commitment(
-        _num_vars: usize,
-        _num_polys_per_point: usize,
-        _max_num_points: usize,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
@@ -2654,6 +2661,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                     current_w_len: next_w_len,
                     witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
                     direct_bytes: next_w_len,
+                    commit_params: None,
                 }),
             ],
             total_bytes: 0,

@@ -29,6 +29,9 @@ use akita_types::{
 pub struct PlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams> {
     /// SIS modulus family used by generated fold levels.
     pub sis_family: SisModulusFamily,
+    /// Cyclotomic ring dimension `D` for this config's root commitments.
+    /// Mirrors `Cfg::D`.
+    pub ring_dimension: usize,
     /// Root-level digit decomposition used to interpret generated entries.
     pub root_decomp: DecompositionParams,
     /// Challenge-field width used for verifier challenges and proof-byte accounting.
@@ -46,6 +49,12 @@ pub struct PlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams> {
     pub scale_batched_root_layout: ScaleBatchedRoot,
     /// Direct terminal layout policy for a schedule state and log-basis.
     pub direct_level_params: DirectLevelParams,
+    /// Infinity-norm expansion introduced when claim-field coordinates are
+    /// embedded into the ring subfield via `psi`. Mirrors
+    /// `CommitmentConfig::ring_subfield_embedding_norm_bound`. Consumed by
+    /// [`crate::root_direct_commit_layout`] when materializing a root-direct
+    /// table entry.
+    pub ring_subfield_norm_bound: u32,
 }
 
 fn generated_level_params<Stage1Config>(
@@ -125,6 +134,7 @@ where
 {
     let PlanPolicy {
         sis_family,
+        ring_dimension,
         root_decomp,
         challenge_field_bits,
         recursive_public_rows,
@@ -132,6 +142,7 @@ where
         stage1_challenge_config,
         scale_batched_root_layout,
         direct_level_params,
+        ring_subfield_norm_bound,
     } = policy;
 
     if entry.steps.is_empty() {
@@ -335,6 +346,38 @@ where
                         "generated direct step must be terminal".to_string(),
                     ));
                 }
+                // Root-direct entries (`fold_level == 0`) carry the root
+                // commit layout so `Cfg::get_params_for_batched_commitment`
+                // can read it straight from the materialized step.
+                // Terminal direct (after one or more folds) leaves
+                // `commit_params` as `None`; the root commit layout lives
+                // on the first fold step instead.
+                // Root-direct entries (`fold_level == 0`) record the root
+                // commit layout when it lies inside the audited SIS-floor
+                // table. The generated tables also contain large-`num_vars`
+                // root-direct edge entries whose root-commit layout exceeds
+                // the audited SIS-floor (no production caller asks for
+                // their singleton commit params). Materialize those with
+                // `commit_params: None`; the corresponding
+                // `get_params_for_batched_commitment` call surfaces the
+                // missing-layout error if anything ever does ask.
+                // Terminal direct (after one or more folds, `fold_level > 0`)
+                // always leaves `commit_params` as `None`; the root commit
+                // layout lives on the first fold step instead.
+                let commit_params = if fold_level == 0 {
+                    crate::root_direct_commit_layout(
+                        sis_family,
+                        ring_dimension,
+                        root_decomp,
+                        stage1_challenge_config(ring_dimension)?,
+                        ring_subfield_norm_bound,
+                        key.num_vars,
+                        root_decomp.log_basis,
+                    )
+                    .ok()
+                } else {
+                    None
+                };
                 let witness_shape = if fold_level == 0 {
                     DirectWitnessShape::FieldElements(current_w_len)
                 } else {
@@ -356,11 +399,12 @@ where
                     current_w_len: direct_current_w_len,
                     log_basis: current_log_basis,
                 };
-                steps.push(AkitaPlannedStep::Direct(AkitaPlannedDirectStep {
+                steps.push(AkitaPlannedStep::Direct(Box::new(AkitaPlannedDirectStep {
                     state,
                     witness_shape,
                     direct_bytes,
-                }));
+                    commit_params,
+                })));
             }
         }
     }

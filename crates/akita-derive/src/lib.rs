@@ -22,7 +22,8 @@ pub mod derivation;
 pub mod materialize;
 
 pub use derivation::{
-    derived_root_commitment_layout_from_params, sis_derived_recursive_params_for_layout,
-    sis_derived_root_params_for_layout, sis_secure_level_params, SisCollisionBounds, SisRoleWidths,
+    derived_root_commitment_layout_from_params, root_direct_commit_layout,
+    sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
+    sis_secure_level_params, SisCollisionBounds, SisRoleWidths,
 };
 pub use materialize::{schedule_plan_from_table, schedule_plan_from_table_entry, PlanPolicy};

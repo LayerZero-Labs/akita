@@ -39,6 +39,7 @@ use akita_derive::{schedule_plan_from_table, PlanPolicy};
 fn search_options_for_cfg<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> SearchOptions {
     SearchOptions {
         key,
+        ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_modulus_family: Cfg::sis_modulus_family(),
         challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
@@ -73,6 +74,10 @@ const MAX_RECURSION_DEPTH: usize = 12;
 pub(crate) struct SearchOptions {
     /// Public schedule lookup key the search is solving for.
     pub key: AkitaScheduleLookupKey,
+    /// Cyclotomic ring dimension `D` mirroring `Cfg::D`. Needed alongside
+    /// `decomposition` so root-direct commit-layout derivation can read it
+    /// without `<Cfg>` plumbing through every internal function.
+    pub ring_dimension: usize,
     /// Root decomposition parameters; `field_bits()` is the effective
     /// field bit width consumed by sizing formulas.
     pub decomposition: DecompositionParams,
@@ -343,6 +348,9 @@ fn to_direct_step(opts: &SearchOptions, current_w_len: usize, log_basis: u32) ->
         current_w_len,
         witness_shape,
         direct_bytes,
+        // Terminal Direct after one or more folds: root commit params live
+        // on the first `FoldStep`, not on this terminal step.
+        commit_params: None,
     })
 }
 
@@ -797,6 +805,7 @@ fn offline_schedule_for_key(opts: &SearchOptions) -> Result<Option<Schedule>, Ak
         table,
         PlanPolicy {
             sis_family: opts.sis_modulus_family,
+            ring_dimension: opts.ring_dimension,
             root_decomp: opts.decomposition,
             challenge_field_bits: opts.challenge_field_bits,
             recursive_public_rows: opts.recursive_public_rows,
@@ -804,6 +813,7 @@ fn offline_schedule_for_key(opts: &SearchOptions) -> Result<Option<Schedule>, Ak
             stage1_challenge_config: opts.stage1_challenge_config,
             scale_batched_root_layout: opts.scale_batched_root_layout,
             direct_level_params: opts.direct_level_params_with_log_basis,
+            ring_subfield_norm_bound: opts.ring_subfield_embedding_norm_bound,
         },
     )?;
     Ok(plan.map(|plan| schedule_from_plan(&plan, opts.field_bits())))
@@ -865,10 +875,28 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
     let fb = opts.field_bits();
     let root_direct_shape = DirectWitnessShape::FieldElements(root_w_len);
     let mut best_cost = direct_witness_bytes(fb, &root_direct_shape);
+    // Populate `commit_params` so consumers don't have to re-derive the
+    // root commit layout from the schedule shape. Uses the same primitives
+    // as the (deleted) `akita_root_commitment_layout` fallback. Large
+    // `num_vars` baselines whose root layout exceeds the audited SIS-floor
+    // are still valid as a proof-bytes upper bound for the DP comparator
+    // (no production caller asks for their singleton commit params); they
+    // record `commit_params: None`.
+    let root_direct_commit_params = akita_derive::root_direct_commit_layout(
+        opts.sis_modulus_family,
+        Cfg::D,
+        opts.decomposition,
+        (opts.stage1_challenge_config)(Cfg::D)?,
+        opts.ring_subfield_embedding_norm_bound,
+        num_vars,
+        opts.decomposition.log_basis,
+    )
+    .ok();
     let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
         current_w_len: root_w_len,
         witness_shape: root_direct_shape,
         direct_bytes: best_cost,
+        commit_params: root_direct_commit_params,
     })];
     let mut memo = ScheduleMemo::new();
 
