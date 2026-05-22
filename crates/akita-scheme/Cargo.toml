@@ -19,8 +19,6 @@ readme = "../../README.md"
 default = []
 planner = ["dep:akita-planner", "akita-setup/planner"]
 parallel = [
-  "dep:rayon",
-  "akita-algebra/parallel",
   "akita-field/parallel",
   "akita-prover/parallel",
   "akita-setup/parallel",
@@ -35,7 +33,6 @@ zk = [
 ]
 
 [dependencies]
-akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-config = { version = "0.1.0", path = "../akita-config" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
@@ -46,7 +43,6 @@ akita-setup = { version = "0.1.0", path = "../akita-setup" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier" }
-rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
@@ -55,7 +51,6 @@ akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
   "test-utils",
 ] }
 rand = "0.8"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 
 [lints]
 workspace = true

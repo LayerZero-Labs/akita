@@ -163,7 +163,6 @@ dependencies = [
 name = "akita-scheme"
 version = "0.1.0"
 dependencies = [
- "akita-algebra",
  "akita-challenges",
  "akita-config",
  "akita-derive",
@@ -176,9 +175,7 @@ dependencies = [
  "akita-types",
  "akita-verifier",
  "rand 0.8.6",
- "rayon",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
