@@ -15,9 +15,9 @@ use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_is_root_direct, schedule_root_fold_step, scheduled_next_level_params,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep, AkitaScheduleInputs, AkitaSetupSeed,
-    AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, DirectWitnessProof, LevelParams,
-    RingCommitment, RingSubfieldEncoding, Schedule, VerifierClaims,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep, AkitaSetupSeed, AkitaVerifierSetup,
+    BasisMode, ClaimIncidenceSummary, DirectWitnessProof, LevelParams, RingCommitment,
+    RingSubfieldEncoding, Schedule, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -423,23 +423,13 @@ pub(crate) enum BatchedVerifierScheduleContext {
 ///
 /// Returns an error if the schedule is empty or the supplied recursive layout
 /// callback rejects the selected folded-root schedule.
-pub(crate) fn prepare_batched_verifier_schedule_context<NextParams>(
-    num_vars: usize,
+pub(crate) fn prepare_batched_verifier_schedule_context(
     schedule: &Schedule,
-    mut next_params: NextParams,
-) -> Result<BatchedVerifierScheduleContext, AkitaError>
-where
-    NextParams: FnMut(AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
-{
+) -> Result<BatchedVerifierScheduleContext, AkitaError> {
     if schedule_is_root_direct(schedule) {
         Ok(BatchedVerifierScheduleContext::RootDirect)
     } else if let Some(root_step) = schedule_root_fold_step(schedule) {
-        let next_inputs = AkitaScheduleInputs {
-            num_vars,
-            level: 1,
-            current_w_len: root_step.next_w_len,
-        };
-        let next_level_params = next_params(next_inputs)?;
+        let next_level_params = scheduled_next_level_params(schedule, 1)?;
         Ok(BatchedVerifierScheduleContext::Fold(Box::new(
             FoldVerifierLayouts {
                 root_lp: root_step.params.clone(),
@@ -620,10 +610,7 @@ where
         transcript,
     )?;
 
-    let schedule_context =
-        prepare_batched_verifier_schedule_context(num_vars, &schedule, |next_inputs| {
-            scheduled_next_level_params(&schedule, 1, next_inputs, Cfg::level_params_with_log_basis)
-        })
+    let schedule_context = prepare_batched_verifier_schedule_context(&schedule)
         .map_err(|_| AkitaError::InvalidProof)?;
 
     verify_batched_proof_with_schedule::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _>(

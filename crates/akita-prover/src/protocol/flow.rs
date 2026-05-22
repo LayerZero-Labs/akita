@@ -3062,13 +3062,8 @@ where
             level,
             current_w_len: current_state.w.len(),
         };
-        let (level_params, next_params) = scheduled_fold_execution(
-            schedule,
-            level,
-            inputs,
-            current_state.log_basis,
-            Cfg::level_params_with_log_basis,
-        )?;
+        let (level_params, next_params) =
+            scheduled_fold_execution(schedule, level, inputs, current_state.log_basis)?;
         let out = dispatch_prove_level::<F, T, D, Cfg>(
             level_params.ring_dimension,
             ntt_cache,
@@ -3092,13 +3087,8 @@ where
         level,
         current_w_len: current_state.w.len(),
     };
-    let (level_params, next_params) = scheduled_fold_execution(
-        schedule,
-        level,
-        inputs,
-        current_state.log_basis,
-        Cfg::level_params_with_log_basis,
-    )?;
+    let (level_params, next_params) =
+        scheduled_fold_execution(schedule, level, inputs, current_state.log_basis)?;
     let terminal = dispatch_prove_terminal_level::<F, T, D, Cfg>(
         level_params.ring_dimension,
         ntt_cache,
@@ -3206,13 +3196,7 @@ where
         ));
     }
 
-    let next_inputs = AkitaScheduleInputs {
-        num_vars,
-        level: 1,
-        current_w_len: root_step.next_w_len,
-    };
-    let root_next_params =
-        scheduled_next_level_params(&schedule, 1, next_inputs, Cfg::level_params_with_log_basis)?;
+    let root_next_params = scheduled_next_level_params(&schedule, 1)?;
 
     if schedule_num_fold_levels(&schedule) == 1 {
         // Root is the terminal fold; no recursive suffix.

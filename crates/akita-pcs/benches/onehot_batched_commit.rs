@@ -64,7 +64,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         level: 0,
         current_w_len: single_layout.num_blocks * single_layout.block_len * D,
     };
-    let single_params = Cfg::level_params_with_log_basis(
+    let single_params = akita_config::proof_optimized::level_params_with_log_basis::<Cfg>(
         single_inputs,
         Cfg::log_basis_at_level(single_inputs).expect("single log_basis_at_level"),
     )
@@ -74,7 +74,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         level: 0,
         current_w_len: batch_layout.num_blocks * batch_layout.block_len * D,
     };
-    let batch_params = Cfg::level_params_with_log_basis(
+    let batch_params = akita_config::proof_optimized::level_params_with_log_basis::<Cfg>(
         batch_inputs,
         Cfg::log_basis_at_level(batch_inputs).expect("batch log_basis_at_level"),
     )

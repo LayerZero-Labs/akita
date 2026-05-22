@@ -1207,7 +1207,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
                 level: state.level,
                 current_w_len: state.current_w_len,
             };
-            let params = Cfg::level_params_with_log_basis(
+            let params = akita_config::proof_optimized::level_params_with_log_basis::<Cfg>(
                 level_inputs,
                 Cfg::log_basis_at_level(level_inputs).expect("log basis"),
             )

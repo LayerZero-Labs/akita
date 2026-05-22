@@ -166,6 +166,7 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-config",
+ "akita-derive",
  "akita-field",
  "akita-planner",
  "akita-prover",

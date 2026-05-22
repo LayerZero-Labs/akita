@@ -87,8 +87,16 @@ fn same_point_batched_root_preserves_opening_geometry() {
             current_w_len: root_step.current_w_len,
         };
         let level_lp = &root_step.params;
-        let root_lp =
-            OneHotCfg::root_level_params_for_layout_with_log_basis(root_inputs, level_lp).unwrap();
+        let root_lp = akita_derive::root_level_params_for_layout_with_log_basis(
+            OneHotCfg::sis_modulus_family(),
+            OneHotCfg::D,
+            OneHotCfg::decomposition(),
+            OneHotCfg::stage1_challenge_config(OneHotCfg::D).unwrap(),
+            OneHotCfg::ring_subfield_embedding_norm_bound(),
+            root_inputs,
+            level_lp,
+        )
+        .unwrap();
         assert_eq!(root_lp.block_len, level_lp.block_len);
         assert_eq!(root_lp.num_blocks, level_lp.num_blocks);
         assert_eq!(root_lp.m_vars, level_lp.m_vars);
@@ -114,8 +122,16 @@ fn expected_same_point_batched_shape(
         current_w_len: root_step.current_w_len,
     };
     let level_lp = &root_step.params;
-    let root_lp =
-        OneHotCfg::root_level_params_for_layout_with_log_basis(root_inputs, level_lp).unwrap();
+    let root_lp = akita_derive::root_level_params_for_layout_with_log_basis(
+        OneHotCfg::sis_modulus_family(),
+        OneHotCfg::D,
+        OneHotCfg::decomposition(),
+        OneHotCfg::stage1_challenge_config(OneHotCfg::D).unwrap(),
+        OneHotCfg::ring_subfield_embedding_norm_bound(),
+        root_inputs,
+        level_lp,
+    )
+    .unwrap();
     let root_w_len = root_step.next_w_len;
     let root_rounds = batched_shape_rounds(root_lp.ring_dimension, root_w_len);
 
@@ -124,18 +140,8 @@ fn expected_same_point_batched_shape(
     if num_fold_levels == 1 {
         // The terminal fold's `next` parameters live at `schedule.steps[1]`,
         // which is a `Direct` step encoding the final packed-digit basis.
-        let next_inputs = AkitaScheduleInputs {
-            num_vars: max_num_vars,
-            level: 1,
-            current_w_len: root_w_len,
-        };
-        let terminal_next_params = scheduled_next_level_params(
-            &schedule,
-            1,
-            next_inputs,
-            OneHotCfg::level_params_with_log_basis,
-        )
-        .expect("terminal next params");
+        let terminal_next_params =
+            scheduled_next_level_params(&schedule, 1).expect("terminal next params");
         return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
             y_rings_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
             extension_opening_reduction: None,
@@ -147,18 +153,7 @@ fn expected_same_point_batched_shape(
         });
     }
 
-    let next_inputs = AkitaScheduleInputs {
-        num_vars: max_num_vars,
-        level: 1,
-        current_w_len: root_step.next_w_len,
-    };
-    let next_level_params = scheduled_next_level_params(
-        &schedule,
-        1,
-        next_inputs,
-        OneHotCfg::level_params_with_log_basis,
-    )
-    .unwrap();
+    let next_level_params = scheduled_next_level_params(&schedule, 1).unwrap();
     let root_shape = LevelProofShape {
         y_ring_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
         extension_opening_reduction: None,
@@ -183,14 +178,9 @@ fn expected_same_point_batched_shape(
             level: current_level,
             current_w_len,
         };
-        let (level_params, next_level_params) = scheduled_fold_execution(
-            &schedule,
-            current_level,
-            inputs,
-            current_log_basis,
-            OneHotCfg::level_params_with_log_basis,
-        )
-        .expect("scheduled recursive fold");
+        let (level_params, next_level_params) =
+            scheduled_fold_execution(&schedule, current_level, inputs, current_log_basis)
+                .expect("scheduled recursive fold");
         let current_lp = akita_types::recursive_level_layout_from_params(
             &level_params,
             current_w_len,
@@ -222,14 +212,9 @@ fn expected_same_point_batched_shape(
         level: current_level,
         current_w_len,
     };
-    let (terminal_params, terminal_next_params) = scheduled_fold_execution(
-        &schedule,
-        current_level,
-        terminal_inputs,
-        current_log_basis,
-        OneHotCfg::level_params_with_log_basis,
-    )
-    .expect("scheduled terminal fold");
+    let (terminal_params, terminal_next_params) =
+        scheduled_fold_execution(&schedule, current_level, terminal_inputs, current_log_basis)
+            .expect("scheduled terminal fold");
     let terminal_lp = akita_types::recursive_level_layout_from_params(
         &terminal_params,
         current_w_len,
@@ -502,11 +487,12 @@ fn debug_batched_root_relation_claim_matches_tables() {
             level: 0,
             current_w_len: akita_types::root_current_w_len(&batch_layout),
         };
-        let batch_root_params = OneHotCfg::level_params_with_log_basis(
-            batch_root_inputs,
-            OneHotCfg::log_basis_at_level(batch_root_inputs).expect("log basis"),
-        )
-        .expect("level params");
+        let batch_root_params =
+            akita_config::proof_optimized::level_params_with_log_basis::<OneHotCfg>(
+                batch_root_inputs,
+                OneHotCfg::log_basis_at_level(batch_root_inputs).expect("log basis"),
+            )
+            .expect("level params");
 
         let batch_polys: Vec<OneHotPoly<OneHotF, ONEHOT_D, u8>> = (0..BATCH_SIZE)
             .map(|idx| debug_make_onehot_poly(&batch_layout, 0x0bee_fcaf_e000_2900 + idx as u64))
@@ -624,11 +610,12 @@ fn debug_batched_root_relation_claim_matches_tables() {
             level: 1,
             current_w_len: w.len(),
         };
-        let commit_params = OneHotCfg::level_params_with_log_basis(
-            commit_inputs,
-            OneHotCfg::log_basis_at_level(commit_inputs).expect("log basis"),
-        )
-        .expect("level params");
+        let commit_params =
+            akita_config::proof_optimized::level_params_with_log_basis::<OneHotCfg>(
+                commit_inputs,
+                OneHotCfg::log_basis_at_level(commit_inputs).expect("log basis"),
+            )
+            .expect("level params");
         let mut commit_ntt_cache = MultiDNttCaches::default();
         let next_commitment = akita_prover::commit_next_w::<OneHotF, OneHotCfg, ONEHOT_D>(
             &commit_params,
@@ -1209,21 +1196,23 @@ fn debug_onehot_batched_profile_compare() {
             level: 0,
             current_w_len: akita_types::root_current_w_len(&single_layout),
         };
-        let single_root_params = OneHotCfg::level_params_with_log_basis(
-            single_root_inputs,
-            OneHotCfg::log_basis_at_level(single_root_inputs).expect("log basis"),
-        )
-        .expect("level params");
+        let single_root_params =
+            akita_config::proof_optimized::level_params_with_log_basis::<OneHotCfg>(
+                single_root_inputs,
+                OneHotCfg::log_basis_at_level(single_root_inputs).expect("log basis"),
+            )
+            .expect("level params");
         let _batch_root_inputs = AkitaScheduleInputs {
             num_vars: BATCH_NUM_VARS,
             level: 0,
             current_w_len: akita_types::root_current_w_len(&batch_layout),
         };
-        let _batch_root_params = OneHotCfg::level_params_with_log_basis(
-            _batch_root_inputs,
-            OneHotCfg::log_basis_at_level(_batch_root_inputs).expect("log basis"),
-        )
-        .expect("level params");
+        let _batch_root_params =
+            akita_config::proof_optimized::level_params_with_log_basis::<OneHotCfg>(
+                _batch_root_inputs,
+                OneHotCfg::log_basis_at_level(_batch_root_inputs).expect("log basis"),
+            )
+            .expect("level params");
 
         let single_root_w_ring = w_ring_element_count::<OneHotF>(&single_root_params).unwrap();
         let batched_root_w_ring = w_ring_element_count_with_counts::<OneHotF>(
@@ -2434,27 +2423,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
-    fn level_params_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        _log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
-    fn root_level_params_for_layout_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp().with_layout(lp))
-    }
-
-    fn root_level_layout_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        _log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
     fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
         Ok(3)
     }
@@ -2501,6 +2469,11 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                     )),
                     direct_bytes: compact_w_len,
                     commit_params: None,
+                    // Stub fixture: terminal-direct level params equal the
+                    // fold's `lp` (matches the deleted
+                    // `Cfg::level_params_with_log_basis` override that
+                    // returned `Self::root_lp()`).
+                    level_params: Some(lp.clone()),
                 }),
             ],
             total_bytes: 0,
@@ -2593,27 +2566,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
-    fn level_params_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        _log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
-    fn root_level_params_for_layout_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp().with_layout(lp))
-    }
-
-    fn root_level_layout_with_log_basis(
-        _inputs: AkitaScheduleInputs,
-        _log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
     fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
         Ok(3)
     }
@@ -2662,6 +2614,11 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                     witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
                     direct_bytes: next_w_len,
                     commit_params: None,
+                    // Stub fixture: terminal-direct level params equal the
+                    // fold's `lp` (matches the deleted
+                    // `Cfg::level_params_with_log_basis` override that
+                    // returned `Self::root_lp()`).
+                    level_params: Some(lp.clone()),
                 }),
             ],
             total_bytes: 0,

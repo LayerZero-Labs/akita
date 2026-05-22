@@ -1001,6 +1001,7 @@ mod tests {
                     witness_shape: DirectWitnessShape::PackedDigits((64, 3)),
                     direct_bytes: 32,
                     commit_params: None,
+                    level_params: None,
                 }),
             ],
             total_bytes: 155,
@@ -1131,6 +1132,7 @@ mod tests {
                 witness_shape: DirectWitnessShape::FieldElements(8),
                 direct_bytes: 8,
                 commit_params: None,
+                level_params: None,
             })],
             total_bytes: 8,
         };
@@ -1140,6 +1142,7 @@ mod tests {
                 witness_shape: DirectWitnessShape::PackedDigits((8, 3)),
                 direct_bytes: 3,
                 commit_params: None,
+                level_params: None,
             })],
             total_bytes: 3,
         };

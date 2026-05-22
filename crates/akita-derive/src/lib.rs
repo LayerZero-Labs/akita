@@ -23,6 +23,7 @@ pub mod materialize;
 
 pub use derivation::{
     derived_root_commitment_layout_from_params, root_direct_commit_layout,
+    root_level_layout_with_log_basis, root_level_params_for_layout_with_log_basis,
     sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
     sis_secure_level_params, SisCollisionBounds, SisRoleWidths,
 };

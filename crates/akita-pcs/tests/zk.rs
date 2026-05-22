@@ -83,27 +83,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Ok((rows, 16_384))
     }
 
-    fn level_params_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        Cfg::level_params_with_log_basis(inputs, log_basis)
-    }
-
-    fn root_level_params_for_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        Cfg::root_level_params_for_layout_with_log_basis(inputs, lp)
-    }
-
-    fn root_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        Cfg::root_level_layout_with_log_basis(inputs, log_basis)
-    }
-
     fn log_basis_at_level(inputs: AkitaScheduleInputs) -> Result<u32, akita_field::AkitaError> {
         Cfg::log_basis_at_level(inputs)
     }

@@ -47,9 +47,7 @@ fn search_options_for_cfg<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) ->
         recursive_witness_expansion: 1,
         recursive_public_rows: 1,
         table: Cfg::schedule_table(),
-        scale_batched_root_layout: akita_config::scale_batched_root_layout_with_config::<Cfg>,
         stage1_challenge_config: Cfg::stage1_challenge_config,
-        root_level_layout_with_log_basis: Cfg::root_level_layout_with_log_basis,
         current_level_layout_with_log_basis: akita_config::current_level_layout_with_log_basis::<Cfg>,
         direct_level_params_with_log_basis: akita_config::direct_level_params_with_log_basis::<Cfg>,
         ring_subfield_embedding_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
@@ -98,17 +96,15 @@ pub(crate) struct SearchOptions {
     /// gated by the `allow_table_fast_path` argument on
     /// [`find_optimal_schedule`].
     pub table: Option<GeneratedScheduleTable>,
-    /// Layout-scaling helper used by the materializer when a table hit
-    /// requires scaling a batched root layout.
-    pub scale_batched_root_layout: fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     /// Stage-1 sparse challenge selector for a given ring dimension. The
     /// hook is Result-returning so config-side validation errors propagate
     /// instead of panicking on the verifier replay path.
     pub stage1_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    /// Root-level layout hook (level == 0).
-    pub root_level_layout_with_log_basis:
-        fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
-    /// Recursive-level layout hook (level > 0).
+    /// Recursive-level layout hook (level > 0). Root (`level == 0`) is
+    /// derived inline via [`akita_derive::root_level_layout_with_log_basis`]
+    /// using the value-typed Cfg knobs above.
+    ///
+    /// `level == 0` does not consult this hook.
     pub current_level_layout_with_log_basis:
         fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
     /// Terminal direct-step layout hook.
@@ -190,7 +186,15 @@ fn derive_candidate_level_params(
     };
 
     let level_lp = match if level == 0 {
-        (opts.root_level_layout_with_log_basis)(inputs, log_basis)
+        akita_derive::root_level_layout_with_log_basis(
+            opts.sis_modulus_family,
+            opts.ring_dimension,
+            opts.decomposition,
+            (opts.stage1_challenge_config)(opts.ring_dimension)?,
+            opts.ring_subfield_embedding_norm_bound,
+            inputs,
+            log_basis,
+        )
     } else {
         (opts.current_level_layout_with_log_basis)(inputs, log_basis)
     } {
@@ -351,9 +355,14 @@ fn to_direct_step(opts: &SearchOptions, current_w_len: usize, log_basis: u32) ->
         // Terminal Direct after one or more folds: root commit params live
         // on the first `FoldStep`, not on this terminal step.
         commit_params: None,
+        // Populated by `finalize_terminal_direct_witness_shape` once the
+        // enclosing fold candidate (and therefore `terminal_field_len`)
+        // is known.
+        level_params: None,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finalize_terminal_direct_witness_shape(
     opts: &SearchOptions,
     suffix_steps: &mut [Step],
@@ -362,6 +371,8 @@ fn finalize_terminal_direct_witness_shape(
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
+    num_vars: usize,
+    fold_level: usize,
 ) -> Result<(), AkitaError> {
     if suffix_steps.len() != 1 {
         return Err(AkitaError::InvalidSetup(
@@ -396,9 +407,23 @@ fn finalize_terminal_direct_witness_shape(
         .expect("terminal recursive witness length overflow");
     let witness_shape = DirectWitnessShape::PackedDigits((terminal_field_len, log_basis));
     let direct_bytes = direct_witness_bytes(opts.field_bits(), &witness_shape);
+    // Bake the SIS-secure terminal-direct level params onto the step so
+    // prover/verifier (and the materializer, when this candidate is
+    // emitted via the offline table) can read them straight from the
+    // schedule. This mirrors what the prover's
+    // `scheduled_next_level_params` callback used to compute on the fly.
+    let level_params = (opts.direct_level_params_with_log_basis)(
+        AkitaScheduleInputs {
+            num_vars,
+            level: fold_level + 1,
+            current_w_len: terminal_field_len,
+        },
+        log_basis,
+    )?;
     direct.current_w_len = terminal_field_len;
     direct.witness_shape = witness_shape;
     direct.direct_bytes = direct_bytes;
+    direct.level_params = Some(level_params);
     Ok(())
 }
 
@@ -526,6 +551,8 @@ fn derive_optimal_suffix_schedule(
                     1,
                     1,
                     1,
+                    num_vars,
+                    level,
                 )?;
                 let (new_direct_bytes, terminal_field_len) =
                     match suffix_steps.first().expect("suffix non-empty") {
@@ -657,7 +684,15 @@ fn derive_root_candidate(
         current_w_len: root_w_len,
     };
 
-    let root_lp = match (opts.root_level_layout_with_log_basis)(inputs, log_basis) {
+    let root_lp = match akita_derive::root_level_layout_with_log_basis(
+        opts.sis_modulus_family,
+        opts.ring_dimension,
+        opts.decomposition,
+        (opts.stage1_challenge_config)(opts.ring_dimension)?,
+        opts.ring_subfield_embedding_norm_bound,
+        inputs,
+        log_basis,
+    ) {
         Ok(root_lp) => root_lp,
         Err(_) => return Ok(None),
     };
@@ -800,7 +835,7 @@ fn offline_schedule_for_key(opts: &SearchOptions) -> Result<Option<Schedule>, Ak
     // bit-width driven and uses `root_decomp.field_bits()` everywhere, so
     // this is just a phantom.
     use akita_field::Prime128OffsetA7F7 as PhantomField;
-    let plan = schedule_plan_from_table::<PhantomField, _, _, _>(
+    let plan = schedule_plan_from_table::<PhantomField, _, _>(
         opts.key,
         table,
         PlanPolicy {
@@ -811,7 +846,6 @@ fn offline_schedule_for_key(opts: &SearchOptions) -> Result<Option<Schedule>, Ak
             recursive_public_rows: opts.recursive_public_rows,
             extension_opening_width: opts.extension_opening_width,
             stage1_challenge_config: opts.stage1_challenge_config,
-            scale_batched_root_layout: opts.scale_batched_root_layout,
             direct_level_params: opts.direct_level_params_with_log_basis,
             ring_subfield_norm_bound: opts.ring_subfield_embedding_norm_bound,
         },
@@ -897,6 +931,9 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
         witness_shape: root_direct_shape,
         direct_bytes: best_cost,
         commit_params: root_direct_commit_params,
+        // Root-direct never has a next level after itself; the prover
+        // walk stops at this direct step.
+        level_params: None,
     })];
     let mut memo = ScheduleMemo::new();
 
@@ -935,6 +972,8 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
                 t_vectors,
                 w_vectors,
                 z_vectors,
+                num_vars,
+                0,
             )?;
             let (new_direct_bytes, terminal_field_len) =
                 match suffix_steps.first().expect("suffix non-empty") {

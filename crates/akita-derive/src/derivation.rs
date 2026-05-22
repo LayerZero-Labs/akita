@@ -373,6 +373,94 @@ pub fn root_direct_commit_layout(
     )))
 }
 
+/// Audited root-rank-cap iteration: iterate the root A-row rank against
+/// the SIS-floor table until self-consistent, then return the converged
+/// `LevelParams`.
+///
+/// This is the "normal root" variant used by the planner DP, the table
+/// materializer, and the config's `level_params_with_log_basis` fast-path.
+/// For root-direct (tiny-root) layouts use
+/// [`root_direct_commit_layout`] instead.
+///
+/// # Errors
+///
+/// Returns an error when the rank-cap iteration does not converge, when
+/// the SIS-floor table does not cover the candidate widths, or when the
+/// layout arithmetic overflows.
+pub fn root_level_layout_with_log_basis(
+    sis_family: SisModulusFamily,
+    d: usize,
+    decomp: DecompositionParams,
+    stage1: SparseChallengeConfig,
+    ring_subfield_norm_bound: u32,
+    inputs: AkitaScheduleInputs,
+    log_basis: u32,
+) -> Result<LevelParams, AkitaError> {
+    let rank_cap = root_a_rank_cap(sis_family, d, &decomp, &stage1, ring_subfield_norm_bound)?;
+    let mut candidate_n_a = 1usize;
+    for _ in 0..rank_cap {
+        let candidate_params = LevelParams::params_only(
+            sis_family,
+            d,
+            log_basis,
+            candidate_n_a,
+            1,
+            1,
+            stage1.clone(),
+        );
+        let root_lp =
+            derived_root_commitment_layout_from_params(inputs, decomp, &candidate_params, false)?;
+        let derived_params = sis_derived_root_params_for_layout(
+            sis_family,
+            d,
+            decomp,
+            stage1.clone(),
+            ring_subfield_norm_bound,
+            inputs,
+            &root_lp,
+        )?;
+        if derived_params.a_key.row_len() == candidate_n_a {
+            return Ok(derived_params.with_layout(&root_lp));
+        }
+        candidate_n_a = derived_params.a_key.row_len();
+    }
+    Err(AkitaError::InvalidSetup(format!(
+        "failed to converge on self-consistent root A-row rank for D={d} lb={log_basis}"
+    )))
+}
+
+/// Apply [`sis_derived_root_params_for_layout`] to an explicit root layout
+/// and re-attach the layout to the resulting params.
+///
+/// This is the one-line "post-process the layout we already have" sister
+/// of [`root_level_layout_with_log_basis`]. Used by the planner DP's
+/// candidate evaluator and by tests that pre-compute a root layout.
+///
+/// # Errors
+///
+/// Propagates the SIS-floor lookup error from
+/// [`sis_derived_root_params_for_layout`].
+pub fn root_level_params_for_layout_with_log_basis(
+    sis_family: SisModulusFamily,
+    d: usize,
+    decomp: DecompositionParams,
+    stage1: SparseChallengeConfig,
+    ring_subfield_norm_bound: u32,
+    inputs: AkitaScheduleInputs,
+    lp: &LevelParams,
+) -> Result<LevelParams, AkitaError> {
+    let params = sis_derived_root_params_for_layout(
+        sis_family,
+        d,
+        decomp,
+        stage1,
+        ring_subfield_norm_bound,
+        inputs,
+        lp,
+    )?;
+    Ok(params.with_layout(lp))
+}
+
 /// Number of audited A-row SIS-rank buckets available for the root A role
 /// at this `(sis_family, d, decomp, stage1, ring_subfield_norm_bound)`. Used
 /// as the iteration cap when probing self-consistent root A-row ranks.

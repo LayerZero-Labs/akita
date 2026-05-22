@@ -125,27 +125,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
         Ok((max_rows, max_stride))
     }
 
-    fn level_params_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Cfg::level_params_with_log_basis(inputs, log_basis)
-    }
-
-    fn root_level_params_for_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, AkitaError> {
-        Cfg::root_level_params_for_layout_with_log_basis(inputs, lp)
-    }
-
-    fn root_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Cfg::root_level_layout_with_log_basis(inputs, log_basis)
-    }
-
     fn log_basis_at_level(inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
         Cfg::log_basis_at_level(inputs)
     }

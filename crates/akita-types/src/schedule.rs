@@ -237,6 +237,10 @@ pub struct AkitaPlannedDirectStep {
     /// Commit-layout params for root-direct schedules (planned root step is
     /// `Direct`). `None` for terminal Direct steps that follow a fold.
     pub commit_params: Option<LevelParams>,
+    /// SIS-secure level params for the terminal `Direct(PackedDigits)`
+    /// step that sits after one or more folds. `None` for root-direct
+    /// (the root direct has no sumcheck-time level after itself).
+    pub level_params: Option<LevelParams>,
 }
 
 /// Exact current-step execution data recovered from a pinned schedule.
@@ -653,6 +657,12 @@ pub struct DirectStep {
     /// step is this `Direct`). `None` for terminal Direct steps that follow
     /// a fold, where the root commit is sized by the first fold's params.
     pub commit_params: Option<LevelParams>,
+    /// SIS-secure level params for this terminal `Direct(PackedDigits)`
+    /// step (i.e. the params the prover/verifier consume as the
+    /// next-level params at the end of a folded schedule). Always set
+    /// for terminal-direct after a fold; left `None` for root-direct,
+    /// where the run never traverses past the direct step.
+    pub level_params: Option<LevelParams>,
 }
 
 impl DirectStep {
@@ -712,6 +722,9 @@ pub fn root_direct_schedule(
             witness_shape: DirectWitnessShape::FieldElements(current_w_len),
             direct_bytes: 0,
             commit_params: Some(commit_params),
+            // Root-direct never has a "next level after itself"; the
+            // schedule walks the single direct step and stops.
+            level_params: None,
         })],
         total_bytes: 0,
     })
@@ -832,6 +845,7 @@ pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule
                     witness_shape: direct.witness_shape.clone(),
                     direct_bytes: direct.direct_bytes,
                     commit_params: direct.commit_params.clone(),
+                    level_params: direct.level_params.clone(),
                 }));
             }
         }
@@ -871,28 +885,27 @@ pub fn schedule_root_fold_params(schedule: &Schedule) -> Option<&LevelParams> {
 
 /// Resolve one scheduled level's active Akita params.
 ///
-/// Fold steps carry concrete params in the schedule. Direct steps only carry
-/// the terminal packed basis, so callers provide the config-specific direct
-/// param derivation callback.
+/// Both `Fold` and `Direct(PackedDigits)` steps now carry their params
+/// inline (set by the planner DP and table materializer), so no
+/// derivation callback is needed at runtime.
 ///
 /// # Errors
 ///
-/// Returns an error when `step_index` is outside the schedule.
-pub fn scheduled_next_level_params<DirectParams>(
+/// Returns an error when `step_index` is outside the schedule or when a
+/// terminal `Direct(PackedDigits)` step is missing its baked
+/// `level_params`.
+pub fn scheduled_next_level_params(
     schedule: &Schedule,
     step_index: usize,
-    inputs: AkitaScheduleInputs,
-    direct_params: DirectParams,
-) -> Result<LevelParams, AkitaError>
-where
-    DirectParams: FnOnce(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
-{
+) -> Result<LevelParams, AkitaError> {
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
         Some(Step::Direct(step)) => match step.witness_shape {
-            DirectWitnessShape::PackedDigits((_, bits_per_elem)) => {
-                direct_params(inputs, bits_per_elem)
-            }
+            DirectWitnessShape::PackedDigits(_) => step.level_params.clone().ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "terminal direct step is missing baked level params".to_string(),
+                )
+            }),
             DirectWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
                 "recursive schedule cannot transition into a field-element direct step".to_string(),
             )),
@@ -912,16 +925,12 @@ where
 ///
 /// Returns an error if `level` is not a fold step or if the runtime state does
 /// not match the scheduled fold.
-pub fn scheduled_fold_execution<DirectParams>(
+pub fn scheduled_fold_execution(
     schedule: &Schedule,
     level: usize,
     inputs: AkitaScheduleInputs,
     current_log_basis: u32,
-    direct_params: DirectParams,
-) -> Result<(LevelParams, LevelParams), AkitaError>
-where
-    DirectParams: FnOnce(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
-{
+) -> Result<(LevelParams, LevelParams), AkitaError> {
     let Some(Step::Fold(step)) = schedule.steps.get(level) else {
         return Err(AkitaError::InvalidSetup(format!(
             "schedule is missing fold step at level {level}"
@@ -934,13 +943,7 @@ where
             step.current_w_len, inputs.current_w_len, step.params.log_basis, current_log_basis
         )));
     }
-    let next_inputs = AkitaScheduleInputs {
-        num_vars: inputs.num_vars,
-        level: level + 1,
-        current_w_len: step.next_w_len,
-    };
-    let next_level_params =
-        scheduled_next_level_params(schedule, level + 1, next_inputs, direct_params)?;
+    let next_level_params = scheduled_next_level_params(schedule, level + 1)?;
     Ok((step.params.clone(), next_level_params))
 }
 
@@ -993,6 +996,7 @@ mod tests {
         assert_eq!(step.witness_shape, DirectWitnessShape::FieldElements(8));
         assert_eq!(step.direct_bytes, 0);
         assert_eq!(step.commit_params.as_ref(), Some(&dummy_commit_params));
+        assert!(step.level_params.is_none());
     }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {

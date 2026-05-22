@@ -5,11 +5,15 @@
 //! `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`. It
 //! replaces the previous three-trait split (`CommitmentConfig`,
 //! `ScheduleProvider`, `PlannerConfig`). Verifier-reachable hooks — namely
-//! [`CommitmentConfig::level_params_with_log_basis`],
-//! [`CommitmentConfig::log_basis_at_level`], and
+//! [`CommitmentConfig::log_basis_at_level`] and
 //! [`CommitmentConfig::stage1_challenge_config`] — return `Result` so
 //! malformed inputs surface as `AkitaError` instead of panicking on the
 //! verifier replay path.
+//!
+//! Pure-derivation layout helpers (`level_params_with_log_basis` plus
+//! the root-layout pair) used to be trait methods too; they now live as
+//! free functions in [`proof_optimized`] / [`akita_derive`] so the trait
+//! stays focused on configuration knobs, not derivation rules.
 //!
 //! Presets must implement every required (no-default) hook explicitly.
 //! Substantive helpers that encode protocol logic — `get_params_for_prove`
@@ -42,16 +46,11 @@ use akita_types::{
 use std::marker::PhantomData;
 
 pub mod proof_optimized;
-pub(crate) mod schedule_policy;
 mod transcript_binding;
 pub use proof_optimized::{
-    matrix_envelope_for_levels, setup_level_params_from_plan,
-    setup_level_params_from_runtime_schedule,
-};
-pub use schedule_policy::{
     current_level_layout_with_log_basis, direct_level_params_with_log_basis,
-    fallback_batched_root_split, scale_batched_root_layout_with_config,
-    sis_derived_recursive_params,
+    fallback_batched_root_split, matrix_envelope_for_levels, setup_level_params_from_plan,
+    setup_level_params_from_runtime_schedule,
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
@@ -203,42 +202,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError>;
 
-    /// Active level params for one level under an explicit basis.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the requested level/basis combination is
-    /// invalid for this config (verifier-reachable; must not panic).
-    #[doc(hidden)]
-    fn level_params_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, AkitaError>;
-
-    /// Active root params for a concrete root layout.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the config cannot derive a sound root parameter
-    /// set for the supplied root layout.
-    #[doc(hidden)]
-    fn root_level_params_for_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, AkitaError>;
-
-    /// Root fold layout for an explicit basis.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the root variable split underflows, overflows, or
-    /// does not admit a sound root parameterization.
-    #[doc(hidden)]
-    fn root_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, AkitaError>;
-
     /// Active basis for one level from public inputs.
     ///
     /// # Errors
@@ -362,29 +325,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
-    fn level_params_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        let params = Cfg::level_params_with_log_basis(inputs, log_basis)?;
-        debug_assert_eq!(params.ring_dimension, D);
-        Ok(params)
-    }
-
-    fn root_level_params_for_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, AkitaError> {
-        Cfg::root_level_params_for_layout_with_log_basis(inputs, lp)
-    }
-
-    fn root_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Cfg::root_level_layout_with_log_basis(inputs, log_basis)
-    }
-
     fn log_basis_at_level(inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {
         Cfg::log_basis_at_level(inputs)
     }
@@ -473,35 +413,6 @@ mod tests {
             _max_num_points: usize,
         ) -> Result<(usize, usize), AkitaError> {
             Ok((1, 1))
-        }
-
-        fn level_params_with_log_basis(
-            _inputs: AkitaScheduleInputs,
-            log_basis: u32,
-        ) -> Result<LevelParams, AkitaError> {
-            Ok(LevelParams::params_only(
-                Self::sis_modulus_family(),
-                Self::D,
-                log_basis,
-                1,
-                1,
-                1,
-                Self::stage1_challenge_config(Self::D)?,
-            ))
-        }
-
-        fn root_level_params_for_layout_with_log_basis(
-            inputs: AkitaScheduleInputs,
-            lp: &LevelParams,
-        ) -> Result<LevelParams, AkitaError> {
-            Ok(Self::level_params_with_log_basis(inputs, lp.log_basis)?.with_layout(lp))
-        }
-
-        fn root_level_layout_with_log_basis(
-            inputs: AkitaScheduleInputs,
-            log_basis: u32,
-        ) -> Result<LevelParams, AkitaError> {
-            Self::level_params_with_log_basis(inputs, log_basis)
         }
 
         fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> Result<u32, AkitaError> {

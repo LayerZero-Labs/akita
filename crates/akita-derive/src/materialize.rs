@@ -26,7 +26,7 @@ use akita_types::{
 /// runtime schedules.
 ///
 /// This is the renamed `GeneratedSchedulePlanPolicy` from `akita-types`.
-pub struct PlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams> {
+pub struct PlanPolicy<Stage1Config, DirectLevelParams> {
     /// SIS modulus family used by generated fold levels.
     pub sis_family: SisModulusFamily,
     /// Cyclotomic ring dimension `D` for this config's root commitments.
@@ -45,8 +45,6 @@ pub struct PlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams> {
     /// Result-returning so config-side validation propagates instead of
     /// panicking on the verifier replay path.
     pub stage1_challenge_config: Stage1Config,
-    /// Root-layout scaler for batched committed openings.
-    pub scale_batched_root_layout: ScaleBatchedRoot,
     /// Direct terminal layout policy for a schedule state and log-basis.
     pub direct_level_params: DirectLevelParams,
     /// Infinity-norm expansion introduced when claim-field coordinates are
@@ -121,15 +119,14 @@ fn extension_opening_reduction_level_bytes(
 ///
 /// Returns an error if the generated entry is structurally invalid, does not
 /// match `key`, or does not agree with the supplied config policy callbacks.
-pub fn schedule_plan_from_table_entry<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
+pub fn schedule_plan_from_table_entry<F, Stage1Config, DirectLevelParams>(
     key: AkitaScheduleLookupKey,
     entry: &GeneratedScheduleTableEntry,
-    policy: PlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>,
+    policy: PlanPolicy<Stage1Config, DirectLevelParams>,
 ) -> Result<AkitaSchedulePlan, AkitaError>
 where
     F: CanonicalField,
     Stage1Config: Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
     let PlanPolicy {
@@ -140,7 +137,6 @@ where
         recursive_public_rows,
         extension_opening_width,
         stage1_challenge_config,
-        scale_batched_root_layout,
         direct_level_params,
         ring_subfield_norm_bound,
     } = policy;
@@ -207,7 +203,16 @@ where
                         || key.num_z_vectors != 1);
                 let mut lp = params.with_layout(&layout);
                 if root_is_batched {
-                    lp = scale_batched_root_layout(&lp, key.num_t_vectors)?;
+                    // Inlined `scale_batched_root_layout_with_config` — the
+                    // policy already exposes the two Cfg knobs we need
+                    // (`stage1_challenge_config(ring_dimension)` and
+                    // `root_decomp.field_bits()`), so no fn-pointer hop.
+                    lp = akita_types::scale_batched_root_layout(
+                        &lp,
+                        key.num_t_vectors,
+                        stage1_challenge_config(ring_dimension)?.l1_norm(),
+                        root_decomp.field_bits(),
+                    )?;
                 }
                 let runtime_next_w_len = if fold_level == 0 {
                     let next_w_ring = w_ring_element_count_with_counts_bits(
@@ -394,6 +399,24 @@ where
                     DirectWitnessShape::PackedDigits((len, _)) => *len,
                     DirectWitnessShape::FieldElements(len) => *len,
                 };
+                // Bake terminal-direct level params onto the planned step
+                // for `fold_level > 0` (i.e. terminal `Direct(PackedDigits)`
+                // after at least one fold), so prover/verifier can read
+                // the next-level params straight from the schedule.
+                // Root-direct (`fold_level == 0`) has no next level, so
+                // `level_params` stays `None`.
+                let level_params = if fold_level > 0 {
+                    Some(direct_level_params(
+                        AkitaScheduleInputs {
+                            num_vars: key.num_vars,
+                            level: fold_level,
+                            current_w_len: direct_current_w_len,
+                        },
+                        current_log_basis,
+                    )?)
+                } else {
+                    None
+                };
                 let state = AkitaPlannedState {
                     level: fold_level,
                     current_w_len: direct_current_w_len,
@@ -404,6 +427,7 @@ where
                     witness_shape,
                     direct_bytes,
                     commit_params,
+                    level_params,
                 })));
             }
         }
@@ -429,15 +453,14 @@ where
 ///
 /// Returns an error if a matching generated entry exists but fails validation
 /// against the supplied config policy callbacks.
-pub fn schedule_plan_from_table<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
+pub fn schedule_plan_from_table<F, Stage1Config, DirectLevelParams>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
-    policy: PlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>,
+    policy: PlanPolicy<Stage1Config, DirectLevelParams>,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
     F: CanonicalField,
     Stage1Config: Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
     if table.sis_family != policy.sis_family {
@@ -447,7 +470,7 @@ where
         )));
     }
     match table_entry(table, generated_schedule_lookup_key(key)) {
-        Some(entry) => schedule_plan_from_table_entry::<F, _, _, _>(key, entry, policy).map(Some),
+        Some(entry) => schedule_plan_from_table_entry::<F, _, _>(key, entry, policy).map(Some),
         None => Ok(None),
     }
 }
