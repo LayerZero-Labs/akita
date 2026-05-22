@@ -479,37 +479,40 @@ macro_rules! preset_module {
     };
 }
 
+// Wrap every preset in `PlannerCfg` so multipoint/batched setup sizing falls
+// through to DP. Tables-only configs (`D128*` has no table at all) would
+// otherwise reject these sizing iterations.
 preset_module!(
     d128_full,
-    fp128::D128Full,
+    akita_planner::test_utils::PlannerCfg<fp128::D128Full>,
     128,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
     d64_full,
-    fp128::D64Full,
+    akita_planner::test_utils::PlannerCfg<fp128::D64Full>,
     64,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
     d64_onehot,
-    fp128::D64OneHot,
+    akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>,
     64,
     run_onehot_e2e,
     run_onehot_batched_e2e
 );
 preset_module!(
     d32_full,
-    fp128::D32Full,
+    akita_planner::test_utils::PlannerCfg<fp128::D32Full>,
     32,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
     d32_onehot,
-    fp128::D32OneHot,
+    akita_planner::test_utils::PlannerCfg<fp128::D32OneHot>,
     32,
     run_onehot_e2e,
     run_onehot_batched_e2e

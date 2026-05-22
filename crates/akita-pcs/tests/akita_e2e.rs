@@ -859,11 +859,13 @@ fn batched_onehot_same_point_round_trip() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64OneHot;
+        // Two-claim incidence misses the singleton/4-batch tables; route
+        // through the planner DP fallback via `PlannerCfg`.
+        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>;
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = akita_batched_root_layout::<Cfg>(nv, 2).expect("layout");
+        let layout = Cfg::get_params_for_commitment(nv, 2, 1).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -946,11 +948,13 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64OneHot;
+        // Two-claim incidence misses the singleton/4-batch tables; route
+        // through the planner DP fallback via `PlannerCfg`.
+        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>;
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = akita_batched_root_layout::<Cfg>(nv, 2).expect("layout");
+        let layout = Cfg::get_params_for_commitment(nv, 2, 1).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");

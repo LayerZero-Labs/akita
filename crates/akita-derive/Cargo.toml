@@ -1,5 +1,5 @@
 [package]
-name = "akita-config"
+name = "akita-derive"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
@@ -11,26 +11,18 @@ authors = [
   "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
 ]
 license = "Apache-2.0 OR MIT"
-description = "Runtime configuration presets and schedule policy for the Akita polynomial commitment scheme"
+description = "Verifier-reachable SIS derivation and schedule-table materialization for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
-[package.metadata.cargo-machete]
-ignored = ["akita-algebra"]
+[dependencies]
+akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
+akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-types = { version = "0.1.0", path = "../akita-types" }
 
 [features]
-default = ["parallel"]
-parallel = []
-zk = ["akita-derive/zk", "akita-types/zk"]
-
-[dependencies]
-akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
-akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
-akita-derive = { version = "0.1.0", path = "../akita-derive" }
-akita-field = { version = "0.1.0", path = "../akita-field" }
-akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
-akita-types = { version = "0.1.0", path = "../akita-types" }
-tracing = "0.1"
+default = []
+zk = ["akita-types/zk"]
 
 [lints]
 workspace = true

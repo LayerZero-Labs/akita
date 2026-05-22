@@ -48,11 +48,7 @@ parallel = [
 ]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = ["akita-transcript/logging-transcript"]
-planner = [
-  "akita-config/planner",
-  "akita-scheme/planner",
-  "akita-setup/planner",
-]
+planner = ["dep:akita-planner", "akita-scheme/planner", "akita-setup/planner"]
 zk = [
   "akita-config/zk",
   "akita-prover/zk",
@@ -69,6 +65,7 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-config = { version = "0.1.0", path = "../akita-config" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-planner = { version = "0.1.0", path = "../akita-planner", optional = true }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
@@ -82,6 +79,9 @@ rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"
 
 [dev-dependencies]
+akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
+  "test-utils",
+] }
 rand = "0.8"
 criterion = { version = "0.5", features = ["html_reports"] }
 num-bigint = "0.4.6"

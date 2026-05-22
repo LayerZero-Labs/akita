@@ -5,14 +5,15 @@
 //! smallest `next_commit` across all next-level bases; the suffix is
 //! recursed into unconstrained.
 //!
-//! The search is a free function: it takes a value-typed [`SearchOptions`]
-//! that bundles the schedule key, decomposition, SIS family, layout hooks,
-//! and (optionally) a generated schedule table for the offline fast path.
-//! No trait surface is exposed.
+//! Public entry: [`find_optimal_schedule`], `<Cfg>`-generic, takes
+//! `allow_table_fast_path: bool` to control whether the search consults
+//! `Cfg::schedule_table()` before running DP. Production callers pass
+//! `true`; the table-emitter binary regenerates from scratch with `false`.
 
 use std::collections::HashMap;
 
 use akita_challenges::SparseChallengeConfig;
+use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::layout::digit_math::{
@@ -27,7 +28,33 @@ use akita_types::{
     LevelParams, MRowLayout, Schedule, SisModulusFamily, Step,
 };
 
-use crate::materialize::{schedule_plan_from_table, PlanPolicy};
+use akita_derive::{schedule_plan_from_table, PlanPolicy};
+
+/// Build a `SearchOptions` value from a `CommitmentConfig`.
+///
+/// This is the bridge between the runtime config trait and the internal
+/// schedule-search machinery. Public callers reach the planner through the
+/// `<Cfg>`-generic [`find_optimal_schedule`] wrapper below; `SearchOptions`
+/// itself is crate-private.
+fn search_options_for_cfg<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> SearchOptions {
+    SearchOptions {
+        key,
+        decomposition: Cfg::decomposition(),
+        sis_modulus_family: Cfg::sis_modulus_family(),
+        challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
+        extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
+        recursive_witness_expansion: 1,
+        recursive_public_rows: 1,
+        table: Cfg::schedule_table(),
+        scale_batched_root_layout: akita_config::scale_batched_root_layout_with_config::<Cfg>,
+        stage1_challenge_config: Cfg::stage1_challenge_config,
+        root_level_layout_with_log_basis: Cfg::root_level_layout_with_log_basis,
+        current_level_layout_with_log_basis: akita_config::current_level_layout_with_log_basis::<Cfg>,
+        direct_level_params_with_log_basis: akita_config::direct_level_params_with_log_basis::<Cfg>,
+        ring_subfield_embedding_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+        log_basis_search_range: Cfg::log_basis_search_range,
+    }
+}
 
 const MAX_RECURSION_DEPTH: usize = 12;
 
@@ -43,7 +70,7 @@ const MAX_RECURSION_DEPTH: usize = 12;
 /// future config needs closures, switch the field to a
 /// `Box<dyn Fn(...) -> _ + Send + Sync + 'static>` — the change is internal
 /// to this module and a handful of callers.
-pub struct SearchOptions {
+pub(crate) struct SearchOptions {
     /// Public schedule lookup key the search is solving for.
     pub key: AkitaScheduleLookupKey,
     /// Root decomposition parameters; `field_bits()` is the effective
@@ -62,11 +89,9 @@ pub struct SearchOptions {
     pub recursive_witness_expansion: usize,
     /// Number of public opening rows used by each recursive fold.
     pub recursive_public_rows: usize,
-    /// When true and `table` is `Some(...)`, the search returns a table
-    /// hit immediately before running DP. Regeneration paths
-    /// (`find_optimal_schedule_from_scratch`) disable this.
-    pub allow_table_fast_path: bool,
-    /// Optional generated schedule table to consult before DP search.
+    /// Optional generated schedule table to consult before DP search,
+    /// gated by the `allow_table_fast_path` argument on
+    /// [`find_optimal_schedule`].
     pub table: Option<GeneratedScheduleTable>,
     /// Layout-scaling helper used by the materializer when a table hit
     /// requires scaling a batched root layout.
@@ -84,9 +109,9 @@ pub struct SearchOptions {
     /// Terminal direct-step layout hook.
     pub direct_level_params_with_log_basis:
         fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
-    /// Re-derive root params for an explicit layout (batched-root path).
-    pub root_level_params_for_layout_with_log_basis:
-        fn(AkitaScheduleInputs, &LevelParams) -> Result<LevelParams, AkitaError>,
+    /// Infinity-norm expansion introduced when claim-field coordinates are
+    /// embedded into the ring subfield via `psi`.
+    pub ring_subfield_embedding_norm_bound: u32,
     /// Inclusive `(min, max)` log-basis search range at a state.
     pub log_basis_search_range: fn(AkitaScheduleInputs) -> (u32, u32),
 }
@@ -120,7 +145,16 @@ fn derive_batched_root_level_derivation(
         (opts.stage1_challenge_config)(root_lp.ring_dimension)?.l1_norm(),
         opts.field_bits(),
     )?;
-    let derived_root_lp = (opts.root_level_params_for_layout_with_log_basis)(inputs, &level_lp)?;
+    let derived_root_lp = akita_derive::sis_derived_root_params_for_layout(
+        opts.sis_modulus_family,
+        level_lp.ring_dimension,
+        opts.decomposition,
+        (opts.stage1_challenge_config)(level_lp.ring_dimension)?,
+        opts.ring_subfield_embedding_norm_bound,
+        inputs,
+        &level_lp,
+    )?
+    .with_layout(&level_lp);
     Ok((level_lp, derived_root_lp))
 }
 
@@ -775,8 +809,24 @@ fn offline_schedule_for_key(opts: &SearchOptions) -> Result<Option<Schedule>, Ak
     Ok(plan.map(|plan| schedule_from_plan(&plan, opts.field_bits())))
 }
 
-fn find_optimal_schedule_impl(opts: &SearchOptions) -> Result<Schedule, AkitaError> {
-    let key = opts.key;
+/// Find the optimal schedule for a root schedule lookup key under `Cfg`.
+///
+/// When `allow_table_fast_path` is `true` and `Cfg::schedule_table()` is
+/// `Some(...)`, the search consults the offline table and returns the
+/// matching entry without running DP. When `false`, DP runs from scratch;
+/// this is what the `gen_schedule_tables` binary uses to regenerate
+/// generated tables.
+///
+/// # Errors
+///
+/// Returns an error if vector counts are invalid, if the witness length
+/// overflows, or if generated-table materialization fails.
+pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
+    key: AkitaScheduleLookupKey,
+    allow_table_fast_path: bool,
+) -> Result<Schedule, AkitaError> {
+    let opts = search_options_for_cfg::<Cfg>(key);
+    let opts = &opts;
     let t_vectors = key.num_t_vectors;
     let w_vectors = key.num_w_vectors;
     let z_vectors = num_z_vectors(key);
@@ -793,7 +843,7 @@ fn find_optimal_schedule_impl(opts: &SearchOptions) -> Result<Schedule, AkitaErr
     }
     let num_vars = key.num_vars;
 
-    if opts.allow_table_fast_path {
+    if allow_table_fast_path {
         if let Some(schedule) = offline_schedule_for_key(opts)? {
             tracing::debug!(
                 num_vars,
@@ -923,68 +973,9 @@ fn find_optimal_schedule_impl(opts: &SearchOptions) -> Result<Schedule, AkitaErr
     })
 }
 
-/// Find the optimal schedule for a root schedule lookup key.
-///
-/// **Offline fast path.** If `opts.allow_table_fast_path` is true and
-/// `opts.table` is `Some(...)`, the table is consulted before the DP runs.
-///
-/// # Errors
-///
-/// Returns an error if vector counts are invalid, if the witness length
-/// overflows, or if generated-table materialization fails.
-pub fn find_optimal_schedule(opts: &SearchOptions) -> Result<Schedule, AkitaError> {
-    find_optimal_schedule_impl(opts)
-}
-
-/// Find the optimal schedule without consulting generated offline tables.
-///
-/// Equivalent to [`find_optimal_schedule`] with
-/// `allow_table_fast_path` overridden to `false`.
-pub fn find_optimal_schedule_from_scratch(opts: &SearchOptions) -> Result<Schedule, AkitaError> {
-    let mut local = SearchOptions {
-        allow_table_fast_path: false,
-        ..*opts
-    };
-    // Drop any provided table so the search cannot accidentally peek at it.
-    local.table = None;
-    find_optimal_schedule_impl(&local)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::SparseChallengeConfig;
-    use akita_types::generated::fp128_d64_full_table;
-    use akita_types::SisModulusFamily;
-
-    fn no_op_layout(
-        _inputs: AkitaScheduleInputs,
-        _log_basis: u32,
-    ) -> Result<LevelParams, AkitaError> {
-        Err(AkitaError::InvalidSetup("not implemented".into()))
-    }
-
-    fn no_op_root_for_layout(
-        _inputs: AkitaScheduleInputs,
-        _lp: &LevelParams,
-    ) -> Result<LevelParams, AkitaError> {
-        Err(AkitaError::InvalidSetup("not implemented".into()))
-    }
-
-    fn no_op_scale(_lp: &LevelParams, _claims: usize) -> Result<LevelParams, AkitaError> {
-        Err(AkitaError::InvalidSetup("not implemented".into()))
-    }
-
-    fn unit_basis_range(_: AkitaScheduleInputs) -> (u32, u32) {
-        (1, 1)
-    }
-
-    fn fp128_stage1_challenge_config(_d: usize) -> Result<SparseChallengeConfig, AkitaError> {
-        Ok(SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        })
-    }
 
     #[test]
     fn planner_z_count_comes_from_schedule_key() {
@@ -996,34 +987,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn planner_uses_generated_schedule_fast_path() {
-        // Build a SearchOptions that points at fp128_d64_full table and a
-        // singleton key the table covers. The layout hooks panic in this
-        // test because the fast path should short-circuit before DP runs.
+        // Pick a real preset and a singleton key its table covers. The fast
+        // path should short-circuit before DP runs.
+        use akita_config::proof_optimized::fp128;
         let key = AkitaScheduleLookupKey::singleton(8);
-        let opts = SearchOptions {
-            key,
-            decomposition: DecompositionParams {
-                log_basis: 4,
-                log_commit_bound: 128,
-                log_open_bound: Some(128),
-            },
-            sis_modulus_family: SisModulusFamily::Q128,
-            challenge_field_bits: 128,
-            extension_opening_width: 1,
-            recursive_witness_expansion: 1,
-            recursive_public_rows: 1,
-            allow_table_fast_path: true,
-            table: Some(fp128_d64_full_table()),
-            scale_batched_root_layout: no_op_scale,
-            stage1_challenge_config: fp128_stage1_challenge_config,
-            root_level_layout_with_log_basis: no_op_layout,
-            current_level_layout_with_log_basis: no_op_layout,
-            direct_level_params_with_log_basis: no_op_layout,
-            root_level_params_for_layout_with_log_basis: no_op_root_for_layout,
-            log_basis_search_range: unit_basis_range,
-        };
-        let schedule = find_optimal_schedule(&opts).expect("offline schedule lookup");
+        let schedule =
+            find_optimal_schedule::<fp128::D64Full>(key, true).expect("offline schedule lookup");
         assert!(!schedule.steps.is_empty());
     }
 }

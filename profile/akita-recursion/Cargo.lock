@@ -83,11 +83,20 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-derive",
  "akita-field",
- "akita-planner",
  "akita-transcript",
  "akita-types",
  "tracing",
+]
+
+[[package]]
+name = "akita-derive"
+version = "0.1.0"
+dependencies = [
+ "akita-challenges",
+ "akita-field",
+ "akita-types",
 ]
 
 [[package]]
@@ -122,17 +131,6 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "thiserror",
- "tracing",
-]
-
-[[package]]
-name = "akita-planner"
-version = "0.1.0"
-dependencies = [
- "akita-algebra",
- "akita-challenges",
- "akita-field",
- "akita-types",
  "tracing",
 ]
 

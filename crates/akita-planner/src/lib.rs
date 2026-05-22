@@ -1,29 +1,31 @@
-//! Proof-size parameter planner for the Akita polynomial commitment scheme.
+//! Offline schedule planner for the Akita polynomial commitment scheme.
 //!
-//! Free-function API: no public trait. Callers (today, `akita-config`) build
-//! a value-typed [`SearchOptions`] or [`PlanPolicy`] from their
-//! `CommitmentConfig` shape and call into the planner directly.
+//! `<Cfg>`-generic API. The single production entry point is
+//! [`find_optimal_schedule`], which runs an exhaustive DP over
+//! `(level, w_len, log_basis)` to minimize proof size for the supplied
+//! schedule lookup key. The boolean `allow_table_fast_path` controls
+//! whether `Cfg::schedule_table()` is consulted before DP — production
+//! callers pass `true`; the `gen_schedule_tables` binary passes `false` to
+//! regenerate table entries from DP.
 //!
-//! Two production entry points:
-//! - [`find_optimal_schedule`] — exhaustive DP over `(level, w_len,
-//!   log_basis)`, security-aware against the generated SIS-floor tables.
-//!   Consulted on table miss from `CommitmentConfig::get_params_for_prove`.
-//! - [`schedule_plan_from_table`] — materialize a generated
-//!   `GeneratedScheduleTable` entry into a runtime [`akita_types::Schedule`]
-//!   under a config-supplied [`PlanPolicy`].
+//! This crate sits *above* `akita-config` in the dependency graph and is
+//! deliberately excluded from the verifier dep tree: production verifier
+//! replay never reaches DP code, because preset `Cfg::schedule_plan` impls
+//! always materialize from the generated schedule tables that ship with the
+//! presets.
 //!
-//! SIS-floor lookups defer to `akita_types::generated::sis_floor`. The
-//! planner crate carries no separate SIS-floor table.
+//! Cross-crate test fixtures that need a runtime DP fallback (multipoint
+//! incidences, presets with `table = None`, setup-matrix sizing iteration)
+//! enable the `test-utils` feature and use `test_utils::PlannerCfg` — a
+//! `Cfg` wrapper that routes schedule-table misses through
+//! [`find_optimal_schedule`]. It is gated off by default so production
+//! builds never link it.
+//!
+//! SIS derivation, `(m, r)` split, and table materialization live in the
+//! sibling crate [`akita_derive`].
 
-pub mod derivation;
-pub mod materialize;
 pub mod schedule_params;
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
 
-pub use derivation::{
-    derived_root_commitment_layout_from_params, sis_derived_recursive_params_for_layout,
-    sis_derived_root_params_for_layout, sis_secure_level_params, SisCollisionBounds, SisRoleWidths,
-};
-pub use materialize::{schedule_plan_from_table, schedule_plan_from_table_entry, PlanPolicy};
-pub use schedule_params::{
-    find_optimal_schedule, find_optimal_schedule_from_scratch, SearchOptions,
-};
+pub use schedule_params::find_optimal_schedule;

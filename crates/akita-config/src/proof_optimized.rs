@@ -17,8 +17,6 @@ use akita_field::{
 };
 use akita_types::generated::table_entry_envelope_up_to_num_vars;
 use akita_types::ClaimIncidenceSummary;
-#[cfg(feature = "planner")]
-use akita_types::Step;
 use akita_types::{
     exact_planned_level_execution, planned_log_basis_at_level_from_schedule,
     planned_schedule_key_from_schedule, AkitaPlannedStep, AkitaScheduleInputs,
@@ -114,10 +112,10 @@ where
     let Some(table) = Cfg::schedule_table() else {
         return Ok(None);
     };
-    akita_planner::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _>(
+    akita_derive::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _>(
         key,
         table,
-        akita_planner::PlanPolicy {
+        akita_derive::PlanPolicy {
             sis_family: Cfg::sis_modulus_family(),
             root_decomp: Cfg::decomposition(),
             challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
@@ -211,23 +209,6 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
     ))
 }
 
-/// Proof-optimized `root_level_params_for_layout_with_log_basis` impl.
-pub(crate) fn proof_optimized_root_level_params_for_layout_with_log_basis<Cfg: CommitmentConfig>(
-    inputs: AkitaScheduleInputs,
-    lp: &LevelParams,
-) -> Result<LevelParams, AkitaError> {
-    let params = akita_planner::sis_derived_root_params_for_layout(
-        Cfg::sis_modulus_family(),
-        Cfg::D,
-        Cfg::decomposition(),
-        Cfg::stage1_challenge_config(Cfg::D)?,
-        Cfg::ring_subfield_embedding_norm_bound(),
-        inputs,
-        lp,
-    )?;
-    Ok(params.with_layout(lp))
-}
-
 /// Proof-optimized `root_level_layout_with_log_basis` impl.
 pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
@@ -246,13 +227,13 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
             1,
             stage1_config.clone(),
         );
-        let root_lp = akita_planner::derived_root_commitment_layout_from_params(
+        let root_lp = akita_derive::derived_root_commitment_layout_from_params(
             inputs,
             Cfg::decomposition(),
             &candidate_params,
             false,
         )?;
-        let derived_params = akita_planner::sis_derived_root_params_for_layout(
+        let derived_params = akita_derive::sis_derived_root_params_for_layout(
             Cfg::sis_modulus_family(),
             Cfg::D,
             Cfg::decomposition(),
@@ -422,28 +403,16 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
 ) -> Result<Option<(usize, usize)>, AkitaError> {
     let num_polys = incidence.num_polynomials();
     let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
-    #[cfg(not(feature = "planner"))]
     let _ = setup_envelope;
 
     let fallback = fallback_batched_root_split::<Cfg>(incidence.num_vars(), num_polys)?;
 
-    let setup_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
-        setup_level_params_from_plan(&plan)
-    } else {
-        #[cfg(feature = "planner")]
-        {
-            let schedule = akita_planner::find_optimal_schedule(
-                &crate::schedule_policy::search_options_for_cfg::<Cfg>(cached_key),
-            )?;
-            setup_level_params_from_runtime_schedule(schedule.steps, setup_envelope)
-        }
-
-        #[cfg(not(feature = "planner"))]
-        {
-            let _ = cached_key;
-            return Ok(None);
-        }
+    // Table-only: configs that want a runtime DP fallback override the
+    // `setup_envelope_levels` path via `max_setup_matrix_size` directly.
+    let Some(plan) = Cfg::schedule_plan(cached_key)? else {
+        return Ok(None);
     };
+    let setup_levels = setup_level_params_from_plan(&plan);
 
     Ok(Some(matrix_envelope_for_levels::<Cfg>(
         &fallback,
@@ -451,7 +420,7 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     )?))
 }
 
-fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
+pub fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
     plan.steps
         .iter()
         .filter_map(|step| match step {
@@ -461,21 +430,22 @@ fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
         .collect()
 }
 
-#[cfg(feature = "planner")]
-fn setup_level_params_from_runtime_schedule(
-    steps: Vec<Step>,
-    _setup_envelope: &CommitmentEnvelope,
-) -> Vec<LevelParams> {
+/// Extract setup-level params from a runtime `Schedule` (kept the fold-step
+/// `params` slice, drops direct/terminal steps).
+///
+/// Used by `PlannerCfg` to size setup matrices when the underlying preset
+/// has no schedule table and the schedule must come from DP search.
+pub fn setup_level_params_from_runtime_schedule(steps: &[akita_types::Step]) -> Vec<LevelParams> {
     steps
-        .into_iter()
+        .iter()
         .filter_map(|step| match step {
-            Step::Fold(fold_step) => Some(fold_step.params),
-            Step::Direct(_) => None,
+            akita_types::Step::Fold(fold_step) => Some(fold_step.params.clone()),
+            akita_types::Step::Direct(_) => None,
         })
         .collect()
 }
 
-fn matrix_envelope_for_levels<Cfg>(
+pub fn matrix_envelope_for_levels<Cfg>(
     fallback_root: &LevelParams,
     setup_levels: &[LevelParams],
 ) -> Result<(usize, usize), AkitaError>
@@ -578,22 +548,12 @@ macro_rules! impl_fp128_preset {
                 $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
             }
 
-            fn audited_root_rank(
-                role: akita_types::AjtaiRole,
-                max_num_vars: usize,
-            ) -> usize {
-                $crate::proof_optimized::fp128_audited_root_rank::<Self>(
-                    role,
-                    max_num_vars,
-                )
+            fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
+                $crate::proof_optimized::fp128_audited_root_rank::<Self>(role, max_num_vars)
             }
 
-            fn envelope(
-                max_num_vars: usize,
-            ) -> akita_types::CommitmentEnvelope {
-                $crate::proof_optimized::proof_optimized_envelope::<Self>(
-                    max_num_vars,
-                )
+            fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
+                $crate::proof_optimized::proof_optimized_envelope::<Self>(max_num_vars)
             }
 
             fn max_setup_matrix_size(
@@ -613,8 +573,7 @@ macro_rules! impl_fp128_preset {
                 log_basis: u32,
             ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_level_params_with_log_basis::<Self>(
-                    inputs,
-                    log_basis,
+                    inputs, log_basis,
                 )
             }
 
@@ -622,8 +581,16 @@ macro_rules! impl_fp128_preset {
                 inputs: akita_types::AkitaScheduleInputs,
                 lp: &akita_types::LevelParams,
             ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-                $crate::proof_optimized::
-                    proof_optimized_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
+                let params = akita_derive::sis_derived_root_params_for_layout(
+                    Self::sis_modulus_family(),
+                    Self::D,
+                    Self::decomposition(),
+                    Self::stage1_challenge_config(Self::D)?,
+                    Self::ring_subfield_embedding_norm_bound(),
+                    inputs,
+                    lp,
+                )?;
+                Ok(params.with_layout(lp))
             }
 
             fn root_level_layout_with_log_basis(
@@ -631,8 +598,7 @@ macro_rules! impl_fp128_preset {
                 log_basis: u32,
             ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_root_level_layout_with_log_basis::<Self>(
-                    inputs,
-                    log_basis,
+                    inputs, log_basis,
                 )
             }
 
@@ -642,13 +608,10 @@ macro_rules! impl_fp128_preset {
                 $crate::proof_optimized::proof_optimized_log_basis_at_level::<Self>(inputs)
             }
 
-            fn log_basis_search_range(
-                _inputs: akita_types::AkitaScheduleInputs,
-            ) -> (u32, u32) {
+            fn log_basis_search_range(_inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
                 $crate::proof_optimized::proof_optimized_log_basis_search_range()
             }
         }
-
     };
 }
 pub(crate) use impl_fp128_preset;
@@ -707,20 +670,13 @@ macro_rules! impl_small_field_preset {
                 $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
             }
 
-            fn audited_root_rank(
-                role: akita_types::AjtaiRole,
-                max_num_vars: usize,
-            ) -> usize {
+            fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
                 let _ = (role, max_num_vars);
                 1
             }
 
-            fn envelope(
-                max_num_vars: usize,
-            ) -> akita_types::CommitmentEnvelope {
-                $crate::proof_optimized::proof_optimized_envelope::<Self>(
-                    max_num_vars,
-                )
+            fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
+                $crate::proof_optimized::proof_optimized_envelope::<Self>(max_num_vars)
             }
 
             fn max_setup_matrix_size(
@@ -740,8 +696,7 @@ macro_rules! impl_small_field_preset {
                 log_basis: u32,
             ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_level_params_with_log_basis::<Self>(
-                    inputs,
-                    log_basis,
+                    inputs, log_basis,
                 )
             }
 
@@ -749,8 +704,16 @@ macro_rules! impl_small_field_preset {
                 inputs: akita_types::AkitaScheduleInputs,
                 lp: &akita_types::LevelParams,
             ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-                $crate::proof_optimized::
-                    proof_optimized_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
+                let params = akita_derive::sis_derived_root_params_for_layout(
+                    Self::sis_modulus_family(),
+                    Self::D,
+                    Self::decomposition(),
+                    Self::stage1_challenge_config(Self::D)?,
+                    Self::ring_subfield_embedding_norm_bound(),
+                    inputs,
+                    lp,
+                )?;
+                Ok(params.with_layout(lp))
             }
 
             fn root_level_layout_with_log_basis(
@@ -758,8 +721,7 @@ macro_rules! impl_small_field_preset {
                 log_basis: u32,
             ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_root_level_layout_with_log_basis::<Self>(
-                    inputs,
-                    log_basis,
+                    inputs, log_basis,
                 )
             }
 
@@ -769,13 +731,10 @@ macro_rules! impl_small_field_preset {
                 $crate::proof_optimized::proof_optimized_log_basis_at_level::<Self>(inputs)
             }
 
-            fn log_basis_search_range(
-                _inputs: akita_types::AkitaScheduleInputs,
-            ) -> (u32, u32) {
+            fn log_basis_search_range(_inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
                 $crate::proof_optimized::proof_optimized_log_basis_search_range()
             }
         }
-
     };
 }
 

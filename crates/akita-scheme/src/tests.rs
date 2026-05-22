@@ -40,7 +40,7 @@ use std::sync::Once;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
-type Cfg = fp128::D64Full;
+type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D64Full>;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<D, Cfg>;
@@ -51,7 +51,7 @@ fn single_point_group_incidence(num_vars: usize, group_poly_count: usize) -> Cla
 }
 
 type OneHotF = fp128::Field;
-type OneHotCfg = fp128::D64OneHot;
+type OneHotCfg = akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>;
 const ONEHOT_D: usize = OneHotCfg::D;
 const BENCH_ONEHOT_K: usize = ONEHOT_D;
 type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
@@ -73,10 +73,6 @@ fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
 }
 
 #[test]
-#[cfg_attr(
-    not(feature = "planner"),
-    ignore = "requires planner fallback for generated schedule misses"
-)]
 fn same_point_batched_root_preserves_opening_geometry() {
     for num_claims in [4usize, 6] {
         let incidence =
@@ -1365,10 +1361,6 @@ fn debug_onehot_batched_profile_compare() {
 
 #[test]
 #[cfg(not(feature = "zk"))]
-#[cfg_attr(
-    not(feature = "planner"),
-    ignore = "requires planner fallback for generated schedule misses"
-)]
 fn batched_commit_matches_individual_commits() {
     let alpha = D.trailing_zeros() as usize;
     let layout = Cfg::commitment_layout(16).unwrap();
@@ -1403,10 +1395,6 @@ fn batched_commit_matches_individual_commits() {
 /// suffix, and the verifier must accept it via the batched root-direct
 /// checks (per-claim opening + joint per-group re-commit).
 #[test]
-#[cfg_attr(
-    not(feature = "planner"),
-    ignore = "requires planner fallback for generated schedule misses"
-)]
 fn batched_root_direct_fast_path_round_trip() {
     // For Cfg = fp128::D64Full with num_t_vectors = 4 and a same-
     // point batch of 4 claims, the generated schedule table is
@@ -1513,10 +1501,6 @@ fn batched_root_direct_fast_path_round_trip() {
 /// The verifier must reject a root-direct batched proof whose
 /// per-claim direct witnesses disagree with the claimed opening.
 #[test]
-#[cfg_attr(
-    not(feature = "planner"),
-    ignore = "requires planner fallback for generated schedule misses"
-)]
 fn batched_root_direct_rejects_wrong_opening() {
     const NUM_VARS: usize = 8;
     const NUM_POLYS: usize = 4;
@@ -1580,10 +1564,6 @@ fn batched_root_direct_rejects_wrong_opening() {
 }
 
 #[test]
-#[cfg_attr(
-    not(feature = "planner"),
-    ignore = "requires planner fallback for generated schedule misses"
-)]
 fn batched_verify_passes_for_consistent_openings() {
     let alpha = D.trailing_zeros() as usize;
     let layout = Cfg::commitment_layout(16).unwrap();
@@ -1648,10 +1628,6 @@ fn batched_verify_passes_for_consistent_openings() {
 }
 
 #[test]
-#[cfg_attr(
-    not(feature = "planner"),
-    ignore = "requires planner fallback for generated schedule misses"
-)]
 fn batched_onehot_roundtrip_matches_public_shape_context() {
     // NV chosen large enough that the runtime schedule yields at least two
     // fold steps so the proof is fold-rooted (not terminal-rooted). Under
@@ -1765,10 +1741,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 }
 
 #[test]
-#[cfg_attr(
-    not(feature = "planner"),
-    ignore = "requires planner fallback for generated schedule misses"
-)]
 fn batched_verify_rejects_wrong_opening() {
     let alpha = D.trailing_zeros() as usize;
     let layout = Cfg::commitment_layout(16).unwrap();
@@ -1829,10 +1801,6 @@ fn batched_verify_rejects_wrong_opening() {
 }
 
 #[test]
-#[cfg_attr(
-    not(feature = "planner"),
-    ignore = "requires planner fallback for generated schedule misses"
-)]
 fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
     let alpha = D.trailing_zeros() as usize;
     let layout = Cfg::commitment_layout(16).unwrap();

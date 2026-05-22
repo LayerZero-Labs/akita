@@ -16,10 +16,15 @@
 //! `get_params_for_commitment`, `get_params_for_prove`,
 //! `get_params_for_batched_commitment` — keep default bodies because they
 //! are not policy choices and would otherwise be duplicated verbatim across
-//! every config. Under the `planner` feature these defaults route table
-//! misses through `akita_planner::find_optimal_schedule`; without the
-//! feature they return [`AkitaError::InvalidSetup`] on table miss and
-//! callers can override every default to provide a planner-free `Cfg`.
+//! every config.
+//!
+//! The defaults are **table-only**: on a generated-schedule-table hit they
+//! materialize the plan through [`akita_derive::schedule_plan_from_table`];
+//! on a miss they return [`AkitaError::InvalidSetup`]. Offline DP search
+//! lives in `akita-planner`, which depends on this crate; callers that want
+//! a runtime DP fallback construct a custom `Cfg` impl that overrides the
+//! relevant defaults and calls `akita_planner::find_optimal_schedule`
+//! directly. The verifier path therefore never reaches DP code.
 //!
 //! [`WCommitmentConfig`] is the derived recursive-w config that
 //! `<Cfg>`-generic dispatch helpers use for ring-degree dispatch.
@@ -28,8 +33,6 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::generated::GeneratedScheduleTable;
-#[cfg(feature = "planner")]
-use akita_types::schedule_root_fold_params;
 use akita_types::{
     recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
     LevelParams, SisModulusFamily,
@@ -42,16 +45,23 @@ use std::marker::PhantomData;
 pub mod proof_optimized;
 pub(crate) mod schedule_policy;
 mod transcript_binding;
-pub use schedule_policy::{
-    akita_batched_root_layout, current_level_layout_with_log_basis, search_options_for_cfg,
+pub use proof_optimized::{
+    matrix_envelope_for_levels, setup_level_params_from_plan,
+    setup_level_params_from_runtime_schedule,
 };
-use schedule_policy::{akita_root_commitment_layout, fallback_batched_root_split};
+use schedule_policy::akita_root_commitment_layout;
+pub use schedule_policy::{
+    akita_batched_root_layout, current_level_layout_with_log_basis,
+    direct_level_params_with_log_basis, fallback_batched_root_split,
+    scale_batched_root_layout_with_config, sis_derived_recursive_params,
+};
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
-#[cfg(not(feature = "planner"))]
 pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookupKey) -> AkitaError {
     AkitaError::InvalidSetup(format!(
-        "{context} requires a generated schedule for key {key:?}; enable the akita-config `planner` feature to allow offline planner fallback"
+        "{context} requires a generated schedule entry for key {key:?}; \
+         override the relevant `CommitmentConfig` default and call \
+         `akita_planner::find_optimal_schedule` to enable an offline DP fallback"
     ))
 }
 
@@ -257,15 +267,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 return Ok(root_fold.lp.clone());
             }
         }
-        #[cfg(feature = "planner")]
-        {
-            let schedule =
-                akita_planner::find_optimal_schedule(&search_options_for_cfg::<Self>(key))?;
-            if let Some(root_params) = schedule_root_fold_params(&schedule) {
-                return Ok(root_params.clone());
-            }
-        }
         // Tiny-root fallback: roots that don't admit any fold step.
+        // (Configs that want a DP fallback on table miss override this hook
+        //  and call `akita_planner::find_optimal_schedule` themselves.)
         akita_root_commitment_layout::<Self>(max_num_vars)
     }
 
@@ -306,27 +310,16 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             return fallback_batched_root_split::<Self>(num_vars, num_claims);
         }
 
-        #[cfg(feature = "planner")]
-        {
-            let schedule =
-                akita_planner::find_optimal_schedule(&search_options_for_cfg::<Self>(lookup_key))?;
-            if let Some(root_params) = schedule_root_fold_params(&schedule) {
-                Ok(root_params.clone())
-            } else {
-                fallback_batched_root_split::<Self>(num_vars, num_claims)
-            }
-        }
-
-        #[cfg(not(feature = "planner"))]
-        {
-            let split = akita_batched_root_layout::<Self>(num_vars, num_claims)?;
-            akita_types::scale_batched_root_layout(
-                &split,
-                num_claims,
-                Self::stage1_challenge_config(Self::D)?.l1_norm(),
-                Self::decomposition().field_bits(),
-            )
-        }
+        // No table entry for `lookup_key`. Build the singleton-derived split
+        // and scale it for `num_claims`. Configs that want planner-DP routing
+        // on table miss override this hook directly.
+        let split = akita_batched_root_layout::<Self>(num_vars, num_claims)?;
+        akita_types::scale_batched_root_layout(
+            &split,
+            num_claims,
+            Self::stage1_challenge_config(Self::D)?.l1_norm(),
+            Self::decomposition().field_bits(),
+        )
     }
 
     /// Choose the root parameters consumed by the prove/verify root path.
@@ -342,18 +335,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 akita_types::schedule_from_plan(&plan, Self::decomposition().field_bits());
             return Ok(schedule);
         }
-
-        #[cfg(feature = "planner")]
-        {
-            akita_planner::find_optimal_schedule(&search_options_for_cfg::<Self>(key))
-        }
-
-        #[cfg(not(feature = "planner"))]
-        {
-            Err(AkitaError::InvalidSetup(
-                "prove schedule requires a generated schedule entry".to_string(),
-            ))
-        }
+        Err(missing_generated_schedule("prove schedule", key))
     }
 
     /// Choose the root parameters consumed by multipoint batched commitment.
@@ -670,7 +652,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, any(not(feature = "zk"), feature = "planner")))]
+#[cfg(all(test, not(feature = "zk")))]
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
@@ -850,74 +832,6 @@ mod fp128_policy_tests {
         assert!(actual.num_digits_fold >= singleton.num_digits_fold);
     }
 
-    #[cfg(feature = "planner")]
-    #[test]
-    fn batched_commitment_table_miss_uses_grouped_planner_root() {
-        type Cfg = fp128::D32OneHot;
-
-        let num_vars = 30;
-        let num_polys_per_point = 3;
-        let max_num_points = 1;
-        let lookup_key = AkitaScheduleLookupKey::new_with_points(
-            num_vars,
-            1,
-            num_polys_per_point,
-            num_polys_per_point * max_num_points,
-            max_num_points,
-        );
-        let schedule =
-            akita_planner::find_optimal_schedule(&search_options_for_cfg::<Cfg>(lookup_key))
-                .expect("planner schedule");
-        let Some(akita_types::Step::Fold(root_step)) = schedule.steps.first() else {
-            panic!("batched commitment planner schedule should start with a root fold");
-        };
-        let actual = Cfg::get_params_for_commitment(num_vars, num_polys_per_point, max_num_points)
-            .expect("batched layout");
-
-        assert_eq!(actual, root_step.params);
-        assert_eq!(actual.outer_width(), root_step.params.outer_width());
-        assert_eq!(actual.d_matrix_width(), root_step.params.d_matrix_width());
-    }
-
-    #[cfg(feature = "planner")]
-    #[test]
-    fn batched_commitment_shape_uses_root_schedule_params() {
-        type Cfg = fp128::D32OneHot;
-
-        // Three opening points, each bundling 2 polynomials in its commitment.
-        let incidence =
-            ClaimIncidenceSummary::from_point_polys(30, vec![2, 2, 2]).expect("valid incidence");
-        let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");
-        let Some(akita_types::Step::Fold(root)) = prove_schedule.steps.first() else {
-            panic!("batched shape should start with a root fold");
-        };
-        assert!(root.params.outer_width() > 0);
-    }
-
-    #[cfg(feature = "planner")]
-    #[test]
-    fn multipoint_prove_root_layout_is_planner_routed() {
-        use super::proof_optimized::fp32;
-
-        type Cfg = fp32::D64Full;
-
-        let num_vars = 20;
-        let num_points = 4;
-        // One polynomial per point across `num_points` distinct points.
-        let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_points])
-            .expect("valid multipoint incidence");
-
-        let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");
-        let Some(akita_types::Step::Fold(root)) = prove_schedule.steps.first() else {
-            panic!("multipoint shape should start with a root fold");
-        };
-        // The multipoint prove root must be sized by the planner — at minimum
-        // wider than the singleton root and visible to all `num_points` polys.
-        let singleton = Cfg::commitment_layout(num_vars).expect("singleton layout");
-        assert!(root.params.outer_width() >= singleton.outer_width());
-    }
-
-    #[cfg(feature = "planner")]
     #[test]
     fn small_field_sis_pricing_includes_psi_norm_bound() {
         use super::proof_optimized::{fp128, fp32};

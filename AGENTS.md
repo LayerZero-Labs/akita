@@ -25,12 +25,13 @@ Workspace members under `crates/`:
 - `akita-challenges` — Fiat-Shamir challenge sampling helpers
 - `akita-sumcheck` — sumcheck proofs, drivers, compact folding, batching, accumulation
 - `akita-types` — proof, setup, schedule, layout, commitment, transcript-append, PRG shapes; verifier-reachable proof-size formulas; pure layout helpers (`level_layout_from_params`, `recursive_level_layout_from_params`, `recursive_level_decomposition_from_root`, `decomp_depths`)
-- `akita-config` — runtime config presets, the single `CommitmentConfig` trait, `WCommitmentConfig`, config-backed schedule adapters, and the canonical `bind_transcript_instance_descriptor` helper consumed by both prover and verifier. Holds the `gen_schedule_tables` / `tune_small_field_schedules` binaries
+- `akita-derive` — verifier-reachable parameter derivation: SIS-secure layout derivation (`sis_derived_root_params_for_layout`, `sis_derived_recursive_params_for_layout`, `derived_root_commitment_layout_from_params`, `sis_secure_level_params`) and schedule-table materialization (`schedule_plan_from_table`, `PlanPolicy`). Free-function API. Sits below `akita-config` in the dep graph
+- `akita-config` — runtime config presets, the single `CommitmentConfig` trait, `WCommitmentConfig`, config-backed schedule adapters, and the canonical `bind_transcript_instance_descriptor` helper consumed by both prover and verifier. Depends on `akita-derive`; does NOT depend on `akita-planner`. `Cfg` defaults are table-only and error on schedule-table miss; runtime DP fallback is opt-in for tests via `akita_planner::test_utils::PlannerCfg<Cfg>` (feature-gated)
 - `akita-setup` — config-backed setup construction + optional setup cache
-- `akita-verifier` — verifier replay (no prover-only polynomial backends). Public surface is `<Cfg>`-generic: `verify_batched::<F, Cfg, T, D>` (lives in `protocol::batched`)
-- `akita-prover` — commitment, proving, setup expansion, recursive/ring-switch witnesses, polynomial backends. Public surface is `<Cfg>`-generic: `prove_batched` (in `protocol::flow`), `commit` / `batched_commit` (in `api::commitment`), `recursive_w_commit_layout_for_d` (in `protocol::ring_switch`), and `bind_transcript_instance_descriptor` re-exported from `akita-config`. Multi-`D` dispatch helpers live here (not in scheme) so producer ↔ consumer ↔ producer cycles are avoided
-- `akita-scheme` — thin end-to-end `AkitaCommitmentScheme` glue; each `CommitmentProver`/`CommitmentVerifier` method is a one-line call into the prover/verifier `<Cfg>`-generic API
-- `akita-planner` — offline schedule search (`find_optimal_schedule(&SearchOptions)`), proof-size/security planning, materialization (`schedule_plan_from_table`), and SIS derivation (`sis_secure_level_params`, etc.). Free-function API with no public trait. Benchmark planner uses `BenchmarkSchedule`; the production runtime type is `akita_types::Schedule`
+- `akita-verifier` — verifier replay (no prover-only polynomial backends). Public surface is `<Cfg>`-generic: `verify_batched::<F, Cfg, T, D>` (lives in `protocol::batched`). Dep tree excludes `akita-planner`
+- `akita-prover` — commitment, proving, setup expansion, recursive/ring-switch witnesses, polynomial backends. Public surface is `<Cfg>`-generic: `prove_batched` (in `protocol::flow`), `commit` / `batched_commit` (in `api::commitment`), `recursive_w_commit_layout_for_d` (in `protocol::ring_switch`), and `bind_transcript_instance_descriptor` re-exported from `akita-config`. Multi-`D` dispatch helpers live here (not in scheme). Dep tree excludes `akita-planner`
+- `akita-scheme` — thin end-to-end `AkitaCommitmentScheme` glue; each `CommitmentProver`/`CommitmentVerifier` method is a one-line call into the prover/verifier `<Cfg>`-generic API. Dep tree excludes `akita-planner`
+- `akita-planner` — offline schedule search (`find_optimal_schedule::<Cfg>(key, allow_table_fast_path)`) plus the `gen_schedule_tables` binary that emits the generated tables. The `test_utils::PlannerCfg<Cfg>` DP-routing wrapper is gated behind the `test-utils` feature so production callers never link it. Depends on `akita-config` (Cfg-generic API). Sits ABOVE `akita-config` and is excluded from the prover/verifier/scheme/setup dep tree
 - `akita-pcs` — umbrella crate with examples, benches, integration tests, public re-exports
 
 ## Key Abstractions
@@ -39,7 +40,8 @@ Workspace members under `crates/`:
 - `CommitmentConfig` — single user-facing trait defining every per-config policy hook (algebra, SIS family, decomposition, layout, schedule table/key/plan, transcript bind, prove/commitment params). Replaces the previous `CommitmentConfig` + `ScheduleProvider` + `PlannerConfig` triad. Verifier-reachable hooks return `Result<_, AkitaError>` (`level_params_with_log_basis`, `log_basis_at_level`, `stage1_challenge_config`)
 - `WCommitmentConfig<const D: usize, Cfg>` — derived recursive-w `CommitmentConfig` for ring-degree dispatch
 - `LevelParams` — recursion schedule, layout, per-level config
-- `SearchOptions` + `PlanPolicy` — value-typed inputs to `akita_planner::find_optimal_schedule` and `akita_planner::schedule_plan_from_table`; replace the old `PlannerConfig` trait
+- `PlanPolicy` — value-typed inputs to `akita_derive::schedule_plan_from_table` (table materialization). Planner search is `<Cfg>`-generic — no separate `SearchOptions`-shaped input
+- `PlannerCfg<Cfg>` — test-only `Cfg` wrapper in `akita_planner::test_utils` (gated by the `test-utils` Cargo feature) that overrides the `CommitmentConfig` parameter accessors to route schedule-table misses through `find_optimal_schedule::<Self>`. Production presets do not need this wrapper and never link it
 - `DensePoly`, `OneHotPoly`, `AkitaPolyOps` — polynomial backends consumed by the scheme
 - `BlockOrder` — explicit root-vs-recursive opening split convention
 - `AkitaBatchedProof`, `AkitaBatchedRootProof`, `AkitaLevelProof`, `AkitaProofStep` — serialized proof structure (singleton openings are the 1x1 special case of the batched proof)
@@ -51,7 +53,7 @@ Workspace members under `crates/`:
 Verifier-reachable execution is a no-panic boundary.
 Any malformed verifier-facing proof, setup, schedule, public claim, opening point, commitment, direct witness, or transcript input must be rejected with `AkitaError` or `SerializationError`, not by panicking.
 
-This applies to `akita-verifier` and any verifier-reachable code in `akita-types`, `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `akita-field` paths, `akita-config` (every `CommitmentConfig` method reachable from `verify_batched`), and the verifier-reachable parts of `akita-planner` (materialization in `materialize.rs` and SIS-floor lookups consumed by config policy at verifier replay time).
+This applies to `akita-verifier` and any verifier-reachable code in `akita-types`, `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `akita-field` paths, `akita-config` (every `CommitmentConfig` method reachable from `verify_batched`), and `akita-derive` (SIS derivation + table materialization). `akita-planner` (offline DP search) is not on the verifier path and is excluded from the verifier crate's dep graph.
 Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing/slicing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier verifier boundary has clearly validated the invariant.
 
 Prefer strengthening existing validation at deserialization, setup construction, schedule selection, `LevelParams` construction, and verifier API entry points.
@@ -61,7 +63,8 @@ Prover-only panics are acceptable for now if they are not reachable from verifie
 ## Feature Flags
 
 - `parallel` — Rayon parallelization (default)
-- `planner` — enables the planner-DP runtime fallback inside `CommitmentConfig::get_params_for_*` / `commitment_layout` defaults (default on `akita-config`, `akita-scheme`, `akita-setup`, `akita-pcs`). SIS-derivation and table-materialization always live in `akita-planner` and do not depend on this flag; the flag only gates the DP search at runtime config selection time. Custom `CommitmentConfig` impls that override every default can disable this flag.
+- `planner` — opt-in dep on `akita-planner` (still defined on `akita-pcs`, `akita-scheme`, `akita-setup` for downstream callers that want the DP search at runtime; orthogonal to the `Cfg` trait defaults, which are always table-only)
+- `akita-planner/test-utils` — gates `akita_planner::test_utils::PlannerCfg`; enabled in dev-dependencies of `akita-pcs`, `akita-scheme`, `akita-setup` so their test fixtures can drive table-miss DP fallback. Never enabled in production builds
 - `disk-persistence` — disk-backed persistence paths used by some commitment flows
 - `logging-transcript` — enables `LoggingTranscript` schedule events and smell checks in transcript tests
 

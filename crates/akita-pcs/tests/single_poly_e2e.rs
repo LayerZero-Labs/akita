@@ -104,7 +104,7 @@ fn run_single_onehot(nv: usize) {
 // Dense helpers (D = 128)
 // ---------------------------------------------------------------------------
 
-type DenseCfg = fp128::D128Full;
+type DenseCfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
 const DENSE_D: usize = DenseCfg::D;
 
 fn run_single_dense(nv: usize) {

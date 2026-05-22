@@ -1,43 +1,14 @@
 use crate::CommitmentConfig;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_planner::SearchOptions;
 use akita_types::CommitmentEnvelope;
 use akita_types::DecompositionParams;
 use akita_types::LevelParams;
 use akita_types::{level_layout_from_params, AkitaScheduleInputs, AkitaScheduleLookupKey};
 
-/// Build a `SearchOptions` value from a `CommitmentConfig`.
-///
-/// This is the bridge between the runtime config trait and the
-/// trait-free planner search API. Each function-pointer field is a
-/// monomorphic fn-item coercion from a generic helper, so no closures or
-/// boxed callbacks are required.
-pub fn search_options_for_cfg<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> SearchOptions {
-    SearchOptions {
-        key,
-        decomposition: Cfg::decomposition(),
-        sis_modulus_family: Cfg::sis_modulus_family(),
-        challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
-        extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
-        recursive_witness_expansion: 1,
-        recursive_public_rows: 1,
-        allow_table_fast_path: true,
-        table: Cfg::schedule_table(),
-        scale_batched_root_layout: scale_batched_root_layout_with_config::<Cfg>,
-        stage1_challenge_config: Cfg::stage1_challenge_config,
-        root_level_layout_with_log_basis: Cfg::root_level_layout_with_log_basis,
-        current_level_layout_with_log_basis: current_level_layout_with_log_basis::<Cfg>,
-        direct_level_params_with_log_basis: direct_level_params_with_log_basis::<Cfg>,
-        root_level_params_for_layout_with_log_basis:
-            Cfg::root_level_params_for_layout_with_log_basis,
-        log_basis_search_range: Cfg::log_basis_search_range,
-    }
-}
-
 #[cfg(test)]
 use akita_types::layout::digit_math::optimal_m_r_split;
-#[cfg(any(all(test, not(feature = "zk")), all(test, feature = "planner")))]
+#[cfg(all(test, not(feature = "zk")))]
 use akita_types::ClaimIncidenceSummary;
 #[cfg(test)]
 use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
@@ -48,7 +19,7 @@ use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_fr
 /// recursive layout for it under the active decomposition, then runs the
 /// planner's recursive-layout SIS derivation. Returns `None` when either the
 /// recursive layout or the SIS step rejects the candidate.
-pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
+pub fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
     d: usize,
     log_basis: u32,
     current_w_len: usize,
@@ -70,7 +41,7 @@ pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
         Cfg::decomposition(),
     )
     .ok()?;
-    akita_planner::sis_derived_recursive_params_for_layout(
+    akita_derive::sis_derived_recursive_params_for_layout(
         Cfg::sis_modulus_family(),
         d,
         log_basis,
@@ -81,7 +52,7 @@ pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
     )
 }
 
-pub(crate) fn scale_batched_root_layout_with_config<Cfg: CommitmentConfig>(
+pub fn scale_batched_root_layout_with_config<Cfg: CommitmentConfig>(
     root_lp: &LevelParams,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError> {
@@ -93,7 +64,7 @@ pub(crate) fn scale_batched_root_layout_with_config<Cfg: CommitmentConfig>(
     )
 }
 
-pub(crate) fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
+pub fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
@@ -212,7 +183,7 @@ pub(crate) fn akita_root_commitment_layout<Cfg: CommitmentConfig>(
 // `AkitaPolyOps::commit_inner_witness` (see `commitment_scheme.rs`), so only
 // the layout-selection helpers remain here.
 
-pub(crate) fn fallback_batched_root_split<Cfg>(
+pub fn fallback_batched_root_split<Cfg>(
     num_vars: usize,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError>
@@ -280,32 +251,11 @@ where
     tracing::info!(
         num_vars,
         num_claims,
-        "batched root split: generated table miss, using planner fallback"
+        "batched root split: generated table miss, using singleton-derived fallback"
     );
 
-    #[cfg(feature = "planner")]
-    {
-        let schedule =
-            akita_planner::find_optimal_schedule(&search_options_for_cfg::<Cfg>(lookup_key))?;
-        match schedule.steps.first() {
-            Some(akita_types::Step::Fold(root_step)) => Ok(akita_types::split_batched_root_params(
-                &root_step.params,
-                Cfg::decomposition().field_bits(),
-            )),
-            Some(akita_types::Step::Direct(_)) | None => {
-                fallback_batched_root_split::<Cfg>(num_vars, 1)
-            }
-        }
-    }
-
-    #[cfg(not(feature = "planner"))]
-    {
-        let _ = num_claims;
-        Err(crate::missing_generated_schedule(
-            "batched root layout",
-            lookup_key,
-        ))
-    }
+    let _ = lookup_key;
+    fallback_batched_root_split::<Cfg>(num_vars, 1)
 }
 
 #[cfg(test)]
@@ -322,18 +272,6 @@ mod tests {
         fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
         GeneratedScheduleTable,
     };
-    #[cfg(feature = "planner")]
-    use akita_types::w_ring_element_count_with_counts;
-
-    #[cfg(feature = "planner")]
-    fn point_local_incidence_summary(
-        num_vars: usize,
-        num_polys_per_point: &[usize],
-    ) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point.to_vec())
-            .expect("schedule-policy incidence inputs are nonempty and point-local")
-    }
-
     #[cfg(not(feature = "zk"))]
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
         assert_plan_matches_runtime_w_sizes_for_key::<Cfg>(AkitaScheduleLookupKey::singleton(
@@ -590,10 +528,10 @@ mod tests {
         // `Cfg::schedule_plan` would use the unmodified `Cfg::schedule_table()`,
         // so we bypass it to test the SIS-family mismatch rejection path.
         let err =
-            akita_planner::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _>(
+            akita_derive::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _>(
                 key,
                 mismatched,
-                akita_planner::PlanPolicy {
+                akita_derive::PlanPolicy {
                     sis_family: Cfg::sis_modulus_family(),
                     root_decomp: Cfg::decomposition(),
                     challenge_field_bits: Cfg::decomposition().field_bits()
@@ -755,108 +693,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[cfg(feature = "planner")]
-    #[test]
-    fn batched_root_next_w_len_and_shape_track_total_claims() {
-        type Cfg = fp128::D64OneHot;
-        const MAX_NUM_VARS: usize = 30;
-
-        // Two opening-point shapes with the same total claim count: a 4+2
-        // partition and a 3+3 partition. Under one-commit-per-point the planner
-        // key projects only `num_polys_per_point`, so total `num_w_vectors`
-        // matches between the two shapes.
-        let incidence_a = point_local_incidence_summary(MAX_NUM_VARS, &[4, 2]);
-        let incidence_b = point_local_incidence_summary(MAX_NUM_VARS, &[3, 3]);
-
-        let plan_a = Cfg::get_params_for_prove(&incidence_a).unwrap();
-        let plan_b = Cfg::get_params_for_prove(&incidence_b).unwrap();
-        let Some(akita_types::Step::Fold(root_a)) = plan_a.steps.first() else {
-            panic!("batch A schedule should start with a fold");
-        };
-        let Some(akita_types::Step::Fold(root_b)) = plan_b.steps.first() else {
-            panic!("batch B schedule should start with a fold");
-        };
-
-        let next_w_ring_a = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
-            &root_a.params,
-            incidence_a.num_points(),
-            incidence_a.num_polynomials(),
-            incidence_a.num_claims(),
-            incidence_a.num_public_rows(),
-        )
-        .unwrap();
-        let next_w_ring_b = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
-            &root_b.params,
-            incidence_b.num_points(),
-            incidence_b.num_polynomials(),
-            incidence_b.num_claims(),
-            incidence_b.num_public_rows(),
-        )
-        .unwrap();
-
-        assert_eq!(next_w_ring_a, next_w_ring_b);
-    }
-
-    #[cfg(feature = "planner")]
-    #[test]
-    fn batched_root_next_w_len_depends_on_projected_schedule_key() {
-        type Cfg = fp128::D64OneHot;
-        const MAX_NUM_VARS: usize = 30;
-
-        // Six total polynomials distributed differently across opening points.
-        let one_point_six_polys = point_local_incidence_summary(MAX_NUM_VARS, &[6]);
-        let six_points_one_poly = point_local_incidence_summary(MAX_NUM_VARS, &[1, 1, 1, 1, 1, 1]);
-
-        let singleton_plan = Cfg::get_params_for_prove(&one_point_six_polys).unwrap();
-        let multipoint_plan = Cfg::get_params_for_prove(&six_points_one_poly).unwrap();
-        let Some(akita_types::Step::Fold(singleton_root)) = singleton_plan.steps.first() else {
-            panic!("singleton schedule should start with a fold");
-        };
-        let Some(akita_types::Step::Fold(multipoint_root)) = multipoint_plan.steps.first() else {
-            panic!("multipoint schedule should start with a fold");
-        };
-
-        assert_ne!(
-            AkitaScheduleLookupKey::new_from_incidence(&one_point_six_polys).unwrap(),
-            AkitaScheduleLookupKey::new_from_incidence(&six_points_one_poly).unwrap(),
-        );
-        assert_ne!(singleton_root.next_w_len, multipoint_root.next_w_len);
-        assert_eq!(one_point_six_polys.num_points(), 1);
-        assert_eq!(six_points_one_poly.num_points(), 6);
-    }
-
-    #[cfg(feature = "planner")]
-    #[test]
-    fn batched_root_layout_planner_direct_fallback_is_per_polynomial() {
-        type Cfg = fp128::D32OneHot;
-        const MAX_NUM_VARS: usize = 1;
-        const NUM_CLAIMS: usize = 3;
-
-        let table_miss_key = AkitaScheduleLookupKey::new(MAX_NUM_VARS, NUM_CLAIMS, NUM_CLAIMS, 1);
-        assert!(
-            Cfg::schedule_plan(table_miss_key).unwrap().is_none(),
-            "test must exercise the planner fallback, not a generated table entry"
-        );
-
-        let planner_schedule =
-            akita_planner::find_optimal_schedule(&search_options_for_cfg::<Cfg>(table_miss_key))
-                .expect("planner fallback");
-        assert!(
-            !planner_schedule
-                .steps
-                .iter()
-                .any(|step| matches!(step, akita_types::Step::Fold(_))),
-            "test must exercise the direct/empty fallback path"
-        );
-
-        let singleton = fallback_batched_root_split::<Cfg>(MAX_NUM_VARS, 1).unwrap();
-        let scaled = fallback_batched_root_split::<Cfg>(MAX_NUM_VARS, NUM_CLAIMS).unwrap();
-        let actual = akita_batched_root_layout::<Cfg>(MAX_NUM_VARS, NUM_CLAIMS).unwrap();
-
-        assert_eq!(actual, singleton);
-        assert_ne!(actual.outer_width(), scaled.outer_width());
-        assert_ne!(actual.d_matrix_width(), scaled.d_matrix_width());
     }
 }
