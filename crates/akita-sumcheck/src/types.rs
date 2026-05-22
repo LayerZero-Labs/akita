@@ -162,100 +162,11 @@ pub struct SumcheckProof<E: FieldCore> {
     pub round_polys: Vec<CompressedUniPoly<E>>,
 }
 
-/// Full univariate polynomial in fixed-width proof form.
-///
-/// Unlike [`akita_algebra::uni_poly::UniPoly`]'s generic serialization, this
-/// type is encoded without a length prefix. The surrounding proof shape supplies
-/// the expected degree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FullUniPoly<E: FieldCore> {
-    /// Coefficients from low degree to high degree.
-    pub coeffs: Vec<E>,
-}
-
-impl<E: FieldCore> FullUniPoly<E> {
-    /// Construct from a dense coefficient list.
-    pub fn from_coeffs(coeffs: Vec<E>) -> Self {
-        Self { coeffs }
-    }
-
-    /// Degree of the polynomial, conservatively treating empty as degree 0.
-    pub fn degree(&self) -> usize {
-        self.coeffs.len().saturating_sub(1)
-    }
-
-    /// Evaluate at `x` via Horner's method.
-    pub fn evaluate(&self, x: &E) -> E {
-        let mut acc = E::zero();
-        for coeff in self.coeffs.iter().rev() {
-            acc = acc * *x + *coeff;
-        }
-        acc
-    }
-
-    /// Borrow the full coefficient vector.
-    pub fn coeffs(&self) -> &[E] {
-        &self.coeffs
-    }
-}
-
-impl<E: Valid + FieldCore> Valid for FullUniPoly<E> {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.coeffs.check()
-    }
-}
-
-impl<E: FieldCore + AkitaSerialize> AkitaSerialize for FullUniPoly<E> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        for coeff in &self.coeffs {
-            coeff.serialize_with_mode(&mut writer, compress)?;
-        }
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.coeffs
-            .iter()
-            .map(|coeff| coeff.serialized_size(compress))
-            .sum()
-    }
-}
-
-impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for FullUniPoly<E> {
-    /// Degree of the full polynomial.
-    type Context = usize;
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        degree: &usize,
-    ) -> Result<Self, SerializationError> {
-        let mut coeffs = Vec::with_capacity(degree.saturating_add(1));
-        for _ in 0..degree.saturating_add(1) {
-            coeffs.push(E::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?);
-        }
-        let out = Self { coeffs };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
 /// ZK plain-opening mask payload for standard sumcheck rounds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SumcheckProofMasked<E: FieldCore> {
-    /// Transcript-visible masked round polynomials.
-    pub masked_round_polys: Vec<FullUniPoly<E>>,
+    /// Transcript-visible masked compressed round polynomials.
+    pub masked_round_polys: Vec<CompressedUniPoly<E>>,
 }
 
 impl<E: Valid + FieldCore> Valid for SumcheckProofMasked<E> {
@@ -287,7 +198,7 @@ impl<E: FieldCore + AkitaSerialize> AkitaSerialize for SumcheckProofMasked<E> {
 impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     for SumcheckProofMasked<E>
 {
-    /// Per-round full coefficient counts.
+    /// Per-round compressed coefficient counts.
     type Context = SumcheckProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -304,7 +215,7 @@ impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
                 )
             })?;
         for degree in ctx {
-            masked_round_polys.push(FullUniPoly::deserialize_with_mode(
+            masked_round_polys.push(CompressedUniPoly::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,

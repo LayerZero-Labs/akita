@@ -1413,7 +1413,7 @@ mod tests {
     #[cfg(not(feature = "zk"))]
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
     #[cfg(feature = "zk")]
-    use akita_sumcheck::{EqFactoredSumcheckProofMasked, FullUniPoly, SumcheckProofMasked};
+    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 
     use crate::ExtensionOpeningReductionProof;
 
@@ -1448,13 +1448,15 @@ mod tests {
         rounds: usize,
         degree: usize,
     ) -> SumcheckProofMasked<F> {
-        let full_rounds = || {
+        let compressed_rounds = || {
             (0..rounds)
-                .map(|_| FullUniPoly::from_coeffs(vec![F::zero(); degree + 1]))
+                .map(|_| CompressedUniPoly {
+                    coeffs_except_linear_term: vec![F::zero(); degree],
+                })
                 .collect()
         };
         SumcheckProofMasked {
-            masked_round_polys: full_rounds(),
+            masked_round_polys: compressed_rounds(),
         }
     }
 

@@ -3,9 +3,9 @@
 use crate::traits::{SumcheckInstanceProver, SumcheckInstanceVerifier};
 use crate::types::SumcheckProof;
 #[cfg(feature = "zk")]
-use crate::types::{FullUniPoly, SumcheckProofMasked};
+use crate::types::SumcheckProofMasked;
 #[cfg(feature = "zk")]
-use akita_algebra::uni_poly::UniPoly;
+use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_field::AkitaError;
 #[cfg(feature = "zk")]
 use akita_field::ExtField;
@@ -253,31 +253,37 @@ where
 }
 
 #[cfg(feature = "zk")]
-fn pad_coeffs_to_degree<E: FieldCore>(coeffs: &[E], degree_bound: usize) -> Vec<E> {
-    let mut out = coeffs.to_vec();
-    out.resize(degree_bound.saturating_add(1), E::zero());
+fn pad_compressed_coeffs_to_degree<E: FieldCore>(
+    coeffs_except_linear: &[E],
+    degree_bound: usize,
+) -> Vec<E> {
+    let mut out = coeffs_except_linear.to_vec();
+    out.resize(degree_bound, E::zero());
     out
 }
 
 #[cfg(feature = "zk")]
-fn mask_full_poly<E>(
-    poly: &UniPoly<E>,
-    pad_poly: FullUniPoly<E>,
+fn mask_compressed_poly<E>(
+    poly: &CompressedUniPoly<E>,
+    pad_poly: CompressedUniPoly<E>,
     degree_bound: usize,
-) -> Result<FullUniPoly<E>, AkitaError>
+) -> Result<CompressedUniPoly<E>, AkitaError>
 where
     E: FieldCore,
 {
-    let true_coeffs = pad_coeffs_to_degree(&poly.coeffs, degree_bound);
-    if pad_poly.coeffs().len() != true_coeffs.len() {
+    let true_coeffs =
+        pad_compressed_coeffs_to_degree(&poly.coeffs_except_linear_term, degree_bound);
+    if pad_poly.coeffs_except_linear_term.len() != true_coeffs.len() {
         return Err(AkitaError::InvalidProof);
     }
     let mut masked_coeffs = Vec::with_capacity(true_coeffs.len());
     for (idx, true_coeff) in true_coeffs.into_iter().enumerate() {
-        let pad = pad_poly.coeffs()[idx];
+        let pad = pad_poly.coeffs_except_linear_term[idx];
         masked_coeffs.push(true_coeff + pad);
     }
-    Ok(FullUniPoly::from_coeffs(masked_coeffs))
+    Ok(CompressedUniPoly {
+        coeffs_except_linear_term: masked_coeffs,
+    })
 }
 
 #[cfg(feature = "zk")]
@@ -300,7 +306,7 @@ where
         public_input_claim: E,
         transcript: &mut T,
         mut sample_challenge: S,
-        pre_sampled_pads: Vec<FullUniPoly<E>>,
+        pre_sampled_pads: Vec<CompressedUniPoly<E>>,
     ) -> Result<MaskedProveOutput<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -332,12 +338,12 @@ where
                     degree_bound
                 )));
             }
-            let masked_poly = mask_full_poly(&g, pad_poly, degree_bound)?;
+            let masked_poly = mask_compressed_poly(&compressed, pad_poly, degree_bound)?;
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &masked_poly);
             let r_i = sample_challenge(transcript);
             r.push(r_i);
 
-            claim = g.evaluate(&r_i);
+            claim = compressed.eval_from_hint(&claim, &r_i);
             self.ingest_challenge(round, r_i);
             masked_round_polys.push(masked_poly);
         }
@@ -414,25 +420,22 @@ where
             } else {
                 "masked sumcheck round chain"
             };
-            let masked_round_sum =
-                masked_poly.evaluate(&E::zero()) + masked_poly.evaluate(&E::one());
-            let (next_claim_mask, round_sum_mask) = relations.push_masked_full_round_relation::<F>(
+            let next_claim_mask = relations.push_masked_compressed_round_relation::<F>(
                 description,
-                masked_claim_handle,
                 &claim_mask,
-                masked_poly.coeffs(),
+                &masked_poly.coeffs_except_linear_term,
                 r_i,
                 hiding_cursor,
             );
             if round == 0 {
                 self.record_input_relation(
                     initial_claim,
-                    masked_round_sum,
-                    &round_sum_mask,
+                    masked_claim_handle,
+                    &claim_mask,
                     relations,
                 )?;
             }
-            masked_claim_handle = masked_poly.evaluate(&r_i);
+            masked_claim_handle = masked_poly.eval_from_hint(&masked_claim_handle, &r_i);
             claim_mask = next_claim_mask;
         }
 

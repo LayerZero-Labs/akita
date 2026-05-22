@@ -39,7 +39,7 @@ use akita_sumcheck::{
 };
 #[cfg(feature = "zk")]
 use akita_sumcheck::{
-    EqFactoredUniPoly, FullUniPoly, SumcheckProofMasked, ZkSumcheckInstanceProverExt,
+    CompressedUniPoly, EqFactoredUniPoly, SumcheckProofMasked, ZkSumcheckInstanceProverExt,
 };
 #[cfg(not(feature = "zk"))]
 use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
@@ -176,21 +176,22 @@ impl<F: FieldCore> ZkHidingProverState<F> {
             .collect()
     }
 
-    fn take_full_rounds<L>(
+    fn take_compressed_rounds<L>(
         &mut self,
         rounds: usize,
         degree: usize,
-    ) -> Result<Vec<FullUniPoly<L>>, AkitaError>
+    ) -> Result<Vec<CompressedUniPoly<L>>, AkitaError>
     where
         L: ExtField<F>,
     {
-        let coeffs = degree.saturating_add(1);
         (0..rounds)
             .map(|_| {
-                let coeffs = (0..coeffs)
+                let coeffs = (0..degree)
                     .map(|_| self.take_ext_scalar())
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(FullUniPoly::from_coeffs(coeffs))
+                Ok(CompressedUniPoly {
+                    coeffs_except_linear_term: coeffs,
+                })
             })
             .collect()
     }
@@ -217,7 +218,7 @@ impl<F: FieldCore> ZkHidingProverState<F> {
                 );
             }
         }
-        let stage2_round_pads = self.take_full_rounds(rounds, 3)?;
+        let stage2_round_pads = self.take_compressed_rounds(rounds, 3)?;
         Ok((
             stage1_round_pads,
             stage1_child_claim_masks,
@@ -229,15 +230,15 @@ impl<F: FieldCore> ZkHidingProverState<F> {
         &mut self,
         partials: usize,
         rounds: usize,
-    ) -> Result<(Vec<L>, Vec<FullUniPoly<L>>), AkitaError>
+    ) -> Result<(Vec<L>, Vec<CompressedUniPoly<L>>), AkitaError>
     where
         L: ExtField<F>,
     {
         let partial_masks = (0..partials)
             .map(|_| self.take_ext_scalar())
             .collect::<Result<Vec<_>, _>>()?;
-        let round_pads =
-            self.take_full_rounds(rounds, akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE)?;
+        let round_pads = self
+            .take_compressed_rounds(rounds, akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE)?;
         Ok((partial_masks, round_pads))
     }
 }
@@ -455,7 +456,7 @@ fn flattened_zk_blinding_digits<const D: usize>(
 type ZkLevelRoundPads<L> = (
     Vec<Vec<akita_sumcheck::EqFactoredUniPoly<L>>>,
     Vec<Vec<L>>,
-    Vec<akita_sumcheck::FullUniPoly<L>>,
+    Vec<akita_sumcheck::CompressedUniPoly<L>>,
 );
 
 #[cfg(feature = "zk")]
@@ -526,7 +527,7 @@ where
     F: FieldCore + RandomSampling,
     L: ExtField<F>,
 {
-    for _ in 0..rounds * (3 + 1) {
+    for _ in 0..rounds * 3 {
         push_random_ext_scalar_slots::<F, L>(out, rng);
     }
 }
@@ -573,7 +574,7 @@ fn append_zk_extension_reduction_slots<F, L>(
     F: FieldCore + RandomSampling,
     L: ExtField<F>,
 {
-    let round_coeffs = akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE + 1;
+    let round_coeffs = akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
     for _ in 0..(partials + rounds * round_coeffs) {
         push_random_ext_scalar_slots::<F, L>(out, rng);
     }
@@ -1673,7 +1674,7 @@ where
     // dummy zeros for `r_stage1` and `s_claim` are safe.
     let r_stage1 = vec![L::zero(); col_bits + ring_bits];
     #[cfg(feature = "zk")]
-    let stage2_round_pads = zk_hiding.take_full_rounds::<L>(col_bits + ring_bits, 3)?;
+    let stage2_round_pads = zk_hiding.take_compressed_rounds::<L>(col_bits + ring_bits, 3)?;
     #[cfg(feature = "zk")]
     let stage2_sumcheck_proof_masked = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal").entered();
@@ -4125,7 +4126,7 @@ where
 
     let r_stage1 = vec![C::zero(); col_bits + ring_bits];
     #[cfg(feature = "zk")]
-    let stage2_round_pads = zk_hiding.take_full_rounds::<C>(col_bits + ring_bits, 3)?;
+    let stage2_round_pads = zk_hiding.take_compressed_rounds::<C>(col_bits + ring_bits, 3)?;
     #[cfg(feature = "zk")]
     let stage2_sumcheck_proof_masked = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal_root").entered();

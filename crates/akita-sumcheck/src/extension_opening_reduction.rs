@@ -14,8 +14,10 @@ use crate::drivers::ZkSumcheckInstanceProverExt;
 use crate::traits::{SumcheckInstanceProver, SumcheckInstanceVerifier};
 use crate::types::SumcheckProof;
 #[cfg(feature = "zk")]
-use crate::types::{FullUniPoly, SumcheckProofMasked};
+use crate::types::SumcheckProofMasked;
 use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
+#[cfg(feature = "zk")]
+use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_algebra::uni_poly::UniPoly;
 use akita_algebra::EqPolynomial;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -2086,7 +2088,7 @@ impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
         prover: &mut ExtensionOpeningReductionProver<E>,
         transcript: &mut T,
         sample_challenge: S,
-        pre_sampled_pads: Vec<FullUniPoly<E>>,
+        pre_sampled_pads: Vec<CompressedUniPoly<E>>,
     ) -> Result<
         (
             SumcheckProofMasked<E>,
@@ -2167,16 +2169,14 @@ impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, masked_poly);
             let r_i = sample_challenge(transcript);
             challenges.push(r_i);
-            let (next_claim_mask, _round_sum_mask) = relations
-                .push_masked_full_round_relation::<F>(
-                    "masked extension-opening reduction round chain",
-                    masked_claim,
-                    &claim_mask,
-                    masked_poly.coeffs(),
-                    r_i,
-                    hiding_cursor,
-                );
-            masked_claim = masked_poly.evaluate(&r_i);
+            let next_claim_mask = relations.push_masked_compressed_round_relation::<F>(
+                "masked extension-opening reduction round chain",
+                &claim_mask,
+                &masked_poly.coeffs_except_linear_term,
+                r_i,
+                hiding_cursor,
+            );
+            masked_claim = masked_poly.eval_from_hint(&masked_claim, &r_i);
             claim_mask = next_claim_mask;
         }
 

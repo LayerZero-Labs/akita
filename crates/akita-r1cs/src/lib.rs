@@ -548,6 +548,55 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         (next_mask, round_sum_mask)
     }
 
+    /// Consume one masked compressed standard sumcheck round and return the next
+    /// claim mask.
+    ///
+    /// Compressed rounds send `[g~_0, g~_2, g~_3, ...]`; the masked linear term is
+    /// implicitly recovered from the previous public masked claim. If
+    /// `eta_{i-1}` masks the previous claim and the stored pad coefficients are
+    /// `[rho_0, rho_2, rho_3, ...]`, then the omitted pad coefficient is
+    ///
+    /// `rho_1 = eta_{i-1} - 2 * rho_0 - sum_{j >= 2} rho_j`.
+    ///
+    /// Therefore the next claim mask is the public-challenge linear combination
+    ///
+    /// `eta_i = r * eta_{i-1} + (1 - 2r) * rho_0
+    ///        + sum_{j >= 2} (r^j - r) * rho_j`.
+    ///
+    /// The sumcheck chain equation itself is tautological for the public
+    /// compressed message, so no separate R1CS row is needed for this transition.
+    #[doc(hidden)]
+    pub fn push_masked_compressed_round_relation<F>(
+        &mut self,
+        _description: &'static str,
+        previous_mask: &ZkR1csLinearCombination<E>,
+        public_coeffs_except_linear: &[E],
+        r_round: E,
+        hiding_cursor: &mut usize,
+    ) -> ZkR1csLinearCombination<E>
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        let mut next_mask = ZkR1csLinearCombination::zero();
+        add_scaled_lc(&mut next_mask, r_round, previous_mask);
+
+        let mut next_higher_power = r_round * r_round;
+        for (idx, &_public_coeff) in public_coeffs_except_linear.iter().enumerate() {
+            let mask_coeff = zk_ext_mask_lc::<F, E>(hiding_cursor);
+            let weight = if idx == 0 {
+                E::one() - r_round - r_round
+            } else {
+                let weight = next_higher_power - r_round;
+                next_higher_power *= r_round;
+                weight
+            };
+            add_scaled_lc(&mut next_mask, weight, &mask_coeff);
+        }
+
+        next_mask
+    }
+
     /// Record one masked eq-factored sumcheck round relation.
     ///
     /// Eq-factored rounds do not send the full round polynomial. They send the

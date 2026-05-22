@@ -794,7 +794,7 @@ where
     let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
     #[cfg(feature = "zk")]
     let stage2_next_w_eval_mask_cursor =
-        *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 4 * <C as ExtField<F>>::EXT_DEGREE;
+        *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <C as ExtField<F>>::EXT_DEGREE;
     let stage2_verifier = match &stage_input {
         RootStageInput::Terminal { final_witness, .. } => {
             AkitaStage2Verifier::new_with_direct_witness(
@@ -1338,7 +1338,7 @@ where
     let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
     #[cfg(feature = "zk")]
     let stage2_next_w_eval_mask_cursor =
-        *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 4 * <L as ExtField<F>>::EXT_DEGREE;
+        *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <L as ExtField<F>>::EXT_DEGREE;
     let stage2_verifier = match &proof {
         FoldProofView::Terminal(terminal_proof) => AkitaStage2Verifier::new_with_direct_witness(
             batching_coeff,

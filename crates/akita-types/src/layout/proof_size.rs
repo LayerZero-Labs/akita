@@ -55,11 +55,6 @@ fn eq_factored_round_mask_bytes(rounds: usize, degree: usize, elem_bytes: usize)
     sumcheck_bytes(rounds, degree, elem_bytes)
 }
 
-#[cfg(feature = "zk")]
-fn full_round_mask_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
-    rounds * (degree + 1) * elem_bytes
-}
-
 /// Header-stripped byte size of an extension-opening reduction proof.
 ///
 /// The reduction proof serializes `partials` challenge-field elements followed
@@ -96,7 +91,7 @@ pub fn extension_opening_reduction_proof_bytes(
     Ok(partials.saturating_mul(elem_bytes).saturating_add({
         #[cfg(feature = "zk")]
         {
-            full_round_mask_bytes(rounds, EXTENSION_OPENING_REDUCTION_DEGREE, elem_bytes)
+            sumcheck_bytes(rounds, EXTENSION_OPENING_REDUCTION_DEGREE, elem_bytes)
         }
         #[cfg(not(feature = "zk"))]
         {
@@ -233,7 +228,7 @@ pub fn level_proof_bytes(
         + {
             #[cfg(feature = "zk")]
             {
-                full_round_mask_bytes(rounds, 3, challenge_elem_bytes)
+                sumcheck_bytes(rounds, 3, challenge_elem_bytes)
             }
             #[cfg(not(feature = "zk"))]
             {
@@ -267,7 +262,7 @@ pub fn terminal_level_proof_bytes(
     y_bytes + {
         #[cfg(feature = "zk")]
         {
-            full_round_mask_bytes(rounds, 3, challenge_elem_bytes)
+            sumcheck_bytes(rounds, 3, challenge_elem_bytes)
         }
         #[cfg(not(feature = "zk"))]
         {

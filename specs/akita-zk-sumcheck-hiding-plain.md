@@ -27,7 +27,7 @@ In folded `feature = "zk"` builds, the implementation currently hides:
 - stage-1 eq-factored sumcheck round messages;
 - stage-1 tree child claims between product layers;
 - `AkitaStage1Proof::s_claim`;
-- stage-2 full-univariate sumcheck round messages;
+- stage-2 compressed sumcheck round messages;
 - recursive `next_w_eval` handoffs, serialized as
   `AkitaStage2Proof::next_w_eval_masked`.
 
@@ -110,7 +110,7 @@ if the schedule has at least one fold:
       for each eq-factored sumcheck round:
         EqFactoredUniPoly::coeffs_except_linear_term
       stage child-claim masks
-    Stage-2 full round pads, 4 coefficients per round
+    Stage-2 compressed round pads, 3 coefficients per round
   if the root fold is not terminal:
     root_next_w_eval_mask:
       1 field element
@@ -127,8 +127,8 @@ if the schedule has at least one fold:
 
 The round count for a level is `sumcheck_rounds(ring_dimension, next_w_len)`.
 Stage 1 uses `stage1_tree_stage_shapes(rounds, b)`, where
-`b = 1 << params.log_basis`. Stage 2 has degree bound `3`, so each full-round pad
-contains four coefficients.
+`b = 1 << params.log_basis`. Stage 2 has degree bound `3`, so each compressed
+round pad contains three stored coefficients.
 
 The prover allocates a scalar `next_w_eval` mask only for non-terminal fold
 levels, where the level's output evaluation is used as the opening claim for a
@@ -297,12 +297,14 @@ variables in `akita_r1cs::ZkRelationAccumulator` and checks them during
 ## Stage-2 Flow
 
 Stage 2 uses `SumcheckProofMasked`, not the transparent `SumcheckProof`. The
-prover computes each true full univariate round polynomial, adds a precommitted
-degree-3 pad, and absorbs the full masked coefficient list:
+prover computes each true univariate round polynomial, adds a precommitted
+degree-3 compressed pad, and absorbs the masked coefficient list with the linear
+term omitted:
 
 ```text
-g_tilde_i(X) = g_i(X) + rho_i(X)
-rho_i(X) = rho_i,0 + rho_i,1 X + rho_i,2 X^2 + rho_i,3 X^3
+g_tilde_i.stored = g_i.stored + rho_i.stored
+stored indices = [0, 2, 3]
+rho_i,1 = eta_{i-1} - 2 * rho_i,0 - rho_i,2 - rho_i,3
 ```
 
 The transcript-visible input claim uses the masked stage-1 handoff and the
@@ -337,26 +339,59 @@ synthesizing verifier-local auxiliaries, rather than as separate rows for each
 displayed equality.
 
 That synthesized input mask is then used for Stage 2's first standard-sumcheck
-round. Round 0 must satisfy the same masked chain identity as later rounds:
+round. Since compressed standard rounds omit the linear term, the masked chain
+identity is enforced by reconstruction from the incoming masked claim:
 
 ```text
-eta_0 = rho_0(r_0)
-g_tilde_0(0) + g_tilde_0(1) - C_tilde_{-1}
-  =
-rho_0(0) + rho_0(1) - eta_{-1}
+g_tilde_i,1 =
+  C_tilde_{i-1} - 2 * g_tilde_i,0 - sum_{j >= 2} g_tilde_i,j
 ```
 
-For every later round `i > 0`, the generic masked standard-sumcheck verifier
-checks the masked chain identity:
+The corresponding mask transition is a public linear combination of the previous
+claim mask and the stored round pads:
 
 ```text
-g_tilde_i(0) + g_tilde_i(1) - C_tilde_{i-1}
-  =
-rho_i(0) + rho_i(1) - eta_{i-1}
+eta_i =
+  r_i * eta_{i-1}
+  + (1 - 2 * r_i) * rho_i,0
+  + sum_{j >= 2} (r_i^j - r_i) * rho_i,j
 ```
 
-It also consumes the full-round pad slots to build the linear mask for the final
-masked claim:
+This transition is carried symbolically by the verifier; the current
+plain-opening inventory does not emit one R1CS row per compressed standard
+sumcheck round. The omitted linear term is defined from `C_tilde_{i-1}` and the
+stored coefficients, so the usual round-chain identity
+`g_tilde_i(0) + g_tilde_i(1) = C_tilde_{i-1}` has no independent residual to
+check. Adding a row for this equality would only restate the decompression
+definition unless the verifier also introduced explicit auxiliary wires for the
+mask chain. The nontrivial standard-sumcheck relation recorded in R1CS is the
+protocol-specific final oracle check after all round challenges have been
+derived.
+
+Row-count summary for compressed standard ZK sumchecks:
+
+- No per-round R1CS rows are recorded for the sumcheck chain.
+- Usually one final-oracle R1CS row is recorded per sumcheck.
+- Caller-specific handoff, input, or output rows may be recorded around the
+  sumcheck when another protocol object must be tied to the unmasked claim.
+
+For Stage 2 this is roughly:
+
+```text
+1 handoff/input relation
++ 1 final oracle relation
++ 0 per-round chain relations
+```
+
+Extension-opening reduction follows the same compressed-round pattern: it
+propagates masks linearly through the rounds, returns one final unmasked claim
+expression to the caller, and the caller records the later output check that
+consumes that expression. Stage 1 is the exception: its eq-factored ZK
+sumchecks still record one R1CS transition relation per round, plus their final
+relations.
+
+It consumes the compressed-round pad slots to build the linear mask for the
+final masked claim:
 
 ```text
 final_claim_true =
@@ -415,6 +450,18 @@ support per row. Single-mask linear equations are therefore allowed by the
 container, although the terminal direct-witness binding is intentionally omitted
 from the current inventory. The sumcheck crates use the accumulator only behind
 `feature = "zk"`; transparent sumcheck drivers do not depend on the R1CS API.
+
+For compressed standard sumchecks, `ZkRelationAccumulator` consumes the
+compressed round-mask slots and returns the next claim mask as a linear
+combination, but it intentionally records no per-round R1CS row. The compressed
+message format already forces the masked round sum to equal the incoming masked
+claim. The rows associated with such a sumcheck are instead the surrounding
+semantic rows: a caller-specific input/handoff row when needed, an output row
+when the reduced claim is tied to another object, and the final oracle row that
+checks the unmasked final claim against the protocol oracle. Eq-factored Stage-1
+sumchecks are different: their masked transition is not just the ordinary
+standard compressed round equation, so they still record one R1CS transition row
+per sumcheck round.
 Future work is to prove this same row inventory without revealing
 `hiding_witness`.
 
@@ -434,7 +481,7 @@ In folded ZK builds:
   claims.
 - `AkitaStage1Proof::s_claim` is absorbed under the existing label, but its wire
   value is masked.
-- Stage-2 absorbs masked full round polynomials.
+- Stage-2 absorbs masked compressed round polynomials.
 - `AkitaStage2Proof::next_w_eval_masked` is the ZK proof field for recursive
   handoffs, accessed through `next_w_eval()`.
 
@@ -506,7 +553,7 @@ not absorbed before the masked messages they support are fixed.
 - Stage 1 calls `prove_zk` with precommitted eq-factored pads and child-claim
   masks, and stores the masked `s_claim`.
 - Stage 2 calls `prove_zk` with the masked wire expression as the
-  transcript-visible input claim plus precommitted full-univariate pads, and
+  transcript-visible input claim plus precommitted compressed-univariate pads, and
   stores `next_w_eval + eta_w` for non-terminal handoffs in ZK builds.
 
 ### `akita-verifier`

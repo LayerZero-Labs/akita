@@ -1217,7 +1217,7 @@ pub struct AkitaStage2Proof<F: FieldCore, L: FieldCore> {
     /// Stage-2 fused sumcheck proof.
     #[cfg(not(feature = "zk"))]
     pub sumcheck_proof: SumcheckProof<L>,
-    /// ZK plain-opening masked full round payload.
+    /// ZK plain-opening masked compressed round payload.
     #[cfg(feature = "zk")]
     pub sumcheck_proof_masked: SumcheckProofMasked<L>,
     /// Commitment to the next witness `w`
@@ -1261,7 +1261,7 @@ pub struct ExtensionOpeningReductionProof<L: FieldCore> {
     /// Degree-two reduction sumcheck.
     #[cfg(not(feature = "zk"))]
     pub sumcheck: SumcheckProof<L>,
-    /// ZK plain-opening masked degree-two reduction sumcheck.
+    /// ZK plain-opening masked compressed degree-two reduction sumcheck.
     #[cfg(feature = "zk")]
     pub sumcheck_proof_masked: SumcheckProofMasked<L>,
 }
@@ -2150,7 +2150,7 @@ fn sumcheck_proof_masked_shape<F: FieldCore>(masks: &SumcheckProofMasked<F>) -> 
     masks
         .masked_round_polys
         .iter()
-        .map(|p| p.coeffs().len().saturating_sub(1))
+        .map(|p| p.coeffs_except_linear_term.len())
         .collect()
 }
 

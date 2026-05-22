@@ -56,4 +56,4 @@ pub use types::{
     EqFactoredUniPoly, SumcheckProof, SumcheckProofShape,
 };
 #[cfg(feature = "zk")]
-pub use types::{EqFactoredSumcheckProofMasked, FullUniPoly, SumcheckProofMasked};
+pub use types::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};
