@@ -3,14 +3,9 @@
 //! Requires AVX-512F + AVX-512DQ. Uses native unsigned comparisons and mask
 //! registers for branchless conditionals.
 
-// This file is only compiled when AVX-512F/DQ are enabled, which in turn
-// requires either nightly Rust (for `stdarch_x86_avx512`) or Rust ≥ 1.89
-// (where those intrinsics are stable). Either way the workspace MSRV of
-// 1.88 doesn't apply to this file, so silence the incompatible-MSRV lint.
 // The `suspicious_arithmetic_impl` allow covers the mask-or expression used
 // inside the 128-bit `Sub` impl for `PackedFp128Avx512`, which is correct
 // 128-bit subtraction wiring rather than an arithmetic bug.
-#![allow(clippy::incompatible_msrv)]
 #![allow(clippy::suspicious_arithmetic_impl)]
 
 use super::packed::{PackedField, PackedValue};
