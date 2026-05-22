@@ -18,15 +18,15 @@ use akita_types::{
     root_extension_opening_partials, terminal_level_proof_bytes,
     w_ring_element_count_with_counts_bits, w_ring_element_count_with_counts_for_layout_bits,
     AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedState, AkitaPlannedStep,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DecompositionParams,
-    DirectWitnessShape, LevelParams, MRowLayout, SisModulusFamily,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, CommitmentEnvelope,
+    DecompositionParams, DirectWitnessShape, LevelParams, MRowLayout, SisModulusFamily,
 };
 
 /// Policy hooks needed to materialize generated schedule-table entries into
 /// runtime schedules.
 ///
 /// This is the renamed `GeneratedSchedulePlanPolicy` from `akita-types`.
-pub struct PlanPolicy<Stage1Config, DirectLevelParams> {
+pub struct PlanPolicy<Stage1Config> {
     /// SIS modulus family used by generated fold levels.
     pub sis_family: SisModulusFamily,
     /// Cyclotomic ring dimension `D` for this config's root commitments.
@@ -45,8 +45,11 @@ pub struct PlanPolicy<Stage1Config, DirectLevelParams> {
     /// Result-returning so config-side validation propagates instead of
     /// panicking on the verifier replay path.
     pub stage1_challenge_config: Stage1Config,
-    /// Direct terminal layout policy for a schedule state and log-basis.
-    pub direct_level_params: DirectLevelParams,
+    /// Pre-computed commitment envelope for `key.num_vars`. Consumed by
+    /// [`crate::direct_level_params_with_log_basis`] when materializing a
+    /// terminal-direct step. Caller computes it once via
+    /// `Cfg::envelope(num_vars)` at policy construction.
+    pub envelope: CommitmentEnvelope,
     /// Infinity-norm expansion introduced when claim-field coordinates are
     /// embedded into the ring subfield via `psi`. Mirrors
     /// `CommitmentConfig::ring_subfield_embedding_norm_bound`. Consumed by
@@ -119,15 +122,14 @@ fn extension_opening_reduction_level_bytes(
 ///
 /// Returns an error if the generated entry is structurally invalid, does not
 /// match `key`, or does not agree with the supplied config policy callbacks.
-pub fn schedule_plan_from_table_entry<F, Stage1Config, DirectLevelParams>(
+pub fn schedule_plan_from_table_entry<F, Stage1Config>(
     key: AkitaScheduleLookupKey,
     entry: &GeneratedScheduleTableEntry,
-    policy: PlanPolicy<Stage1Config, DirectLevelParams>,
+    policy: PlanPolicy<Stage1Config>,
 ) -> Result<AkitaSchedulePlan, AkitaError>
 where
     F: CanonicalField,
     Stage1Config: Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
     let PlanPolicy {
         sis_family,
@@ -137,7 +139,7 @@ where
         recursive_public_rows,
         extension_opening_width,
         stage1_challenge_config,
-        direct_level_params,
+        envelope,
         ring_subfield_norm_bound,
     } = policy;
 
@@ -255,7 +257,16 @@ where
                         (next_level_params, coeffs)
                     }
                     GeneratedStep::Direct(_) => {
-                        let next_level_params = direct_level_params(next_inputs, next_log_basis)?;
+                        let next_level_params = crate::direct_level_params_with_log_basis(
+                            sis_family,
+                            ring_dimension,
+                            root_decomp,
+                            stage1_challenge_config(ring_dimension)?,
+                            ring_subfield_norm_bound,
+                            &envelope,
+                            next_inputs,
+                            next_log_basis,
+                        )?;
                         let coeffs =
                             next_level_params.b_key.row_len() * next_level_params.ring_dimension;
                         (next_level_params, coeffs)
@@ -352,25 +363,21 @@ where
                     ));
                 }
                 // Root-direct entries (`fold_level == 0`) carry the root
-                // commit layout so `Cfg::get_params_for_batched_commitment`
-                // can read it straight from the materialized step.
-                // Terminal direct (after one or more folds) leaves
-                // `commit_params` as `None`; the root commit layout lives
-                // on the first fold step instead.
-                // Root-direct entries (`fold_level == 0`) record the root
-                // commit layout when it lies inside the audited SIS-floor
-                // table. The generated tables also contain large-`num_vars`
-                // root-direct edge entries whose root-commit layout exceeds
-                // the audited SIS-floor (no production caller asks for
-                // their singleton commit params). Materialize those with
-                // `commit_params: None`; the corresponding
-                // `get_params_for_batched_commitment` call surfaces the
-                // missing-layout error if anything ever does ask.
-                // Terminal direct (after one or more folds, `fold_level > 0`)
-                // always leaves `commit_params` as `None`; the root commit
-                // layout lives on the first fold step instead.
+                // commit layout — same role as `FoldStep.params` for
+                // Fold-root entries, so the same batched scaling applies
+                // when the entry is for a non-singleton incidence.
+                //
+                // Tables also contain large-`num_vars` root-direct edge
+                // entries whose singleton root layout exceeds the audited
+                // SIS-floor; materialize those with `commit_params: None`
+                // (any caller that does ask gets a clean missing-layout
+                // error via `Cfg::get_params_for_batched_commitment`).
+                //
+                // Terminal direct (`fold_level > 0`) leaves `commit_params`
+                // as `None`; the root commit layout lives on the first
+                // fold step instead.
                 let commit_params = if fold_level == 0 {
-                    crate::root_direct_commit_layout(
+                    let singleton = crate::root_direct_commit_layout(
                         sis_family,
                         ring_dimension,
                         root_decomp,
@@ -379,7 +386,22 @@ where
                         key.num_vars,
                         root_decomp.log_basis,
                     )
-                    .ok()
+                    .ok();
+                    let root_is_batched = key.num_points != 1
+                        || key.num_t_vectors != 1
+                        || key.num_w_vectors != 1
+                        || key.num_z_vectors != 1;
+                    match singleton {
+                        Some(lp) if root_is_batched => {
+                            Some(akita_types::scale_batched_root_layout(
+                                &lp,
+                                key.num_t_vectors,
+                                stage1_challenge_config(ring_dimension)?.l1_norm(),
+                                root_decomp.field_bits(),
+                            )?)
+                        }
+                        other => other,
+                    }
                 } else {
                     None
                 };
@@ -406,7 +428,13 @@ where
                 // Root-direct (`fold_level == 0`) has no next level, so
                 // `level_params` stays `None`.
                 let level_params = if fold_level > 0 {
-                    Some(direct_level_params(
+                    Some(crate::direct_level_params_with_log_basis(
+                        sis_family,
+                        ring_dimension,
+                        root_decomp,
+                        stage1_challenge_config(ring_dimension)?,
+                        ring_subfield_norm_bound,
+                        &envelope,
                         AkitaScheduleInputs {
                             num_vars: key.num_vars,
                             level: fold_level,
@@ -453,15 +481,14 @@ where
 ///
 /// Returns an error if a matching generated entry exists but fails validation
 /// against the supplied config policy callbacks.
-pub fn schedule_plan_from_table<F, Stage1Config, DirectLevelParams>(
+pub fn schedule_plan_from_table<F, Stage1Config>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
-    policy: PlanPolicy<Stage1Config, DirectLevelParams>,
+    policy: PlanPolicy<Stage1Config>,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
     F: CanonicalField,
     Stage1Config: Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
     if table.sis_family != policy.sis_family {
         return Err(AkitaError::InvalidSetup(format!(
@@ -470,7 +497,7 @@ where
         )));
     }
     match table_entry(table, generated_schedule_lookup_key(key)) {
-        Some(entry) => schedule_plan_from_table_entry::<F, _, _>(key, entry, policy).map(Some),
+        Some(entry) => schedule_plan_from_table_entry::<F, _>(key, entry, policy).map(Some),
         None => Ok(None),
     }
 }

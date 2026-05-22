@@ -8,7 +8,6 @@
 //! (when applicable) the audited root-rank floor.
 
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope};
-use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_field::{
     Ext2, Prime128OffsetA7F7, Prime16Offset99, Prime32Offset99, Prime64Offset59, RingSubfieldFp4,
@@ -17,9 +16,8 @@ use akita_field::{
 use akita_types::generated::table_entry_envelope_up_to_num_vars;
 use akita_types::ClaimIncidenceSummary;
 use akita_types::{
-    exact_planned_level_execution, planned_log_basis_at_level_from_schedule,
-    planned_schedule_key_from_schedule, AkitaPlannedStep, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
+    planned_log_basis_at_level_from_schedule, planned_schedule_key_from_schedule, AkitaPlannedStep,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
 };
 
 /// Inclusive minimum of the proof-optimized log-basis search range used by
@@ -40,163 +38,6 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 // because they consult `Cfg::envelope` / `Cfg::schedule_plan`, which only
 // exist at the `akita-config` layer.
 // ---------------------------------------------------------------------------
-
-/// Derive SIS-secure recursive (level > 0) params from the active envelope.
-///
-/// Builds a tentative `LevelParams` from the envelope row floors, derives a
-/// recursive layout for it under the active decomposition, then runs the
-/// planner's recursive-layout SIS derivation. Returns `None` when either
-/// the recursive layout or the SIS step rejects the candidate.
-pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
-    d: usize,
-    log_basis: u32,
-    current_w_len: usize,
-    stage1_config: &SparseChallengeConfig,
-    envelope: &CommitmentEnvelope,
-) -> Option<LevelParams> {
-    let tentative = LevelParams::params_only(
-        Cfg::sis_modulus_family(),
-        d,
-        log_basis,
-        envelope.max_n_a,
-        1,
-        1,
-        stage1_config.clone(),
-    );
-    let layout = akita_types::recursive_level_layout_from_params(
-        &tentative,
-        current_w_len,
-        Cfg::decomposition(),
-    )
-    .ok()?;
-    akita_derive::sis_derived_recursive_params_for_layout(
-        Cfg::sis_modulus_family(),
-        d,
-        log_basis,
-        stage1_config,
-        Cfg::ring_subfield_embedding_norm_bound(),
-        envelope,
-        &layout,
-    )
-}
-
-/// Direct-step level params hook (`PlanPolicy.direct_level_params` /
-/// `SearchOptions.direct_level_params_with_log_basis`).
-///
-/// Level 0 delegates to [`akita_derive::root_level_layout_with_log_basis`].
-/// Level > 0 derives recursive params straight from the envelope (no
-/// `Cfg::schedule_plan` consultation) and applies the recursive layout —
-/// the planner uses this to evaluate the "ship the witness directly"
-/// branch at non-root levels.
-///
-/// # Errors
-///
-/// Returns an error if the derivation cannot satisfy SIS-secure widths
-/// for the requested level/basis combination.
-pub fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
-    inputs: AkitaScheduleInputs,
-    log_basis: u32,
-) -> Result<LevelParams, AkitaError> {
-    if inputs.level == 0 {
-        return akita_derive::root_level_layout_with_log_basis(
-            Cfg::sis_modulus_family(),
-            Cfg::D,
-            Cfg::decomposition(),
-            Cfg::stage1_challenge_config(Cfg::D)?,
-            Cfg::ring_subfield_embedding_norm_bound(),
-            inputs,
-            log_basis,
-        );
-    }
-
-    let envelope = Cfg::envelope(inputs.num_vars);
-    let stage1_config = Cfg::stage1_challenge_config(Cfg::D)?;
-    let params = sis_derived_recursive_params::<Cfg>(
-        Cfg::D,
-        log_basis,
-        inputs.current_w_len,
-        &stage1_config,
-        &envelope,
-    )
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup(format!(
-            "failed to derive direct terminal params for level {} at num_vars={}",
-            inputs.level, inputs.num_vars
-        ))
-    })?;
-    akita_types::recursive_level_layout_from_params(
-        &params,
-        inputs.current_w_len,
-        Cfg::decomposition(),
-    )
-}
-
-/// Current-level commitment layout hook
-/// (`SearchOptions.current_level_layout_with_log_basis`).
-///
-/// Level 0 delegates to [`akita_derive::root_level_layout_with_log_basis`].
-/// Level > 0 consults [`level_params_with_log_basis`] (which prefers the
-/// exact planned level from `Cfg::schedule_plan` over an envelope-derived
-/// fallback) and then re-applies the recursive layout.
-///
-/// # Errors
-///
-/// Returns an error if the root or recursive layout derivation fails.
-pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
-    inputs: AkitaScheduleInputs,
-    log_basis: u32,
-) -> Result<LevelParams, AkitaError> {
-    if inputs.level == 0 {
-        return akita_derive::root_level_layout_with_log_basis(
-            Cfg::sis_modulus_family(),
-            Cfg::D,
-            Cfg::decomposition(),
-            Cfg::stage1_challenge_config(Cfg::D)?,
-            Cfg::ring_subfield_embedding_norm_bound(),
-            inputs,
-            log_basis,
-        );
-    }
-    let params = level_params_with_log_basis::<Cfg>(inputs, log_basis)?;
-    let layout = akita_types::recursive_level_layout_from_params(
-        &params,
-        inputs.current_w_len,
-        Cfg::decomposition(),
-    )?;
-    Ok(params.with_layout(&layout))
-}
-
-/// Batched-root commitment layout for the table-miss / non-singleton case.
-///
-/// Reads the singleton commit layout off the schedule's first step (via
-/// `Cfg::get_params_for_batched_commitment`), then scales it for
-/// `num_claims > 1`. Used by `proof_optimized_max_setup_matrix_size` and
-/// by `akita-planner::test_utils::PlannerCfg`.
-///
-/// # Errors
-///
-/// Propagates errors from `Cfg::get_params_for_batched_commitment` and
-/// `akita_types::scale_batched_root_layout`.
-pub fn fallback_batched_root_split<Cfg>(
-    num_vars: usize,
-    num_claims: usize,
-) -> Result<LevelParams, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    let singleton_incidence = ClaimIncidenceSummary::same_point(num_vars, 1)?;
-    let root_lp = Cfg::get_params_for_batched_commitment(&singleton_incidence)?;
-    if num_claims <= 1 {
-        Ok(root_lp)
-    } else {
-        akita_types::scale_batched_root_layout(
-            &root_lp,
-            num_claims,
-            Cfg::stage1_challenge_config(Cfg::D)?.l1_norm(),
-            Cfg::decomposition().field_bits(),
-        )
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Trait-shaped wrappers consumed by the macros below.
@@ -222,7 +63,7 @@ where
     let Some(table) = Cfg::schedule_table() else {
         return Ok(None);
     };
-    akita_derive::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _>(
+    akita_derive::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _>(
         key,
         table,
         akita_derive::PlanPolicy {
@@ -233,7 +74,7 @@ where
             recursive_public_rows: 1,
             extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
             stage1_challenge_config: Cfg::stage1_challenge_config,
-            direct_level_params: direct_level_params_with_log_basis::<Cfg>,
+            envelope: Cfg::envelope(key.num_vars),
             ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         },
     )
@@ -289,46 +130,20 @@ pub fn level_params_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
-    let singleton_key = AkitaScheduleLookupKey::singleton(inputs.num_vars);
-    if let Some(plan) = proof_optimized_schedule_plan::<Cfg>(singleton_key)? {
-        if let Some(planned_level) =
-            exact_planned_level_execution(&plan, inputs, log_basis, Cfg::stage1_challenge_config)?
-        {
-            return Ok(planned_level.level.lp.clone());
-        }
-    }
+    let plan =
+        proof_optimized_schedule_plan::<Cfg>(AkitaScheduleLookupKey::singleton(inputs.num_vars))?;
     let envelope = Cfg::envelope(inputs.num_vars);
-    let d = Cfg::D;
-    let stage1_config = Cfg::stage1_challenge_config(d)?;
-
-    if inputs.level > 0 {
-        if let Some(params) = sis_derived_recursive_params::<Cfg>(
-            d,
-            log_basis,
-            inputs.current_w_len,
-            &stage1_config,
-            &envelope,
-        ) {
-            if let Ok(lp) = akita_types::recursive_level_layout_from_params(
-                &params,
-                inputs.current_w_len,
-                Cfg::decomposition(),
-            ) {
-                return Ok(lp);
-            }
-            return Ok(params);
-        }
-    }
-
-    Ok(LevelParams::params_only(
+    akita_derive::level_params_with_log_basis(
         Cfg::sis_modulus_family(),
-        d,
+        Cfg::D,
+        Cfg::decomposition(),
+        Cfg::ring_subfield_embedding_norm_bound(),
+        plan.as_ref(),
+        &envelope,
+        Cfg::stage1_challenge_config,
+        inputs,
         log_basis,
-        envelope.max_n_a,
-        envelope.max_n_b,
-        envelope.max_n_d,
-        stage1_config,
-    ))
+    )
 }
 
 /// Proof-optimized `envelope` impl: combine the audited rank floor with the
@@ -422,52 +237,58 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     incidence: &ClaimIncidenceSummary,
     setup_envelope: &CommitmentEnvelope,
 ) -> Result<Option<(usize, usize)>, AkitaError> {
-    let num_polys = incidence.num_polynomials();
     let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
     let _ = setup_envelope;
 
-    let fallback = fallback_batched_root_split::<Cfg>(incidence.num_vars(), num_polys)?;
-
     // Table-only: configs that want a runtime DP fallback override the
-    // `setup_envelope_levels` path via `max_setup_matrix_size` directly.
+    // `max_setup_matrix_size` trait method directly (see `PlannerCfg`).
     let Some(plan) = Cfg::schedule_plan(cached_key)? else {
         return Ok(None);
     };
     let setup_levels = setup_level_params_from_plan(&plan);
 
-    Ok(Some(matrix_envelope_for_levels::<Cfg>(
-        &fallback,
-        &setup_levels,
-    )?))
+    Ok(Some(matrix_envelope_for_levels::<Cfg>(&setup_levels)?))
 }
 
+/// Extract setup-level params from a materialized plan: the root step's
+/// commit layout plus every subsequent fold step's `lp` and the terminal
+/// `level_params` if the run finishes in a packed direct step.
+///
+/// Both `Fold(lp)` and `Direct(commit_params | level_params)` are
+/// commitments that must be covered by setup matrices. Direct steps now
+/// carry their participating `LevelParams` inline (root-direct in
+/// `commit_params`, terminal-direct-after-fold in `level_params`); a
+/// well-formed plan has exactly one populated per Direct step.
 pub fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
     plan.steps
         .iter()
         .filter_map(|step| match step {
             AkitaPlannedStep::Fold(level) => Some(level.lp.clone()),
-            AkitaPlannedStep::Direct(_) => None,
+            AkitaPlannedStep::Direct(direct) => direct
+                .commit_params
+                .clone()
+                .or_else(|| direct.level_params.clone()),
         })
         .collect()
 }
 
-/// Extract setup-level params from a runtime `Schedule` (kept the fold-step
-/// `params` slice, drops direct/terminal steps).
-///
-/// Used by `PlannerCfg` to size setup matrices when the underlying preset
-/// has no schedule table and the schedule must come from DP search.
+/// Extract setup-level params from a runtime `Schedule`. Mirrors
+/// [`setup_level_params_from_plan`] for schedules that did not come from
+/// the offline table (e.g. `PlannerCfg`'s DP fallback path).
 pub fn setup_level_params_from_runtime_schedule(steps: &[akita_types::Step]) -> Vec<LevelParams> {
     steps
         .iter()
         .filter_map(|step| match step {
             akita_types::Step::Fold(fold_step) => Some(fold_step.params.clone()),
-            akita_types::Step::Direct(_) => None,
+            akita_types::Step::Direct(direct) => direct
+                .commit_params
+                .clone()
+                .or_else(|| direct.level_params.clone()),
         })
         .collect()
 }
 
 pub fn matrix_envelope_for_levels<Cfg>(
-    fallback_root: &LevelParams,
     setup_levels: &[LevelParams],
 ) -> Result<(usize, usize), AkitaError>
 where
@@ -475,13 +296,8 @@ where
 {
     let mut max_rows: usize = 1;
     let mut max_stride: usize = 1;
-
-    accumulate_matrix_envelope_for_level::<Cfg>(fallback_root, &mut max_rows, &mut max_stride)?;
-    if let Some((root_level, recursive_levels)) = setup_levels.split_first() {
-        accumulate_matrix_envelope_for_level::<Cfg>(root_level, &mut max_rows, &mut max_stride)?;
-        for lp in recursive_levels {
-            accumulate_matrix_envelope_for_level::<Cfg>(lp, &mut max_rows, &mut max_stride)?;
-        }
+    for lp in setup_levels {
+        accumulate_matrix_envelope_for_level::<Cfg>(lp, &mut max_rows, &mut max_stride)?;
     }
     Ok((max_rows, max_stride))
 }
@@ -1084,7 +900,7 @@ mod tests {
         // Drive the planner materializer directly with the mismatched table:
         // `Cfg::schedule_plan` would use the unmodified `Cfg::schedule_table()`,
         // so we bypass it to test the SIS-family mismatch rejection path.
-        let err = akita_derive::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _>(
+        let err = akita_derive::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _>(
             key,
             mismatched,
             akita_derive::PlanPolicy {
@@ -1096,7 +912,7 @@ mod tests {
                 recursive_public_rows: 1,
                 extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
                 stage1_challenge_config: Cfg::stage1_challenge_config,
-                direct_level_params: super::direct_level_params_with_log_basis::<Cfg>,
+                envelope: Cfg::envelope(key.num_vars),
                 ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
             },
         )

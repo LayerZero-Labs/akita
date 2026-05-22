@@ -19,13 +19,14 @@ use akita_types::generated::GeneratedScheduleTable;
 use akita_types::layout::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field,
 };
+use akita_types::AkitaSchedulePlan;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
     root_current_w_len, root_extension_opening_partials, scale_batched_root_layout,
     schedule_from_plan, terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, DecompositionParams, DirectStep, DirectWitnessShape, FoldStep,
-    LevelParams, MRowLayout, Schedule, SisModulusFamily, Step,
+    AkitaScheduleLookupKey, CommitmentEnvelope, DecompositionParams, DirectStep,
+    DirectWitnessShape, FoldStep, LevelParams, MRowLayout, Schedule, SisModulusFamily, Step,
 };
 
 use akita_derive::{schedule_plan_from_table, PlanPolicy};
@@ -36,8 +37,14 @@ use akita_derive::{schedule_plan_from_table, PlanPolicy};
 /// schedule-search machinery. Public callers reach the planner through the
 /// `<Cfg>`-generic [`find_optimal_schedule`] wrapper below; `SearchOptions`
 /// itself is crate-private.
-fn search_options_for_cfg<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> SearchOptions {
-    SearchOptions {
+fn search_options_for_cfg<Cfg: CommitmentConfig>(
+    key: AkitaScheduleLookupKey,
+) -> Result<SearchOptions, AkitaError> {
+    // The singleton schedule plan is fixed for the whole search (it only
+    // depends on `key.num_vars`); precompute it once instead of having
+    // every DP candidate evaluation reach back into `Cfg::schedule_plan`.
+    let schedule_plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(key.num_vars))?;
+    Ok(SearchOptions {
         key,
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
@@ -48,11 +55,11 @@ fn search_options_for_cfg<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) ->
         recursive_public_rows: 1,
         table: Cfg::schedule_table(),
         stage1_challenge_config: Cfg::stage1_challenge_config,
-        current_level_layout_with_log_basis: akita_config::current_level_layout_with_log_basis::<Cfg>,
-        direct_level_params_with_log_basis: akita_config::direct_level_params_with_log_basis::<Cfg>,
+        schedule_plan,
+        envelope: Cfg::envelope(key.num_vars),
         ring_subfield_embedding_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         log_basis_search_range: Cfg::log_basis_search_range,
-    }
+    })
 }
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -100,16 +107,17 @@ pub(crate) struct SearchOptions {
     /// hook is Result-returning so config-side validation errors propagate
     /// instead of panicking on the verifier replay path.
     pub stage1_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    /// Recursive-level layout hook (level > 0). Root (`level == 0`) is
-    /// derived inline via [`akita_derive::root_level_layout_with_log_basis`]
-    /// using the value-typed Cfg knobs above.
-    ///
-    /// `level == 0` does not consult this hook.
-    pub current_level_layout_with_log_basis:
-        fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
-    /// Terminal direct-step layout hook.
-    pub direct_level_params_with_log_basis:
-        fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
+    /// Pre-computed singleton schedule plan
+    /// (`Cfg::schedule_plan(singleton_key(num_vars))`). Consumed by
+    /// [`akita_derive::current_level_layout_with_log_basis`] as the
+    /// table-lookup shortcut; precomputed once per search since
+    /// `num_vars` is fixed.
+    pub schedule_plan: Option<AkitaSchedulePlan>,
+    /// Pre-computed commitment envelope for `key.num_vars`. Consumed by
+    /// [`akita_derive::direct_level_params_with_log_basis`] and
+    /// [`akita_derive::current_level_layout_with_log_basis`] at
+    /// candidate-evaluation sites.
+    pub envelope: CommitmentEnvelope,
     /// Infinity-norm expansion introduced when claim-field coordinates are
     /// embedded into the ring subfield via `psi`.
     pub ring_subfield_embedding_norm_bound: u32,
@@ -185,19 +193,17 @@ fn derive_candidate_level_params(
         current_w_len,
     };
 
-    let level_lp = match if level == 0 {
-        akita_derive::root_level_layout_with_log_basis(
-            opts.sis_modulus_family,
-            opts.ring_dimension,
-            opts.decomposition,
-            (opts.stage1_challenge_config)(opts.ring_dimension)?,
-            opts.ring_subfield_embedding_norm_bound,
-            inputs,
-            log_basis,
-        )
-    } else {
-        (opts.current_level_layout_with_log_basis)(inputs, log_basis)
-    } {
+    let level_lp = match akita_derive::current_level_layout_with_log_basis(
+        opts.sis_modulus_family,
+        opts.ring_dimension,
+        opts.decomposition,
+        opts.ring_subfield_embedding_norm_bound,
+        opts.schedule_plan.as_ref(),
+        &opts.envelope,
+        opts.stage1_challenge_config,
+        inputs,
+        log_basis,
+    ) {
         Ok(level_lp) => level_lp,
         Err(_) => return Ok(None),
     };
@@ -412,7 +418,13 @@ fn finalize_terminal_direct_witness_shape(
     // emitted via the offline table) can read them straight from the
     // schedule. This mirrors what the prover's
     // `scheduled_next_level_params` callback used to compute on the fly.
-    let level_params = (opts.direct_level_params_with_log_basis)(
+    let level_params = akita_derive::direct_level_params_with_log_basis(
+        opts.sis_modulus_family,
+        opts.ring_dimension,
+        opts.decomposition,
+        (opts.stage1_challenge_config)(opts.ring_dimension)?,
+        opts.ring_subfield_embedding_norm_bound,
+        &opts.envelope,
         AkitaScheduleInputs {
             num_vars,
             level: fold_level + 1,
@@ -460,7 +472,13 @@ fn successor_level_params_from_schedule(
         .expect("optimal suffix schedule must contain at least one step")
     {
         Step::Fold(step) => Ok(level_params_from_fold_step(opts, step)),
-        Step::Direct(step) => (opts.direct_level_params_with_log_basis)(
+        Step::Direct(step) => akita_derive::direct_level_params_with_log_basis(
+            opts.sis_modulus_family,
+            opts.ring_dimension,
+            opts.decomposition,
+            (opts.stage1_challenge_config)(opts.ring_dimension)?,
+            opts.ring_subfield_embedding_norm_bound,
+            &opts.envelope,
             AkitaScheduleInputs {
                 num_vars,
                 level,
@@ -494,7 +512,16 @@ fn derive_optimal_suffix_schedule(
     }
 
     let direct_allowed = level == 0
-        || (opts.direct_level_params_with_log_basis)(
+        || akita_derive::direct_level_params_with_log_basis(
+            opts.sis_modulus_family,
+            opts.ring_dimension,
+            opts.decomposition,
+            match (opts.stage1_challenge_config)(opts.ring_dimension) {
+                Ok(s) => s,
+                Err(_) => return Ok((usize::MAX, Vec::new())),
+            },
+            opts.ring_subfield_embedding_norm_bound,
+            &opts.envelope,
             AkitaScheduleInputs {
                 num_vars,
                 level,
@@ -835,7 +862,7 @@ fn offline_schedule_for_key(opts: &SearchOptions) -> Result<Option<Schedule>, Ak
     // bit-width driven and uses `root_decomp.field_bits()` everywhere, so
     // this is just a phantom.
     use akita_field::Prime128OffsetA7F7 as PhantomField;
-    let plan = schedule_plan_from_table::<PhantomField, _, _>(
+    let plan = schedule_plan_from_table::<PhantomField, _>(
         opts.key,
         table,
         PlanPolicy {
@@ -846,7 +873,7 @@ fn offline_schedule_for_key(opts: &SearchOptions) -> Result<Option<Schedule>, Ak
             recursive_public_rows: opts.recursive_public_rows,
             extension_opening_width: opts.extension_opening_width,
             stage1_challenge_config: opts.stage1_challenge_config,
-            direct_level_params: opts.direct_level_params_with_log_basis,
+            envelope: opts.envelope,
             ring_subfield_norm_bound: opts.ring_subfield_embedding_norm_bound,
         },
     )?;
@@ -869,7 +896,7 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
     allow_table_fast_path: bool,
 ) -> Result<Schedule, AkitaError> {
-    let opts = search_options_for_cfg::<Cfg>(key);
+    let opts = search_options_for_cfg::<Cfg>(key)?;
     let opts = &opts;
     let t_vectors = key.num_t_vectors;
     let w_vectors = key.num_w_vectors;
@@ -916,16 +943,34 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
     // are still valid as a proof-bytes upper bound for the DP comparator
     // (no production caller asks for their singleton commit params); they
     // record `commit_params: None`.
-    let root_direct_commit_params = akita_derive::root_direct_commit_layout(
-        opts.sis_modulus_family,
-        Cfg::D,
-        opts.decomposition,
-        (opts.stage1_challenge_config)(Cfg::D)?,
-        opts.ring_subfield_embedding_norm_bound,
-        num_vars,
-        opts.decomposition.log_basis,
-    )
-    .ok();
+    let root_direct_commit_params = {
+        let singleton = akita_derive::root_direct_commit_layout(
+            opts.sis_modulus_family,
+            Cfg::D,
+            opts.decomposition,
+            (opts.stage1_challenge_config)(Cfg::D)?,
+            opts.ring_subfield_embedding_norm_bound,
+            num_vars,
+            opts.decomposition.log_basis,
+        )
+        .ok();
+        // Apply the same batched-root scaling as the Fold-root path so
+        // `commit_params` carries the correct width for non-singleton
+        // incidences. Mirrors the materializer's Fold/Direct symmetry.
+        let root_is_batched = key.num_points != 1
+            || key.num_t_vectors != 1
+            || key.num_w_vectors != 1
+            || key.num_z_vectors != 1;
+        match singleton {
+            Some(lp) if root_is_batched => Some(scale_batched_root_layout(
+                &lp,
+                key.num_t_vectors,
+                (opts.stage1_challenge_config)(Cfg::D)?.l1_norm(),
+                opts.field_bits(),
+            )?),
+            other => other,
+        }
+    };
     let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
         current_w_len: root_w_len,
         witness_shape: root_direct_shape,

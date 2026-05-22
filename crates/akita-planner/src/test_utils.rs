@@ -19,8 +19,7 @@ use std::marker::PhantomData;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_config::{
-    fallback_batched_root_split, matrix_envelope_for_levels,
-    setup_level_params_from_runtime_schedule, CommitmentConfig,
+    matrix_envelope_for_levels, setup_level_params_from_runtime_schedule, CommitmentConfig,
 };
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
@@ -114,9 +113,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
                         ClaimIncidenceSummary::from_counts(num_vars, num_polys, num_points)?;
                     let schedule = <Self as CommitmentConfig>::get_params_for_prove(&incidence)?;
                     let setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
-                    let fallback = fallback_batched_root_split::<Self>(num_vars, num_polys)?;
-                    let (rows, stride) =
-                        matrix_envelope_for_levels::<Self>(&fallback, &setup_levels)?;
+                    let (rows, stride) = matrix_envelope_for_levels::<Self>(&setup_levels)?;
                     max_rows = max_rows.max(rows);
                     max_stride = max_stride.max(stride);
                 }
@@ -196,12 +193,14 @@ where
             num_claims,
             "batched root split: schedule is direct-only, falling back to config root layout"
         );
-        return fallback_batched_root_split::<Cfg>(num_vars, 1);
+        return Cfg::get_params_for_batched_commitment(&ClaimIncidenceSummary::same_point(
+            num_vars, 1,
+        )?);
     }
     tracing::info!(
         num_vars,
         num_claims,
         "batched root split: generated table miss, using singleton-derived fallback"
     );
-    fallback_batched_root_split::<Cfg>(num_vars, 1)
+    Cfg::get_params_for_batched_commitment(&ClaimIncidenceSummary::same_point(num_vars, 1)?)
 }

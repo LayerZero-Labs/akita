@@ -18,7 +18,8 @@ use akita_types::generated::sis_floor::{
 };
 use akita_types::layout::digit_math::{compute_num_digits_fold_with_claims, optimal_m_r_split};
 use akita_types::{
-    decomp_depths, level_layout_from_params, AjtaiKeyParams, AkitaScheduleInputs,
+    decomp_depths, exact_planned_level_execution, level_layout_from_params,
+    recursive_level_layout_from_params, AjtaiKeyParams, AkitaScheduleInputs, AkitaSchedulePlan,
     CommitmentEnvelope, DecompositionParams, LevelParams, SisModulusFamily,
 };
 
@@ -110,6 +111,232 @@ pub fn sis_secure_level_params(
     result.b_key = AjtaiKeyParams::new(sis_family, n_b, 0, collisions.bd, d);
     result.d_key = AjtaiKeyParams::new(sis_family, n_d, 0, collisions.bd, d);
     Ok(result)
+}
+
+/// Pick level-params for one level + log-basis.
+///
+/// Prefers the exact entry from a pre-materialized
+/// [`AkitaSchedulePlan`] (`schedule_plan = Cfg::schedule_plan(singleton_key(num_vars))?`
+/// — fixed throughout a search), otherwise derives SIS-secure recursive
+/// params from the envelope (level > 0) or returns the envelope-row-floor
+/// params-only `LevelParams` (level 0 / final fallback).
+///
+/// `stage1_chooser` resolves the sparse-challenge config for a ring
+/// dimension; it's the same hook `Cfg::stage1_challenge_config` plays at
+/// runtime, threaded through as a value to keep this function free of
+/// `<Cfg>` plumbing.
+///
+/// # Errors
+///
+/// Returns an error if `stage1_chooser` rejects `d`, if exact-plan
+/// resolution fails, or if envelope-driven recursive derivation
+/// over/underflows.
+#[allow(clippy::too_many_arguments)]
+pub fn level_params_with_log_basis(
+    sis_family: SisModulusFamily,
+    d: usize,
+    decomp: DecompositionParams,
+    ring_subfield_norm_bound: u32,
+    schedule_plan: Option<&AkitaSchedulePlan>,
+    envelope: &CommitmentEnvelope,
+    stage1_chooser: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    inputs: AkitaScheduleInputs,
+    log_basis: u32,
+) -> Result<LevelParams, AkitaError> {
+    if let Some(plan) = schedule_plan {
+        if let Some(planned_level) =
+            exact_planned_level_execution(plan, inputs, log_basis, stage1_chooser)?
+        {
+            return Ok(planned_level.level.lp.clone());
+        }
+    }
+    let stage1_config = stage1_chooser(d)?;
+
+    if inputs.level > 0 {
+        if let Some(params) = sis_derived_recursive_params(
+            sis_family,
+            d,
+            decomp,
+            log_basis,
+            inputs.current_w_len,
+            &stage1_config,
+            ring_subfield_norm_bound,
+            envelope,
+        ) {
+            if let Ok(lp) =
+                recursive_level_layout_from_params(&params, inputs.current_w_len, decomp)
+            {
+                return Ok(lp);
+            }
+            return Ok(params);
+        }
+    }
+
+    Ok(LevelParams::params_only(
+        sis_family,
+        d,
+        log_basis,
+        envelope.max_n_a,
+        envelope.max_n_b,
+        envelope.max_n_d,
+        stage1_config,
+    ))
+}
+
+/// Current-level commitment-layout hook used by the planner DP at
+/// recursive (level > 0) candidate evaluation.
+///
+/// Level 0 delegates to [`root_level_layout_with_log_basis`]. Level > 0
+/// reads params via [`level_params_with_log_basis`] (which prefers the
+/// plan's exact entry) and re-applies the recursive layout.
+///
+/// # Errors
+///
+/// Returns an error if the params lookup or the recursive layout
+/// derivation fails.
+#[allow(clippy::too_many_arguments)]
+pub fn current_level_layout_with_log_basis(
+    sis_family: SisModulusFamily,
+    d: usize,
+    decomp: DecompositionParams,
+    ring_subfield_norm_bound: u32,
+    schedule_plan: Option<&AkitaSchedulePlan>,
+    envelope: &CommitmentEnvelope,
+    stage1_chooser: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    inputs: AkitaScheduleInputs,
+    log_basis: u32,
+) -> Result<LevelParams, AkitaError> {
+    if inputs.level == 0 {
+        return root_level_layout_with_log_basis(
+            sis_family,
+            d,
+            decomp,
+            stage1_chooser(d)?,
+            ring_subfield_norm_bound,
+            inputs,
+            log_basis,
+        );
+    }
+    let params = level_params_with_log_basis(
+        sis_family,
+        d,
+        decomp,
+        ring_subfield_norm_bound,
+        schedule_plan,
+        envelope,
+        stage1_chooser,
+        inputs,
+        log_basis,
+    )?;
+    let layout = recursive_level_layout_from_params(&params, inputs.current_w_len, decomp)?;
+    Ok(params.with_layout(&layout))
+}
+
+/// Direct-step level-params hook used by the planner DP and the schedule
+/// materializer.
+///
+/// Level 0 delegates to [`root_level_layout_with_log_basis`]. Level > 0
+/// derives recursive params straight from the envelope (no
+/// `Cfg::schedule_plan` consultation) and applies the recursive layout —
+/// this is the "ship the witness directly at level N" hypothesis that
+/// the planner evaluates as one alternative.
+///
+/// `envelope` is fixed throughout a search (it only depends on
+/// `inputs.num_vars`, which is the polynomial size); callers compute it
+/// once at `SearchOptions` / `PlanPolicy` construction time.
+///
+/// # Errors
+///
+/// Returns an error if the derivation cannot satisfy SIS-secure widths
+/// for the requested level/basis combination.
+#[allow(clippy::too_many_arguments)]
+pub fn direct_level_params_with_log_basis(
+    sis_family: SisModulusFamily,
+    d: usize,
+    root_decomp: DecompositionParams,
+    stage1_config: SparseChallengeConfig,
+    ring_subfield_norm_bound: u32,
+    envelope: &CommitmentEnvelope,
+    inputs: AkitaScheduleInputs,
+    log_basis: u32,
+) -> Result<LevelParams, AkitaError> {
+    if inputs.level == 0 {
+        return root_level_layout_with_log_basis(
+            sis_family,
+            d,
+            root_decomp,
+            stage1_config,
+            ring_subfield_norm_bound,
+            inputs,
+            log_basis,
+        );
+    }
+    let params = sis_derived_recursive_params(
+        sis_family,
+        d,
+        root_decomp,
+        log_basis,
+        inputs.current_w_len,
+        &stage1_config,
+        ring_subfield_norm_bound,
+        envelope,
+    )
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "failed to derive direct terminal params for level {} at num_vars={}",
+            inputs.level, inputs.num_vars
+        ))
+    })?;
+    akita_types::recursive_level_layout_from_params(&params, inputs.current_w_len, root_decomp)
+}
+
+/// Derive SIS-secure recursive (level > 0) params from the active envelope.
+///
+/// Builds the recursive layout for the envelope's `(n_a, n_b=1, n_d=1)`
+/// row floors and then runs the layout-flavoured SIS derivation. Returns
+/// `None` when either step rejects the candidate.
+///
+/// Sibling of [`sis_derived_recursive_params_for_layout`]: this is the
+/// "I have an envelope, give me both a layout and SIS-secure params"
+/// entry point; the `_for_layout` form is the "I already have a layout"
+/// entry point.
+#[allow(clippy::too_many_arguments)]
+pub fn sis_derived_recursive_params(
+    sis_family: SisModulusFamily,
+    d: usize,
+    root_decomp: DecompositionParams,
+    log_basis: u32,
+    current_w_len: usize,
+    stage1_config: &SparseChallengeConfig,
+    ring_subfield_norm_bound: u32,
+    envelope: &CommitmentEnvelope,
+) -> Option<LevelParams> {
+    // The envelope-shaped params-only `LevelParams` is just plumbing for
+    // `recursive_level_layout_from_params`, so it stays an inline expression
+    // with no named binding.
+    let layout = recursive_level_layout_from_params(
+        &LevelParams::params_only(
+            sis_family,
+            d,
+            log_basis,
+            envelope.max_n_a,
+            1,
+            1,
+            stage1_config.clone(),
+        ),
+        current_w_len,
+        root_decomp,
+    )
+    .ok()?;
+    sis_derived_recursive_params_for_layout(
+        sis_family,
+        d,
+        log_basis,
+        stage1_config,
+        ring_subfield_norm_bound,
+        envelope,
+        &layout,
+    )
 }
 
 /// Derive SIS-secure recursive params for a concrete recursive layout.

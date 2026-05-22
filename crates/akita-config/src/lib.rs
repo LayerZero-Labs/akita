@@ -48,8 +48,7 @@ use std::marker::PhantomData;
 pub mod proof_optimized;
 mod transcript_binding;
 pub use proof_optimized::{
-    current_level_layout_with_log_basis, direct_level_params_with_log_basis,
-    fallback_batched_root_split, matrix_envelope_for_levels, setup_level_params_from_plan,
+    matrix_envelope_for_levels, setup_level_params_from_plan,
     setup_level_params_from_runtime_schedule,
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
