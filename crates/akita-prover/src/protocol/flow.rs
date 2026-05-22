@@ -627,9 +627,12 @@ where
             &mut hiding_witness,
             &mut rng,
         )?;
-        // Root fold scalar: added to the root level's final next-witness
-        // evaluation claim (`w_eval`) after Stage 2.
-        push_random_ext_scalar_slots::<F, L>(&mut hiding_witness, &mut rng);
+        if fold_steps.len() > 1 {
+            // Root fold scalar: added to the root level's final next-witness
+            // evaluation claim (`w_eval`) after Stage 2. Terminal roots have
+            // no next witness and therefore consume no next-w eval mask.
+            push_random_ext_scalar_slots::<F, L>(&mut hiding_witness, &mut rng);
+        }
         let mut current_opening_vars =
             sumcheck_rounds(root_step.params.ring_dimension, root_step.next_w_len);
         for (step_idx, step) in fold_steps.iter().enumerate().skip(1) {
@@ -654,9 +657,11 @@ where
                 &mut hiding_witness,
                 &mut rng,
             )?;
-            // Recursive fold scalar: added to that level's final next-witness
-            // evaluation claim (`w_eval`) after Stage 2.
-            push_random_ext_scalar_slots::<F, L>(&mut hiding_witness, &mut rng);
+            if include_stage1 {
+                // Recursive fold scalar: added to non-terminal levels' final
+                // next-witness evaluation claim (`w_eval`) after Stage 2.
+                push_random_ext_scalar_slots::<F, L>(&mut hiding_witness, &mut rng);
+            }
             current_opening_vars = sumcheck_rounds(step.params.ring_dimension, step.next_w_len);
         }
     }
@@ -1478,7 +1483,7 @@ where
         let mut stage2_prover = stage2_prover_result?;
         let stage2_public_input = batching_coeff * stage1_proof.s_claim + relation_claim_public;
         let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
-            .prove_zk_with_public_claim::<F, T, _>(
+            .prove_zk::<F, T, _>(
                 stage2_public_input,
                 transcript,
                 |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
@@ -1686,7 +1691,7 @@ where
             relation_claim,
         )?;
         let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
-            .prove_zk_with_public_claim::<F, T, _>(
+            .prove_zk::<F, T, _>(
                 relation_claim_public,
                 transcript,
                 |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
@@ -1825,10 +1830,11 @@ where
             "extension-opening reduction input claim mismatch".to_string(),
         ));
     }
-    #[cfg(feature = "zk")]
-    let mut prover = prover.with_input_claim(input_claim);
-    #[cfg(not(feature = "zk"))]
     let mut prover = prover;
+    #[cfg(feature = "zk")]
+    let reduction_sumcheck =
+        ExtensionOpeningReductionSumcheck::new(input_claim, prover.num_rounds());
+    #[cfg(not(feature = "zk"))]
     let reduction_sumcheck =
         ExtensionOpeningReductionSumcheck::new(prover.input_claim(), prover.num_rounds());
     #[cfg(not(feature = "zk"))]
@@ -2751,9 +2757,6 @@ where
         let _span = tracing::info_span!("root_extension_reduction_prover_new").entered();
         BatchedExtensionOpeningReductionProver::new(terms, true_input_claim)?
     };
-    #[cfg(feature = "zk")]
-    let mut prover = prover.with_input_claim(input_claim);
-    #[cfg(not(feature = "zk"))]
     let mut prover = prover;
     #[cfg(not(feature = "zk"))]
     let (sumcheck, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
@@ -2761,22 +2764,11 @@ where
     })?;
     #[cfg(feature = "zk")]
     let (sumcheck_proof_masked, rho) = prover.prove_zk::<F, T, _>(
+        input_claim,
         transcript,
         |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         sumcheck_pads,
     )?;
-    #[cfg(feature = "zk")]
-    let final_claim = prover
-        .final_terms()
-        .ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "root extension-opening reduction has not reached a final point".to_string(),
-            )
-        })?
-        .into_iter()
-        .fold(C::zero(), |acc, (coeff, witness, factor)| {
-            acc + coeff * witness * factor
-        });
     let final_terms = prover.final_terms().ok_or_else(|| {
         AkitaError::InvalidInput(
             "root extension-opening reduction has not reached a final point".to_string(),
@@ -2787,6 +2779,9 @@ where
         .fold(C::zero(), |acc, (coeff, witness, factor)| {
             acc + coeff * witness * factor
         });
+    #[cfg(feature = "zk")]
+    let final_claim = expected_final;
+    #[cfg(not(feature = "zk"))]
     if final_claim != expected_final {
         return Err(AkitaError::InvalidInput(
             "root extension-opening reduction final oracle mismatch".to_string(),
@@ -3955,7 +3950,7 @@ where
         let mut stage2_prover = stage2_prover_result?;
         let stage2_public_input = batching_coeff * stage1_proof.s_claim + relation_claim_public;
         let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
-            .prove_zk_with_public_claim::<F, T, _>(
+            .prove_zk::<F, T, _>(
                 stage2_public_input,
                 transcript,
                 |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
@@ -4148,7 +4143,7 @@ where
             relation_claim,
         )?;
         let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
-            .prove_zk_with_public_claim::<F, T, _>(
+            .prove_zk::<F, T, _>(
                 relation_claim_public,
                 transcript,
                 |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),

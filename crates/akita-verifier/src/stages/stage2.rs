@@ -458,12 +458,12 @@ where
         relations: &mut ZkRelationAccumulator<E>,
     ) -> Result<ZkR1csLinearCombination<E>, AkitaError> {
         let true_s_claim_lc = ZkRelationAccumulator::unmask_lc(self.s_claim, &self.s_claim_mask);
-        let true_s_claim = relations.new_auxilary(
+        let true_s_claim = relations.new_auxiliary(
             "stage-1 true s_claim handoff",
             true_s_claim_lc,
             ZkR1csLinearCombination::one(),
         )?;
-        let scaled_s_claim_mask = relations.new_auxilary(
+        let scaled_s_claim_mask = relations.new_auxiliary(
             "stage-2 input mask scaling",
             self.s_claim_mask.clone(),
             ZkR1csLinearCombination::constant(self.batching_coeff),

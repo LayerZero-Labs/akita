@@ -1835,10 +1835,7 @@ where
             )?;
             #[cfg(feature = "zk")]
             {
-                let expected_len = zk_hiding_cursor
-                    .checked_add(<C as ExtField<F>>::EXT_DEGREE)
-                    .ok_or(AkitaError::InvalidProof)?;
-                if expected_len != proof.zk_hiding.hiding_witness.len() {
+                if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
                     return Err(AkitaError::InvalidProof);
                 }
                 let lifted = lift_hiding_witness::<F, C>(&proof.zk_hiding.hiding_witness);
@@ -1925,10 +1922,7 @@ where
             )?;
             #[cfg(feature = "zk")]
             {
-                let expected_len = zk_hiding_cursor
-                    .checked_add(<C as ExtField<F>>::EXT_DEGREE)
-                    .ok_or(AkitaError::InvalidProof)?;
-                if expected_len != proof.zk_hiding.hiding_witness.len() {
+                if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
                     return Err(AkitaError::InvalidProof);
                 }
                 let lifted = lift_hiding_witness::<F, C>(&proof.zk_hiding.hiding_witness);

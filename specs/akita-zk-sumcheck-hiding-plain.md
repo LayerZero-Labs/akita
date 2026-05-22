@@ -111,16 +111,18 @@ if the schedule has at least one fold:
         EqFactoredUniPoly::coeffs_except_linear_term
       stage child-claim masks
     Stage-2 full round pads, 4 coefficients per round
-  root_next_w_eval_mask:
-    1 field element
+  if the root fold is not terminal:
+    root_next_w_eval_mask:
+      1 field element
 
   for each recursive fold level after the root:
     recursive_y_ring_mask:
       D field elements
     recursive_level_pads:
       same Stage-1 / child-claim / Stage-2 layout as above
-    recursive_next_w_eval_mask:
-      1 field element
+    if the recursive fold is not terminal:
+      recursive_next_w_eval_mask:
+        1 field element
 ```
 
 The round count for a level is `sumcheck_rounds(ring_dimension, next_w_len)`.
@@ -128,22 +130,22 @@ Stage 1 uses `stage1_tree_stage_shapes(rounds, b)`, where
 `b = 1 << params.log_basis`. Stage 2 has degree bound `3`, so each full-round pad
 contains four coefficients.
 
-The prover currently allocates a scalar `next_w_eval` mask for every fold level,
-including the last fold. The verifier consumes that scalar only when the level's
-output evaluation is used as the opening claim for another recursive level. At a
-terminal direct-witness level, the stage-2 final oracle uses the direct witness
-payload instead, so the terminal `next_w_eval_masked` field and its final mask
-slot are not referenced by the current R1CS inventory.
+The prover allocates a scalar `next_w_eval` mask only for non-terminal fold
+levels, where the level's output evaluation is used as the opening claim for a
+successor recursive level. At a terminal direct-witness level, the stage-2 final
+oracle uses the direct witness payload instead, so the terminal
+`next_w_eval_masked` field is not referenced by the current R1CS inventory and
+no terminal mask slot is allocated.
 
 The verifier consumes the same cursor order for every slot it references, but it
 finishes folded verification by requiring:
 
 ```text
-hiding_witness.len() = consumed_cursor + 1
+hiding_witness.len() = consumed_cursor
 ```
 
-The `+ 1` is the single terminal `next_w_eval` mask slot described above. Extra
-trailing revealed hiding-witness slots are rejected.
+No unreferenced terminal `next_w_eval` mask slot is permitted. Extra trailing
+revealed hiding-witness slots are rejected.
 
 ## Root Flow
 
@@ -176,11 +178,13 @@ The serialized masked `y_ring` values are also used to build the masked
 stage-2 wire relation claim, matching the prover's transcript-visible wire
 data. The prover still constructs the root quadratic equation, ring-switch
 witness, and true stage-2 round polynomials from the unmasked `y_ring` values;
-only the transcript-visible input claim is overridden to the masked wire claim.
+`prove_zk(public_input_claim, ...)` absorbs only the transcript-visible masked
+wire claim while retaining the true input claim for local round construction.
 
 ## Recursive Flow
 
-Every fold level serializes a masked next-witness evaluation in ZK builds:
+Every non-terminal fold level serializes a masked next-witness evaluation in ZK
+builds:
 
 ```text
 next_w_eval_masked = Eval(next_w, r_stage2) + eta_w
@@ -310,8 +314,9 @@ C_0_stage2_wire =
 ```
 
 The stage-2 prover keeps the true `s_claim` and true `relation_claim` for local
-round-polynomial construction. In ZK builds, `with_input_claim` changes only the
-transcript-visible input claim to the masked wire expression above.
+round-polynomial construction. In ZK builds, `prove_zk(public_input_claim, ...)`
+absorbs the masked wire expression above as the transcript-visible input claim
+without mutating the prover's true input claim.
 
 The verifier records deferred handoff relations that synthesize the true
 Stage-1 handoff and the initial Stage-2 input mask:
@@ -489,8 +494,8 @@ not absorbed before the masked messages they support are fixed.
 ### `akita-prover`
 
 - `build_zk_hiding_context` samples root y-ring masks, per-level stage-1 pads,
-  stage-1 child-claim masks, stage-2 pads, recursive y-ring masks, and per-level
-  `next_w_eval` masks in the cursor order described above.
+  stage-1 child-claim masks, stage-2 pads, recursive y-ring masks, and
+  non-terminal `next_w_eval` masks in the cursor order described above.
 - `commit_zk_hiding_witness` commits the padded hiding witness as `u_blind`
   using the original root fold parameters (`root_step.params`) adjusted to the
   hiding-witness length, then adds independent B-side blinding digits.
@@ -500,9 +505,9 @@ not absorbed before the masked messages they support are fixed.
   quadratic-equation and true stage-2 relation still use the unmasked `y_ring`.
 - Stage 1 calls `prove_zk` with precommitted eq-factored pads and child-claim
   masks, and stores the masked `s_claim`.
-- Stage 2 calls `prove_zk` with precommitted full-univariate pads, overrides the
-  transcript-visible input claim to the masked wire expression, and stores
-  `next_w_eval + eta_w` in ZK builds.
+- Stage 2 calls `prove_zk` with the masked wire expression as the
+  transcript-visible input claim plus precommitted full-univariate pads, and
+  stores `next_w_eval + eta_w` for non-terminal handoffs in ZK builds.
 
 ### `akita-verifier`
 
@@ -518,9 +523,8 @@ not absorbed before the masked messages they support are fixed.
 - Nonlinear final oracle checks are recorded as R1CS rows and checked by the
   plain verifier using revealed `hiding_witness` plus verifier-local
   auxiliaries.
-- The verifier requires the revealed `hiding_witness` length to equal the
-  consumed cursor plus the single terminal `next_w_eval` mask slot, so extra
-  trailing slots are rejected.
+- The verifier requires the revealed `hiding_witness` length to exactly equal the
+  consumed cursor, so extra trailing slots are rejected.
 
 ## Acceptance Criteria
 
@@ -539,8 +543,8 @@ not absorbed before the masked messages they support are fixed.
 - The ZK proof path does not carry redundant transparent sumcheck proofs.
 - The plain verifier checks the currently recorded R1CS inventory against the
   revealed `hiding_witness`.
-- The folded verifier rejects extra trailing `hiding_witness` slots beyond the
-  one terminal mask slot allocated by the prover layout.
+- The folded verifier rejects any extra trailing `hiding_witness` slots beyond
+  the consumed cursor.
 - The only intentionally unproven relation classes in this branch are the
   `u_blind` commitment-opening relation and the terminal direct-witness binding
   for `next_w_eval_masked`.
@@ -555,4 +559,3 @@ not absorbed before the masked messages they support are fixed.
    verification over the same relation inventory.
 3. Remove `hiding_witness` and Ajtai blinding material from the serialized proof
    once those relations are proven.
-4. Avoid allocating or serializing unused terminal `next_w_eval` masks.

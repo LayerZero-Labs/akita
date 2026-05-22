@@ -84,7 +84,7 @@ fn zk_child_claim_product<E: FieldCore>(
         return Ok(ZkR1csLinearCombination::one());
     };
     for next in child_claim_lcs {
-        acc = relations.new_auxilary("stage-1 child claim product", acc, next)?;
+        acc = relations.new_auxiliary("stage-1 child claim product", acc, next)?;
     }
     Ok(acc)
 }
@@ -101,7 +101,7 @@ fn zk_record_polynomial_eval<E: FieldCore>(
     };
     let mut acc = ZkR1csLinearCombination::constant(highest_coeff);
     for &coeff in remaining_coeffs.iter().rev() {
-        let product = relations.new_auxilary(description, acc, x_lc.clone())?;
+        let product = relations.new_auxiliary(description, acc, x_lc.clone())?;
         let mut next = ZkR1csLinearCombination::constant(coeff);
         next.add_scaled(E::one(), &product);
         acc = next;

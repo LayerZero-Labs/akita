@@ -427,7 +427,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
     /// # Errors
     ///
     /// Returns an error if auxiliary cursor allocation overflows.
-    pub fn new_auxilary(
+    pub fn new_auxiliary(
         &mut self,
         description: &'static str,
         a: ZkR1csLinearCombination<E>,
@@ -616,7 +616,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         {
             public_transition += transition_coeff * public_coeff;
         }
-        let next_mask = self.new_auxilary(
+        let next_mask = self.new_auxiliary(
             "masked eq-factored sumcheck next mask",
             next_mask_transition.clone(),
             ZkR1csLinearCombination::one(),

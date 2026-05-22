@@ -286,8 +286,8 @@ pub trait ZkSumcheckInstanceProverExt<E>: SumcheckInstanceProver<E>
 where
     E: FieldCore,
 {
-    /// Prove with precommitted pad polynomials from the plain-opening hiding
-    /// witness.
+    /// Prove with a transcript-visible masked input claim while retaining the
+    /// instance's private true input claim for round-polynomial construction.
     ///
     /// # Errors
     ///
@@ -296,35 +296,6 @@ where
     #[tracing::instrument(skip_all, name = "prove_zk_sumcheck")]
     #[inline(never)]
     fn prove_zk<F, T, S>(
-        &mut self,
-        transcript: &mut T,
-        sample_challenge: S,
-        pre_sampled_pads: Vec<FullUniPoly<E>>,
-    ) -> Result<MaskedProveOutput<E>, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        T: Transcript<F>,
-        E: AkitaSerialize,
-        S: FnMut(&mut T) -> E,
-    {
-        self.prove_zk_with_public_claim::<F, T, S>(
-            self.input_claim(),
-            transcript,
-            sample_challenge,
-            pre_sampled_pads,
-        )
-    }
-
-    /// Prove with a transcript-visible masked input claim while retaining the
-    /// instance's private true input claim for round-polynomial construction.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if pad shape is invalid or a round exceeds the degree
-    /// bound.
-    #[tracing::instrument(skip_all, name = "prove_zk_sumcheck_public_claim")]
-    #[inline(never)]
-    fn prove_zk_with_public_claim<F, T, S>(
         &mut self,
         public_input_claim: E,
         transcript: &mut T,

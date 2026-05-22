@@ -755,16 +755,6 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
         })
     }
 
-    /// Override the transcript-visible input claim.
-    ///
-    /// This is used by ZK masked openings where the committed table sum remains
-    /// the true claim, but the transcript absorbs the masked claim.
-    #[must_use]
-    pub fn with_input_claim(mut self, input_claim: E) -> Self {
-        self.input_claim = input_claim;
-        self
-    }
-
     /// Return the final folded witness and factor evaluations after all
     /// challenges have been ingested.
     pub fn final_witness_and_factor_evals(&self) -> Option<(E, E)> {
@@ -1819,16 +1809,6 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionProver<E> {
         })
     }
 
-    /// Override the transcript-visible input claim.
-    ///
-    /// This is used by ZK masked openings where the term tables remain true,
-    /// but the transcript absorbs the masked claim.
-    #[must_use]
-    pub fn with_input_claim(mut self, input_claim: E) -> Self {
-        self.input_claim = input_claim;
-        self
-    }
-
     /// Compute the input sum represented by a set of batched terms.
     ///
     /// This is useful for tests and standalone callers that do not already
@@ -2089,11 +2069,6 @@ impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
                 actual: prover.num_rounds(),
             });
         }
-        if prover.input_claim() != self.input_claim {
-            return Err(AkitaError::InvalidInput(
-                "extension-opening reduction prover input claim mismatch".to_string(),
-            ));
-        }
         Ok(())
     }
 }
@@ -2128,6 +2103,7 @@ impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
         self.check_prover_shape(prover)?;
         let (proof, challenges) = ZkSumcheckInstanceProverExt::prove_zk::<F, T, S>(
             prover,
+            self.input_claim,
             transcript,
             sample_challenge,
             pre_sampled_pads,
