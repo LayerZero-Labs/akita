@@ -255,6 +255,10 @@ impl<const P: u32> PackedFp32Avx512<P> {
     }
 
     /// Two-fold Solinas reduction of 8+8 `u64` products → 16 `u32` lanes.
+    ///
+    /// The `Self::BITS == 31` branches mirror the immediate-shift
+    /// specialisation PR #99 added in the base-field `Mul` impl, so
+    /// extension-field operations on Mersenne31 get the same per-shift win.
     #[inline(always)]
     unsafe fn solinas_reduce(prod_evn: __m512i, prod_odd: __m512i) -> __m512i {
         let mask = _mm512_set1_epi64(Self::MASK_U64 as i64);
@@ -262,20 +266,36 @@ impl<const P: u32> PackedFp32Avx512<P> {
 
         // Fold 1
         let evn_lo = _mm512_and_si512(prod_evn, mask);
-        let evn_hi = _mm512_srl_epi64(prod_evn, shift);
+        let evn_hi = if Self::BITS == 31 {
+            _mm512_srli_epi64::<31>(prod_evn)
+        } else {
+            _mm512_srl_epi64(prod_evn, shift)
+        };
         let evn_f1 = _mm512_add_epi64(evn_lo, Self::mul_c_u64(evn_hi));
 
         let odd_lo = _mm512_and_si512(prod_odd, mask);
-        let odd_hi = _mm512_srl_epi64(prod_odd, shift);
+        let odd_hi = if Self::BITS == 31 {
+            _mm512_srli_epi64::<31>(prod_odd)
+        } else {
+            _mm512_srl_epi64(prod_odd, shift)
+        };
         let odd_f1 = _mm512_add_epi64(odd_lo, Self::mul_c_u64(odd_hi));
 
         // Fold 2
         let evn_f1_lo = _mm512_and_si512(evn_f1, mask);
-        let evn_f1_hi = _mm512_srl_epi64(evn_f1, shift);
+        let evn_f1_hi = if Self::BITS == 31 {
+            _mm512_srli_epi64::<31>(evn_f1)
+        } else {
+            _mm512_srl_epi64(evn_f1, shift)
+        };
         let evn_f2 = _mm512_add_epi64(evn_f1_lo, Self::mul_c_u64(evn_f1_hi));
 
         let odd_f1_lo = _mm512_and_si512(odd_f1, mask);
-        let odd_f1_hi = _mm512_srl_epi64(odd_f1, shift);
+        let odd_f1_hi = if Self::BITS == 31 {
+            _mm512_srli_epi64::<31>(odd_f1)
+        } else {
+            _mm512_srl_epi64(odd_f1, shift)
+        };
         let odd_f2 = _mm512_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
 
         Self::pack_and_canonicalize(evn_f2, odd_f2)
@@ -294,14 +314,22 @@ impl<const P: u32> PackedFp32Avx512<P> {
 
         // Fold 1 with carry correction
         let evn_lo = _mm512_and_si512(prod_evn, mask);
-        let evn_hi = _mm512_srl_epi64(prod_evn, shift);
+        let evn_hi = if Self::BITS == 31 {
+            _mm512_srli_epi64::<31>(prod_evn)
+        } else {
+            _mm512_srl_epi64(prod_evn, shift)
+        };
         let evn_f1 = _mm512_add_epi64(
             _mm512_add_epi64(evn_lo, Self::mul_c_u64(evn_hi)),
             Self::carry_correction(carry_evn),
         );
 
         let odd_lo = _mm512_and_si512(prod_odd, mask);
-        let odd_hi = _mm512_srl_epi64(prod_odd, shift);
+        let odd_hi = if Self::BITS == 31 {
+            _mm512_srli_epi64::<31>(prod_odd)
+        } else {
+            _mm512_srl_epi64(prod_odd, shift)
+        };
         let odd_f1 = _mm512_add_epi64(
             _mm512_add_epi64(odd_lo, Self::mul_c_u64(odd_hi)),
             Self::carry_correction(carry_odd),
@@ -309,11 +337,19 @@ impl<const P: u32> PackedFp32Avx512<P> {
 
         // Fold 2
         let evn_f1_lo = _mm512_and_si512(evn_f1, mask);
-        let evn_f1_hi = _mm512_srl_epi64(evn_f1, shift);
+        let evn_f1_hi = if Self::BITS == 31 {
+            _mm512_srli_epi64::<31>(evn_f1)
+        } else {
+            _mm512_srl_epi64(evn_f1, shift)
+        };
         let evn_f2 = _mm512_add_epi64(evn_f1_lo, Self::mul_c_u64(evn_f1_hi));
 
         let odd_f1_lo = _mm512_and_si512(odd_f1, mask);
-        let odd_f1_hi = _mm512_srl_epi64(odd_f1, shift);
+        let odd_f1_hi = if Self::BITS == 31 {
+            _mm512_srli_epi64::<31>(odd_f1)
+        } else {
+            _mm512_srl_epi64(odd_f1, shift)
+        };
         let odd_f2 = _mm512_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
 
         Self::pack_and_canonicalize(evn_f2, odd_f2)
