@@ -282,7 +282,7 @@ mod tests {
         let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             F,
             D,
-        >>::commit(&[poly.clone()], &setup)
+        >>::commit(std::slice::from_ref(&poly), &setup)
         .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
@@ -412,7 +412,7 @@ mod tests {
         let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             F,
             D,
-        >>::commit(&[poly.clone()], &setup)
+        >>::commit(std::slice::from_ref(&poly), &setup)
         .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
@@ -569,7 +569,7 @@ mod tests {
         let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             F,
             D,
-        >>::commit(&[poly.clone()], &setup)
+        >>::commit(std::slice::from_ref(&poly), &setup)
         .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
@@ -634,7 +634,7 @@ mod tests {
 
         let m_evals_x = compute_m_evals_x::<F, F, D>(
             &setup.expanded,
-            &[ring_opening_point.clone()],
+            std::slice::from_ref(&ring_opening_point),
             std::slice::from_ref(&ring_multiplier_point),
             &[0usize],
             &quad_eq.challenges,

@@ -107,7 +107,7 @@ impl<const D: usize, const K: usize> SubfieldParams<D, K> {
                 "ring dimension D={D} must be a power of two",
             )));
         }
-        if D % 2 != 0 {
+        if !D.is_multiple_of(2) {
             return Err(AkitaError::InvalidInput(format!(
                 "ring dimension D={D} must be even",
             )));
@@ -117,7 +117,7 @@ impl<const D: usize, const K: usize> SubfieldParams<D, K> {
                 "extension degree K must be non-zero".to_string(),
             ));
         }
-        if K > D / 2 || (D / 2) % K != 0 {
+        if K > D / 2 || !(D / 2).is_multiple_of(K) {
             return Err(AkitaError::InvalidInput(format!(
                 "extension degree K={K} must divide D/2 for D={D}",
             )));
