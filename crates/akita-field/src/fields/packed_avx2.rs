@@ -91,6 +91,38 @@ impl<const P: u32> PackedFp32Avx2<P> {
     unsafe fn from_vec(v: __m256i) -> Self {
         unsafe { transmute(v) }
     }
+
+    #[inline(always)]
+    unsafe fn mul_c_u64(x: __m256i) -> __m256i {
+        if Self::C == 1 {
+            x
+        } else {
+            let c_vec = _mm256_set1_epi64x(Self::C as i64);
+            _mm256_mul_epu32(x, c_vec)
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn mul_mersenne31_vec(a: __m256i, b: __m256i) -> __m256i {
+        unsafe {
+            let lhs_odd_dbl = _mm256_srli_epi64::<31>(a);
+            let rhs_odd = movehdup_epi32(b);
+
+            let prod_odd_dbl = _mm256_mul_epu32(rhs_odd, lhs_odd_dbl);
+            let prod_evn = _mm256_mul_epu32(b, a);
+
+            let prod_odd_lo_dirty = _mm256_slli_epi64::<31>(prod_odd_dbl);
+            let prod_evn_hi = _mm256_srli_epi64::<31>(prod_evn);
+
+            let prod_lo_dirty = _mm256_blend_epi32::<0b1010_1010>(prod_evn, prod_odd_lo_dirty);
+            let prod_hi = _mm256_blend_epi32::<0b1010_1010>(prod_evn_hi, prod_odd_dbl);
+
+            let p = _mm256_set1_epi32(P as i32);
+            let prod_lo = _mm256_and_si256(prod_lo_dirty, p);
+            let folded = _mm256_add_epi32(prod_lo, prod_hi);
+            _mm256_min_epu32(folded, _mm256_sub_epi32(folded, p))
+        }
+    }
 }
 
 impl<const P: u32> Default for PackedFp32Avx2<P> {
@@ -182,32 +214,51 @@ impl<const P: u32> Mul for PackedFp32Avx2<P> {
             let a = self.to_vec();
             let b = rhs.to_vec();
 
+            if Self::BITS == 31 && Self::C == 1 {
+                return Self::from_vec(Self::mul_mersenne31_vec(a, b));
+            }
+
             let prod_evn = _mm256_mul_epu32(a, b);
             let a_odd = movehdup_epi32(a);
             let b_odd = movehdup_epi32(b);
             let prod_odd = _mm256_mul_epu32(a_odd, b_odd);
 
             let mask = _mm256_set1_epi64x(Self::MASK_U64 as i64);
-            let c_vec = _mm256_set1_epi64x(Self::C as i64);
             let shift = _mm_set_epi64x(0, Self::BITS as i64);
 
             // Fold 1
             let evn_lo = _mm256_and_si256(prod_evn, mask);
-            let evn_hi = _mm256_srl_epi64(prod_evn, shift);
-            let evn_f1 = _mm256_add_epi64(evn_lo, _mm256_mul_epu32(evn_hi, c_vec));
+            let evn_hi = if Self::BITS == 31 {
+                _mm256_srli_epi64::<31>(prod_evn)
+            } else {
+                _mm256_srl_epi64(prod_evn, shift)
+            };
+            let evn_f1 = _mm256_add_epi64(evn_lo, Self::mul_c_u64(evn_hi));
 
             let odd_lo = _mm256_and_si256(prod_odd, mask);
-            let odd_hi = _mm256_srl_epi64(prod_odd, shift);
-            let odd_f1 = _mm256_add_epi64(odd_lo, _mm256_mul_epu32(odd_hi, c_vec));
+            let odd_hi = if Self::BITS == 31 {
+                _mm256_srli_epi64::<31>(prod_odd)
+            } else {
+                _mm256_srl_epi64(prod_odd, shift)
+            };
+            let odd_f1 = _mm256_add_epi64(odd_lo, Self::mul_c_u64(odd_hi));
 
             // Fold 2
             let evn_f1_lo = _mm256_and_si256(evn_f1, mask);
-            let evn_f1_hi = _mm256_srl_epi64(evn_f1, shift);
-            let evn_f2 = _mm256_add_epi64(evn_f1_lo, _mm256_mul_epu32(evn_f1_hi, c_vec));
+            let evn_f1_hi = if Self::BITS == 31 {
+                _mm256_srli_epi64::<31>(evn_f1)
+            } else {
+                _mm256_srl_epi64(evn_f1, shift)
+            };
+            let evn_f2 = _mm256_add_epi64(evn_f1_lo, Self::mul_c_u64(evn_f1_hi));
 
             let odd_f1_lo = _mm256_and_si256(odd_f1, mask);
-            let odd_f1_hi = _mm256_srl_epi64(odd_f1, shift);
-            let odd_f2 = _mm256_add_epi64(odd_f1_lo, _mm256_mul_epu32(odd_f1_hi, c_vec));
+            let odd_f1_hi = if Self::BITS == 31 {
+                _mm256_srli_epi64::<31>(odd_f1)
+            } else {
+                _mm256_srl_epi64(odd_f1, shift)
+            };
+            let odd_f2 = _mm256_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
 
             // Recombine even/odd: shift odd results into high 32-bit positions, blend.
             let odd_shifted = _mm256_slli_epi64::<32>(odd_f2);

@@ -704,7 +704,6 @@ macro_rules! impl_fp128_preset {
         }
     };
 }
-pub(crate) use impl_fp128_preset;
 
 macro_rules! impl_small_field_preset {
     ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $log_basis:expr, $weight:expr, $coeffs:expr, $table:expr) => {
