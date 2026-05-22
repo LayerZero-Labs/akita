@@ -522,8 +522,14 @@ mod tensor_fold {
                 field_bits,
             );
             root_step.delta_fold_per_poly = root_step.params.num_digits_fold;
-            root_step.w_ring =
-                akita_types::w_ring_element_count_with_counts::<FF>(&root_step.params, 1, 1, 1, 1)?;
+            root_step.w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<FF>(
+                &root_step.params,
+                1,
+                1,
+                1,
+                1,
+                akita_types::MRowLayout::Terminal,
+            )?;
             root_step
                 .w_ring
                 .checked_mul(root_step.params.ring_dimension)
@@ -565,7 +571,7 @@ mod tensor_fold {
     /// fold and assert acceptance.
     #[test]
     fn onehot_tensor_fold_prove_verify() {
-        const NV: usize = 12;
+        const NV: usize = 15;
         init_rayon_pool();
         run_on_large_stack(|| {
             let layout = TensorOneHotCfg::commitment_layout(NV).expect("layout");
@@ -589,8 +595,7 @@ mod tensor_fold {
             let opening_groups = [&openings[..]];
             let hints = vec![hint];
 
-            let mut prover_transcript =
-                Blake2bTranscript::<F>::new(b"single_poly_e2e/tensor_onehot");
+            let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/tensor_onehot");
             let proof = <TensorOneHotScheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
                 prove_input(
@@ -604,14 +609,17 @@ mod tensor_fold {
             )
             .expect("prove");
 
-            let root = proof.root.as_fold().expect("tensor test must fold root");
+            let root = proof
+                .root
+                .as_terminal_root()
+                .expect("tensor test must use a terminal root fold");
             assert!(
-                !root.stage1.stages.is_empty(),
-                "tensor test must exercise the stage-1 fold"
+                !root.stage2_sumcheck.round_polys.is_empty(),
+                "tensor test must exercise the terminal root fold"
             );
 
             let mut verifier_transcript =
-                Blake2bTranscript::<F>::new(b"single_poly_e2e/tensor_onehot");
+                AkitaTranscript::<F>::new(b"single_poly_e2e/tensor_onehot");
             <TensorOneHotScheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
                 &proof,
                 &verifier_setup,
@@ -623,13 +631,12 @@ mod tensor_fold {
         });
     }
 
-    /// Negative-path companion: tampering with the prover's stage-1 fold
-    /// message after the proof has been built must cause the verifier to
-    /// reject. Guards against transcript-binding regressions on the new
-    /// tensor sampling labels.
+    /// Negative-path companion: tampering with the terminal root sumcheck after
+    /// the proof has been built must cause the verifier to reject. Guards the
+    /// tensor-shaped root fold replay path exercised by this test module.
     #[test]
     fn onehot_tensor_fold_rejects_tampered_proof() {
-        const NV: usize = 12;
+        const NV: usize = 15;
         init_rayon_pool();
         run_on_large_stack(|| {
             let layout = TensorOneHotCfg::commitment_layout(NV).expect("layout");
@@ -654,7 +661,7 @@ mod tensor_fold {
             let hints = vec![hint];
 
             let mut prover_transcript =
-                Blake2bTranscript::<F>::new(b"single_poly_e2e/tensor_onehot_tampered");
+                AkitaTranscript::<F>::new(b"single_poly_e2e/tensor_onehot_tampered");
             let mut proof = <TensorOneHotScheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
                 prove_input(
@@ -668,18 +675,16 @@ mod tensor_fold {
             )
             .expect("prove");
 
-            // Flip the stage-1 final `s_claim`. The verifier absorbs it
-            // before sampling the stage-2 batching coefficient, so any
-            // tamper perturbs the reconstructed stage-2 input claim and the
-            // sumcheck check must fail.
+            // Flip the first terminal-root sumcheck coefficient; verifier
+            // replay must reject the altered folded relation.
             let root = proof
                 .root
-                .as_fold_mut()
-                .expect("tensor test must fold root");
-            root.stage1.s_claim += F::one();
+                .as_terminal_root_mut()
+                .expect("tensor test must use a terminal root fold");
+            root.stage2_sumcheck.round_polys[0].coeffs_except_linear_term[0] += F::one();
 
             let mut verifier_transcript =
-                Blake2bTranscript::<F>::new(b"single_poly_e2e/tensor_onehot_tampered");
+                AkitaTranscript::<F>::new(b"single_poly_e2e/tensor_onehot_tampered");
             let result = <TensorOneHotScheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
                 &proof,
                 &verifier_setup,

@@ -15,7 +15,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::TensorChallenges;
+use akita_challenges::FoldingChallenges;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, LiftBase,
@@ -748,7 +748,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &TensorChallenges,
+    challenges: &FoldingChallenges,
     alpha: E,
     alpha_pows: &[E],
     lp: &LevelParams,

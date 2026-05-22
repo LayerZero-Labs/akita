@@ -7,7 +7,7 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{sample_tensor_challenges, TensorChallengeLabels, TensorChallenges};
+use akita_challenges::{sample_folding_challenges, ChallengeLabels, FoldingChallenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
@@ -25,8 +25,8 @@ use akita_types::{
 
 /// Stage-1 fold label bundle used by both the flat and tensor samplers.
 #[inline]
-pub(crate) fn fold_challenge_labels() -> TensorChallengeLabels<'static> {
-    TensorChallengeLabels {
+pub(crate) fn fold_challenge_labels() -> ChallengeLabels<'static> {
+    ChallengeLabels {
         flat: CHALLENGE_STAGE1_FOLD,
         tensor_left: CHALLENGE_TENSOR_FOLD_LEFT,
         tensor_left_digest: ABSORB_TENSOR_FOLD_LEFT,
@@ -49,7 +49,7 @@ pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     num_claims: usize,
     lp: &LevelParams,
     m_row_layout: MRowLayout,
-) -> Result<TensorChallenges, AkitaError>
+) -> Result<FoldingChallenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -61,7 +61,7 @@ where
     if matches!(m_row_layout, MRowLayout::Intermediate) {
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
     }
-    sample_tensor_challenges::<F, T, D>(
+    sample_folding_challenges::<F, T, D>(
         transcript,
         num_blocks,
         num_claims,

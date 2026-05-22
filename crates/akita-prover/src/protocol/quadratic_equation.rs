@@ -13,13 +13,13 @@ use crate::{AkitaPolyOps, DecomposeFoldWitness, RecursiveWitnessView};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{
-    sample_tensor_challenges, IntegerChallenge, TensorChallengeLabels, TensorChallenges,
+    sample_folding_challenges, ChallengeLabels, FoldingChallenges, IntegerChallenge,
 };
 
-/// Stage-1 fold label bundle for [`sample_tensor_challenges`].
+/// Stage-1 fold label bundle for [`sample_folding_challenges`].
 #[inline]
-fn fold_challenge_labels() -> TensorChallengeLabels<'static> {
-    TensorChallengeLabels {
+fn fold_challenge_labels() -> ChallengeLabels<'static> {
+    ChallengeLabels {
         flat: CHALLENGE_STAGE1_FOLD,
         tensor_left: CHALLENGE_TENSOR_FOLD_LEFT,
         tensor_left_digest: ABSORB_TENSOR_FOLD_LEFT,
@@ -160,7 +160,7 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     pub v: Vec<CyclotomicRing<F, D>>,
     /// Sampled stage-1 fold challenges; either flat (one per logical block)
     /// or tensor-shaped (left/right factors per claim).
-    pub challenges: TensorChallenges,
+    pub challenges: FoldingChallenges,
     /// Logical flat expansion of [`Self::challenges`] used by the prover
     /// fold/decompose kernels. Re-derived once from `challenges` at
     /// construction time.
@@ -475,7 +475,7 @@ where
             MRowLayout::Terminal => Vec::new(),
         };
 
-        let stage1_challenges = sample_tensor_challenges::<F, T, D>(
+        let stage1_challenges = sample_folding_challenges::<F, T, D>(
             transcript,
             lp.num_blocks,
             num_claims,
@@ -701,7 +701,7 @@ where
             MRowLayout::Terminal => Vec::new(),
         };
 
-        let stage1_challenges = sample_tensor_challenges::<F, T, D>(
+        let stage1_challenges = sample_folding_challenges::<F, T, D>(
             transcript,
             lp.num_blocks,
             num_claims,

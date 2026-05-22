@@ -3,7 +3,7 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_algebra::ring::scalar_powers;
-use akita_challenges::TensorChallenges;
+use akita_challenges::FoldingChallenges;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
 };
@@ -120,7 +120,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &TensorChallenges,
+    challenges: &FoldingChallenges,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -176,7 +176,7 @@ pub(crate) fn ring_switch_verifier_after_absorb<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &[SparseChallenge],
+    challenges: &FoldingChallenges,
     w_len: usize,
     transcript: &mut T,
     lp: &LevelParams,
@@ -282,7 +282,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "prepare_ring_switch_row_eval")]
 pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
-    challenges: &TensorChallenges,
+    challenges: &FoldingChallenges,
     alpha: E,
     lp: &LevelParams,
     tau1: &[E],
@@ -957,8 +957,8 @@ mod tests {
         }
     }
 
-    fn empty_flat_challenges() -> TensorChallenges {
-        TensorChallenges::Flat(Vec::new())
+    fn empty_flat_challenges() -> FoldingChallenges {
+        FoldingChallenges::Flat(Vec::new())
     }
 
     #[test]
