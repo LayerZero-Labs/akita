@@ -60,7 +60,7 @@ impl<E: FieldCore> ZkR1csLinearCombination<E> {
     pub fn add_scaled(&mut self, scale: E, source: &Self) {
         self.constant += scale * source.constant;
         self.terms
-            .extend(source.terms.iter().cloned().map(|term| ZkR1csTerm {
+            .extend(source.terms.iter().map(|term| ZkR1csTerm {
                 variable: term.variable,
                 coeff: scale * term.coeff,
             }));
