@@ -315,13 +315,16 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
             }
             return;
         }
-        for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] += self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] -= self.coeffs[i];
-            }
+        // Split the negacyclic shift into two branch-free loops so the compiler
+        // can auto-vectorise each contiguous run. Source indices [0..D-k) land
+        // at dst[i+k] with a `+=`; indices [D-k..D) wrap to dst[i+k-D] with a
+        // `-=` (negacyclic sign flip).
+        let split = D - k;
+        for i in 0..split {
+            dst.coeffs[i + k] += self.coeffs[i];
+        }
+        for i in split..D {
+            dst.coeffs[i + k - D] -= self.coeffs[i];
         }
     }
 
@@ -338,13 +341,12 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
             }
             return;
         }
-        for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] -= self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] += self.coeffs[i];
-            }
+        let split = D - k;
+        for i in 0..split {
+            dst.coeffs[i + k] -= self.coeffs[i];
+        }
+        for i in split..D {
+            dst.coeffs[i + k - D] += self.coeffs[i];
         }
     }
 
@@ -361,14 +363,12 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
             }
             return;
         }
-        for i in 0..D {
-            let target = i + k;
-            let product = self.coeffs[i] * scale;
-            if target < D {
-                dst.coeffs[target] += product;
-            } else {
-                dst.coeffs[target - D] -= product;
-            }
+        let split = D - k;
+        for i in 0..split {
+            dst.coeffs[i + k] += self.coeffs[i] * scale;
+        }
+        for i in split..D {
+            dst.coeffs[i + k - D] -= self.coeffs[i] * scale;
         }
     }
 
@@ -1242,13 +1242,13 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
             }
             return;
         }
-        for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] += self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] -= self.coeffs[i];
-            }
+        // See `CyclotomicRing::shift_accumulate_into` for the split-loop rationale.
+        let split = D - k;
+        for i in 0..split {
+            dst.coeffs[i + k] += self.coeffs[i];
+        }
+        for i in split..D {
+            dst.coeffs[i + k - D] -= self.coeffs[i];
         }
     }
 
@@ -1262,13 +1262,12 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
             }
             return;
         }
-        for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] -= self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] += self.coeffs[i];
-            }
+        let split = D - k;
+        for i in 0..split {
+            dst.coeffs[i + k] -= self.coeffs[i];
+        }
+        for i in split..D {
+            dst.coeffs[i + k - D] += self.coeffs[i];
         }
     }
 
