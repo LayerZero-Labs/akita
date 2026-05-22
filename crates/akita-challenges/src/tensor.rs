@@ -6,16 +6,16 @@
 //! the negacyclic tensor product `left[p] · right[q]`. This shrinks transcript
 //! challenge sampling from `O(num_blocks)` to `O(√num_blocks)` per claim
 //! while leaving the downstream fold semantics unchanged: callers see a
-//! uniform flat view through [`TensorChallenges::expand_integer`] /
-//! [`TensorChallenges::evals_at_pows`].
+//! uniform flat view through [`FoldingChallenges::expand_integer`] /
+//! [`FoldingChallenges::evals_at_pows`].
 //!
-//! Sampling labels are taken as a [`TensorChallengeLabels`] parameter so this
+//! Sampling labels are taken as a [`ChallengeLabels`] parameter so this
 //! module is not coupled to any specific protocol stage.
 //!
 //! The public types are split by protocol role:
-//! [`TensorChallengeShape`] is only the flat-vs-tensor selector,
-//! [`TensorChallenges`] is the sampled runtime container, and
-//! [`TensorChallengeSet`] is the factored tensor state whose left/right lengths
+//! [`ChallengeShape`] is only the flat-vs-tensor selector,
+//! [`FoldingChallenges`] is the sampled runtime container, and
+//! [`TensorChallenges`] is the factored tensor state whose left/right lengths
 //! are part of the invariant. Materialized logical challenges use
 //! [`IntegerChallenge`], because tensor products can widen coefficients beyond
 //! the sampled [`SparseChallenge`] range.
@@ -33,7 +33,7 @@ const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/tensor-left-digest/v1";
 /// choosing transcript labels, challenge counts, and L1 envelopes before a
 /// runtime container exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum TensorChallengeShape {
+pub enum ChallengeShape {
     /// Sample one independent challenge for every logical block.
     #[default]
     Flat,
@@ -42,11 +42,11 @@ pub enum TensorChallengeShape {
     Tensor,
 }
 
-impl TensorChallengeShape {
+impl ChallengeShape {
     /// Effective per-logical-block integer L1 mass for this shape.
     ///
     /// Flat folds inherit the configured per-challenge L1 norm directly;
-    /// tensor folds materialise `α_p · β_q` whose L1 envelope is bounded by
+    /// tensor folds materialize `α_p · β_q` whose L1 envelope is bounded by
     /// the product of the two factors' L1 norms.
     #[inline]
     #[must_use]
@@ -67,7 +67,7 @@ impl TensorChallengeShape {
 /// the factorization invariant explicit for callers that can evaluate weighted
 /// aggregates without expanding every logical block.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TensorChallengeSet {
+pub struct TensorChallenges {
     /// Left vector entries, grouped by claim.
     pub left: Vec<SparseChallenge>,
     /// Right vector entries, grouped by claim.
@@ -76,22 +76,22 @@ pub struct TensorChallengeSet {
     pub left_len: usize,
     /// Number of right entries per claim.
     pub right_len: usize,
-    /// Number of claims represented by this tensor challenge set.
+    /// Number of claims represented by this tensor challenge family.
     pub num_claims: usize,
 }
 
 /// Sampled folding challenges, either already flat or tensor-structured.
 ///
 /// This enum preserves the runtime representation chosen by
-/// [`TensorChallengeShape`]. Callers that need ordinary per-block polynomials
-/// can use [`TensorChallenges::expand_integer`]; callers that can exploit the
+/// [`ChallengeShape`]. Callers that need ordinary per-block polynomials
+/// can use [`FoldingChallenges::expand_integer`]; callers that can exploit the
 /// factorization can match the tensor variant directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TensorChallenges {
+pub enum FoldingChallenges {
     /// Flat challenge vector indexed as `claim * num_blocks + block`.
     Flat(Vec<SparseChallenge>),
     /// Tensor-structured vectors indexed as `(claim, p, q)`.
-    Tensor(TensorChallengeSet),
+    Tensor(TensorChallenges),
 }
 
 /// Transcript labels consumed by [`sample_tensor_challenges`].
@@ -100,7 +100,7 @@ pub enum TensorChallenges {
 /// accidental left/right swaps. Callers pick label byte strings appropriate
 /// for their protocol stage.
 #[derive(Debug, Clone, Copy)]
-pub struct TensorChallengeLabels<'a> {
+pub struct ChallengeLabels<'a> {
     /// Label used for the flat shape's single sampling step.
     pub flat: &'a [u8],
     /// Label used for sampling the tensor shape's left factor.
@@ -112,7 +112,7 @@ pub struct TensorChallengeLabels<'a> {
     pub tensor_right: &'a [u8],
 }
 
-impl TensorChallenges {
+impl FoldingChallenges {
     /// Number of logical flat challenges represented by this value.
     #[inline]
     #[must_use]
@@ -170,7 +170,7 @@ impl TensorChallenges {
     }
 }
 
-impl TensorChallengeSet {
+impl TensorChallenges {
     /// Materialize tensor products into logical flat order.
     ///
     /// This expansion is intentionally separate from the evaluation helpers
@@ -200,7 +200,7 @@ impl TensorChallengeSet {
 
     /// Evaluate reduced tensor products in logical flat order.
     ///
-    /// This mirrors [`TensorChallenges::evals_at_pows`] for the tensor payload:
+    /// This mirrors [`FoldingChallenges::evals_at_pows`] for the tensor payload:
     /// it produces one field element per logical block without returning the
     /// intermediate [`IntegerChallenge`] values.
     ///
@@ -273,14 +273,14 @@ impl TensorChallengeSet {
     /// Σ_{p,q} u[p] · v[q] · eval(reduce(L_p · R_q), α)
     /// ```
     ///
-    /// without materialising every reduced tensor product. The negacyclic
+    /// without materializing every reduced tensor product. The negacyclic
     /// correction term is explicit, so the result is exact at every
     /// ring-switch point where `α^D + 1` is non-zero.
     ///
     /// # Errors
     ///
     /// Returns an error if weights, powers, claim routing, or sparse challenge
-    /// representations are inconsistent with this tensor challenge set.
+    /// representations are inconsistent with these tensor challenges.
     pub fn eval_factored_aggregate_at_pows<F, E, const D: usize>(
         &self,
         claim_idx: usize,
@@ -589,22 +589,22 @@ pub fn sample_tensor_challenges<F, T, const D: usize>(
     num_blocks: usize,
     num_claims: usize,
     cfg: &SparseChallengeConfig,
-    shape: &TensorChallengeShape,
-    labels: TensorChallengeLabels<'_>,
-) -> Result<TensorChallenges, AkitaError>
+    shape: &ChallengeShape,
+    labels: ChallengeLabels<'_>,
+) -> Result<FoldingChallenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
     match shape {
-        TensorChallengeShape::Flat => {
+        ChallengeShape::Flat => {
             let total = num_blocks.checked_mul(num_claims).ok_or_else(|| {
                 AkitaError::InvalidSetup("tensor challenge count overflow".to_string())
             })?;
             sample_sparse_challenges::<F, T, D>(transcript, labels.flat, total, cfg)
-                .map(TensorChallenges::Flat)
+                .map(FoldingChallenges::Flat)
         }
-        TensorChallengeShape::Tensor => {
+        ChallengeShape::Tensor => {
             let (left_len, right_len) = tensor_split(num_blocks)?;
             let left_total = left_len.checked_mul(num_claims).ok_or_else(|| {
                 AkitaError::InvalidSetup("tensor-left challenge count overflow".to_string())
@@ -626,7 +626,7 @@ where
                 right_total,
                 cfg,
             )?;
-            Ok(TensorChallenges::Tensor(TensorChallengeSet {
+            Ok(FoldingChallenges::Tensor(TensorChallenges {
                 left,
                 right,
                 left_len,

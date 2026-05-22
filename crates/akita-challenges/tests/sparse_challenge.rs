@@ -3,9 +3,9 @@
 
 use akita_algebra::ring::CyclotomicRing;
 use akita_challenges::{
-    sample_sparse_challenges, sample_tensor_challenges, tensor_left_digest, IntegerChallenge,
-    SparseChallenge, SparseChallengeConfig, TensorChallengeLabels, TensorChallengeSet,
-    TensorChallengeShape, TensorChallenges,
+    sample_sparse_challenges, sample_tensor_challenges, tensor_left_digest, ChallengeLabels,
+    ChallengeShape, FoldingChallenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig,
+    TensorChallenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{
@@ -15,8 +15,8 @@ use akita_transcript::labels::{
 use akita_transcript::{Blake2bTranscript, Transcript};
 
 /// Stage-1 fold label bundle reused by every tensor-vs-flat sampling test.
-fn fold_challenge_labels() -> TensorChallengeLabels<'static> {
-    TensorChallengeLabels {
+fn fold_challenge_labels() -> ChallengeLabels<'static> {
+    ChallengeLabels {
         flat: CHALLENGE_STAGE1_FOLD,
         tensor_left: CHALLENGE_TENSOR_FOLD_LEFT,
         tensor_left_digest: ABSORB_TENSOR_FOLD_LEFT,
@@ -356,12 +356,12 @@ fn tensor_sampling_uses_two_vectors() {
         8,
         2,
         &cfg,
-        &TensorChallengeShape::Tensor,
+        &ChallengeShape::Tensor,
         fold_challenge_labels(),
     )
     .unwrap();
 
-    let TensorChallenges::Tensor(tensor) = challenges else {
+    let FoldingChallenges::Tensor(tensor) = challenges else {
         panic!("expected tensor challenges");
     };
     assert_eq!(tensor.left_len, 2);
@@ -386,11 +386,11 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
         8,
         2,
         &cfg,
-        &TensorChallengeShape::Tensor,
+        &ChallengeShape::Tensor,
         fold_challenge_labels(),
     )
     .unwrap();
-    let TensorChallenges::Tensor(sampled) = sampled else {
+    let FoldingChallenges::Tensor(sampled) = sampled else {
         panic!("expected tensor challenges");
     };
 
@@ -457,7 +457,7 @@ fn tensor_lazy_evals_match_expanded_products() {
         8,
         1,
         &cfg,
-        &TensorChallengeShape::Tensor,
+        &ChallengeShape::Tensor,
         fold_challenge_labels(),
     )
     .unwrap();
@@ -478,7 +478,7 @@ fn tensor_lazy_evals_match_expanded_products() {
 #[test]
 fn tensor_factored_aggregate_matches_expanded_products() {
     const TD: usize = 8;
-    let tensor = TensorChallengeSet {
+    let tensor = TensorChallenges {
         left: vec![
             SparseChallenge {
                 positions: vec![0, 6],
@@ -568,7 +568,7 @@ fn tensor_factored_aggregate_matches_expanded_products() {
 #[test]
 fn tensor_evals_at_pows_match_expanded_integer_reference() {
     const TD: usize = 8;
-    let tensor = TensorChallengeSet {
+    let tensor = TensorChallenges {
         left: vec![
             SparseChallenge {
                 positions: vec![0, 3],
@@ -612,7 +612,7 @@ fn tensor_product_only_formula_is_not_exact_for_generic_alpha() {
     // `alpha = 5, D = 2` the wrap term `α^D + 1` is non-zero, so the exact
     // aggregate must differ from the bare product of evaluations.
     const TD: usize = 2;
-    let tensor = TensorChallengeSet {
+    let tensor = TensorChallenges {
         left: vec![SparseChallenge {
             positions: vec![1],
             coeffs: vec![1],
@@ -655,7 +655,7 @@ fn tensor_exact_aggregate_collapses_to_product_at_negacyclic_root() {
     // When `alpha^D + 1 == 0` the negacyclic wrap term vanishes, so the
     // exact aggregate degenerates to the bare product of evaluations.
     const TD: usize = 2;
-    let tensor = TensorChallengeSet {
+    let tensor = TensorChallenges {
         left: vec![SparseChallenge {
             positions: vec![1],
             coeffs: vec![1],
