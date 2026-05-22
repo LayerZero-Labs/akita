@@ -232,46 +232,41 @@ where
 
     let mut row_masks = vec![ZkR1csLinearCombination::zero(); width];
     for (col_idx, col_mask) in column_masks.iter().enumerate() {
-        let mut basis = vec![E::zero(); width];
-        basis[col_idx] = E::one();
-        let row_coeffs = transpose_extension_columns::<F, E>(&basis)?;
-        for (row_mask, coeff) in row_masks.iter_mut().zip(row_coeffs) {
-            row_mask.add_scaled(coeff, col_mask);
+        let constant_coords = col_mask.constant.to_base_vec();
+        if constant_coords.len() != width {
+            return Err(AkitaError::InvalidSize {
+                expected: width,
+                actual: constant_coords.len(),
+            });
+        }
+        for (row_idx, &coord) in constant_coords.iter().enumerate() {
+            let mut row_basis = vec![F::zero(); width];
+            row_basis[col_idx] = coord;
+            row_masks[row_idx].constant += E::from_base_slice(&row_basis);
+        }
+
+        for term in &col_mask.terms {
+            let term_coords = term.coeff.to_base_vec();
+            if term_coords.len() != width {
+                return Err(AkitaError::InvalidSize {
+                    expected: width,
+                    actual: term_coords.len(),
+                });
+            }
+            for (row_idx, &coord) in term_coords.iter().enumerate() {
+                if coord == F::zero() {
+                    continue;
+                }
+                let mut row_basis = vec![F::zero(); width];
+                row_basis[col_idx] = coord;
+                row_masks[row_idx].terms.push(ZkR1csTerm {
+                    variable: term.variable,
+                    coeff: E::from_base_slice(&row_basis),
+                });
+            }
         }
     }
     Ok(row_masks)
-}
-
-fn transpose_extension_columns<F, E>(column_partials: &[E]) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let width = <E as ExtField<F>>::EXT_DEGREE;
-    if column_partials.len() != width {
-        return Err(AkitaError::InvalidSize {
-            expected: width,
-            actual: column_partials.len(),
-        });
-    }
-
-    let mut rows = vec![vec![F::zero(); width]; width];
-    for (column, partial) in column_partials.iter().enumerate() {
-        let coords = partial.to_base_vec();
-        if coords.len() != width {
-            return Err(AkitaError::InvalidSize {
-                expected: width,
-                actual: coords.len(),
-            });
-        }
-        for (row, coord) in coords.into_iter().enumerate() {
-            rows[row][column] = coord;
-        }
-    }
-    Ok(rows
-        .into_iter()
-        .map(|coords| E::from_base_slice(&coords))
-        .collect())
 }
 
 /// Return a masked linear value with base masks subtracted symbolically.
@@ -749,8 +744,11 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ZkR1csLinearCombination, ZkR1csVariable, ZkRelationAccumulator};
-    use akita_field::Prime128Offset275;
+    use super::{
+        lift_hiding_witness, zk_ext_mask_lc, zk_row_masks_from_column_masks,
+        ZkR1csLinearCombination, ZkR1csVariable, ZkR1csWitness, ZkRelationAccumulator,
+    };
+    use akita_field::{ExtField, Prime128Offset275, Prime32Offset99, RingSubfieldFp4};
 
     type F = Prime128Offset275;
 
@@ -767,5 +765,34 @@ mod tests {
         relations
             .verify_all(&[F::from_u64(3), F::from_u64(4)])
             .expect("valid hiding-backed R1CS row");
+    }
+
+    #[test]
+    fn row_masks_transpose_extension_limb_masks() {
+        type Base = Prime32Offset99;
+        type E = RingSubfieldFp4<Base>;
+
+        let mut cursor = 0usize;
+        let column_masks = (0..<E as ExtField<Base>>::EXT_DEGREE)
+            .map(|_| zk_ext_mask_lc::<Base, E>(&mut cursor))
+            .collect::<Vec<_>>();
+        let row_masks =
+            zk_row_masks_from_column_masks::<Base, E>(&column_masks).expect("valid row masks");
+
+        let base_witness = (1..=16).map(Base::from_u64).collect::<Vec<_>>();
+        let lifted_witness = lift_hiding_witness::<Base, E>(&base_witness);
+        let witness = ZkR1csWitness::new(&lifted_witness, 0);
+
+        for (row_idx, row_mask) in row_masks.iter().enumerate() {
+            let mut expected_coords = vec![Base::zero(); <E as ExtField<Base>>::EXT_DEGREE];
+            for (col_idx, expected_coord) in expected_coords.iter_mut().enumerate() {
+                *expected_coord =
+                    base_witness[col_idx * <E as ExtField<Base>>::EXT_DEGREE + row_idx];
+            }
+            assert_eq!(
+                row_mask.evaluate(&witness),
+                Some(E::from_base_slice(&expected_coords))
+            );
+        }
     }
 }

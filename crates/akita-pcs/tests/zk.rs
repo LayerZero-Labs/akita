@@ -4,7 +4,9 @@
 mod common;
 
 use akita_algebra::CyclotomicRing;
+use akita_config::proof_optimized::fp32;
 use akita_config::CommitmentConfig;
+use akita_field::{ExtField, LiftBase};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::linear::mat_vec_mul_ntt_single_i8;
 use akita_prover::{AkitaProverSetup, CommitmentProver, QuadraticEquation};
@@ -12,10 +14,10 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaSchedulePlan, AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary,
-    CommitmentEnvelope, DecompositionParams, MRowLayout, RingCommitment,
-    RingMultiplierOpeningPoint, ScheduleProvider, SisModulusFamily,
+    lagrange_weights, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup,
+    AppendToTranscript, ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, MRowLayout,
+    RingCommitment, RingMultiplierOpeningPoint, ScheduleProvider, SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -285,6 +287,123 @@ fn assert_folded_v_hiding<const D: usize>(
             "zk recursive v should re-randomize at recursive level {level_idx} for D={D}, nv={nv}"
         );
     }
+}
+
+fn random_fp32_extension_point(nv: usize, seed: u64) -> Vec<fp32::ExtensionField> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    (0..nv)
+        .map(|_| {
+            let limbs = (0..<fp32::ExtensionField as ExtField<fp32::Field>>::EXT_DEGREE)
+                .map(|_| fp32::Field::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect::<Vec<_>>();
+            <fp32::ExtensionField as ExtField<fp32::Field>>::from_base_slice(&limbs)
+        })
+        .collect()
+}
+
+fn dense_fp32_extension_opening(
+    evals: &[fp32::Field],
+    point: &[fp32::ExtensionField],
+) -> fp32::ExtensionField {
+    let weights = lagrange_weights(point).expect("valid extension opening point");
+    evals
+        .iter()
+        .zip(weights.iter())
+        .fold(fp32::ExtensionField::zero(), |acc, (&coeff, &weight)| {
+            acc + weight * fp32::ExtensionField::lift_base(coeff)
+        })
+}
+
+#[derive(Clone, Copy)]
+enum ExpectedRoot {
+    Terminal,
+    Fold,
+}
+
+fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
+    label: &'static [u8],
+    expected_root: ExpectedRoot,
+) {
+    type Cfg = fp32::D32Full;
+    const D: usize = Cfg::D;
+
+    init_rayon_pool();
+    run_on_large_stack(move || {
+        let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
+        let evals = (0..1usize << NV)
+            .map(|_| fp32::Field::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect::<Vec<_>>();
+        let poly =
+            DensePoly::<fp32::Field, D>::from_field_evals(NV, &evals).expect("dense fp32 poly");
+        let point = random_fp32_extension_point(NV, 0xcafe_babe);
+        let expected_opening = dense_fp32_extension_opening(&evals, &point);
+
+        let setup = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::setup_prover(NV, 1, 1);
+        let verifier_setup =
+            <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::setup_verifier(&setup);
+        let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::commit(
+            std::slice::from_ref(&poly),
+            &setup,
+        )
+        .expect("zk fp32 commit");
+
+        let mut prover_transcript = AkitaTranscript::<fp32::Field>::new(label);
+        let proof = <Scheme<D, Cfg> as CommitmentProver<fp32::Field, D>>::batched_prove(
+            &setup,
+            prove_input(&point, std::slice::from_ref(&poly), &commitment, hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("zk fp32 prove");
+
+        match (expected_root, &proof.root) {
+            (ExpectedRoot::Terminal, AkitaBatchedRootProof::Terminal(root)) => {
+                assert!(
+                    root.extension_opening_reduction.is_some(),
+                    "fixture must exercise root extension-opening reduction"
+                );
+            }
+            (ExpectedRoot::Fold, AkitaBatchedRootProof::Fold(root)) => {
+                assert!(
+                    root.extension_opening_reduction.is_some(),
+                    "fixture must exercise folded-root extension-opening reduction"
+                );
+            }
+            (ExpectedRoot::Terminal, other) => {
+                panic!("expected terminal root extension-reduction proof, got {other:?}");
+            }
+            (ExpectedRoot::Fold, other) => {
+                panic!("expected folded root extension-reduction proof, got {other:?}");
+            }
+        }
+
+        let openings = [expected_opening];
+        let mut verifier_transcript = AkitaTranscript::<fp32::Field>::new(label);
+        <Scheme<D, Cfg> as CommitmentVerifier<fp32::Field, D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&point, &openings, &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect("zk fp32 extension-opening reduction verify");
+    });
+}
+
+#[test]
+fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
+    run_zk_fp32_extension_opening_reduction::<13>(
+        b"zk/fp32-extension-root-terminal",
+        ExpectedRoot::Terminal,
+    );
+}
+
+#[test]
+fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
+    run_zk_fp32_extension_opening_reduction::<14>(
+        b"zk/fp32-extension-root-fold",
+        ExpectedRoot::Fold,
+    );
 }
 
 fn run_zk_dense_commitment_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])

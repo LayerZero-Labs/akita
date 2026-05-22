@@ -2905,11 +2905,12 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, const D: usize, CommitW>(
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
     w_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
+    #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<C>>,
     #[cfg(feature = "zk")] zk_hiding_proof: ZkHidingProof<F>,
-    #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
+    #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
@@ -2942,15 +2943,6 @@ where
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    #[cfg(feature = "zk")]
-    let y_rings_masked = {
-        let mut masked = y_rings.clone();
-        for y_ring in &mut masked {
-            let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
-            *y_ring += y_garbage;
-        }
-        masked
-    };
     let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_prover(
         ntt_shared,
         ring_opening_points,
@@ -3202,6 +3194,8 @@ where
             prepared_points,
             w_folded_by_poly,
             y_rings,
+            #[cfg(feature = "zk")]
+            y_rings_masked,
             row_coefficients,
             row_coefficient_rings,
             extension_opening_reduction,
