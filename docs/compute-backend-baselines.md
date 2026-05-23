@@ -104,7 +104,7 @@ samples.
 | `akita/onehot_opening/batched_32xnv29/prove` | `[6.9099 s 6.9328 s 6.9555 s]` |
 | `akita/onehot_opening/batched_32xnv29/verify` | `[49.073 ms 49.209 ms 49.350 ms]` |
 
-## Profile Example
+## Profile Example: One-Hot nv32 fp128
 
 Command:
 
@@ -122,6 +122,53 @@ AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=error AKITA_PROFILE_ANSI=0 AKITA_MODE=on
 | Fold bytes | `29,920 bytes` |
 | Tail bytes | `31,380 bytes` |
 | Levels | `7` |
+
+## Additional Profile Matrix
+
+Additional profiles were captured from commit `223d32fa` (`docs(compute):
+record cutover prep`), which is a docs-only descendant of the original baseline
+commit. Raw logs are under `/tmp/akita-metal-baselines/extra-profiles/`.
+
+Command template:
+
+```bash
+AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=error AKITA_PROFILE_ANSI=0 AKITA_MODE=<mode> AKITA_NUM_VARS=<nv> cargo run --release -p akita-pcs --example profile
+```
+
+### One-Hot nv32 Small-Field Modes
+
+| Mode | Setup | Commit | Prove | Verify | Proof total | Fold bytes | Tail bytes | Levels | Claim/challenge ext degree |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `onehot_fp16_d32` | `1.646845 s` | `0.897135 s` | `20.734671 s` | `0.191994 s` | `32,088 B` | `18,560 B` | `13,528 B` | `6` | `8/8` |
+| `onehot_fp16_d64` | `0.394603 s` | `0.822700 s` | `20.146319 s` | `0.080661 s` | `38,464 B` | `19,664 B` | `18,800 B` | `6` | `8/8` |
+| `onehot_fp32_d32` | `0.985262 s` | `0.547446 s` | `3.335166 s` | `0.051551 s` | `38,352 B` | `19,472 B` | `18,880 B` | `6` | `4/4` |
+| `onehot_fp32_d64` | `0.294832 s` | `0.569073 s` | `3.056431 s` | `0.037627 s` | `43,248 B` | `20,624 B` | `22,624 B` | `6` | `4/4` |
+| `onehot_fp64_d32` | `0.440407 s` | `0.409220 s` | `2.144096 s` | `0.037579 s` | `43,248 B` | `20,624 B` | `22,624 B` | `6` | `2/2` |
+| `onehot_fp64_d64` | `0.195142 s` | `0.385249 s` | `2.191310 s` | `0.040556 s` | `54,528 B` | `23,776 B` | `30,752 B` | `6` | `2/2` |
+
+### Dense nv26 Modes
+
+| Field / mode | Setup | Commit | Prove | Verify | Proof total | Fold bytes | Tail bytes | Levels | Claim/challenge ext degree |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fp128 `full_d32` | `0.753363 s` | `5.920908 s` | `4.434486 s` | `0.019827 s` | `61,300 B` | `29,920 B` | `31,380 B` | `7` | `1/1` |
+| fp128 `full_d64` | `0.110167 s` | `3.208263 s` | `3.498260 s` | `0.016489 s` | `71,688 B` | `32,048 B` | `39,640 B` | `6` | `1/1` |
+| fp16 `full_fp16_d32` | `0.347935 s` | `8.401944 s` | `2.443714 s` | `0.050395 s` | `30,656 B` | `14,848 B` | `15,808 B` | `5` | `8/8` |
+| fp16 `full_fp16_d64` | `0.141352 s` | `5.767364 s` | `2.062466 s` | `0.037458 s` | `36,816 B` | `15,536 B` | `21,280 B` | `5` | `8/8` |
+| fp32 `dense_fp32_d32` | `0.244446 s` | `6.687460 s` | `1.579170 s` | `0.021254 s` | `37,600 B` | `19,040 B` | `18,560 B` | `6` | `4/4` |
+| fp32 `dense_fp32_d64` | `0.111561 s` | `1.023532 s` | `1.044095 s` | `0.016854 s` | `41,008 B` | `19,360 B` | `21,648 B` | `5` | `4/4` |
+| fp64 `dense_fp64_d32` | `0.223420 s` | `2.221016 s` | failed | failed | failed | failed | failed | failed | not reached |
+| fp64 `dense_fp64_d64` | `0.204219 s` | `2.696530 s` | failed | failed | failed | failed | failed | failed | not reached |
+
+Both dense fp64 nv26 runs panic at
+`crates/akita-pcs/examples/profile/workload.rs:232:6` with
+`InvalidSize { expected: 16777216, actual: 33554432 }` after the commit phase.
+That should be investigated before dense fp64 nv26 is used as a regression
+gate. As a diagnostic fallback only, nv25 completed:
+
+| Fallback mode | Setup | Commit | Prove | Verify | Proof total | Fold bytes | Tail bytes | Levels | Claim/challenge ext degree |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `dense_fp64_d32`, nv25 | `0.164370 s` | `1.080666 s` | `1.003147 s` | `0.014192 s` | `40,928 B` | `19,328 B` | `21,600 B` | `5` | `2/2` |
+| `dense_fp64_d64`, nv25 | `0.102718 s` | `0.916756 s` | `0.986052 s` | `0.020455 s` | `51,232 B` | `22,336 B` | `28,896 B` | `5` | `2/2` |
 
 ## Notes For Comparison
 
