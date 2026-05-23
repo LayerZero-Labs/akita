@@ -121,6 +121,18 @@ runtime dispatch, no new public API).
 - **Runtime CPU feature dispatch.** A single binary still ships only
   one backend; switching requires recompile with appropriate
   `RUSTFLAGS`.
+- **`#[repr(align(N))]` on packed types.** The `PackedFp32Avx{2,512}`
+  structs currently get 4-byte alignment from `#[repr(transparent)]`
+  over `[Fp32<P>; N]`, so `Vec<PackedFp32Avx512>` allocations are not
+  guaranteed to be 64-byte aligned. Implicit `vmovdqu` loads pay a
+  ~3-5 cycle penalty when they straddle a 64-byte cache line, which
+  with default allocator alignment can happen on every load for
+  AVX-512 and on every other load for AVX2. Forcing alignment via
+  `#[repr(C, align(32 | 64))]` would close this gap. Tracked as a
+  separate follow-up PR (`taghi/perf/packed-align-simd`) so the win
+  can be benchmarked and attributed cleanly without coupling to the
+  extension-field overrides in this PR. (NEON's 16-byte elements are
+  already naturally aligned, so the follow-up is x86-only.)
 - **No CI changes.** Pre-existing `packed_avx{2,512}` base-field code
   also ships without a dedicated CI job; the new code follows the
   same convention.
