@@ -17,17 +17,35 @@ use std::array::from_fn;
 const D32_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 24;
 const D64_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 42;
 
-#[cfg(any(
-    target_arch = "aarch64",
-    all(target_arch = "x86_64", target_feature = "avx2")
-))]
-use akita_algebra::ntt::use_simd_ntt;
-
 #[cfg(target_arch = "aarch64")]
 use crate::kernels::neon_decompose_fold as decompose_fold_neon;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 use crate::kernels::avx_decompose_fold as decompose_fold_avx;
+
+/// Whether the SIMD `decompose-fold` dispatch is enabled.
+///
+/// On aarch64 this delegates to [`akita_algebra::ntt::neon::use_neon_ntt`]
+/// so a single `AKITA_SCALAR_NTT=1` env var disables both the NEON NTT and
+/// the NEON decompose-fold for A/B benchmarks. On x86 we read the same env
+/// var locally (the NEON module isn't compiled, so we can't share the
+/// helper across crates without re-introducing a hoist into `akita-algebra`).
+#[cfg(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "avx2")
+))]
+fn use_simd_decompose_fold() -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        akita_algebra::ntt::neon::use_neon_ntt()
+    }
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    {
+        use std::sync::OnceLock;
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED.get_or_init(|| std::env::var("AKITA_SCALAR_NTT").map_or(true, |v| v != "1"))
+    }
+}
 
 pub struct DecomposeParams {
     pub threshold: u128,
@@ -288,7 +306,7 @@ pub fn sparse_mul_acc<const D: usize>(
         all(target_arch = "x86_64", target_feature = "avx2")
     ))]
     {
-        if use_simd_ntt()
+        if use_simd_decompose_fold()
             && challenge
                 .coeffs
                 .iter()

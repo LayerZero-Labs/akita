@@ -135,7 +135,7 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
 ) {
     #[cfg(target_arch = "aarch64")]
-    if super::use_simd_ntt() {
+    if super::neon::use_neon_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
             unsafe {
                 super::neon::forward_ntt_i32(
@@ -194,7 +194,7 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
 ) {
     #[cfg(target_arch = "aarch64")]
-    if super::use_simd_ntt() {
+    if super::neon::use_neon_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
             unsafe {
                 super::neon::inverse_ntt_i32(
@@ -252,7 +252,7 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
 ) {
     #[cfg(target_arch = "aarch64")]
-    if super::use_simd_ntt() {
+    if super::neon::use_neon_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
             unsafe {
                 super::neon::forward_ntt_cyclic_i32(
@@ -306,7 +306,7 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
     tw: &NttTwiddles<W, D>,
 ) {
     #[cfg(target_arch = "aarch64")]
-    if super::use_simd_ntt() {
+    if super::neon::use_neon_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
             unsafe {
                 super::neon::inverse_ntt_cyclic_i32(

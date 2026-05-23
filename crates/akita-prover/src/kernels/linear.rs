@@ -1,9 +1,9 @@
 //! Linear algebra helpers for ring commitment.
 
+#[cfg(all(target_arch = "aarch64", feature = "parallel"))]
+use akita_algebra::ntt::neon;
 use akita_algebra::ntt::MontCoeff;
 use akita_algebra::ntt::PrimeWidth;
-#[cfg(all(target_arch = "aarch64", feature = "parallel"))]
-use akita_algebra::ntt::{neon, use_simd_ntt};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
@@ -523,7 +523,7 @@ fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
     params: &CrtNttParamSet<W, K, D>,
 ) {
     #[cfg(target_arch = "aarch64")]
-    if use_simd_ntt() {
+    if neon::use_neon_ntt() {
         for k in 0..K {
             let prime = params.primes[k];
             unsafe {

@@ -62,24 +62,25 @@ runtime dispatch, no new public API).
    AVX-512 — all present in this branch byte-for-byte. We add new
    helpers in adjacent code regions; we do not modify `#99`'s
    functions.
-3. **Existing scalar and NEON paths are unchanged.** The one small
-   refactor that touches shared infrastructure is the `use_simd_ntt`
-   hoist into `ntt/mod.rs` so the same `AKITA_SCALAR_NTT=1` env var
-   gates both the NEON NTT (aarch64) and the AVX2 `decompose-fold`
-   dispatch (x86). NEON dispatch sites and parity tests are otherwise
-   byte-identical to `main` — verified by `cargo test -p akita-algebra`
-   on aarch64.
+3. **Existing scalar and NEON paths are byte-identical to `main`.**
+   No files in `akita-algebra` (NTT, ring, neon) are touched. The
+   `AKITA_SCALAR_NTT=1` kill switch on aarch64 still gates NEON NTT
+   and NEON `decompose-fold` via the pre-existing
+   `akita_algebra::ntt::neon::use_neon_ntt` function. On x86 the same
+   env var is read locally in `poly_helpers::use_simd_decompose_fold`
+   to gate the new AVX2 `decompose-fold` dispatch; the NEON module
+   isn't compiled on x86, so we can't share that helper across crates
+   without re-introducing an `akita-algebra` API hoist.
 4. **Backend selection is compile-time** via `cfg(target_feature = ...)`
    on the `packed_avx2` / `packed_avx512` modules in
    `crates/akita-field/src/fields/packed.rs` and on the
    `decompose_fold_avx` module in
    `crates/akita-prover/src/kernels/mod.rs`. Precedence: AVX-512
    (F + DQ + BW) > AVX2 > NEON on aarch64 > scalar.
-5. **`AKITA_SCALAR_NTT=1` kill switch applies uniformly.** The
-   `use_simd_ntt()` function in
-   `crates/akita-algebra/src/ntt/mod.rs` gates both the NEON NTT and
-   the AVX2 `decompose-fold` dispatch — one env var disables all
-   hand-rolled SIMD on either arch.
+5. **`AKITA_SCALAR_NTT=1` kill switch applies uniformly.** Same env
+   var name, read by `akita_algebra::ntt::neon::use_neon_ntt` on
+   aarch64 and by `poly_helpers::use_simd_decompose_fold` on x86 —
+   one env var disables all hand-rolled SIMD on either arch.
 6. **Verifier no-panic contract** (per `AGENTS.md`) is preserved. New
    AVX intrinsics live in prover-only crates; packed-field overrides
    ride through the existing `PackedField` trait surface, exercised
@@ -168,8 +169,8 @@ runtime dispatch, no new public API).
       on aarch64 stable 1.95, x86 AVX2 stable 1.95, and x86 AVX-512
       (`target-cpu=native` on a host with `avx512{f,dq,bw}`).
 - [x] **Tests:** `cargo test` clean on aarch64; 28 `packed_ext`
-      tests, 12 NEON `simd_tests`, 3 new `sparse_mul_acc_simd`
-      `decompose-fold` parity tests.
+      tests, 12 NEON NTT parity tests (in `ntt::neon::tests`), 3 new
+      `sparse_mul_acc_simd` `decompose-fold` parity tests.
 
 ### Testing Strategy
 

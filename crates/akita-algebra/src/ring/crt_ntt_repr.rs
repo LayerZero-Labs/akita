@@ -7,9 +7,9 @@ use std::mem::size_of;
 use crate::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt_cyclic, NttTwiddles};
 use crate::ntt::crt::GarnerData;
-use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
 #[cfg(target_arch = "aarch64")]
-use crate::ntt::{neon, use_simd_ntt};
+use crate::ntt::neon;
+use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
 use crate::{CanonicalField, FieldCore};
 
 use super::cyclotomic::CyclotomicRing;
@@ -325,7 +325,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
         #[cfg(target_arch = "aarch64")]
-        if use_simd_ntt() {
+        if neon::use_neon_ntt() {
             for (k, (scratch_limb, tw)) in
                 scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
             {
@@ -390,7 +390,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         let [lhs0, lhs1] = lhs;
 
         #[cfg(target_arch = "aarch64")]
-        if use_simd_ntt() {
+        if neon::use_neon_ntt() {
             for (k, (scratch_limb, tw)) in
                 scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
             {
@@ -487,7 +487,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         let [lhs0, lhs1, lhs2] = lhs;
 
         #[cfg(target_arch = "aarch64")]
-        if use_simd_ntt() {
+        if neon::use_neon_ntt() {
             for (k, (scratch_limb, tw)) in
                 scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
             {
@@ -1003,7 +1003,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
     ) {
         #[cfg(target_arch = "aarch64")]
-        if use_simd_ntt() {
+        if neon::use_neon_ntt() {
             for k in 0..K {
                 let prime = params.primes[k];
                 unsafe {

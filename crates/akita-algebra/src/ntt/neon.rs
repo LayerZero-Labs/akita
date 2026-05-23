@@ -2,13 +2,22 @@
 //! and pointwise operations.
 //!
 //! Provides vectorized i32 (for Q64/Q128) and i16 (for Q32) paths.
-//! Dispatch is controlled by [`super::use_simd_ntt`] (defined once at the
-//! `ntt` module level and shared across all SIMD backends).
+//! Dispatch is controlled by [`use_neon_ntt`]: set `AKITA_SCALAR_NTT=1`
+//! to force the scalar fallback for A/B performance comparison.
 
 use std::arch::aarch64::*;
+use std::sync::OnceLock;
 
 use super::butterfly::NttTwiddles;
 use super::prime::{MontCoeff, NttPrime};
+
+/// Whether the NEON NTT path is active. Cached on first call.
+/// Set `AKITA_SCALAR_NTT=1` to force scalar fallback.
+/// Returns whether NEON NTT kernels are enabled at runtime.
+pub fn use_neon_ntt() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("AKITA_SCALAR_NTT").map_or(true, |v| v != "1"))
+}
 
 /// 4-wide Montgomery multiply for i32 primes.
 ///
@@ -735,13 +744,13 @@ unsafe fn reduce_range_in_place_i16<const D: usize>(a: &mut [MontCoeff<i16>; D],
 
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
-    use super::*;
-    use crate::ntt::butterfly::{
+    use super::super::butterfly::{
         forward_ntt as scalar_forward_ntt, forward_ntt_cyclic as scalar_forward_ntt_cyclic,
         inverse_ntt as scalar_inverse_ntt, inverse_ntt_cyclic as scalar_inverse_ntt_cyclic,
         NttTwiddles,
     };
-    use crate::ntt::prime::{MontCoeff, NttPrime};
+    use super::super::prime::{MontCoeff, NttPrime};
+    use super::*;
 
     fn random_mont_array_i32<const D: usize>(
         prime: NttPrime<i32>,
@@ -775,7 +784,7 @@ mod tests {
     const TEST_PRIME_I16: i16 = 13697;
 
     #[test]
-    fn forward_ntt_i32_matches_scalar() {
+    fn neon_forward_ntt_i32_matches_scalar() {
         let prime = NttPrime::compute(TEST_PRIME_I32);
         let tw = NttTwiddles::<i32, 512>::compute(prime);
         let input = random_mont_array_i32::<512>(prime, 0xCAFE);
@@ -794,7 +803,7 @@ mod tests {
     }
 
     #[test]
-    fn inverse_ntt_i32_matches_scalar() {
+    fn neon_inverse_ntt_i32_matches_scalar() {
         let prime = NttPrime::compute(TEST_PRIME_I32);
         let tw = NttTwiddles::<i32, 512>::compute(prime);
         let input = random_mont_array_i32::<512>(prime, 0xBEEF);
@@ -813,7 +822,7 @@ mod tests {
     }
 
     #[test]
-    fn forward_inverse_roundtrip_i32() {
+    fn neon_forward_inverse_roundtrip_i32() {
         let prime = NttPrime::compute(TEST_PRIME_I32);
         let tw = NttTwiddles::<i32, 512>::compute(prime);
         let input = random_mont_array_i32::<512>(prime, 0xDEAD);
@@ -835,7 +844,7 @@ mod tests {
     }
 
     #[test]
-    fn cyclic_ntt_i32_matches_scalar() {
+    fn neon_cyclic_ntt_i32_matches_scalar() {
         let prime = NttPrime::compute(TEST_PRIME_I32);
         let tw = NttTwiddles::<i32, 512>::compute(prime);
         let input = random_mont_array_i32::<512>(prime, 0xFACE);
@@ -866,7 +875,7 @@ mod tests {
     }
 
     #[test]
-    fn pointwise_mul_acc_i32_matches_scalar() {
+    fn neon_pointwise_mul_acc_i32_matches_scalar() {
         let prime = NttPrime::compute(TEST_PRIME_I32);
         const D: usize = 512;
         let acc_init = random_mont_array_i32::<D>(prime, 0x1111);
@@ -900,7 +909,7 @@ mod tests {
     }
 
     #[test]
-    fn pointwise_mul_acc_i32_handles_scalar_tail() {
+    fn neon_pointwise_mul_acc_i32_handles_scalar_tail() {
         let prime = NttPrime::compute(TEST_PRIME_I32);
         const D: usize = 6;
         let acc_init = random_mont_array_i32::<D>(prime, 0x4444);
@@ -931,7 +940,7 @@ mod tests {
 
     #[cfg(feature = "parallel")]
     #[test]
-    fn add_reduce_i32_handles_scalar_tail() {
+    fn neon_add_reduce_i32_handles_scalar_tail() {
         let prime = NttPrime::compute(TEST_PRIME_I32);
         const D: usize = 6;
         let acc_init = random_mont_array_i32::<D>(prime, 0x7777);
@@ -957,7 +966,7 @@ mod tests {
     }
 
     #[test]
-    fn forward_ntt_i16_matches_scalar() {
+    fn neon_forward_ntt_i16_matches_scalar() {
         let prime = NttPrime::compute(TEST_PRIME_I16);
         let tw = NttTwiddles::<i16, 64>::compute(prime);
         let input = random_mont_array_i16::<64>(prime, 0xABCD);
@@ -976,7 +985,7 @@ mod tests {
     }
 
     #[test]
-    fn inverse_ntt_i16_matches_scalar() {
+    fn neon_inverse_ntt_i16_matches_scalar() {
         let prime = NttPrime::compute(TEST_PRIME_I16);
         let tw = NttTwiddles::<i16, 64>::compute(prime);
         let input = random_mont_array_i16::<64>(prime, 0xFEED);
@@ -995,7 +1004,7 @@ mod tests {
     }
 
     #[test]
-    fn forward_inverse_roundtrip_i16() {
+    fn neon_forward_inverse_roundtrip_i16() {
         let prime = NttPrime::compute(TEST_PRIME_I16);
         let tw = NttTwiddles::<i16, 64>::compute(prime);
         let input = random_mont_array_i16::<64>(prime, 0x7777);
@@ -1014,7 +1023,7 @@ mod tests {
     }
 
     #[test]
-    fn cyclic_i16_matches_scalar() {
+    fn neon_cyclic_i16_matches_scalar() {
         let prime = NttPrime::compute(TEST_PRIME_I16);
         let tw = NttTwiddles::<i16, 64>::compute(prime);
         let input = random_mont_array_i16::<64>(prime, 0x9999);
@@ -1045,7 +1054,7 @@ mod tests {
     }
 
     #[test]
-    fn pointwise_mul_acc_i16_matches_scalar() {
+    fn neon_pointwise_mul_acc_i16_matches_scalar() {
         let prime = NttPrime::compute(TEST_PRIME_I16);
         const D: usize = 64;
         let acc_init = random_mont_array_i16::<D>(prime, 0xAAAA);
