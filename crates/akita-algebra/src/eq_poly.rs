@@ -113,7 +113,7 @@ impl<E: FieldCore> EqPolynomial<E> {
     /// `r[..j]`: `result[j][x] = eq(r[..j], x)` for `x ∈ {0,1}^j`.
     ///
     /// So `result[0] = [1]`, `result[1]` has 2 entries, ..., and `result[n]`
-    /// equals [`Self::evals(r)`].
+    /// equals [`Self::evals`] called on `r`.
     pub fn evals_cached(r: &[E]) -> Result<Vec<Vec<E>>, AkitaError> {
         Self::evals_cached_with_scaling(r, None)
     }

@@ -618,7 +618,7 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
                     current_claim_mask.constant += weight * mask.constant;
                     current_claim_mask
                         .terms
-                        .extend(mask.terms.iter().cloned().map(|term| ZkR1csTerm {
+                        .extend(mask.terms.iter().map(|term| ZkR1csTerm {
                             variable: term.variable,
                             coeff: weight * term.coeff,
                         }));

@@ -9,10 +9,6 @@
 //! Fiat–Shamir challenge representations and samplers live in
 //! `akita-challenges`.
 
-#![cfg_attr(
-    all(target_arch = "x86_64", target_feature = "avx512f"),
-    feature(stdarch_x86_avx512)
-)]
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 

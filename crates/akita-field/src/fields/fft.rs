@@ -95,13 +95,13 @@ fn smallest_prime_factor(n: usize) -> usize {
         return n;
     }
     for &p in &[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31] {
-        if n % p == 0 {
+        if n.is_multiple_of(p) {
             return p;
         }
     }
     let mut i = 37;
     while i * i <= n {
-        if n % i == 0 {
+        if n.is_multiple_of(i) {
             return i;
         }
         i += 2;

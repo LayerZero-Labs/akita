@@ -312,7 +312,7 @@ where
             .map(E::lift_base)
             .ok_or_else(|| AkitaError::InvalidInput("empty root y-ring".to_string()));
     }
-    if D % <E as ExtField<F>>::EXT_DEGREE != 0
+    if !D.is_multiple_of(<E as ExtField<F>>::EXT_DEGREE)
         || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
     {
         return Err(AkitaError::InvalidInput(

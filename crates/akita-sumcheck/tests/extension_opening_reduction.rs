@@ -364,12 +364,15 @@ fn sparse_tensor_factor_matches_dense_factor_rounds() {
     )
     .unwrap();
 
-    let expected_claim =
-        BatchedExtensionOpeningReductionProver::input_claim_from_terms(&[dense_term.clone()])
-            .unwrap();
+    let expected_claim = BatchedExtensionOpeningReductionProver::input_claim_from_terms(
+        std::slice::from_ref(&dense_term),
+    )
+    .unwrap();
     assert_eq!(
-        BatchedExtensionOpeningReductionProver::input_claim_from_terms(&[lazy_term.clone()])
-            .unwrap(),
+        BatchedExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
+            &lazy_term,
+        ))
+        .unwrap(),
         expected_claim
     );
 

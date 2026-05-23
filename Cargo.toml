@@ -17,7 +17,7 @@ members = [
   "crates/akita-planner",
 ]
 # `profile/akita-recursion/` is a standalone sub-workspace: it pins its own
-# `rust-toolchain.toml` (channel 1.94 + RISC-V targets) and applies Jolt's
+# `rust-toolchain.toml` (channel 1.95 + RISC-V targets) and applies Jolt's
 # `[patch.crates-io]` overrides for `arkworks-algebra`. Keep it out of this
 # workspace's resolution graph.
 exclude = ["profile/akita-recursion", "fuzz"]

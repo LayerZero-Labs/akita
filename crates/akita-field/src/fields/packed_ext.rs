@@ -705,11 +705,13 @@ where
     type Packing = PackedRingSubfieldFp4<F, F::Packing>;
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::fields::ext::{Ext2, PowerBasisFp4, RingSubfieldFp4, TowerBasisFp4, TwoNr, UnitNr};
+    use crate::Fp32;
     use crate::Fp64;
+    use crate::Prime31Offset19;
     use crate::Prime32Offset99;
     use crate::Prime64Offset59;
     use crate::RandomSampling;
@@ -726,11 +728,113 @@ mod tests {
     type PE4 = PackedTowerBasisFp4<F, TwoNr, UnitNr, <F as HasPacking>::Packing>;
     type PP4 = PackedPowerBasisFp4<F, TwoNr, <F as HasPacking>::Packing>;
     type PR4 = PackedRingSubfieldFp4<F, <F as HasPacking>::Packing>;
+    type Mersenne31 = Fp32<{ (1u32 << 31) - 1 }>;
+    type Generic30Offset16397 = Fp32<{ (1u32 << 30) - 16_397 }>;
+    type Generic31Offset61 = Fp32<{ (1u32 << 31) - 61 }>;
+    type Generic31Offset32787 = Fp32<{ (1u32 << 31) - 32_787 }>;
+    type PP4Prime31 =
+        PackedPowerBasisFp4<Prime31Offset19, TwoNr, <Prime31Offset19 as HasPacking>::Packing>;
+    type PR4Prime31 =
+        PackedRingSubfieldFp4<Prime31Offset19, <Prime31Offset19 as HasPacking>::Packing>;
+    type PP4Mersenne31 =
+        PackedPowerBasisFp4<Mersenne31, TwoNr, <Mersenne31 as HasPacking>::Packing>;
+    type PR4Mersenne31 = PackedRingSubfieldFp4<Mersenne31, <Mersenne31 as HasPacking>::Packing>;
+    type PP4Generic30Offset16397 = PackedPowerBasisFp4<
+        Generic30Offset16397,
+        TwoNr,
+        <Generic30Offset16397 as HasPacking>::Packing,
+    >;
+    type PR4Generic30Offset16397 =
+        PackedRingSubfieldFp4<Generic30Offset16397, <Generic30Offset16397 as HasPacking>::Packing>;
+    type PP4Generic31Offset61 =
+        PackedPowerBasisFp4<Generic31Offset61, TwoNr, <Generic31Offset61 as HasPacking>::Packing>;
+    type PR4Generic31Offset61 =
+        PackedRingSubfieldFp4<Generic31Offset61, <Generic31Offset61 as HasPacking>::Packing>;
+    type PP4Generic31Offset32787 = PackedPowerBasisFp4<
+        Generic31Offset32787,
+        TwoNr,
+        <Generic31Offset32787 as HasPacking>::Packing,
+    >;
+    type PR4Generic31Offset32787 =
+        PackedRingSubfieldFp4<Generic31Offset32787, <Generic31Offset32787 as HasPacking>::Packing>;
     type R4Prime32 = RingSubfieldFp4<Prime32Offset99>;
     type PR4Prime32 =
         PackedRingSubfieldFp4<Prime32Offset99, <Prime32Offset99 as HasPacking>::Packing>;
     type E2Full = Fp2<Prime64Offset59, TwoNr>;
     type PE2Full = PackedFp2<Prime64Offset59, TwoNr, <Prime64Offset59 as HasPacking>::Packing>;
+
+    fn fp32_ext_edge_values<const P: u32>() -> [Fp32<P>; 4] {
+        [
+            Fp32::<P>::from_canonical_u32(P - 1),
+            Fp32::<P>::from_canonical_u32(P - 2),
+            Fp32::<P>::from_canonical_u32((P - 1) / 2),
+            Fp32::<P>::one(),
+        ]
+    }
+
+    fn check_packed_power_basis_fp4_edge<const P: u32, PP4>()
+    where
+        PP4: PackedField<Scalar = PowerBasisFp4<Fp32<P>, TwoNr>>
+            + PackedValue<Value = PowerBasisFp4<Fp32<P>, TwoNr>>,
+    {
+        let values = fp32_ext_edge_values::<P>();
+        let elem = |offset: usize| {
+            PowerBasisFp4::<Fp32<P>, TwoNr>::new(std::array::from_fn(|j| {
+                values[(offset + j) % values.len()]
+            }))
+        };
+        let a = PP4::from_fn(elem);
+        let b = PP4::from_fn(|i| elem(i + 1));
+        let product = a * b;
+        let square = a.square();
+
+        for lane in 0..PP4::WIDTH {
+            let lhs = elem(lane);
+            let rhs = elem(lane + 1);
+            assert_eq!(
+                product.extract(lane),
+                lhs * rhs,
+                "packed PowerBasisFp4 edge mul mismatch at lane {lane}"
+            );
+            assert_eq!(
+                square.extract(lane),
+                lhs.square(),
+                "packed PowerBasisFp4 edge square mismatch at lane {lane}"
+            );
+        }
+    }
+
+    fn check_packed_ring_subfield_fp4_edge<const P: u32, PR4>()
+    where
+        PR4: PackedField<Scalar = RingSubfieldFp4<Fp32<P>>>
+            + PackedValue<Value = RingSubfieldFp4<Fp32<P>>>,
+    {
+        let values = fp32_ext_edge_values::<P>();
+        let elem = |offset: usize| {
+            RingSubfieldFp4::<Fp32<P>>::new(std::array::from_fn(|j| {
+                values[(offset + j) % values.len()]
+            }))
+        };
+        let a = PR4::from_fn(elem);
+        let b = PR4::from_fn(|i| elem(i + 1));
+        let product = a * b;
+        let square = a.square();
+
+        for lane in 0..PR4::WIDTH {
+            let lhs = elem(lane);
+            let rhs = elem(lane + 1);
+            assert_eq!(
+                product.extract(lane),
+                lhs * rhs,
+                "packed RingSubfieldFp4 edge mul mismatch at lane {lane}"
+            );
+            assert_eq!(
+                square.extract(lane),
+                lhs.square(),
+                "packed RingSubfieldFp4 edge square mismatch at lane {lane}"
+            );
+        }
+    }
 
     #[test]
     fn packed_fp2_add() {
@@ -836,6 +940,34 @@ mod tests {
                 "packed PowerBasisFp4 mul mismatch at lane {i}"
             );
         }
+    }
+
+    #[test]
+    fn packed_power_basis_fp4_prime31_edge_lanes() {
+        check_packed_power_basis_fp4_edge::<
+            { crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
+            PP4Prime31,
+        >();
+    }
+
+    #[test]
+    fn packed_power_basis_fp4_mersenne31_edge_lanes() {
+        check_packed_power_basis_fp4_edge::<{ (1u32 << 31) - 1 }, PP4Mersenne31>();
+    }
+
+    #[test]
+    fn packed_power_basis_fp4_generic31_edge_lanes() {
+        check_packed_power_basis_fp4_edge::<{ (1u32 << 31) - 61 }, PP4Generic31Offset61>();
+    }
+
+    #[test]
+    fn packed_power_basis_fp4_large_generic30_edge_lanes() {
+        check_packed_power_basis_fp4_edge::<{ (1u32 << 30) - 16_397 }, PP4Generic30Offset16397>();
+    }
+
+    #[test]
+    fn packed_power_basis_fp4_large_generic31_edge_lanes() {
+        check_packed_power_basis_fp4_edge::<{ (1u32 << 31) - 32_787 }, PP4Generic31Offset32787>();
     }
 
     #[test]
@@ -970,6 +1102,34 @@ mod tests {
                 "Prime32 packed RingSubfieldFp4 mul mismatch at lane {i}"
             );
         }
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp4_prime31_edge_lanes() {
+        check_packed_ring_subfield_fp4_edge::<
+            { crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
+            PR4Prime31,
+        >();
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp4_mersenne31_edge_lanes() {
+        check_packed_ring_subfield_fp4_edge::<{ (1u32 << 31) - 1 }, PR4Mersenne31>();
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp4_generic31_edge_lanes() {
+        check_packed_ring_subfield_fp4_edge::<{ (1u32 << 31) - 61 }, PR4Generic31Offset61>();
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp4_large_generic30_edge_lanes() {
+        check_packed_ring_subfield_fp4_edge::<{ (1u32 << 30) - 16_397 }, PR4Generic30Offset16397>();
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp4_large_generic31_edge_lanes() {
+        check_packed_ring_subfield_fp4_edge::<{ (1u32 << 31) - 32_787 }, PR4Generic31Offset32787>();
     }
 
     #[test]

@@ -47,7 +47,7 @@ where
     if !packed_witness.num_elems.is_multiple_of(y_len) {
         return Err(AkitaError::InvalidProof);
     }
-    if physical_w_len % D != 0 {
+    if D == 0 || !physical_w_len.is_multiple_of(D) {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -659,6 +659,14 @@ mod tests {
         let challenges = vec![E::zero(), E::zero()];
         let err = packed_witness_eval::<F, E, D>(&packed, 1, &challenges, 1, 1)
             .expect_err("truncated packed witness");
+        assert!(matches!(err, AkitaError::InvalidProof));
+    }
+
+    #[test]
+    fn packed_witness_eval_rejects_zero_ring_dimension() {
+        let packed = PackedDigits::from_i8_digits(&[], 3);
+        let err = packed_witness_eval::<F, E, 0>(&packed, 0, &[], 0, 0)
+            .expect_err("zero ring dimension should be rejected");
         assert!(matches!(err, AkitaError::InvalidProof));
     }
 }
