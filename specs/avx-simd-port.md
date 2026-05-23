@@ -66,7 +66,9 @@ runtime dispatch, no new public API).
    refactor that touches shared infrastructure is the `use_simd_ntt`
    hoist into `ntt/mod.rs` so the same `AKITA_SCALAR_NTT=1` env var
    gates both the NEON NTT (aarch64) and the AVX2 `decompose-fold`
-   dispatch (x86). Verified by NEON parity tests on aarch64.
+   dispatch (x86). NEON dispatch sites and parity tests are otherwise
+   byte-identical to `main` — verified by `cargo test -p akita-algebra`
+   on aarch64.
 4. **Backend selection is compile-time** via `cfg(target_feature = ...)`
    on the `packed_avx2` / `packed_avx512` modules in
    `crates/akita-field/src/fields/packed.rs` and on the
@@ -177,11 +179,12 @@ runtime dispatch, no new public API).
   `packed_*_fp4_*_edge_lanes` cases there, all routed through
   `<F as HasPacking>::Packing` — they automatically exercise the AVX
   overrides on x86 builds and the NEON overrides on aarch64 builds.
-- [`crates/akita-algebra/src/ntt/simd_tests.rs`](../crates/akita-algebra/src/ntt/simd_tests.rs)
-  was lifted out of `ntt/neon.rs` as a backend-agnostic parity module
-  against `super::simd::*`. Currently only NEON is plugged into the
-  `simd` alias (see Non-Goals), so on x86 this module is a no-op.
-  Ready to re-enable when AVX NTT is reworked.
+- The 12 NEON NTT parity tests live inline in
+  [`crates/akita-algebra/src/ntt/neon.rs`](../crates/akita-algebra/src/ntt/neon.rs)
+  under `mod tests` — same coverage as before this PR (forward /
+  inverse / negacyclic / cyclic for i32 and i16, plus
+  `pointwise_mul_acc_*` and `add_reduce_*` scalar-tail handling),
+  compared against the scalar reference in `ntt::butterfly`.
 - New: `tests::sparse_mul_acc_simd_*` in
   [`crates/akita-prover/src/backend/poly_helpers.rs`](../crates/akita-prover/src/backend/poly_helpers.rs)
   — 3 tests comparing the SIMD `decompose-fold` dispatch
@@ -345,11 +348,12 @@ Key implementation points:
   `target_feature = "avx512ifma"` gate; deferred as a future spike
   (see Non-Goals).
 - **Hand-rolled AVX NTT module.** Prototyped, benchmarked, reverted —
-  see Non-Goals. The takeaway: the dispatch wiring (a unified `simd`
-  alias in `ntt/mod.rs` and `super::simd::*` call sites in
-  `butterfly.rs` / `crt_ntt_repr.rs` / `kernels/linear.rs`) is kept
-  for forward compatibility, but currently only resolves to
-  `super::neon::*` on aarch64.
+  see Non-Goals. We also did not preserve a `simd::` alias as
+  forward-compat scaffolding: the dispatch sites in `butterfly.rs` /
+  `crt_ntt_repr.rs` / `kernels/linear.rs` call `super::neon::*`
+  directly. If/when AVX NTT returns it adds back the alias in one
+  commit; in the meantime the indirection would be dead weight on
+  the diff and on reader cognitive load.
 - **Two styles for the `BITS == 31` specialisation.** NEON uses
   separate functions (`solinas_reduce_bits31`,
   `solinas_reduce_with_carry_bits31`) with a one-line dispatch — the

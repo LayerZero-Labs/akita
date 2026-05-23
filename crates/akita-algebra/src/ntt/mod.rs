@@ -20,19 +20,13 @@ pub fn use_simd_ntt() -> bool {
 
 // SIMD NTT backend. Only NEON is currently wired into the dispatch sites
 // (`butterfly.rs`, `crt_ntt_repr.rs`, `kernels/linear.rs`). A draft AVX2 /
-// AVX-512 NTT port was reverted because it regressed `commit` and `setup`
-// at the e2e level — LLVM's auto-vectorization of the simple scalar
-// butterfly / pointwise-mul-acc loops turned out to be competitive with
-// hand-written intrinsics for the typical small `D ≤ 64` NTT sizes. The
-// `pub use ... as simd` alias is kept arch-agnostic so future SIMD
-// backends can plug in without touching every dispatch site.
+// AVX-512 NTT port was prototyped but reverted because it regressed
+// `commit` and `setup` end-to-end (LLVM's auto-vectorisation of the
+// scalar butterfly / pointwise-mul-acc loops was competitive with
+// intrinsics at Akita's `D ≤ 64` sizes, and the wider AVX registers
+// hurt cache locality on the radix-stride access pattern).
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
-#[cfg(target_arch = "aarch64")]
-pub use neon as simd;
-
-#[cfg(all(test, not(feature = "zk")))]
-mod simd_tests;
 
 pub use butterfly::NttTwiddles;
 pub use crt::{GarnerData, LimbQ, RADIX_BITS};
