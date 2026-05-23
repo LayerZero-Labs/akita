@@ -14,12 +14,12 @@ use akita_types::generated::{
 };
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, generated_schedule_lookup_key,
-    level_layout_from_params, level_proof_bytes, recursive_level_decomposition_from_root,
-    root_extension_opening_partials, terminal_level_proof_bytes,
-    w_ring_element_count_with_counts_bits, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedState, AkitaPlannedStep,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, CommitmentEnvelope,
-    DecompositionParams, DirectWitnessShape, LevelParams, MRowLayout, SisModulusFamily,
+    level_layout_from_params, level_proof_bytes, root_extension_opening_partials,
+    terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaPlannedDirectStep, AkitaPlannedLevel,
+    AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    AkitaSchedulePlan, CommitmentEnvelope, DecompositionParams, DirectWitnessShape, LevelParams,
+    MRowLayout, SisModulusFamily,
 };
 
 /// Policy hooks needed to materialize generated schedule-table entries into
@@ -189,7 +189,17 @@ where
                         ..root_decomp
                     }
                 } else {
-                    recursive_level_decomposition_from_root(root_decomp, level.log_basis)
+                    // Recursive level: balanced-digit `w` entries collapse
+                    // `log_commit_bound` to `log_basis`.
+                    DecompositionParams {
+                        log_basis: level.log_basis,
+                        log_commit_bound: level.log_basis,
+                        log_open_bound: Some(
+                            root_decomp
+                                .log_open_bound
+                                .unwrap_or(root_decomp.log_commit_bound),
+                        ),
+                    }
                 };
                 let layout = level_layout_from_params(
                     level.m_vars as usize,

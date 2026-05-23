@@ -24,7 +24,7 @@ Workspace members under `crates/`:
 - `akita-transcript` — spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks
 - `akita-challenges` — Fiat-Shamir challenge sampling helpers
 - `akita-sumcheck` — sumcheck proofs, drivers, compact folding, batching, accumulation
-- `akita-types` — proof, setup, schedule, layout, commitment, transcript-append, PRG shapes; verifier-reachable proof-size formulas; pure layout helpers (`level_layout_from_params`, `recursive_level_layout_from_params`, `recursive_level_decomposition_from_root`, `decomp_depths`)
+- `akita-types` — proof, setup, schedule, layout, commitment, transcript-append, PRG shapes; verifier-reachable proof-size formulas; pure layout helpers (`level_layout_from_params`, `recursive_level_layout_from_params`, `decomp_depths`)
 - `akita-derive` — verifier-reachable parameter derivation: SIS-secure layout derivation (`sis_derived_root_params_for_layout`, `sis_derived_recursive_params_for_layout`, `derived_root_commitment_layout_from_params`, `sis_secure_level_params`) and schedule-table materialization (`schedule_plan_from_table`, `PlanPolicy`). Free-function API. Sits below `akita-config` in the dep graph
 - `akita-config` — runtime config presets, the single `CommitmentConfig` trait, `WCommitmentConfig`, config-backed schedule adapters, and the canonical `bind_transcript_instance_descriptor` helper consumed by both prover and verifier. Depends on `akita-derive`; does NOT depend on `akita-planner`. `Cfg` defaults are table-only and error on schedule-table miss; runtime DP fallback is opt-in for tests via `akita_planner::test_utils::PlannerCfg<Cfg>` (feature-gated)
 - `akita-setup` — config-backed setup construction + optional setup cache

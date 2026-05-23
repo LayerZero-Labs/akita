@@ -2,7 +2,7 @@
 //!
 //! The verifier-reachable layout helpers
 //! (`level_layout_from_params`, `recursive_level_layout_from_params`,
-//! `recursive_level_decomposition_from_root`, `decomp_depths`) live here.
+//! `decomp_depths`) live here.
 //! Search and SIS-derivation loops moved to `akita_planner::derivation`.
 
 use crate::layout::digit_math::{
@@ -18,21 +18,6 @@ pub fn decomp_depths(decomp: DecompositionParams) -> (usize, usize) {
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let depth_open = num_digits_for_bound(open_bound, field_bits, decomp.log_basis);
     (depth_commit, depth_open)
-}
-
-/// Derive recursive-level decomposition bounds from the root decomposition.
-pub fn recursive_level_decomposition_from_root(
-    root_decomp: DecompositionParams,
-    log_basis: u32,
-) -> DecompositionParams {
-    let parent_open = root_decomp
-        .log_open_bound
-        .unwrap_or(root_decomp.log_commit_bound);
-    DecompositionParams {
-        log_basis,
-        log_commit_bound: log_basis,
-        log_open_bound: Some(parent_open),
-    }
 }
 
 /// Apply layout coordinates and decomposition depths to a parameter-only level.
@@ -87,7 +72,17 @@ pub fn recursive_level_layout_from_params(
     let alpha = lp.ring_dimension.trailing_zeros() as usize;
     let reduced_vars = total.trailing_zeros() as usize;
     let max_num_vars = reduced_vars + alpha;
-    let decomp = recursive_level_decomposition_from_root(root_decomp, lp.log_basis);
+    // Recursive level: balanced-digit `w` entries collapse `log_commit_bound`
+    // to `log_basis`; opening folds inherit the parent's open bound.
+    let decomp = DecompositionParams {
+        log_basis: lp.log_basis,
+        log_commit_bound: lp.log_basis,
+        log_open_bound: Some(
+            root_decomp
+                .log_open_bound
+                .unwrap_or(root_decomp.log_commit_bound),
+        ),
+    };
     let (m_vars, r_vars) = optimal_m_r_split(
         lp.a_key.row_len() as u32,
         lp.challenge_l1_mass(),

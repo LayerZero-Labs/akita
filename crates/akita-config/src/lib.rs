@@ -1,46 +1,22 @@
-//! The single user-facing commitment-config trait and concrete protocol
-//! configs.
+//! [`CommitmentConfig`] — the single `<Cfg>` parameter used by
+//! `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`.
 //!
-//! The trait [`CommitmentConfig`] is the only `<Cfg>` parameter consumed by
-//! `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`. It
-//! replaces the previous three-trait split (`CommitmentConfig`,
-//! `ScheduleProvider`, `PlannerConfig`). The remaining verifier-reachable
-//! hook [`CommitmentConfig::stage1_challenge_config`] returns `Result` so
-//! malformed inputs surface as `AkitaError` instead of panicking on the
-//! verifier replay path.
+//! `get_params_for_prove` / `get_params_for_batched_commitment` are
+//! table-only by default: schedule-table hit ⇒ materialize via
+//! [`akita_derive::schedule_plan_from_table`]; miss ⇒
+//! [`AkitaError::InvalidSetup`].
 //!
-//! Pure-derivation layout helpers (`level_params_with_log_basis` plus
-//! the root-layout pair) used to be trait methods too; they now live
-//! as free functions in [`proof_optimized`] / [`akita_derive`] so the
-//! trait stays focused on configuration knobs, not derivation rules.
-//!
-//! Presets must implement every required (no-default) hook explicitly.
-//! Substantive helpers that encode protocol logic — `get_params_for_prove`
-//! and `get_params_for_batched_commitment` — keep default bodies because
-//! they are not policy choices and would otherwise be duplicated verbatim
-//! across every config.
-//!
-//! The defaults are **table-only**: on a generated-schedule-table hit they
-//! materialize the plan through [`akita_derive::schedule_plan_from_table`];
-//! on a miss they return [`AkitaError::InvalidSetup`]. Offline DP search
-//! lives in `akita-planner`, which depends on this crate; callers that want
-//! a runtime DP fallback construct a custom `Cfg` impl that overrides the
-//! relevant defaults and calls `akita_planner::find_optimal_schedule`
-//! directly. The verifier path therefore never reaches DP code.
-//!
-//! [`WCommitmentConfig`] is the derived recursive-w config that
-//! `<Cfg>`-generic dispatch helpers use for ring-degree dispatch.
+//! [`WCommitmentConfig`] is the derived recursive-w config used by
+//! `<Cfg>`-generic ring-degree dispatch helpers.
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
-    recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
-    LevelParams, SisModulusFamily,
-};
-use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary, Schedule,
+    AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
+    ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, LevelParams, Schedule,
+    SisModulusFamily,
 };
 use std::marker::PhantomData;
 
@@ -62,29 +38,14 @@ pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookup
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
 ///
-/// Concrete presets must implement every runtime hook below: the trait
-/// intentionally provides no default bodies for the delegating hooks so
-/// that each preset is fully explicit about which planner-backed helper
-/// it uses. The substantive helpers (`get_params_for_prove`,
-/// `get_params_for_batched_commitment`) keep default bodies that route
-/// through `Self::schedule_plan` and return an error on table miss.
+/// Three field roles, all extending `Field`:
+/// - `Field` — base ring / SIS scalar.
+/// - `ClaimField` — public opening points + claimed evaluations (proof bytes).
+/// - `ChallengeField` — Fiat-Shamir scalars.
 ///
-/// # Field convention
-///
-/// Three fields participate, all extensions of the base field `Field`:
-///
-/// - `Field` is the base ring/SIS scalar.
-/// - `ClaimField` carries public opening points and claimed evaluations
-///   (counts toward proof bytes; should be small).
-/// - `ChallengeField` carries Fiat-Shamir scalars (does not count toward
-///   proof bytes; should be large enough for Schwartz–Zippel soundness).
-///
-/// `ChallengeField` is required to contain `ClaimField` (the
-/// `ChallengeField: ExtField<Self::ClaimField>` bound), so batching a claim
-/// by a challenge always lifts the claim into the challenge. The degree-one
-/// specialization `Field = ClaimField = ChallengeField` is the current
-/// production fp128 path; the only non-trivial concrete chain so far is
-/// `F ⊆ Fp2 ⊆ TowerBasisFp4`.
+/// `ChallengeField: ExtField<ClaimField>` so batching by a challenge always
+/// lifts the claim. The degree-one specialization
+/// `Field = ClaimField = ChallengeField` is the production fp128 path.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
     type Field: CanonicalField + FieldCore;
@@ -117,7 +78,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// construction.
     const CHAL_EXT_DEGREE: usize = <Self::ChallengeField as ExtField<Self::Field>>::EXT_DEGREE;
 
-    /// Append a claim-field element using the config's base transcript field.
+    /// Absorb a claim-field element into a base-field transcript.
     fn append_claim_field<T: Transcript<Self::Field>>(
         transcript: &mut T,
         label: &[u8],
@@ -126,7 +87,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         append_ext_field::<Self::Field, Self::ClaimField, T>(transcript, label, x);
     }
 
-    /// Sample a challenge-field element using the config's base transcript field.
+    /// Squeeze a challenge-field element from a base-field transcript.
     fn sample_challenge_field<T: Transcript<Self::Field>>(
         transcript: &mut T,
         label: &[u8],
@@ -137,32 +98,30 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
 
-    /// Decomposition parameters (gadget base and coefficient bounds).
+    /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
 
-    /// Sparse challenge family used at this level.
+    /// Sparse challenge family for ring dimension `d`.
     ///
     /// # Errors
     ///
-    /// Returns an error if `d` is not supported by this config.
+    /// `InvalidSetup` if `d` is not supported.
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
 
-    /// SIS modulus family used by security-floor lookups for this config.
+    /// SIS modulus family used by security-floor lookups.
     fn sis_modulus_family() -> SisModulusFamily;
 
-    // -- inlined former `ScheduleProvider` methods --
-
-    /// Pre-computed schedule table backing this config, if any.
+    /// Offline schedule table backing this config (preset only).
     fn schedule_table() -> Option<GeneratedScheduleTable>;
 
-    /// Stable identity for the active schedule at `key`.
+    /// Stable identity for the schedule at `key`.
     fn schedule_key(key: AkitaScheduleLookupKey) -> String;
 
-    /// Optional full schedule plan for configs with an explicit provider.
+    /// Materialized plan for `key`, or `None` on table miss.
     ///
     /// # Errors
     ///
-    /// Returns an error when the provider cannot materialize a valid schedule.
+    /// `InvalidSetup` if the table entry fails materialization.
     fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError>;
 
     /// Infinity-norm expansion introduced when claim-field coordinates are
@@ -180,11 +139,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         }
     }
 
-    /// Audited rank floor for the root level, by role.
+    /// Audited root-rank floor for one Ajtai role.
     #[doc(hidden)]
     fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize;
 
-    /// Maximum matrix row envelope needed across all runtime levels.
+    /// Max matrix-row envelope across all runtime levels.
     #[doc(hidden)]
     fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
 
@@ -192,7 +151,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// Returns [`AkitaError::InvalidSetup`] on arithmetic overflow.
+    /// `InvalidSetup` on arithmetic overflow.
     #[doc(hidden)]
     fn max_setup_matrix_size(
         max_num_vars: usize,
@@ -204,12 +163,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32);
 
-    /// Choose the root parameters consumed by the prove/verify root path.
+    /// Schedule consumed by the prove/verify root path.
+    /// Default: materialize the table entry; error on miss.
     ///
     /// # Errors
     ///
-    /// Returns an error if the root layout, batched layout scaling, next
-    /// witness sizing, or next-level basis selection is invalid.
+    /// `InvalidSetup` if no schedule-table entry exists for `incidence`.
     fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
         let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
         if let Some(plan) = Self::schedule_plan(key)? {
@@ -220,21 +179,15 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Err(missing_generated_schedule("prove schedule", key))
     }
 
-    /// Choose the root parameters consumed by multipoint batched commitment.
-    ///
-    /// Returns the same layout `batched_prove` will use for the supplied
-    /// incidence, so that every per-point commitment produced under this
-    /// layout is compatible with the batched prove root. The default
-    /// implementation pulls the first fold step's params from
-    /// [`Self::get_params_for_prove`], or falls back to the tiny-root
-    /// commitment layout when the schedule starts directly with the root
-    /// `Direct` step.
+    /// Root commit layout the `batched_prove` flow uses for `incidence`,
+    /// read straight off the schedule's first step (Fold params or
+    /// root-direct `commit_params`). Same layout per-point commits use,
+    /// so they stay compatible with the batched prove root.
     ///
     /// # Errors
     ///
-    /// Returns an error if `get_params_for_prove` fails or the tiny-root
-    /// fallback for root-direct schedules does not admit a valid commitment
-    /// layout.
+    /// Propagates `get_params_for_prove`; errors if the root-direct
+    /// schedule lacks `commit_params`.
     fn get_params_for_batched_commitment(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<LevelParams, AkitaError> {
@@ -255,11 +208,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 }
 
-/// Derived commitment config for recursive w-openings.
-///
-/// Sets `log_commit_bound = log_basis` because recursive `w` entries are
-/// balanced digits, and sets `log_open_bound` from the parent opening bound
-/// because recursive opening folds produce full-field coefficients.
+/// Derived commitment config for recursive w-openings: `log_commit_bound`
+/// drops to `log_basis` (balanced-digit `w` entries) while `log_open_bound`
+/// inherits the parent opening bound (recursive opening folds produce
+/// full-field coefficients).
 #[derive(Clone, Copy, Debug)]
 pub struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
@@ -272,10 +224,16 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     const D: usize = D;
 
     fn decomposition() -> DecompositionParams {
-        recursive_level_decomposition_from_root(
-            Cfg::decomposition(),
-            Cfg::decomposition().log_basis,
-        )
+        // Recursive `w` entries are balanced digits, so `log_commit_bound`
+        // drops to `log_basis`. Recursive opening folds produce full-field
+        // coefficients, so `log_open_bound` inherits the parent's open
+        // bound (or commit bound when the parent doesn't pin one).
+        let root = Cfg::decomposition();
+        DecompositionParams {
+            log_basis: root.log_basis,
+            log_commit_bound: root.log_basis,
+            log_open_bound: Some(root.log_open_bound.unwrap_or(root.log_commit_bound)),
+        }
     }
 
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {

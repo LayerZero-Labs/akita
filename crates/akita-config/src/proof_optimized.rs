@@ -539,7 +539,8 @@ mod tests {
     };
     use akita_types::layout::digit_math::optimal_m_r_split;
     use akita_types::level_layout_from_params;
-    use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
+    use akita_types::planned_w_ring_element_count;
+    use akita_types::DecompositionParams;
 
     #[test]
     #[cfg(not(feature = "zk"))]
@@ -945,8 +946,12 @@ mod tests {
         };
         let params =
             crate::proof_optimized::level_params_with_log_basis::<Cfg>(inputs, log_basis).unwrap();
-        let decomp =
-            recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis);
+        let root = Cfg::decomposition();
+        let decomp = DecompositionParams {
+            log_basis: params.log_basis,
+            log_commit_bound: params.log_basis,
+            log_open_bound: Some(root.log_open_bound.unwrap_or(root.log_commit_bound)),
+        };
         let num_ring = inputs.current_w_len / params.ring_dimension;
         let lp_12_7 = level_layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
         let lp_11_8 = level_layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
