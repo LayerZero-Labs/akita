@@ -575,6 +575,21 @@ impl OneHotBlocks {
             OneHotBlocks::MultiChunk(blocks) => blocks.num_blocks(),
         }
     }
+
+    fn commit_plan_blocks(&self) -> OneHotCommitBlocks<'_> {
+        match self {
+            OneHotBlocks::SingleChunk(blocks) => {
+                let views: Vec<&[SingleChunkEntry]> =
+                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
+                OneHotCommitBlocks::SingleChunk(views)
+            }
+            OneHotBlocks::MultiChunk(blocks) => {
+                let views: Vec<&[MultiChunkEntry]> =
+                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
+                OneHotCommitBlocks::MultiChunk(views)
+            }
+        }
+    }
 }
 
 /// One-hot polynomial: sparse witness with at most one nonzero field element
@@ -1543,26 +1558,18 @@ where
     {
         let blocks = self.blocks_for(block_len)?;
         let num_blocks = blocks.num_blocks();
-        let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
-        let plan_blocks = match blocks {
-            OneHotBlocks::SingleChunk(blocks) => {
-                let views: Vec<&[SingleChunkEntry]> =
-                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                OneHotCommitBlocks::SingleChunk(views)
-            }
-            OneHotBlocks::MultiChunk(blocks) => {
-                let views: Vec<&[MultiChunkEntry]> =
-                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                OneHotCommitBlocks::MultiChunk(views)
-            }
-        };
+        let zero_block_len = n_a.checked_mul(num_digits_open).ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "one-hot inner commitment digit block count overflow".to_string(),
+            )
+        })?;
         let t_all = backend.onehot_commit_rows::<D>(
             prepared,
             OneHotCommitRowsPlan {
                 n_a,
                 block_len,
                 num_digits_commit,
-                blocks: plan_blocks,
+                blocks: blocks.commit_plan_blocks(),
             },
         )?;
 
@@ -1604,26 +1611,18 @@ where
         B: CommitmentComputeBackend<F>,
     {
         let blocks = self.blocks_for(block_len)?;
-        let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
-        let plan_blocks = match blocks {
-            OneHotBlocks::SingleChunk(blocks) => {
-                let views: Vec<&[SingleChunkEntry]> =
-                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                OneHotCommitBlocks::SingleChunk(views)
-            }
-            OneHotBlocks::MultiChunk(blocks) => {
-                let views: Vec<&[MultiChunkEntry]> =
-                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                OneHotCommitBlocks::MultiChunk(views)
-            }
-        };
+        let zero_block_len = n_a.checked_mul(num_digits_open).ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "one-hot inner commitment digit block count overflow".to_string(),
+            )
+        })?;
         let t = backend.onehot_commit_rows::<D>(
             prepared,
             OneHotCommitRowsPlan {
                 n_a,
                 block_len,
                 num_digits_commit,
-                blocks: plan_blocks,
+                blocks: blocks.commit_plan_blocks(),
             },
         )?;
 

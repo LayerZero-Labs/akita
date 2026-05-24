@@ -356,7 +356,8 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         poly.num_vars(),
         1,
         1,
-    );
+    )
+    .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
@@ -460,8 +461,13 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         onehot_lagrange_opening::<FF, Cfg::ClaimField, u8, D>(&onehot_poly, &pt)
     };
     let t0 = Instant::now();
-    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1);
+    let setup =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1).unwrap();
+    let setup_expand_secs = t0.elapsed().as_secs_f64();
+    let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    report_timing(label, "setup_expand", setup_expand_secs);
+    report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
 
     run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &onehot_poly, &pt, opening, plan);
@@ -549,7 +555,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
-    let setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys, 1);
+    let setup =
+        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys, 1).unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();

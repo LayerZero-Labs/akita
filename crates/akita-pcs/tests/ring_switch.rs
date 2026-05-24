@@ -277,7 +277,8 @@ mod tests {
         let point = vec![F::zero(); NV];
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
+                .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             F,
@@ -407,7 +408,8 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
+                .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             F,
@@ -513,11 +515,12 @@ mod tests {
     #[test]
     fn asymmetric_centering_decompose_roundtrip() {
         use akita_types::layout::digit_math::compute_num_digits_full_field;
+        use rand::SeedableRng;
 
         type F = fp128::Field;
         const D: usize = 64;
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xA11A_D15C_A11A_D15C);
 
         for log_basis in [2u32, 3, 4, 5, 6] {
             let field_bits = 128u32;
@@ -564,7 +567,8 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
+                .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             F,

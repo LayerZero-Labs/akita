@@ -321,7 +321,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let full_num_vars = layout.m_vars + layout.r_vars + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(full_num_vars, 1, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(full_num_vars, 1, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
@@ -491,7 +491,7 @@ fn commit_singleton_group_returns_single_claim_hint() {
     let layout = Cfg::commitment_layout(16).unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let (poly, _) = make_dense_poly(num_vars);
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
 
     let (_, hint) = <Scheme as CommitmentProver<F, D>>::commit(
@@ -540,7 +540,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
             BATCH_NUM_VARS,
             BATCH_SIZE,
             1,
-        );
+        )
+        .unwrap();
         let batch_prepared = CpuBackend.prepare_setup(&batch_setup).unwrap();
         let batch_poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> = batch_polys.iter().collect();
         let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentProver<
@@ -1299,7 +1300,8 @@ fn debug_onehot_batched_profile_compare() {
             SINGLE_NUM_VARS,
             1,
             1,
-        );
+        )
+        .unwrap();
         let single_prepared = CpuBackend.prepare_setup(&single_setup).unwrap();
         let single_verifier_setup =
             <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&single_setup);
@@ -1356,7 +1358,8 @@ fn debug_onehot_batched_profile_compare() {
             BATCH_NUM_VARS,
             BATCH_SIZE,
             1,
-        );
+        )
+        .unwrap();
         let batch_prepared = CpuBackend.prepare_setup(&batch_setup).unwrap();
         let batch_verifier_setup =
             <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&batch_setup);
@@ -1424,7 +1427,7 @@ fn batched_commit_matches_individual_commits() {
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
     let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
     let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
@@ -1480,7 +1483,7 @@ fn batched_root_direct_fast_path_round_trip() {
         .collect();
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) =
@@ -1588,7 +1591,7 @@ fn batched_root_direct_rejects_wrong_opening() {
         .collect();
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) =
@@ -1652,7 +1655,7 @@ fn batched_verify_passes_for_consistent_openings() {
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
     let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
     let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
@@ -1740,7 +1743,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .collect();
 
     let setup =
-        <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE, 1);
+        <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE, 1)
+            .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
@@ -1844,7 +1848,7 @@ fn batched_verify_rejects_wrong_opening() {
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 5 + 13) as u64)).collect();
     let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
     let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
@@ -1910,7 +1914,7 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 19) as u64)).collect();
     let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
     let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
@@ -1983,7 +1987,7 @@ fn verify_passes_for_consistent_opening() {
 
     let (poly, evals) = make_dense_poly(num_vars);
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
@@ -2049,7 +2053,7 @@ fn verify_rejects_wrong_opening() {
 
     let (poly, evals) = make_dense_poly(num_vars);
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
@@ -2262,7 +2266,7 @@ fn monomial_basis_prove_verify_round_trip() {
     let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
     let poly = DensePoly::<F, D>::from_field_evals(num_vars, &coeffs).unwrap();
 
-    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
@@ -2339,7 +2343,8 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     let opening_point = vec![DirectF::zero(); num_vars];
     let opening = evals[0];
 
-    let setup = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_prover(num_vars, 1, 1);
+    let setup = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_prover(num_vars, 1, 1)
+        .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_verifier(&setup);
@@ -2926,7 +2931,8 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
             acc + weight * SmallE::lift_base(coeff)
         });
 
-    let setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 1, 1);
+    let setup =
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 1, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
@@ -3071,7 +3077,8 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
             acc + weight * SmallE::lift_base(coeff)
         });
 
-    let setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2, 1);
+    let setup =
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
@@ -3200,7 +3207,8 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     let opening_a = opening_at(&point_a);
     let opening_b = opening_at(&point_b);
 
-    let setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2, 2);
+    let setup =
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 2, 2).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_refs = [&poly];

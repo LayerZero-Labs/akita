@@ -31,14 +31,15 @@ where
     /// Build prover setup for maximum polynomial dimension, batch capacity,
     /// and distinct opening-point count.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if internal setup fails (programming error, not adversarial input).
+    /// Returns an error if the requested capacity, field tower, or generated
+    /// setup is invalid.
     fn setup_prover(
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Self::ProverSetup;
+    ) -> Result<Self::ProverSetup, AkitaError>;
 
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
@@ -74,13 +75,6 @@ where
     /// commitment layout from the full multipoint incidence so the produced
     /// commitments are compatible with the prove root.
     ///
-    /// The default implementation falls back to per-point [`Self::commit`]
-    /// calls. That fallback is correct only when each bundle's singleton
-    /// commit layout coincides with the multipoint batched-prove root layout
-    /// (typically the singleton case). `AkitaCommitmentScheme` (in
-    /// `akita-scheme`) overrides this with a config-backed implementation
-    /// that always selects the shared multipoint layout.
-    ///
     /// # Errors
     ///
     /// Returns an error if input validation, layout selection, or any
@@ -93,13 +87,7 @@ where
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
         P: AkitaPolyOps<F, D>,
-        B: CommitmentComputeBackend<F>,
-    {
-        polys_per_point
-            .iter()
-            .map(|polys| Self::commit(backend, prepared, polys))
-            .collect()
-    }
+        B: CommitmentComputeBackend<F>;
 
     /// Produce a fused batched opening proof for one or more opening points.
     ///

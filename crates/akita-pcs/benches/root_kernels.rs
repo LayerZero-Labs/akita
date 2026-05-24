@@ -40,7 +40,8 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     let evals = make_dense_evals::<Cfg>(NV);
     let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
     let layout = Cfg::commitment_layout(NV).expect("layout");
-    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+    let setup =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1).unwrap();
     let total = setup
         .expanded
         .shared_matrix

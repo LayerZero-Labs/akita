@@ -106,7 +106,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
                 NV,
                 total_claims,
                 num_polys_per_point.len(),
-            );
+            ).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -221,7 +221,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             NV,
             total_claims,
             num_polys_per_point.len(),
-        );
+        ).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
@@ -319,7 +319,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
                 NV,
                 total_claims,
                 NUM_POINTS,
-            );
+            ).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
@@ -465,7 +465,8 @@ mod non_zk_negative_cases {
             let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
-            >>::setup_prover(NV, total_claims, num_polys_per_point.len());
+            >>::setup_prover(NV, total_claims, num_polys_per_point.len())
+            .unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
@@ -553,7 +554,8 @@ mod non_zk_negative_cases {
                 DENSE_D,
             >>::setup_prover(
                 NV, total_claims, num_polys_per_point.len()
-            );
+            )
+            .unwrap();
             let commit_prepared = CpuBackend.prepare_setup(&commit_setup).unwrap();
             // Prove setup with strictly smaller capacity than total_claims.
             let prove_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
@@ -561,7 +563,8 @@ mod non_zk_negative_cases {
                 DENSE_D,
             >>::setup_prover(
                 NV, total_claims - 1, num_polys_per_point.len()
-            );
+            )
+            .unwrap();
             let prove_prepared = CpuBackend.prepare_setup(&prove_setup).unwrap();
             // Use the over-capacity setup so that commit succeeds; the
             // intent is to drive `batched_prove` against `prove_setup` that
@@ -650,7 +653,8 @@ mod non_zk_negative_cases {
             let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
-            >>::setup_prover(NV, total_claims, num_polys_per_point.len());
+            >>::setup_prover(NV, total_claims, num_polys_per_point.len())
+            .unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,

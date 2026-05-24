@@ -34,7 +34,8 @@ fn event_stream_equality_small() {
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1);
+        let setup =
+            <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(

@@ -74,7 +74,8 @@ mod non_zk_aggregated_cases {
             let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
-            >>::setup_prover(nv, batch_size, 1);
+            >>::setup_prover(nv, batch_size, 1)
+            .unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
@@ -164,7 +165,8 @@ mod non_zk_aggregated_cases {
             let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
-            >>::setup_prover(nv, batch_size, 1);
+            >>::setup_prover(nv, batch_size, 1)
+            .unwrap();
             let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
@@ -296,7 +298,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
                 NV,
                 BATCH_SIZE,
                 1,
-            );
+            ).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,

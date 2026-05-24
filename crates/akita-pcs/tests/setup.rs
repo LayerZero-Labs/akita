@@ -118,7 +118,8 @@ where
         setup_nv,
         setup_polys,
         1,
-    );
+    )
+    .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -191,7 +192,8 @@ where
         setup_nv,
         setup_polys,
         1,
-    );
+    )
+    .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -272,7 +274,8 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         setup_nv,
         setup_polys,
         1,
-    );
+    )
+    .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -362,7 +365,8 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         setup_nv,
         setup_polys,
         1,
-    );
+    )
+    .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);

@@ -11,8 +11,11 @@ scheduling remain follow-up work.
 - `AkitaProverSetup<F, D>` is a prover setup wrapper around expanded setup. It
   does not own CPU NTT caches, device buffers, command queues, or any
   backend-prepared state.
-- `CommitComputeBackend<F>` owns backend preparation and migrated compute
-  operations. Its associated `PreparedSetup<D>` is typed by ring dimension.
+- `ComputeBackendSetup<F>` owns backend preparation. Its associated
+  `PreparedSetup<D>` is typed by ring dimension.
+- `DigitRowsComputeBackend<F>`, `CyclicRowsComputeBackend<F>`,
+  `CommitmentComputeBackend<F>`, and `RingSwitchComputeBackend<F>` own the
+  migrated operation families.
 - `CpuBackend` prepares `CpuPreparedSetup<F, D>` from an
   `AkitaProverSetup<F, D>` or an `Arc<AkitaExpandedSetup<F>>`. That prepared
   state owns the CPU NTT cache internally.
@@ -21,7 +24,7 @@ Callers prepare once, then pass both the backend and prepared setup into prover
 entrypoints:
 
 ```rust
-let setup = AkitaCommitmentScheme::<D, Cfg>::setup_prover(nv, num_polys, points);
+let setup = AkitaCommitmentScheme::<D, Cfg>::setup_prover(nv, num_polys, points)?;
 let backend = CpuBackend;
 let prepared = backend.prepare_setup(&setup)?;
 let (commitment, hint) =
@@ -54,7 +57,7 @@ wired through setup-owned CPU caches:
 - one-hot and sparse-ring commit rows without dense materialization;
 - recursive witness commit rows;
 - single-row cyclic and negacyclic digit rows;
-- split-eq quotient rows for ring switch.
+- cyclic and quotient relation rows for ring switch.
 
 ## Deferred Work
 
@@ -63,6 +66,9 @@ becomes active:
 
 - `akita-metal` device/runtime skeleton with one tiny deterministic dispatch;
 - production Metal ring/NTT kernels;
+- fused inner-commit witness operations that return decomposed digits and
+  recomposed rows together for device backends;
+- flat one-hot and sparse-ring plan tables for accelerator upload;
 - base-field and MLE kernels tied to concrete prover consumers;
 - stage-1/stage-2 sumcheck backend hooks;
 - deterministic true CPU/GPU hybrid scheduling;

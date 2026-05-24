@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(all(feature = "zk", feature = "planner"))]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
 
 mod common;
 
@@ -325,7 +325,8 @@ where
         let point = random_point(nv, 0x0bad_f00d_0000 + D as u64 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+        let setup =
+            <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -422,7 +423,8 @@ where
         let point = random_point(nv, 0x0bad_f00d_0000 + D as u64 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+        let setup =
+            <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_verifier(&setup);

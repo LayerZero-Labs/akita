@@ -1,12 +1,13 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 
+use crate::api::commitment::validate_commit_inner_witness_shape;
 use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{
-    tensor_pack_recursive_witness, ProverComputeBackend, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat,
+    tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
+    RecursiveWitnessFlat, RingSwitchComputeBackend,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
@@ -90,7 +91,7 @@ pub fn ring_switch_build_w<F, B, const D: usize>(
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
-    B: ProverComputeBackend<F>,
+    B: RingSwitchComputeBackend<F>,
 {
     {
         let x: u8 = 0;
@@ -494,7 +495,7 @@ pub fn commit_w<F, B, const D: usize>(
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    B: ProverComputeBackend<F>,
+    B: CommitmentComputeBackend<F>,
 {
     if commit_layout.ring_dimension != D {
         return Err(AkitaError::InvalidInput(format!(
@@ -531,6 +532,13 @@ where
         commit_layout.block_len,
         commit_layout.num_blocks,
         commit_layout.num_digits_commit,
+        commit_layout.num_digits_open,
+        commit_layout.log_basis,
+    )?;
+    validate_commit_inner_witness_shape(
+        &inner,
+        commit_layout.num_blocks,
+        commit_layout.a_key.row_len(),
         commit_layout.num_digits_open,
         commit_layout.log_basis,
     )?;
@@ -587,7 +595,7 @@ fn dispatch_commit_w_with_layout_policy<F, L, B, Layout>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     L: ExtField<F>,
-    B: ProverComputeBackend<F>,
+    B: CommitmentComputeBackend<F>,
     Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let commit_d = commit_params.ring_dimension;
@@ -646,7 +654,7 @@ pub fn commit_next_w_with_policy<F, L, B, SameLayout, DispatchLayout, const D: u
 where
     F: FieldCore + CanonicalField + RandomSampling,
     L: ExtField<F>,
-    B: ProverComputeBackend<F>,
+    B: CommitmentComputeBackend<F>,
     SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {

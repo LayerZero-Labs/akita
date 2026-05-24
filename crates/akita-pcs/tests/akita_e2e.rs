@@ -203,7 +203,8 @@ where
     purge_setup_cache(nv);
 
     let setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_prover(nv, 1, 1);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_prover(nv, 1, 1)
+            .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_verifier(&setup);
@@ -347,7 +348,8 @@ fn full_d64_prove_verify() {
             FULL_TEST_NV,
             1,
             1,
-        );
+        )
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &CpuBackend,
@@ -594,7 +596,8 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let opening = opening_from_poly(&poly, &opening_point, &layout);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
+                .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -774,7 +777,8 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         purge_setup_cache(nv);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
+                .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -906,7 +910,8 @@ fn batched_onehot_same_point_round_trip() {
         purge_setup_cache(nv);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1)
+                .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -998,7 +1003,8 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         purge_setup_cache(nv);
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1)
+                .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -1109,7 +1115,8 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
 
         let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
             NV, BATCH_SIZE, 1,
-        );
+        )
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -1201,7 +1208,8 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         let nv = FULL_TEST_NV;
         let layout = Cfg::commitment_layout(nv).expect("layout");
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
+                .unwrap();
         let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");

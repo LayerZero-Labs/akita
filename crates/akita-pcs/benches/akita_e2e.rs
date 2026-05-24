@@ -94,12 +94,14 @@ fn bench_dense_phases<
                     black_box(nv),
                     black_box(1),
                     black_box(1),
-                ),
+                )
+                .unwrap(),
             )
         })
     });
 
-    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+    let setup =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
 
     group.bench_function("commit", |b| {
@@ -289,7 +291,8 @@ fn bench_onehot_phases<
     let pt = random_point(nv);
     let opening = multilinear_eval(&dense_evals, &pt).unwrap();
 
-    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+    let setup =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
 
     let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));

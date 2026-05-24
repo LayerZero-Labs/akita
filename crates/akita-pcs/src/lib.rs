@@ -3,7 +3,7 @@
 //! A high performance and modular implementation of the Akita polynomial commitment scheme.
 //!
 //! Akita is a lattice-based polynomial commitment scheme with transparent setup and
-//! post-quantum security guarantees. It descends from Akita while carrying the current
+//! post-quantum security guarantees. It descends from Hachi while carrying the current
 //! Akita crate decomposition work.
 //!
 //! ## Key Features
@@ -56,10 +56,11 @@ pub use akita_field::{
 };
 pub use akita_prover::{
     AkitaPolyOps, CommitmentComputeBackend, CommitmentProver, CommittedPolynomials,
-    ComputeBackendSetup, CpuBackend, CpuPreparedSetup, DecomposeFoldWitness, DenseCommitInput,
-    DenseCommitRowsPlan, LinearComputeBackend, MultiChunkEntry, OneHotCommitBlocks,
-    OneHotCommitRowsPlan, ProverClaims, ProverComputeBackend, RecursiveWitnessCommitRowsPlan,
-    RingSwitchComputeBackend, SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
+    ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
+    DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
+    MultiChunkEntry, OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims, ProverComputeBackend,
+    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
 };
 pub use akita_scheme::AkitaCommitmentScheme;
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};

@@ -97,7 +97,8 @@ fn bench_single_case(c: &mut Criterion) {
         SINGLE_NUM_VARS,
         1,
         1,
-    );
+    )
+    .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -208,7 +209,8 @@ fn bench_batched_case(c: &mut Criterion) {
         BATCH_NUM_VARS,
         BATCH_SIZE,
         1,
-    );
+    )
+    .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);

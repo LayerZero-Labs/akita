@@ -75,7 +75,8 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         num_vars,
         total_claims,
         num_polys_per_point.len(),
-    );
+    )
+    .unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_verifier(&setup);
 

@@ -8,9 +8,10 @@ use akita_field::Fp64;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, HalvingField};
 use akita_pcs::{
     AkitaPolyOps, CommitmentComputeBackend, CommitmentProver, CommittedPolynomials,
-    ComputeBackendSetup, DecomposeFoldWitness, DenseCommitRowsPlan, LinearComputeBackend,
-    OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims, ProverComputeBackend,
-    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, SparseRingCommitRowsPlan,
+    ComputeBackendSetup, CyclicRowsComputeBackend, DecomposeFoldWitness, DenseCommitRowsPlan,
+    DigitRowsComputeBackend, OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims,
+    ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
 use akita_transcript::{labels, AkitaTranscript, Transcript};
 use akita_types::AkitaExpandedSetup;
@@ -176,7 +177,7 @@ impl CommitmentComputeBackend<F> for DummyBackend {
     }
 }
 
-impl LinearComputeBackend<F> for DummyBackend {
+impl DigitRowsComputeBackend<F> for DummyBackend {
     fn digit_rows<const D: usize>(
         &self,
         _prepared: &Self::PreparedSetup<D>,
@@ -185,7 +186,9 @@ impl LinearComputeBackend<F> for DummyBackend {
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         unreachable!("dummy backend is not used for compute")
     }
+}
 
+impl CyclicRowsComputeBackend<F> for DummyBackend {
     fn cyclic_digit_rows<const D: usize>(
         &self,
         _prepared: &Self::PreparedSetup<D>,
@@ -200,21 +203,8 @@ impl RingSwitchComputeBackend<F> for DummyBackend {
     fn ring_switch_relation_rows<const D: usize>(
         &self,
         _prepared: &Self::PreparedSetup<D>,
-        _n_d: usize,
-        _n_b: usize,
-        _n_a: usize,
-        _w_hat: &[[i8; D]],
-        _t_hat: &[[i8; D]],
-        _z_segment: &[[i32; D]],
-        _z_pre_centered_inf_norm: u32,
-    ) -> Result<
-        (
-            Vec<CyclotomicRing<F, D>>,
-            Vec<CyclotomicRing<F, D>>,
-            Vec<CyclotomicRing<F, D>>,
-        ),
-        AkitaError,
-    >
+        _plan: RingSwitchRelationRowsPlan<'_, D>,
+    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
         F: HalvingField,
     {
@@ -268,10 +258,10 @@ impl CommitmentProver<F, 1> for DummyScheme {
         max_num_vars: usize,
         _max_num_batched_polys: usize,
         _max_num_points: usize,
-    ) -> Self::ProverSetup {
-        DummySetup {
+    ) -> Result<Self::ProverSetup, AkitaError> {
+        Ok(DummySetup {
             _max_num_vars: max_num_vars,
-        }
+        })
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
@@ -289,6 +279,21 @@ impl CommitmentProver<F, 1> for DummyScheme {
     {
         let c = AkitaCommitment(0);
         Ok((c, c))
+    }
+
+    fn batched_commit<P, B>(
+        backend: &B,
+        prepared: &B::PreparedSetup<1>,
+        polys_per_point: &[&[P]],
+    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
+    where
+        P: AkitaPolyOps<F, 1>,
+        B: CommitmentComputeBackend<F>,
+    {
+        polys_per_point
+            .iter()
+            .map(|polys| Self::commit(backend, prepared, polys))
+            .collect()
     }
 
     fn batched_prove<'a, T, P, B>(
@@ -320,7 +325,7 @@ fn commitment_scheme_round_trip() {
     };
     let opening_point = [F::from_u64(11), F::from_u64(13)];
 
-    let psetup = DummyScheme::setup_prover(poly.num_vars(), 1, 1);
+    let psetup = DummyScheme::setup_prover(poly.num_vars(), 1, 1).unwrap();
     let prepared = DummySetup {
         _max_num_vars: poly.num_vars(),
     };

@@ -5,7 +5,10 @@
 
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
-use crate::{AkitaPolyOps, DecomposeFoldWitness, ProverComputeBackend, RecursiveWitnessView};
+use crate::{
+    AkitaPolyOps, CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend,
+    RecursiveWitnessView, RingSwitchComputeBackend, RingSwitchRelationRowsPlan,
+};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::sample_sparse_challenges;
@@ -193,7 +196,7 @@ fn compute_v_rows<F, B, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    B: ProverComputeBackend<F>,
+    B: DigitRowsComputeBackend<F>,
 {
     #[cfg(feature = "zk")]
     {
@@ -267,7 +270,7 @@ where
     where
         T: Transcript<F>,
         P: AkitaPolyOps<F, D>,
-        B: ProverComputeBackend<F>,
+        B: DigitRowsComputeBackend<F>,
     {
         {
             let x: u8 = 0;
@@ -616,7 +619,7 @@ where
     ) -> Result<Self, AkitaError>
     where
         T: Transcript<F>,
-        B: ProverComputeBackend<F>,
+        B: DigitRowsComputeBackend<F>,
     {
         let num_claims = ring_opening_points.len();
         if num_claims == 0
@@ -1133,7 +1136,7 @@ fn add_blinding_cyclic_rows<F, B, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    B: ProverComputeBackend<F>,
+    B: CyclicRowsComputeBackend<F>,
 {
     if blinding.is_empty() {
         return Ok(());
@@ -1170,7 +1173,7 @@ fn repeated_b_commitment_rows<F, B, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    B: ProverComputeBackend<F>,
+    B: CyclicRowsComputeBackend<F>,
 {
     if num_polys_per_point.is_empty() || blocks_per_claim == 0 {
         return Err(AkitaError::InvalidProof);
@@ -1282,7 +1285,7 @@ pub fn compute_r_split_eq<F, B, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
-    B: ProverComputeBackend<F>,
+    B: RingSwitchComputeBackend<F>,
 {
     if num_polys_per_point.is_empty() || num_polys_per_point.contains(&0) {
         return Err(AkitaError::InvalidProof);
@@ -1322,6 +1325,9 @@ where
         || row_coefficient_rings.len() != claim_to_point.len()
         || claim_to_point_poly.len() != claim_to_point.len()
         || claim_poly_indices.len() != claim_to_point.len()
+        || claim_to_point
+            .iter()
+            .any(|&point_idx| point_idx >= num_public_outputs)
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -1338,9 +1344,31 @@ where
     if challenges.len() != expected_challenges {
         return Err(AkitaError::InvalidProof);
     }
+    if w_hat_flat.len()
+        != expected_challenges
+            .checked_mul(lp.num_digits_open)
+            .ok_or(AkitaError::InvalidProof)?
+    {
+        return Err(AkitaError::InvalidProof);
+    }
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
     let n_a = lp.a_key.row_len();
+    let expected_t_hat_block_digits = n_a
+        .checked_mul(lp.num_digits_open)
+        .ok_or(AkitaError::InvalidProof)?;
+    let expected_t_hat_flat_digits = expected_inner_rows
+        .checked_mul(expected_t_hat_block_digits)
+        .ok_or(AkitaError::InvalidProof)?;
+    if t_hat.block_count() != expected_inner_rows
+        || t_hat
+            .block_sizes()
+            .iter()
+            .any(|&block_size| block_size != expected_t_hat_block_digits)
+        || t_hat.flat_digits().len() != expected_t_hat_flat_digits
+    {
+        return Err(AkitaError::InvalidProof);
+    }
     // Terminal layout drops the D-rows from M (and from `y`). All structural
     // offsets must use `n_d_active`, not `n_d`, to match the verifier.
     let n_d_active = match m_row_layout {
@@ -1360,28 +1388,42 @@ where
     let b_start = d_start + n_d_active;
     let a_start = b_start + commitment_row_count;
 
-    if inner_width == 0 || !z_pre_centered.len().is_multiple_of(inner_width) {
+    if inner_width == 0
+        || z_pre_centered.len()
+            != num_public_outputs
+                .checked_mul(inner_width)
+                .ok_or(AkitaError::InvalidProof)?
+    {
         return Err(AkitaError::InvalidProof);
     }
 
     let mut z_segments = z_pre_centered.chunks(inner_width);
     let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
-    let (d_cyclic, b_cyclic, mut a_quotients) = backend.ring_switch_relation_rows::<D>(
+    let relation_rows = backend.ring_switch_relation_rows::<D>(
         prepared,
-        n_d_active,
-        n_b,
-        n_a,
-        w_hat_flat,
-        t_hat.flat_digits(),
-        first_z_segment,
-        z_pre_centered_inf_norm,
+        RingSwitchRelationRowsPlan::Full {
+            n_d: n_d_active,
+            n_b,
+            n_a,
+            w_hat: w_hat_flat,
+            t_hat: t_hat.flat_digits(),
+            z_segment: first_z_segment,
+            z_pre_centered_inf_norm,
+        },
     )?;
-    if d_cyclic.len() != n_d_active || b_cyclic.len() != n_b || a_quotients.len() != n_a {
+    if relation_rows.d_cyclic.len() != n_d_active
+        || relation_rows.b_cyclic.len() != n_b
+        || relation_rows.a_quotients.len() != n_a
+    {
         return Err(AkitaError::InvalidProof);
     }
+    let mut a_quotients = relation_rows.a_quotients;
+    let b_cyclic = relation_rows.b_cyclic;
     #[cfg(feature = "zk")]
-    let mut d_cyclic = d_cyclic;
+    let mut d_cyclic = relation_rows.d_cyclic;
+    #[cfg(not(feature = "zk"))]
+    let d_cyclic = relation_rows.d_cyclic;
     #[cfg(feature = "zk")]
     add_blinding_cyclic_rows(
         backend,
@@ -1392,20 +1434,24 @@ where
         &mut d_cyclic,
     )?;
     for z_segment in z_segments {
-        let (_, _, segment_a_quotients) = backend.ring_switch_relation_rows::<D>(
+        let segment_rows = backend.ring_switch_relation_rows::<D>(
             prepared,
-            0,
-            0,
-            n_a,
-            &[],
-            &[],
-            z_segment,
-            z_pre_centered_inf_norm,
+            RingSwitchRelationRowsPlan::QuotientOnly {
+                n_a,
+                z_segment,
+                z_pre_centered_inf_norm,
+            },
         )?;
-        if segment_a_quotients.len() != n_a {
+        if !segment_rows.d_cyclic.is_empty()
+            || !segment_rows.b_cyclic.is_empty()
+            || segment_rows.a_quotients.len() != n_a
+        {
             return Err(AkitaError::InvalidProof);
         }
-        for (dst, src) in a_quotients.iter_mut().zip(segment_a_quotients.into_iter()) {
+        for (dst, src) in a_quotients
+            .iter_mut()
+            .zip(segment_rows.a_quotients.into_iter())
+        {
             *dst += src;
         }
     }

@@ -2,13 +2,116 @@
 
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
-use crate::{AkitaPolyOps, CommitmentComputeBackend};
+use crate::{AkitaPolyOps, CommitInnerWitness, CommitmentComputeBackend};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
     AkitaCommitmentHint, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams, RingCommitment,
 };
+
+pub(crate) fn commit_inner_block_digit_count(
+    n_a: usize,
+    num_digits_open: usize,
+) -> Result<usize, AkitaError> {
+    if num_digits_open == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "num_digits_open must be nonzero for inner commitment digits".to_string(),
+        ));
+    }
+    n_a.checked_mul(num_digits_open).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "commit inner witness block digit count overflowed usize".to_string(),
+        )
+    })
+}
+
+pub(crate) fn commit_inner_flat_digit_count(
+    num_blocks: usize,
+    n_a: usize,
+    num_digits_open: usize,
+) -> Result<usize, AkitaError> {
+    num_blocks
+        .checked_mul(commit_inner_block_digit_count(n_a, num_digits_open)?)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "commit inner witness flat digit count overflowed usize".to_string(),
+            )
+        })
+}
+
+pub(crate) fn validate_commit_inner_witness_shape<F, const D: usize>(
+    inner: &CommitInnerWitness<F, D>,
+    num_blocks: usize,
+    n_a: usize,
+    num_digits_open: usize,
+    log_basis: u32,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
+    let expected_flat_digits = commit_inner_flat_digit_count(num_blocks, n_a, num_digits_open)?;
+    if !(1..=128).contains(&log_basis) {
+        return Err(AkitaError::InvalidSetup(
+            "log_basis must be in 1..=128 when recomposing inner commitment digits".to_string(),
+        ));
+    }
+
+    if inner.recomposed_inner_rows.len() != num_blocks {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} inner commitment blocks, expected {}",
+            inner.recomposed_inner_rows.len(),
+            num_blocks
+        )));
+    }
+    for (block_idx, block_rows) in inner.recomposed_inner_rows.iter().enumerate() {
+        if block_rows.len() != n_a {
+            return Err(AkitaError::InvalidSetup(format!(
+                "backend returned {} A rows for inner commitment block {}, expected {}",
+                block_rows.len(),
+                block_idx,
+                n_a
+            )));
+        }
+    }
+
+    if inner.decomposed_inner_rows.block_count() != num_blocks {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} decomposed inner commitment blocks, expected {}",
+            inner.decomposed_inner_rows.block_count(),
+            num_blocks
+        )));
+    }
+    for (block_idx, &block_digits) in inner.decomposed_inner_rows.block_sizes().iter().enumerate() {
+        if block_digits != expected_block_digits {
+            return Err(AkitaError::InvalidSetup(format!(
+                "backend returned {} decomposed digits for inner commitment block {}, expected {}",
+                block_digits, block_idx, expected_block_digits
+            )));
+        }
+    }
+    if inner.decomposed_inner_rows.flat_digits().len() != expected_flat_digits {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} total decomposed inner commitment digits, expected {}",
+            inner.decomposed_inner_rows.flat_digits().len(),
+            expected_flat_digits
+        )));
+    }
+    for (block_idx, block_digits) in inner.decomposed_inner_rows.iter_blocks().enumerate() {
+        let recomposed_block = &inner.recomposed_inner_rows[block_idx];
+        for (row_idx, row_digits) in block_digits.chunks(num_digits_open).enumerate() {
+            let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(row_digits, log_basis);
+            if recomposed_block[row_idx] != recomposed {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "backend returned recomposed row {row_idx} for inner commitment block {block_idx} that does not match its decomposed digits"
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
 
 /// Validate a singleton commitment request against prover setup capacity.
 ///
@@ -59,7 +162,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if an inner witness commitment or hint allocation fails.
+/// Returns an error if input validation, inner witness commitment, or hint
+/// allocation fails.
 pub fn commit_with_params<F, const D: usize, P, B>(
     polys: &[P],
     backend: &B,
@@ -71,7 +175,13 @@ where
     P: AkitaPolyOps<F, D>,
     B: CommitmentComputeBackend<F>,
 {
-    let b_input_len_per_poly = params.num_blocks * params.a_key.row_len() * params.num_digits_open;
+    prepare_commit_inputs::<F, D, P>(polys, backend.expanded::<D>(prepared))?;
+
+    let b_input_len_per_poly = commit_inner_flat_digit_count(
+        params.num_blocks,
+        params.a_key.row_len(),
+        params.num_digits_open,
+    )?;
     let mut b_input_digits = vec![[0i8; D]; polys.len() * b_input_len_per_poly];
     let mut decomposed_inner_rows: Vec<FlatDigitBlocks<D>> = (0..polys.len())
         .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
@@ -90,6 +200,13 @@ where
                     params.a_key.row_len(),
                     params.block_len,
                     params.num_digits_commit,
+                    params.num_digits_open,
+                    params.log_basis,
+                )?;
+                validate_commit_inner_witness_shape(
+                    &inner,
+                    params.num_blocks,
+                    params.a_key.row_len(),
                     params.num_digits_open,
                     params.log_basis,
                 )?;
@@ -277,7 +394,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if any per-point commitment fails.
+/// Returns an error if batched input validation fails or any per-point
+/// commitment fails.
 #[allow(clippy::type_complexity)]
 pub fn batched_commit_with_params<F, const D: usize, P, B>(
     polys_per_point: &[&[P]],
@@ -290,6 +408,8 @@ where
     P: AkitaPolyOps<F, D>,
     B: CommitmentComputeBackend<F>,
 {
+    prepare_batched_commit_inputs::<F, D, P>(polys_per_point, backend.expanded::<D>(prepared))?;
+
     let mut out = Vec::with_capacity(polys_per_point.len());
     for polys in polys_per_point {
         out.push(commit_with_params::<F, D, P, B>(
@@ -297,4 +417,54 @@ where
         )?);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Fp64;
+
+    type F = Fp64<4294967197>;
+    const D: usize = 32;
+
+    fn inner_witness(
+        recomposed_blocks: usize,
+        rows_per_block: usize,
+        block_sizes: Vec<usize>,
+    ) -> CommitInnerWitness<F, D> {
+        let total_digits = block_sizes.iter().sum();
+        CommitInnerWitness {
+            recomposed_inner_rows: vec![
+                vec![CyclotomicRing::<F, D>::zero(); rows_per_block];
+                recomposed_blocks
+            ],
+            decomposed_inner_rows: FlatDigitBlocks::new(vec![[0i8; D]; total_digits], block_sizes)
+                .expect("valid flat digit blocks"),
+        }
+    }
+
+    #[test]
+    fn commit_inner_witness_shape_accepts_expected_layout() {
+        let inner = inner_witness(2, 3, vec![6, 6]);
+        validate_commit_inner_witness_shape(&inner, 2, 3, 2, 4).expect("shape should match");
+    }
+
+    #[test]
+    fn commit_inner_witness_shape_rejects_bad_block_count() {
+        let inner = inner_witness(1, 3, vec![6, 6]);
+        assert!(validate_commit_inner_witness_shape(&inner, 2, 3, 2, 4).is_err());
+    }
+
+    #[test]
+    fn commit_inner_witness_shape_rejects_bad_digit_block_size() {
+        let inner = inner_witness(2, 3, vec![6, 5]);
+        assert!(validate_commit_inner_witness_shape(&inner, 2, 3, 2, 4).is_err());
+    }
+
+    #[test]
+    fn commit_inner_witness_shape_rejects_recomposition_mismatch() {
+        let mut inner = inner_witness(1, 1, vec![2]);
+        inner.decomposed_inner_rows.flat_digits_mut()[0][0] = 1;
+        assert!(validate_commit_inner_witness_shape(&inner, 1, 1, 2, 4).is_err());
+    }
 }

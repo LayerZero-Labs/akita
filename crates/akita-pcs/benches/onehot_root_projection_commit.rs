@@ -118,7 +118,8 @@ where
         .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
-    let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys, 1);
+    let setup =
+        <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let params = Cfg::get_params_for_commitment(num_vars, num_polys, 1)
         .expect("benchmark commitment params");

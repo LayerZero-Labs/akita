@@ -52,7 +52,8 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         SINGLE_NUM_VARS,
         1,
         1,
-    );
+    )
+    .unwrap();
     let single_prepared = CpuBackend.prepare_setup(&single_setup).unwrap();
     let single_total = single_setup
         .expanded
@@ -71,7 +72,8 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         BATCH_NUM_VARS,
         BATCH_SIZE,
         1,
-    );
+    )
+    .unwrap();
     let batched_prepared = CpuBackend.prepare_setup(&batched_setup).unwrap();
     let batched_total = batched_setup
         .expanded

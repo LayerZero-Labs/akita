@@ -157,8 +157,8 @@ where
     }
 }
 
-/// Linear digit mat-vec operations shared by commitment and ring-switch code.
-pub trait LinearComputeBackend<F>: ComputeBackendSetup<F>
+/// Negacyclic digit mat-vec operations shared by commitment and protocol code.
+pub trait DigitRowsComputeBackend<F>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField,
 {
@@ -169,7 +169,13 @@ where
         row_len: usize,
         digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+}
 
+/// Cyclic digit mat-vec operations needed by ring-switch relation code.
+pub trait CyclicRowsComputeBackend<F>: DigitRowsComputeBackend<F>
+where
+    F: FieldCore + CanonicalField,
+{
     /// Cyclic single-input digit mat-vec rows.
     fn cyclic_digit_rows<const D: usize>(
         &self,
@@ -180,7 +186,7 @@ where
 }
 
 /// Commitment row operations for migrated root/ring commitment work.
-pub trait CommitmentComputeBackend<F>: LinearComputeBackend<F>
+pub trait CommitmentComputeBackend<F>: DigitRowsComputeBackend<F>
 where
     F: FieldCore + CanonicalField,
 {
@@ -219,31 +225,58 @@ where
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
 }
 
+/// Ring-switch relation operation input.
+pub enum RingSwitchRelationRowsPlan<'a, const D: usize> {
+    /// Full first segment, producing D-side, B-side, and A-side relation rows.
+    Full {
+        /// Number of D-side cyclic rows to produce.
+        n_d: usize,
+        /// Number of B-side cyclic rows to produce.
+        n_b: usize,
+        /// Number of A-side quotient rows to produce.
+        n_a: usize,
+        /// Flat decomposed `w_hat` digits for the D-side relation rows.
+        w_hat: &'a [[i8; D]],
+        /// Flat decomposed inner-commitment digits for the B-side relation rows.
+        t_hat: &'a [[i8; D]],
+        /// One centered `z` segment contributing to A-side quotient rows.
+        z_segment: &'a [[i32; D]],
+        /// Infinity norm of the full centered `z_pre` witness.
+        z_pre_centered_inf_norm: u32,
+    },
+    /// Additional public-row segment, producing only A-side quotient rows.
+    QuotientOnly {
+        /// Number of A-side quotient rows to produce.
+        n_a: usize,
+        /// One centered `z` segment contributing to A-side quotient rows.
+        z_segment: &'a [[i32; D]],
+        /// Infinity norm of the full centered `z_pre` witness.
+        z_pre_centered_inf_norm: u32,
+    },
+}
+
+/// Named ring-switch relation rows returned by a backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RingSwitchRelationRows<F: FieldCore, const D: usize> {
+    /// D-side cyclic rows.
+    pub d_cyclic: Vec<CyclotomicRing<F, D>>,
+    /// B-side cyclic rows.
+    pub b_cyclic: Vec<CyclotomicRing<F, D>>,
+    /// A-side quotient rows.
+    pub a_quotients: Vec<CyclotomicRing<F, D>>,
+}
+
 /// Ring-switch relation operations for migrated proving work.
-pub trait RingSwitchComputeBackend<F>: LinearComputeBackend<F>
+pub trait RingSwitchComputeBackend<F>: CyclicRowsComputeBackend<F>
 where
     F: FieldCore + CanonicalField,
 {
     /// Fused cyclic/quotient rows used by ring-switch finalization.
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn ring_switch_relation_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup<D>,
-        n_d: usize,
-        n_b: usize,
-        n_a: usize,
-        w_hat: &[[i8; D]],
-        t_hat: &[[i8; D]],
-        z_segment: &[[i32; D]],
-        z_pre_centered_inf_norm: u32,
-    ) -> Result<
-        (
-            Vec<CyclotomicRing<F, D>>,
-            Vec<CyclotomicRing<F, D>>,
-            Vec<CyclotomicRing<F, D>>,
-        ),
-        AkitaError,
-    >
+        plan: RingSwitchRelationRowsPlan<'_, D>,
+    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
         F: HalvingField;
 }
@@ -465,7 +498,7 @@ where
     }
 }
 
-impl<F> LinearComputeBackend<F> for CpuBackend
+impl<F> DigitRowsComputeBackend<F> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
@@ -482,7 +515,12 @@ where
             digits,
         ))
     }
+}
 
+impl<F> CyclicRowsComputeBackend<F> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
     fn cyclic_digit_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup<D>,
@@ -505,25 +543,44 @@ where
     fn ring_switch_relation_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup<D>,
-        n_d: usize,
-        n_b: usize,
-        n_a: usize,
-        w_hat: &[[i8; D]],
-        t_hat: &[[i8; D]],
-        z_segment: &[[i32; D]],
-        z_pre_centered_inf_norm: u32,
-    ) -> Result<
-        (
-            Vec<CyclotomicRing<F, D>>,
-            Vec<CyclotomicRing<F, D>>,
-            Vec<CyclotomicRing<F, D>>,
-        ),
-        AkitaError,
-    >
+        plan: RingSwitchRelationRowsPlan<'_, D>,
+    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
         F: HalvingField,
     {
-        Ok(fused_split_eq_quotients(
+        let (n_d, n_b, n_a, w_hat, t_hat, z_segment, z_pre_centered_inf_norm) = match plan {
+            RingSwitchRelationRowsPlan::Full {
+                n_d,
+                n_b,
+                n_a,
+                w_hat,
+                t_hat,
+                z_segment,
+                z_pre_centered_inf_norm,
+            } => (
+                n_d,
+                n_b,
+                n_a,
+                w_hat,
+                t_hat,
+                z_segment,
+                z_pre_centered_inf_norm,
+            ),
+            RingSwitchRelationRowsPlan::QuotientOnly {
+                n_a,
+                z_segment,
+                z_pre_centered_inf_norm,
+            } => (
+                0,
+                0,
+                n_a,
+                &[][..],
+                &[][..],
+                z_segment,
+                z_pre_centered_inf_norm,
+            ),
+        };
+        let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients(
             &prepared.ntt_shared,
             n_d,
             n_b,
@@ -533,7 +590,12 @@ where
             t_hat,
             z_segment,
             z_pre_centered_inf_norm,
-        ))
+        );
+        Ok(RingSwitchRelationRows {
+            d_cyclic,
+            b_cyclic,
+            a_quotients,
+        })
     }
 }
 
@@ -579,7 +641,18 @@ mod tests {
         let t_hat = vec![[-1i8; D], [3i8; D]];
         let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D]];
         let via_backend = CpuBackend
-            .ring_switch_relation_rows::<D>(&prepared, 1, 1, 1, &w_hat, &t_hat, &z_segment, 3)
+            .ring_switch_relation_rows::<D>(
+                &prepared,
+                RingSwitchRelationRowsPlan::Full {
+                    n_d: 1,
+                    n_b: 1,
+                    n_a: 1,
+                    w_hat: &w_hat,
+                    t_hat: &t_hat,
+                    z_segment: &z_segment,
+                    z_pre_centered_inf_norm: 3,
+                },
+            )
             .expect("backend ring-switch relation rows");
         let direct = fused_split_eq_quotients(
             &prepared.ntt_shared,
@@ -592,6 +665,13 @@ mod tests {
             &z_segment,
             3,
         );
-        assert_eq!(via_backend, direct);
+        assert_eq!(
+            (
+                via_backend.d_cyclic,
+                via_backend.b_cyclic,
+                via_backend.a_quotients
+            ),
+            direct
+        );
     }
 }
