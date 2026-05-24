@@ -760,9 +760,9 @@ impl<const P: u32> PackedFp32Neon<P> {
     }
 
     /// `solinas_reduce_with_carry` specialised for `BITS == 31` (Mersenne31
-    /// and any pseudo-Mersenne `Fp32<P>` with `P = 2^31 - C`). Mirrors PR
-    /// #99's `solinas_reduce_bits31` style: a separate function that swaps
-    /// the variable-amount `vshlq_u64(.., neg_bits)` for the immediate-shift
+    /// and any pseudo-Mersenne `Fp32<P>` with `P = 2^31 - C`). Sibling of
+    /// `solinas_reduce_bits31`: a separate function that swaps the
+    /// variable-amount `vshlq_u64(.., neg_bits)` for the immediate-shift
     /// `vshrq_n_u64::<31>`, reducing shift-count register pressure and
     /// dispatch port pressure. Since `BITS == 31` implies `BITS < 32`, the
     /// `else` branch of the canonicalisation can be dropped.

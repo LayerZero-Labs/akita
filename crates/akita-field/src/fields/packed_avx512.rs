@@ -99,7 +99,8 @@ impl<const P: u32> PackedFp32Avx512<P> {
     }
 
     /// Multiply each lane's low 32 bits by `C`. Building block of Solinas
-    /// reduction. The `C == 1` fast path is from PR #99's fp31 work.
+    /// reduction; the `C == 1` fast path skips the multiply entirely for
+    /// Mersenne-like primes.
     #[inline(always)]
     unsafe fn mul_c_u64(x: __m512i) -> __m512i {
         if Self::C == 1 {
@@ -112,7 +113,7 @@ impl<const P: u32> PackedFp32Avx512<P> {
 
     /// Plonky3-style Mersenne31 multiply (P = 2^31 - 1). Specialized using
     /// `_mm512_srli_epi64::<31>` shifts and 16-lane mask blends. Used by
-    /// the `Mul` impl when `Self::BITS == 31 && Self::C == 1`. From PR #99.
+    /// the `Mul` impl when `Self::BITS == 31 && Self::C == 1`.
     #[inline(always)]
     unsafe fn mul_mersenne31_vec(a: __m512i, b: __m512i) -> __m512i {
         unsafe {
@@ -256,9 +257,11 @@ impl<const P: u32> PackedFp32Avx512<P> {
 
     /// Two-fold Solinas reduction of 8+8 `u64` products → 16 `u32` lanes.
     ///
-    /// The `Self::BITS == 31` branches mirror the immediate-shift
-    /// specialisation PR #99 added in the base-field `Mul` impl, so
-    /// extension-field operations on Mersenne31 get the same per-shift win.
+    /// The `Self::BITS == 31` branches use immediate-shift
+    /// `_mm512_srli_epi64::<31>` instead of the generic variable-shift
+    /// `_mm512_srl_epi64(.., shift)`, mirroring the same specialisation
+    /// the base-field `Mul` impl uses on Mersenne31, so extension-field
+    /// operations on Mersenne31 get the same per-shift win.
     #[inline(always)]
     unsafe fn solinas_reduce(prod_evn: __m512i, prod_odd: __m512i) -> __m512i {
         let mask = _mm512_set1_epi64(Self::MASK_U64 as i64);

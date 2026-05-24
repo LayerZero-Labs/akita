@@ -95,8 +95,8 @@ impl<const P: u32> PackedFp32Avx2<P> {
     }
 
     /// Multiply each lane's low 32 bits by `C`. Building block of Solinas
-    /// reduction. The `C == 1` fast path is from PR #99's fp31 work.
-    /// Mirrors `PackedFp32Neon::mul_c_u64`.
+    /// reduction; the `C == 1` fast path skips the multiply entirely for
+    /// Mersenne-like primes. Mirrors `PackedFp32Neon::mul_c_u64`.
     #[inline(always)]
     unsafe fn mul_c_u64(x: __m256i) -> __m256i {
         if Self::C == 1 {
@@ -109,7 +109,7 @@ impl<const P: u32> PackedFp32Avx2<P> {
 
     /// Plonky3-style Mersenne31 multiply (P = 2^31 - 1). Specialized fold
     /// using `_mm256_srli_epi64::<31>` shifts. Used by the `Mul` impl when
-    /// `Self::BITS == 31 && Self::C == 1`. From PR #99.
+    /// `Self::BITS == 31 && Self::C == 1`.
     #[inline(always)]
     unsafe fn mul_mersenne31_vec(a: __m256i, b: __m256i) -> __m256i {
         unsafe {
@@ -272,9 +272,11 @@ impl<const P: u32> PackedFp32Avx2<P> {
     /// Inputs are the even-lane and odd-lane product vectors from
     /// `_mm256_mul_epu32`. Mirrors `PackedFp32Neon::solinas_reduce`.
     ///
-    /// The `Self::BITS == 31` branches mirror the immediate-shift
-    /// specialisation PR #99 added in the base-field `Mul` impl, so
-    /// extension-field operations on Mersenne31 get the same per-shift win.
+    /// The `Self::BITS == 31` branches use immediate-shift
+    /// `_mm256_srli_epi64::<31>` instead of the generic variable-shift
+    /// `_mm256_srl_epi64(.., shift)`, mirroring the same specialisation
+    /// the base-field `Mul` impl uses on Mersenne31, so extension-field
+    /// operations on Mersenne31 get the same per-shift win.
     #[inline(always)]
     unsafe fn solinas_reduce(prod_evn: __m256i, prod_odd: __m256i) -> __m256i {
         let mask = _mm256_set1_epi64x(Self::MASK_U64 as i64);
