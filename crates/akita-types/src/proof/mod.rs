@@ -128,6 +128,22 @@ impl<F: FieldCore> DirectWitnessProof<F> {
             Self::FieldElements(field_elems) => field_elems.coeff_len(),
         }
     }
+
+    /// Decode packed terminal-witness digits into their logical signed stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when the witness is not the
+    /// canonical packed-digit representation or when the bit-packed payload is
+    /// malformed.
+    pub fn packed_i8_digits(&self) -> Result<Vec<i8>, AkitaError> {
+        let Self::PackedDigits(packed) = self else {
+            return Err(AkitaError::InvalidProof);
+        };
+        (0..packed.num_elems)
+            .map(|idx| packed.digit_at(idx).ok_or(AkitaError::InvalidProof))
+            .collect()
+    }
 }
 
 /// Shape descriptor for deserializing a direct witness payload.

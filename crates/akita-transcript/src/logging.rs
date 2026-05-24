@@ -261,6 +261,11 @@ where
         self.inner.record_wire_serde(label, s);
     }
 
+    fn record_wire_bytes(&mut self, label: &[u8], bytes: &[u8]) {
+        self.record_wire_use(label, bytes);
+        self.inner.record_wire_bytes(label, bytes);
+    }
+
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
         self.record(TranscriptEvent::Absorb {
             label: label.to_vec(),

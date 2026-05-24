@@ -7,10 +7,10 @@
 
 use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, ClaimIncidenceSummary, DecompositionParams,
-    DirectWitnessShape, FlatMatrix, FoldStep, LevelParams, Schedule, SisModulusFamily, Step,
+    DirectWitnessShape, FoldStep, LevelParams, Schedule, SisModulusFamily, Step,
 };
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -18,64 +18,47 @@ use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use std::io::{Read, Write};
 
-/// Descriptor schema version for transcript-hardening v1.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
+/// Descriptor schema version for seed-bound transcript-hardening.
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
 
-/// Cached digest identities for setup artifacts.
+/// Cached digest identity for deterministic setup derivation.
 ///
-/// These digests are setup-derived metadata, not proof-time work. Computing
-/// `shared_matrix_digest` serializes the full expanded matrix, so callers on
-/// prove/verify hot paths should reuse this cached value rather than calling
-/// [`SetupSection::from_parts`].
+/// The expanded shared matrix and NTT views are deterministic caches derived
+/// from the setup seed, so the transcript descriptor binds the seed and the
+/// schedule/layout metadata that determine how those caches are used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SetupArtifactDigests {
+pub struct SetupIdentityDigests {
     /// Digest of the canonical `AkitaSetupSeed` bytes.
     pub setup_seed_digest: DescriptorDigest,
-    /// Digest of the canonical expanded shared-matrix artifact bytes.
-    pub shared_matrix_digest: DescriptorDigest,
 }
 
-impl SetupArtifactDigests {
-    /// Compute setup artifact digests from the concrete setup data.
+impl SetupIdentityDigests {
+    /// Compute setup identity digest from the canonical setup seed.
     ///
     /// # Errors
     ///
-    /// Returns a serialization error if either artifact cannot be canonically
+    /// Returns a serialization error if the seed cannot be canonically
     /// serialized.
-    pub fn from_parts<F>(
-        setup_seed: &AkitaSetupSeed,
-        shared_matrix: &FlatMatrix<F>,
-    ) -> Result<Self, SerializationError>
-    where
-        F: FieldCore + AkitaSerialize,
-    {
+    pub fn from_seed(setup_seed: &AkitaSetupSeed) -> Result<Self, SerializationError> {
         Ok(Self {
             setup_seed_digest: digest_serializable(setup_seed)?,
-            shared_matrix_digest: digest_serializable(shared_matrix)?,
         })
     }
 
-    /// Recompute and compare against the provided concrete setup data.
+    /// Recompute and compare against the provided setup seed.
     ///
     /// # Errors
     ///
     /// Returns a serialization error if canonical serialization fails or if the
-    /// cached digest pair is stale.
-    pub fn check_parts<F>(
-        &self,
-        setup_seed: &AkitaSetupSeed,
-        shared_matrix: &FlatMatrix<F>,
-    ) -> Result<(), SerializationError>
-    where
-        F: FieldCore + AkitaSerialize,
-    {
-        let expected = Self::from_parts(setup_seed, shared_matrix)?;
+    /// cached digest is stale.
+    pub fn check_seed(&self, setup_seed: &AkitaSetupSeed) -> Result<(), SerializationError> {
+        let expected = Self::from_seed(setup_seed)?;
         if *self != expected {
             return Err(SerializationError::InvalidData(
-                "cached setup descriptor digests do not match setup artifacts".to_string(),
+                "cached setup descriptor digest does not match setup seed".to_string(),
             ));
         }
         Ok(())
@@ -89,7 +72,7 @@ pub struct AkitaInstanceDescriptor {
     pub version: u32,
     /// Algebraic substrate for this binary/proof family.
     pub algebra: AlgebraSection,
-    /// Setup-bound parameters and setup artifact identities.
+    /// Setup-bound parameters and deterministic setup identity.
     pub setup: SetupSection,
     /// Final effective verifier schedule for this proof.
     pub plan: PlanSection,
@@ -98,7 +81,7 @@ pub struct AkitaInstanceDescriptor {
 }
 
 impl AkitaInstanceDescriptor {
-    /// Construct a version-1 descriptor from its four sections.
+    /// Construct a descriptor from its four sections.
     pub fn new(
         algebra: AlgebraSection,
         setup: SetupSection,
@@ -192,8 +175,6 @@ pub struct SetupSection {
     pub sis_modulus_family: SisModulusFamily,
     /// Digest of the canonical `AkitaSetupSeed` bytes.
     pub setup_seed_digest: DescriptorDigest,
-    /// Digest of the canonical expanded shared-matrix artifact bytes.
-    pub shared_matrix_digest: DescriptorDigest,
     /// Protocol-affecting feature mode.
     pub protocol_features: ProtocolFeatureSet,
     /// Digest of the full `Vec<LevelParams>` envelope.
@@ -207,42 +188,37 @@ impl SetupSection {
     ///
     /// Returns a serialization error if any canonical digest input fails to
     /// serialize.
-    pub fn from_parts<F>(
+    pub fn from_parts(
         decomposition: DecompositionParams,
         sis_modulus_family: SisModulusFamily,
         setup_seed: &AkitaSetupSeed,
-        shared_matrix: &FlatMatrix<F>,
         level_params: &[LevelParams],
-    ) -> Result<Self, SerializationError>
-    where
-        F: FieldCore + AkitaSerialize,
-    {
-        let artifact_digests = SetupArtifactDigests::from_parts(setup_seed, shared_matrix)?;
-        Ok(Self::from_artifact_digests(
+    ) -> Result<Self, SerializationError> {
+        let identity_digests = SetupIdentityDigests::from_seed(setup_seed)?;
+        Ok(Self::from_setup_identity_digests(
             decomposition,
             sis_modulus_family,
-            artifact_digests,
+            identity_digests,
             level_params,
         ))
     }
 
-    /// Build setup fields from precomputed setup artifact digests.
+    /// Build setup fields from a precomputed setup identity digest.
     ///
-    /// Use this on prove/verify hot paths. The expensive shared-matrix digest
-    /// should already have been computed and checked when the setup artifact
-    /// was generated or loaded.
+    /// Use this on prove/verify hot paths. Expanded matrices and NTT views are
+    /// deterministic caches derived from the setup seed, not transcript-bound
+    /// artifacts.
     #[must_use]
-    pub fn from_artifact_digests(
+    pub fn from_setup_identity_digests(
         decomposition: DecompositionParams,
         sis_modulus_family: SisModulusFamily,
-        artifact_digests: SetupArtifactDigests,
+        identity_digests: SetupIdentityDigests,
         level_params: &[LevelParams],
     ) -> Self {
         Self {
             decomposition,
             sis_modulus_family,
-            setup_seed_digest: artifact_digests.setup_seed_digest,
-            shared_matrix_digest: artifact_digests.shared_matrix_digest,
+            setup_seed_digest: identity_digests.setup_seed_digest,
             protocol_features: ProtocolFeatureSet::current(),
             level_params_digest: digest_level_params(level_params),
         }
@@ -366,6 +342,12 @@ pub fn digest_effective_schedule(schedule: &Schedule) -> DescriptorDigest {
 
 impl Valid for AkitaInstanceDescriptor {
     fn check(&self) -> Result<(), SerializationError> {
+        if self.version != AKITA_INSTANCE_DESCRIPTOR_VERSION {
+            return Err(SerializationError::InvalidData(format!(
+                "unsupported Akita instance descriptor version {}",
+                self.version
+            )));
+        }
         self.algebra.check()?;
         self.setup.check()?;
         self.plan.check()?;
@@ -564,7 +546,6 @@ impl AkitaSerialize for SetupSection {
         encode_decomposition(&self.decomposition, &mut writer, compress)?;
         encode_sis_family(self.sis_modulus_family, &mut writer, compress)?;
         writer.write_all(&self.setup_seed_digest)?;
-        writer.write_all(&self.shared_matrix_digest)?;
         self.protocol_features
             .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.level_params_digest)?;
@@ -574,7 +555,6 @@ impl AkitaSerialize for SetupSection {
     fn serialized_size(&self, compress: Compress) -> usize {
         decomposition_size(&self.decomposition, compress)
             + sis_family_size(compress)
-            + 32
             + 32
             + self.protocol_features.serialized_size(compress)
             + 32
@@ -593,7 +573,6 @@ impl AkitaDeserialize for SetupSection {
         let decomposition = decode_decomposition(&mut reader, compress, validate)?;
         let sis_modulus_family = decode_sis_family(&mut reader, compress, validate)?;
         let setup_seed_digest = read_digest(&mut reader)?;
-        let shared_matrix_digest = read_digest(&mut reader)?;
         let protocol_features =
             ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let level_params_digest = read_digest(&mut reader)?;
@@ -601,7 +580,6 @@ impl AkitaDeserialize for SetupSection {
             decomposition,
             sis_modulus_family,
             setup_seed_digest,
-            shared_matrix_digest,
             protocol_features,
             level_params_digest,
         };
@@ -1016,7 +994,6 @@ mod tests {
                 },
                 sis_modulus_family: SisModulusFamily::Q32,
                 setup_seed_digest: [1; 32],
-                shared_matrix_digest: [2; 32],
                 protocol_features: ProtocolFeatureSet::current(),
                 level_params_digest: digest_level_params(&[sample_level_params()]),
             },
@@ -1034,6 +1011,19 @@ mod tests {
         let decoded = AkitaInstanceDescriptor::deserialize_uncompressed(&bytes[..], &())
             .expect("deserialize descriptor");
         assert_eq!(decoded, descriptor);
+    }
+
+    #[test]
+    fn descriptor_rejects_stale_schema_version() {
+        let mut descriptor = sample_descriptor();
+        descriptor.version = AKITA_INSTANCE_DESCRIPTOR_VERSION - 1;
+
+        let err = descriptor
+            .check()
+            .expect_err("stale descriptor versions must be rejected");
+        assert!(err
+            .to_string()
+            .contains("unsupported Akita instance descriptor version"));
     }
 
     #[test]
@@ -1073,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_setup_artifact_digests_match_direct_setup_section() {
+    fn cached_setup_identity_digest_matches_direct_setup_section() {
         let seed = AkitaSetupSeed {
             max_num_vars: 5,
             max_num_batched_polys: 2,
@@ -1081,22 +1071,18 @@ mod tests {
             max_stride: 2,
             public_matrix_seed: [7; 32],
         };
-        let matrix = FlatMatrix::from_flat_data(
-            vec![Prime32Offset99::from_u64(3), Prime32Offset99::from_u64(9)],
-            2,
-        );
         let level_params = [sample_level_params()];
-        let artifact_digests =
-            SetupArtifactDigests::from_parts(&seed, &matrix).expect("artifact digests");
+        let identity_digests =
+            SetupIdentityDigests::from_seed(&seed).expect("setup identity digest");
 
-        let cached = SetupSection::from_artifact_digests(
+        let cached = SetupSection::from_setup_identity_digests(
             DecompositionParams {
                 log_basis: 3,
                 log_commit_bound: 32,
                 log_open_bound: Some(32),
             },
             SisModulusFamily::Q32,
-            artifact_digests,
+            identity_digests,
             &level_params,
         );
         let direct = SetupSection::from_parts(
@@ -1107,19 +1093,18 @@ mod tests {
             },
             SisModulusFamily::Q32,
             &seed,
-            &matrix,
             &level_params,
         )
         .expect("direct setup section");
 
         assert_eq!(cached, direct);
-        artifact_digests
-            .check_parts(&seed, &matrix)
+        identity_digests
+            .check_seed(&seed)
             .expect("fresh digest matches");
 
-        let mut stale = artifact_digests;
-        stale.shared_matrix_digest[0] ^= 1;
-        assert!(stale.check_parts(&seed, &matrix).is_err());
+        let mut stale = identity_digests;
+        stale.setup_seed_digest[0] ^= 1;
+        assert!(stale.check_seed(&seed).is_err());
     }
 
     #[test]

@@ -35,6 +35,9 @@ where
     /// Record a verifier-side structured proof-field use for logging checks.
     fn record_wire_serde<S: AkitaSerialize>(&mut self, _label: &[u8], _s: &S) {}
 
+    /// Record verifier-side canonical bytes for logging checks.
+    fn record_wire_bytes(&mut self, _label: &[u8], _bytes: &[u8]) {}
+
     /// Append labeled raw bytes.
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]);
 

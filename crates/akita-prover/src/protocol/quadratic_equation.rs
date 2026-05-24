@@ -17,7 +17,7 @@ use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
-use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
+use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_W_HAT, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
 use akita_types::{
     gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
@@ -80,6 +80,46 @@ fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
         )));
     }
     Ok(z)
+}
+
+fn absorb_terminal_w_hat<F, T, const D: usize>(
+    transcript: &mut T,
+    w_hat: &FlatDigitBlocks<D>,
+    planes_per_block: usize,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let total_blocks = w_hat.block_count();
+    if planes_per_block == 0
+        || w_hat.flat_digits().len()
+            != total_blocks.checked_mul(planes_per_block).ok_or_else(|| {
+                AkitaError::InvalidSetup("terminal w_hat width overflow".to_string())
+            })?
+    {
+        return Err(AkitaError::InvalidInput(
+            "terminal w_hat block layout does not match open digit depth".to_string(),
+        ));
+    }
+    let mut bytes = Vec::with_capacity(w_hat.flat_digits().len() * D);
+    for compound_dig in 0..planes_per_block {
+        for block in 0..total_blocks {
+            bytes.extend(
+                w_hat.flat_digits()[block * planes_per_block + compound_dig]
+                    .iter()
+                    .copied()
+                    .map(|digit| digit as u8),
+            );
+        }
+    }
+    if bytes.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "terminal w_hat absorb cannot be empty".to_string(),
+        ));
+    }
+    transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &bytes);
+    Ok(())
 }
 
 fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
@@ -458,6 +498,9 @@ where
         let total_blocks = lp.num_blocks.checked_mul(num_claims).ok_or_else(|| {
             AkitaError::InvalidSetup("batched challenge count overflow".to_string())
         })?;
+        if matches!(m_row_layout, MRowLayout::Terminal) {
+            absorb_terminal_w_hat::<F, T, D>(transcript, &w_hat, lp.num_digits_open)?;
+        }
         let challenges = sample_sparse_challenges::<F, T, D>(
             transcript,
             CHALLENGE_STAGE1_FOLD,
@@ -683,6 +726,9 @@ where
         let total_blocks = lp.num_blocks.checked_mul(num_claims).ok_or_else(|| {
             AkitaError::InvalidSetup("recursive multipoint challenge count overflow".to_string())
         })?;
+        if matches!(m_row_layout, MRowLayout::Terminal) {
+            absorb_terminal_w_hat::<F, T, D>(transcript, &w_hat, lp.num_digits_open)?;
+        }
         let challenges = sample_sparse_challenges::<F, T, D>(
             transcript,
             CHALLENGE_STAGE1_FOLD,

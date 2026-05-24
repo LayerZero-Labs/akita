@@ -23,8 +23,8 @@ use akita_types::LevelParams;
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, scheduled_fold_execution,
     scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint, AkitaInstanceDescriptor,
-    AlgebraSection, CallSection, ClaimIncidenceSummary, PlanSection, RingCommitment, Schedule,
-    SetupSection, Step,
+    AkitaScheduleInputs, AlgebraSection, CallSection, ClaimIncidenceSummary, PlanSection,
+    RingCommitment, Schedule, SetupSection, Step,
 };
 use akita_types::{validate_ring_subfield_role, BasisMode, RingSubfieldEncoding};
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
@@ -113,21 +113,11 @@ where
     Cfg::ClaimField: RingSubfieldEncoding<F>,
     Cfg::ChallengeField: RingSubfieldEncoding<F>,
 {
-    let mut setup_levels = schedule
-        .steps
-        .iter()
-        .filter_map(|step| match step {
-            Step::Fold(fold) => Some(fold.params.clone()),
-            Step::Direct(_) => None,
-        })
-        .collect::<Vec<_>>();
-    if setup_levels.is_empty() {
-        setup_levels.push(Cfg::get_params_for_batched_commitment(incidence)?);
-    }
+    let setup_levels = descriptor_setup_levels::<F, Cfg>(incidence, schedule)?;
 
     let descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ClaimField, Cfg::ChallengeField, D>()?,
-        SetupSection::from_artifact_digests(
+        SetupSection::from_setup_identity_digests(
             Cfg::decomposition(),
             Cfg::sis_modulus_family(),
             setup.descriptor_digests,
@@ -141,6 +131,51 @@ where
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor serialization: {err}")))?;
     transcript.bind_instance_bytes(&descriptor_bytes);
     Ok(())
+}
+
+fn descriptor_setup_levels<F, Cfg>(
+    incidence: &ClaimIncidenceSummary,
+    schedule: &Schedule,
+) -> Result<Vec<LevelParams>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    let mut setup_levels = Vec::new();
+    let mut previous_next_w_len = None;
+    for (level, step) in schedule.steps.iter().enumerate() {
+        match step {
+            Step::Fold(fold) => {
+                setup_levels.push(fold.params.clone());
+                previous_next_w_len = Some(fold.next_w_len);
+            }
+            Step::Direct(direct) => {
+                if level == 0 {
+                    setup_levels.push(Cfg::get_params_for_batched_commitment(incidence)?);
+                } else {
+                    let current_w_len = previous_next_w_len.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "direct schedule step has no preceding fold".to_string(),
+                        )
+                    })?;
+                    setup_levels.push(Cfg::level_params_with_log_basis(
+                        AkitaScheduleInputs {
+                            num_vars: incidence.num_vars(),
+                            level,
+                            current_w_len,
+                        },
+                        direct.log_basis(Cfg::decomposition().field_bits()),
+                    ));
+                }
+            }
+        }
+    }
+    if setup_levels.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "descriptor cannot bind an empty schedule".to_string(),
+        ));
+    }
+    Ok(setup_levels)
 }
 
 /// Dispatch a prove-level operation to the correct ring dimension.

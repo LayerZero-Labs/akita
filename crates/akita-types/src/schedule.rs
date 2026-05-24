@@ -1082,6 +1082,79 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     }
 }
 
+/// Logical digit range occupied by terminal `w_hat` inside the final witness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalWitnessSegmentLayout {
+    /// Offset of the terminal `w_hat` digit range in final-witness order.
+    pub w_hat_digit_offset: usize,
+    /// Number of logical terminal `w_hat` digits.
+    pub w_hat_digit_count: usize,
+}
+
+impl TerminalWitnessSegmentLayout {
+    /// Exclusive end of the `w_hat` digit range.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on arithmetic overflow.
+    pub fn w_hat_digit_end(&self) -> Result<usize, AkitaError> {
+        self.w_hat_digit_offset
+            .checked_add(self.w_hat_digit_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat range overflow".to_string()))
+    }
+}
+
+/// Derive the terminal logical `w_hat` digit range from descriptor-bound layout
+/// data.
+///
+/// The terminal proof carries one canonical packed final witness, but
+/// transcript replay binds the logical `w_hat` segment before sparse-seed
+/// sampling. This helper mirrors the segment ordering used when
+/// `ring_switch_build_w` emits final-witness coefficients.
+///
+/// # Errors
+///
+/// Returns an error when counts overflow or the level has an invalid ring
+/// dimension.
+pub fn terminal_witness_segment_layout(
+    lp: &LevelParams,
+    num_w_vectors: usize,
+    num_public_rows: usize,
+) -> Result<TerminalWitnessSegmentLayout, AkitaError> {
+    if lp.ring_dimension == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "terminal witness layout has zero ring dimension".to_string(),
+        ));
+    }
+    let w_hat_ring_count = num_w_vectors
+        .checked_mul(lp.num_blocks)
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat width overflow".to_string()))?;
+    let z_pre_ring_count = num_public_rows
+        .checked_mul(lp.inner_width())
+        .and_then(|n| n.checked_mul(lp.num_digits_fold))
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal z-pre width overflow".to_string()))?;
+    let w_hat_digit_count = w_hat_ring_count
+        .checked_mul(lp.ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat digit overflow".to_string()))?;
+    if w_hat_digit_count == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "terminal w_hat digit range is empty".to_string(),
+        ));
+    }
+    let w_hat_digit_offset = if lp.m_vars >= lp.r_vars {
+        z_pre_ring_count
+            .checked_mul(lp.ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat offset overflow".to_string()))?
+    } else {
+        0
+    };
+    Ok(TerminalWitnessSegmentLayout {
+        w_hat_digit_offset,
+        w_hat_digit_count,
+    })
+}
+
 /// Parameters for one fold level in the computed schedule.
 #[derive(Clone, Debug)]
 pub struct FoldStep {
@@ -1428,6 +1501,50 @@ mod tests {
         assert_eq!(step.current_w_len, 8);
         assert_eq!(step.witness_shape, DirectWitnessShape::FieldElements(8));
         assert_eq!(step.direct_bytes, 0);
+    }
+
+    fn segment_test_params(m_vars: usize, r_vars: usize) -> LevelParams {
+        LevelParams::params_only(
+            SisModulusFamily::Q128,
+            8,
+            3,
+            2,
+            3,
+            2,
+            SparseChallengeConfig::Uniform {
+                weight: 3,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_decomp(m_vars, r_vars, 2, 3, 4, 0)
+        .expect("segment test params")
+    }
+
+    #[test]
+    fn terminal_witness_segment_layout_places_w_hat_after_z_when_z_first() {
+        let lp = segment_test_params(3, 2);
+        let layout = terminal_witness_segment_layout(&lp, 5, 2).unwrap();
+
+        assert_eq!(
+            layout.w_hat_digit_offset,
+            2 * lp.inner_width() * lp.num_digits_fold * lp.ring_dimension
+        );
+        assert_eq!(
+            layout.w_hat_digit_count,
+            5 * lp.num_blocks * lp.num_digits_open * lp.ring_dimension
+        );
+    }
+
+    #[test]
+    fn terminal_witness_segment_layout_places_w_hat_first_when_w_first() {
+        let lp = segment_test_params(1, 3);
+        let layout = terminal_witness_segment_layout(&lp, 5, 2).unwrap();
+
+        assert_eq!(layout.w_hat_digit_offset, 0);
+        assert_eq!(
+            layout.w_hat_digit_count,
+            5 * lp.num_blocks * lp.num_digits_open * lp.ring_dimension
+        );
     }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {

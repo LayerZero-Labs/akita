@@ -21,8 +21,8 @@ use akita_sumcheck::{
     SumcheckInstanceVerifier,
 };
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, ABSORB_SUMCHECK_W,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_HAT,
+    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -32,11 +32,12 @@ use akita_types::{
     prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
     recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
-    sample_public_row_coefficients, schedule_num_fold_levels, w_ring_element_count_with_counts,
-    AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof,
-    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, DirectWitnessProof,
-    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
-    RingOpeningPoint, RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_segment_layout,
+    w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
+    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
+    ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
+    LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule,
+    Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -55,6 +56,75 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub log_basis: u32,
 }
 
+struct TerminalWitnessReplay {
+    digits: Vec<i8>,
+    layout: TerminalWitnessSegmentLayout,
+}
+
+fn i8_digits_to_bytes(digits: &[i8]) -> Vec<u8> {
+    digits.iter().copied().map(|digit| digit as u8).collect()
+}
+
+fn prepare_terminal_witness_replay<F, T>(
+    transcript: &mut T,
+    final_witness: &DirectWitnessProof<F>,
+    final_w_len: usize,
+    layout: TerminalWitnessSegmentLayout,
+) -> Result<TerminalWitnessReplay, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    if final_witness.num_elems() != final_w_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    let digits = final_witness.packed_i8_digits()?;
+    if digits.len() != final_w_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    let w_hat_start = layout.w_hat_digit_offset;
+    let w_hat_end = layout.w_hat_digit_end()?;
+    if w_hat_end > digits.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let w_hat_bytes = i8_digits_to_bytes(&digits[w_hat_start..w_hat_end]);
+    if w_hat_bytes.is_empty() {
+        return Err(AkitaError::InvalidProof);
+    }
+    transcript.record_wire_bytes(ABSORB_TERMINAL_W_HAT, &w_hat_bytes);
+    transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &w_hat_bytes);
+    Ok(TerminalWitnessReplay { digits, layout })
+}
+
+fn append_terminal_witness_remainder<F, T>(
+    transcript: &mut T,
+    replay: &TerminalWitnessReplay,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let w_hat_start = replay.layout.w_hat_digit_offset;
+    let w_hat_end = replay.layout.w_hat_digit_end()?;
+    if w_hat_end > replay.digits.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let remainder_len = replay
+        .digits
+        .len()
+        .checked_sub(replay.layout.w_hat_digit_count)
+        .ok_or(AkitaError::InvalidProof)?;
+    let mut bytes = Vec::with_capacity(remainder_len);
+    bytes.extend(i8_digits_to_bytes(&replay.digits[..w_hat_start]));
+    bytes.extend(i8_digits_to_bytes(&replay.digits[w_hat_end..]));
+    if bytes.is_empty() {
+        return Err(AkitaError::InvalidProof);
+    }
+    transcript.record_wire_bytes(ABSORB_TERMINAL_W_REMAINDER, &bytes);
+    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &bytes);
+    Ok(())
+}
+
 /// Verify the intermediate-root proof payload for batched proofs whose root
 /// is followed by additional recursive levels.
 ///
@@ -62,7 +132,7 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
 /// commitments, padded opening points, per-claim field openings, one gamma
 /// challenge per claim, and gamma-combined per-point y-rings, then runs the
 /// stage-1 norm-check sumcheck and the stage-2 fused sumcheck, threading
-/// `next_w_commitment` through `ABSORB_SUMCHECK_W`.
+/// `next_w_commitment` through the standard ring-switch witness absorb.
 ///
 /// # Errors
 ///
@@ -119,8 +189,8 @@ where
 /// `final_witness` in cleartext).
 ///
 /// Mirrors [`verify_intermediate_root_level`] up through the ring-switch
-/// preamble; at the terminal, [`ABSORB_SUMCHECK_W`] absorbs `final_witness`
-/// instead of a next-witness commitment, stage-1 is skipped entirely, and
+/// preamble; at the terminal, logical `w_hat` and the final-witness remainder
+/// are absorbed in separate terminal events, stage-1 is skipped entirely, and
 /// stage-2 runs in relation-only mode (`batching_coeff = 0`, `s_claim = 0`).
 ///
 /// # Errors
@@ -450,18 +520,6 @@ where
         .num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched root block count overflow".to_string()))?;
-    let stage1_challenges = derive_stage1_challenges::<F, T, D>(
-        transcript,
-        v_typed,
-        total_blocks,
-        batched_lp,
-        if is_terminal {
-            MRowLayout::Terminal
-        } else {
-            MRowLayout::Intermediate
-        },
-    )?;
-
     let w_len = if is_terminal {
         final_w_len_opt.ok_or(AkitaError::InvalidProof)?
     } else {
@@ -475,11 +533,32 @@ where
         .checked_mul(D)
         .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
     };
-    if let RootStageInput::Terminal { final_witness, .. } = &stage_input {
-        if final_witness.num_elems() != w_len {
-            return Err(AkitaError::InvalidProof);
-        }
-    }
+    let terminal_replay = if let RootStageInput::Terminal { final_witness, .. } = &stage_input {
+        let layout = terminal_witness_segment_layout(
+            batched_lp,
+            num_claims,
+            incidence_summary.num_public_rows(),
+        )?;
+        Some(prepare_terminal_witness_replay::<F, T>(
+            transcript,
+            final_witness,
+            w_len,
+            layout,
+        )?)
+    } else {
+        None
+    };
+    let stage1_challenges = derive_stage1_challenges::<F, T, D>(
+        transcript,
+        v_typed,
+        total_blocks,
+        batched_lp,
+        if is_terminal {
+            MRowLayout::Terminal
+        } else {
+            MRowLayout::Intermediate
+        },
+    )?;
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = incidence_summary
         .public_rows()
@@ -514,11 +593,9 @@ where
             incidence_summary.num_public_rows(),
             MRowLayout::Intermediate,
         )?,
-        RootStageInput::Terminal { final_witness, .. } => {
-            // Bind the ring-switch challenges to the cleartext witness rather
-            // than to a separate commitment, mirroring the prover.
-            transcript.record_wire_serde(ABSORB_SUMCHECK_W, *final_witness);
-            transcript.append_serde(ABSORB_SUMCHECK_W, *final_witness);
+        RootStageInput::Terminal { .. } => {
+            let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
+            append_terminal_witness_remainder::<F, T>(transcript, replay)?;
             ring_switch_verifier_after_absorb::<F, C, T, { D }>(
                 &ring_opening_points,
                 &ring_multiplier_points,
@@ -662,10 +739,10 @@ where
 
 /// Verify one terminal recursive fold level.
 ///
-/// At the terminal level the cleartext `final_witness` is absorbed via
-/// [`ABSORB_SUMCHECK_W`] in place of a next-witness commitment, stage-1 is
-/// skipped (packed-digit range is structurally enforced), and stage-2 runs
-/// in relation-only mode.
+/// At the terminal level the cleartext `final_witness` is transcript-bound in
+/// two logical slices (`w_hat` before sparse challenges, remainder before
+/// ring-switch challenges), stage-1 is skipped, and stage-2 runs in
+/// relation-only mode.
 ///
 /// # Errors
 ///
@@ -851,6 +928,24 @@ where
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
     let num_claims = y_rings.len();
+    let w_len = if is_last {
+        final_w_len.ok_or(AkitaError::InvalidProof)?
+    } else {
+        w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
+            .checked_mul(D)
+            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
+    };
+    let terminal_replay = if let FoldProofView::Terminal(terminal_proof) = &proof {
+        let layout = terminal_witness_segment_layout(lp, num_claims, num_claims)?;
+        Some(prepare_terminal_witness_replay::<F, T>(
+            transcript,
+            &terminal_proof.final_witness,
+            w_len,
+            layout,
+        )?)
+    } else {
+        None
+    };
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         v_typed,
@@ -862,19 +957,6 @@ where
             MRowLayout::Intermediate
         },
     )?;
-
-    let w_len = if is_last {
-        final_w_len.ok_or(AkitaError::InvalidProof)?
-    } else {
-        w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
-            .checked_mul(D)
-            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
-    };
-    if let FoldProofView::Terminal(terminal_proof) = &proof {
-        if terminal_proof.final_witness.num_elems() != w_len {
-            return Err(AkitaError::InvalidProof);
-        }
-    }
     tracing::debug!(w_len, is_last, "verify ring_switch");
     let claim_to_point = (0..num_claims).collect::<Vec<_>>();
     let claim_to_point_poly = vec![0usize; num_claims];
@@ -898,9 +980,9 @@ where
             num_claims,
             MRowLayout::Intermediate,
         )?,
-        FoldProofView::Terminal(terminal_proof) => {
-            transcript.record_wire_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
-            transcript.append_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
+        FoldProofView::Terminal(_) => {
+            let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
+            append_terminal_witness_remainder::<F, T>(transcript, replay)?;
             ring_switch_verifier_after_absorb::<F, L, T, { D }>(
                 &ring_opening_points,
                 &ring_multiplier_points,

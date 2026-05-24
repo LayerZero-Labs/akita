@@ -2,7 +2,7 @@
 
 | Field       | Value                                       |
 |-------------|---------------------------------------------|
-| Author(s)   | @quangvdao + Cursor assistant (Claude Opus 4.7) |
+| Author(s)   | @quangvdao                                      |
 | Created     | 2026-05-18                                  |
 | Status      | DRAFT — PR #90 review revisions applied 2026-05-18; OQ 6 (cutover ordering) remains. Ready for implementation after reviewer sign-off. |
 | Branch      | `quang/akita-spongefish-transcript`         |
@@ -71,7 +71,7 @@ The implementation must preserve the following invariants. Where a check is mech
 
 - [x] `akita-transcript` adds `spongefish` `0.7.x` as a workspace dependency.
 - [x] Two new Cargo features added to `akita-transcript/Cargo.toml`: `transcript-blake2b` (default) and `transcript-keccak`, gating `spongefish::instantiations::Blake2b512` / `spongefish::instantiations::Keccak` respectively. Builds with no backend enabled fail; explicit Keccak uses `--no-default-features`; Cargo all-features/default-unified builds resolve to Blake2b.
-- [x] New `AkitaInstanceDescriptor` type in `akita-types` with the four-section shape from §Pillar P0, including normalized batch incidence, effective post-fallback schedule digest, setup artifact identity, and protocol feature mode. Canonical `AkitaSerialize` / `AkitaDeserialize` round-trip tests and prover/verifier event equality cover cross-side descriptor-byte equality.
+- [x] New `AkitaInstanceDescriptor` type in `akita-types` with the four-section shape from §Pillar P0, including normalized batch incidence, effective post-fallback schedule digest, deterministic setup identity, and protocol feature mode. Canonical `AkitaSerialize` / `AkitaDeserialize` round-trip tests and prover/verifier event equality cover cross-side descriptor-byte equality.
 - [x] The old Jolt-backed transcript backend and `Blake2bTranscript` / `KeccakTranscript` public aliases are removed. `AkitaTranscript<Sponge>` is the transcript implementation, backed by `spongefish::ProverState<Sponge>` / `spongefish::VerifierState<'_, Sponge>`. The local generic `Transcript<F>` protocol trait remains as the shared trait surface for prover, verifier, and `LoggingTranscript`.
 - [x] Spongefish absorbs Akita values through canonical Akita serialization or canonical field bytes wrapped in a local prefix-free `FramedBytes` `Encoding<[u8]>` adapter. Direct `Encoding` / `Decoding` impls for `akita-field` / `akita-serialization` types are intentionally not added in `akita-transcript`, because those would be foreign-trait impls over foreign crate types unless routed through local wrappers.
 - [x] `AkitaTranscript` construction takes canonical `AkitaInstanceDescriptor` bytes plus a fixed protocol tag, builds the `spongefish::DomainSeparator` with `.instance(<descriptor bytes>)`, and returns the wrapped prover or verifier state. The byte-taking API avoids a crate cycle from `akita-transcript` back into `akita-types`.
@@ -184,10 +184,10 @@ pub struct AkitaInstanceDescriptor {
     /// effectively a compile-time constant per binary.
     pub algebra: AlgebraSection,
 
-    /// Static across all proofs with the same setup. Changes when setup
-    /// parameters change (different decomposition, different SIS family,
-    /// different per-level matrix dimensions, different setup seed/matrix,
-    /// different protocol feature mode, different planner config).
+    /// Static across all proofs with the same deterministic setup identity.
+    /// Changes when setup parameters change (different decomposition,
+    /// different SIS family, different per-level matrix dimensions, different
+    /// setup seed, different protocol feature mode, different planner config).
     /// In practice: changes per `CommitmentConfig` instantiation.
     pub setup: SetupSection,
 
@@ -246,13 +246,6 @@ pub struct SetupSection {
     /// `max_stride`, `public_matrix_seed`).
     pub setup_seed_digest: [u8; 32],
 
-    /// Blake2b of canonical bytes of the expanded verifier matrix artifact.
-    /// This can be precomputed and cached at setup construction. In the
-    /// ordinary transparent path it is implied by `setup_seed_digest`, but
-    /// binding the actual artifact catches incorrectly expanded or custom-loaded setup
-    /// matrices.
-    pub shared_matrix_digest: [u8; 32],
-
     /// Protocol-affecting compile-time feature mode. At minimum this records
     /// whether `zk` is enabled; non-protocol features such as `parallel` are not
     /// included because they do not change verifier transcript behavior.
@@ -264,10 +257,18 @@ pub struct SetupSection {
     /// `stage1_config`, `m_vars`, `r_vars`, `num_blocks`, `block_len`, and all
     /// digit depths. The verifier branches on these fields; the parenthetical
     /// subset above is not sufficient.
-    /// TODO (transcript-hardening-v2): if Akita ever adds a
-    /// per-deployment salt for the transparent setup PRG (so different
-    /// deployments have different Ajtai matrices for the same params),
-    /// bind that salt here.
+    ///
+    /// The expanded shared matrix and prover NTT views are not bound as
+    /// transcript bytes. They are deterministic caches derived from the setup
+    /// seed plus this layout/schedule metadata. Strict setup-loading paths may
+    /// validate cached matrices against the seed, but Fiat-Shamir binds only
+    /// the compact derivation identity.
+    ///
+    /// TODO (transcript-hardening-v2): if Akita ever adds a per-deployment
+    /// salt for the transparent setup PRG (so different deployments have
+    /// different Ajtai matrices for the same params), add it to
+    /// `AkitaSetupSeed` or another canonical setup-identity field and bind it
+    /// through this section.
     pub level_params_digest: [u8; 32],
 }
 
@@ -442,7 +443,7 @@ Resolved as the four-section shape in §Pillar P0. Three inline `TODO (transcrip
 
 Plus two more flagged in `SetupSection`:
 
-- per-deployment setup PRG salt beyond the existing setup seed / public matrix seed (assumed absent today);
+- per-deployment setup PRG salt beyond the existing setup seed / public matrix seed (assumed absent today; if added, it must become part of canonical setup identity);
 - non-subfield extensions (irreducible polynomial digest would be needed).
 
 These TODOs are the catchment for future revisions.

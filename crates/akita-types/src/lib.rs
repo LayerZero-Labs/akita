@@ -25,7 +25,7 @@ pub use field_reduction::{
 pub use instance_descriptor::{
     digest_effective_schedule, digest_incidence, digest_level_params, digest_serializable,
     AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet,
-    SetupArtifactDigests, SetupSection,
+    SetupIdentityDigests, SetupSection,
 };
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
@@ -74,10 +74,11 @@ pub use schedule::{
     schedule_num_fold_levels, schedule_plan_from_generated_entry, schedule_root_fold_params,
     schedule_root_fold_step, scheduled_fold_execution, scheduled_next_level_params,
     split_batched_root_params, split_batched_root_params_from_schedule_plan,
-    validate_opening_points_for_claims, w_ring_element_count, w_ring_element_count_with_counts,
-    w_ring_element_count_with_counts_for_layout, AkitaPlannedDirectStep, AkitaPlannedLevel,
-    AkitaPlannedLevelExecution, AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep, FoldStep, GeneratedSchedulePlanPolicy,
-    Schedule, ScheduleProvider, Step,
+    terminal_witness_segment_layout, validate_opening_points_for_claims, w_ring_element_count,
+    w_ring_element_count_with_counts, w_ring_element_count_with_counts_for_layout,
+    AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState,
+    AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep,
+    FoldStep, GeneratedSchedulePlanPolicy, Schedule, ScheduleProvider, Step,
+    TerminalWitnessSegmentLayout,
 };
 pub use transcript::AppendToTranscript;

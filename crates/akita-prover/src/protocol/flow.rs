@@ -31,8 +31,8 @@ use akita_sumcheck::{
     SumcheckProof, SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, ABSORB_SUMCHECK_W,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM,
+    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -45,13 +45,13 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs,
-    AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits,
-    ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof,
-    FlatRingVec, IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
-    TerminalLevelProof,
+    schedule_root_fold_step, terminal_witness_segment_layout, validate_batched_inputs,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
+    AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
+    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof,
+    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
+    MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
+    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -86,6 +86,57 @@ pub struct ProveLevelOutput<F: FieldCore, L: FieldCore> {
     pub level_proof: AkitaLevelProof<F, L>,
     /// Recursive prover state for the next level.
     pub next_state: RecursiveProverState<F, L>,
+}
+
+fn terminal_segment_layout_for_quad<F, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    lp: &LevelParams,
+) -> Result<TerminalWitnessSegmentLayout, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    terminal_witness_segment_layout(
+        lp,
+        quad_eq.claim_to_point().len(),
+        quad_eq.num_public_rows(),
+    )
+}
+
+fn i8_digits_to_bytes(digits: &[i8]) -> Vec<u8> {
+    digits.iter().copied().map(|digit| digit as u8).collect()
+}
+
+fn append_terminal_witness_remainder<F, T>(
+    transcript: &mut T,
+    logical_w: &RecursiveWitnessFlat,
+    layout: TerminalWitnessSegmentLayout,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let digits = logical_w.as_i8_digits();
+    let w_hat_start = layout.w_hat_digit_offset;
+    let w_hat_end = layout.w_hat_digit_end()?;
+    if w_hat_end > digits.len() {
+        return Err(AkitaError::InvalidSetup(
+            "terminal w_hat range exceeds final witness".to_string(),
+        ));
+    }
+    let remainder_len = digits
+        .len()
+        .checked_sub(layout.w_hat_digit_count)
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal witness range underflow".to_string()))?;
+    let mut bytes = Vec::with_capacity(remainder_len);
+    bytes.extend(i8_digits_to_bytes(&digits[..w_hat_start]));
+    bytes.extend(i8_digits_to_bytes(&digits[w_hat_end..]));
+    if bytes.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "terminal witness remainder cannot be empty".to_string(),
+        ));
+    }
+    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &bytes);
+    Ok(())
 }
 
 /// Raw pieces produced by the unified root-level prover.
@@ -1062,9 +1113,9 @@ where
 /// * builds `logical_w` via ring switching,
 /// * packs it into the terminal [`DirectWitnessProof`] using
 ///   `final_log_basis` as the planner-mandated minimum bits per element,
-/// * absorbs the cleartext witness via [`ABSORB_SUMCHECK_W`] before sampling
-///   any ring-switch challenges (so the challenges bind to the actual
-///   witness, fixing the prior soundness gap),
+/// * absorbs the final-witness remainder before sampling any ring-switch
+///   challenges (the terminal `w_hat` segment was already absorbed before
+///   sparse-challenge sampling),
 /// * skips the stage-1 sumcheck entirely (packed-digit range is structurally
 ///   enforced by the packing), and
 /// * runs stage-2 in relation-only mode with `batching_coeff = 0`,
@@ -1100,14 +1151,12 @@ where
     L: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    let terminal_layout = terminal_segment_layout_for_quad(&quad_eq, lp)?;
     let logical_w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
     let final_witness = DirectWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
-    // Bind the ring-switch challenges to the actual cleartext witness rather
-    // than to a separate commitment, so the verifier-recomputed challenges
-    // depend on the same witness it sees in the proof.
-    transcript.append_serde(ABSORB_SUMCHECK_W, &final_witness);
+    append_terminal_witness_remainder::<F, T>(transcript, &logical_w, terminal_layout)?;
     let rs = ring_switch_finalize_after_absorb::<F, L, T, { D }>(
         &quad_eq,
         expanded,
@@ -3201,6 +3250,7 @@ where
     C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
+    let terminal_layout = terminal_segment_layout_for_quad(&quad_eq, lp)?;
     let logical_w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
     if logical_w.len() != expected_w_len {
         return Err(AkitaError::InvalidSetup(format!(
@@ -3211,7 +3261,7 @@ where
     let final_witness = DirectWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
-    transcript.append_serde(ABSORB_SUMCHECK_W, &final_witness);
+    append_terminal_witness_remainder::<F, T>(transcript, &logical_w, terminal_layout)?;
 
     let rs = ring_switch_finalize_with_gamma_after_absorb::<F, C, T, { D }>(
         &quad_eq,

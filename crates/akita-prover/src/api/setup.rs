@@ -81,12 +81,15 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the NTT cache cannot be built for the current
-    /// field/ring-dimension pair.
+    /// Returns an error if the expanded setup fails validation or if the NTT
+    /// cache cannot be built for the current field/ring-dimension pair.
     pub fn from_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
-        F: CanonicalField,
+        F: CanonicalField + Valid + AkitaSerialize,
     {
+        expanded
+            .check()
+            .map_err(|err| AkitaError::InvalidSetup(format!("invalid expanded setup: {err}")))?;
         let expanded = Arc::new(expanded);
         let total = expanded.shared_matrix.total_ring_elements_at::<D>()?;
         let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total)?)?;

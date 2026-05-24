@@ -11,6 +11,60 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 
+fn event_label(event: &TranscriptEvent) -> Option<&[u8]> {
+    match event {
+        TranscriptEvent::Absorb { label, .. }
+        | TranscriptEvent::Squeeze { label, .. }
+        | TranscriptEvent::Wire { label, .. } => Some(label),
+        TranscriptEvent::Preamble { .. } => None,
+    }
+}
+
+fn first_label_index(events: &[TranscriptEvent], label: &[u8]) -> Option<usize> {
+    events
+        .iter()
+        .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
+}
+
+fn first_label_index_after(
+    events: &[TranscriptEvent],
+    start: usize,
+    label: &[u8],
+) -> Option<usize> {
+    events[start..]
+        .iter()
+        .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
+        .map(|offset| start + offset)
+}
+
+fn assert_terminal_event_order(events: &[TranscriptEvent]) {
+    let w_hat = first_label_index(events, labels::ABSORB_TERMINAL_W_HAT)
+        .expect("terminal transcript must absorb logical w_hat");
+    let sparse_seed = first_label_index_after(events, w_hat, labels::CHALLENGE_SPARSE_CHALLENGE)
+        .expect("terminal transcript must squeeze sparse seed");
+    let remainder =
+        first_label_index_after(events, sparse_seed, labels::ABSORB_TERMINAL_W_REMAINDER)
+            .expect("terminal transcript must absorb final-witness remainder");
+    let alpha = first_label_index_after(events, remainder, labels::CHALLENGE_RING_SWITCH)
+        .expect("terminal transcript must squeeze ring-switch alpha");
+    let tau1 = first_label_index_after(events, alpha, labels::CHALLENGE_TAU1)
+        .expect("terminal transcript must squeeze tau1");
+
+    assert!(w_hat < sparse_seed, "w_hat must precede sparse seed");
+    assert!(
+        sparse_seed < remainder,
+        "sparse seed must precede witness remainder"
+    );
+    assert!(remainder < alpha, "remainder must precede alpha");
+    assert!(alpha < tau1, "alpha must precede tau1");
+    assert!(
+        events[w_hat..]
+            .iter()
+            .all(|event| event_label(event) != Some(labels::CHALLENGE_TAU0)),
+        "terminal transcript window must not squeeze tau0"
+    );
+}
+
 #[test]
 fn preamble_separation_changes_first_challenge() {
     let mut left = AkitaTranscript::<F>::prover(labels::DOMAIN_AKITA_PROTOCOL, b"descriptor-a");
@@ -71,10 +125,10 @@ fn event_stream_equality_small() {
 
         prover_transcript.assert_smell_checks();
         verifier_transcript.assert_smell_checks();
-        assert_eq!(
-            public_transcript_events(prover_transcript.events()),
-            public_transcript_events(verifier_transcript.events())
-        );
+        let prover_public = public_transcript_events(prover_transcript.events());
+        let verifier_public = public_transcript_events(verifier_transcript.events());
+        assert_eq!(prover_public, verifier_public);
+        assert_terminal_event_order(&prover_public);
         assert!(matches!(
             prover_transcript.events().first(),
             Some(TranscriptEvent::Preamble { .. })

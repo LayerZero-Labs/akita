@@ -3,6 +3,8 @@
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+#[cfg(feature = "disk-persistence")]
+use akita_prover::kernels::matrix::derive_public_matrix_flat;
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
@@ -63,7 +65,8 @@ where
         let max_total = max_rows
             .checked_mul(max_stride)
             .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
-        match load_expanded_setup::<F, Cfg>(max_num_vars, max_num_batched_polys, max_num_points) {
+        match load_expanded_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+        {
             Ok(expanded) => {
                 // A cached setup is acceptable only if its physical
                 // backing is large enough *and* its recorded
@@ -257,7 +260,8 @@ fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig<Fiel
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn load_expanded_setup<
-    F: FieldCore + Valid + CanonicalField,
+    F: FieldCore + Valid + CanonicalField + RandomSampling,
+    const D: usize,
     Cfg: CommitmentConfig<Field = F>,
 >(
     max_num_vars: usize,
@@ -284,11 +288,32 @@ pub(crate) fn load_expanded_setup<
 
     let setup = AkitaExpandedSetup::deserialize_compressed(&mut reader, &())
         .map_err(|e| AkitaError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
+    validate_cached_matrix::<F, D>(&setup)?;
 
     tracing::info!(
         "Loaded setup for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}, max_num_points={max_num_points}"
     );
     Ok(setup)
+}
+
+#[cfg(feature = "disk-persistence")]
+fn validate_cached_matrix<F: FieldCore + CanonicalField + RandomSampling, const D: usize>(
+    setup: &AkitaExpandedSetup<F>,
+) -> Result<(), AkitaError> {
+    if setup.shared_matrix.gen_ring_dim() != D {
+        return Err(AkitaError::InvalidSetup(format!(
+            "cached setup ring dimension {} does not match config D={D}",
+            setup.shared_matrix.gen_ring_dim()
+        )));
+    }
+    let total = setup.shared_matrix.total_ring_elements_at::<D>()?;
+    let expected = derive_public_matrix_flat::<F, D>(total, &setup.seed.public_matrix_seed);
+    if setup.shared_matrix != expected {
+        return Err(AkitaError::InvalidSetup(
+            "cached setup matrix does not match setup seed".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -377,7 +402,7 @@ mod tests {
 
                 let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
 
-                let loaded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let loaded = load_expanded_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
                 assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
 
                 cleanup_setup_file(MAX_VARS);
@@ -402,6 +427,34 @@ mod tests {
         }
 
         #[test]
+        fn load_rejects_cached_matrix_that_does_not_match_seed() {
+            with_test_cache_dir("corrupt-matrix", || {
+                use akita_types::FlatMatrix;
+
+                const MAX_VARS: usize = 13;
+
+                cleanup_setup_file(MAX_VARS);
+
+                let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let total = prover_setup.expanded.shared_matrix.total_ring_elements();
+                let corrupt = AkitaExpandedSetup::from_parts(
+                    prover_setup.expanded.seed.clone(),
+                    FlatMatrix::from_flat_data(vec![TestF::zero(); total * TEST_D], TEST_D),
+                )
+                .unwrap();
+                save_expanded_setup::<TestF, Cfg>(&corrupt, MAX_VARS, 1, 1);
+
+                let err = load_expanded_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1)
+                    .expect_err("corrupt cached matrix must be rejected");
+                assert!(err
+                    .to_string()
+                    .contains("cached setup matrix does not match setup seed"));
+
+                cleanup_setup_file(MAX_VARS);
+            });
+        }
+
+        #[test]
         fn ntt_caches_rebuilt_correctly_from_disk() {
             with_test_cache_dir("ntt-rebuild", || {
                 use akita_algebra::CyclotomicRing;
@@ -416,7 +469,8 @@ mod tests {
 
                 let fresh_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
 
-                let loaded_expanded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let loaded_expanded =
+                    load_expanded_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
                 let disk_setup =
                     AkitaProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
 

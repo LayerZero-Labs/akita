@@ -390,9 +390,12 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
         .trailing_zeros() as usize;
 
-    let tau0: Vec<E> = (0..num_sc_vars)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-        .collect();
+    let tau0: Vec<E> = match m_row_layout {
+        MRowLayout::Intermediate => (0..num_sc_vars)
+            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+            .collect(),
+        MRowLayout::Terminal => Vec::new(),
+    };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();

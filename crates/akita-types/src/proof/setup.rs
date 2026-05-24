@@ -1,6 +1,6 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
-use crate::{FlatMatrix, SetupArtifactDigests};
+use crate::{FlatMatrix, SetupIdentityDigests};
 use akita_field::FieldCore;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -39,8 +39,8 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
     pub seed: AkitaSetupSeed,
     /// Shared 1D flat backing vector.
     pub shared_matrix: FlatMatrix<F>,
-    /// Cached descriptor digests for the setup artifacts.
-    pub descriptor_digests: SetupArtifactDigests,
+    /// Cached descriptor digest for deterministic setup identity.
+    pub descriptor_digests: SetupIdentityDigests,
 }
 
 /// Verifier setup artifact derived from prover setup.
@@ -58,13 +58,13 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a serialization error if the setup seed or shared matrix cannot
-    /// be canonically serialized for descriptor hashing.
+    /// Returns a serialization error if the setup seed cannot be canonically
+    /// serialized for descriptor hashing.
     pub fn from_parts(
         seed: AkitaSetupSeed,
         shared_matrix: FlatMatrix<F>,
     ) -> Result<Self, SerializationError> {
-        let descriptor_digests = SetupArtifactDigests::from_parts(&seed, &shared_matrix)?;
+        let descriptor_digests = SetupIdentityDigests::from_seed(&seed)?;
         Ok(Self {
             seed,
             shared_matrix,
@@ -153,8 +153,7 @@ impl<F: FieldCore + Valid + AkitaSerialize> Valid for AkitaExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
         self.shared_matrix.check()?;
-        self.descriptor_digests
-            .check_parts(&self.seed, &self.shared_matrix)?;
+        self.descriptor_digests.check_seed(&self.seed)?;
         Ok(())
     }
 }

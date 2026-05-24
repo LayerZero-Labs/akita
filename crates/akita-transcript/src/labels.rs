@@ -58,6 +58,10 @@ pub const CHALLENGE_EVAL_BATCH: &[u8] = b"ak/c/eb";
 
 /// Absorb the `w` coefficient vector before sumcheck (paper §4.3).
 pub const ABSORB_SUMCHECK_W: &[u8] = b"ak/a/w";
+/// Absorb terminal logical `w_hat` digits before sparse-challenge sampling.
+pub const ABSORB_TERMINAL_W_HAT: &[u8] = b"ak/a/twh";
+/// Absorb terminal final-witness digits outside logical `w_hat`.
+pub const ABSORB_TERMINAL_W_REMAINDER: &[u8] = b"ak/a/twr";
 /// Challenge for sampling `τ₀` (F_0 range-check batching point, paper §4.3).
 pub const CHALLENGE_TAU0: &[u8] = b"ak/c/t0";
 /// Challenge for sampling `τ₁` (F_α evaluation-relation batching point, paper §4.3).
@@ -88,6 +92,8 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_EVAL_OPENINGS_FIELD,
     CHALLENGE_EVAL_BATCH,
     ABSORB_SUMCHECK_W,
+    ABSORB_TERMINAL_W_HAT,
+    ABSORB_TERMINAL_W_REMAINDER,
     CHALLENGE_TAU0,
     CHALLENGE_TAU1,
 ];
