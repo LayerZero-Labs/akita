@@ -14,7 +14,6 @@
 //! **least-significant bit** (bit 0) and `r[n-1]` to the MSB.
 
 use crate::{AkitaError, FieldCore};
-use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 use std::marker::PhantomData;
 
 /// Utilities for the equality polynomial `eq(x, y) = Πᵢ (xᵢ yᵢ + (1 − xᵢ)(1 − yᵢ))`.
@@ -29,12 +28,6 @@ impl<E: FieldCore> EqPolynomial<E> {
         let len = 1usize
             .checked_shl(shift)
             .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".to_string()))?;
-        if len > DEFAULT_MAX_SEQUENCE_LEN {
-            return Err(AkitaError::InvalidSize {
-                expected: DEFAULT_MAX_SEQUENCE_LEN,
-                actual: len,
-            });
-        }
         Ok(len)
     }
 
@@ -236,8 +229,8 @@ mod tests {
     }
 
     #[test]
-    fn evals_rejects_oversized_dimension() {
-        let r = vec![F::one(); 25];
+    fn evals_rejects_unaddressable_dimension() {
+        let r = vec![F::one(); usize::BITS as usize];
         assert!(EqPolynomial::evals(&r).is_err());
     }
 
