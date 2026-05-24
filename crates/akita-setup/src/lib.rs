@@ -6,9 +6,9 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
-use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-#[cfg(feature = "disk-persistence")]
-use akita_types::detect_field_modulus;
+use akita_serialization::{
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Validate,
+};
 #[cfg(any(feature = "disk-persistence", all(test, feature = "planner")))]
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
@@ -16,7 +16,13 @@ use akita_types::AkitaScheduleLookupKey;
 #[cfg(all(test, feature = "planner"))]
 use akita_types::AkitaVerifierSetup;
 #[cfg(feature = "disk-persistence")]
+use akita_types::{
+    detect_field_modulus, validate_public_matrix_matches_seed, AkitaSetupSeed, FlatMatrix,
+};
+#[cfg(feature = "disk-persistence")]
 use std::fs;
+#[cfg(feature = "disk-persistence")]
+use std::io::Read;
 #[cfg(feature = "disk-persistence")]
 use std::path::PathBuf;
 /// Construct prover setup from a root commitment config.
@@ -60,47 +66,11 @@ where
 
     #[cfg(feature = "disk-persistence")]
     {
-        let max_total = max_rows
-            .checked_mul(max_stride)
-            .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
         match load_expanded_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
         {
             Ok(expanded) => {
-                // A cached setup is acceptable only if its physical
-                // backing is large enough *and* its recorded
-                // `max_stride` matches (or exceeds) what the current
-                // request needs. For configs where `max_rows` can vary
-                // inversely with `max_stride`, a smaller cached stride
-                // would cause `ring_view` to interpret rows/columns with
-                // the wrong stride — the total-elements check alone is
-                // insufficient.
-                let cached_total = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-                let cached_stride = expanded.seed().max_stride;
-                let cached_vars = expanded.seed().max_num_vars;
-                let cached_batch = expanded.seed().max_num_batched_polys;
-                let cached_points = expanded.seed().max_num_points;
-                if cached_total >= max_total
-                    && cached_stride >= max_stride
-                    && cached_vars >= max_num_vars
-                    && cached_batch >= max_num_batched_polys
-                    && cached_points >= max_num_points
-                {
-                    tracing::info!("Loaded setup from disk, rebuilding NTT caches");
-                    return AkitaProverSetup::from_validated_expanded(expanded);
-                }
-                if let Some(storage_path) =
-                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
-                {
-                    let _ = fs::remove_file(&storage_path);
-                    tracing::warn!(
-                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, vars={cached_vars}, batch={cached_batch}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, vars>={max_num_vars}, batch>={max_num_batched_polys}, points>={max_num_points}); regenerating",
-                            storage_path.display()
-                        );
-                } else {
-                    tracing::warn!(
-                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, vars={cached_vars}, batch={cached_batch}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, vars>={max_num_vars}, batch>={max_num_batched_polys}, points>={max_num_points}); regenerating"
-                        );
-                }
+                tracing::info!("Loaded exact setup from disk, rebuilding NTT caches");
+                return AkitaProverSetup::from_seed_validated_expanded(expanded);
             }
             Err(e) => {
                 if let Some(storage_path) =
@@ -288,8 +258,26 @@ pub(crate) fn load_expanded_setup<
         .map_err(|e| AkitaError::InvalidSetup(format!("Failed to open setup file: {e}")))?;
     let mut reader = std::io::BufReader::new(file);
 
-    let setup = AkitaExpandedSetup::deserialize_compressed(&mut reader, &())
-        .map_err(|e| AkitaError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
+    // Disk cache load first validates the byte structure and field elements,
+    // then `validate_cached_matrix` verifies the seed-derived matrix content.
+    let setup = deserialize_cached_setup::<F, D, Cfg>(
+        &mut reader,
+        max_num_vars,
+        max_num_batched_polys,
+        max_num_points,
+    )
+    .map_err(|e| AkitaError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
+    let mut trailing = [0u8; 1];
+    if reader
+        .read(&mut trailing)
+        .map_err(|e| AkitaError::InvalidSetup(format!("Failed to check setup EOF: {e}")))?
+        != 0
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "cached setup has trailing bytes starting with 0x{:02x}",
+            trailing[0]
+        )));
+    }
     validate_cached_matrix::<F, D>(&setup)?;
 
     tracing::info!(
@@ -299,7 +287,64 @@ pub(crate) fn load_expanded_setup<
 }
 
 #[cfg(feature = "disk-persistence")]
-fn validate_cached_matrix<F: FieldCore + CanonicalField, const D: usize>(
+fn deserialize_cached_setup<
+    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F>,
+>(
+    reader: &mut impl Read,
+    expected_max_num_vars: usize,
+    expected_max_num_batched_polys: usize,
+    expected_max_num_points: usize,
+) -> Result<AkitaExpandedSetup<F>, SerializationError> {
+    let seed =
+        AkitaSetupSeed::deserialize_with_mode(&mut *reader, Compress::Yes, Validate::Yes, &())?;
+    if seed.gen_ring_dim != D {
+        return Err(SerializationError::InvalidData(format!(
+            "cached setup ring dimension {} does not match config D={D}",
+            seed.gen_ring_dim
+        )));
+    }
+    if seed.max_num_vars != expected_max_num_vars
+        || seed.max_num_batched_polys != expected_max_num_batched_polys
+        || seed.max_num_points != expected_max_num_points
+    {
+        return Err(SerializationError::InvalidData(
+            "cached setup seed capacity does not match cache key".to_string(),
+        ));
+    }
+    let (expected_rows, expected_stride) = Cfg::max_setup_matrix_size(
+        expected_max_num_vars,
+        expected_max_num_batched_polys,
+        expected_max_num_points,
+    )
+    .map_err(|err| {
+        SerializationError::InvalidData(format!("cached setup expected shape failed: {err}"))
+    })?;
+    let expected_total = expected_rows.checked_mul(expected_stride).ok_or_else(|| {
+        SerializationError::InvalidData("cached setup expected matrix size overflow".to_string())
+    })?;
+    if seed.max_stride != expected_stride || seed.total_ring_elements != expected_total {
+        return Err(SerializationError::InvalidData(
+            "cached setup seed matrix shape does not match cache key".to_string(),
+        ));
+    }
+    let shared_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
+        &mut *reader,
+        Compress::Yes,
+        Validate::Yes,
+        seed.total_ring_elements,
+        seed.gen_ring_dim,
+        seed.matrix_field_elements()?,
+    )?;
+    Ok(AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix))
+}
+
+#[cfg(feature = "disk-persistence")]
+fn validate_cached_matrix<
+    F: FieldCore + CanonicalField + RandomSampling + Valid,
+    const D: usize,
+>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError> {
     if setup.shared_matrix().gen_ring_dim() != D {
@@ -308,6 +353,8 @@ fn validate_cached_matrix<F: FieldCore + CanonicalField, const D: usize>(
             setup.shared_matrix().gen_ring_dim()
         )));
     }
+    validate_public_matrix_matches_seed(setup.shared_matrix(), setup.seed())
+        .map_err(|e| AkitaError::InvalidSetup(format!("cached setup matrix validation: {e}")))?;
     Ok(())
 }
 
@@ -353,6 +400,7 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
+        #[cfg(feature = "planner")]
         new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
         new_prover_setup::<fp128::Field, 32, fp128::D32Full>(12, 1, 1)
@@ -453,6 +501,28 @@ mod tests {
                 assert!(err
                     .to_string()
                     .contains("setup shared_matrix does not match public matrix seed"));
+
+                cleanup_setup_file(MAX_VARS);
+            });
+        }
+
+        #[test]
+        fn load_rejects_cached_setup_with_trailing_bytes() {
+            with_test_cache_dir("trailing-bytes", || {
+                use std::io::Write;
+
+                const MAX_VARS: usize = 13;
+
+                cleanup_setup_file(MAX_VARS);
+
+                new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let path = get_storage_path::<Cfg>(MAX_VARS, 1, 1).unwrap();
+                let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+                file.write_all(&[0]).unwrap();
+
+                let err = load_expanded_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1)
+                    .expect_err("cache with trailing bytes must be rejected");
+                assert!(err.to_string().contains("trailing bytes"));
 
                 cleanup_setup_file(MAX_VARS);
             });

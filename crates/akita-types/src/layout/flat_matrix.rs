@@ -131,6 +131,96 @@ impl<F: FieldCore> FlatMatrix<F> {
     }
 }
 
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
+    /// Deserialize a flat matrix whose shape is already fixed by trusted
+    /// metadata.
+    ///
+    /// The serialized matrix header is checked against `expected_total_ring`
+    /// and `expected_gen_ring_dim` before allocating the backing vector. This
+    /// is the safe verifier-facing setup path: the setup seed is read first,
+    /// then the matrix is bounded by that seed rather than by untrusted matrix
+    /// header sizes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the expected shape is invalid, the serialized header
+    /// does not match it, allocation fails, or a field element is malformed.
+    pub fn deserialize_with_expected_shape<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        expected_total_ring: usize,
+        expected_gen_ring_dim: usize,
+        max_field_elements: usize,
+    ) -> Result<Self, SerializationError> {
+        if expected_gen_ring_dim == 0 {
+            return Err(SerializationError::InvalidData(
+                "expected flat matrix gen_ring_dim must be non-zero".to_string(),
+            ));
+        }
+        if expected_total_ring == 0 {
+            return Err(SerializationError::InvalidData(
+                "expected flat matrix total_ring_elements must be non-zero".to_string(),
+            ));
+        }
+        let expected_fields = expected_total_ring
+            .checked_mul(expected_gen_ring_dim)
+            .ok_or_else(|| {
+                SerializationError::InvalidData("flat matrix field count overflow".to_string())
+            })?;
+        if expected_fields > max_field_elements {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: u64::try_from(expected_fields).unwrap_or(u64::MAX),
+                max: max_field_elements,
+            });
+        }
+
+        let total_ring = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        if total_ring != expected_total_ring {
+            return Err(SerializationError::InvalidData(
+                "flat matrix total_ring_elements does not match expected setup shape".to_string(),
+            ));
+        }
+        if gen_ring_dim != expected_gen_ring_dim {
+            return Err(SerializationError::InvalidData(
+                "flat matrix gen_ring_dim does not match expected setup shape".to_string(),
+            ));
+        }
+
+        Self::deserialize_data(reader, compress, validate, total_ring, gen_ring_dim)
+    }
+
+    fn deserialize_data<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        total_ring: usize,
+        gen_ring_dim: usize,
+    ) -> Result<Self, SerializationError> {
+        let total_fields = total_ring.checked_mul(gen_ring_dim).ok_or_else(|| {
+            SerializationError::InvalidData("flat matrix field count overflow".to_string())
+        })?;
+        let mut data = Vec::new();
+        data.try_reserve_exact(total_fields).map_err(|_| {
+            SerializationError::InvalidData("flat matrix allocation failed".to_string())
+        })?;
+        for _ in 0..total_fields {
+            data.push(F::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?);
+        }
+        let out = Self { data, gen_ring_dim };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
 impl<F: FieldCore + Valid> Valid for FlatMatrix<F> {
     fn check(&self) -> Result<(), SerializationError> {
         if self.gen_ring_dim == 0 {
@@ -193,26 +283,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
                 "flat matrix gen_ring_dim must be non-zero".to_string(),
             ));
         }
-        let total_fields = total_ring.checked_mul(gen_ring_dim).ok_or_else(|| {
-            SerializationError::InvalidData("flat matrix field count overflow".to_string())
-        })?;
-        let mut data = Vec::new();
-        data.try_reserve_exact(total_fields).map_err(|_| {
-            SerializationError::InvalidData("flat matrix allocation failed".to_string())
-        })?;
-        for _ in 0..total_fields {
-            data.push(F::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?);
-        }
-        let out = Self { data, gen_ring_dim };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
+        Self::deserialize_data(reader, compress, validate, total_ring, gen_ring_dim)
     }
 }
 

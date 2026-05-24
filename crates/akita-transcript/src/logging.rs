@@ -336,17 +336,7 @@ fn is_known_or_extension_limb_label(label: &[u8], known: &BTreeSet<&[u8]>) -> bo
     if known.contains(label) {
         return true;
     }
-    let Some((&marker, rest)) = label
-        .len()
-        .checked_sub(12)
-        .and_then(|offset| label[offset..].split_first())
-    else {
-        return false;
-    };
-    marker == 0xff
-        && rest.len() == 11
-        && rest[8..] == *b"ext"
-        && known.contains(&label[..label.len() - 12])
+    crate::ext_limb_base_label(label).is_some_and(|base| known.contains(base))
 }
 
 fn label_text(label: &[u8]) -> String {

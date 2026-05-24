@@ -201,7 +201,11 @@ dependencies = [
 name = "akita-recursion-host"
 version = "0.1.0"
 dependencies = [
+ "akita-config",
+ "akita-recursion-glue",
  "akita-recursion-guest",
+ "akita-transcript",
+ "akita-types",
  "clap",
  "jolt-sdk",
  "jolt-sdk-macros",

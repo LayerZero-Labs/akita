@@ -229,17 +229,7 @@ pub(super) fn first_label_index_after(
 
 #[cfg(feature = "logging-transcript")]
 fn is_label_or_extension_limb(candidate: &[u8], base: &[u8]) -> bool {
-    if candidate == base {
-        return true;
-    }
-    let Some(suffix_start) = candidate.len().checked_sub(12) else {
-        return false;
-    };
-    candidate.starts_with(base)
-        && candidate.len() == base.len() + 12
-        && candidate[base.len()] == 0xff
-        && suffix_start == base.len()
-        && candidate[candidate.len() - 3..] == *b"ext"
+    candidate == base || akita_transcript::is_ext_limb_label(candidate, base)
 }
 
 #[cfg(feature = "logging-transcript")]
@@ -257,26 +247,119 @@ pub(super) fn first_label_or_extension_limb_index_after(
 }
 
 #[cfg(feature = "logging-transcript")]
+fn first_logical_label_span_after(
+    events: &[akita_transcript::TranscriptEvent],
+    start: usize,
+    label: &[u8],
+) -> Option<(usize, usize)> {
+    let span_start = first_label_or_extension_limb_index_after(events, start, label)?;
+    let mut span_end = span_start + 1;
+    while span_end < events.len()
+        && event_label(&events[span_end])
+            .is_some_and(|candidate| is_label_or_extension_limb(candidate, label))
+    {
+        span_end += 1;
+    }
+    Some((span_start, span_end))
+}
+
+#[cfg(feature = "logging-transcript")]
+fn assert_no_logical_label(
+    events: &[akita_transcript::TranscriptEvent],
+    range: std::ops::Range<usize>,
+    label: &[u8],
+    message: &str,
+) {
+    assert!(
+        events[range].iter().all(|event| {
+            event_label(event).is_none_or(|candidate| !is_label_or_extension_limb(candidate, label))
+        }),
+        "{message}"
+    );
+}
+
+#[cfg(feature = "logging-transcript")]
 pub(super) fn assert_terminal_event_order_if_present(
     events: &[akita_transcript::TranscriptEvent],
 ) -> Option<usize> {
     use akita_transcript::labels;
 
     let w_hat = first_label_index(events, labels::ABSORB_TERMINAL_W_HAT)?;
-    let sparse_seed = first_label_or_extension_limb_index_after(
-        events,
-        w_hat,
-        labels::CHALLENGE_SPARSE_CHALLENGE,
-    )
-    .expect("terminal transcript must squeeze sparse seed");
+    let (sparse_seed, sparse_seed_end) =
+        first_logical_label_span_after(events, w_hat, labels::CHALLENGE_SPARSE_CHALLENGE)
+            .expect("terminal transcript must squeeze sparse seed");
     let remainder =
-        first_label_index_after(events, sparse_seed, labels::ABSORB_TERMINAL_W_REMAINDER)
+        first_label_index_after(events, sparse_seed_end, labels::ABSORB_TERMINAL_W_REMAINDER)
             .expect("terminal transcript must absorb final-witness remainder");
-    let alpha =
-        first_label_or_extension_limb_index_after(events, remainder, labels::CHALLENGE_RING_SWITCH)
+    assert_no_logical_label(
+        events,
+        w_hat + 1..remainder,
+        labels::CHALLENGE_RING_SWITCH,
+        "terminal alpha must not precede witness remainder",
+    );
+    assert_no_logical_label(
+        events,
+        w_hat + 1..remainder,
+        labels::CHALLENGE_TAU1,
+        "terminal tau1 must not precede alpha",
+    );
+    assert_no_logical_label(
+        events,
+        w_hat + 1..remainder,
+        labels::CHALLENGE_SUMCHECK_ROUND,
+        "terminal stage-2 sumcheck must not precede tau1",
+    );
+    let (alpha, alpha_end) =
+        first_logical_label_span_after(events, remainder, labels::CHALLENGE_RING_SWITCH)
             .expect("terminal transcript must squeeze ring-switch alpha");
-    let tau1 = first_label_or_extension_limb_index_after(events, alpha, labels::CHALLENGE_TAU1)
-        .expect("terminal transcript must squeeze tau1");
+    assert_no_logical_label(
+        events,
+        remainder + 1..alpha,
+        labels::CHALLENGE_TAU1,
+        "terminal tau1 must not precede alpha",
+    );
+    assert_no_logical_label(
+        events,
+        remainder + 1..alpha,
+        labels::CHALLENGE_SUMCHECK_ROUND,
+        "terminal stage-2 sumcheck must not precede tau1",
+    );
+    let (tau1, tau1_end) =
+        first_logical_label_span_after(events, alpha_end, labels::CHALLENGE_TAU1)
+            .expect("terminal transcript must squeeze tau1");
+    assert_no_logical_label(
+        events,
+        alpha_end..tau1,
+        labels::CHALLENGE_RING_SWITCH,
+        "terminal alpha limbs must be contiguous before tau1",
+    );
+    assert_no_logical_label(
+        events,
+        alpha_end..tau1,
+        labels::CHALLENGE_SUMCHECK_ROUND,
+        "terminal stage-2 sumcheck must not precede tau1",
+    );
+    let (stage2_round, _) =
+        first_logical_label_span_after(events, tau1_end, labels::CHALLENGE_SUMCHECK_ROUND)
+            .expect("terminal transcript must squeeze stage-2 sumcheck after tau1");
+    assert_no_logical_label(
+        events,
+        alpha_end..events.len(),
+        labels::CHALLENGE_RING_SWITCH,
+        "terminal alpha limbs must be contiguous before tau1",
+    );
+    assert_no_logical_label(
+        events,
+        tau1_end..events.len(),
+        labels::CHALLENGE_TAU1,
+        "terminal tau1 limbs must be contiguous before stage-2 sumcheck",
+    );
+    assert_no_logical_label(
+        events,
+        tau1_end..stage2_round,
+        labels::CHALLENGE_SUMCHECK_ROUND,
+        "terminal stage-2 sumcheck must not precede tau1",
+    );
 
     assert!(w_hat < sparse_seed, "w_hat must precede sparse seed");
     assert!(
@@ -285,6 +368,10 @@ pub(super) fn assert_terminal_event_order_if_present(
     );
     assert!(remainder < alpha, "remainder must precede alpha");
     assert!(alpha < tau1, "alpha must precede tau1");
+    assert!(
+        tau1 < stage2_round,
+        "tau1 must precede terminal stage-2 sumcheck"
+    );
     assert!(
         events[w_hat..]
             .iter()

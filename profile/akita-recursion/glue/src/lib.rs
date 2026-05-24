@@ -14,16 +14,10 @@ use akita_field::{FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-#[cfg(any(
-    feature = "trusted-benchmark-artifact",
-    akita_trusted_benchmark_artifact
-))]
-use akita_types::AkitaExpandedSetup;
-use akita_types::{AkitaBatchedProof, AkitaBatchedProofShape, AkitaVerifierSetup, RingCommitment};
-#[cfg(any(
-    feature = "trusted-benchmark-artifact",
-    akita_trusted_benchmark_artifact
-))]
+use akita_types::{
+    AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
+    AkitaVerifierSetup, FlatMatrix, RingCommitment, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+};
 use std::sync::Arc;
 
 /// Encoding mode used for the verifier-input blob. Held constant on both ends
@@ -35,8 +29,15 @@ pub const BLOB_COMPRESS: Compress = Compress::No;
 /// allocation or proof replay.
 pub const BLOB_VALIDATE: Validate = Validate::Yes;
 
+/// Maximum verifier-input blob bytes accepted by host and guest.
+///
+/// Mirrors the Jolt guest `max_input_size` literal in `guest/src/lib.rs`.
+pub const MAX_JOLT_BLOB_BYTES: u64 = 805_306_368;
+
 /// Magic header so the guest fails fast if it gets the wrong bytes.
 const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv1";
+const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
+const MAX_BLOB_NUM_VARS: usize = 64;
 
 fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
     if rest.is_empty() {
@@ -74,12 +75,56 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     pub proof: AkitaBatchedProof<F, F>,
 }
 
+impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
+    fn validate_blob_header_bounds(
+        transcript_domain_len: usize,
+        num_vars: usize,
+        opening_point_len: usize,
+    ) -> Result<(), SerializationError> {
+        if transcript_domain_len > MAX_TRANSCRIPT_DOMAIN_BYTES {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: u64::try_from(transcript_domain_len).unwrap_or(u64::MAX),
+                max: MAX_TRANSCRIPT_DOMAIN_BYTES,
+            });
+        }
+        if num_vars > MAX_BLOB_NUM_VARS {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: u64::try_from(num_vars).unwrap_or(u64::MAX),
+                max: MAX_BLOB_NUM_VARS,
+            });
+        }
+        if opening_point_len != num_vars {
+            return Err(SerializationError::InvalidData(format!(
+                "akita-jolt blob num_vars={num_vars} does not match opening-point arity {opening_point_len}"
+            )));
+        }
+        Ok(())
+    }
+}
+
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: FieldCore + AkitaSerialize,
 {
     /// Encode the bundle into a single contiguous byte vector.
     pub fn write_to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
+        Self::validate_blob_header_bounds(
+            self.transcript_domain.len(),
+            usize::try_from(self.num_vars).map_err(|_| {
+                SerializationError::LengthLimitExceeded {
+                    len: self.num_vars,
+                    max: usize::MAX,
+                }
+            })?,
+            self.opening_point.len(),
+        )?;
+        let encoded_size = self.encoded_size();
+        if encoded_size as u64 > MAX_JOLT_BLOB_BYTES {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: encoded_size as u64,
+                max: MAX_JOLT_BLOB_BYTES as usize,
+            });
+        }
         let mut bytes = Vec::with_capacity(self.encoded_size());
         bytes.extend_from_slice(&BLOB_MAGIC);
         // D is encoded so the guest can fail loudly on a mismatched
@@ -122,6 +167,153 @@ impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
+    fn decode_capped_bytes(
+        rest: &mut &[u8],
+        max_len: usize,
+        context: &'static str,
+    ) -> Result<Vec<u8>, SerializationError> {
+        let encoded_len =
+            u64::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let len =
+            usize::try_from(encoded_len).map_err(|_| SerializationError::LengthLimitExceeded {
+                len: encoded_len,
+                max: usize::MAX,
+            })?;
+        if len > max_len {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: encoded_len,
+                max: max_len,
+            });
+        }
+        if rest.len() < len {
+            return Err(SerializationError::InvalidData(format!(
+                "{context} claims {len} bytes but only {} remain",
+                rest.len()
+            )));
+        }
+        let (bytes, tail) = rest.split_at(len);
+        *rest = tail;
+        Ok(bytes.to_vec())
+    }
+
+    fn decode_num_vars(rest: &mut &[u8]) -> Result<usize, SerializationError> {
+        let encoded = u64::deserialize_with_mode(rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let num_vars =
+            usize::try_from(encoded).map_err(|_| SerializationError::LengthLimitExceeded {
+                len: encoded,
+                max: usize::MAX,
+            })?;
+        if num_vars > MAX_BLOB_NUM_VARS {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: encoded,
+                max: MAX_BLOB_NUM_VARS,
+            });
+        }
+        Ok(num_vars)
+    }
+
+    fn encoded_field_payload_len(field_elements: usize) -> Result<usize, SerializationError> {
+        let field_size = F::zero().serialized_size(BLOB_COMPRESS);
+        field_elements.checked_mul(field_size).ok_or_else(|| {
+            SerializationError::InvalidData(
+                "akita-jolt blob field payload length overflow".to_string(),
+            )
+        })
+    }
+
+    fn decode_opening_point(
+        rest: &mut &[u8],
+        transcript_domain_len: usize,
+        num_vars: usize,
+    ) -> Result<Vec<F>, SerializationError> {
+        let encoded_len =
+            u64::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let len =
+            usize::try_from(encoded_len).map_err(|_| SerializationError::LengthLimitExceeded {
+                len: encoded_len,
+                max: usize::MAX,
+            })?;
+        Self::validate_blob_header_bounds(transcript_domain_len, num_vars, len)?;
+        let payload_len = Self::encoded_field_payload_len(len)?;
+        if rest.len() < payload_len {
+            return Err(SerializationError::InvalidData(format!(
+                "akita-jolt opening point claims {payload_len} payload bytes but only {} remain",
+                rest.len()
+            )));
+        }
+        let mut point = Vec::with_capacity(len);
+        for _ in 0..len {
+            point.push(F::deserialize_with_mode(
+                &mut *rest,
+                BLOB_COMPRESS,
+                BLOB_VALIDATE,
+                &(),
+            )?);
+        }
+        Ok(point)
+    }
+
+    fn setup_matrix_encoded_len(matrix_fields: usize) -> Result<usize, SerializationError> {
+        let header_len = 0usize
+            .serialized_size(BLOB_COMPRESS)
+            .checked_mul(2)
+            .ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "akita-jolt setup matrix header length overflow".to_string(),
+                )
+            })?;
+        let payload_len = Self::encoded_field_payload_len(matrix_fields)?;
+        header_len.checked_add(payload_len).ok_or_else(|| {
+            SerializationError::InvalidData(
+                "akita-jolt setup matrix encoded length overflow".to_string(),
+            )
+        })
+    }
+
+    fn check_setup_matrix_bytes_available(
+        rest: &[u8],
+        matrix_fields: usize,
+    ) -> Result<(), SerializationError> {
+        let matrix_len = Self::setup_matrix_encoded_len(matrix_fields)?;
+        if rest.len() < matrix_len {
+            return Err(SerializationError::InvalidData(format!(
+                "akita-jolt setup matrix claims {matrix_len} bytes but only {} remain",
+                rest.len()
+            )));
+        }
+        Ok(())
+    }
+
+    fn decode_seed_and_matrix(
+        rest: &mut &[u8],
+    ) -> Result<(AkitaSetupSeed, FlatMatrix<F>), SerializationError> {
+        let seed =
+            AkitaSetupSeed::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        if seed.gen_ring_dim != D {
+            return Err(SerializationError::InvalidData(format!(
+                "akita-jolt setup D={} does not match guest D={D}",
+                seed.gen_ring_dim
+            )));
+        }
+        let matrix_fields = seed.matrix_field_elements()?;
+        if matrix_fields > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: u64::try_from(matrix_fields).unwrap_or(u64::MAX),
+                max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+            });
+        }
+        Self::check_setup_matrix_bytes_available(rest, matrix_fields)?;
+        let shared_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
+            &mut *rest,
+            BLOB_COMPRESS,
+            BLOB_VALIDATE,
+            seed.total_ring_elements,
+            seed.gen_ring_dim,
+            MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        )?;
+        Ok((seed, shared_matrix))
+    }
+
     fn decode_from_bytes_with_setup(
         bytes: &[u8],
         decode_setup: impl FnOnce(&mut &[u8]) -> Result<AkitaVerifierSetup<F>, SerializationError>,
@@ -130,6 +322,12 @@ where
             return Err(SerializationError::InvalidData(
                 "akita-jolt blob shorter than magic header".to_string(),
             ));
+        }
+        if bytes.len() as u64 > MAX_JOLT_BLOB_BYTES {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: bytes.len() as u64,
+                max: MAX_JOLT_BLOB_BYTES as usize,
+            });
         }
         let (magic, mut rest) = bytes.split_at(BLOB_MAGIC.len());
         if magic != BLOB_MAGIC {
@@ -143,17 +341,14 @@ where
                 "akita-jolt blob D={encoded_d} doesn't match guest D={D}"
             )));
         }
-        let transcript_domain =
-            Vec::<u8>::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        let num_vars = u64::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let transcript_domain = Self::decode_capped_bytes(
+            &mut rest,
+            MAX_TRANSCRIPT_DOMAIN_BYTES,
+            "akita-jolt transcript domain",
+        )?;
+        let num_vars = Self::decode_num_vars(&mut rest)?;
         let opening_point =
-            Vec::<F>::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        if num_vars != opening_point.len() as u64 {
-            return Err(SerializationError::InvalidData(format!(
-                "akita-jolt blob num_vars={num_vars} does not match opening-point arity {}",
-                opening_point.len()
-            )));
-        }
+            Self::decode_opening_point(&mut rest, transcript_domain.len(), num_vars)?;
         let opening = F::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
         let commitment = RingCommitment::<F, D>::deserialize_with_mode(
             &mut rest,
@@ -177,7 +372,7 @@ where
         reject_trailing_bytes(rest)?;
         Ok(Self {
             transcript_domain,
-            num_vars,
+            num_vars: num_vars as u64,
             opening_point,
             opening,
             commitment,
@@ -192,15 +387,25 @@ impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: FieldCore + RandomSampling + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
+    fn deserialize_strict_host_setup(
+        rest: &mut &[u8],
+    ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
+        let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
+        Ok(AkitaVerifierSetup {
+            expanded: Arc::new(AkitaExpandedSetup::from_verified_parts(
+                seed,
+                shared_matrix,
+            )?),
+        })
+    }
+
     /// Strictly decode the bundle from bytes produced by [`Self::write_to_bytes`].
     ///
     /// This path rederives the public setup matrix from its seed and rejects
     /// stale or corrupted cached matrix bytes. Host-side artifact checks should
     /// use this path.
     pub fn read_from_bytes(bytes: &[u8]) -> Result<Self, SerializationError> {
-        Self::decode_from_bytes_with_setup(bytes, |rest| {
-            AkitaVerifierSetup::<F>::deserialize_with_mode(rest, BLOB_COMPRESS, BLOB_VALIDATE, &())
-        })
+        Self::decode_from_bytes_with_setup(bytes, Self::deserialize_strict_host_setup)
     }
 }
 
@@ -212,6 +417,17 @@ impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
+    fn deserialize_trusted_host_setup(
+        rest: &mut &[u8],
+    ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
+        let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
+        Ok(AkitaVerifierSetup {
+            expanded: Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix),
+            ),
+        })
+    }
+
     /// Decode a host-produced recursion artifact while trusting the cached
     /// setup matrix.
     ///
@@ -221,14 +437,7 @@ where
     /// deliberately skips checking that the expanded setup matrix coefficients
     /// equal the matrix derived from the seed.
     pub fn read_trusted_host_artifact_bytes(bytes: &[u8]) -> Result<Self, SerializationError> {
-        Self::decode_from_bytes_with_setup(bytes, |rest| {
-            Ok(AkitaVerifierSetup {
-                expanded: Arc::new(AkitaExpandedSetup::deserialize_trusted_cached_matrix(
-                    rest,
-                    BLOB_COMPRESS,
-                )?),
-            })
-        })
+        Self::decode_from_bytes_with_setup(bytes, Self::deserialize_trusted_host_setup)
     }
 }
 
@@ -240,12 +449,70 @@ pub use akita_algebra as _akita_algebra_dep;
 
 #[cfg(test)]
 mod tests {
-    use super::reject_trailing_bytes;
+    use super::*;
+    use akita_field::Prime128Offset275;
+
+    type TestF = Prime128Offset275;
+    const TEST_D: usize = 32;
+
+    fn blob_prefix() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&BLOB_MAGIC);
+        (TEST_D as u64)
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
+            .unwrap();
+        bytes
+    }
 
     #[test]
     fn trailing_blob_bytes_are_rejected() {
         let err = reject_trailing_bytes(&[0]).unwrap_err();
         assert!(err.to_string().contains("trailing bytes"));
         reject_trailing_bytes(&[]).unwrap();
+    }
+
+    #[test]
+    fn transcript_domain_len_is_capped_before_allocation() {
+        let mut bytes = blob_prefix();
+        ((MAX_TRANSCRIPT_DOMAIN_BYTES + 1) as u64)
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
+            .unwrap();
+
+        let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes).unwrap_err();
+        assert!(err.to_string().contains("length"));
+    }
+
+    #[test]
+    fn num_vars_is_capped_before_opening_point_allocation() {
+        let mut bytes = blob_prefix();
+        Vec::<u8>::new()
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
+            .unwrap();
+        ((MAX_BLOB_NUM_VARS + 1) as u64)
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
+            .unwrap();
+
+        let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes).unwrap_err();
+        assert!(err.to_string().contains("length"));
+    }
+
+    #[test]
+    fn opening_point_len_must_match_num_vars_before_allocation() {
+        let mut bytes = blob_prefix();
+        Vec::<u8>::new()
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
+            .unwrap();
+        2u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
+        3u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
+
+        let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes).unwrap_err();
+        assert!(err.to_string().contains("opening-point arity 3"));
+    }
+
+    #[test]
+    fn setup_matrix_payload_must_fit_remaining_blob_before_allocation() {
+        let err = AkitaJoltInputs::<TestF, TEST_D>::check_setup_matrix_bytes_available(&[], 1)
+            .unwrap_err();
+        assert!(err.to_string().contains("setup matrix claims"));
     }
 }

@@ -5,8 +5,15 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_transcript::{labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent};
-use akita_types::{AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep, DirectWitnessProof};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+use akita_transcript::{
+    ext_limb_label, labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent,
+};
+use akita_types::{
+    terminal_witness_segment_layout, AkitaBatchedProof, AkitaBatchedProofShape,
+    AkitaBatchedRootProof, AkitaProofStep, DirectWitnessProof, DirectWitnessShape, PackedDigits,
+    TerminalWitnessSegmentLayout,
+};
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
@@ -26,7 +33,7 @@ fn preamble_separation_changes_first_challenge() {
 #[test]
 fn event_stream_equality_small() {
     init_rayon_pool();
-    run_on_large_stack(|| {
+    run_on_large_stack(move || {
         let num_vars = 10;
         let layout = OneHotCfg::commitment_layout(num_vars).expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
@@ -61,6 +68,8 @@ fn event_stream_equality_small() {
 
         let mut verifier_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
+        verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_HAT);
+        verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
         <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
             &proof,
             &verifier_setup,
@@ -82,15 +91,6 @@ fn event_stream_equality_small() {
             Some(TranscriptEvent::Preamble { .. })
         ));
     });
-}
-
-fn ext_limb_label(label: &[u8], limb: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(label.len() + 12);
-    out.extend_from_slice(label);
-    out.push(0xff);
-    out.extend_from_slice(&(limb as u64).to_le_bytes());
-    out.extend_from_slice(b"ext");
-    out
 }
 
 #[test]
@@ -120,7 +120,167 @@ fn terminal_event_order_rejects_extension_tau0_limb() {
             len: 0,
         },
         TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
             label: ext_limb_label(labels::CHALLENGE_TAU0, 0),
+            len: 0,
+        },
+    ];
+
+    let _ = assert_terminal_event_order_if_present(&events);
+}
+
+#[test]
+#[should_panic(expected = "terminal stage-2 sumcheck must not precede tau1")]
+fn terminal_event_order_rejects_early_stage2_squeeze() {
+    let events = vec![
+        TranscriptEvent::Absorb {
+            label: labels::ABSORB_TERMINAL_W_HAT.to_vec(),
+            bytes_digest: [0; 32],
+            bytes_len: 1,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_SPARSE_CHALLENGE.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Absorb {
+            label: labels::ABSORB_TERMINAL_W_REMAINDER.to_vec(),
+            bytes_digest: [0; 32],
+            bytes_len: 1,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_RING_SWITCH.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_TAU1.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
+            len: 0,
+        },
+    ];
+
+    let _ = assert_terminal_event_order_if_present(&events);
+}
+
+#[test]
+#[should_panic(expected = "terminal alpha must not precede witness remainder")]
+fn terminal_event_order_rejects_duplicate_alpha_before_remainder() {
+    let events = vec![
+        TranscriptEvent::Absorb {
+            label: labels::ABSORB_TERMINAL_W_HAT.to_vec(),
+            bytes_digest: [0; 32],
+            bytes_len: 1,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_SPARSE_CHALLENGE.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_RING_SWITCH.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Absorb {
+            label: labels::ABSORB_TERMINAL_W_REMAINDER.to_vec(),
+            bytes_digest: [0; 32],
+            bytes_len: 1,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_RING_SWITCH.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_TAU1.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
+            len: 0,
+        },
+    ];
+
+    let _ = assert_terminal_event_order_if_present(&events);
+}
+
+#[test]
+#[should_panic(expected = "terminal tau1 must not precede alpha")]
+fn terminal_event_order_rejects_duplicate_tau1_before_alpha() {
+    let events = vec![
+        TranscriptEvent::Absorb {
+            label: labels::ABSORB_TERMINAL_W_HAT.to_vec(),
+            bytes_digest: [0; 32],
+            bytes_len: 1,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_SPARSE_CHALLENGE.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Absorb {
+            label: labels::ABSORB_TERMINAL_W_REMAINDER.to_vec(),
+            bytes_digest: [0; 32],
+            bytes_len: 1,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_TAU1.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_RING_SWITCH.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_TAU1.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
+            len: 0,
+        },
+    ];
+
+    let _ = assert_terminal_event_order_if_present(&events);
+}
+
+#[test]
+#[should_panic(expected = "terminal tau1 limbs must be contiguous before stage-2 sumcheck")]
+fn terminal_event_order_rejects_interleaved_tau1_limb() {
+    let events = vec![
+        TranscriptEvent::Absorb {
+            label: labels::ABSORB_TERMINAL_W_HAT.to_vec(),
+            bytes_digest: [0; 32],
+            bytes_len: 1,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_SPARSE_CHALLENGE.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Absorb {
+            label: labels::ABSORB_TERMINAL_W_REMAINDER.to_vec(),
+            bytes_digest: [0; 32],
+            bytes_len: 1,
+        },
+        TranscriptEvent::Squeeze {
+            label: ext_limb_label(labels::CHALLENGE_RING_SWITCH, 0),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: ext_limb_label(labels::CHALLENGE_TAU1, 0),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
+            len: 0,
+        },
+        TranscriptEvent::Squeeze {
+            label: ext_limb_label(labels::CHALLENGE_TAU1, 1),
             len: 0,
         },
     ];
@@ -143,12 +303,12 @@ fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut DirectWitnessP
     }
 }
 
-fn assert_terminal_tamper_rejected(
-    mutate: impl FnOnce(&mut DirectWitnessProof<F>) + Send + 'static,
+fn assert_terminal_tamper_rejected_at_num_vars(
+    num_vars: usize,
+    mutate: impl FnOnce(&mut DirectWitnessProof<F>, TerminalWitnessSegmentLayout) + Send + 'static,
 ) {
     init_rayon_pool();
-    run_on_large_stack(|| {
-        let num_vars = 10;
+    run_on_large_stack(move || {
         let layout = OneHotCfg::commitment_layout(num_vars).expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
         let point = random_point(num_vars, 0x6161);
@@ -178,8 +338,10 @@ fn assert_terminal_tamper_rejected(
             BasisMode::Lagrange,
         )
         .expect("prove");
+        let terminal_layout =
+            terminal_witness_segment_layout(&layout, 1, 1).expect("terminal layout");
 
-        mutate(final_witness_mut(&mut proof));
+        mutate(final_witness_mut(&mut proof), terminal_layout);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
         <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
@@ -193,19 +355,58 @@ fn assert_terminal_tamper_rejected(
     });
 }
 
+fn assert_terminal_tamper_rejected(
+    mutate: impl FnOnce(&mut DirectWitnessProof<F>, TerminalWitnessSegmentLayout) + Send + 'static,
+) {
+    assert_terminal_tamper_rejected_at_num_vars(10, mutate);
+}
+
+fn mutate_packed_digit(packed: &mut PackedDigits, idx: usize) {
+    let mut digits = (0..packed.num_elems)
+        .map(|digit| packed.digit_at(digit).expect("packed digit"))
+        .collect::<Vec<_>>();
+    let digit = digits.get_mut(idx).expect("digit index in range");
+    *digit = if *digit == -1 { 0 } else { -1 };
+    *packed = PackedDigits::from_i8_digits(&digits, packed.bits_per_elem);
+}
+
 #[test]
-fn terminal_final_witness_bit_tamper_rejects() {
-    assert_terminal_tamper_rejected(|witness| {
+fn terminal_w_hat_digit_tamper_rejects() {
+    assert_terminal_tamper_rejected(|witness, layout| {
+        assert!(
+            layout.w_hat_digit_offset > 0,
+            "current terminal corpus should place z_pre before w_hat"
+        );
         let DirectWitnessProof::PackedDigits(packed) = witness else {
             panic!("terminal witness should use packed digits");
         };
-        packed.data[0] ^= 1;
+        mutate_packed_digit(packed, layout.w_hat_digit_offset);
+    });
+}
+
+#[test]
+fn terminal_remainder_digit_tamper_rejects() {
+    assert_terminal_tamper_rejected(|witness, layout| {
+        let DirectWitnessProof::PackedDigits(packed) = witness else {
+            panic!("terminal witness should use packed digits");
+        };
+        let w_hat_end = layout.w_hat_digit_end().expect("terminal range");
+        let remainder_idx = if layout.w_hat_digit_offset > 0 {
+            0
+        } else {
+            w_hat_end
+        };
+        assert!(
+            remainder_idx < packed.num_elems,
+            "terminal tamper corpus must include a non-empty remainder"
+        );
+        mutate_packed_digit(packed, remainder_idx);
     });
 }
 
 #[test]
 fn terminal_final_witness_truncation_rejects() {
-    assert_terminal_tamper_rejected(|witness| {
+    assert_terminal_tamper_rejected(|witness, _layout| {
         let DirectWitnessProof::PackedDigits(packed) = witness else {
             panic!("terminal witness should use packed digits");
         };
@@ -215,11 +416,72 @@ fn terminal_final_witness_truncation_rejects() {
 
 #[test]
 fn terminal_final_witness_packed_payload_truncation_rejects() {
-    assert_terminal_tamper_rejected(|witness| {
+    assert_terminal_tamper_rejected(|witness, _layout| {
         let DirectWitnessProof::PackedDigits(packed) = witness else {
             panic!("terminal witness should use packed digits");
         };
         packed.data.pop();
+    });
+}
+
+fn terminal_shape_final_witness_mut(shape: &mut AkitaBatchedProofShape) -> &mut DirectWitnessShape {
+    match shape {
+        AkitaBatchedProofShape::Terminal(terminal) => &mut terminal.final_witness,
+        AkitaBatchedProofShape::Fold { step_shapes, .. } => step_shapes
+            .last_mut()
+            .and_then(|step| match step {
+                akita_types::AkitaProofStepShape::Intermediate(_) => None,
+                akita_types::AkitaProofStepShape::Terminal(terminal) => {
+                    Some(&mut terminal.final_witness)
+                }
+            })
+            .expect("fold-rooted proof must end in a terminal shape"),
+        AkitaBatchedProofShape::Direct { .. } => {
+            panic!("terminal shape test requires a folded terminal proof")
+        }
+    }
+}
+
+#[test]
+fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let num_vars = 10;
+        let layout = OneHotCfg::commitment_layout(num_vars).expect("layout");
+        let poly = make_onehot_poly(&layout, 0x5151);
+        let point = random_point(num_vars, 0x6161);
+
+        let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1);
+        let (commitment, hint) =
+            <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(std::slice::from_ref(&poly), &setup)
+                .expect("commit");
+
+        let poly_refs = [&poly];
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
+        let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+            &setup,
+            prove_input(&point, &poly_refs, &commitment, hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
+
+        let mut bytes = Vec::new();
+        proof
+            .serialize_compressed(&mut bytes)
+            .expect("serialize proof");
+        let mut bad_shape = proof.shape();
+        let DirectWitnessShape::PackedDigits((num_elems, _bits_per_elem)) =
+            terminal_shape_final_witness_mut(&mut bad_shape)
+        else {
+            panic!("terminal witness should use packed digits");
+        };
+        *num_elems = num_elems
+            .checked_add(1)
+            .expect("terminal witness shape overflow");
+
+        AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &bad_shape)
+            .expect_err("terminal direct-witness shape mismatch must reject");
     });
 }
 

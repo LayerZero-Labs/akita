@@ -32,6 +32,7 @@ pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierC
 pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
     AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

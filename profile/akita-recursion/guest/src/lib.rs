@@ -37,6 +37,8 @@ const _: () = {
 // verifier-input blob is ≈ 4 MiB at nv=20 but grows to ≈ 576 MiB at
 // nv=32 (dominated by the expanded verifier setup matrix). We give:
 //   - `max_input_size` = 768 MiB so the nv=32 blob fits with headroom.
+//                        Keep this literal equal to
+//                        `akita_recursion_glue::MAX_JOLT_BLOB_BYTES`.
 //   - `heap_size`      = 1 GiB so the decoded verifier setup + transient
 //                        verifier-internal allocations fit alongside the
 //                        raw input.
