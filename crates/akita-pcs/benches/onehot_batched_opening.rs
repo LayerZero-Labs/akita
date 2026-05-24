@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_prover::{CommitComputeBackend, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;

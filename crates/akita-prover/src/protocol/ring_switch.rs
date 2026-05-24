@@ -5,7 +5,7 @@ use crate::dispatch_ring_dim_result;
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{
-    tensor_pack_recursive_witness, CommitComputeBackend, RecursiveCommitmentHintCache,
+    tensor_pack_recursive_witness, ProverComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
 };
 use akita_algebra::eq_poly::EqPolynomial;
@@ -90,7 +90,7 @@ pub fn ring_switch_build_w<F, B, const D: usize>(
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     {
         let x: u8 = 0;
@@ -494,7 +494,7 @@ pub fn commit_w<F, B, const D: usize>(
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     if commit_layout.ring_dimension != D {
         return Err(AkitaError::InvalidInput(format!(
@@ -587,7 +587,7 @@ fn dispatch_commit_w_with_layout_policy<F, L, B, Layout>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     L: ExtField<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let commit_d = commit_params.ring_dimension;
@@ -646,7 +646,7 @@ pub fn commit_next_w_with_policy<F, L, B, SameLayout, DispatchLayout, const D: u
 where
     F: FieldCore + CanonicalField + RandomSampling,
     L: ExtField<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {

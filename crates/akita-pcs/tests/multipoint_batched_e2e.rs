@@ -4,7 +4,7 @@
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{commit_with_params, CommitComputeBackend, CommitmentProver, CpuBackend};
+use akita_prover::{commit_with_params, CommitmentProver, ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
@@ -412,7 +412,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
 #[cfg(not(feature = "zk"))]
 mod non_zk_negative_cases {
     use super::*;
-    use akita_prover::{CommitComputeBackend, CpuBackend};
+    use akita_prover::{ComputeBackendSetup, CpuBackend};
 
     #[test]
     fn multipoint_dense_verify_rejects_swapped_points() {

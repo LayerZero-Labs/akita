@@ -2,7 +2,7 @@
 
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
-use crate::{AkitaPolyOps, CommitComputeBackend};
+use crate::{AkitaPolyOps, CommitmentComputeBackend};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
@@ -69,7 +69,7 @@ pub fn commit_with_params<F, const D: usize, P, B>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D>,
-    B: CommitComputeBackend<F>,
+    B: CommitmentComputeBackend<F>,
 {
     let b_input_len_per_poly = params.num_blocks * params.a_key.row_len() * params.num_digits_open;
     let mut b_input_digits = vec![[0i8; D]; polys.len() * b_input_len_per_poly];
@@ -153,7 +153,7 @@ pub fn commit_with_policy<F, const D: usize, P, B, SelectParams>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D>,
-    B: CommitComputeBackend<F>,
+    B: CommitmentComputeBackend<F>,
     SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
     let incidence = prepare_commit_inputs::<F, D, P>(polys, backend.expanded::<D>(prepared))?;
@@ -259,7 +259,7 @@ pub fn batched_commit_with_policy<F, const D: usize, P, B, SelectParams>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D>,
-    B: CommitComputeBackend<F>,
+    B: CommitmentComputeBackend<F>,
     SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
     let incidence =
@@ -288,7 +288,7 @@ pub fn batched_commit_with_params<F, const D: usize, P, B>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D>,
-    B: CommitComputeBackend<F>,
+    B: CommitmentComputeBackend<F>,
 {
     let mut out = Vec::with_capacity(polys_per_point.len());
     for polys in polys_per_point {

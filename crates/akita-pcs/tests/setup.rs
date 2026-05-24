@@ -27,7 +27,7 @@ use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_prover::{CommitComputeBackend, CommitmentProver, CpuBackend};
+use akita_prover::{CommitmentProver, ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
 use akita_types::BasisMode;
 use akita_verifier::CommitmentVerifier;

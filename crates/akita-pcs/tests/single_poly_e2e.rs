@@ -13,7 +13,7 @@
 #![allow(missing_docs)]
 #![cfg(not(feature = "zk"))]
 
-use akita_prover::{CommitComputeBackend, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 mod common;
 

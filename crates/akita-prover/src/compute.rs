@@ -53,9 +53,9 @@ pub struct DenseCommitRowsPlan<'a, F: FieldCore, const D: usize> {
 /// One-hot commit input representation.
 ///
 /// The contained entry slices are read-only plan views. They are public so
-/// accelerator crates can implement [`CommitComputeBackend`] without depending
-/// on CPU-prepared storage, while construction remains owned by the polynomial
-/// representations.
+/// accelerator crates can implement [`CommitmentComputeBackend`] without
+/// depending on CPU-prepared storage, while construction remains owned by the
+/// polynomial representations.
 pub enum OneHotCommitBlocks<'a> {
     /// One ring has at most one hot coefficient.
     SingleChunk(Vec<&'a [SingleChunkEntry]>),
@@ -119,8 +119,8 @@ pub struct RecursiveWitnessCommitRowsPlan<'a, const D: usize> {
     pub log_basis: u32,
 }
 
-/// Compute backend family for migrated root/ring commitment work.
-pub trait CommitComputeBackend<F>: Send + Sync
+/// Shared prepared-setup contract for prover compute backends.
+pub trait ComputeBackendSetup<F>: Send + Sync
 where
     F: FieldCore + CanonicalField,
 {
@@ -155,7 +155,35 @@ where
     fn max_stride<const D: usize>(&self, prepared: &Self::PreparedSetup<D>) -> usize {
         self.expanded::<D>(prepared).seed.max_stride
     }
+}
 
+/// Linear digit mat-vec operations shared by commitment and ring-switch code.
+pub trait LinearComputeBackend<F>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Negacyclic single-input digit mat-vec rows.
+    fn digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+
+    /// Cyclic single-input digit mat-vec rows.
+    fn cyclic_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+}
+
+/// Commitment row operations for migrated root/ring commitment work.
+pub trait CommitmentComputeBackend<F>: LinearComputeBackend<F>
+where
+    F: FieldCore + CanonicalField,
+{
     /// Dense A-side commit rows.
     fn dense_commit_rows<const D: usize>(
         &self,
@@ -189,26 +217,16 @@ where
         prepared: &Self::PreparedSetup<D>,
         plan: RecursiveWitnessCommitRowsPlan<'_, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
+}
 
-    /// Negacyclic single-input digit mat-vec rows.
-    fn digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
-    /// Cyclic single-input digit mat-vec rows.
-    fn cyclic_digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        row_len: usize,
-        digits: &[[i8; D]],
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
-    /// Fused split-eq quotient rows used by ring-switch finalization.
+/// Ring-switch relation operations for migrated proving work.
+pub trait RingSwitchComputeBackend<F>: LinearComputeBackend<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Fused cyclic/quotient rows used by ring-switch finalization.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-    fn split_eq_quotients<const D: usize>(
+    fn ring_switch_relation_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup<D>,
         n_d: usize,
@@ -230,6 +248,21 @@ where
         F: HalvingField;
 }
 
+/// Full first-PR prover compute surface.
+pub trait ProverComputeBackend<F>:
+    CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>
+where
+    F: FieldCore + CanonicalField,
+{
+}
+
+impl<F, B> ProverComputeBackend<F> for B
+where
+    F: FieldCore + CanonicalField,
+    B: CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>,
+{
+}
+
 /// CPU backend using the existing Rust/Rayon kernels.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CpuBackend;
@@ -241,7 +274,7 @@ pub struct CpuPreparedSetup<F: FieldCore, const D: usize> {
     ntt_shared: NttSlotCache<D>,
 }
 
-impl<F> CommitComputeBackend<F> for CpuBackend
+impl<F> ComputeBackendSetup<F> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
@@ -265,7 +298,12 @@ where
     ) -> &'a Arc<AkitaExpandedSetup<F>> {
         &prepared.expanded
     }
+}
 
+impl<F> CommitmentComputeBackend<F> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
     fn dense_commit_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup<D>,
@@ -425,7 +463,12 @@ where
             ))
         }
     }
+}
 
+impl<F> LinearComputeBackend<F> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
     fn digit_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup<D>,
@@ -453,8 +496,13 @@ where
             digits,
         ))
     }
+}
 
-    fn split_eq_quotients<const D: usize>(
+impl<F> RingSwitchComputeBackend<F> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn ring_switch_relation_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup<D>,
         n_d: usize,
@@ -525,14 +573,14 @@ mod tests {
     }
 
     #[test]
-    fn cpu_split_eq_quotients_match_direct_kernel() {
+    fn cpu_ring_switch_relation_rows_match_direct_kernel() {
         let prepared = prepared();
         let w_hat = vec![[1i8; D], [2i8; D]];
         let t_hat = vec![[-1i8; D], [3i8; D]];
         let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D]];
         let via_backend = CpuBackend
-            .split_eq_quotients::<D>(&prepared, 1, 1, 1, &w_hat, &t_hat, &z_segment, 3)
-            .expect("backend split-eq quotients");
+            .ring_switch_relation_rows::<D>(&prepared, 1, 1, 1, &w_hat, &t_hat, &z_segment, 3)
+            .expect("backend ring-switch relation rows");
         let direct = fused_split_eq_quotients(
             &prepared.ntt_shared,
             1,

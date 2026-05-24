@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_prover::{CommitComputeBackend, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_algebra::poly::multilinear_eval;
 use akita_config::proof_optimized::fp128;

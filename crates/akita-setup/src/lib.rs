@@ -408,7 +408,7 @@ mod tests {
                 use akita_config::CommitmentConfig;
                 use akita_prover::AkitaPolyOps;
                 use akita_prover::DensePoly;
-                use akita_prover::{CommitComputeBackend, CpuBackend};
+                use akita_prover::{ComputeBackendSetup, CpuBackend};
 
                 const MAX_VARS: usize = 14;
 

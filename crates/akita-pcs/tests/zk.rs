@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(all(feature = "zk", feature = "planner"))]
 
-use akita_prover::{CommitComputeBackend, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 mod common;
 
@@ -173,7 +173,7 @@ fn single_point_group_incidence(num_vars: usize) -> ClaimIncidenceSummary {
 }
 
 fn plain_root_d_image<const D: usize>(
-    prepared: &<CpuBackend as CommitComputeBackend<F>>::PreparedSetup<D>,
+    prepared: &<CpuBackend as ComputeBackendSetup<F>>::PreparedSetup<D>,
     poly: &DensePoly<F, D>,
     point: &[F],
     layout: &LevelParams,

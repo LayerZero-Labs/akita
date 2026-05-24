@@ -55,10 +55,11 @@ pub use akita_field::{
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use akita_prover::{
-    AkitaPolyOps, CommitComputeBackend, CommitmentProver, CommittedPolynomials, CpuBackend,
-    CpuPreparedSetup, DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan, MultiChunkEntry,
-    OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims, RecursiveWitnessCommitRowsPlan,
-    SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
+    AkitaPolyOps, CommitmentComputeBackend, CommitmentProver, CommittedPolynomials,
+    ComputeBackendSetup, CpuBackend, CpuPreparedSetup, DecomposeFoldWitness, DenseCommitInput,
+    DenseCommitRowsPlan, LinearComputeBackend, MultiChunkEntry, OneHotCommitBlocks,
+    OneHotCommitRowsPlan, ProverClaims, ProverComputeBackend, RecursiveWitnessCommitRowsPlan,
+    RingSwitchComputeBackend, SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
 };
 pub use akita_scheme::AkitaCommitmentScheme;
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};

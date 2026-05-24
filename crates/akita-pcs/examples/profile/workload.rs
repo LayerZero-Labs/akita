@@ -11,7 +11,7 @@ use akita_prover::{
     AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex,
     OneHotPoly,
 };
-use akita_prover::{CommitComputeBackend, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -165,7 +165,7 @@ where
 fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPolyOps<FF, D>>(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
-    prepared: &<CpuBackend as CommitComputeBackend<FF>>::PreparedSetup<D>,
+    prepared: &<CpuBackend as ComputeBackendSetup<FF>>::PreparedSetup<D>,
     poly: &P,
     pt: &[Cfg::ClaimField],
     opening: Cfg::ClaimField,

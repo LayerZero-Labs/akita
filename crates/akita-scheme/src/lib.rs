@@ -13,8 +13,8 @@ use akita_prover::dispatch_ring_dim_result;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
     prove_folded_batched_with_policy, prove_recursive_level_with_policy, AkitaPolyOps,
-    AkitaProverSetup, CommitComputeBackend, CommitmentProver, ProveLevelOutput, ProverClaims,
-    RecursiveProverState, RecursiveSuffixOutcome, RootTensorProjectionPoly,
+    AkitaProverSetup, CommitmentComputeBackend, CommitmentProver, ProveLevelOutput, ProverClaims,
+    ProverComputeBackend, RecursiveProverState, RecursiveSuffixOutcome, RootTensorProjectionPoly,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -168,7 +168,7 @@ where
         + HalvingField
         + PseudoMersenneField,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ClaimField: RingSubfieldEncoding<F>,
     Cfg::ChallengeField: RingSubfieldEncoding<F>
@@ -285,7 +285,7 @@ where
         + PseudoMersenneField
         + Valid,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ClaimField: RingSubfieldEncoding<F>,
     Cfg::ChallengeField: RingSubfieldEncoding<F>
@@ -366,7 +366,7 @@ where
         + HalvingField
         + PseudoMersenneField,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ClaimField: RingSubfieldEncoding<F>,
     Cfg::ChallengeField: RingSubfieldEncoding<F>
@@ -479,7 +479,7 @@ where
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         P: AkitaPolyOps<F, D>,
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         if let Some(first) = polys.first() {
             let incidence = ClaimIncidenceSummary::same_point(first.num_vars(), polys.len())?;
@@ -513,7 +513,7 @@ where
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
         P: AkitaPolyOps<F, D>,
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let incidence = akita_prover::prepare_batched_commit_inputs::<F, D, P>(
             polys_per_point,
@@ -557,7 +557,7 @@ where
     where
         T: Transcript<F>,
         P: AkitaPolyOps<F, D>,
-        B: CommitComputeBackend<F>,
+        B: ProverComputeBackend<F>,
     {
         let t_prove_total = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;

@@ -9,7 +9,7 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_prover::{CommitComputeBackend, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::{AkitaTranscript, LoggingTranscript};
 use akita_types::ClaimIncidenceSummary;
 use akita_verifier::CommitmentVerifier;

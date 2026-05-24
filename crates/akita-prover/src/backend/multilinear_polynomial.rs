@@ -15,7 +15,7 @@ use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
 
-use crate::compute::CommitComputeBackend;
+use crate::compute::CommitmentComputeBackend;
 use crate::{
     AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly,
 };
@@ -197,7 +197,7 @@ where
         log_basis: u32,
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         match self {
             Self::Dense(poly) => poly.commit_inner(
@@ -233,7 +233,7 @@ where
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         match self {
             Self::Dense(poly) => poly.commit_inner_witness(

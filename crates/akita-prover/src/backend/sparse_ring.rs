@@ -14,7 +14,7 @@ use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::compute::{CommitComputeBackend, SparseRingCommitRowsPlan};
+use crate::compute::{CommitmentComputeBackend, SparseRingCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
@@ -379,7 +379,7 @@ where
         log_basis: u32,
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let t = self.commit_inner_rows(backend, prepared, n_a, block_len, num_digits_commit)?;
         decompose_commit_rows::<F, D>(&t, n_a, num_digits_open, log_basis)
@@ -397,7 +397,7 @@ where
         log_basis: u32,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let t = self.commit_inner_rows(backend, prepared, n_a, block_len, num_digits_commit)?;
         let decomposed_inner_rows =
@@ -442,7 +442,7 @@ where
         num_digits_commit: usize,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let blocks = self.blocks_for(block_len)?;
         let block_views = (0..blocks.num_blocks())

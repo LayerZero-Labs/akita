@@ -46,7 +46,7 @@ use std::sync::{Arc, OnceLock};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::compute::{CommitComputeBackend, OneHotCommitBlocks, OneHotCommitRowsPlan};
+use crate::compute::{CommitmentComputeBackend, OneHotCommitBlocks, OneHotCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{
     AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
@@ -1539,7 +1539,7 @@ where
         log_basis: u32,
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let blocks = self.blocks_for(block_len)?;
         let num_blocks = blocks.num_blocks();
@@ -1601,7 +1601,7 @@ where
         log_basis: u32,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let blocks = self.blocks_for(block_len)?;
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();

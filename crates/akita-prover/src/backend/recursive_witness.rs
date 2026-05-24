@@ -16,7 +16,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
-use crate::compute::{CommitComputeBackend, RecursiveWitnessCommitRowsPlan};
+use crate::compute::{CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 use akita_types::FlatDigitBlocks;
 use std::marker::PhantomData;
@@ -250,7 +250,7 @@ where
         log_basis: u32,
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let t_all = backend.recursive_witness_commit_rows(
             prepared,
@@ -296,7 +296,7 @@ where
         log_basis: u32,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let t = backend.recursive_witness_commit_rows(
             prepared,

@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(all(feature = "logging-transcript", not(feature = "zk")))]
 
-use akita_prover::{CommitComputeBackend, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 mod common;
 

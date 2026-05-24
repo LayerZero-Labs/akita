@@ -7,7 +7,7 @@ use crate::protocol::ring_switch::{
 };
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::{
-    AkitaPolyOps, CommitComputeBackend, CommittedPolynomials, ProverClaims, QuadraticEquation,
+    AkitaPolyOps, CommittedPolynomials, ProverClaims, ProverComputeBackend, QuadraticEquation,
     RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
     RootTensorProjectionPoly,
 };
@@ -646,7 +646,7 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     CommitRootNext: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
     BuildSuffix: FnOnce(
         RecursiveProverState<F, C>,
@@ -920,7 +920,7 @@ where
         + PseudoMersenneField,
     L: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
@@ -1092,7 +1092,7 @@ where
         + PseudoMersenneField,
     L: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
     let final_witness = DirectWitnessProof::PackedDigits(
@@ -1316,7 +1316,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     {
@@ -1501,7 +1501,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     {
         let x: u8 = 0;
@@ -1681,7 +1681,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
@@ -1749,7 +1749,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup_terminal", level).entered();
@@ -2230,7 +2230,7 @@ where
     C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     let ring_opening_points = incidence_summary
@@ -2340,7 +2340,7 @@ where
     C: RingSubfieldEncoding<F> + ExtField<E> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     let claim_to_point = incidence_summary.claim_to_point();
@@ -2658,7 +2658,7 @@ where
     C: RingSubfieldEncoding<F> + ExtField<E> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     let claim_to_point = incidence_summary.claim_to_point();
     let num_claims = incidence_summary.num_claims();
@@ -2961,7 +2961,7 @@ where
     C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     let ring_opening_points = incidence_summary
         .public_rows()
@@ -3066,7 +3066,7 @@ where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
@@ -3225,7 +3225,7 @@ where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
     if logical_w.len() != expected_w_len {

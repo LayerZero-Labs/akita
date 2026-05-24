@@ -29,8 +29,9 @@ pub use backend::{
     RootTensorProjectionPoly, SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly,
 };
 pub use compute::{
-    CommitComputeBackend, CpuBackend, CpuPreparedSetup, DenseCommitInput, DenseCommitRowsPlan,
-    OneHotCommitBlocks, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
+    CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup, DenseCommitInput,
+    DenseCommitRowsPlan, LinearComputeBackend, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
     SparseRingCommitRowsPlan,
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
@@ -477,7 +478,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
         F: CanonicalField,
-        B: CommitComputeBackend<F>;
+        B: CommitmentComputeBackend<F>;
 
     /// Inner Ajtai commit step that also preserves recomposed inner rows.
     ///
@@ -497,7 +498,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let t_hat = self.commit_inner(
             backend,
@@ -683,7 +684,7 @@ where
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
         F: CanonicalField,
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         <P as AkitaPolyOps<F, D>>::commit_inner(
             *self,
@@ -709,7 +710,7 @@ where
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         <P as AkitaPolyOps<F, D>>::commit_inner_witness(
             *self,

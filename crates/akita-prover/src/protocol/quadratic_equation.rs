@@ -5,7 +5,7 @@
 
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
-use crate::{AkitaPolyOps, CommitComputeBackend, DecomposeFoldWitness, RecursiveWitnessView};
+use crate::{AkitaPolyOps, DecomposeFoldWitness, ProverComputeBackend, RecursiveWitnessView};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::sample_sparse_challenges;
@@ -193,7 +193,7 @@ fn compute_v_rows<F, B, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     #[cfg(feature = "zk")]
     {
@@ -267,7 +267,7 @@ where
     where
         T: Transcript<F>,
         P: AkitaPolyOps<F, D>,
-        B: CommitComputeBackend<F>,
+        B: ProverComputeBackend<F>,
     {
         {
             let x: u8 = 0;
@@ -616,7 +616,7 @@ where
     ) -> Result<Self, AkitaError>
     where
         T: Transcript<F>,
-        B: CommitComputeBackend<F>,
+        B: ProverComputeBackend<F>,
     {
         let num_claims = ring_opening_points.len();
         if num_claims == 0
@@ -1133,7 +1133,7 @@ fn add_blinding_cyclic_rows<F, B, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     if blinding.is_empty() {
         return Ok(());
@@ -1170,7 +1170,7 @@ fn repeated_b_commitment_rows<F, B, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     if num_polys_per_point.is_empty() || blocks_per_claim == 0 {
         return Err(AkitaError::InvalidProof);
@@ -1282,7 +1282,7 @@ pub fn compute_r_split_eq<F, B, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
-    B: CommitComputeBackend<F>,
+    B: ProverComputeBackend<F>,
 {
     if num_polys_per_point.is_empty() || num_polys_per_point.contains(&0) {
         return Err(AkitaError::InvalidProof);
@@ -1367,7 +1367,7 @@ where
     let mut z_segments = z_pre_centered.chunks(inner_width);
     let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
-    let (d_cyclic, b_cyclic, mut a_quotients) = backend.split_eq_quotients::<D>(
+    let (d_cyclic, b_cyclic, mut a_quotients) = backend.ring_switch_relation_rows::<D>(
         prepared,
         n_d_active,
         n_b,
@@ -1392,7 +1392,7 @@ where
         &mut d_cyclic,
     )?;
     for z_segment in z_segments {
-        let (_, _, segment_a_quotients) = backend.split_eq_quotients::<D>(
+        let (_, _, segment_a_quotients) = backend.ring_switch_relation_rows::<D>(
             prepared,
             0,
             0,

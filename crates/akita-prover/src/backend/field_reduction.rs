@@ -6,7 +6,7 @@ use akita_field::{AkitaError, ExtField, FieldCore};
 use akita_types::pack_tensor_base_lift_i8_digits;
 use std::sync::Arc;
 
-use crate::compute::CommitComputeBackend;
+use crate::compute::CommitmentComputeBackend;
 use crate::{AkitaPolyOps, DensePoly, RecursiveWitnessFlat, SparseRingPoly};
 
 /// Root polynomial obtained by tensor-projecting base-field evaluations into
@@ -117,7 +117,7 @@ where
         log_basis: u32,
     ) -> Result<akita_types::FlatDigitBlocks<D>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         dispatch_root_projection!(self, poly => {
             poly.commit_inner(
@@ -144,7 +144,7 @@ where
     ) -> Result<crate::CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         dispatch_root_projection!(self, poly => {
             poly.commit_inner_witness(

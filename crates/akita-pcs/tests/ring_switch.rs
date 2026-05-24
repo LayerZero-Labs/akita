@@ -97,7 +97,7 @@ mod tests {
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
     use akita_prover::{
-        AkitaPolyOps, CommitComputeBackend, CpuBackend, DensePoly, QuadraticEquation,
+        AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, QuadraticEquation,
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;

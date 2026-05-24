@@ -21,14 +21,16 @@ This spec defines the first clean rearchitecture slice: make prover compute an
 explicit host-prepared boundary, move the existing ring/commit CPU path behind
 that boundary, remove CPU NTT cache ownership from protocol-facing setup and
 polynomial APIs, and record the inventory/baselines needed to review the
-cutover honestly. The prepared boundary is a typed compute-backend trait with
-an associated prepared setup; the current PR implements only `CpuBackend`, whose
-prepared state is `CpuPreparedSetup<F, D>`. Migrated hot paths call named
-backend operations rather than reaching through raw CPU setup matrices or NTT
-slots. Metal skeleton work, field kernels, MLE kernels, sumcheck kernels, true
-hybrid scheduling, and Jolt adapter work are captured as one remaining-work
-bucket that should be expanded into its own detailed spec when that work
-becomes current.
+cutover honestly. The prepared boundary is a small `ComputeBackendSetup` trait
+with an associated prepared setup, plus operation-family traits layered on top:
+`LinearComputeBackend`, `CommitmentComputeBackend`, `RingSwitchComputeBackend`,
+and the convenience umbrella `ProverComputeBackend` for call sites that need the
+full first-PR operation set. The current PR implements only `CpuBackend`, whose
+prepared state is `CpuPreparedSetup<F, D>`. Migrated hot paths call named backend
+operations rather than reaching through raw CPU setup matrices or NTT slots.
+Metal skeleton work, field kernels, MLE kernels, sumcheck kernels, true hybrid
+scheduling, and Jolt adapter work are captured as one remaining-work bucket that
+should be expanded into its own detailed spec when that work becomes current.
 
 ## Intent
 
@@ -40,9 +42,9 @@ behavior exactly.
 
 The key surfaces modified by this spec are:
 
-- `akita-prover::compute`: new plan/result types, a const-generic compute
-  backend trait, `CpuBackend`, `CpuPreparedSetup<F, D>`, and the migrated
-  ring/commit operation interface.
+- `akita-prover::compute`: new plan/result types, `ComputeBackendSetup`,
+  operation-family compute backend traits, `CpuBackend`,
+  `CpuPreparedSetup<F, D>`, and the migrated ring/commit operation interface.
 - `AkitaProverSetup`: becomes protocol/setup data only; it must not own
   `NttSlotCache`, `MultiDNttCaches`, Metal buffers, command queues, or any
   backend-prepared cache.
@@ -151,14 +153,16 @@ The key surfaces modified by this spec are:
       migrated paths.
 - [ ] Backend operations that may fail on an accelerator return
       `Result<_, AkitaError>`. This includes single-row digit mat-vec, cyclic
-      digit mat-vec, and split-eq quotient rows; future Metal backends must not
-      need to panic or silently fall back to CPU to report device or shape
+      digit mat-vec, and ring-switch relation rows; future Metal backends must
+      not need to panic or silently fall back to CPU to report device or shape
       failure.
 - [ ] Dynamic-D setup preparation returns `AkitaError` from typed dispatch arms
       instead of panicking through CPU-cache-specific dispatch for migrated
       paths.
-- [ ] `CpuBackend` implements the migrated ring/commit operation family and
-      delegates to the existing CPU kernels internally.
+- [ ] `CpuBackend` implements `ComputeBackendSetup`,
+      `LinearComputeBackend`, `CommitmentComputeBackend`, and
+      `RingSwitchComputeBackend`, delegating to the existing CPU kernels
+      internally.
 - [ ] The compute boundary contains no type-erased prepared-cache map, runtime
       downcast, or mutexed hot-path lookup for const-generic prepared state.
 - [ ] The compute boundary contains no public raw prepared-setup accessor used
@@ -272,7 +276,8 @@ graph TD
   Types["akita-types<br/>proof/setup/descriptor shapes"]
   Verifier["akita-verifier<br/>verification only"]
   Prover["akita-prover<br/>protocol flow + compute traits"]
-  Compute["ComputeBackend trait<br/>operation boundary"]
+  Compute["ComputeBackendSetup<br/>prepared-state boundary"]
+  Ops["operation-family traits<br/>linear / commitment / ring-switch"]
   Cpu["CpuBackend + CpuPreparedSetup<br/>current Rust/Rayon kernels"]
   Scheme["akita-scheme<br/>accepts backend + prepared setup"]
   Host["akita-pcs / host / future jolt-akita<br/>prepares backend context"]
@@ -280,7 +285,8 @@ graph TD
   Types --> Verifier
   Types --> Prover
   Prover --> Compute
-  Compute --> Cpu
+  Compute --> Ops
+  Ops --> Cpu
   Scheme --> Prover
   Host --> Scheme
 ```
@@ -321,7 +327,7 @@ where
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         P: AkitaPolyOps<F, D>,
-        B: CommitComputeBackend<F>;
+        B: CommitmentComputeBackend<F>;
 
     fn batched_commit<P, B>(
         backend: &B,
@@ -330,7 +336,7 @@ where
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
         P: AkitaPolyOps<F, D>,
-        B: CommitComputeBackend<F>;
+        B: CommitmentComputeBackend<F>;
 
     fn batched_prove<'a, T, P, B>(
         backend: &B,
@@ -342,7 +348,7 @@ where
     where
         T: Transcript<F>,
         P: AkitaPolyOps<F, D>,
-        B: CommitComputeBackend<F>;
+        B: ProverComputeBackend<F>;
 }
 ```
 
@@ -460,7 +466,7 @@ transcript absorption after backend output is returned.
 ### Backend And Prepared Context Selection
 
 ```rust
-pub trait CommitComputeBackend<F>: Send + Sync
+pub trait ComputeBackendSetup<F>: Send + Sync
 where
     F: FieldCore + CanonicalField,
 {
@@ -470,6 +476,41 @@ where
         &self,
         setup: &AkitaProverSetup<F, D>,
     ) -> Result<Self::PreparedSetup<D>, AkitaError>;
+
+    fn prepare_expanded<const D: usize>(
+        &self,
+        expanded: Arc<AkitaExpandedSetup<F>>,
+    ) -> Result<Self::PreparedSetup<D>, AkitaError>;
+
+    fn expanded<'a, const D: usize>(
+        &self,
+        prepared: &'a Self::PreparedSetup<D>,
+    ) -> &'a Arc<AkitaExpandedSetup<F>>;
+}
+
+pub trait LinearComputeBackend<F>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    fn digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+
+    fn cyclic_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+}
+
+pub trait CommitmentComputeBackend<F>: LinearComputeBackend<F>
+where
+    F: FieldCore + CanonicalField,
+{
 
     fn dense_commit_rows<const D: usize>(
         &self,
@@ -488,6 +529,37 @@ where
         prepared: &Self::PreparedSetup<D>,
         plan: SparseRingCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
+}
+
+pub trait RingSwitchComputeBackend<F>: LinearComputeBackend<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    fn ring_switch_relation_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        n_d: usize,
+        n_b: usize,
+        n_a: usize,
+        w_hat: &[[i8; D]],
+        t_hat: &[[i8; D]],
+        z_segment: &[[i32; D]],
+        z_pre_centered_inf_norm: u32,
+    ) -> Result<
+        (
+            Vec<CyclotomicRing<F, D>>,
+            Vec<CyclotomicRing<F, D>>,
+            Vec<CyclotomicRing<F, D>>,
+        ),
+        AkitaError,
+    >;
+}
+
+pub trait ProverComputeBackend<F>:
+    CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>
+where
+    F: FieldCore + CanonicalField,
+{
 }
 
 pub struct CpuBackend;
@@ -692,9 +764,10 @@ Scope:
   path;
 - inventory `AkitaPolyOps` methods and impls that participate in root commit,
   recursive witness commit, and ring-switch commit paths;
-- add `akita-prover::compute` with a typed compute-backend trait,
-  `CpuBackend`, `CpuPreparedSetup<F, D>`, operation plan/result helpers, no
-  erased prepared-cache registry, and no raw prepared-setup accessor boundary;
+- add `akita-prover::compute` with `ComputeBackendSetup`, operation-family
+  compute backend traits, `CpuBackend`, `CpuPreparedSetup<F, D>`, operation
+  plan/result helpers, no erased prepared-cache registry, and no raw
+  prepared-setup accessor boundary;
 - move NTT cache construction from `AkitaProverSetup` into
   `CpuBackend::prepare_setup`;
 - make `AkitaProverSetup::generate_with_capacity` and `from_expanded`

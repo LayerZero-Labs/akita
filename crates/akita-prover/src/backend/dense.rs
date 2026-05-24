@@ -18,7 +18,7 @@ use crate::backend::poly_helpers::{
     decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
     DecomposeParams,
 };
-use crate::compute::{CommitComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
+use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
 use crate::kernels::linear::{decompose_rows_i8_into, try_centered_i8};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
@@ -445,7 +445,7 @@ where
         log_basis: u32,
     ) -> Result<FlatDigitBlocks<D>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let t = self.commit_rows(
             backend,
@@ -469,7 +469,7 @@ where
         log_basis: u32,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let t = self.commit_rows(
             backend,
@@ -520,7 +520,7 @@ where
         log_basis: u32,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);

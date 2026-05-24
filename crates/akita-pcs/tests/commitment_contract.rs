@@ -7,9 +7,10 @@ use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::Fp64;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, HalvingField};
 use akita_pcs::{
-    AkitaPolyOps, CommitComputeBackend, CommitmentProver, CommittedPolynomials,
-    DecomposeFoldWitness, DenseCommitRowsPlan, OneHotCommitBlocks, OneHotCommitRowsPlan,
-    ProverClaims, RecursiveWitnessCommitRowsPlan, SparseRingCommitRowsPlan,
+    AkitaPolyOps, CommitmentComputeBackend, CommitmentProver, CommittedPolynomials,
+    ComputeBackendSetup, DecomposeFoldWitness, DenseCommitRowsPlan, LinearComputeBackend,
+    OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims, ProverComputeBackend,
+    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, SparseRingCommitRowsPlan,
 };
 use akita_transcript::{labels, AkitaTranscript, Transcript};
 use akita_types::AkitaExpandedSetup;
@@ -74,7 +75,7 @@ impl AkitaPolyOps<F, 1> for DummyPoly {
         _log_basis: u32,
     ) -> Result<FlatDigitBlocks<1>, AkitaError>
     where
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         Ok(FlatDigitBlocks::from_blocks(vec![]))
     }
@@ -88,7 +89,7 @@ struct DummySetup {
 #[derive(Clone, Copy)]
 struct DummyBackend;
 
-impl CommitComputeBackend<F> for DummyBackend {
+impl ComputeBackendSetup<F> for DummyBackend {
     type PreparedSetup<const D: usize> = DummySetup;
 
     fn prepare_expanded<const D: usize>(
@@ -104,7 +105,9 @@ impl CommitComputeBackend<F> for DummyBackend {
     ) -> &'a Arc<AkitaExpandedSetup<F>> {
         unreachable!("dummy backend does not expose expanded setup")
     }
+}
 
+impl CommitmentComputeBackend<F> for DummyBackend {
     fn dense_commit_rows<const D: usize>(
         &self,
         _prepared: &Self::PreparedSetup<D>,
@@ -171,7 +174,9 @@ impl CommitComputeBackend<F> for DummyBackend {
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         unreachable!("dummy backend is not used for compute")
     }
+}
 
+impl LinearComputeBackend<F> for DummyBackend {
     fn digit_rows<const D: usize>(
         &self,
         _prepared: &Self::PreparedSetup<D>,
@@ -189,8 +194,10 @@ impl CommitComputeBackend<F> for DummyBackend {
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         unreachable!("dummy backend is not used for compute")
     }
+}
 
-    fn split_eq_quotients<const D: usize>(
+impl RingSwitchComputeBackend<F> for DummyBackend {
+    fn ring_switch_relation_rows<const D: usize>(
         &self,
         _prepared: &Self::PreparedSetup<D>,
         _n_d: usize,
@@ -278,7 +285,7 @@ impl CommitmentProver<F, 1> for DummyScheme {
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         P: AkitaPolyOps<F, 1>,
-        B: CommitComputeBackend<F>,
+        B: CommitmentComputeBackend<F>,
     {
         let c = AkitaCommitment(0);
         Ok((c, c))
@@ -294,7 +301,7 @@ impl CommitmentProver<F, 1> for DummyScheme {
     where
         T: Transcript<F>,
         P: AkitaPolyOps<F, 1>,
-        B: CommitComputeBackend<F>,
+        B: ProverComputeBackend<F>,
     {
         for (_, payload) in claims {
             payload

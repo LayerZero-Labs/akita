@@ -29,7 +29,7 @@ use akita_prover::CommitmentProver;
 #[cfg(feature = "planner")]
 use akita_prover::MultilinearPolynomial;
 #[cfg(feature = "planner")]
-use akita_prover::{CommitComputeBackend, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaBatchedProof;
@@ -53,7 +53,7 @@ fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, 
 #[cfg(not(feature = "zk"))]
 mod non_zk_aggregated_cases {
     use super::*;
-    use akita_prover::{CommitComputeBackend, CpuBackend};
+    use akita_prover::{ComputeBackendSetup, CpuBackend};
 
     /// All one-hot polynomials are aggregated into a single commitment group.
     fn run_aggregated_onehot(nv: usize, batch_size: usize) {
