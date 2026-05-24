@@ -1,5 +1,6 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
+use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::generated::{
     table_entry, GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTable,
     GeneratedScheduleTableEntry, GeneratedStep,
@@ -1169,14 +1170,6 @@ impl Schedule {
         }
         push_usize(bytes, self.total_bytes);
     }
-}
-
-fn push_usize(bytes: &mut Vec<u8>, value: usize) {
-    bytes.extend_from_slice(&(value as u64).to_le_bytes());
-}
-
-fn push_u32(bytes: &mut Vec<u8>, value: u32) {
-    bytes.extend_from_slice(&value.to_le_bytes());
 }
 
 fn append_direct_witness_shape_descriptor_bytes(bytes: &mut Vec<u8>, shape: &DirectWitnessShape) {

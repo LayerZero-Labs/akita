@@ -7,6 +7,8 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
+use crate::descriptor_bytes::{push_i8, push_u32, push_usize, sis_family_tag};
+
 pub use crate::generated::sis_floor::SisModulusFamily;
 
 /// Per-level M-matrix row layout selector.
@@ -201,7 +203,7 @@ impl AjtaiKeyParams {
     }
 
     fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(sis_family_descriptor_tag(self.sis_family()));
+        bytes.push(sis_family_tag(self.sis_family()));
         push_usize(bytes, self.row_len());
         push_usize(bytes, self.col_len());
         push_u32(bytes, self.collision_inf());
@@ -516,27 +518,6 @@ impl LevelParams {
             num_digits_open: other.num_digits_open,
             num_digits_fold: other.num_digits_fold,
         }
-    }
-}
-
-fn push_usize(bytes: &mut Vec<u8>, value: usize) {
-    bytes.extend_from_slice(&(value as u64).to_le_bytes());
-}
-
-fn push_u32(bytes: &mut Vec<u8>, value: u32) {
-    bytes.extend_from_slice(&value.to_le_bytes());
-}
-
-fn push_i8(bytes: &mut Vec<u8>, value: i8) {
-    bytes.extend_from_slice(&value.to_le_bytes());
-}
-
-fn sis_family_descriptor_tag(family: SisModulusFamily) -> u8 {
-    match family {
-        SisModulusFamily::Q32 => 0,
-        SisModulusFamily::Q64 => 1,
-        SisModulusFamily::Q128 => 2,
-        SisModulusFamily::Q16 => 3,
     }
 }
 

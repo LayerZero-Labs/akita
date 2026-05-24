@@ -5,6 +5,7 @@
 //! generated schedule/SIS data shared by prover, verifier, and planner code.
 
 pub mod config;
+pub(crate) mod descriptor_bytes;
 pub mod field_reduction;
 pub mod generated;
 pub mod instance_descriptor;

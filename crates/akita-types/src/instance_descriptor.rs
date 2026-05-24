@@ -5,6 +5,7 @@
 //! Akita encodings. The top-level descriptor remains self-describing and
 //! round-trippable so both prover and verifier can compare preamble bytes.
 
+use crate::descriptor_bytes::{push_usize, push_usize_vec, sis_family_tag};
 use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, ClaimIncidenceSummary, DecompositionParams,
     LevelParams, Schedule, SisModulusFamily,
@@ -657,17 +658,6 @@ fn read_digest<R: Read>(mut reader: R) -> Result<DescriptorDigest, Serialization
     Ok(digest)
 }
 
-fn push_usize(bytes: &mut Vec<u8>, value: usize) {
-    bytes.extend_from_slice(&(value as u64).to_le_bytes());
-}
-
-fn push_usize_vec(bytes: &mut Vec<u8>, values: &[usize]) {
-    push_usize(bytes, values.len());
-    for &value in values {
-        push_usize(bytes, value);
-    }
-}
-
 fn encode_decomposition<W: Write>(
     decomp: &DecompositionParams,
     mut writer: W,
@@ -745,15 +735,6 @@ fn decode_sis_family<R: Read>(
         other => Err(SerializationError::InvalidData(format!(
             "unknown SisModulusFamily tag {other}"
         ))),
-    }
-}
-
-fn sis_family_tag(family: SisModulusFamily) -> u8 {
-    match family {
-        SisModulusFamily::Q32 => 0,
-        SisModulusFamily::Q64 => 1,
-        SisModulusFamily::Q128 => 2,
-        SisModulusFamily::Q16 => 3,
     }
 }
 
