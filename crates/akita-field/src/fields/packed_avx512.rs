@@ -88,6 +88,16 @@ impl<const P: u32> PackedFp32Avx512<P> {
         (1u64 << Self::BITS) - 1
     };
 
+    /// Whether two Solinas folds suffice to bring the sum of four
+    /// `(P-1)^2` products into `[0, 2*P)` for the final canonicalize step.
+    /// Mirrors `PackedFp32Neon::TWO_FOLD_FOUR_PRODUCT_OK`. When `false`,
+    /// `solinas_reduce` / `solinas_reduce_with_carry` must do a third fold
+    /// before handing off to `pack_and_canonicalize`.
+    const TWO_FOLD_FOUR_PRODUCT_OK: bool = {
+        let c = Self::C as u64;
+        4 * c * c + 3 * c <= (1u64 << Self::BITS)
+    };
+
     #[inline(always)]
     fn to_vec(self) -> __m512i {
         unsafe { transmute(self) }
@@ -98,16 +108,23 @@ impl<const P: u32> PackedFp32Avx512<P> {
         unsafe { transmute(v) }
     }
 
-    /// Multiply each lane's low 32 bits by `C`. Building block of Solinas
-    /// reduction; the `C == 1` fast path skips the multiply entirely for
-    /// Mersenne-like primes.
+    /// Multiply each `u64` lane by `C`. Building block of Solinas reduction;
+    /// the `C == 1` fast path skips the multiply entirely for Mersenne-like
+    /// primes.
+    ///
+    /// Uses `_mm512_mullo_epi64` (AVX-512DQ, single `vpmullq`) for full
+    /// 64-bit width. The previous implementation used `_mm512_mul_epu32`
+    /// which only reads the *low 32 bits* of each lane and silently dropped
+    /// bit 32+ of the input — fine for `BITS == 32` (where the caller's
+    /// `prod >> 32` always fits in 32 bits) but wrong for `BITS == 31` and
+    /// `C != 1` where `prod >> 31` can occupy 33 bits.
     #[inline(always)]
     unsafe fn mul_c_u64(x: __m512i) -> __m512i {
         if Self::C == 1 {
             x
         } else {
             let c_vec = _mm512_set1_epi64(Self::C as i64);
-            _mm512_mul_epu32(x, c_vec)
+            _mm512_mullo_epi64(x, c_vec)
         }
     }
 
@@ -255,13 +272,19 @@ impl<const P: u32> PackedFp32Avx512<P> {
         }
     }
 
-    /// Two-fold Solinas reduction of 8+8 `u64` products → 16 `u32` lanes.
+    /// Two-or-three-fold Solinas reduction of 8+8 `u64` products → 16 `u32`
+    /// lanes.
     ///
     /// The `Self::BITS == 31` branches use immediate-shift
     /// `_mm512_srli_epi64::<31>` instead of the generic variable-shift
     /// `_mm512_srl_epi64(.., shift)`, mirroring the same specialisation
     /// the base-field `Mul` impl uses on Mersenne31, so extension-field
     /// operations on Mersenne31 get the same per-shift win.
+    ///
+    /// Two folds always suffice when `Self::TWO_FOLD_FOUR_PRODUCT_OK`. When
+    /// it doesn't (large `C` such that `4*C^2 + 3*C > 2^BITS`), we run a
+    /// third fold so `pack_and_canonicalize`'s single subtract-and-min step
+    /// is enough to land in `[0, P)`. Mirrors `PackedFp32Neon::solinas_reduce`.
     #[inline(always)]
     unsafe fn solinas_reduce(prod_evn: __m512i, prod_odd: __m512i) -> __m512i {
         let mask = _mm512_set1_epi64(Self::MASK_U64 as i64);
@@ -301,7 +324,30 @@ impl<const P: u32> PackedFp32Avx512<P> {
         };
         let odd_f2 = _mm512_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
 
-        Self::pack_and_canonicalize(evn_f2, odd_f2)
+        // Optional third fold for large-C primes (e.g. Generic31Offset32787)
+        // where two folds leave residue > 2*P.
+        let (evn_final, odd_final) = if Self::TWO_FOLD_FOUR_PRODUCT_OK {
+            (evn_f2, odd_f2)
+        } else {
+            let evn_f2_lo = _mm512_and_si512(evn_f2, mask);
+            let evn_f2_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(evn_f2)
+            } else {
+                _mm512_srl_epi64(evn_f2, shift)
+            };
+            let odd_f2_lo = _mm512_and_si512(odd_f2, mask);
+            let odd_f2_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(odd_f2)
+            } else {
+                _mm512_srl_epi64(odd_f2, shift)
+            };
+            (
+                _mm512_add_epi64(evn_f2_lo, Self::mul_c_u64(evn_f2_hi)),
+                _mm512_add_epi64(odd_f2_lo, Self::mul_c_u64(odd_f2_hi)),
+            )
+        };
+
+        Self::pack_and_canonicalize(evn_final, odd_final)
     }
 
     /// Same as `solinas_reduce` but with extra carry counts to fold in.
@@ -355,7 +401,29 @@ impl<const P: u32> PackedFp32Avx512<P> {
         };
         let odd_f2 = _mm512_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
 
-        Self::pack_and_canonicalize(evn_f2, odd_f2)
+        // Optional third fold (see `solinas_reduce`).
+        let (evn_final, odd_final) = if Self::TWO_FOLD_FOUR_PRODUCT_OK {
+            (evn_f2, odd_f2)
+        } else {
+            let evn_f2_lo = _mm512_and_si512(evn_f2, mask);
+            let evn_f2_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(evn_f2)
+            } else {
+                _mm512_srl_epi64(evn_f2, shift)
+            };
+            let odd_f2_lo = _mm512_and_si512(odd_f2, mask);
+            let odd_f2_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(odd_f2)
+            } else {
+                _mm512_srl_epi64(odd_f2, shift)
+            };
+            (
+                _mm512_add_epi64(evn_f2_lo, Self::mul_c_u64(evn_f2_hi)),
+                _mm512_add_epi64(odd_f2_lo, Self::mul_c_u64(odd_f2_hi)),
+            )
+        };
+
+        Self::pack_and_canonicalize(evn_final, odd_final)
     }
 
     /// Combine 8+8 `u64` lanes into 16 `u32` lanes canonicalized to `[0, P)`.

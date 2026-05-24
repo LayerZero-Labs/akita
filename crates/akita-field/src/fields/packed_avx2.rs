@@ -84,6 +84,16 @@ impl<const P: u32> PackedFp32Avx2<P> {
         (1u64 << Self::BITS) - 1
     };
 
+    /// Whether two Solinas folds suffice to bring the sum of four
+    /// `(P-1)^2` products into `[0, 2*P)` for the final canonicalize step.
+    /// Mirrors `PackedFp32Neon::TWO_FOLD_FOUR_PRODUCT_OK`. When `false`,
+    /// `solinas_reduce` / `solinas_reduce_with_carry` must do a third fold
+    /// before handing off to `pack_and_canonicalize`.
+    const TWO_FOLD_FOUR_PRODUCT_OK: bool = {
+        let c = Self::C as u64;
+        4 * c * c + 3 * c <= (1u64 << Self::BITS)
+    };
+
     #[inline(always)]
     fn to_vec(self) -> __m256i {
         unsafe { transmute(self) }
@@ -94,17 +104,27 @@ impl<const P: u32> PackedFp32Avx2<P> {
         unsafe { transmute(v) }
     }
 
-    /// Multiply each lane's low 32 bits by `C`. Building block of Solinas
-    /// reduction; the `C == 1` fast path skips the multiply entirely for
-    /// Mersenne-like primes. Mirrors `PackedFp32Neon::mul_c_u64`.
+    /// Multiply each `u64` lane by `C`. Building block of Solinas reduction;
+    /// the `C == 1` fast path skips the multiply entirely for Mersenne-like
+    /// primes. Mirrors `PackedFp32Neon::mul_c_u64`.
+    ///
+    /// AVX2 has no native 64×64-bit multiply, so we split `x` into two 32-bit
+    /// halves, multiply each by `C` with `_mm256_mul_epu32` (32×32→64), then
+    /// recombine: `x*C = x_lo*C + ((x_hi*C) << 32)` (mod 2^64). The previous
+    /// implementation used a single `_mm256_mul_epu32(x, c_vec)` which only
+    /// reads the *low 32 bits* of `x` and silently dropped bit 32+ — fine for
+    /// `BITS == 32` (where the caller's `prod >> 32` always fits in 32 bits)
+    /// but wrong for `BITS == 31` and `C != 1` where `prod >> 31` can occupy
+    /// 33 bits.
     #[inline(always)]
     unsafe fn mul_c_u64(x: __m256i) -> __m256i {
         if Self::C == 1 {
-            x
-        } else {
-            let c_vec = _mm256_set1_epi64x(Self::C as i64);
-            _mm256_mul_epu32(x, c_vec)
+            return x;
         }
+        let c_vec = _mm256_set1_epi64x(Self::C as i64);
+        let lo_part = _mm256_mul_epu32(x, c_vec);
+        let hi_part = _mm256_mul_epu32(_mm256_srli_epi64::<32>(x), c_vec);
+        _mm256_add_epi64(lo_part, _mm256_slli_epi64::<32>(hi_part))
     }
 
     /// Plonky3-style Mersenne31 multiply (P = 2^31 - 1). Specialized fold
@@ -268,8 +288,8 @@ impl<const P: u32> PackedFp32Avx2<P> {
         }
     }
 
-    /// Two-fold Solinas reduction of 4+4 `u64` products → 8 `u32` lanes.
-    /// Inputs are the even-lane and odd-lane product vectors from
+    /// Two-or-three-fold Solinas reduction of 4+4 `u64` products → 8 `u32`
+    /// lanes. Inputs are the even-lane and odd-lane product vectors from
     /// `_mm256_mul_epu32`. Mirrors `PackedFp32Neon::solinas_reduce`.
     ///
     /// The `Self::BITS == 31` branches use immediate-shift
@@ -277,6 +297,11 @@ impl<const P: u32> PackedFp32Avx2<P> {
     /// `_mm256_srl_epi64(.., shift)`, mirroring the same specialisation
     /// the base-field `Mul` impl uses on Mersenne31, so extension-field
     /// operations on Mersenne31 get the same per-shift win.
+    ///
+    /// Two folds always suffice when `Self::TWO_FOLD_FOUR_PRODUCT_OK`. When
+    /// it doesn't (large `C` such that `4*C^2 + 3*C > 2^BITS`), we run a
+    /// third fold so `pack_and_canonicalize`'s single subtract-and-min step
+    /// is enough to land in `[0, P)`.
     #[inline(always)]
     unsafe fn solinas_reduce(prod_evn: __m256i, prod_odd: __m256i) -> __m256i {
         let mask = _mm256_set1_epi64x(Self::MASK_U64 as i64);
@@ -316,7 +341,30 @@ impl<const P: u32> PackedFp32Avx2<P> {
         };
         let odd_f2 = _mm256_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
 
-        Self::pack_and_canonicalize(evn_f2, odd_f2)
+        // Optional third fold for large-C primes (e.g. Generic31Offset32787)
+        // where two folds leave residue > 2*P.
+        let (evn_final, odd_final) = if Self::TWO_FOLD_FOUR_PRODUCT_OK {
+            (evn_f2, odd_f2)
+        } else {
+            let evn_f2_lo = _mm256_and_si256(evn_f2, mask);
+            let evn_f2_hi = if Self::BITS == 31 {
+                _mm256_srli_epi64::<31>(evn_f2)
+            } else {
+                _mm256_srl_epi64(evn_f2, shift)
+            };
+            let odd_f2_lo = _mm256_and_si256(odd_f2, mask);
+            let odd_f2_hi = if Self::BITS == 31 {
+                _mm256_srli_epi64::<31>(odd_f2)
+            } else {
+                _mm256_srl_epi64(odd_f2, shift)
+            };
+            (
+                _mm256_add_epi64(evn_f2_lo, Self::mul_c_u64(evn_f2_hi)),
+                _mm256_add_epi64(odd_f2_lo, Self::mul_c_u64(odd_f2_hi)),
+            )
+        };
+
+        Self::pack_and_canonicalize(evn_final, odd_final)
     }
 
     /// Same as `solinas_reduce` but with extra carry counts to fold in. Used
@@ -372,7 +420,29 @@ impl<const P: u32> PackedFp32Avx2<P> {
         };
         let odd_f2 = _mm256_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
 
-        Self::pack_and_canonicalize(evn_f2, odd_f2)
+        // Optional third fold (see `solinas_reduce`).
+        let (evn_final, odd_final) = if Self::TWO_FOLD_FOUR_PRODUCT_OK {
+            (evn_f2, odd_f2)
+        } else {
+            let evn_f2_lo = _mm256_and_si256(evn_f2, mask);
+            let evn_f2_hi = if Self::BITS == 31 {
+                _mm256_srli_epi64::<31>(evn_f2)
+            } else {
+                _mm256_srl_epi64(evn_f2, shift)
+            };
+            let odd_f2_lo = _mm256_and_si256(odd_f2, mask);
+            let odd_f2_hi = if Self::BITS == 31 {
+                _mm256_srli_epi64::<31>(odd_f2)
+            } else {
+                _mm256_srl_epi64(odd_f2, shift)
+            };
+            (
+                _mm256_add_epi64(evn_f2_lo, Self::mul_c_u64(evn_f2_hi)),
+                _mm256_add_epi64(odd_f2_lo, Self::mul_c_u64(odd_f2_hi)),
+            )
+        };
+
+        Self::pack_and_canonicalize(evn_final, odd_final)
     }
 
     /// Combine 4+4 `u64` lanes (in range `[0, 2P)`) into 8 `u32` lanes
