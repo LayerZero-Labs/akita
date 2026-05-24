@@ -9,7 +9,7 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_transcript::{labels, AkitaTranscript, LoggingTranscript, TranscriptEvent};
+use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
 use akita_types::ClaimIncidenceSummary;
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -17,33 +17,9 @@ use proptest::prelude::*;
 
 type Scheme = AkitaCommitmentScheme<DENSE_D, DenseCfg>;
 
-fn event_label(event: &TranscriptEvent) -> Option<&[u8]> {
-    match event {
-        TranscriptEvent::Absorb { label, .. }
-        | TranscriptEvent::Squeeze { label, .. }
-        | TranscriptEvent::Wire { label, .. } => Some(label),
-        TranscriptEvent::Preamble { .. } => None,
-    }
-}
-
-fn first_label_index(events: &[TranscriptEvent], label: &[u8]) -> Option<usize> {
-    events
-        .iter()
-        .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
-}
-
-fn first_label_index_after(
-    events: &[TranscriptEvent],
-    start: usize,
-    label: &[u8],
+fn assert_terminal_event_order_if_present(
+    events: &[akita_transcript::TranscriptEvent],
 ) -> Option<usize> {
-    events[start..]
-        .iter()
-        .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
-        .map(|offset| start + offset)
-}
-
-fn assert_terminal_event_order_if_present(events: &[TranscriptEvent]) -> Option<usize> {
     let w_hat = first_label_index(events, labels::ABSORB_TERMINAL_W_HAT)?;
     let sparse_seed = first_label_index_after(events, w_hat, labels::CHALLENGE_SPARSE_CHALLENGE)
         .expect("terminal transcript must squeeze sparse seed");

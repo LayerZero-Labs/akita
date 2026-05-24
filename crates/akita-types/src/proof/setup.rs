@@ -1,6 +1,9 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
 use crate::{FlatMatrix, SetupIdentityDigests};
+use akita_algebra::ring::CyclotomicRing;
+#[allow(unused_imports)]
+use akita_field::parallel::*;
 use akita_field::{FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -166,13 +169,24 @@ pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {
-    let mut data = Vec::with_capacity(total_ring_elements.saturating_mul(D));
-    for idx in 0..total_ring_elements {
-        let mut entry_rng = ShakeXofRng::new(seed, idx);
-        for _ in 0..D {
-            data.push(F::random(&mut entry_rng));
-        }
-    }
+    let ring_elements: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..total_ring_elements)
+        .map(|idx| {
+            let mut entry_rng = ShakeXofRng::new(seed, idx);
+            CyclotomicRing::random(&mut entry_rng)
+        })
+        .collect();
+
+    // SAFETY: CyclotomicRing<F, D> is #[repr(transparent)] over [F; D], so
+    // Vec<CyclotomicRing<F, D>> and Vec<F> share the same backing allocation
+    // layout (same element alignment, same total byte count).
+    let data = unsafe {
+        let ptr = ring_elements.as_ptr() as *mut F;
+        let len = ring_elements.len() * D;
+        let cap = ring_elements.capacity() * D;
+        std::mem::forget(ring_elements);
+        Vec::from_raw_parts(ptr, len, cap)
+    };
+
     FlatMatrix::from_flat_data(data, D)
 }
 

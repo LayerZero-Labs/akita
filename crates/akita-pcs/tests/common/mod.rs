@@ -194,3 +194,35 @@ pub(super) fn public_transcript_events(
         .cloned()
         .collect()
 }
+
+#[cfg(feature = "logging-transcript")]
+pub(super) fn event_label(event: &akita_transcript::TranscriptEvent) -> Option<&[u8]> {
+    match event {
+        akita_transcript::TranscriptEvent::Absorb { label, .. }
+        | akita_transcript::TranscriptEvent::Squeeze { label, .. }
+        | akita_transcript::TranscriptEvent::Wire { label, .. } => Some(label),
+        akita_transcript::TranscriptEvent::Preamble { .. } => None,
+    }
+}
+
+#[cfg(feature = "logging-transcript")]
+pub(super) fn first_label_index(
+    events: &[akita_transcript::TranscriptEvent],
+    label: &[u8],
+) -> Option<usize> {
+    events
+        .iter()
+        .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
+}
+
+#[cfg(feature = "logging-transcript")]
+pub(super) fn first_label_index_after(
+    events: &[akita_transcript::TranscriptEvent],
+    start: usize,
+    label: &[u8],
+) -> Option<usize> {
+    events[start..]
+        .iter()
+        .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
+        .map(|offset| start + offset)
+}

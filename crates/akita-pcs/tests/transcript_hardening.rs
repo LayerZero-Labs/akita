@@ -11,32 +11,6 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
 
-fn event_label(event: &TranscriptEvent) -> Option<&[u8]> {
-    match event {
-        TranscriptEvent::Absorb { label, .. }
-        | TranscriptEvent::Squeeze { label, .. }
-        | TranscriptEvent::Wire { label, .. } => Some(label),
-        TranscriptEvent::Preamble { .. } => None,
-    }
-}
-
-fn first_label_index(events: &[TranscriptEvent], label: &[u8]) -> Option<usize> {
-    events
-        .iter()
-        .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
-}
-
-fn first_label_index_after(
-    events: &[TranscriptEvent],
-    start: usize,
-    label: &[u8],
-) -> Option<usize> {
-    events[start..]
-        .iter()
-        .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
-        .map(|offset| start + offset)
-}
-
 fn assert_terminal_event_order(events: &[TranscriptEvent]) {
     let w_hat = first_label_index(events, labels::ABSORB_TERMINAL_W_HAT)
         .expect("terminal transcript must absorb logical w_hat");
