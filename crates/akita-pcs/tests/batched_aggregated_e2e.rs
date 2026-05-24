@@ -25,9 +25,11 @@
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::CommitmentProver;
 #[cfg(feature = "planner")]
 use akita_prover::MultilinearPolynomial;
-use akita_prover::{CommitComputeBackend, CommitmentProver, CpuBackend};
+#[cfg(feature = "planner")]
+use akita_prover::{CommitComputeBackend, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaBatchedProof;

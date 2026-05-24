@@ -128,7 +128,7 @@ impl OneHotIndex for usize {
 /// Fields are private and accessed via `pos_in_block()` / `coeff_idx()`.
 /// The caller-owned invariants `pos_in_block < block_len <= u32::MAX`
 /// and `coeff_idx < D <= 65536` are pre-validated in
-/// [`FlatBlocks::<SingleChunkEntry>::from_indices`]; the
+/// `FlatBlocks::<SingleChunkEntry>::from_indices`; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SingleChunkEntry {
@@ -208,7 +208,7 @@ impl SingleChunkEntry {
 /// `nonzero_coeffs()`. The caller-owned invariants
 /// `pos_in_block < block_len <= u32::MAX` and every
 /// `coeff < D <= 65536` are pre-validated in
-/// [`FlatBlocks::<MultiChunkEntry>::from_indices`]; the
+/// `FlatBlocks::<MultiChunkEntry>::from_indices`; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MultiChunkEntry {
