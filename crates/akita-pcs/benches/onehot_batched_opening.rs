@@ -103,6 +103,7 @@ fn bench_single_case(c: &mut Criterion) {
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -126,6 +127,7 @@ fn bench_single_case(c: &mut Criterion) {
                 let start = Instant::now();
                 let proof =
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                        &setup,
                         &CpuBackend,
                         &prepared,
                         vec![(
@@ -149,6 +151,7 @@ fn bench_single_case(c: &mut Criterion) {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"bench/onehot-opening/single");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -216,6 +219,7 @@ fn bench_batched_case(c: &mut Criterion) {
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let opening_groups = [&openings[..]];
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         &polys,
@@ -236,6 +240,7 @@ fn bench_batched_case(c: &mut Criterion) {
                 let start = Instant::now();
                 let proof =
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                        &setup,
                         &CpuBackend,
                         &prepared,
                         vec![(
@@ -259,6 +264,7 @@ fn bench_batched_case(c: &mut Criterion) {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"bench/onehot-opening/batched");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(

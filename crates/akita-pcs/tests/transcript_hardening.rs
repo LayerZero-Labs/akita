@@ -39,6 +39,7 @@ fn event_stream_equality_small() {
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+            &setup,
             &CpuBackend,
             &prepared,
             std::slice::from_ref(&poly),
@@ -53,6 +54,7 @@ fn event_stream_equality_small() {
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+            &setup,
             &CpuBackend,
             &prepared,
             prove_input(

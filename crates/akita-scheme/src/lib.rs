@@ -32,6 +32,7 @@ use akita_verifier::{
     VerifierClaims,
 };
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
@@ -151,6 +152,7 @@ where
 #[inline(never)]
 fn dispatch_prove_level<F, T, B, const D: usize, Cfg>(
     level_d: usize,
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
@@ -177,10 +179,9 @@ where
         + HasUnreducedOps
         + AkitaSerialize,
 {
-    let expanded = backend.expanded::<D>(prepared);
     if level_d == D {
         prove_recursive_level_with_policy::<F, Cfg::ChallengeField, T, B, D, _, _>(
-            expanded,
+            expanded.as_ref(),
             backend,
             prepared,
             transcript,
@@ -198,6 +199,7 @@ where
             |w| {
                 akita_prover::commit_next_w_with_policy::<F, Cfg::ChallengeField, B, _, _, D>(
                     &next_params,
+                    expanded,
                     backend,
                     prepared,
                     w,
@@ -213,7 +215,6 @@ where
             },
         )
     } else {
-        let expanded = expanded.clone();
         dispatch_ring_dim_result!(level_d, |D_LEVEL| {
             let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
             prove_recursive_level_with_policy::<F, Cfg::ChallengeField, T, B, { D_LEVEL }, _, _>(
@@ -242,6 +243,7 @@ where
                         { D_LEVEL },
                     >(
                         &next_params,
+                        expanded,
                         backend,
                         &level_prepared,
                         w,
@@ -268,6 +270,7 @@ where
 /// witness basis.
 #[allow(clippy::too_many_arguments)]
 fn prove_recursive_suffix<F, T, B, const D: usize, Cfg>(
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     num_vars: usize,
@@ -315,6 +318,7 @@ where
                 next_params,
             } => dispatch_prove_level::<F, T, B, D, Cfg>(
                 level_params.ring_dimension,
+                expanded,
                 backend,
                 prepared,
                 current_state,
@@ -331,6 +335,7 @@ where
                 final_log_basis,
             } => dispatch_prove_terminal_level::<F, T, B, D, Cfg>(
                 level_params.ring_dimension,
+                expanded,
                 backend,
                 prepared,
                 current_state,
@@ -349,6 +354,7 @@ where
 #[inline(never)]
 fn dispatch_prove_terminal_level<F, T, B, const D: usize, Cfg>(
     level_d: usize,
+    expanded: &Arc<AkitaExpandedSetup<F>>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
@@ -375,10 +381,9 @@ where
         + HasUnreducedOps
         + AkitaSerialize,
 {
-    let expanded = backend.expanded::<D>(prepared);
     if level_d == D {
         akita_prover::prove_terminal_recursive_level_with_policy::<F, Cfg::ChallengeField, T, B, D, _>(
-            expanded,
+            expanded.as_ref(),
             backend,
             prepared,
             transcript,
@@ -395,7 +400,6 @@ where
             },
         )
     } else {
-        let expanded = expanded.clone();
         dispatch_ring_dim_result!(level_d, |D_LEVEL| {
             let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
             akita_prover::prove_terminal_recursive_level_with_policy::<
@@ -472,6 +476,7 @@ where
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
     fn commit<P, B>(
+        setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         polys: &[P],
@@ -489,6 +494,7 @@ where
                     .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?;
                 return commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, B, _>(
                     &transformed,
+                    setup.expanded.as_ref(),
                     backend,
                     prepared,
                     Cfg::get_params_for_batched_commitment,
@@ -497,6 +503,7 @@ where
         }
         commit_with_policy::<F, D, P, B, _>(
             polys,
+            setup.expanded.as_ref(),
             backend,
             prepared,
             Cfg::get_params_for_batched_commitment,
@@ -506,6 +513,7 @@ where
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
     fn batched_commit<P, B>(
+        setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         polys_per_point: &[&[P]],
@@ -516,7 +524,7 @@ where
     {
         let incidence = akita_prover::prepare_batched_commit_inputs::<F, D, P>(
             polys_per_point,
-            backend.expanded::<D>(prepared),
+            setup.expanded.as_ref(),
         )?;
         if should_transform_root_commitment::<F, D, Cfg>(&incidence)? {
             let transformed: Vec<Vec<RootTensorProjectionPoly<F, D>>> = polys_per_point
@@ -532,6 +540,7 @@ where
                 transformed.iter().map(Vec::as_slice).collect();
             return batched_commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, B, _>(
                 &transformed_refs,
+                setup.expanded.as_ref(),
                 backend,
                 prepared,
                 Cfg::get_params_for_batched_commitment,
@@ -539,6 +548,7 @@ where
         }
         batched_commit_with_policy::<F, D, P, B, _>(
             polys_per_point,
+            setup.expanded.as_ref(),
             backend,
             prepared,
             Cfg::get_params_for_batched_commitment,
@@ -547,6 +557,7 @@ where
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T, P, B>(
+        setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
@@ -560,7 +571,8 @@ where
     {
         let t_prove_total = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;
-        let expanded = backend.expanded::<D>(prepared);
+        let expanded = setup.expanded.as_ref();
+        let expanded_arc = setup.expanded.clone();
         let proof = prove_batched_with_policy::<
             F,
             Cfg::ClaimField,
@@ -626,6 +638,7 @@ where
                                 D,
                             >(
                                 &next_params,
+                                &expanded_arc,
                                 backend,
                                 prepared,
                                 w,
@@ -641,7 +654,13 @@ where
                         },
                         |next_state, schedule, transcript| {
                             prove_recursive_suffix::<F, T, B, D, Cfg>(
-                                backend, prepared, num_vars, transcript, next_state, schedule,
+                                &expanded_arc,
+                                backend,
+                                prepared,
+                                num_vars,
+                                transcript,
+                                next_state,
+                                schedule,
                             )
                         },
                     )

@@ -20,9 +20,68 @@ use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::AkitaExpandedSetup;
+use akita_types::{AkitaExpandedSetup, SetupArtifactDigests};
 use std::array::from_fn;
 use std::sync::Arc;
+
+/// Flat block table handed to a compute backend.
+///
+/// `entries[offsets[i]..offsets[i + 1]]` is the entry slice for block `i`.
+/// This is the canonical compact representation for sparse per-block work:
+/// CPU code may recover per-block slices, while accelerator backends can upload
+/// one contiguous entry table plus one offsets table.
+#[derive(Debug, Clone, Copy)]
+pub struct FlatBlockTable<'a, E> {
+    entries: &'a [E],
+    offsets: &'a [u32],
+}
+
+impl<'a, E> FlatBlockTable<'a, E> {
+    /// Build a flat block table from validated storage.
+    #[inline]
+    pub(crate) fn new(entries: &'a [E], offsets: &'a [u32]) -> Self {
+        Self { entries, offsets }
+    }
+
+    /// Contiguous sparse entries.
+    #[inline]
+    pub fn entries(&self) -> &'a [E] {
+        self.entries
+    }
+
+    /// Block offsets into [`Self::entries`].
+    #[inline]
+    pub fn offsets(&self) -> &'a [u32] {
+        self.offsets
+    }
+
+    /// Number of logical blocks.
+    #[inline]
+    pub fn num_blocks(&self) -> usize {
+        self.offsets.len().saturating_sub(1)
+    }
+
+    /// Entry slice for one block.
+    pub fn block(&self, idx: usize) -> Result<&'a [E], AkitaError> {
+        let lo = self.offsets.get(idx).copied().ok_or_else(|| {
+            AkitaError::InvalidSetup(format!("flat block table missing offset {idx}"))
+        })? as usize;
+        let hi = self.offsets.get(idx + 1).copied().ok_or_else(|| {
+            AkitaError::InvalidSetup(format!("flat block table missing offset {}", idx + 1))
+        })? as usize;
+        if lo > hi || hi > self.entries.len() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "flat block table has malformed offsets for block {idx}: {lo}..{hi} over {} entries",
+                self.entries.len()
+            )));
+        }
+        Ok(&self.entries[lo..hi])
+    }
+
+    fn block_slices(&self) -> Result<Vec<&'a [E]>, AkitaError> {
+        (0..self.num_blocks()).map(|idx| self.block(idx)).collect()
+    }
+}
 
 /// Dense polynomial commit representation handed to the compute backend.
 pub enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
@@ -58,9 +117,9 @@ pub struct DenseCommitRowsPlan<'a, F: FieldCore, const D: usize> {
 /// polynomial representations.
 pub enum OneHotCommitBlocks<'a> {
     /// One ring has at most one hot coefficient.
-    SingleChunk(Vec<&'a [SingleChunkEntry]>),
+    SingleChunk(FlatBlockTable<'a, SingleChunkEntry>),
     /// One ring may contain several hot coefficients.
-    MultiChunk(Vec<&'a [MultiChunkEntry]>),
+    MultiChunk(FlatBlockTable<'a, MultiChunkEntry>),
 }
 
 /// One-hot commit operation plan.
@@ -92,14 +151,14 @@ pub struct SparseRingCommitRowsPlan<'a> {
     /// Number of balanced digits used for the A-side commit.
     pub num_digits_commit: usize,
     /// Per-block sparse signed coefficients.
-    pub(crate) blocks: Vec<&'a [SparseRingBlockEntry]>,
+    pub(crate) blocks: FlatBlockTable<'a, SparseRingBlockEntry>,
 }
 
 impl<'a> SparseRingCommitRowsPlan<'a> {
     /// Per-block sparse signed coefficients.
     #[inline]
-    pub fn blocks(&self) -> &[&'a [SparseRingBlockEntry]] {
-        &self.blocks
+    pub fn blocks(&self) -> FlatBlockTable<'a, SparseRingBlockEntry> {
+        self.blocks
     }
 }
 
@@ -141,19 +200,27 @@ where
         expanded: Arc<AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup<D>, AkitaError>;
 
-    /// Protocol setup backing this prepared context.
+    /// Cached setup-artifact identity for this prepared context.
     ///
-    /// This exposes setup metadata and descriptor inputs used by the prover
-    /// call graph; migrated compute paths must still request named backend
-    /// operations instead of inspecting backend-prepared storage.
-    fn expanded<'a, const D: usize>(
+    /// The digest pair is an identity check only: canonical setup metadata
+    /// remains owned by the public prover setup passed into prover APIs.
+    fn prepared_setup_digests<const D: usize>(
         &self,
-        prepared: &'a Self::PreparedSetup<D>,
-    ) -> &'a Arc<AkitaExpandedSetup<F>>;
+        prepared: &Self::PreparedSetup<D>,
+    ) -> SetupArtifactDigests;
 
-    /// Maximum shared-matrix stride supported by this prepared context.
-    fn max_stride<const D: usize>(&self, prepared: &Self::PreparedSetup<D>) -> usize {
-        self.expanded::<D>(prepared).seed.max_stride
+    /// Ensure explicit setup metadata and backend-prepared state match.
+    fn validate_prepared_setup<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        expanded: &AkitaExpandedSetup<F>,
+    ) -> Result<(), AkitaError> {
+        if self.prepared_setup_digests::<D>(prepared) != expanded.descriptor_digests {
+            return Err(AkitaError::InvalidSetup(
+                "prepared compute context was built for a different setup".to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -225,34 +292,32 @@ where
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
 }
 
-/// Ring-switch relation operation input.
-pub enum RingSwitchRelationRowsPlan<'a, const D: usize> {
-    /// Full first segment, producing D-side, B-side, and A-side relation rows.
-    Full {
-        /// Number of D-side cyclic rows to produce.
-        n_d: usize,
-        /// Number of B-side cyclic rows to produce.
-        n_b: usize,
-        /// Number of A-side quotient rows to produce.
-        n_a: usize,
-        /// Flat decomposed `w_hat` digits for the D-side relation rows.
-        w_hat: &'a [[i8; D]],
-        /// Flat decomposed inner-commitment digits for the B-side relation rows.
-        t_hat: &'a [[i8; D]],
-        /// One centered `z` segment contributing to A-side quotient rows.
-        z_segment: &'a [[i32; D]],
-        /// Infinity norm of the full centered `z_pre` witness.
-        z_pre_centered_inf_norm: u32,
-    },
-    /// Additional public-row segment, producing only A-side quotient rows.
-    QuotientOnly {
-        /// Number of A-side quotient rows to produce.
-        n_a: usize,
-        /// One centered `z` segment contributing to A-side quotient rows.
-        z_segment: &'a [[i32; D]],
-        /// Infinity norm of the full centered `z_pre` witness.
-        z_pre_centered_inf_norm: u32,
-    },
+/// Full ring-switch relation operation input.
+pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
+    /// Number of D-side cyclic rows to produce.
+    pub n_d: usize,
+    /// Number of B-side cyclic rows to produce.
+    pub n_b: usize,
+    /// Number of A-side quotient rows to produce.
+    pub n_a: usize,
+    /// Flat decomposed `w_hat` digits for the D-side relation rows.
+    pub w_hat: &'a [[i8; D]],
+    /// Flat decomposed inner-commitment digits for the B-side relation rows.
+    pub t_hat: &'a [[i8; D]],
+    /// One centered `z` segment contributing to A-side quotient rows.
+    pub z_segment: &'a [[i32; D]],
+    /// Infinity norm of the full centered `z_pre` witness.
+    pub z_pre_centered_inf_norm: u32,
+}
+
+/// Additional public-row quotient operation input.
+pub struct RingSwitchQuotientRowsPlan<'a, const D: usize> {
+    /// Number of A-side quotient rows to produce.
+    pub n_a: usize,
+    /// One centered `z` segment contributing to A-side quotient rows.
+    pub z_segment: &'a [[i32; D]],
+    /// Infinity norm of the full centered `z_pre` witness.
+    pub z_pre_centered_inf_norm: u32,
 }
 
 /// Named ring-switch relation rows returned by a backend.
@@ -277,6 +342,15 @@ where
         prepared: &Self::PreparedSetup<D>,
         plan: RingSwitchRelationRowsPlan<'_, D>,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
+    where
+        F: HalvingField;
+
+    /// A-side quotient rows for an additional public-row segment.
+    fn ring_switch_quotient_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        plan: RingSwitchQuotientRowsPlan<'_, D>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where
         F: HalvingField;
 }
@@ -307,6 +381,15 @@ pub struct CpuPreparedSetup<F: FieldCore, const D: usize> {
     ntt_shared: NttSlotCache<D>,
 }
 
+fn validate_digit_row_width(width: usize, max_stride: usize) -> Result<(), AkitaError> {
+    if width > max_stride {
+        return Err(AkitaError::InvalidInput(format!(
+            "digit row width {width} exceeds prepared setup max_stride {max_stride}"
+        )));
+    }
+    Ok(())
+}
+
 impl<F> ComputeBackendSetup<F> for CpuBackend
 where
     F: FieldCore + CanonicalField,
@@ -325,11 +408,11 @@ where
         })
     }
 
-    fn expanded<'a, const D: usize>(
+    fn prepared_setup_digests<const D: usize>(
         &self,
-        prepared: &'a Self::PreparedSetup<D>,
-    ) -> &'a Arc<AkitaExpandedSetup<F>> {
-        &prepared.expanded
+        prepared: &Self::PreparedSetup<D>,
+    ) -> SetupArtifactDigests {
+        prepared.expanded.descriptor_digests
     }
 }
 
@@ -342,7 +425,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         plan: DenseCommitRowsPlan<'_, F, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let stride = self.max_stride::<D>(prepared);
+        let stride = prepared.expanded.seed.max_stride;
         Ok(match plan.input {
             DenseCommitInput::CachedDigits { digit_block_slices } => {
                 mat_vec_mul_ntt_dense_digits_i8(
@@ -391,7 +474,7 @@ where
         F: HasWide,
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
-        let stride = self.max_stride::<D>(prepared);
+        let stride = prepared.expanded.seed.max_stride;
         let a_view = prepared
             .expanded
             .shared_matrix
@@ -409,14 +492,14 @@ where
         Ok(match plan.blocks {
             OneHotCommitBlocks::SingleChunk(blocks) => column_sweep_ajtai_single_chunk::<F, D>(
                 &a_view,
-                &blocks,
+                &blocks.block_slices()?,
                 plan.n_a,
                 active_a_cols,
                 plan.num_digits_commit,
             ),
             OneHotCommitBlocks::MultiChunk(blocks) => column_sweep_ajtai_multi_chunk::<F, D>(
                 &a_view,
-                &blocks,
+                &blocks.block_slices()?,
                 plan.n_a,
                 active_a_cols,
                 plan.num_digits_commit,
@@ -433,7 +516,7 @@ where
         F: HasWide,
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
-        let stride = self.max_stride::<D>(prepared);
+        let stride = prepared.expanded.seed.max_stride;
         let a_view = prepared
             .expanded
             .shared_matrix
@@ -453,7 +536,7 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         Ok(column_sweep_sparse(
             &a_rows,
-            &plan.blocks,
+            &plan.blocks.block_slices()?,
             plan.n_a,
             plan.block_len,
             plan.num_digits_commit,
@@ -465,7 +548,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         plan: RecursiveWitnessCommitRowsPlan<'_, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let stride = self.max_stride::<D>(prepared);
+        let stride = prepared.expanded.seed.max_stride;
         if plan.num_digits_commit == 1 {
             Ok(mat_vec_mul_ntt_digits_i8_strided(
                 &prepared.ntt_shared,
@@ -508,10 +591,11 @@ where
         row_len: usize,
         digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        validate_digit_row_width(digits.len(), prepared.expanded.seed.max_stride)?;
         Ok(mat_vec_mul_ntt_single_i8(
             &prepared.ntt_shared,
             row_len,
-            self.max_stride::<D>(prepared),
+            prepared.expanded.seed.max_stride,
             digits,
         ))
     }
@@ -527,10 +611,11 @@ where
         row_len: usize,
         digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        validate_digit_row_width(digits.len(), prepared.expanded.seed.max_stride)?;
         Ok(mat_vec_mul_ntt_single_i8_cyclic(
             &prepared.ntt_shared,
             row_len,
-            self.max_stride::<D>(prepared),
+            prepared.expanded.seed.max_stride,
             digits,
         ))
     }
@@ -548,54 +633,44 @@ where
     where
         F: HalvingField,
     {
-        let (n_d, n_b, n_a, w_hat, t_hat, z_segment, z_pre_centered_inf_norm) = match plan {
-            RingSwitchRelationRowsPlan::Full {
-                n_d,
-                n_b,
-                n_a,
-                w_hat,
-                t_hat,
-                z_segment,
-                z_pre_centered_inf_norm,
-            } => (
-                n_d,
-                n_b,
-                n_a,
-                w_hat,
-                t_hat,
-                z_segment,
-                z_pre_centered_inf_norm,
-            ),
-            RingSwitchRelationRowsPlan::QuotientOnly {
-                n_a,
-                z_segment,
-                z_pre_centered_inf_norm,
-            } => (
-                0,
-                0,
-                n_a,
-                &[][..],
-                &[][..],
-                z_segment,
-                z_pre_centered_inf_norm,
-            ),
-        };
         let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients(
             &prepared.ntt_shared,
-            n_d,
-            n_b,
-            n_a,
-            self.max_stride::<D>(prepared),
-            w_hat,
-            t_hat,
-            z_segment,
-            z_pre_centered_inf_norm,
+            plan.n_d,
+            plan.n_b,
+            plan.n_a,
+            prepared.expanded.seed.max_stride,
+            plan.w_hat,
+            plan.t_hat,
+            plan.z_segment,
+            plan.z_pre_centered_inf_norm,
         );
         Ok(RingSwitchRelationRows {
             d_cyclic,
             b_cyclic,
             a_quotients,
         })
+    }
+
+    fn ring_switch_quotient_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        plan: RingSwitchQuotientRowsPlan<'_, D>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+    where
+        F: HalvingField,
+    {
+        let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients(
+            &prepared.ntt_shared,
+            0,
+            0,
+            plan.n_a,
+            prepared.expanded.seed.max_stride,
+            &[][..],
+            &[][..],
+            plan.z_segment,
+            plan.z_pre_centered_inf_norm,
+        );
+        Ok(a_quotients)
     }
 }
 
@@ -610,6 +685,23 @@ mod tests {
     fn prepared() -> CpuPreparedSetup<F, D> {
         let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
         CpuBackend.prepare_setup(&setup).unwrap()
+    }
+
+    #[test]
+    fn cpu_prepared_setup_identity_rejects_mismatched_setup() {
+        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
+        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(9, 1, 1, 4, 8).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
+
+        CpuBackend
+            .validate_prepared_setup::<D>(&prepared, setup_a.expanded.as_ref())
+            .expect("matching setup");
+        assert!(
+            CpuBackend
+                .validate_prepared_setup::<D>(&prepared, setup_b.expanded.as_ref())
+                .is_err(),
+            "prepared context must stay bound to the setup used to create it"
+        );
     }
 
     #[test]
@@ -643,7 +735,7 @@ mod tests {
         let via_backend = CpuBackend
             .ring_switch_relation_rows::<D>(
                 &prepared,
-                RingSwitchRelationRowsPlan::Full {
+                RingSwitchRelationRowsPlan {
                     n_d: 1,
                     n_b: 1,
                     n_a: 1,

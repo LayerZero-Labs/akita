@@ -1,6 +1,9 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 
-use crate::api::commitment::validate_commit_inner_witness_shape;
+use crate::api::commitment::{
+    validate_commit_inner_witness_shape, validate_commit_level_params,
+    validate_commit_outer_input_width,
+};
 use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
@@ -489,6 +492,7 @@ where
 #[inline(never)]
 pub fn commit_w<F, B, const D: usize>(
     w: &RecursiveWitnessFlat,
+    expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     commit_layout: &LevelParams,
@@ -509,6 +513,8 @@ where
             actual: w.len(),
         });
     }
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    validate_commit_level_params::<F, D>(commit_layout, expanded)?;
 
     let num_ring_elems = w.len() / D;
     tracing::debug!(
@@ -552,6 +558,7 @@ where
     let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
     #[cfg(feature = "zk")]
     outer_input.extend_from_slice(b_blinding_digits.flat_digits());
+    validate_commit_outer_input_width(outer_input.len(), expanded)?;
     let u: Vec<CyclotomicRing<F, D>> =
         backend.digit_rows::<D>(prepared, commit_layout.b_key.row_len(), &outer_input)?;
     if u.len() != commit_layout.b_key.row_len() {
@@ -605,6 +612,7 @@ where
             let commit_layout = layout_for_d(D_COMMIT, &commit_params, logical_w.len())?;
             let (wc, wh) = commit_w::<F, B, { D_COMMIT }>(
                 logical_w,
+                expanded.as_ref(),
                 backend,
                 &prepared_commit,
                 &commit_layout,
@@ -619,6 +627,7 @@ where
             let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
             let (wc, wh) = commit_w::<F, B, { D_COMMIT }>(
                 &committed_w,
+                expanded.as_ref(),
                 backend,
                 &prepared_commit,
                 &commit_layout,
@@ -645,6 +654,7 @@ where
 #[inline(never)]
 pub fn commit_next_w_with_policy<F, L, B, SameLayout, DispatchLayout, const D: usize>(
     commit_params: &LevelParams,
+    expanded: &std::sync::Arc<AkitaExpandedSetup<F>>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     logical_w: &RecursiveWitnessFlat,
@@ -661,7 +671,13 @@ where
     if commit_params.ring_dimension == D {
         if L::EXT_DEGREE == 1 {
             let commit_layout = same_d_layout(commit_params, logical_w.len())?;
-            let (wc, wh) = commit_w::<F, B, D>(logical_w, backend, prepared, &commit_layout)?;
+            let (wc, wh) = commit_w::<F, B, D>(
+                logical_w,
+                expanded.as_ref(),
+                backend,
+                prepared,
+                &commit_layout,
+            )?;
             Ok(NextWitnessCommitment {
                 witness: None,
                 commitment: FlatRingVec::from_commitment(&wc),
@@ -670,7 +686,13 @@ where
         } else {
             let committed_w = tensor_pack_recursive_witness::<F, L, D>(logical_w)?;
             let commit_layout = same_d_layout(commit_params, committed_w.len())?;
-            let (wc, wh) = commit_w::<F, B, D>(&committed_w, backend, prepared, &commit_layout)?;
+            let (wc, wh) = commit_w::<F, B, D>(
+                &committed_w,
+                expanded.as_ref(),
+                backend,
+                prepared,
+                &commit_layout,
+            )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
                 commitment: FlatRingVec::from_commitment(&wc),
@@ -681,7 +703,7 @@ where
         dispatch_commit_w_with_layout_policy::<F, L, B, DispatchLayout>(
             backend,
             commit_params.clone(),
-            backend.expanded::<D>(prepared),
+            expanded,
             logical_w,
             dispatch_layout,
         )

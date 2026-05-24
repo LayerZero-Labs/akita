@@ -81,6 +81,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let verifier_setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_verifier(&setup);
 
     let commit_outputs = <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(
+        &setup,
         &CpuBackend,
         &prepared,
         &polys_per_point_refs,
@@ -91,6 +92,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = <Scheme as CommitmentProver<F, DENSE_D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),

@@ -154,6 +154,7 @@ where
                 let start = Instant::now();
                 let committed = commit_with_params::<F, D, _, CpuBackend>(
                     &transformed_polys,
+                    setup.expanded.as_ref(),
                     &CpuBackend,
                     &prepared,
                     &params,
@@ -173,6 +174,7 @@ where
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
                 let committed = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &setup,
                     &CpuBackend,
                     &prepared,
                     &polys,

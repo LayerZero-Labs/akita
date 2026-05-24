@@ -14,7 +14,7 @@ use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::compute::{CommitmentComputeBackend, SparseRingCommitRowsPlan};
+use crate::compute::{CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
@@ -141,6 +141,11 @@ impl SparseRingBlocks {
         let lo = self.offsets[idx] as usize;
         let hi = self.offsets[idx + 1] as usize;
         &self.entries[lo..hi]
+    }
+
+    #[inline]
+    fn table(&self) -> FlatBlockTable<'_, SparseRingBlockEntry> {
+        FlatBlockTable::new(&self.entries, &self.offsets)
     }
 }
 
@@ -445,16 +450,13 @@ where
         B: CommitmentComputeBackend<F>,
     {
         let blocks = self.blocks_for(block_len)?;
-        let block_views = (0..blocks.num_blocks())
-            .map(|idx| blocks.block(idx))
-            .collect::<Vec<_>>();
         backend.sparse_ring_commit_rows(
             prepared,
             SparseRingCommitRowsPlan {
                 n_a,
                 block_len,
                 num_digits_commit,
-                blocks: block_views,
+                blocks: blocks.table(),
             },
         )
     }

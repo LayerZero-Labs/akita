@@ -125,6 +125,7 @@ where
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -139,6 +140,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         prove_input(
@@ -199,6 +201,7 @@ where
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -213,6 +216,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         prove_input(
@@ -282,6 +286,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         &polys,
@@ -293,6 +298,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         prove_input(
@@ -373,6 +379,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let poly_refs: Vec<&OneHotPoly<F, D, usize>> = polys.iter().collect();
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         &polys,
@@ -384,6 +391,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         prove_input(

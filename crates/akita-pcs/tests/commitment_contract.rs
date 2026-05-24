@@ -9,13 +9,16 @@ use akita_field::{AdditiveGroup, AkitaError, CanonicalField, HalvingField};
 use akita_pcs::{
     AkitaPolyOps, CommitmentComputeBackend, CommitmentProver, CommittedPolynomials,
     ComputeBackendSetup, CyclicRowsComputeBackend, DecomposeFoldWitness, DenseCommitRowsPlan,
-    DigitRowsComputeBackend, OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims,
-    ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
-    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
+    DigitRowsComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    ProverClaims, ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
+    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
+    SparseRingCommitRowsPlan,
 };
 use akita_transcript::{labels, AkitaTranscript, Transcript};
-use akita_types::AkitaExpandedSetup;
-use akita_types::{AkitaCommitment, AppendToTranscript, BasisMode, DummyProof, FlatDigitBlocks};
+use akita_types::{
+    AkitaCommitment, AkitaExpandedSetup, AppendToTranscript, BasisMode, DummyProof,
+    FlatDigitBlocks, SetupArtifactDigests,
+};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use std::sync::Arc;
 
@@ -85,6 +88,14 @@ impl AkitaPolyOps<F, 1> for DummyPoly {
 #[derive(Clone)]
 struct DummySetup {
     _max_num_vars: usize,
+    digests: SetupArtifactDigests,
+}
+
+fn dummy_digests() -> SetupArtifactDigests {
+    SetupArtifactDigests {
+        setup_seed_digest: [0; 32],
+        shared_matrix_digest: [1; 32],
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -95,16 +106,19 @@ impl ComputeBackendSetup<F> for DummyBackend {
 
     fn prepare_expanded<const D: usize>(
         &self,
-        _expanded: Arc<AkitaExpandedSetup<F>>,
+        expanded: Arc<AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup<D>, AkitaError> {
-        Ok(DummySetup { _max_num_vars: 0 })
+        Ok(DummySetup {
+            _max_num_vars: 0,
+            digests: expanded.descriptor_digests,
+        })
     }
 
-    fn expanded<'a, const D: usize>(
+    fn prepared_setup_digests<const D: usize>(
         &self,
-        _prepared: &'a Self::PreparedSetup<D>,
-    ) -> &'a Arc<AkitaExpandedSetup<F>> {
-        unreachable!("dummy backend does not expose expanded setup")
+        prepared: &Self::PreparedSetup<D>,
+    ) -> SetupArtifactDigests {
+        prepared.digests
     }
 }
 
@@ -127,14 +141,10 @@ impl CommitmentComputeBackend<F> for DummyBackend {
         <F as HasWide>::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
         let _readable_by_external_backend: usize = match plan.blocks() {
-            OneHotCommitBlocks::SingleChunk(blocks) => blocks
-                .iter()
-                .flat_map(|block| block.iter())
-                .map(|entry| entry.pos_in_block() + entry.coeff_idx())
-                .sum(),
+            OneHotCommitBlocks::SingleChunk(blocks) => read_onehot_single(blocks),
             OneHotCommitBlocks::MultiChunk(blocks) => blocks
+                .entries()
                 .iter()
-                .flat_map(|block| block.iter())
                 .map(|entry| {
                     entry.pos_in_block()
                         + entry
@@ -159,8 +169,8 @@ impl CommitmentComputeBackend<F> for DummyBackend {
     {
         let _readable_by_external_backend: i64 = plan
             .blocks()
+            .entries()
             .iter()
-            .flat_map(|block| block.iter())
             .map(|entry| {
                 entry.pos_in_block() as i64 + entry.coeff_idx() as i64 + i64::from(entry.value())
             })
@@ -210,6 +220,25 @@ impl RingSwitchComputeBackend<F> for DummyBackend {
     {
         unreachable!("dummy backend is not used for compute")
     }
+
+    fn ring_switch_quotient_rows<const D: usize>(
+        &self,
+        _prepared: &Self::PreparedSetup<D>,
+        _plan: RingSwitchQuotientRowsPlan<'_, D>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+    where
+        F: HalvingField,
+    {
+        unreachable!("dummy backend is not used for compute")
+    }
+}
+
+fn read_onehot_single(blocks: &FlatBlockTable<'_, akita_pcs::SingleChunkEntry>) -> usize {
+    blocks
+        .entries()
+        .iter()
+        .map(|entry| entry.pos_in_block() + entry.coeff_idx())
+        .sum()
 }
 
 #[derive(Clone)]
@@ -261,6 +290,7 @@ impl CommitmentProver<F, 1> for DummyScheme {
     ) -> Result<Self::ProverSetup, AkitaError> {
         Ok(DummySetup {
             _max_num_vars: max_num_vars,
+            digests: dummy_digests(),
         })
     }
 
@@ -269,6 +299,7 @@ impl CommitmentProver<F, 1> for DummyScheme {
     }
 
     fn commit<P, B>(
+        _setup: &Self::ProverSetup,
         _backend: &B,
         _prepared: &B::PreparedSetup<1>,
         _polys: &[P],
@@ -282,6 +313,7 @@ impl CommitmentProver<F, 1> for DummyScheme {
     }
 
     fn batched_commit<P, B>(
+        setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<1>,
         polys_per_point: &[&[P]],
@@ -292,11 +324,12 @@ impl CommitmentProver<F, 1> for DummyScheme {
     {
         polys_per_point
             .iter()
-            .map(|polys| Self::commit(backend, prepared, polys))
+            .map(|polys| Self::commit(setup, backend, prepared, polys))
             .collect()
     }
 
     fn batched_prove<'a, T, P, B>(
+        _setup: &Self::ProverSetup,
         _backend: &B,
         _prepared: &B::PreparedSetup<1>,
         claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
@@ -328,11 +361,17 @@ fn commitment_scheme_round_trip() {
     let psetup = DummyScheme::setup_prover(poly.num_vars(), 1, 1).unwrap();
     let prepared = DummySetup {
         _max_num_vars: poly.num_vars(),
+        digests: psetup.digests,
     };
     let vsetup = DummyScheme::setup_verifier(&psetup);
 
-    let (commitment, hint) =
-        DummyScheme::commit(&DummyBackend, &prepared, std::slice::from_ref(&poly)).unwrap();
+    let (commitment, hint) = DummyScheme::commit(
+        &psetup,
+        &DummyBackend,
+        &prepared,
+        std::slice::from_ref(&poly),
+    )
+    .unwrap();
     let opening = poly.evaluate(&opening_point);
 
     let poly_refs: [&DummyPoly; 1] = [&poly];
@@ -350,6 +389,7 @@ fn commitment_scheme_round_trip() {
         },
     )];
     let proof = DummyScheme::batched_prove(
+        &psetup,
         &DummyBackend,
         &prepared,
         prove_inputs,

@@ -7,7 +7,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    AkitaCommitmentHint, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams, RingCommitment,
+    AkitaCommitmentHint, AkitaExpandedSetup, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams,
+    RingCommitment,
 };
 
 pub(crate) fn commit_inner_block_digit_count(
@@ -113,6 +114,96 @@ where
     Ok(())
 }
 
+pub(crate) fn validate_commit_level_params<F, const D: usize>(
+    params: &LevelParams,
+    setup: &AkitaExpandedSetup<F>,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+{
+    if params.ring_dimension != D {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params ring dimension {} does not match static D={D}",
+            params.ring_dimension
+        )));
+    }
+    if params.num_blocks == 0 || params.block_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "commit params require nonzero num_blocks and block_len".to_string(),
+        ));
+    }
+    if params.num_digits_commit == 0 || params.num_digits_open == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "commit params require nonzero digit depths".to_string(),
+        ));
+    }
+    if setup.seed.max_stride == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "setup max_stride must be nonzero".to_string(),
+        ));
+    }
+    if !(1..=128).contains(&params.log_basis) {
+        return Err(AkitaError::InvalidSetup(
+            "commit params log_basis must be in 1..=128".to_string(),
+        ));
+    }
+    let expected_a_width = params
+        .block_len
+        .checked_mul(params.num_digits_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("A commit width overflow".to_string()))?;
+    if params.a_key.col_len() != expected_a_width {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params A width {} does not match block_len * num_digits_commit = {expected_a_width}",
+            params.a_key.col_len()
+        )));
+    }
+    if params.b_key.col_len() == 0 || params.d_key.col_len() == 0 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params require nonzero B and D widths, got B={} D={}",
+            params.b_key.col_len(),
+            params.d_key.col_len()
+        )));
+    }
+    if params.a_key.col_len() > setup.seed.max_stride
+        || params.b_key.col_len() > setup.seed.max_stride
+        || params.d_key.col_len() > setup.seed.max_stride
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params column widths A={} B={} D={} exceed setup max_stride {}",
+            params.a_key.col_len(),
+            params.b_key.col_len(),
+            params.d_key.col_len(),
+            setup.seed.max_stride
+        )));
+    }
+    let max_rows = setup.shared_matrix.total_ring_elements_at::<D>()? / setup.seed.max_stride;
+    if params.a_key.row_len() > max_rows
+        || params.b_key.row_len() > max_rows
+        || params.d_key.row_len() > max_rows
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params row counts A={} B={} D={} exceed setup max_rows {max_rows}",
+            params.a_key.row_len(),
+            params.b_key.row_len(),
+            params.d_key.row_len()
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_commit_outer_input_width<F: FieldCore>(
+    active_width: usize,
+    setup: &AkitaExpandedSetup<F>,
+) -> Result<(), AkitaError> {
+    if active_width == 0 || active_width > setup.seed.max_stride {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit B input width {active_width} must be in 1..={}",
+            setup.seed.max_stride
+        )));
+    }
+    Ok(())
+}
+
 /// Validate a singleton commitment request against prover setup capacity.
 ///
 /// # Errors
@@ -121,7 +212,7 @@ where
 /// exceeds the prover setup capacity.
 pub fn prepare_commit_inputs<F, const D: usize, P>(
     polys: &[P],
-    setup: &akita_types::AkitaExpandedSetup<F>,
+    setup: &AkitaExpandedSetup<F>,
 ) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
@@ -166,6 +257,7 @@ where
 /// allocation fails.
 pub fn commit_with_params<F, const D: usize, P, B>(
     polys: &[P],
+    expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
@@ -175,7 +267,9 @@ where
     P: AkitaPolyOps<F, D>,
     B: CommitmentComputeBackend<F>,
 {
-    prepare_commit_inputs::<F, D, P>(polys, backend.expanded::<D>(prepared))?;
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    prepare_commit_inputs::<F, D, P>(polys, expanded)?;
+    validate_commit_level_params::<F, D>(params, expanded)?;
 
     let b_input_len_per_poly = commit_inner_flat_digit_count(
         params.num_blocks,
@@ -223,6 +317,7 @@ where
         b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
         b_blinding_digits
     };
+    validate_commit_outer_input_width(b_input_digits.len(), expanded)?;
     let u: Vec<CyclotomicRing<F, D>> =
         backend.digit_rows::<D>(prepared, params.b_key.row_len(), &b_input_digits)?;
     if u.len() != params.b_key.row_len() {
@@ -263,6 +358,7 @@ where
 /// execution fails.
 pub fn commit_with_policy<F, const D: usize, P, B, SelectParams>(
     polys: &[P],
+    expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     select_params: SelectParams,
@@ -273,9 +369,10 @@ where
     B: CommitmentComputeBackend<F>,
     SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
-    let incidence = prepare_commit_inputs::<F, D, P>(polys, backend.expanded::<D>(prepared))?;
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    let incidence = prepare_commit_inputs::<F, D, P>(polys, expanded)?;
     let params = select_params(&incidence)?;
-    commit_with_params::<F, D, P, B>(polys, backend, prepared, &params)
+    commit_with_params::<F, D, P, B>(polys, expanded, backend, prepared, &params)
 }
 
 /// Validate a multipoint commitment request and derive its
@@ -293,7 +390,7 @@ where
 /// setup capacity, or the variable count exceeds the prover setup capacity.
 pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
     polys_per_point: &[&[P]],
-    setup: &akita_types::AkitaExpandedSetup<F>,
+    setup: &AkitaExpandedSetup<F>,
 ) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
@@ -369,6 +466,7 @@ where
 #[allow(clippy::type_complexity)]
 pub fn batched_commit_with_policy<F, const D: usize, P, B, SelectParams>(
     polys_per_point: &[&[P]],
+    expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     select_params: SelectParams,
@@ -379,10 +477,10 @@ where
     B: CommitmentComputeBackend<F>,
     SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
-    let incidence =
-        prepare_batched_commit_inputs::<F, D, P>(polys_per_point, backend.expanded::<D>(prepared))?;
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    let incidence = prepare_batched_commit_inputs::<F, D, P>(polys_per_point, expanded)?;
     let params = select_params(&incidence)?;
-    batched_commit_with_params::<F, D, P, B>(polys_per_point, backend, prepared, &params)
+    batched_commit_with_params::<F, D, P, B>(polys_per_point, expanded, backend, prepared, &params)
 }
 
 /// Commit one polynomial bundle per opening point using already-selected
@@ -399,6 +497,7 @@ where
 #[allow(clippy::type_complexity)]
 pub fn batched_commit_with_params<F, const D: usize, P, B>(
     polys_per_point: &[&[P]],
+    expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
@@ -408,12 +507,14 @@ where
     P: AkitaPolyOps<F, D>,
     B: CommitmentComputeBackend<F>,
 {
-    prepare_batched_commit_inputs::<F, D, P>(polys_per_point, backend.expanded::<D>(prepared))?;
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    prepare_batched_commit_inputs::<F, D, P>(polys_per_point, expanded)?;
+    validate_commit_level_params::<F, D>(params, expanded)?;
 
     let mut out = Vec::with_capacity(polys_per_point.len());
     for polys in polys_per_point {
         out.push(commit_with_params::<F, D, P, B>(
-            polys, backend, prepared, params,
+            polys, expanded, backend, prepared, params,
         )?);
     }
     Ok(out)

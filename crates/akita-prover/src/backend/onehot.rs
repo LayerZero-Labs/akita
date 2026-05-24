@@ -46,7 +46,9 @@ use std::sync::{Arc, OnceLock};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::compute::{CommitmentComputeBackend, OneHotCommitBlocks, OneHotCommitRowsPlan};
+use crate::compute::{
+    CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
+};
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{
     AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
@@ -328,6 +330,11 @@ impl<E> FlatBlocks<E> {
         debug_assert_eq!(self.offsets[num_blocks] as usize, self.entries.len());
         self
     }
+
+    #[inline]
+    fn table(&self) -> FlatBlockTable<'_, E> {
+        FlatBlockTable::new(&self.entries, &self.offsets)
+    }
 }
 
 impl FlatBlocks<MultiChunkEntry> {
@@ -578,16 +585,8 @@ impl OneHotBlocks {
 
     fn commit_plan_blocks(&self) -> OneHotCommitBlocks<'_> {
         match self {
-            OneHotBlocks::SingleChunk(blocks) => {
-                let views: Vec<&[SingleChunkEntry]> =
-                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                OneHotCommitBlocks::SingleChunk(views)
-            }
-            OneHotBlocks::MultiChunk(blocks) => {
-                let views: Vec<&[MultiChunkEntry]> =
-                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                OneHotCommitBlocks::MultiChunk(views)
-            }
+            OneHotBlocks::SingleChunk(blocks) => OneHotCommitBlocks::SingleChunk(blocks.table()),
+            OneHotBlocks::MultiChunk(blocks) => OneHotCommitBlocks::MultiChunk(blocks.table()),
         }
     }
 }

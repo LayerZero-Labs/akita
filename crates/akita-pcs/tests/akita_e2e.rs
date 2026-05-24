@@ -210,6 +210,7 @@ where
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_verifier(&setup);
     let (commitment, hint) =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::commit(
+            &setup,
             &CpuBackend,
             &prepared,
             std::slice::from_ref(&poly),
@@ -222,6 +223,7 @@ where
 
     let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         prove_input(
@@ -352,6 +354,7 @@ fn full_d64_prove_verify() {
         .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &setup,
             &CpuBackend,
             &prepared,
             std::slice::from_ref(&poly),
@@ -367,6 +370,7 @@ fn full_d64_prove_verify() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
         let prove_start = Instant::now();
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
             &CpuBackend,
             &prepared,
             prove_input(
@@ -602,6 +606,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &setup,
             &CpuBackend,
             &prepared,
             std::slice::from_ref(&poly),
@@ -615,6 +620,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
             &CpuBackend,
             &prepared,
             prove_input(
@@ -652,6 +658,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         {
             let (recomputed_commitment, _) =
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &setup,
                     &CpuBackend,
                     &prepared,
                     std::slice::from_ref(&reconstructed),
@@ -783,6 +790,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &setup,
             &CpuBackend,
             &prepared,
             std::slice::from_ref(&onehot_poly),
@@ -797,6 +805,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
             &CpuBackend,
             &prepared,
             prove_input(
@@ -917,6 +926,7 @@ fn batched_onehot_same_point_round_trip() {
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &setup,
             &CpuBackend,
             &prepared,
             &poly_group,
@@ -927,6 +937,7 @@ fn batched_onehot_same_point_round_trip() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
             &CpuBackend,
             &prepared,
             prove_input(
@@ -1010,6 +1021,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &setup,
             &CpuBackend,
             &prepared,
             &poly_group,
@@ -1021,6 +1033,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
             &CpuBackend,
             &prepared,
             prove_input(
@@ -1121,6 +1134,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &setup,
             &CpuBackend,
             &prepared,
             &poly_refs,
@@ -1131,6 +1145,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
             &CpuBackend,
             &prepared,
             prove_input(

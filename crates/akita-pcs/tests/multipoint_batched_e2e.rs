@@ -120,7 +120,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             F,
             DENSE_D,
         >>::batched_commit(
-            &CpuBackend, &prepared, &polys_per_point_refs
+            &setup, &CpuBackend, &prepared, &polys_per_point_refs
         )
         .expect("dense batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -130,7 +130,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             F,
             DENSE_D,
         >>::batched_prove(
-            &CpuBackend,
+            &setup, &CpuBackend,
             &prepared,
             prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
             &mut prover_transcript,
@@ -232,14 +232,14 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             F,
             ONEHOT_D,
         >>::batched_commit(
-            &CpuBackend, &prepared, &polys_per_point_refs
+            &setup, &CpuBackend, &prepared, &polys_per_point_refs
         )
         .expect("onehot batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
         let proof =
-            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(&CpuBackend, &prepared, prove_inputs_from_groups(
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(&setup, &CpuBackend, &prepared, prove_inputs_from_groups(
                     &opening_points,
                     &polys_per_point_refs,
                     &commitments,
@@ -330,6 +330,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
         let (commitment, hint) =
             commit_with_params::<F, DENSE_D, DensePoly<F, DENSE_D>, CpuBackend>(
                 &polys,
+                setup.expanded.as_ref(),
                 &CpuBackend,
                 &prepared,
                 &layout,
@@ -358,7 +359,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
             F,
             DENSE_D,
         >>::batched_prove(
-            &CpuBackend,
+            &setup, &CpuBackend,
             &prepared,
             prover_claims,
             &mut prover_transcript,
@@ -477,7 +478,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_commit(
-                &CpuBackend, &prepared, &polys_per_point_refs
+                &setup, &CpuBackend, &prepared, &polys_per_point_refs
             )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -488,6 +489,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_prove(
+                &setup,
                 &CpuBackend,
                 &prepared,
                 prove_inputs_from_groups(
@@ -573,7 +575,10 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_commit(
-                &CpuBackend, &commit_prepared, &polys_per_point_refs
+                &commit_setup,
+                &CpuBackend,
+                &commit_prepared,
+                &polys_per_point_refs,
             )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -583,6 +588,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_prove(
+                &prove_setup,
                 &CpuBackend,
                 &prove_prepared,
                 prove_inputs_from_groups(
@@ -665,7 +671,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_commit(
-                &CpuBackend, &prepared, &polys_per_point_refs
+                &setup, &CpuBackend, &prepared, &polys_per_point_refs
             )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -676,6 +682,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_prove(
+                &setup,
                 &CpuBackend,
                 &prepared,
                 prove_inputs_from_groups(

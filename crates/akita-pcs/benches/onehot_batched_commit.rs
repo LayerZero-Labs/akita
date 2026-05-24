@@ -144,6 +144,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &single_setup,
                     &CpuBackend,
                     &single_prepared,
                     black_box(std::slice::from_ref(&single_poly)),
@@ -209,6 +210,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &batched_setup,
                     &CpuBackend,
                     &batched_prepared,
                     black_box(&batched_polys),

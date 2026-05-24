@@ -108,6 +108,11 @@ The key surfaces modified by this spec are:
     code outside `akita-prover::compute` must not call methods such as
     `shared_matrix()`, expose `&NttSlotCache<D>`, or inspect backend-specific
     storage. It requests named operations from the backend instead.
+15. Canonical host setup metadata remains separate from compute. Prover APIs
+    receive setup metadata explicitly; the compute backend trait does not become
+    the source of `AkitaExpandedSetup` or descriptor information. Prepared
+    compute state may expose only cached setup artifact digests to reject
+    mismatched setup/prepared-context pairs.
 
 ### Non-Goals
 
@@ -172,6 +177,10 @@ The key surfaces modified by this spec are:
       by migrated polynomial/protocol code. In particular, one-hot and
       sparse-ring commit paths must not reach through `CpuPreparedSetup` to
       inspect `shared_matrix` or `NttSlotCache`.
+- [x] Prepared compute state is checked against explicit setup metadata by
+      setup artifact digest identity; public APIs reject a prepared context
+      built from a different setup without making the backend the owner of
+      canonical setup metadata.
 - [x] Representation-aware plan data needed by future out-of-crate backends is
       readable through public plan variants/accessors. The trait must not
       require `akita-metal` or another accelerator crate to live inside
@@ -304,10 +313,12 @@ this graph.
 ### Public API Cutover
 
 The public prover API changes in one pass. The existing method names may remain
-if their signatures gain an explicit backend plus typed prepared-context
-argument, but the old setup-only methods are removed. The prepared context is
-owned by the backend that created it, so callers cannot accidentally pair an
-unrelated setup object with a cache.
+if their signatures gain explicit setup metadata, an explicit backend, and that
+backend's typed prepared-context argument. The old setup-only methods are
+removed. The prepared context is owned by the backend that created it, while
+canonical setup metadata remains owned by `AkitaProverSetup`. Public entrypoints
+compare the prepared context's setup artifact digests with the explicit setup
+before using either.
 
 Representative shape:
 
@@ -324,6 +335,7 @@ where
     type BatchedProof: Clone + Send + Sync;
 
     fn commit<P, B>(
+        setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         polys: &[P],
@@ -333,6 +345,7 @@ where
         B: CommitmentComputeBackend<F>;
 
     fn batched_commit<P, B>(
+        setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         polys_per_point: &[&[P]],
@@ -342,6 +355,7 @@ where
         B: CommitmentComputeBackend<F>;
 
     fn batched_prove<'a, T, P, B>(
+        setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
@@ -485,10 +499,16 @@ where
         expanded: Arc<AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup<D>, AkitaError>;
 
-    fn expanded<'a, const D: usize>(
+    fn prepared_setup_digests<const D: usize>(
         &self,
-        prepared: &'a Self::PreparedSetup<D>,
-    ) -> &'a Arc<AkitaExpandedSetup<F>>;
+        prepared: &Self::PreparedSetup<D>,
+    ) -> SetupArtifactDigests;
+
+    fn validate_prepared_setup<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        expanded: &AkitaExpandedSetup<F>,
+    ) -> Result<(), AkitaError>;
 }
 
 pub trait DigitRowsComputeBackend<F>: ComputeBackendSetup<F>
@@ -578,9 +598,10 @@ pub struct CpuPreparedSetup<F, const D: usize> {
 }
 ```
 
-`RingSwitchRelationRowsPlan` is an enum with explicit `Full` and
-`QuotientOnly` variants, so additional public-row `z` segments cannot be
-mistaken for a full D/B/A relation request with sentinel zero row counts.
+Full ring-switch relation rows and additional public-row quotient segments use
+separate `RingSwitchRelationRowsPlan` / `RingSwitchQuotientRowsPlan` inputs and
+separate backend methods, so quotient-only work is not represented with
+sentinel zero D/B row counts.
 
 Rules:
 
@@ -784,8 +805,8 @@ Scope:
   `CpuBackend::prepare_setup`;
 - make `AkitaProverSetup::generate_with_capacity` and `from_expanded`
   expanded-setup-only with respect to CPU NTT state;
-- change `CommitmentProver` entrypoints to require an explicit backend plus
-  that backend's typed prepared context;
+- change `CommitmentProver` entrypoints to require explicit setup metadata,
+  an explicit backend, and that backend's typed prepared context;
 - update all in-repo tests, benches, examples, `akita-scheme`, and aggregate
   crate call sites;
 - remove `CommitCache = NttSlotCache<D>` from migrated `AkitaPolyOps` paths;
@@ -832,9 +853,6 @@ Likely contents when expanded:
 - fused inner-commit witness operations that can return decomposed digits and
   recomposed rows together, so a device backend is not forced through an
   A-row host round trip before the B-side rows;
-- flat POD plan tables for one-hot and sparse-ring representations (entries,
-  offsets, and coefficient pools), so device backends do not repack nested host
-  pointer views on every launch;
 - Metal skeleton: `crates/akita-metal`, target-specific dependencies, device
   discovery, capability reporting, safe buffer wrappers, pipeline loading, one
   tiny deterministic dispatch, Apple-only smoke tests, and non-Apple compile

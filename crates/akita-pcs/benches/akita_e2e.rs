@@ -108,6 +108,7 @@ fn bench_dense_phases<
         b.iter(|| {
             black_box(
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &setup,
                     &CpuBackend,
                     &prepared,
                     black_box(std::slice::from_ref(&poly)),
@@ -118,6 +119,7 @@ fn bench_dense_phases<
     });
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -136,6 +138,7 @@ fn bench_dense_phases<
                 let mut transcript = AkitaTranscript::<F>::new(b"bench");
                 black_box(
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                        &setup,
                         &CpuBackend,
                         &prepared,
                         vec![(
@@ -160,6 +163,7 @@ fn bench_dense_phases<
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -198,6 +202,7 @@ fn bench_dense_phases<
     group.bench_function("e2e", |b| {
         b.iter(|| {
             let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                &setup,
                 &CpuBackend,
                 &prepared,
                 std::slice::from_ref(&poly),
@@ -206,6 +211,7 @@ fn bench_dense_phases<
             let cms = [cm];
             let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
             let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                &setup,
                 &CpuBackend,
                 &prepared,
                 vec![(
@@ -302,6 +308,7 @@ fn bench_onehot_phases<
         b.iter(|| {
             black_box(
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &setup,
                     &CpuBackend,
                     &prepared,
                     black_box(std::slice::from_ref(&onehot_poly)),
@@ -312,6 +319,7 @@ fn bench_onehot_phases<
     });
 
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&onehot_poly),
@@ -330,6 +338,7 @@ fn bench_onehot_phases<
                 let mut transcript = AkitaTranscript::<F>::new(b"bench");
                 black_box(
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                        &setup,
                         &CpuBackend,
                         &prepared,
                         vec![(
@@ -354,6 +363,7 @@ fn bench_onehot_phases<
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -392,6 +402,7 @@ fn bench_onehot_phases<
     group.bench_function("e2e", |b| {
         b.iter(|| {
             let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                &setup,
                 &CpuBackend,
                 &prepared,
                 std::slice::from_ref(&onehot_poly),
@@ -400,6 +411,7 @@ fn bench_onehot_phases<
             let cms = [cm];
             let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
             let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                &setup,
                 &CpuBackend,
                 &prepared,
                 vec![(

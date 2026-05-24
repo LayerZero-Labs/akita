@@ -58,9 +58,10 @@ pub use akita_prover::{
     AkitaPolyOps, CommitmentComputeBackend, CommitmentProver, CommittedPolynomials,
     ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
     DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
-    MultiChunkEntry, OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims, ProverComputeBackend,
-    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchRelationRows,
-    RingSwitchRelationRowsPlan, SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
+    FlatBlockTable, MultiChunkEntry, OneHotCommitBlocks, OneHotCommitRowsPlan, ProverClaims,
+    ProverComputeBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
+    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
+    SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
 };
 pub use akita_scheme::AkitaCommitmentScheme;
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};

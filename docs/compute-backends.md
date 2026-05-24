@@ -28,7 +28,7 @@ let setup = AkitaCommitmentScheme::<D, Cfg>::setup_prover(nv, num_polys, points)
 let backend = CpuBackend;
 let prepared = backend.prepare_setup(&setup)?;
 let (commitment, hint) =
-    AkitaCommitmentScheme::<D, Cfg>::commit(&backend, &prepared, polys)?;
+    AkitaCommitmentScheme::<D, Cfg>::commit(&setup, &backend, &prepared, polys)?;
 ```
 
 ## Boundary Rules
@@ -37,14 +37,17 @@ let (commitment, hint) =
   proof object construction.
 - Backends run named operations and return rows or witnesses. They do not
   absorb to or squeeze from transcripts.
+- Prepared compute state carries only setup artifact digests for identity
+  checks. Prover APIs still take explicit setup metadata and reject a prepared
+  context built from a different setup.
 - Backend operations return `Result<_, AkitaError>` whenever a future
   accelerator may need to report unsupported shape, device, or submission
   failure.
 - Migrated prover code must not accept `&NttSlotCache<D>` directly. CPU NTT
   slots stay inside `CpuPreparedSetup`.
-- One-hot and sparse-ring plans expose read-only entry views so future
-  out-of-crate backends can consume the compact representation without
-  reaching into CPU storage.
+- One-hot and sparse-ring plans expose flat entry and offset tables so future
+  out-of-crate backends can upload the compact representation without reaching
+  into CPU storage.
 - Dynamic ring-dimension code uses typed dispatch and prepares the target
   backend context inside the matched `D` arm.
 
@@ -68,7 +71,6 @@ becomes active:
 - production Metal ring/NTT kernels;
 - fused inner-commit witness operations that return decomposed digits and
   recomposed rows together for device backends;
-- flat one-hot and sparse-ring plan tables for accelerator upload;
 - base-field and MLE kernels tied to concrete prover consumers;
 - stage-1/stage-2 sumcheck backend hooks;
 - deterministic true CPU/GPU hybrid scheduling;

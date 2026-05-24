@@ -52,7 +52,7 @@ fn run_single_onehot(nv: usize) {
         let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::commit(&CpuBackend, &prepared, commit_input)
+        >>::commit(&setup, &CpuBackend, &prepared, commit_input)
         .expect("commit");
 
         let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
@@ -65,7 +65,7 @@ fn run_single_onehot(nv: usize) {
         let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::batched_prove(&CpuBackend, &prepared, prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()), &mut prover_transcript, BasisMode::Lagrange)
+        >>::batched_prove(&setup, &CpuBackend, &prepared, prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()), &mut prover_transcript, BasisMode::Lagrange)
         .expect("prove");
 
         let mut serialized = Vec::new();
@@ -130,7 +130,7 @@ fn run_single_dense(nv: usize) {
         let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
-        >>::commit(&CpuBackend, &prepared, commit_input)
+        >>::commit(&setup, &CpuBackend, &prepared, commit_input)
         .expect("commit");
 
         let poly_refs: [&DensePoly<F, DENSE_D>; 1] = [&poly];
@@ -143,7 +143,7 @@ fn run_single_dense(nv: usize) {
         let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
-        >>::batched_prove(&CpuBackend, &prepared, prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()), &mut prover_transcript, BasisMode::Lagrange)
+        >>::batched_prove(&setup, &CpuBackend, &prepared, prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()), &mut prover_transcript, BasisMode::Lagrange)
         .expect("prove");
 
         let mut serialized = Vec::new();
@@ -257,7 +257,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::commit(&CpuBackend, &prepared, commit_input)
+        >>::commit(&setup, &CpuBackend, &prepared, commit_input)
         .expect("commit with oversized setup");
 
         let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
@@ -270,7 +270,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::batched_prove(&CpuBackend, &prepared, prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()), &mut prover_transcript, BasisMode::Lagrange)
+        >>::batched_prove(&setup, &CpuBackend, &prepared, prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()), &mut prover_transcript, BasisMode::Lagrange)
         .expect("prove with oversized setup");
 
         let mut serialized = Vec::new();

@@ -333,6 +333,7 @@ where
 
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
+            &setup,
             &CpuBackend,
             &prepared,
             commit_input,
@@ -340,6 +341,7 @@ where
         .expect("first zk commit");
         let (rerandomized_commitment, _) =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
+                &setup,
                 &CpuBackend,
                 &prepared,
                 commit_input,
@@ -356,6 +358,7 @@ where
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
             &CpuBackend,
             &prepared,
             prove_input(&point, &poly_refs, &commitments[0], hint),
@@ -431,6 +434,7 @@ where
 
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
+            &setup,
             &CpuBackend,
             &prepared,
             commit_input,
@@ -453,6 +457,7 @@ where
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
             &CpuBackend,
             &prepared,
             prove_input(&point, &poly_refs, &commitments[0], hint.clone()),
@@ -463,6 +468,7 @@ where
 
         let mut second_prover_transcript = AkitaTranscript::<F>::new(label);
         let second_proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
             &CpuBackend,
             &prepared,
             prove_input(&point, &poly_refs, &commitments[0], hint),

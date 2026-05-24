@@ -325,6 +325,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -345,6 +346,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -495,6 +497,7 @@ fn commit_singleton_group_returns_single_claim_hint() {
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
 
     let (_, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -544,13 +547,14 @@ fn debug_batched_root_relation_claim_matches_tables() {
         .unwrap();
         let batch_prepared = CpuBackend.prepare_setup(&batch_setup).unwrap();
         let batch_poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> = batch_polys.iter().collect();
-        let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentProver<
-            OneHotF,
-            ONEHOT_D,
-        >>::commit(
-            &CpuBackend, &batch_prepared, &batch_poly_refs
-        )
-        .expect("batched debug commit");
+        let (batch_commitment, batch_hint) =
+            <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(
+                &batch_setup,
+                &CpuBackend,
+                &batch_prepared,
+                &batch_poly_refs,
+            )
+            .expect("batched debug commit");
         let batch_commitments = [batch_commitment];
         let batch_hints = vec![batch_hint];
         let batch_commitment_rows = flatten_batched_commitment_rows(&batch_commitments);
@@ -666,6 +670,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             ONEHOT_D,
         >(
             &commit_params,
+            &batch_setup.expanded,
             &CpuBackend,
             &batch_prepared,
             &w,
@@ -1307,6 +1312,7 @@ fn debug_onehot_batched_profile_compare() {
             <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&single_setup);
         let (single_commitment, single_hint) =
             <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(
+                &single_setup,
                 &CpuBackend,
                 &single_prepared,
                 std::slice::from_ref(&single_poly),
@@ -1321,6 +1327,7 @@ fn debug_onehot_batched_profile_compare() {
         let _single_prove_span = tracing::info_span!("debug_single_prove").entered();
         let mut single_prover_transcript = AkitaTranscript::<OneHotF>::new(b"debug/onehot/single");
         let single_proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
+            &single_setup,
             &CpuBackend,
             &single_prepared,
             vec![(
@@ -1363,19 +1370,21 @@ fn debug_onehot_batched_profile_compare() {
         let batch_prepared = CpuBackend.prepare_setup(&batch_setup).unwrap();
         let batch_verifier_setup =
             <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&batch_setup);
-        let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentProver<
-            OneHotF,
-            ONEHOT_D,
-        >>::commit(
-            &CpuBackend, &batch_prepared, &batch_polys
-        )
-        .expect("batched debug commit");
+        let (batch_commitment, batch_hint) =
+            <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(
+                &batch_setup,
+                &CpuBackend,
+                &batch_prepared,
+                &batch_polys,
+            )
+            .expect("batched debug commit");
         let batch_commitments = [batch_commitment];
         let batch_hints = vec![batch_hint];
 
         let _batched_prove_span = tracing::info_span!("debug_batched_prove").entered();
         let mut batch_prover_transcript = AkitaTranscript::<OneHotF>::new(b"debug/onehot/batched");
         let batch_proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
+            &batch_setup,
             &CpuBackend,
             &batch_prepared,
             vec![(
@@ -1433,18 +1442,22 @@ fn batched_commit_matches_individual_commits() {
 
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
         .iter()
-        .map(|group| <Scheme as CommitmentProver<F, D>>::commit(&CpuBackend, &prepared, group))
+        .map(|group| {
+            <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, group)
+        })
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
         .unzip();
     let (commitment_a, hint_a) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly_a),
     )
     .unwrap();
     let (commitment_b, hint_b) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly_b),
@@ -1487,7 +1500,8 @@ fn batched_root_direct_fast_path_round_trip() {
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&CpuBackend, &prepared, &poly_refs).unwrap();
+        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_refs)
+            .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -1516,6 +1530,7 @@ fn batched_root_direct_fast_path_round_trip() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -1595,7 +1610,8 @@ fn batched_root_direct_rejects_wrong_opening() {
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&CpuBackend, &prepared, &poly_refs).unwrap();
+        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_refs)
+            .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -1606,6 +1622,7 @@ fn batched_root_direct_rejects_wrong_opening() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -1660,7 +1677,8 @@ fn batched_verify_passes_for_consistent_openings() {
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
     let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&CpuBackend, &prepared, &poly_group).unwrap();
+        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_group)
+            .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -1672,6 +1690,7 @@ fn batched_verify_passes_for_consistent_openings() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -1749,6 +1768,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let verifier_setup =
         <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
     let (commitment, hint) = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         &poly_refs,
@@ -1759,6 +1779,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     let proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -1853,7 +1874,8 @@ fn batched_verify_rejects_wrong_opening() {
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
     let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&CpuBackend, &prepared, &poly_group).unwrap();
+        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_group)
+            .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -1866,6 +1888,7 @@ fn batched_verify_rejects_wrong_opening() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/bad");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -1919,7 +1942,8 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
     let poly_group = [&poly_a, &poly_b];
     let (commitment, hint) =
-        <Scheme as CommitmentProver<F, D>>::commit(&CpuBackend, &prepared, &poly_group).unwrap();
+        <Scheme as CommitmentProver<F, D>>::commit(&setup, &CpuBackend, &prepared, &poly_group)
+            .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -1931,6 +1955,7 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/oversized");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -1992,6 +2017,7 @@ fn verify_passes_for_consistent_opening() {
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -2012,6 +2038,7 @@ fn verify_passes_for_consistent_opening() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -2058,6 +2085,7 @@ fn verify_rejects_wrong_opening() {
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -2076,6 +2104,7 @@ fn verify_rejects_wrong_opening() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -2271,6 +2300,7 @@ fn monomial_basis_prove_verify_round_trip() {
     let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -2292,6 +2322,7 @@ fn monomial_basis_prove_verify_round_trip() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/monomial");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -2349,6 +2380,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     let verifier_setup =
         <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_verifier(&setup);
     let (commitment, hint) = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -2362,6 +2394,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
 
     let mut prover_transcript = AkitaTranscript::<DirectF>::new(b"test/tiny-direct");
     let proof = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -2936,6 +2969,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         std::slice::from_ref(&poly),
@@ -2947,6 +2981,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -3083,6 +3118,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_refs = [&poly_a, &poly_b];
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         &poly_refs,
@@ -3094,6 +3130,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![(
@@ -3213,6 +3250,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let poly_refs = [&poly];
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+        &setup,
         &CpuBackend,
         &prepared,
         &poly_refs,
@@ -3225,6 +3263,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     let mut prover_transcript =
         AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+        &setup,
         &CpuBackend,
         &prepared,
         vec![

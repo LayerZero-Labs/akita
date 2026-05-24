@@ -58,6 +58,7 @@ where
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
     fn commit<P, B>(
+        setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         polys: &[P],
@@ -81,6 +82,7 @@ where
     /// per-point commitment fails.
     #[allow(clippy::type_complexity)]
     fn batched_commit<P, B>(
+        setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         polys_per_point: &[&[P]],
@@ -104,6 +106,7 @@ where
     /// fails.
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T, P, B>(
+        setup: &Self::ProverSetup,
         backend: &B,
         prepared: &B::PreparedSetup<D>,
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,

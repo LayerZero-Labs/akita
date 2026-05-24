@@ -7,7 +7,8 @@
 use crate::protocol::masking::sample_blinding_digits;
 use crate::{
     AkitaPolyOps, CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend,
-    RecursiveWitnessView, RingSwitchComputeBackend, RingSwitchRelationRowsPlan,
+    RecursiveWitnessView, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRowsPlan,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
@@ -1147,11 +1148,11 @@ where
     let total_planes = message_planes
         .checked_add(blinding.flat_digits().len())
         .ok_or(AkitaError::InvalidProof)?;
-    if total_planes > backend.max_stride::<D>(prepared) {
-        return Err(AkitaError::InvalidProof);
-    }
     let mut padded = vec![[0i8; D]; message_planes];
     padded.extend_from_slice(blinding.flat_digits());
+    if padded.len() != total_planes {
+        return Err(AkitaError::InvalidProof);
+    }
     let b_blinding_rows = backend.cyclic_digit_rows::<D>(prepared, n_b, &padded)?;
     if b_blinding_rows.len() != n_b {
         return Err(AkitaError::InvalidProof);
@@ -1402,7 +1403,7 @@ where
 
     let relation_rows = backend.ring_switch_relation_rows::<D>(
         prepared,
-        RingSwitchRelationRowsPlan::Full {
+        RingSwitchRelationRowsPlan {
             n_d: n_d_active,
             n_b,
             n_a,
@@ -1434,24 +1435,18 @@ where
         &mut d_cyclic,
     )?;
     for z_segment in z_segments {
-        let segment_rows = backend.ring_switch_relation_rows::<D>(
+        let segment_rows = backend.ring_switch_quotient_rows::<D>(
             prepared,
-            RingSwitchRelationRowsPlan::QuotientOnly {
+            RingSwitchQuotientRowsPlan {
                 n_a,
                 z_segment,
                 z_pre_centered_inf_norm,
             },
         )?;
-        if !segment_rows.d_cyclic.is_empty()
-            || !segment_rows.b_cyclic.is_empty()
-            || segment_rows.a_quotients.len() != n_a
-        {
+        if segment_rows.len() != n_a {
             return Err(AkitaError::InvalidProof);
         }
-        for (dst, src) in a_quotients
-            .iter_mut()
-            .zip(segment_rows.a_quotients.into_iter())
-        {
+        for (dst, src) in a_quotients.iter_mut().zip(segment_rows.into_iter()) {
             *dst += src;
         }
     }
