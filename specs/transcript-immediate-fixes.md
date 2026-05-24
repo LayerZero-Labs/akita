@@ -94,6 +94,13 @@ Land the immediate Fiat-Shamir fixes that are independent of grinding:
       input decoding may use an explicit trusted cached-matrix path to skip
       this rederivation, but the name must make the trust boundary clear and
       structural/field validation must remain in place.
+- [ ] Recursion verifier replay constructs a verifier-side transcript state
+      before descriptor binding. It must not use a prover-side placeholder
+      transcript in the Jolt guest, because prover transcript construction may
+      require host entropy that the guest runtime does not provide.
+- [ ] Any verifier guest path that bypasses `AkitaCommitmentScheme` to avoid
+      host-only APIs must still bind the same canonical instance descriptor
+      bytes before replaying proof challenges.
 - [ ] Terminal fold replay uses separate terminal and non-terminal ring-switch
       helper paths. The terminal helper returns only `alpha` and grouped
       `tau1`; it must not call the `tau0` squeeze path.
@@ -130,7 +137,9 @@ New or updated checks:
 
 - `profile/akita-recursion` glue/guest, if this PR touches recursion input
   decoding: trusted cached-digest decode path still validates structure and
-  field elements.
+  field elements; the guest starts with `AkitaTranscript::unbound_verifier`;
+  the manually inlined verifier policy binds the same descriptor bytes as the
+  scheme verifier path.
 
 - Terminal transcript-order tests: assert the public event order is
   "current commitment/opening context, terminal logical `w_hat` absorb, sparse
@@ -176,6 +185,29 @@ If Akita later supports a per-deployment setup PRG salt, custom public matrix
 derivation domain, or another setup-generation input, that input must become a
 canonical setup-identity field. It must not be smuggled in as an unbound local
 configuration knob.
+
+### Recursion Verifier Replay
+
+The `profile/akita-recursion` guest is verifier code, even though it cannot
+call `AkitaCommitmentScheme::batched_verify` directly: the scheme wrapper
+contains host-only timing/logging (`Instant::now()`) that traps under the Jolt
+RISC-V runtime. The guest may call `akita_verifier::verify_batched_with_policy`
+directly, but it must preserve the scheme verifier's transcript policy:
+
+1. construct an unbound verifier transcript with
+   `AkitaTranscript::unbound_verifier(domain)`;
+2. derive the effective schedule and level-parameter list using the same
+   `CommitmentConfig` callbacks as the scheme verifier;
+3. build `AkitaInstanceDescriptor` from algebra, setup seed identity,
+   effective schedule, and call incidence;
+4. bind the canonical descriptor bytes before any proof absorb or challenge
+   squeeze; and
+5. run the same root-direct commitment check callback as the scheme verifier.
+
+The guest must not use `AkitaTranscript::new` for verifier replay. That helper
+constructs a prover-side placeholder transcript for lower-level tests and may
+request randomness through the transcript backend. Jolt guest execution has no
+host entropy source, and verifier replay should not need one.
 
 ### Terminal Transcript Path
 
@@ -274,6 +306,9 @@ Update:
   deterministic and seed/layout derived, not expanded-artifact derived.
 - `profile/akita-recursion/README.md`, if recursion input decoding changes, to
   describe the trusted cached-matrix fast path and the validation it preserves.
+- `profile/akita-recursion` artifact/guest code, if transcript construction
+  changes, so host sanity checks and Jolt guest replay use verifier-side
+  transcripts for verifier paths.
 - Transcript logging docs with the terminal event order and the "no terminal
   `tau0`" invariant.
 
@@ -292,9 +327,12 @@ Suggested implementation order:
    grouped `tau1`.
 5. Split terminal direct-witness transcript absorption into
    logical-`w_hat`-before-sparse-seed and remainder-before-ring-switch phases.
-6. Add logging and tamper tests for terminal event order, absent terminal
+6. Update recursion guest replay if verifier policy or transcript construction
+   moved: use `unbound_verifier`, bind the canonical descriptor, and keep the
+   trusted cached-matrix decode boundary explicit.
+7. Add logging and tamper tests for terminal event order, absent terminal
    `tau0`, and malformed witness rejection.
-7. Run the acceptance commands.
+8. Run the acceptance commands.
 
 ## References
 

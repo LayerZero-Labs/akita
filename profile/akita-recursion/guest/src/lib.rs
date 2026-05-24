@@ -6,7 +6,7 @@
 //! can attribute total cycles to:
 //!
 //! - `deserialize_input`: blob -> typed `AkitaJoltInputs<F, D>`.
-//! - `transcript_init`:   construct the `Blake2bTranscript`.
+//! - `transcript_init`:   construct the `AkitaTranscript`.
 //! - `akita_verify`:      `verify_batched_with_policy` (the kernel that
 //!   `akita-scheme::batched_verify` wraps; we call it directly to avoid
 //!   `std::time::Instant::now()`, which traps on the Jolt RISC-V emulator).
@@ -19,9 +19,14 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
+use akita_field::AkitaError;
 use akita_recursion_glue::AkitaJoltInputs;
-use akita_transcript::Blake2bTranscript;
-use akita_types::{scheduled_next_level_params, BasisMode, CommittedOpenings, VerifierClaims};
+use akita_transcript::AkitaTranscript;
+use akita_types::{
+    scheduled_next_level_params, AkitaInstanceDescriptor, AkitaScheduleInputs, AlgebraSection,
+    BasisMode, CallSection, ClaimIncidenceSummary, CommittedOpenings, LevelParams, PlanSection,
+    Schedule, SetupSection, Step, VerifierClaims,
+};
 use akita_verifier::{verify_batched_with_policy, verify_root_direct_commitments_with_params};
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
@@ -78,7 +83,7 @@ fn akita_verify(input: &[u8]) -> u32 {
     end_cycle_tracking("deserialize_input");
 
     start_cycle_tracking("transcript_init");
-    let mut transcript = Blake2bTranscript::<F>::new(&decoded.transcript_domain);
+    let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     end_cycle_tracking("transcript_init");
 
     let openings = [decoded.opening];
@@ -99,15 +104,13 @@ fn akita_verify(input: &[u8]) -> u32 {
     // the scheme entry point directly would abort before any real verifier
     // work runs.
     start_cycle_tracking("akita_verify");
-    let result = verify_batched_with_policy::<F, F, F, _, D, _, _, _, _>(
+    let result = verify_batched_with_policy::<F, F, F, _, D, _, _, _, _, _>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
         claims,
         BasisMode::Lagrange,
-        |incidence_summary| {
-            <Cfg as CommitmentConfig>::get_params_for_prove(incidence_summary)
-        },
+        |incidence_summary| <Cfg as CommitmentConfig>::get_params_for_prove(incidence_summary),
         |schedule, next_inputs| {
             scheduled_next_level_params(
                 schedule,
@@ -117,6 +120,33 @@ fn akita_verify(input: &[u8]) -> u32 {
             )
         },
         <Cfg as CommitmentConfig>::get_params_for_batched_commitment,
+        |transcript, incidence_summary, schedule, basis| {
+            let setup_levels = descriptor_setup_levels(incidence_summary, schedule)?;
+            let descriptor = AkitaInstanceDescriptor::new(
+                AlgebraSection::for_fields::<
+                    F,
+                    <Cfg as CommitmentConfig>::ClaimField,
+                    <Cfg as CommitmentConfig>::ChallengeField,
+                    D,
+                >()?,
+                SetupSection::from_parts(
+                    <Cfg as CommitmentConfig>::decomposition(),
+                    <Cfg as CommitmentConfig>::sis_modulus_family(),
+                    &decoded.verifier_setup.expanded.seed,
+                    &setup_levels,
+                )
+                .map_err(|err| {
+                    AkitaError::InvalidSetup(format!("descriptor setup identity: {err}"))
+                })?,
+                PlanSection::from_schedule(schedule),
+                CallSection::from_incidence(incidence_summary, basis)?,
+            );
+            let descriptor_bytes = descriptor.canonical_bytes().map_err(|err| {
+                AkitaError::InvalidSetup(format!("descriptor serialization: {err}"))
+            })?;
+            transcript.bind_instance_bytes(&descriptor_bytes);
+            Ok(())
+        },
         |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
             verify_root_direct_commitments_with_params::<F, D>(
                 witnesses,
@@ -134,4 +164,45 @@ fn akita_verify(input: &[u8]) -> u32 {
         Ok(()) => 0,
         Err(_) => 2,
     }
+}
+
+fn descriptor_setup_levels(
+    incidence: &ClaimIncidenceSummary,
+    schedule: &Schedule,
+) -> Result<Vec<LevelParams>, AkitaError> {
+    let mut setup_levels = Vec::new();
+    let mut previous_next_w_len = None;
+    for (level, step) in schedule.steps.iter().enumerate() {
+        match step {
+            Step::Fold(fold) => {
+                setup_levels.push(fold.params.clone());
+                previous_next_w_len = Some(fold.next_w_len);
+            }
+            Step::Direct(direct) => {
+                if level == 0 {
+                    setup_levels.push(Cfg::get_params_for_batched_commitment(incidence)?);
+                } else {
+                    let current_w_len = previous_next_w_len.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "direct schedule step has no preceding fold".to_string(),
+                        )
+                    })?;
+                    setup_levels.push(Cfg::level_params_with_log_basis(
+                        AkitaScheduleInputs {
+                            num_vars: incidence.num_vars(),
+                            level,
+                            current_w_len,
+                        },
+                        direct.log_basis(Cfg::decomposition().field_bits()),
+                    ));
+                }
+            }
+        }
+    }
+    if setup_levels.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "descriptor cannot bind an empty schedule".to_string(),
+        ));
+    }
+    Ok(setup_levels)
 }
