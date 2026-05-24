@@ -246,16 +246,15 @@ where
     ClaimIncidenceSummary::same_point(num_vars, polys.len())
 }
 
-/// Commit a group of polynomials using already-selected level parameters.
-///
-/// Config/schedule policy chooses `params`; this function owns only the
-/// prover-side matrix work for the supplied concrete layout.
-///
-/// # Errors
-///
-/// Returns an error if input validation, inner witness commitment, or hint
-/// allocation fails.
-pub fn commit_with_params<F, const D: usize, P, B>(
+fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usize, AkitaError> {
+    total_polys.checked_mul(per_poly).ok_or_else(|| {
+        AkitaError::InvalidInput(format!(
+            "commit B digit input length overflow for {total_polys} polynomials with {per_poly} digits each"
+        ))
+    })
+}
+
+fn commit_with_validated_params<F, const D: usize, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
@@ -267,16 +266,13 @@ where
     P: AkitaPolyOps<F, D>,
     B: CommitmentComputeBackend<F>,
 {
-    backend.validate_prepared_setup::<D>(prepared, expanded)?;
-    prepare_commit_inputs::<F, D, P>(polys, expanded)?;
-    validate_commit_level_params::<F, D>(params, expanded)?;
-
     let b_input_len_per_poly = commit_inner_flat_digit_count(
         params.num_blocks,
         params.a_key.row_len(),
         params.num_digits_open,
     )?;
-    let mut b_input_digits = vec![[0i8; D]; polys.len() * b_input_len_per_poly];
+    let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
+    let mut b_input_digits = vec![[0i8; D]; total_b_input_len];
     let mut decomposed_inner_rows: Vec<FlatDigitBlocks<D>> = (0..polys.len())
         .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
         .collect::<Result<_, _>>()?;
@@ -347,6 +343,33 @@ where
     Ok((RingCommitment { u }, hint))
 }
 
+/// Commit a group of polynomials using already-selected level parameters.
+///
+/// Config/schedule policy chooses `params`; this function owns only the
+/// prover-side matrix work for the supplied concrete layout.
+///
+/// # Errors
+///
+/// Returns an error if input validation, inner witness commitment, or hint
+/// allocation fails.
+pub fn commit_with_params<F, const D: usize, P, B>(
+    polys: &[P],
+    expanded: &AkitaExpandedSetup<F>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    params: &LevelParams,
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    P: AkitaPolyOps<F, D>,
+    B: CommitmentComputeBackend<F>,
+{
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    prepare_commit_inputs::<F, D, P>(polys, expanded)?;
+    validate_commit_level_params::<F, D>(params, expanded)?;
+    commit_with_validated_params::<F, D, P, B>(polys, expanded, backend, prepared, params)
+}
+
 /// Commit a group of polynomials using caller-supplied config policy.
 ///
 /// The prover crate owns config-free input validation and commitment execution;
@@ -372,7 +395,8 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
     let incidence = prepare_commit_inputs::<F, D, P>(polys, expanded)?;
     let params = select_params(&incidence)?;
-    commit_with_params::<F, D, P, B>(polys, expanded, backend, prepared, &params)
+    validate_commit_level_params::<F, D>(&params, expanded)?;
+    commit_with_validated_params::<F, D, P, B>(polys, expanded, backend, prepared, &params)
 }
 
 /// Validate a multipoint commitment request and derive its
@@ -480,7 +504,36 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
     let incidence = prepare_batched_commit_inputs::<F, D, P>(polys_per_point, expanded)?;
     let params = select_params(&incidence)?;
-    batched_commit_with_params::<F, D, P, B>(polys_per_point, expanded, backend, prepared, &params)
+    validate_commit_level_params::<F, D>(&params, expanded)?;
+    batched_commit_with_validated_params::<F, D, P, B>(
+        polys_per_point,
+        expanded,
+        backend,
+        prepared,
+        &params,
+    )
+}
+
+#[allow(clippy::type_complexity)]
+fn batched_commit_with_validated_params<F, const D: usize, P, B>(
+    polys_per_point: &[&[P]],
+    expanded: &AkitaExpandedSetup<F>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    params: &LevelParams,
+) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    P: AkitaPolyOps<F, D>,
+    B: CommitmentComputeBackend<F>,
+{
+    let mut out = Vec::with_capacity(polys_per_point.len());
+    for polys in polys_per_point {
+        out.push(commit_with_validated_params::<F, D, P, B>(
+            polys, expanded, backend, prepared, params,
+        )?);
+    }
+    Ok(out)
 }
 
 /// Commit one polynomial bundle per opening point using already-selected
@@ -510,14 +563,13 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
     prepare_batched_commit_inputs::<F, D, P>(polys_per_point, expanded)?;
     validate_commit_level_params::<F, D>(params, expanded)?;
-
-    let mut out = Vec::with_capacity(polys_per_point.len());
-    for polys in polys_per_point {
-        out.push(commit_with_params::<F, D, P, B>(
-            polys, expanded, backend, prepared, params,
-        )?);
-    }
-    Ok(out)
+    batched_commit_with_validated_params::<F, D, P, B>(
+        polys_per_point,
+        expanded,
+        backend,
+        prepared,
+        params,
+    )
 }
 
 #[cfg(test)]
@@ -567,5 +619,14 @@ mod tests {
         let mut inner = inner_witness(1, 1, vec![2]);
         inner.decomposed_inner_rows.flat_digits_mut()[0][0] = 1;
         assert!(validate_commit_inner_witness_shape(&inner, 1, 1, 2, 4).is_err());
+    }
+
+    #[test]
+    fn commit_b_input_len_rejects_overflow() {
+        assert_eq!(checked_commit_b_input_len(3, 5).expect("fits"), 15);
+        assert!(matches!(
+            checked_commit_b_input_len(usize::MAX, 2),
+            Err(AkitaError::InvalidInput(_))
+        ));
     }
 }
