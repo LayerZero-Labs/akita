@@ -109,7 +109,11 @@ where
     let u: Vec<CyclotomicRing<F, D>> =
         backend.digit_rows::<D>(prepared, params.b_key.row_len(), &b_input_digits)?;
     if u.len() != params.b_key.row_len() {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} B commitment rows, expected {}",
+            u.len(),
+            params.b_key.row_len()
+        )));
     }
     let hint = {
         #[cfg(feature = "zk")]
