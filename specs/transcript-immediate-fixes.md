@@ -89,14 +89,11 @@ Land the immediate Fiat-Shamir fixes that are independent of grinding:
 - [ ] `SetupSection` binds `setup_seed_digest`, decomposition, SIS modulus
       family, level-parameter digest, and protocol feature mode, but contains no
       `shared_matrix_digest` or other expanded-matrix transcript digest.
-- [ ] Expanded setup serialization may carry cached descriptor digests for
-      performance, but strict deserialization validates those cached digests
-      against the serialized seed. Any matrix cache validation that requires
-      rederiving the public matrix is an explicit setup-loading responsibility,
-      not proof-time Fiat-Shamir input.
-- [ ] Recursive guest input decoding has an explicit trusted cached-digest path
-      if it skips expensive matrix rehashing. The name must make the trust
-      boundary clear, and structural/field validation must remain in place.
+- [ ] Strict expanded/verifier setup deserialization validates any materialized
+      shared matrix against the serialized public-matrix seed. Recursive guest
+      input decoding may use an explicit trusted cached-matrix path to skip
+      this rederivation, but the name must make the trust boundary clear and
+      structural/field validation must remain in place.
 - [ ] Terminal fold replay uses separate terminal and non-terminal ring-switch
       helper paths. The terminal helper returns only `alpha` and grouped
       `tau1`; it must not call the `tau0` squeeze path.
@@ -168,9 +165,12 @@ fold/direct/terminal steps, digit depths, row counts, block sizes, stage-1
 configuration, public-row shape, and any other verifier branch condition.
 
 The expanded shared matrix is not part of `SetupSection`. It is implied by the
-setup seed and schedule/layout metadata in the transparent path. A strict setup
-loader may still validate a cached matrix by rederiving or checking it against
-the seed; that validation is separate from Fiat-Shamir transcript input.
+setup seed and schedule/layout metadata in the transparent path. Strict
+expanded/verifier setup decoding must validate a materialized matrix by
+rederiving or checking it against the seed; that validation is separate from
+Fiat-Shamir transcript input. Trusted cache consumers, such as host-produced
+recursion blobs, may opt into a named cached-matrix decode path that preserves
+structural/field validation while skipping the expensive rederivation.
 
 If Akita later supports a per-deployment setup PRG salt, custom public matrix
 derivation domain, or another setup-generation input, that input must become a
@@ -273,7 +273,7 @@ Update:
 - `specs/transcript-hardening.md` with a short note that setup identity is
   deterministic and seed/layout derived, not expanded-artifact derived.
 - `profile/akita-recursion/README.md`, if recursion input decoding changes, to
-  describe the trusted cached-digest fast path and the validation it preserves.
+  describe the trusted cached-matrix fast path and the validation it preserves.
 - Transcript logging docs with the terminal event order and the "no terminal
   `tau0`" invariant.
 

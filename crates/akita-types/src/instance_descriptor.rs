@@ -205,9 +205,10 @@ impl SetupSection {
 
     /// Build setup fields from a precomputed setup identity digest.
     ///
-    /// Use this on prove/verify hot paths. Expanded matrices and NTT views are
-    /// deterministic caches derived from the setup seed, not transcript-bound
-    /// artifacts.
+    /// Expanded matrices and NTT views are deterministic caches derived from
+    /// the setup seed, not transcript-bound artifacts. Callers that already
+    /// hold a setup seed should prefer [`Self::from_parts`] so stale cached
+    /// digest fields cannot steer transcript preamble bytes.
     #[must_use]
     pub fn from_setup_identity_digests(
         decomposition: DecompositionParams,

@@ -144,6 +144,10 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
    `clock_gettime`, and the guest aborts there). Three
    `start_cycle_tracking` / `end_cycle_tracking` pairs wrap
    `deserialize_input`, `transcript_init`, and the verifier kernel.
+   The verifier setup is decoded through the explicitly trusted cached-matrix
+   path: shape metadata and field elements are still validated, but the guest
+   skips rederiving the full public matrix from the seed because the blob is
+   produced by the host-side artifact generator.
 
 ## Why D=32 has more zkVM cycles than D=64
 

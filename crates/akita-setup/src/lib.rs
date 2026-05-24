@@ -3,8 +3,6 @@
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
-#[cfg(feature = "disk-persistence")]
-use akita_prover::kernels::matrix::derive_public_matrix_flat;
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
@@ -78,9 +76,13 @@ where
                 // insufficient.
                 let cached_total = expanded.shared_matrix.total_ring_elements_at::<D>()?;
                 let cached_stride = expanded.seed.max_stride;
+                let cached_vars = expanded.seed.max_num_vars;
+                let cached_batch = expanded.seed.max_num_batched_polys;
                 let cached_points = expanded.seed.max_num_points;
                 if cached_total >= max_total
                     && cached_stride >= max_stride
+                    && cached_vars >= max_num_vars
+                    && cached_batch >= max_num_batched_polys
                     && cached_points >= max_num_points
                 {
                     tracing::info!("Loaded setup from disk, rebuilding NTT caches");
@@ -91,12 +93,12 @@ where
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
-                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating",
+                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, vars={cached_vars}, batch={cached_batch}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, vars>={max_num_vars}, batch>={max_num_batched_polys}, points>={max_num_points}); regenerating",
                             storage_path.display()
                         );
                 } else {
                     tracing::warn!(
-                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating"
+                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, vars={cached_vars}, batch={cached_batch}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, vars>={max_num_vars}, batch>={max_num_batched_polys}, points>={max_num_points}); regenerating"
                         );
                 }
             }
@@ -297,7 +299,7 @@ pub(crate) fn load_expanded_setup<
 }
 
 #[cfg(feature = "disk-persistence")]
-fn validate_cached_matrix<F: FieldCore + CanonicalField + RandomSampling, const D: usize>(
+fn validate_cached_matrix<F: FieldCore + CanonicalField, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError> {
     if setup.shared_matrix.gen_ring_dim() != D {
@@ -305,13 +307,6 @@ fn validate_cached_matrix<F: FieldCore + CanonicalField + RandomSampling, const 
             "cached setup ring dimension {} does not match config D={D}",
             setup.shared_matrix.gen_ring_dim()
         )));
-    }
-    let total = setup.shared_matrix.total_ring_elements_at::<D>()?;
-    let expected = derive_public_matrix_flat::<F, D>(total, &setup.seed.public_matrix_seed);
-    if setup.shared_matrix != expected {
-        return Err(AkitaError::InvalidSetup(
-            "cached setup matrix does not match setup seed".to_string(),
-        ));
     }
     Ok(())
 }
@@ -372,10 +367,20 @@ mod tests {
 
         static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-        fn cleanup_setup_file(max_num_vars: usize) {
-            if let Some(path) = get_storage_path::<Cfg>(max_num_vars, 1, 1) {
+        fn cleanup_setup_file_shape(
+            max_num_vars: usize,
+            max_num_batched_polys: usize,
+            max_num_points: usize,
+        ) {
+            if let Some(path) =
+                get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+            {
                 let _ = fs::remove_file(path);
             }
+        }
+
+        fn cleanup_setup_file(max_num_vars: usize) {
+            cleanup_setup_file_shape(max_num_vars, 1, 1);
         }
 
         fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
@@ -448,9 +453,38 @@ mod tests {
                     .expect_err("corrupt cached matrix must be rejected");
                 assert!(err
                     .to_string()
-                    .contains("cached setup matrix does not match setup seed"));
+                    .contains("setup shared_matrix does not match public matrix seed"));
 
                 cleanup_setup_file(MAX_VARS);
+            });
+        }
+
+        #[test]
+        fn cache_rejects_seed_capacity_that_is_too_small() {
+            with_test_cache_dir("undersized-seed", || {
+                const MAX_VARS: usize = 13;
+                const MAX_BATCH: usize = 2;
+
+                cleanup_setup_file_shape(MAX_VARS, MAX_BATCH, 1);
+
+                let prover_setup =
+                    new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, MAX_BATCH, 1).unwrap();
+                let mut stale_seed = prover_setup.expanded.seed.clone();
+                stale_seed.max_num_vars = MAX_VARS - 1;
+                stale_seed.max_num_batched_polys = MAX_BATCH - 1;
+                let stale = AkitaExpandedSetup::from_parts(
+                    stale_seed,
+                    prover_setup.expanded.shared_matrix.clone(),
+                )
+                .unwrap();
+                save_expanded_setup::<TestF, Cfg>(&stale, MAX_VARS, MAX_BATCH, 1);
+
+                let regenerated =
+                    new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, MAX_BATCH, 1).unwrap();
+                assert_eq!(regenerated.expanded.seed.max_num_vars, MAX_VARS);
+                assert_eq!(regenerated.expanded.seed.max_num_batched_polys, MAX_BATCH);
+
+                cleanup_setup_file_shape(MAX_VARS, MAX_BATCH, 1);
             });
         }
 

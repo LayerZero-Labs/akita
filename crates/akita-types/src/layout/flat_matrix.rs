@@ -44,6 +44,12 @@ impl<F: FieldCore> FlatMatrix<F> {
         self.gen_ring_dim
     }
 
+    /// Borrow the backing field-element coefficients.
+    #[inline]
+    pub fn as_field_slice(&self) -> &[F] {
+        &self.data
+    }
+
     /// Total number of ring elements when viewed at dimension D.
     #[inline]
     pub fn total_ring_elements_at<const D: usize>(&self) -> Result<usize, AkitaError> {

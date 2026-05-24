@@ -117,12 +117,13 @@ where
 
     let descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ClaimField, Cfg::ChallengeField, D>()?,
-        SetupSection::from_setup_identity_digests(
+        SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_family(),
-            setup.descriptor_digests,
+            &setup.seed,
             &setup_levels,
-        ),
+        )
+        .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(schedule),
         CallSection::from_incidence(incidence, basis)?,
     );

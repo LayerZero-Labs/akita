@@ -1,10 +1,12 @@
 //! Prover setup artifact and config-free setup expansion helpers.
 
 use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
-use crate::kernels::matrix::{derive_public_matrix_flat, sample_public_matrix_seed};
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
-use akita_types::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup};
+use akita_types::{
+    derive_public_matrix_flat, sample_public_matrix_seed, AkitaExpandedSetup, AkitaSetupSeed,
+    AkitaVerifierSetup,
+};
 use std::sync::Arc;
 
 /// Prover setup artifact (expanded setup + single shared NTT cache).
@@ -85,7 +87,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     /// cache cannot be built for the current field/ring-dimension pair.
     pub fn from_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + Valid + AkitaSerialize,
+        F: CanonicalField + RandomSampling + Valid + AkitaSerialize,
     {
         expanded
             .check()
@@ -100,7 +102,9 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid + AkitaSerialize, const D: usize> Valid for AkitaProverSetup<F, D> {
+impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize, const D: usize> Valid
+    for AkitaProverSetup<F, D>
+{
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()
     }

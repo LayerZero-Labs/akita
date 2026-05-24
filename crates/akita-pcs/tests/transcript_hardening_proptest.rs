@@ -9,13 +9,67 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_transcript::{AkitaTranscript, LoggingTranscript};
+use akita_transcript::{labels, AkitaTranscript, LoggingTranscript, TranscriptEvent};
 use akita_types::ClaimIncidenceSummary;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use proptest::prelude::*;
 
 type Scheme = AkitaCommitmentScheme<DENSE_D, DenseCfg>;
+
+fn event_label(event: &TranscriptEvent) -> Option<&[u8]> {
+    match event {
+        TranscriptEvent::Absorb { label, .. }
+        | TranscriptEvent::Squeeze { label, .. }
+        | TranscriptEvent::Wire { label, .. } => Some(label),
+        TranscriptEvent::Preamble { .. } => None,
+    }
+}
+
+fn first_label_index(events: &[TranscriptEvent], label: &[u8]) -> Option<usize> {
+    events
+        .iter()
+        .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
+}
+
+fn first_label_index_after(
+    events: &[TranscriptEvent],
+    start: usize,
+    label: &[u8],
+) -> Option<usize> {
+    events[start..]
+        .iter()
+        .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
+        .map(|offset| start + offset)
+}
+
+fn assert_terminal_event_order_if_present(events: &[TranscriptEvent]) -> Option<usize> {
+    let w_hat = first_label_index(events, labels::ABSORB_TERMINAL_W_HAT)?;
+    let sparse_seed = first_label_index_after(events, w_hat, labels::CHALLENGE_SPARSE_CHALLENGE)
+        .expect("terminal transcript must squeeze sparse seed");
+    let remainder =
+        first_label_index_after(events, sparse_seed, labels::ABSORB_TERMINAL_W_REMAINDER)
+            .expect("terminal transcript must absorb final-witness remainder");
+    let alpha = first_label_index_after(events, remainder, labels::CHALLENGE_RING_SWITCH)
+        .expect("terminal transcript must squeeze ring-switch alpha");
+    let tau1 = first_label_index_after(events, alpha, labels::CHALLENGE_TAU1)
+        .expect("terminal transcript must squeeze tau1");
+
+    assert!(w_hat < sparse_seed, "w_hat must precede sparse seed");
+    assert!(
+        sparse_seed < remainder,
+        "sparse seed must precede witness remainder"
+    );
+    assert!(remainder < alpha, "remainder must precede alpha");
+    assert!(alpha < tau1, "alpha must precede tau1");
+    assert!(
+        events[w_hat..]
+            .iter()
+            .all(|event| event_label(event) != Some(labels::CHALLENGE_TAU0)),
+        "terminal transcript window must not squeeze tau0"
+    );
+    Some(w_hat)
+}
 
 fn batch_shape(index: usize) -> Vec<usize> {
     match index {
@@ -105,10 +159,20 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 
     prover_transcript.assert_smell_checks();
     verifier_transcript.assert_smell_checks();
-    assert_eq!(
-        public_transcript_events(prover_transcript.events()),
-        public_transcript_events(verifier_transcript.events())
-    );
+    let prover_public = public_transcript_events(prover_transcript.events());
+    let verifier_public = public_transcript_events(verifier_transcript.events());
+    assert_eq!(prover_public, verifier_public);
+    let terminal_w_hat = assert_terminal_event_order_if_present(&prover_public);
+    if num_vars >= 20 {
+        let terminal_w_hat =
+            terminal_w_hat.expect("recursive corpus case must include a terminal fold");
+        let tau0 = first_label_index(&prover_public, labels::CHALLENGE_TAU0)
+            .expect("recursive corpus case must include non-terminal tau0");
+        assert!(
+            tau0 < terminal_w_hat,
+            "recursive tau0 must occur before the terminal transcript window"
+        );
+    }
 }
 
 #[test]

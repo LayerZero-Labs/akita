@@ -28,7 +28,11 @@ pub use incidence::{
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
-pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
+pub use setup::{
+    derive_public_matrix_flat, derive_public_matrix_flat_with_dimension, sample_public_matrix_seed,
+    validate_public_matrix_matches_seed, AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup,
+    PublicMatrixSeed,
+};
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
@@ -140,6 +144,7 @@ impl<F: FieldCore> DirectWitnessProof<F> {
         let Self::PackedDigits(packed) = self else {
             return Err(AkitaError::InvalidProof);
         };
+        packed.check().map_err(|_| AkitaError::InvalidProof)?;
         (0..packed.num_elems)
             .map(|idx| packed.digit_at(idx).ok_or(AkitaError::InvalidProof))
             .collect()
@@ -255,6 +260,7 @@ impl PackedDigits {
     /// Returns [`AkitaError::InvalidProof`] if the packed byte buffer is
     /// malformed relative to `num_elems`/`bits_per_elem`.
     pub fn to_field_elems<F: FieldCore + FromPrimitiveInt>(&self) -> Result<Vec<F>, AkitaError> {
+        self.check().map_err(|_| AkitaError::InvalidProof)?;
         let mut out = Vec::with_capacity(self.num_elems);
         for i in 0..self.num_elems {
             let signed = self.digit_at(i).ok_or(AkitaError::InvalidProof)?;
@@ -1446,8 +1452,9 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 
 /// Terminal fold-level proof.
 ///
-/// Ships `final_witness` in cleartext, absorbed into the transcript at the
-/// `ABSORB_SUMCHECK_W` position in place of the prior `next_w_commitment`.
+/// Ships `final_witness` in cleartext. Verifier replay splits it into the
+/// logical terminal `w_hat` segment and the remaining witness digits, absorbing
+/// them around the sparse-seed squeeze before ring-switch `alpha`/`tau1`.
 /// Drops the redundant proof components at the terminal: `stage1`
 /// (`PackedDigits` structurally enforces digit range), `next_w_commitment`
 /// (replaced by `final_witness`), and `next_w_eval` (verifier computes
@@ -1463,8 +1470,9 @@ pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     /// Stage-2 fused sumcheck proof.
     pub stage2_sumcheck: SumcheckProof<L>,
-    /// Terminal witness, absorbed via `ABSORB_SUMCHECK_W` in place of
-    /// `next_w_commitment`.
+    /// Terminal witness, transcript-bound as logical `w_hat` before sparse
+    /// challenge sampling and as the remaining digits before ring-switch
+    /// `alpha`/`tau1`.
     pub final_witness: DirectWitnessProof<F>,
 }
 
@@ -1894,9 +1902,10 @@ pub enum AkitaProofStep<F: FieldCore, L: FieldCore> {
     /// Intermediate (non-terminal) fold level. Ships `next_w_commitment` and
     /// the stage-1 range-check tree.
     Intermediate(AkitaLevelProof<F, L>),
-    /// Terminal fold level. Ships `final_witness` in cleartext (absorbed via
-    /// `ABSORB_SUMCHECK_W`) and drops `stage1`, `next_w_commitment`,
-    /// `next_w_eval`.
+    /// Terminal fold level. Ships `final_witness` in cleartext, absorbs
+    /// logical `w_hat` before sparse challenge sampling, absorbs the remaining
+    /// witness digits before ring-switch `alpha`/`tau1`, and drops `stage1`,
+    /// `next_w_commitment`, and `next_w_eval`.
     Terminal(TerminalLevelProof<F, L>),
 }
 
@@ -3463,6 +3472,15 @@ mod tests {
         assert!(packed.check().is_err());
         assert_eq!(packed.digit_at(3), None);
         assert!(packed.to_field_elems::<Prime128Offset275>().is_err());
+    }
+
+    #[test]
+    fn direct_witness_packed_i8_digits_rejects_trailing_bytes() {
+        let mut packed = PackedDigits::from_i8_digits(&[1, -1, 0, 2], 3);
+        packed.data.push(0);
+        let witness = DirectWitnessProof::<Prime128Offset275>::PackedDigits(packed);
+
+        assert!(witness.packed_i8_digits().is_err());
     }
 
     #[test]

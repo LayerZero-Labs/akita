@@ -113,11 +113,14 @@ where
             BLOB_VALIDATE,
             &(),
         )?;
-        let verifier_setup = AkitaVerifierSetup::<F>::deserialize_with_mode(
+        // The host-side artifact generator produced this blob and already
+        // materialized the deterministic setup matrix. Guest decode keeps
+        // structure/field validation but deliberately skips the expensive
+        // seed-to-matrix recomputation through this trusted cache boundary.
+        let verifier_setup = AkitaVerifierSetup::<F>::deserialize_with_trusted_cached_matrix(
             &mut rest,
             BLOB_COMPRESS,
             BLOB_VALIDATE,
-            &(),
         )?;
         let proof_shape = AkitaBatchedProofShape::deserialize_with_mode(
             &mut rest,
