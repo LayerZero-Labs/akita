@@ -149,6 +149,14 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     }
 }
 
+impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize, const D: usize> Valid
+    for AkitaProverSetup<F, D>
+{
+    fn check(&self) -> Result<(), SerializationError> {
+        self.expanded.check()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,13 +204,5 @@ mod tests {
             AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(8, 1, 1, 1, 0)
                 .expect_err("zero stride must not produce an undecodable setup");
         assert!(zero_stride.to_string().contains("max_stride"));
-    }
-}
-
-impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize, const D: usize> Valid
-    for AkitaProverSetup<F, D>
-{
-    fn check(&self) -> Result<(), SerializationError> {
-        self.expanded.check()
     }
 }
