@@ -600,7 +600,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &batch_commitments,
                 &batched_y_rings,
                 batch_gamma_rings,
-                batch_setup.expanded.seed.max_stride,
+                batch_setup.expanded.seed().max_stride,
                 MRowLayout::Intermediate,
             )
             .expect("debug batched quadratic equation"),
@@ -647,7 +647,6 @@ fn debug_batched_root_relation_claim_matches_tables() {
             &w,
             &w_commitment_proof,
             &batched_root_lp,
-            MRowLayout::Intermediate,
         )
         .expect("debug batched ring switch");
 
@@ -767,20 +766,20 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let g1_commit = gadget_scalars(batched_root_lp.num_digits_commit);
         let fold_gadget = gadget_scalars(batched_root_lp.num_digits_fold);
         let r_gadget = gadget_scalars(r_decomp_levels::<OneHotF>(batched_root_lp.log_basis));
-        let debug_stride = batch_setup.expanded.seed.max_stride;
+        let debug_stride = batch_setup.expanded.seed().max_stride;
         let d_view = batch_setup
             .expanded
-            .shared_matrix
+            .shared_matrix()
             .ring_view::<ONEHOT_D>(batch_root_params.d_key.row_len(), debug_stride)
             .unwrap();
         let b_view = batch_setup
             .expanded
-            .shared_matrix
+            .shared_matrix()
             .ring_view::<ONEHOT_D>(batch_root_params.b_key.row_len(), debug_stride)
             .unwrap();
         let a_view = batch_setup
             .expanded
-            .shared_matrix
+            .shared_matrix()
             .ring_view::<ONEHOT_D>(batch_root_params.a_key.row_len(), debug_stride)
             .unwrap();
         let denom = alpha_pows[ONEHOT_D - 1] * rs.alpha + OneHotF::one();
@@ -912,7 +911,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 1,
                 batched_root_lp.num_blocks,
                 batched_root_lp.inner_width(),
-                batch_setup.expanded.seed.max_stride,
+                batch_setup.expanded.seed().max_stride,
                 &batch_setup.ntt_shared,
                 MRowLayout::Intermediate,
             )

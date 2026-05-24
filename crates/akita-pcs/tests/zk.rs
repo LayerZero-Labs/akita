@@ -218,7 +218,7 @@ fn plain_root_d_image<const D: usize>(
         std::slice::from_ref(commitment),
         std::slice::from_ref(&y_ring),
         vec![CyclotomicRing::<F, D>::one()],
-        setup.expanded.seed.max_stride,
+        setup.expanded.seed().max_stride,
         MRowLayout::Intermediate,
     )
     .expect("debug quadratic equation");
@@ -230,7 +230,7 @@ fn plain_root_d_image<const D: usize>(
     let plain_v = mat_vec_mul_ntt_single_i8(
         &setup.ntt_shared,
         layout.d_key.row_len(),
-        setup.expanded.seed.max_stride,
+        setup.expanded.seed().max_stride,
         quad_eq.w_hat_flat().expect("debug w_hat"),
     );
     assert_ne!(

@@ -37,17 +37,18 @@ where
             "all polynomials in a batched commit must have the same num_vars".to_string(),
         ));
     }
-    if polys.len() > setup.expanded.seed.max_num_batched_polys {
+    if polys.len() > setup.expanded.seed().max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
             "commit received {} polynomials but setup supports at most {}",
             polys.len(),
-            setup.expanded.seed.max_num_batched_polys
+            setup.expanded.seed().max_num_batched_polys
         )));
     }
-    if num_vars > setup.expanded.seed.max_num_vars {
+    if num_vars > setup.expanded.seed().max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "commit received a polynomial with {} variables but setup supports at most {}",
-            num_vars, setup.expanded.seed.max_num_vars
+            num_vars,
+            setup.expanded.seed().max_num_vars
         )));
     }
 
@@ -85,14 +86,14 @@ where
         .try_for_each(
             |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
                 let inner = poly.commit_inner_witness(
-                    &setup.expanded.shared_matrix,
+                    setup.expanded.shared_matrix(),
                     &setup.ntt_shared,
                     params.a_key.row_len(),
                     params.block_len,
                     params.num_digits_commit,
                     params.num_digits_open,
                     params.log_basis,
-                    setup.expanded.seed.max_stride,
+                    setup.expanded.seed().max_stride,
                 )?;
                 dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
                 *decomposed = inner.decomposed_inner_rows;
@@ -110,7 +111,7 @@ where
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         &setup.ntt_shared,
         params.b_key.row_len(),
-        setup.expanded.seed.max_stride,
+        setup.expanded.seed().max_stride,
         &b_input_digits,
     );
     let hint = {
@@ -183,11 +184,11 @@ where
             "batched_commit requires at least one opening point".to_string(),
         ));
     }
-    if polys_per_point.len() > setup.expanded.seed.max_num_points {
+    if polys_per_point.len() > setup.expanded.seed().max_num_points {
         return Err(AkitaError::InvalidInput(format!(
             "batched_commit received {} opening points but setup supports at most {}",
             polys_per_point.len(),
-            setup.expanded.seed.max_num_points
+            setup.expanded.seed().max_num_points
         )));
     }
     let first_bundle = polys_per_point.first().ok_or_else(|| {
@@ -197,10 +198,11 @@ where
         AkitaError::InvalidInput("batched_commit bundles must be nonempty".to_string())
     })?;
     let num_vars = first_poly.num_vars();
-    if num_vars > setup.expanded.seed.max_num_vars {
+    if num_vars > setup.expanded.seed().max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "batched_commit received a polynomial with {} variables but setup supports at most {}",
-            num_vars, setup.expanded.seed.max_num_vars
+            num_vars,
+            setup.expanded.seed().max_num_vars
         )));
     }
 
@@ -222,10 +224,10 @@ where
             AkitaError::InvalidInput("batched_commit total polynomial count overflow".to_string())
         })?;
     }
-    if total_polys > setup.expanded.seed.max_num_batched_polys {
+    if total_polys > setup.expanded.seed().max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
             "batched_commit received {total_polys} polynomials but setup supports at most {}",
-            setup.expanded.seed.max_num_batched_polys
+            setup.expanded.seed().max_num_batched_polys
         )));
     }
 

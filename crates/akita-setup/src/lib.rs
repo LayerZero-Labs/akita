@@ -74,11 +74,11 @@ where
                 // would cause `ring_view` to interpret rows/columns with
                 // the wrong stride — the total-elements check alone is
                 // insufficient.
-                let cached_total = expanded.shared_matrix.total_ring_elements_at::<D>()?;
-                let cached_stride = expanded.seed.max_stride;
-                let cached_vars = expanded.seed.max_num_vars;
-                let cached_batch = expanded.seed.max_num_batched_polys;
-                let cached_points = expanded.seed.max_num_points;
+                let cached_total = expanded.shared_matrix().total_ring_elements_at::<D>()?;
+                let cached_stride = expanded.seed().max_stride;
+                let cached_vars = expanded.seed().max_num_vars;
+                let cached_batch = expanded.seed().max_num_batched_polys;
+                let cached_points = expanded.seed().max_num_points;
                 if cached_total >= max_total
                     && cached_stride >= max_stride
                     && cached_vars >= max_num_vars
@@ -302,10 +302,10 @@ pub(crate) fn load_expanded_setup<
 fn validate_cached_matrix<F: FieldCore + CanonicalField, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError> {
-    if setup.shared_matrix.gen_ring_dim() != D {
+    if setup.shared_matrix().gen_ring_dim() != D {
         return Err(AkitaError::InvalidSetup(format!(
             "cached setup ring dimension {} does not match config D={D}",
-            setup.shared_matrix.gen_ring_dim()
+            setup.shared_matrix().gen_ring_dim()
         )));
     }
     Ok(())
@@ -343,7 +343,7 @@ mod tests {
         let decoded = AkitaExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
 
         assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
-        assert_eq!(decoded.seed.max_num_batched_polys, 3);
+        assert_eq!(decoded.seed().max_num_batched_polys, 3);
 
         let derived_verifier = AkitaVerifierSetup {
             expanded: Arc::new(decoded.clone()),
@@ -441,12 +441,11 @@ mod tests {
                 cleanup_setup_file(MAX_VARS);
 
                 let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
-                let total = prover_setup.expanded.shared_matrix.total_ring_elements();
-                let corrupt = AkitaExpandedSetup::from_parts(
-                    prover_setup.expanded.seed.clone(),
+                let total = prover_setup.expanded.shared_matrix().total_ring_elements();
+                let corrupt = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    prover_setup.expanded.seed().clone(),
                     FlatMatrix::from_flat_data(vec![TestF::zero(); total * TEST_D], TEST_D),
-                )
-                .unwrap();
+                );
                 save_expanded_setup::<TestF, Cfg>(&corrupt, MAX_VARS, 1, 1);
 
                 let err = load_expanded_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1)
@@ -469,20 +468,19 @@ mod tests {
 
                 let prover_setup =
                     new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, MAX_BATCH, 1).unwrap();
-                let mut stale_seed = prover_setup.expanded.seed.clone();
+                let mut stale_seed = prover_setup.expanded.seed().clone();
                 stale_seed.max_num_vars = MAX_VARS - 1;
                 stale_seed.max_num_batched_polys = MAX_BATCH - 1;
-                let stale = AkitaExpandedSetup::from_parts(
+                let stale = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     stale_seed,
-                    prover_setup.expanded.shared_matrix.clone(),
-                )
-                .unwrap();
+                    prover_setup.expanded.shared_matrix().clone(),
+                );
                 save_expanded_setup::<TestF, Cfg>(&stale, MAX_VARS, MAX_BATCH, 1);
 
                 let regenerated =
                     new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, MAX_BATCH, 1).unwrap();
-                assert_eq!(regenerated.expanded.seed.max_num_vars, MAX_VARS);
-                assert_eq!(regenerated.expanded.seed.max_num_batched_polys, MAX_BATCH);
+                assert_eq!(regenerated.expanded.seed().max_num_vars, MAX_VARS);
+                assert_eq!(regenerated.expanded.seed().max_num_batched_polys, MAX_BATCH);
 
                 cleanup_setup_file_shape(MAX_VARS, MAX_BATCH, 1);
             });
@@ -517,20 +515,20 @@ mod tests {
                 let commit_u = |setup: &AkitaProverSetup<TestF, TEST_D>| {
                     let inner = poly
                         .commit_inner_witness(
-                            &setup.expanded.shared_matrix,
+                            setup.expanded.shared_matrix(),
                             &setup.ntt_shared,
                             lp.a_key.row_len(),
                             lp.block_len,
                             lp.num_digits_commit,
                             lp.num_digits_open,
                             lp.log_basis,
-                            setup.expanded.seed.max_stride,
+                            setup.expanded.seed().max_stride,
                         )
                         .unwrap();
                     mat_vec_mul_ntt_single_i8::<TestF, TEST_D>(
                         &setup.ntt_shared,
                         lp.b_key.row_len(),
-                        setup.expanded.seed.max_stride,
+                        setup.expanded.seed().max_stride,
                         inner.decomposed_inner_rows.flat_digits(),
                     )
                 };

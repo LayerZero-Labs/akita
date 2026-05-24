@@ -199,6 +199,13 @@ impl AjtaiKeyParams {
     pub fn sis_family(&self) -> SisModulusFamily {
         self.sis_family
     }
+
+    fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.push(sis_family_descriptor_tag(self.sis_family()));
+        push_usize(bytes, self.row_len());
+        push_usize(bytes, self.col_len());
+        push_u32(bytes, self.collision_inf());
+    }
 }
 
 /// Unified per-level parameters for one Akita recursion level.
@@ -306,6 +313,26 @@ impl LevelParams {
     #[inline]
     pub fn inner_width(&self) -> usize {
         self.a_key.col_len()
+    }
+
+    /// Append the descriptor digest encoding for this parameter set.
+    ///
+    /// Kept next to [`LevelParams`] so protocol-affecting field changes are
+    /// reviewed with their Fiat-Shamir binding.
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        push_usize(bytes, self.ring_dimension);
+        push_u32(bytes, self.log_basis);
+        self.a_key.append_descriptor_bytes(bytes);
+        self.b_key.append_descriptor_bytes(bytes);
+        self.d_key.append_descriptor_bytes(bytes);
+        push_usize(bytes, self.num_blocks);
+        push_usize(bytes, self.block_len);
+        push_usize(bytes, self.m_vars);
+        push_usize(bytes, self.r_vars);
+        append_sparse_challenge_descriptor_bytes(bytes, &self.stage1_config);
+        push_usize(bytes, self.num_digits_commit);
+        push_usize(bytes, self.num_digits_open);
+        push_usize(bytes, self.num_digits_fold);
     }
 
     /// Width of outer matrix B (column count of the B-key).
@@ -488,6 +515,54 @@ impl LevelParams {
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
             num_digits_fold: other.num_digits_fold,
+        }
+    }
+}
+
+fn push_usize(bytes: &mut Vec<u8>, value: usize) {
+    bytes.extend_from_slice(&(value as u64).to_le_bytes());
+}
+
+fn push_u32(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_i8(bytes: &mut Vec<u8>, value: i8) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn sis_family_descriptor_tag(family: SisModulusFamily) -> u8 {
+    match family {
+        SisModulusFamily::Q32 => 0,
+        SisModulusFamily::Q64 => 1,
+        SisModulusFamily::Q128 => 2,
+        SisModulusFamily::Q16 => 3,
+    }
+}
+
+fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &SparseChallengeConfig) {
+    match config {
+        SparseChallengeConfig::Uniform {
+            weight,
+            nonzero_coeffs,
+        } => {
+            bytes.push(0);
+            push_usize(bytes, *weight);
+            push_usize(bytes, nonzero_coeffs.len());
+            for &coeff in nonzero_coeffs {
+                push_i8(bytes, coeff);
+            }
+        }
+        SparseChallengeConfig::ExactShell {
+            count_mag1,
+            count_mag2,
+        } => {
+            bytes.push(1);
+            push_usize(bytes, *count_mag1);
+            push_usize(bytes, *count_mag2);
+        }
+        SparseChallengeConfig::BoundedL1Norm => {
+            bytes.push(2);
         }
     }
 }

@@ -2,9 +2,9 @@
 
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_after_absorb,
-    ring_switch_finalize_with_gamma, ring_switch_finalize_with_gamma_after_absorb,
-    NextWitnessCommitment, RingSwitchOutput,
+    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
+    ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
+    NextWitnessCommitment, RingSwitchOutput, TerminalRingSwitchOutput,
 };
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::{
@@ -31,8 +31,8 @@ use akita_sumcheck::{
     SumcheckProof, SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM,
-    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -45,14 +45,14 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, terminal_witness_remainder_bytes, terminal_witness_segment_layout,
-    validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof,
-    BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
-    IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
-    TerminalLevelProof, TerminalWitnessSegmentLayout,
+    schedule_root_fold_step, schedule_terminal_direct_witness_shape,
+    terminal_witness_segment_layout, validate_batched_inputs, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
+    AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape,
+    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
+    PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
+    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -103,21 +103,36 @@ where
     )
 }
 
-fn append_terminal_witness_remainder<F, T>(
-    transcript: &mut T,
+fn pack_scheduled_terminal_witness<F: FieldCore>(
     logical_w: &RecursiveWitnessFlat,
-    layout: TerminalWitnessSegmentLayout,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    let bytes =
-        terminal_witness_remainder_bytes(logical_w.as_i8_digits(), layout).ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal witness remainder is invalid".to_string())
-        })?;
-    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &bytes);
-    Ok(())
+    expected_shape: &DirectWitnessShape,
+) -> Result<DirectWitnessProof<F>, AkitaError> {
+    let DirectWitnessShape::PackedDigits((expected_len, bits_per_elem)) = expected_shape else {
+        return Err(AkitaError::InvalidSetup(
+            "terminal fold requires a packed-digit direct step".to_string(),
+        ));
+    };
+    if logical_w.len() != *expected_len {
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheduled terminal witness length did not match runtime witness: expected={expected_len}, actual={}",
+            logical_w.len()
+        )));
+    }
+    if PackedDigits::required_bits_per_elem(logical_w.as_i8_digits()) > *bits_per_elem {
+        return Err(AkitaError::InvalidSetup(
+            "scheduled terminal witness bit width is too small".to_string(),
+        ));
+    }
+    let witness = DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
+        logical_w.as_i8_digits(),
+        *bits_per_elem,
+    ));
+    if witness.shape() != *expected_shape {
+        return Err(AkitaError::InvalidSetup(
+            "packed terminal witness shape does not match schedule".to_string(),
+        ));
+    }
+    Ok(witness)
 }
 
 /// Raw pieces produced by the unified root-level prover.
@@ -342,9 +357,9 @@ where
         claims: incidence_claims,
     };
     let summary = incidence.validate(ClaimIncidenceLimits {
-        max_num_vars: expanded.seed.max_num_vars,
-        max_num_points: expanded.seed.max_num_points,
-        max_num_claims: expanded.seed.max_num_batched_polys,
+        max_num_vars: expanded.seed().max_num_vars,
+        max_num_points: expanded.seed().max_num_points,
+        max_num_claims: expanded.seed().max_num_batched_polys,
     })?;
 
     Ok(ProverPreparedIncidence {
@@ -715,14 +730,6 @@ where
                 ));
             }
         };
-        let final_log_basis = match direct_step.witness_shape {
-            DirectWitnessShape::PackedDigits((_, bits)) => bits,
-            DirectWitnessShape::FieldElements(_) => {
-                return Err(AkitaError::InvalidSetup(
-                    "terminal root requires a packed-digit direct step".to_string(),
-                ));
-            }
-        };
         let _ = (commit_root_next, build_suffix, root_next_params);
         let terminal = prove_terminal_root_fold_with_params::<F, E, C, T, D, P>(
             expanded,
@@ -735,7 +742,7 @@ where
             prepared_claims.flat_hints,
             &root_step.params,
             root_step.next_w_len,
-            final_log_basis,
+            &direct_step.witness_shape,
             basis,
         )?;
         return Ok((build_terminal_root_batched_proof::<F, C>(terminal), 1));
@@ -809,9 +816,8 @@ pub enum SuffixLevelRequest<'a, F: FieldCore, L: FieldCore> {
         current_state: &'a RecursiveProverState<F, L>,
         /// Current level parameters from the schedule.
         level_params: &'a LevelParams,
-        /// Bits-per-element used to pack the final witness as
-        /// [`PackedDigits`].
-        final_log_basis: u32,
+        /// Scheduled direct-witness shape used to pack the terminal witness.
+        final_witness_shape: DirectWitnessShape,
     },
 }
 
@@ -902,13 +908,14 @@ where
         level,
         current_w_len: current_state.w.len(),
     };
-    let (level_params, next_params) =
+    let (level_params, _next_params) =
         select_fold_execution(level, inputs, current_state.log_basis)?;
+    let final_witness_shape = schedule_terminal_direct_witness_shape(schedule)?.clone();
     let out = prove_level(SuffixLevelRequest::Terminal {
         level,
         current_state: &current_state,
         level_params: &level_params,
-        final_log_basis: next_params.log_basis,
+        final_witness_shape,
     })?;
     let SuffixLevelOutput::Terminal(terminal) = out else {
         return Err(AkitaError::InvalidSetup(
@@ -981,7 +988,6 @@ where
         &logical_w,
         &w_commitment_proof,
         lp,
-        MRowLayout::Intermediate,
     )?;
 
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
@@ -1092,8 +1098,7 @@ where
 /// [`PackedDigits`], so this function:
 ///
 /// * builds `logical_w` via ring switching,
-/// * packs it into the terminal [`DirectWitnessProof`] using
-///   `final_log_basis` as the planner-mandated minimum bits per element,
+/// * packs it into the scheduled terminal [`DirectWitnessProof`] shape,
 /// * absorbs the final-witness remainder before sampling any ring-switch
 ///   challenges (the terminal `w_hat` segment was already absorbed before
 ///   sparse-challenge sampling),
@@ -1115,7 +1120,7 @@ pub fn prove_terminal_fold_level_from_quadratic<F, L, T, const D: usize>(
     commitment_u: &[CyclotomicRing<F, D>],
     _level: usize,
     lp: &LevelParams,
-    final_log_basis: u32,
+    final_witness_shape: &DirectWitnessShape,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
@@ -1134,17 +1139,15 @@ where
 {
     let terminal_layout = terminal_segment_layout_for_quad(&quad_eq, lp)?;
     let logical_w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
-    let final_witness = DirectWitnessProof::PackedDigits(
-        PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
-    );
-    append_terminal_witness_remainder::<F, T>(transcript, &logical_w, terminal_layout)?;
-    let rs = ring_switch_finalize_after_absorb::<F, L, T, { D }>(
+    let final_witness = pack_scheduled_terminal_witness(&logical_w, final_witness_shape)?;
+    let rs = ring_switch_finalize_terminal::<F, L, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
         &logical_w,
+        &final_witness,
+        terminal_layout,
         lp,
-        MRowLayout::Terminal,
     )?;
 
     // Terminal layout drops the D-block: the relation claim no longer sums
@@ -1156,14 +1159,14 @@ where
         commitment_u,
         &y_rings,
     )?;
-    let RingSwitchOutput {
+    let relation_only_inputs = rs.relation_only_stage2_inputs();
+    let TerminalRingSwitchOutput {
         w_evals_compact,
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
         col_bits,
         ring_bits,
-        tau0: _,
         tau1: _,
         b,
         alpha: _,
@@ -1172,14 +1175,13 @@ where
     // Relation-only stage-2: batching_coeff = 0 zeros the virtual-claim
     // contribution to every round polynomial regardless of `r_stage1`, so
     // dummy zeros for `r_stage1` and `s_claim` are safe.
-    let r_stage1 = vec![L::zero(); col_bits + ring_bits];
     let stage2_sumcheck = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
-            L::zero(),
+            relation_only_inputs.batching_coeff,
             w_evals_compact,
-            &r_stage1,
-            L::zero(),
+            &relation_only_inputs.r_stage1,
+            relation_only_inputs.s_claim,
             b,
             alpha_evals_y,
             m_evals_x,
@@ -1469,7 +1471,7 @@ where
             transcript,
             commitment_u,
             &y_rings,
-            expanded.seed.max_stride,
+            expanded.seed().max_stride,
             MRowLayout::Intermediate,
         )?,
     );
@@ -1516,7 +1518,7 @@ pub fn prove_terminal_recursive_fold_with_params<F, L, T, const D: usize>(
     commitment: &FlatRingVec<F>,
     level: usize,
     level_params: &LevelParams,
-    final_log_basis: u32,
+    final_witness_shape: &DirectWitnessShape,
 ) -> Result<TerminalLevelProof<F, L>, AkitaError>
 where
     F: FieldCore
@@ -1650,7 +1652,7 @@ where
             transcript,
             commitment_u,
             &y_rings,
-            expanded.seed.max_stride,
+            expanded.seed().max_stride,
             MRowLayout::Terminal,
         )?,
     );
@@ -1663,7 +1665,7 @@ where
         commitment_u,
         level,
         level_params,
-        final_log_basis,
+        final_witness_shape,
         quad_eq,
         extension_opening_reduction,
         y_rings,
@@ -1757,7 +1759,7 @@ pub fn prove_terminal_recursive_level_with_policy<F, L, T, const D: usize, Curre
     current_state: &RecursiveProverState<F, L>,
     level: usize,
     level_params: &LevelParams,
-    final_log_basis: u32,
+    final_witness_shape: &DirectWitnessShape,
     current_layout: CurrentLayout,
 ) -> Result<TerminalLevelProof<F, L>, AkitaError>
 where
@@ -1797,7 +1799,7 @@ where
         &current_state.commitment,
         level,
         &w_lp,
-        final_log_basis,
+        final_witness_shape,
     )
 }
 
@@ -2293,7 +2295,7 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
-        expanded.seed.max_stride,
+        expanded.seed().max_stride,
         MRowLayout::Intermediate,
     )?);
 
@@ -2608,7 +2610,7 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
-        expanded.seed.max_stride,
+        expanded.seed().max_stride,
         MRowLayout::Intermediate,
     )?);
 
@@ -2664,7 +2666,7 @@ pub fn prove_terminal_root_fold_with_params<F, E, C, T, const D: usize, P>(
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
     expected_w_len: usize,
-    final_log_basis: u32,
+    final_witness_shape: &DirectWitnessShape,
     basis: BasisMode,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
@@ -2674,6 +2676,21 @@ where
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
+    match final_witness_shape {
+        DirectWitnessShape::PackedDigits((scheduled_len, _))
+            if *scheduled_len == expected_w_len => {}
+        DirectWitnessShape::PackedDigits((scheduled_len, _)) => {
+            return Err(AkitaError::InvalidSetup(format!(
+                "terminal root direct shape length does not match root next-w length: expected={expected_w_len}, actual={scheduled_len}"
+            )));
+        }
+        DirectWitnessShape::FieldElements(_) => {
+            return Err(AkitaError::InvalidSetup(
+                "terminal root requires a packed-digit direct step".to_string(),
+            ));
+        }
+    }
+
     let claim_to_point = incidence_summary.claim_to_point();
     let num_claims = incidence_summary.num_claims();
 
@@ -2808,7 +2825,7 @@ where
             hints,
             root_params,
             expected_w_len,
-            final_log_basis,
+            final_witness_shape,
             prepared_points,
             w_folded_by_poly,
             y_rings,
@@ -2919,7 +2936,7 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
-        expanded.seed.max_stride,
+        expanded.seed().max_stride,
         MRowLayout::Terminal,
     )?);
 
@@ -2940,7 +2957,7 @@ where
         commitment_rows,
         root_params,
         expected_w_len,
-        final_log_basis,
+        final_witness_shape,
         quad_eq,
         y_rings,
         row_coefficients,
@@ -2958,7 +2975,7 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, const D: usize>(
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
     expected_w_len: usize,
-    final_log_basis: u32,
+    final_witness_shape: &DirectWitnessShape,
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
     w_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
@@ -3010,7 +3027,7 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
-        expanded.seed.max_stride,
+        expanded.seed().max_stride,
         MRowLayout::Terminal,
     )?);
 
@@ -3031,7 +3048,7 @@ where
         commitment_rows,
         root_params,
         expected_w_len,
-        final_log_basis,
+        final_witness_shape,
         quad_eq,
         y_rings,
         row_coefficients,
@@ -3101,7 +3118,6 @@ where
         &w_commitment_proof,
         lp,
         &row_coefficients,
-        MRowLayout::Intermediate,
     )?;
 
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
@@ -3221,7 +3237,7 @@ pub fn prove_terminal_root_fold_from_quadratic<F, C, T, const D: usize>(
     commitment_rows: &[CyclotomicRing<F, D>],
     lp: &akita_types::LevelParams,
     expected_w_len: usize,
-    final_log_basis: u32,
+    final_witness_shape: &DirectWitnessShape,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
@@ -3239,19 +3255,16 @@ where
             logical_w.len()
         )));
     }
-    let final_witness = DirectWitnessProof::PackedDigits(
-        PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
-    );
-    append_terminal_witness_remainder::<F, T>(transcript, &logical_w, terminal_layout)?;
-
-    let rs = ring_switch_finalize_with_gamma_after_absorb::<F, C, T, { D }>(
+    let final_witness = pack_scheduled_terminal_witness(&logical_w, final_witness_shape)?;
+    let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
         &logical_w,
+        &final_witness,
+        terminal_layout,
         lp,
         &row_coefficients,
-        MRowLayout::Terminal,
     )?;
 
     // Terminal layout: the D-block is omitted, so the relation claim sums no
@@ -3265,27 +3278,26 @@ where
         &y_rings,
     )?;
 
-    let RingSwitchOutput {
+    let relation_only_inputs = rs.relation_only_stage2_inputs();
+    let TerminalRingSwitchOutput {
         w_evals_compact,
         live_x_cols,
         m_evals_x,
         alpha_evals_y,
         col_bits,
         ring_bits,
-        tau0: _,
         tau1: _,
         b,
         alpha: _,
     } = rs;
 
-    let r_stage1 = vec![C::zero(); col_bits + ring_bits];
     let stage2_sumcheck = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal_root").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
-            C::zero(),
+            relation_only_inputs.batching_coeff,
             w_evals_compact,
-            &r_stage1,
-            C::zero(),
+            &relation_only_inputs.r_stage1,
+            relation_only_inputs.s_claim,
             b,
             alpha_evals_y,
             m_evals_x,
@@ -3324,17 +3336,18 @@ mod tests {
     type E = Fp2<F, NegOneNr>;
 
     fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup::from_parts(
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 4,
                 max_num_points: 2,
                 max_stride: 1,
+                gen_ring_dim: 1,
+                total_ring_elements: 1,
                 public_matrix_seed: [0u8; 32],
             },
             FlatMatrix::from_flat_data(vec![F::zero()], 1),
         )
-        .unwrap()
     }
 
     #[test]

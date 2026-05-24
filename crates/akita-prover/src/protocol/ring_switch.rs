@@ -22,14 +22,16 @@ use akita_field::{
     MulBase, RandomSampling,
 };
 use akita_transcript::labels::{
-    ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
+    ABSORB_SUMCHECK_W, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0,
+    CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
-    FlatRingVec, LevelParams, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingSubfieldEncoding,
+    terminal_witness_segment_layout_from_counts, validate_opening_points_for_claims,
+    AkitaCommitmentHint, AkitaExpandedSetup, DirectWitnessProof, FlatDigitBlocks, FlatRingVec,
+    LevelParams, MRowLayout, RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingSubfieldEncoding, TerminalWitnessSegmentLayout,
 };
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -47,7 +49,7 @@ pub struct RingSwitchOutput<E: FieldCore> {
     pub col_bits: usize,
     /// Number of lower variable bits.
     pub ring_bits: usize,
-    /// Challenge tau0 for F_0 sumcheck.
+    /// Challenge tau0 for the stage-1 sumcheck.
     pub tau0: Vec<E>,
     /// Challenge tau1 for F_alpha sumcheck.
     pub tau1: Vec<E>,
@@ -55,6 +57,83 @@ pub struct RingSwitchOutput<E: FieldCore> {
     pub b: usize,
     /// Ring-switch challenge alpha.
     pub alpha: E,
+}
+
+/// Terminal ring-switch output. Terminal steps have no stage-1 `tau0`.
+pub struct TerminalRingSwitchOutput<E: FieldCore> {
+    /// Compact evaluation table of w, stored as x-outer/y-inner slices.
+    pub w_evals_compact: Vec<i8>,
+    /// Physical x width before zero-extension to the next power of two.
+    pub live_x_cols: usize,
+    /// Evaluation table of M_alpha(x) (tau1-weighted).
+    pub m_evals_x: Vec<E>,
+    /// Evaluation table of alpha powers (y dimension).
+    pub alpha_evals_y: Vec<E>,
+    /// Number of upper variable bits.
+    pub col_bits: usize,
+    /// Number of lower variable bits.
+    pub ring_bits: usize,
+    /// Challenge tau1 for F_alpha sumcheck.
+    pub tau1: Vec<E>,
+    /// Basis size b = 2^LOG_BASIS.
+    pub b: usize,
+    /// Ring-switch challenge alpha.
+    pub alpha: E,
+}
+
+impl<E: FieldCore> TerminalRingSwitchOutput<E> {
+    /// Relation-only stage-2 inputs for a terminal ring switch.
+    pub fn relation_only_stage2_inputs(&self) -> RelationOnlyStage2Inputs<E> {
+        RelationOnlyStage2Inputs::new(self.col_bits + self.ring_bits)
+    }
+}
+
+struct RingSwitchCoreOutput<E: FieldCore> {
+    w_evals_compact: Vec<i8>,
+    live_x_cols: usize,
+    m_evals_x: Vec<E>,
+    alpha_evals_y: Vec<E>,
+    col_bits: usize,
+    ring_bits: usize,
+    tau0: Option<Vec<E>>,
+    tau1: Vec<E>,
+    b: usize,
+    alpha: E,
+}
+
+impl<E: FieldCore> RingSwitchCoreOutput<E> {
+    fn into_intermediate(self) -> Result<RingSwitchOutput<E>, AkitaError> {
+        let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
+        Ok(RingSwitchOutput {
+            w_evals_compact: self.w_evals_compact,
+            live_x_cols: self.live_x_cols,
+            m_evals_x: self.m_evals_x,
+            alpha_evals_y: self.alpha_evals_y,
+            col_bits: self.col_bits,
+            ring_bits: self.ring_bits,
+            tau0,
+            tau1: self.tau1,
+            b: self.b,
+            alpha: self.alpha,
+        })
+    }
+
+    fn into_terminal(self) -> Result<TerminalRingSwitchOutput<E>, AkitaError> {
+        if self.tau0.is_some() {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(TerminalRingSwitchOutput {
+            w_evals_compact: self.w_evals_compact,
+            live_x_cols: self.live_x_cols,
+            m_evals_x: self.m_evals_x,
+            alpha_evals_y: self.alpha_evals_y,
+            col_bits: self.col_bits,
+            ring_bits: self.ring_bits,
+            tau1: self.tau1,
+            b: self.b,
+            alpha: self.alpha,
+        })
+    }
 }
 
 /// Result of committing the next logical recursive witness.
@@ -149,7 +228,7 @@ where
         quad_eq.num_public_rows(),
         lp.num_blocks,
         lp.inner_width(),
-        setup.seed.max_stride,
+        setup.seed().max_stride,
         ntt_shared,
         quad_eq.m_row_layout(),
     )?;
@@ -203,7 +282,6 @@ pub fn ring_switch_finalize<F, E, T, const D: usize>(
     w: &RecursiveWitnessFlat,
     w_commitment_proof: &FlatRingVec<F>,
     lp: &LevelParams,
-    m_row_layout: MRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -217,7 +295,6 @@ where
         w,
         w_commitment_proof,
         lp,
-        m_row_layout,
     )
 }
 
@@ -235,7 +312,6 @@ pub fn ring_switch_finalize_with_claim_groups<F, E, T, const D: usize>(
     w: &RecursiveWitnessFlat,
     w_commitment_proof: &FlatRingVec<F>,
     lp: &LevelParams,
-    m_row_layout: MRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -256,29 +332,29 @@ where
         w_commitment_proof,
         lp,
         &gamma,
-        m_row_layout,
     )
 }
 
-/// Variant of [`ring_switch_finalize`] that assumes the caller has already
-/// absorbed the `ABSORB_SUMCHECK_W` bytes into `transcript`.
+/// Terminal variant of [`ring_switch_finalize`].
 ///
-/// Used by terminal fold levels, which absorb the cleartext `final_witness`
-/// in place of the recursive `next_w_commitment`.
+/// This owns the required terminal final-witness remainder absorb before
+/// sampling ring-switch challenges.
 ///
 /// # Errors
 ///
-/// Returns an error if matrix expansion or evaluation-table construction fails.
+/// Returns an error if terminal witness slicing, matrix expansion, or
+/// evaluation-table construction fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_finalize_after_absorb<F, E, T, const D: usize>(
+pub fn ring_switch_finalize_terminal<F, E, T, const D: usize>(
     quad_eq: &QuadraticEquation<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
+    final_witness: &DirectWitnessProof<F>,
+    terminal_layout: TerminalWitnessSegmentLayout,
     lp: &LevelParams,
-    m_row_layout: MRowLayout,
-) -> Result<RingSwitchOutput<E>, AkitaError>
+) -> Result<TerminalRingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
@@ -290,14 +366,15 @@ where
         .copied()
         .map(E::lift_base)
         .collect::<Vec<_>>();
-    ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
+    ring_switch_finalize_terminal_with_gamma::<F, E, T, D>(
         quad_eq,
         setup,
         transcript,
         w,
+        final_witness,
+        terminal_layout,
         lp,
         &gamma,
-        m_row_layout,
     )
 }
 
@@ -323,7 +400,6 @@ pub fn ring_switch_finalize_with_gamma<F, E, T, const D: usize>(
     w_commitment_proof: &FlatRingVec<F>,
     lp: &LevelParams,
     gamma: &[E],
-    m_row_layout: MRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -331,32 +407,66 @@ where
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
-    ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
+    ring_switch_finalize_core::<F, E, T, D>(
         quad_eq,
         setup,
         transcript,
         w,
         lp,
         gamma,
-        m_row_layout,
-    )
+        MRowLayout::Intermediate,
+    )?
+    .into_intermediate()
 }
 
-/// Variant of [`ring_switch_finalize_with_gamma`] that assumes the caller has
-/// already absorbed the `ABSORB_SUMCHECK_W` bytes into `transcript`.
+/// Terminal variant of [`ring_switch_finalize_with_gamma`].
 ///
-/// Intermediate fold levels absorb `next_w_commitment` before calling this;
-/// terminal fold levels absorb the cleartext `final_witness` instead. Keeping
-/// the absorb in the caller lets the protocol bind whichever payload is
-/// shipped at this step without needing a duality flag here.
+/// This owns the required terminal final-witness remainder absorb before
+/// sampling ring-switch challenges.
 ///
 /// # Errors
 ///
-/// Returns an error if the supplied gamma vector does not match the claim
-/// count or if matrix expansion or evaluation-table construction fails.
+/// Returns an error if terminal witness slicing, the supplied gamma vector,
+/// matrix expansion, or evaluation-table construction fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_finalize_with_gamma_after_absorb<F, E, T, const D: usize>(
+pub fn ring_switch_finalize_terminal_with_gamma<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: &RecursiveWitnessFlat,
+    final_witness: &DirectWitnessProof<F>,
+    terminal_layout: TerminalWitnessSegmentLayout,
+    lp: &LevelParams,
+    gamma: &[E],
+) -> Result<TerminalRingSwitchOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
+    let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
+    if final_witness.packed_i8_digits()?.as_slice() != w.as_i8_digits() {
+        return Err(AkitaError::InvalidInput(
+            "terminal final witness does not match ring-switch witness".to_string(),
+        ));
+    }
+    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+    ring_switch_finalize_core::<F, E, T, D>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        lp,
+        gamma,
+        MRowLayout::Terminal,
+    )?
+    .into_terminal()
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn ring_switch_finalize_core<F, E, T, const D: usize>(
     quad_eq: &QuadraticEquation<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
@@ -364,7 +474,7 @@ pub fn ring_switch_finalize_with_gamma_after_absorb<F, E, T, const D: usize>(
     lp: &LevelParams,
     gamma: &[E],
     m_row_layout: MRowLayout,
-) -> Result<RingSwitchOutput<E>, AkitaError>
+) -> Result<RingSwitchCoreOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
@@ -390,11 +500,13 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
         .trailing_zeros() as usize;
 
-    let tau0: Vec<E> = match m_row_layout {
-        MRowLayout::Intermediate => (0..num_sc_vars)
-            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-            .collect(),
-        MRowLayout::Terminal => Vec::new(),
+    let tau0 = match m_row_layout {
+        MRowLayout::Intermediate => Some(
+            (0..num_sc_vars)
+                .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+                .collect(),
+        ),
+        MRowLayout::Terminal => None,
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -463,7 +575,7 @@ where
     let m_evals_x = m_evals_x_result?;
     let (w_evals_compact, _, _) = w_result?;
 
-    Ok(RingSwitchOutput {
+    Ok(RingSwitchCoreOutput {
         w_evals_compact,
         live_x_cols,
         m_evals_x,
@@ -595,7 +707,7 @@ where
     Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let commit_d = commit_params.ring_dimension;
-    let stride = expanded.seed.max_stride;
+    let stride = expanded.seed().max_stride;
     dispatch_with_ntt!(
         commit_d,
         commit_ntt_cache,
@@ -658,7 +770,7 @@ where
                 logical_w,
                 ntt_shared,
                 &commit_layout,
-                expanded.seed.max_stride,
+                expanded.seed().max_stride,
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
@@ -672,7 +784,7 @@ where
                 &committed_w,
                 ntt_shared,
                 &commit_layout,
-                expanded.seed.max_stride,
+                expanded.seed().max_stride,
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
@@ -930,10 +1042,10 @@ where
         .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
         .collect::<Result<_, _>>()?;
 
-    let stride = setup.seed.max_stride;
-    let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride)?;
-    let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride)?;
-    let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride)?;
+    let stride = setup.seed().max_stride;
+    let d_view = setup.shared_matrix().ring_view::<D>(n_d, stride)?;
+    let b_view = setup.shared_matrix().ring_view::<D>(n_b, stride)?;
+    let a_view = setup.shared_matrix().ring_view::<D>(n_a, stride)?;
     let d_rows: Vec<_> = d_view.rows().collect();
     let b_rows: Vec<_> = b_view.rows().collect();
     let a_rows: Vec<_> = a_view.rows().collect();
@@ -1331,6 +1443,13 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         + z_pre_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
     let z_first = lp.m_vars >= lp.r_vars;
+    let terminal_w_hat_layout = terminal_witness_segment_layout_from_counts(
+        D,
+        z_first,
+        z_pre_centered.len() * num_digits_fold,
+        w_hat_planes,
+    )
+    .expect("build_w_coeffs receives a non-empty terminal w_hat layout");
     tracing::debug!(
         w_hat_planes,
         d_blinding_planes,
@@ -1377,7 +1496,15 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             num_digits_fold,
             log_basis,
         );
+        debug_assert_eq!(out.len(), terminal_w_hat_layout.w_hat_digit_offset);
         emit_planes_block_inner(&mut out, w_hat.flat_digits(), w_block_count, depth_open);
+        debug_assert_eq!(
+            out.len(),
+            terminal_w_hat_layout
+                .w_hat_digit_offset
+                .checked_add(terminal_w_hat_layout.w_hat_digit_count)
+                .expect("terminal w_hat range end")
+        );
         emit_planes_block_inner(
             &mut out,
             t_hat.flat_digits(),
@@ -1389,7 +1516,15 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
     } else {
+        debug_assert_eq!(out.len(), terminal_w_hat_layout.w_hat_digit_offset);
         emit_planes_block_inner(&mut out, w_hat.flat_digits(), w_block_count, depth_open);
+        debug_assert_eq!(
+            out.len(),
+            terminal_w_hat_layout
+                .w_hat_digit_offset
+                .checked_add(terminal_w_hat_layout.w_hat_digit_count)
+                .expect("terminal w_hat range end")
+        );
         emit_planes_block_inner(
             &mut out,
             t_hat.flat_digits(),

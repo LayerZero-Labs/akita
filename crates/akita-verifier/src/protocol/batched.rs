@@ -231,8 +231,8 @@ where
 {
     let a_matrix = setup
         .expanded
-        .shared_matrix
-        .ring_view::<D>(params.a_key.row_len(), setup.expanded.seed.max_stride)?;
+        .shared_matrix()
+        .ring_view::<D>(params.a_key.row_len(), setup.expanded.seed().max_stride)?;
     let a_rows: Vec<_> = a_matrix.rows().collect();
     let out_capacity = params
         .num_blocks
@@ -316,8 +316,8 @@ where
 
     let b_matrix = setup
         .expanded
-        .shared_matrix
-        .ring_view::<D>(params.b_key.row_len(), setup.expanded.seed.max_stride)?;
+        .shared_matrix()
+        .ring_view::<D>(params.b_key.row_len(), setup.expanded.seed().max_stride)?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
     Ok(RingCommitment {
         u: mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input),
@@ -366,7 +366,7 @@ where
     }
     validate_root_direct_recommitment_shape::<F, D>(
         witnesses,
-        &setup.expanded.seed,
+        setup.expanded.seed(),
         incidence_summary,
         params,
     )?;
@@ -712,6 +712,8 @@ mod tests {
             max_num_batched_polys: 1,
             max_num_points: 1,
             max_stride: 3,
+            gen_ring_dim: D,
+            total_ring_elements: 3,
             public_matrix_seed: [0u8; 32],
         };
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
@@ -739,6 +741,8 @@ mod tests {
             max_num_batched_polys: 1,
             max_num_points: 1,
             max_stride: 128,
+            gen_ring_dim: D,
+            total_ring_elements: 128,
             public_matrix_seed: [0u8; 32],
         };
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(

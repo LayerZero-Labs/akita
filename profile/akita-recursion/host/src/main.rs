@@ -18,6 +18,8 @@ use clap::Parser;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+const TRUSTED_BENCHMARK_ARTIFACT_ENV: &str = "AKITA_RECURSION_TRUSTED_BENCHMARK_ARTIFACT";
+
 #[derive(Debug, Parser)]
 #[command(
     about = "Prove the Akita verifier inside Jolt and report cycle counts",
@@ -33,10 +35,42 @@ struct Args {
     #[arg(long, default_value = "/tmp/akita-recursion-targets")]
     target_dir: String,
 
+    /// Trace file path for `--trace-only`; defaults to
+    /// `<target-dir>/akita_verify.trace`.
+    #[arg(long)]
+    trace_output: Option<PathBuf>,
+
     /// Only trace the guest (skips the ~minute-long Jolt prover step).
     /// Useful when iterating on guest panics with `JOLT_BACKTRACE=full`.
     #[arg(long, default_value_t = false)]
     trace_only: bool,
+}
+
+fn run_native_guest_or_exit(blob: &[u8]) {
+    info!("running guest natively (sanity check)");
+    let native_output = guest::akita_verify(blob);
+    info!(native_output, "native guest output");
+    if native_output != 0 {
+        eprintln!("error: native guest run reported failure code {native_output}");
+        std::process::exit(1);
+    }
+}
+
+fn path_to_utf8_or_exit<'a>(path: &'a std::path::Path, context: &str) -> &'a str {
+    match path.to_str() {
+        Some(path) => path,
+        None => {
+            eprintln!("error: {context} must be valid UTF-8: `{}`", path.display());
+            std::process::exit(2);
+        }
+    }
+}
+
+fn enable_trusted_benchmark_guest_build() {
+    // The pinned Jolt SDK builds guest ELFs with a hard-coded `--features guest`.
+    // This checked build-script cfg keeps plain `guest` strict while letting
+    // this benchmark harness opt the RISC-V build into trusted setup decode.
+    std::env::set_var(TRUSTED_BENCHMARK_ARTIFACT_ENV, "1");
 }
 
 fn main() {
@@ -54,49 +88,42 @@ fn main() {
                 "error: verifier-input blob not found at `{}`.",
                 args.input.display()
             );
-            eprintln!(
-                "Generate one first with `akita-recursion-artifact`. For example:"
-            );
+            eprintln!("Generate one first with `akita-recursion-artifact`. For example:");
+            eprintln!();
+            eprintln!("    AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact");
+            eprintln!();
+            eprintln!("or, for a different blob path / arity:");
             eprintln!();
             eprintln!(
-                "    AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact"
-            );
-            eprintln!();
-            eprintln!(
-                "or, for a different blob path / arity:"
-            );
-            eprintln!();
-            eprintln!(
-                "    AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB={} \\"
-                , args.input.display()
+                "    AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB={} \\",
+                args.input.display()
             );
             eprintln!("        ./target/release/akita-recursion-artifact");
             std::process::exit(2);
         }
         Err(err) => {
-            eprintln!(
-                "error: failed to read `{}`: {}",
-                args.input.display(),
-                err
-            );
+            eprintln!("error: failed to read `{}`: {}", args.input.display(), err);
             std::process::exit(2);
         }
     };
     info!(bytes = blob.len(), "blob loaded");
 
     info!(target_dir = %args.target_dir, "compiling Akita verifier guest program");
+    enable_trusted_benchmark_guest_build();
     let mut program = guest::compile_akita_verify(&args.target_dir);
 
     if args.trace_only {
         info!("trace-only mode: skipping preprocessing and proof generation");
-        // Native run first to surface any guest panic outside the prover.
-        info!("running guest natively (sanity check)");
-        let native_output = guest::akita_verify(&blob);
-        info!(native_output, "native guest output");
+        run_native_guest_or_exit(&blob);
 
-        let trace_path = PathBuf::from(&args.target_dir).join("akita_verify.trace");
+        let trace_path = args
+            .trace_output
+            .unwrap_or_else(|| PathBuf::from(&args.target_dir).join("akita_verify.trace"));
         info!(trace_file = %trace_path.display(), "tracing guest under emulator");
-        guest::trace_akita_verify_to_file(trace_path.to_str().expect("utf-8 path"), &blob);
+        guest::trace_akita_verify_to_file(
+            path_to_utf8_or_exit(&trace_path, "--trace-output"),
+            &blob,
+        );
         info!("trace done");
         return;
     }
@@ -114,14 +141,7 @@ fn main() {
     let prove_akita_verify = guest::build_prover_akita_verify(program, prover_preprocessing);
     let verify_akita_verify = guest::build_verifier_akita_verify(verifier_preprocessing);
 
-    // Native run first to surface any guest panic outside the prover.
-    info!("running guest natively (sanity check)");
-    let native_output = guest::akita_verify(&blob);
-    info!(native_output, "native guest output");
-    assert_eq!(
-        native_output, 0,
-        "native guest run reported failure code {native_output}"
-    );
+    run_native_guest_or_exit(&blob);
 
     info!("invoking Jolt prover");
     let now = Instant::now();

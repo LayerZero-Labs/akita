@@ -22,12 +22,22 @@ use akita_types::{
 };
 use std::marker::PhantomData;
 
+pub mod descriptor_policy;
 pub mod proof_optimized;
 pub(crate) mod schedule_policy;
 pub(crate) mod sis_policy;
+#[cfg(feature = "verifier-adapter")]
+pub mod verifier_adapter;
+pub mod verifier_policy;
 
+pub use descriptor_policy::{
+    bind_instance_descriptor_for_config, descriptor_setup_levels_for_config,
+};
 pub use schedule_policy::{akita_batched_root_layout, current_level_layout_with_log_basis};
 use schedule_policy::{akita_root_commitment_layout, fallback_batched_root_split};
+#[cfg(feature = "verifier-adapter")]
+pub use verifier_adapter::batched_verify_with_config;
+pub use verifier_policy::validate_field_roles_for_config;
 
 #[cfg(not(feature = "planner"))]
 pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookupKey) -> AkitaError {

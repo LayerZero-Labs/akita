@@ -85,8 +85,10 @@ dependencies = [
  "akita-challenges",
  "akita-field",
  "akita-planner",
+ "akita-serialization",
  "akita-transcript",
  "akita-types",
+ "akita-verifier",
  "tracing",
 ]
 
@@ -192,7 +194,6 @@ dependencies = [
  "akita-recursion-glue",
  "akita-transcript",
  "akita-types",
- "akita-verifier",
  "jolt-sdk",
 ]
 

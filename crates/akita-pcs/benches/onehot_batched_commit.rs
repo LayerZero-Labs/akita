@@ -72,28 +72,28 @@ fn bench_commit_breakdown(c: &mut Criterion) {
 
     let single_inner = single_poly
         .commit_inner_witness(
-            &single_setup.expanded.shared_matrix,
+            single_setup.expanded.shared_matrix(),
             &single_setup.ntt_shared,
             single_params.a_key.row_len(),
             single_layout.block_len,
             single_layout.num_digits_commit,
             single_layout.num_digits_open,
             single_layout.log_basis,
-            single_setup.expanded.seed.max_stride,
+            single_setup.expanded.seed().max_stride,
         )
         .expect("single inner witness");
     let batched_inner: Vec<_> = batched_polys
         .iter()
         .map(|poly| {
             poly.commit_inner_witness(
-                &batched_setup.expanded.shared_matrix,
+                batched_setup.expanded.shared_matrix(),
                 &batched_setup.ntt_shared,
                 batch_params.a_key.row_len(),
                 batch_layout.block_len,
                 batch_layout.num_digits_commit,
                 batch_layout.num_digits_open,
                 batch_layout.log_basis,
-                batched_setup.expanded.seed.max_stride,
+                batched_setup.expanded.seed().max_stride,
             )
             .expect("batched inner witness")
         })
@@ -126,14 +126,14 @@ fn bench_commit_breakdown(c: &mut Criterion) {
             black_box(
                 single_poly
                     .commit_inner_witness(
-                        &single_setup.expanded.shared_matrix,
+                        single_setup.expanded.shared_matrix(),
                         &single_setup.ntt_shared,
                         single_params.a_key.row_len(),
                         single_layout.block_len,
                         single_layout.num_digits_commit,
                         single_layout.num_digits_open,
                         single_layout.log_basis,
-                        single_setup.expanded.seed.max_stride,
+                        single_setup.expanded.seed().max_stride,
                     )
                     .expect("single inner witness"),
             )
@@ -193,14 +193,14 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                     .iter()
                     .map(|poly| {
                         poly.commit_inner_witness(
-                            &batched_setup.expanded.shared_matrix,
+                            batched_setup.expanded.shared_matrix(),
                             &batched_setup.ntt_shared,
                             batch_params.a_key.row_len(),
                             batch_layout.block_len,
                             batch_layout.num_digits_commit,
                             batch_layout.num_digits_open,
                             batch_layout.log_basis,
-                            batched_setup.expanded.seed.max_stride,
+                            batched_setup.expanded.seed().max_stride,
                         )
                         .expect("batched inner witness")
                     })

@@ -255,32 +255,8 @@ fn main() {
     };
 
     let blob = inputs.write_to_bytes().expect("encode jolt inputs blob");
-
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent).expect("create output dir");
-    }
-    fs::write(&output_path, &blob).expect("write blob");
-
-    let blob_kib = (blob.len() as f64) / 1024.0;
-    let blob_mib = blob_kib / 1024.0;
-    tracing::info!(
-        nv,
-        d = D,
-        bytes = blob.len(),
-        kib = blob_kib,
-        mib = blob_mib,
-        path = %output_path.display(),
-        "wrote akita-recursion verifier-input blob"
-    );
-    eprintln!(
-        "wrote {} bytes ({:.2} MiB) to {}",
-        blob.len(),
-        blob_mib,
-        output_path.display()
-    );
-
-    // Round-trip immediately so a buggy encoding fails on the host instead of
-    // inside the Jolt emulator.
+    // Round-trip before publishing so a buggy encoding fails on the host
+    // instead of leaving a trusted benchmark artifact on disk.
     let decoded = AkitaJoltInputs::<F, D>::read_from_bytes(&blob)
         .expect("decode jolt inputs blob (round-trip)");
     let mut roundtrip_transcript =
@@ -302,4 +278,34 @@ fn main() {
     )
     .expect("decoded blob verify");
     tracing::info!("decoded-blob verify OK");
+
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).expect("create output dir");
+    }
+    let mut tmp_name = output_path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| "akita_recursion_inputs.bin".into());
+    tmp_name.push(".tmp");
+    let tmp_path = output_path.with_file_name(tmp_name);
+    fs::write(&tmp_path, &blob).expect("write temp blob");
+    fs::rename(&tmp_path, &output_path).expect("publish blob");
+
+    let blob_kib = (blob.len() as f64) / 1024.0;
+    let blob_mib = blob_kib / 1024.0;
+    tracing::info!(
+        nv,
+        d = D,
+        bytes = blob.len(),
+        kib = blob_kib,
+        mib = blob_mib,
+        path = %output_path.display(),
+        "wrote akita-recursion verifier-input blob"
+    );
+    eprintln!(
+        "wrote {} bytes ({:.2} MiB) to {}",
+        blob.len(),
+        blob_mib,
+        output_path.display()
+    );
 }

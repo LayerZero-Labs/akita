@@ -2,18 +2,29 @@
 //! Jolt guest program.
 //!
 //! The host serializes the bundle once (`AkitaJoltInputs::write_to_bytes`) and
-//! the Jolt guest deserializes it as the very first step of the program
-//! (`AkitaJoltInputs::read_from_bytes`). Per-component encoding is the existing
-//! [`AkitaSerialize`] / [`AkitaDeserialize`] machinery in
-//! [`akita_serialization`].
+//! the Jolt guest deserializes it as the very first step of the program.
+//! Per-component encoding is the existing [`AkitaSerialize`] /
+//! [`AkitaDeserialize`] machinery in [`akita_serialization`]. The recursion
+//! benchmark can opt into an explicitly trusted cached-matrix setup decoder;
+//! strict decoding remains the default.
 
 #![allow(clippy::missing_errors_doc)]
 
-use akita_field::FieldCore;
+use akita_field::{FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+#[cfg(any(
+    feature = "trusted-benchmark-artifact",
+    akita_trusted_benchmark_artifact
+))]
+use akita_types::AkitaExpandedSetup;
 use akita_types::{AkitaBatchedProof, AkitaBatchedProofShape, AkitaVerifierSetup, RingCommitment};
+#[cfg(any(
+    feature = "trusted-benchmark-artifact",
+    akita_trusted_benchmark_artifact
+))]
+use std::sync::Arc;
 
 /// Encoding mode used for the verifier-input blob. Held constant on both ends
 /// so the host and guest don't have to negotiate compression.
@@ -26,6 +37,16 @@ pub const BLOB_VALIDATE: Validate = Validate::Yes;
 
 /// Magic header so the guest fails fast if it gets the wrong bytes.
 const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv1";
+
+fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
+    if rest.is_empty() {
+        return Ok(());
+    }
+    Err(SerializationError::InvalidData(format!(
+        "akita-jolt blob has {} trailing bytes",
+        rest.len()
+    )))
+}
 
 /// Bundled verifier inputs that travel from the host to the Jolt guest.
 ///
@@ -55,7 +76,7 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore + AkitaSerialize,
 {
     /// Encode the bundle into a single contiguous byte vector.
     pub fn write_to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
@@ -82,8 +103,29 @@ where
         Ok(bytes)
     }
 
-    /// Decode the bundle from bytes produced by [`Self::write_to_bytes`].
-    pub fn read_from_bytes(bytes: &[u8]) -> Result<Self, SerializationError> {
+    /// Total encoded size in bytes (cheap pre-allocation sizing).
+    pub fn encoded_size(&self) -> usize {
+        BLOB_MAGIC.len()
+            + (D as u64).serialized_size(BLOB_COMPRESS)
+            + self.transcript_domain.serialized_size(BLOB_COMPRESS)
+            + self.num_vars.serialized_size(BLOB_COMPRESS)
+            + self.opening_point.serialized_size(BLOB_COMPRESS)
+            + self.opening.serialized_size(BLOB_COMPRESS)
+            + self.commitment.serialized_size(BLOB_COMPRESS)
+            + self.verifier_setup.serialized_size(BLOB_COMPRESS)
+            + self.proof_shape.serialized_size(BLOB_COMPRESS)
+            + self.proof.serialized_size(BLOB_COMPRESS)
+    }
+}
+
+impl<F, const D: usize> AkitaJoltInputs<F, D>
+where
+    F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+{
+    fn decode_from_bytes_with_setup(
+        bytes: &[u8],
+        decode_setup: impl FnOnce(&mut &[u8]) -> Result<AkitaVerifierSetup<F>, SerializationError>,
+    ) -> Result<Self, SerializationError> {
         if bytes.len() < BLOB_MAGIC.len() {
             return Err(SerializationError::InvalidData(
                 "akita-jolt blob shorter than magic header".to_string(),
@@ -106,6 +148,12 @@ where
         let num_vars = u64::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
         let opening_point =
             Vec::<F>::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        if num_vars != opening_point.len() as u64 {
+            return Err(SerializationError::InvalidData(format!(
+                "akita-jolt blob num_vars={num_vars} does not match opening-point arity {}",
+                opening_point.len()
+            )));
+        }
         let opening = F::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
         let commitment = RingCommitment::<F, D>::deserialize_with_mode(
             &mut rest,
@@ -113,15 +161,7 @@ where
             BLOB_VALIDATE,
             &(),
         )?;
-        // The host-side artifact generator produced this blob and already
-        // materialized the deterministic setup matrix. Guest decode keeps
-        // structure/field validation but deliberately skips the expensive
-        // seed-to-matrix recomputation through this trusted cache boundary.
-        let verifier_setup = AkitaVerifierSetup::<F>::deserialize_with_trusted_cached_matrix(
-            &mut rest,
-            BLOB_COMPRESS,
-            BLOB_VALIDATE,
-        )?;
+        let verifier_setup = decode_setup(&mut rest)?;
         let proof_shape = AkitaBatchedProofShape::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
@@ -134,6 +174,7 @@ where
             BLOB_VALIDATE,
             &proof_shape,
         )?;
+        reject_trailing_bytes(rest)?;
         Ok(Self {
             transcript_domain,
             num_vars,
@@ -145,19 +186,49 @@ where
             proof,
         })
     }
+}
 
-    /// Total encoded size in bytes (cheap pre-allocation sizing).
-    pub fn encoded_size(&self) -> usize {
-        BLOB_MAGIC.len()
-            + (D as u64).serialized_size(BLOB_COMPRESS)
-            + self.transcript_domain.serialized_size(BLOB_COMPRESS)
-            + self.num_vars.serialized_size(BLOB_COMPRESS)
-            + self.opening_point.serialized_size(BLOB_COMPRESS)
-            + self.opening.serialized_size(BLOB_COMPRESS)
-            + self.commitment.serialized_size(BLOB_COMPRESS)
-            + self.verifier_setup.serialized_size(BLOB_COMPRESS)
-            + self.proof_shape.serialized_size(BLOB_COMPRESS)
-            + self.proof.serialized_size(BLOB_COMPRESS)
+impl<F, const D: usize> AkitaJoltInputs<F, D>
+where
+    F: FieldCore + RandomSampling + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+{
+    /// Strictly decode the bundle from bytes produced by [`Self::write_to_bytes`].
+    ///
+    /// This path rederives the public setup matrix from its seed and rejects
+    /// stale or corrupted cached matrix bytes. Host-side artifact checks should
+    /// use this path.
+    pub fn read_from_bytes(bytes: &[u8]) -> Result<Self, SerializationError> {
+        Self::decode_from_bytes_with_setup(bytes, |rest| {
+            AkitaVerifierSetup::<F>::deserialize_with_mode(rest, BLOB_COMPRESS, BLOB_VALIDATE, &())
+        })
+    }
+}
+
+#[cfg(any(
+    feature = "trusted-benchmark-artifact",
+    akita_trusted_benchmark_artifact
+))]
+impl<F, const D: usize> AkitaJoltInputs<F, D>
+where
+    F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+{
+    /// Decode a host-produced recursion artifact while trusting the cached
+    /// setup matrix.
+    ///
+    /// This is a benchmark/profile fast path, not a general recursion security
+    /// boundary. It still validates the blob magic, ring dimension, serialized
+    /// structure, field elements, and seed/matrix shape equality, but it
+    /// deliberately skips checking that the expanded setup matrix coefficients
+    /// equal the matrix derived from the seed.
+    pub fn read_trusted_host_artifact_bytes(bytes: &[u8]) -> Result<Self, SerializationError> {
+        Self::decode_from_bytes_with_setup(bytes, |rest| {
+            Ok(AkitaVerifierSetup {
+                expanded: Arc::new(AkitaExpandedSetup::deserialize_trusted_cached_matrix(
+                    rest,
+                    BLOB_COMPRESS,
+                )?),
+            })
+        })
     }
 }
 
@@ -166,3 +237,15 @@ where
 // here to avoid a `cargo machete` style trim.
 #[doc(hidden)]
 pub use akita_algebra as _akita_algebra_dep;
+
+#[cfg(test)]
+mod tests {
+    use super::reject_trailing_bytes;
+
+    #[test]
+    fn trailing_blob_bytes_are_rejected() {
+        let err = reject_trailing_bytes(&[0]).unwrap_err();
+        assert!(err.to_string().contains("trailing bytes"));
+        reject_trailing_bytes(&[]).unwrap();
+    }
+}

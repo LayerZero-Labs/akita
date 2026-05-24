@@ -326,7 +326,7 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
-            setup.expanded.seed.max_stride,
+            setup.expanded.seed().max_stride,
             MRowLayout::Intermediate,
         )
         .expect("quadratic equation");
@@ -445,7 +445,7 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
-            setup.expanded.seed.max_stride,
+            setup.expanded.seed().max_stride,
             MRowLayout::Intermediate,
         )
         .expect("quadratic equation");
@@ -602,7 +602,7 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
-            setup.expanded.seed.max_stride,
+            setup.expanded.seed().max_stride,
             MRowLayout::Intermediate,
         )
         .expect("quadratic equation");

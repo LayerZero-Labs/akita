@@ -9,6 +9,7 @@ pub mod relation;
 pub mod scheme;
 pub mod setup;
 pub mod stage1;
+pub mod terminal_witness;
 
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_points_to_transcript,
@@ -29,15 +30,20 @@ pub use incidence::{
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{
-    derive_public_matrix_flat, derive_public_matrix_flat_with_dimension, sample_public_matrix_seed,
-    validate_public_matrix_matches_seed, AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup,
-    PublicMatrixSeed,
+    derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
+    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
     stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
+};
+pub use terminal_witness::{
+    i8_digits_to_bytes, terminal_w_hat_bytes_from_blocks, terminal_witness_remainder_bytes,
+    terminal_witness_segment_layout, terminal_witness_segment_layout_from_counts,
+    terminal_witness_transcript_parts, terminal_witness_w_hat_bytes, RelationOnlyStage2Inputs,
+    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 
 use akita_algebra::CyclotomicRing;
@@ -148,6 +154,19 @@ impl<F: FieldCore> DirectWitnessProof<F> {
         (0..packed.num_elems)
             .map(|idx| packed.digit_at(idx).ok_or(AkitaError::InvalidProof))
             .collect()
+    }
+
+    /// Split this terminal direct witness into transcript-bound byte slices.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when the witness is not canonical
+    /// packed-digits form or the descriptor-bound terminal segment is invalid.
+    pub fn terminal_transcript_parts(
+        &self,
+        layout: TerminalWitnessSegmentLayout,
+    ) -> Result<TerminalWitnessTranscriptParts, AkitaError> {
+        terminal_witness_transcript_parts(&self.packed_i8_digits()?, layout)
     }
 }
 
@@ -292,6 +311,7 @@ impl AkitaSerialize for PackedDigits {
 
 impl Valid for PackedDigits {
     fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.num_elems)?;
         if self.bits_per_elem == 0 || self.bits_per_elem > 6 {
             return Err(SerializationError::InvalidData(
                 "bits_per_elem out of range".to_string(),
@@ -310,6 +330,15 @@ impl Valid for PackedDigits {
                 "packed data length mismatch".to_string(),
             ));
         }
+        let used_bits_in_last_byte = expected_bits % 8;
+        if used_bits_in_last_byte != 0 {
+            let used_mask = (1u8 << used_bits_in_last_byte) - 1;
+            if self.data.last().is_some_and(|last| *last & !used_mask != 0) {
+                return Err(SerializationError::InvalidData(
+                    "packed data has non-zero padding bits".to_string(),
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -324,9 +353,7 @@ impl AkitaDeserialize for PackedDigits {
         ctx: &(usize, u32),
     ) -> Result<Self, SerializationError> {
         let (num_elems, bits_per_elem) = *ctx;
-        if matches!(_validate, Validate::Yes) {
-            DirectWitnessShape::PackedDigits(*ctx).check()?;
-        }
+        DirectWitnessShape::PackedDigits(*ctx).check()?;
         let num_bits = num_elems.checked_mul(bits_per_elem as usize).ok_or(
             SerializationError::LengthLimitExceeded {
                 len: u64::MAX,
@@ -3484,6 +3511,27 @@ mod tests {
     }
 
     #[test]
+    fn packed_digits_reject_nonzero_padding_bits() {
+        let mut packed = PackedDigits::from_i8_digits(&[1, -1, 0], 3);
+        assert_eq!(packed.data.len(), 2);
+        *packed.data.last_mut().unwrap() |= 0b1000_0000;
+
+        assert!(packed.check().is_err());
+        assert!(packed.to_field_elems::<Prime128Offset275>().is_err());
+    }
+
+    #[test]
+    fn packed_digits_check_rejects_oversized_shape() {
+        let packed = PackedDigits {
+            num_elems: DEFAULT_MAX_SEQUENCE_LEN + 1,
+            bits_per_elem: 1,
+            data: vec![],
+        };
+
+        assert!(packed.check().is_err());
+    }
+
+    #[test]
     fn direct_witness_shape_rejects_oversized_allocations() {
         let err = DirectWitnessShape::FieldElements(DEFAULT_MAX_SEQUENCE_LEN + 1)
             .check()
@@ -3500,6 +3548,18 @@ mod tests {
 
         let err =
             PackedDigits::deserialize_compressed(&[][..], &ctx).expect_err("shape exceeds cap");
+        assert!(matches!(
+            err,
+            SerializationError::LengthLimitExceeded { .. }
+        ));
+    }
+
+    #[test]
+    fn packed_digits_deserialization_rejects_shape_cap_without_validate() {
+        let ctx = (DEFAULT_MAX_SEQUENCE_LEN + 1, 6);
+
+        let err = PackedDigits::deserialize_with_mode(&[][..], Compress::Yes, Validate::No, &ctx)
+            .expect_err("shape exceeds cap");
         assert!(matches!(
             err,
             SerializationError::LengthLimitExceeded { .. }

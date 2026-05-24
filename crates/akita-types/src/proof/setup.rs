@@ -1,6 +1,6 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
-use crate::{FlatMatrix, SetupIdentityDigests};
+use crate::FlatMatrix;
 use akita_algebra::ring::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
@@ -35,6 +35,10 @@ pub struct AkitaSetupSeed {
     pub max_num_points: usize,
     /// Global row stride for the flat NTT cache.
     pub max_stride: usize,
+    /// Ring dimension used to generate `shared_matrix`.
+    pub gen_ring_dim: usize,
+    /// Number of generated ring elements at `gen_ring_dim`.
+    pub total_ring_elements: usize,
     /// Public seed used to derive commitment matrices.
     pub public_matrix_seed: PublicMatrixSeed,
 }
@@ -45,11 +49,9 @@ pub struct AkitaSetupSeed {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaExpandedSetup<F: FieldCore> {
     /// Setup seed and runtime layout metadata.
-    pub seed: AkitaSetupSeed,
+    seed: AkitaSetupSeed,
     /// Shared 1D flat backing vector.
-    pub shared_matrix: FlatMatrix<F>,
-    /// Cached descriptor digest for deterministic setup identity.
-    pub descriptor_digests: SetupIdentityDigests,
+    shared_matrix: FlatMatrix<F>,
 }
 
 /// Verifier setup artifact derived from prover setup.
@@ -59,91 +61,87 @@ pub struct AkitaVerifierSetup<F: FieldCore> {
     pub expanded: Arc<AkitaExpandedSetup<F>>,
 }
 
-impl<F> AkitaExpandedSetup<F>
-where
-    F: FieldCore + AkitaSerialize,
-{
-    /// Build an expanded setup and compute its cached descriptor digests.
+impl<F: FieldCore> AkitaExpandedSetup<F> {
+    /// Build an expanded setup from a trusted matrix the caller has already
+    /// derived from `seed.public_matrix_seed`.
     ///
-    /// # Errors
-    ///
-    /// Returns a serialization error if the setup seed cannot be canonically
-    /// serialized for descriptor hashing.
-    pub fn from_parts(
+    /// This constructor deliberately does not rederive or validate the matrix. Use
+    /// [`Self::from_verified_parts`] for untrusted serialized setup bytes.
+    #[must_use]
+    pub fn from_trusted_seed_derived_parts_unchecked(
         seed: AkitaSetupSeed,
         shared_matrix: FlatMatrix<F>,
-    ) -> Result<Self, SerializationError> {
-        let descriptor_digests = SetupIdentityDigests::from_seed(&seed)?;
-        Ok(Self {
+    ) -> Self {
+        Self {
             seed,
             shared_matrix,
-            descriptor_digests,
-        })
+        }
     }
 
-    /// Validate seed, structure, field elements, and cached descriptor digests
-    /// without re-deriving the public matrix from the seed.
-    ///
-    /// This is only for trusted cache paths where the host intentionally ships
-    /// a previously materialized matrix. Ordinary setup deserialization uses
-    /// [`Valid::check`] and revalidates matrix determinism.
-    pub fn check_trusted_cached_matrix(&self) -> Result<(), SerializationError>
-    where
-        F: Valid,
-    {
-        self.seed.check()?;
-        self.shared_matrix.check()?;
-        self.descriptor_digests.check_seed(&self.seed)?;
-        Ok(())
+    /// Setup seed and runtime layout metadata.
+    #[must_use]
+    pub fn seed(&self) -> &AkitaSetupSeed {
+        &self.seed
+    }
+
+    /// Shared coefficient-form matrix backing all setup roles.
+    #[must_use]
+    pub fn shared_matrix(&self) -> &FlatMatrix<F> {
+        &self.shared_matrix
     }
 }
 
 impl<F> AkitaExpandedSetup<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()> + AkitaSerialize,
+    F: FieldCore + RandomSampling + Valid + AkitaSerialize,
 {
-    /// Deserialize a trusted cached setup while skipping public-matrix
-    /// rederivation.
+    /// Build an expanded setup from untrusted parts and verify the materialized
+    /// matrix against the public seed.
     ///
-    /// Field elements, shape metadata, and cached seed digests are still
-    /// validated when `validate == Validate::Yes`; only the expensive
-    /// seed-to-matrix recomputation is skipped.
-    pub fn deserialize_with_trusted_cached_matrix<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
+    /// # Errors
+    ///
+    /// Returns a serialization error if the seed/matrix shape is malformed or
+    /// the matrix was not deterministically derived from the seed.
+    pub fn from_verified_parts(
+        seed: AkitaSetupSeed,
+        shared_matrix: FlatMatrix<F>,
     ) -> Result<Self, SerializationError> {
-        let seed = AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let shared_matrix =
-            FlatMatrix::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let out = Self::from_parts(seed, shared_matrix)?;
-        if matches!(validate, Validate::Yes) {
-            out.check_trusted_cached_matrix()?;
-        }
+        let out = Self {
+            seed,
+            shared_matrix,
+        };
+        out.check()?;
         Ok(out)
     }
 }
 
-impl<F> AkitaVerifierSetup<F>
+impl<F> AkitaExpandedSetup<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()> + AkitaSerialize,
+    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
 {
-    /// Deserialize a trusted cached verifier setup while skipping public-matrix
-    /// rederivation.
+    /// Deserialize setup bytes while trusting the cached matrix contents.
     ///
-    /// Use this only when the serialized setup blob was produced inside a
-    /// trusted host-side cache boundary. General verifier setup decoding should
-    /// use [`AkitaDeserialize`] so the matrix is checked against the seed.
-    pub fn deserialize_with_trusted_cached_matrix<R: Read>(
-        reader: R,
+    /// This is only for benchmark/profile artifacts whose host has already
+    /// checked the blob. It validates serialization structure and field
+    /// elements, but deliberately skips the expensive seed-to-matrix
+    /// rederivation performed by ordinary [`AkitaDeserialize`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a serialization error for malformed seed or matrix bytes.
+    pub fn deserialize_trusted_cached_matrix<R: Read>(
+        mut reader: R,
         compress: Compress,
-        validate: Validate,
     ) -> Result<Self, SerializationError> {
-        Ok(Self {
-            expanded: Arc::new(AkitaExpandedSetup::deserialize_with_trusted_cached_matrix(
-                reader, compress, validate,
-            )?),
-        })
+        let seed =
+            AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, Validate::Yes, &())?;
+        let shared_matrix =
+            FlatMatrix::<F>::deserialize_with_mode(&mut reader, compress, Validate::Yes, &())?;
+        validate_public_matrix_shape_matches_seed(&shared_matrix, &seed)?;
+        Ok(Self::from_trusted_seed_derived_parts_unchecked(
+            seed,
+            shared_matrix,
+        ))
     }
 }
 
@@ -170,59 +168,59 @@ pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {
     let ring_elements: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..total_ring_elements)
-        .map(|idx| {
-            let mut entry_rng = ShakeXofRng::new(seed, idx);
-            CyclotomicRing::random(&mut entry_rng)
-        })
+        .map(|idx| derive_public_matrix_ring(seed, idx))
         .collect();
 
-    // SAFETY: CyclotomicRing<F, D> is #[repr(transparent)] over [F; D], so
-    // Vec<CyclotomicRing<F, D>> and Vec<F> share the same backing allocation
-    // layout (same element alignment, same total byte count).
-    let data = unsafe {
-        let ptr = ring_elements.as_ptr() as *mut F;
-        let len = ring_elements.len() * D;
-        let cap = ring_elements.capacity() * D;
-        std::mem::forget(ring_elements);
-        Vec::from_raw_parts(ptr, len, cap)
-    };
+    let mut data = Vec::with_capacity(ring_elements.len() * D);
+    for ring in ring_elements {
+        data.extend_from_slice(ring.coefficients());
+    }
 
     FlatMatrix::from_flat_data(data, D)
 }
 
-/// Fallible public matrix derivation for runtime-selected generation
-/// dimensions.
+fn derive_public_matrix_ring<F: FieldCore + RandomSampling, const D: usize>(
+    seed: &PublicMatrixSeed,
+    flat_index: usize,
+) -> CyclotomicRing<F, D> {
+    let mut entry_rng = ShakeXofRng::new(seed, flat_index);
+    CyclotomicRing::random(&mut entry_rng)
+}
+
+fn derive_public_matrix_coefficients<F: FieldCore + RandomSampling>(
+    seed: &PublicMatrixSeed,
+    flat_index: usize,
+    ring_dim: usize,
+) -> Vec<F> {
+    let mut entry_rng = ShakeXofRng::new(seed, flat_index);
+    (0..ring_dim).map(|_| F::random(&mut entry_rng)).collect()
+}
+
+/// Check that a materialized public matrix has exactly the shape declared by
+/// `seed`.
 ///
 /// # Errors
 ///
-/// Returns an error if `gen_ring_dim` is zero, if the field-element count
-/// overflows, or if the output allocation cannot be reserved.
-pub fn derive_public_matrix_flat_with_dimension<F: FieldCore + RandomSampling>(
-    total_ring_elements: usize,
-    gen_ring_dim: usize,
-    seed: &PublicMatrixSeed,
-) -> Result<FlatMatrix<F>, SerializationError> {
-    if gen_ring_dim == 0 {
+/// Returns an error if either side is structurally malformed or if the matrix
+/// generation dimension / length differs from the seed.
+pub fn validate_public_matrix_shape_matches_seed<F: FieldCore + Valid>(
+    shared_matrix: &FlatMatrix<F>,
+    seed: &AkitaSetupSeed,
+) -> Result<(), SerializationError> {
+    seed.check()?;
+    shared_matrix.check()?;
+    let gen_ring_dim = shared_matrix.gen_ring_dim();
+    if gen_ring_dim != seed.gen_ring_dim {
         return Err(SerializationError::InvalidData(
-            "public matrix generation dimension must be non-zero".to_string(),
+            "setup shared_matrix generation dimension does not match setup seed".to_string(),
         ));
     }
-    let total_fields = total_ring_elements
-        .checked_mul(gen_ring_dim)
-        .ok_or_else(|| {
-            SerializationError::InvalidData("public matrix field count overflow".to_string())
-        })?;
-    let mut data = Vec::new();
-    data.try_reserve_exact(total_fields).map_err(|_| {
-        SerializationError::InvalidData("public matrix allocation failed".to_string())
-    })?;
-    for idx in 0..total_ring_elements {
-        let mut entry_rng = ShakeXofRng::new(seed, idx);
-        for _ in 0..gen_ring_dim {
-            data.push(F::random(&mut entry_rng));
-        }
+    if shared_matrix.total_ring_elements() != seed.total_ring_elements {
+        return Err(SerializationError::InvalidData(
+            "setup shared_matrix length does not match setup seed".to_string(),
+        ));
     }
-    Ok(FlatMatrix::from_flat_data(data, gen_ring_dim))
+    Ok(())
 }
 
 /// Check that a materialized public matrix is exactly the deterministic matrix
@@ -234,23 +232,21 @@ pub fn derive_public_matrix_flat_with_dimension<F: FieldCore + RandomSampling>(
 /// differs from the seed-derived public matrix.
 pub fn validate_public_matrix_matches_seed<F: FieldCore + RandomSampling + Valid>(
     shared_matrix: &FlatMatrix<F>,
-    seed: &PublicMatrixSeed,
+    seed: &AkitaSetupSeed,
 ) -> Result<(), SerializationError> {
-    shared_matrix.check()?;
+    validate_public_matrix_shape_matches_seed(shared_matrix, seed)?;
     let gen_ring_dim = shared_matrix.gen_ring_dim();
-    if gen_ring_dim == 0 {
-        return Err(SerializationError::InvalidData(
-            "public matrix generation dimension must be non-zero".to_string(),
-        ));
-    }
     for (idx, coeffs) in shared_matrix
         .as_field_slice()
         .chunks_exact(gen_ring_dim)
         .enumerate()
     {
-        let mut entry_rng = ShakeXofRng::new(seed, idx);
-        for coeff in coeffs {
-            if *coeff != F::random(&mut entry_rng) {
+        for (actual, expected) in coeffs.iter().zip(derive_public_matrix_coefficients(
+            &seed.public_matrix_seed,
+            idx,
+            gen_ring_dim,
+        )) {
+            if *actual != expected {
                 return Err(SerializationError::InvalidData(
                     "setup shared_matrix does not match public matrix seed".to_string(),
                 ));
@@ -326,6 +322,21 @@ impl Valid for AkitaSetupSeed {
                 "setup seed max_num_points must be at least 1".to_string(),
             ));
         }
+        if self.gen_ring_dim == 0 {
+            return Err(SerializationError::InvalidData(
+                "setup seed gen_ring_dim must be non-zero".to_string(),
+            ));
+        }
+        if self.total_ring_elements == 0 {
+            return Err(SerializationError::InvalidData(
+                "setup seed total_ring_elements must be non-zero".to_string(),
+            ));
+        }
+        if !self.total_ring_elements.is_multiple_of(self.max_stride) {
+            return Err(SerializationError::InvalidData(
+                "setup seed total_ring_elements must be a multiple of max_stride".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -343,6 +354,10 @@ impl AkitaSerialize for AkitaSetupSeed {
         self.max_num_points
             .serialize_with_mode(&mut writer, compress)?;
         self.max_stride.serialize_with_mode(&mut writer, compress)?;
+        self.gen_ring_dim
+            .serialize_with_mode(&mut writer, compress)?;
+        self.total_ring_elements
+            .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
         Ok(())
     }
@@ -352,6 +367,8 @@ impl AkitaSerialize for AkitaSetupSeed {
             + self.max_num_batched_polys.serialized_size(compress)
             + self.max_num_points.serialized_size(compress)
             + self.max_stride.serialized_size(compress)
+            + self.gen_ring_dim.serialized_size(compress)
+            + self.total_ring_elements.serialized_size(compress)
             + 32
     }
 }
@@ -369,6 +386,9 @@ impl AkitaDeserialize for AkitaSetupSeed {
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_num_points = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_stride = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let total_ring_elements =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
         let out = Self {
@@ -376,6 +396,8 @@ impl AkitaDeserialize for AkitaSetupSeed {
             max_num_batched_polys,
             max_num_points,
             max_stride,
+            gen_ring_dim,
+            total_ring_elements,
             public_matrix_seed,
         };
         if matches!(validate, Validate::Yes) {
@@ -387,8 +409,9 @@ impl AkitaDeserialize for AkitaSetupSeed {
 
 impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize> Valid for AkitaExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        self.check_trusted_cached_matrix()?;
-        validate_public_matrix_matches_seed(&self.shared_matrix, &self.seed.public_matrix_seed)?;
+        self.seed.check()?;
+        self.shared_matrix.check()?;
+        validate_public_matrix_matches_seed(&self.shared_matrix, &self.seed)?;
         Ok(())
     }
 }
@@ -425,11 +448,14 @@ where
         let seed = AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let shared_matrix =
             FlatMatrix::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let out = Self::from_parts(seed, shared_matrix)?;
         if matches!(validate, Validate::Yes) {
-            out.check()?;
+            Self::from_verified_parts(seed, shared_matrix)
+        } else {
+            Ok(Self::from_trusted_seed_derived_parts_unchecked(
+                seed,
+                shared_matrix,
+            ))
         }
-        Ok(out)
     }
 }
 
@@ -479,10 +505,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use akita_field::{Fp64, Prime128Offset275};
 
     type F = Prime128Offset275;
     const D: usize = 4;
+    type SmallF = Fp64<4294967197>;
+    const SMALL_D: usize = 64;
 
     fn seed(public_matrix_seed: PublicMatrixSeed) -> AkitaSetupSeed {
         AkitaSetupSeed {
@@ -490,6 +518,8 @@ mod tests {
             max_num_batched_polys: 1,
             max_num_points: 1,
             max_stride: 2,
+            gen_ring_dim: D,
+            total_ring_elements: 2,
             public_matrix_seed,
         }
     }
@@ -500,7 +530,12 @@ mod tests {
         let wrong_seed = [9u8; 32];
         let wrong_matrix = derive_public_matrix_flat::<F, D>(2, &wrong_seed);
         let setup = AkitaVerifierSetup {
-            expanded: Arc::new(AkitaExpandedSetup::from_parts(setup_seed, wrong_matrix).unwrap()),
+            expanded: Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    setup_seed,
+                    wrong_matrix,
+                ),
+            ),
         };
 
         let mut bytes = Vec::new();
@@ -513,23 +548,87 @@ mod tests {
     }
 
     #[test]
-    fn trusted_cached_verifier_setup_decode_skips_matrix_rederivation() {
+    fn strict_verifier_setup_decode_rejects_truncated_seed_prefix_matrix() {
         let setup_seed = seed([7u8; 32]);
-        let wrong_seed = [9u8; 32];
-        let wrong_matrix = derive_public_matrix_flat::<F, D>(2, &wrong_seed);
+        let short_matrix = derive_public_matrix_flat::<F, D>(1, &setup_seed.public_matrix_seed);
         let setup = AkitaVerifierSetup {
-            expanded: Arc::new(AkitaExpandedSetup::from_parts(setup_seed, wrong_matrix).unwrap()),
+            expanded: Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    setup_seed,
+                    short_matrix,
+                ),
+            ),
         };
 
         let mut bytes = Vec::new();
         setup.serialize_compressed(&mut bytes).unwrap();
-        let decoded = AkitaVerifierSetup::<F>::deserialize_with_trusted_cached_matrix(
-            &bytes[..],
-            Compress::Yes,
-            Validate::Yes,
-        )
-        .unwrap();
+        let err = AkitaVerifierSetup::<F>::deserialize_compressed(&bytes[..], &()).unwrap_err();
 
-        assert_eq!(decoded, setup);
+        assert!(err
+            .to_string()
+            .contains("setup shared_matrix length does not match setup seed"));
+    }
+
+    #[test]
+    fn trusted_cached_setup_decode_still_rejects_shape_mismatch() {
+        let setup_seed = seed([7u8; 32]);
+        let short_matrix = derive_public_matrix_flat::<F, D>(1, &setup_seed.public_matrix_seed);
+        let setup =
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(setup_seed, short_matrix);
+
+        let mut bytes = Vec::new();
+        setup.serialize_compressed(&mut bytes).unwrap();
+        let err =
+            AkitaExpandedSetup::<F>::deserialize_trusted_cached_matrix(&bytes[..], Compress::Yes)
+                .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("setup shared_matrix length does not match setup seed"));
+    }
+
+    #[test]
+    fn trusted_cached_setup_decode_accepts_shape_valid_content_mismatch() {
+        let setup_seed = seed([7u8; 32]);
+        let wrong_matrix = derive_public_matrix_flat::<F, D>(2, &[9u8; 32]);
+        let setup =
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(setup_seed, wrong_matrix);
+
+        let mut bytes = Vec::new();
+        setup.serialize_compressed(&mut bytes).unwrap();
+        AkitaExpandedSetup::<F>::deserialize_trusted_cached_matrix(&bytes[..], Compress::Yes)
+            .expect("trusted cached path skips coefficient rederivation only");
+    }
+
+    #[test]
+    fn flat_derivation_is_deterministic_for_same_seed() {
+        let seed = [42u8; 32];
+        let m1 = derive_public_matrix_flat::<SmallF, SMALL_D>(15, &seed);
+        let m2 = derive_public_matrix_flat::<SmallF, SMALL_D>(15, &seed);
+        assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn flat_derivation_is_prefix_stable() {
+        let seed = [7u8; 32];
+        let small = derive_public_matrix_flat::<SmallF, SMALL_D>(6, &seed);
+        let large = derive_public_matrix_flat::<SmallF, SMALL_D>(24, &seed);
+        let small_view = small.ring_view::<SMALL_D>(1, 6).unwrap();
+        let large_view = large.ring_view::<SMALL_D>(1, 6).unwrap();
+        for c in 0..6 {
+            assert_eq!(small_view.row(0).unwrap()[c], large_view.row(0).unwrap()[c]);
+        }
+    }
+
+    #[test]
+    fn different_shapes_from_same_flat() {
+        let seed = [13u8; 32];
+        let flat = derive_public_matrix_flat::<SmallF, SMALL_D>(12, &seed);
+        let view_3x4 = flat.ring_view::<SMALL_D>(3, 4).unwrap();
+        let view_2x6 = flat.ring_view::<SMALL_D>(2, 6).unwrap();
+
+        assert_eq!(view_3x4.row(0).unwrap()[0], view_2x6.row(0).unwrap()[0]);
+        assert_eq!(view_3x4.row(0).unwrap()[3], view_2x6.row(0).unwrap()[3]);
+        assert_ne!(view_3x4.row(1).unwrap()[0], view_2x6.row(1).unwrap()[0]);
     }
 }

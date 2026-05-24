@@ -226,3 +226,72 @@ pub(super) fn first_label_index_after(
         .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
         .map(|offset| start + offset)
 }
+
+#[cfg(feature = "logging-transcript")]
+fn is_label_or_extension_limb(candidate: &[u8], base: &[u8]) -> bool {
+    if candidate == base {
+        return true;
+    }
+    let Some(suffix_start) = candidate.len().checked_sub(12) else {
+        return false;
+    };
+    candidate.starts_with(base)
+        && candidate.len() == base.len() + 12
+        && candidate[base.len()] == 0xff
+        && suffix_start == base.len()
+        && candidate[candidate.len() - 3..] == *b"ext"
+}
+
+#[cfg(feature = "logging-transcript")]
+pub(super) fn first_label_or_extension_limb_index_after(
+    events: &[akita_transcript::TranscriptEvent],
+    start: usize,
+    label: &[u8],
+) -> Option<usize> {
+    events[start..]
+        .iter()
+        .position(|event| {
+            event_label(event).is_some_and(|candidate| is_label_or_extension_limb(candidate, label))
+        })
+        .map(|offset| start + offset)
+}
+
+#[cfg(feature = "logging-transcript")]
+pub(super) fn assert_terminal_event_order_if_present(
+    events: &[akita_transcript::TranscriptEvent],
+) -> Option<usize> {
+    use akita_transcript::labels;
+
+    let w_hat = first_label_index(events, labels::ABSORB_TERMINAL_W_HAT)?;
+    let sparse_seed = first_label_or_extension_limb_index_after(
+        events,
+        w_hat,
+        labels::CHALLENGE_SPARSE_CHALLENGE,
+    )
+    .expect("terminal transcript must squeeze sparse seed");
+    let remainder =
+        first_label_index_after(events, sparse_seed, labels::ABSORB_TERMINAL_W_REMAINDER)
+            .expect("terminal transcript must absorb final-witness remainder");
+    let alpha =
+        first_label_or_extension_limb_index_after(events, remainder, labels::CHALLENGE_RING_SWITCH)
+            .expect("terminal transcript must squeeze ring-switch alpha");
+    let tau1 = first_label_or_extension_limb_index_after(events, alpha, labels::CHALLENGE_TAU1)
+        .expect("terminal transcript must squeeze tau1");
+
+    assert!(w_hat < sparse_seed, "w_hat must precede sparse seed");
+    assert!(
+        sparse_seed < remainder,
+        "sparse seed must precede witness remainder"
+    );
+    assert!(remainder < alpha, "remainder must precede alpha");
+    assert!(alpha < tau1, "alpha must precede tau1");
+    assert!(
+        events[w_hat..]
+            .iter()
+            .all(|event| event_label(event).is_none_or(|candidate| {
+                !is_label_or_extension_limb(candidate, labels::CHALLENGE_TAU0)
+            })),
+        "terminal transcript window must not squeeze tau0"
+    );
+    Some(w_hat)
+}

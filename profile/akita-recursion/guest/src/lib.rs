@@ -7,9 +7,7 @@
 //!
 //! - `deserialize_input`: blob -> typed `AkitaJoltInputs<F, D>`.
 //! - `transcript_init`:   construct the `AkitaTranscript`.
-//! - `akita_verify`:      `verify_batched_with_policy` (the kernel that
-//!   `akita-scheme::batched_verify` wraps; we call it directly to avoid
-//!   `std::time::Instant::now()`, which traps on the Jolt RISC-V emulator).
+//! - `akita_verify`:      timer-free `akita-config` verifier adapter.
 //!
 //! Return code:
 //!
@@ -18,16 +16,10 @@
 //! - `2` — verifier rejected the proof.
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
-use akita_field::AkitaError;
+use akita_config::{batched_verify_with_config, CommitmentConfig};
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
-use akita_types::{
-    scheduled_next_level_params, AkitaInstanceDescriptor, AkitaScheduleInputs, AlgebraSection,
-    BasisMode, CallSection, ClaimIncidenceSummary, CommittedOpenings, LevelParams, PlanSection,
-    Schedule, SetupSection, Step, VerifierClaims,
-};
-use akita_verifier::{verify_batched_with_policy, verify_root_direct_commitments_with_params};
+use akita_types::{BasisMode, CommittedOpenings, VerifierClaims};
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
@@ -36,11 +28,9 @@ const D: usize = 32;
 type Cfg = fp128::D32OneHot;
 
 const _: () = {
-    // Hard-fail at compile time if `D` drifts away from what the host
-    // artifact is encoded for. Keeping these in sync with the artifact
-    // generator (`../artifact/src/main.rs`) is the contract that lets
-    // us drop the full schedule descriptor from the blob.
-    assert!(D == 32);
+    // Hard-fail at compile time if the guest monomorphization drifts away from
+    // the config and host artifact generator (`../artifact/src/main.rs`).
+    assert!(D == <Cfg as CommitmentConfig>::D);
 };
 
 // Memory limits sized for the Akita verifier with `D=32 OneHot`. The
@@ -73,7 +63,18 @@ fn akita_verify(input: &[u8]) -> u32 {
     // emits `postcard::take_from_bytes::<&[u8]>(input_slice)`, which
     // postcard implements as a borrowed `Bytes` slice.
     start_cycle_tracking("deserialize_input");
-    let decoded = match AkitaJoltInputs::<F, D>::read_from_bytes(input) {
+    #[cfg(any(
+        feature = "trusted-benchmark-artifact",
+        akita_trusted_benchmark_artifact
+    ))]
+    let decoded_result = AkitaJoltInputs::<F, D>::read_trusted_host_artifact_bytes(input);
+    #[cfg(not(any(
+        feature = "trusted-benchmark-artifact",
+        akita_trusted_benchmark_artifact
+    )))]
+    let decoded_result = AkitaJoltInputs::<F, D>::read_from_bytes(input);
+
+    let decoded = match decoded_result {
         Ok(decoded) => decoded,
         Err(_) => {
             end_cycle_tracking("deserialize_input");
@@ -97,66 +98,13 @@ fn akita_verify(input: &[u8]) -> u32 {
         },
     )];
 
-    // We replicate the body of `AkitaCommitmentScheme::<D, Cfg>::batched_verify`
-    // here (verbatim except for the `Instant::now()` + final `tracing::info!`
-    // line that report wall-clock elapsed). Jolt's RISC-V runtime panics on
-    // `std::time::Instant::now()` (no `clock_gettime` support), so calling
-    // the scheme entry point directly would abort before any real verifier
-    // work runs.
     start_cycle_tracking("akita_verify");
-    let result = verify_batched_with_policy::<F, F, F, _, D, _, _, _, _, _>(
+    let result = batched_verify_with_config::<F, _, D, Cfg>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
         claims,
         BasisMode::Lagrange,
-        |incidence_summary| <Cfg as CommitmentConfig>::get_params_for_prove(incidence_summary),
-        |schedule, next_inputs| {
-            scheduled_next_level_params(
-                schedule,
-                1,
-                next_inputs,
-                <Cfg as CommitmentConfig>::level_params_with_log_basis,
-            )
-        },
-        <Cfg as CommitmentConfig>::get_params_for_batched_commitment,
-        |transcript, incidence_summary, schedule, basis| {
-            let setup_levels = descriptor_setup_levels(incidence_summary, schedule)?;
-            let descriptor = AkitaInstanceDescriptor::new(
-                AlgebraSection::for_fields::<
-                    F,
-                    <Cfg as CommitmentConfig>::ClaimField,
-                    <Cfg as CommitmentConfig>::ChallengeField,
-                    D,
-                >()?,
-                SetupSection::from_parts(
-                    <Cfg as CommitmentConfig>::decomposition(),
-                    <Cfg as CommitmentConfig>::sis_modulus_family(),
-                    &decoded.verifier_setup.expanded.seed,
-                    &setup_levels,
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidSetup(format!("descriptor setup identity: {err}"))
-                })?,
-                PlanSection::from_schedule(schedule),
-                CallSection::from_incidence(incidence_summary, basis)?,
-            );
-            let descriptor_bytes = descriptor.canonical_bytes().map_err(|err| {
-                AkitaError::InvalidSetup(format!("descriptor serialization: {err}"))
-            })?;
-            transcript.bind_instance_bytes(&descriptor_bytes);
-            Ok(())
-        },
-        |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
-            verify_root_direct_commitments_with_params::<F, D>(
-                witnesses,
-                setup,
-                commitments,
-                incidence_summary,
-                params,
-                direct_commitment_payload,
-            )
-        },
     );
     end_cycle_tracking("akita_verify");
 
@@ -164,45 +112,4 @@ fn akita_verify(input: &[u8]) -> u32 {
         Ok(()) => 0,
         Err(_) => 2,
     }
-}
-
-fn descriptor_setup_levels(
-    incidence: &ClaimIncidenceSummary,
-    schedule: &Schedule,
-) -> Result<Vec<LevelParams>, AkitaError> {
-    let mut setup_levels = Vec::new();
-    let mut previous_next_w_len = None;
-    for (level, step) in schedule.steps.iter().enumerate() {
-        match step {
-            Step::Fold(fold) => {
-                setup_levels.push(fold.params.clone());
-                previous_next_w_len = Some(fold.next_w_len);
-            }
-            Step::Direct(direct) => {
-                if level == 0 {
-                    setup_levels.push(Cfg::get_params_for_batched_commitment(incidence)?);
-                } else {
-                    let current_w_len = previous_next_w_len.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "direct schedule step has no preceding fold".to_string(),
-                        )
-                    })?;
-                    setup_levels.push(Cfg::level_params_with_log_basis(
-                        AkitaScheduleInputs {
-                            num_vars: incidence.num_vars(),
-                            level,
-                            current_w_len,
-                        },
-                        direct.log_basis(Cfg::decomposition().field_bits()),
-                    ));
-                }
-            }
-        }
-    }
-    if setup_levels.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "descriptor cannot bind an empty schedule".to_string(),
-        ));
-    }
-    Ok(setup_levels)
 }

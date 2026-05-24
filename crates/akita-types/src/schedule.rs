@@ -1082,120 +1082,6 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
     }
 }
 
-/// Logical digit range occupied by terminal `w_hat` inside the final witness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TerminalWitnessSegmentLayout {
-    /// Offset of the terminal `w_hat` digit range in final-witness order.
-    pub w_hat_digit_offset: usize,
-    /// Number of logical terminal `w_hat` digits.
-    pub w_hat_digit_count: usize,
-}
-
-impl TerminalWitnessSegmentLayout {
-    /// Exclusive end of the `w_hat` digit range.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on arithmetic overflow.
-    pub fn w_hat_digit_end(&self) -> Result<usize, AkitaError> {
-        self.w_hat_digit_offset
-            .checked_add(self.w_hat_digit_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat range overflow".to_string()))
-    }
-}
-
-/// Convert signed terminal digits to their canonical transcript byte encoding.
-#[must_use]
-pub fn i8_digits_to_bytes(digits: &[i8]) -> Vec<u8> {
-    digits.iter().copied().map(|digit| digit as u8).collect()
-}
-
-/// Extract the logical terminal `w_hat` bytes from a packed final-witness
-/// digit stream.
-#[must_use]
-pub fn terminal_witness_w_hat_bytes(
-    digits: &[i8],
-    layout: TerminalWitnessSegmentLayout,
-) -> Option<Vec<u8>> {
-    let w_hat_start = layout.w_hat_digit_offset;
-    let w_hat_end = layout.w_hat_digit_end().ok()?;
-    if w_hat_end > digits.len() {
-        return None;
-    }
-    let bytes = i8_digits_to_bytes(&digits[w_hat_start..w_hat_end]);
-    (!bytes.is_empty()).then_some(bytes)
-}
-
-/// Extract the final-witness complement that remains after the terminal
-/// `w_hat` segment has already been transcript-bound.
-#[must_use]
-pub fn terminal_witness_remainder_bytes(
-    digits: &[i8],
-    layout: TerminalWitnessSegmentLayout,
-) -> Option<Vec<u8>> {
-    let w_hat_start = layout.w_hat_digit_offset;
-    let w_hat_end = layout.w_hat_digit_end().ok()?;
-    if w_hat_end > digits.len() {
-        return None;
-    }
-    let remainder_len = digits.len().checked_sub(layout.w_hat_digit_count)?;
-    let mut bytes = Vec::with_capacity(remainder_len);
-    bytes.extend(i8_digits_to_bytes(&digits[..w_hat_start]));
-    bytes.extend(i8_digits_to_bytes(&digits[w_hat_end..]));
-    (!bytes.is_empty()).then_some(bytes)
-}
-
-/// Derive the terminal logical `w_hat` digit range from descriptor-bound layout
-/// data.
-///
-/// The terminal proof carries one canonical packed final witness, but
-/// transcript replay binds the logical `w_hat` segment before sparse-seed
-/// sampling. This helper mirrors the segment ordering used when
-/// `ring_switch_build_w` emits final-witness coefficients.
-///
-/// # Errors
-///
-/// Returns an error when counts overflow or the level has an invalid ring
-/// dimension.
-pub fn terminal_witness_segment_layout(
-    lp: &LevelParams,
-    num_w_vectors: usize,
-    num_public_rows: usize,
-) -> Result<TerminalWitnessSegmentLayout, AkitaError> {
-    if lp.ring_dimension == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "terminal witness layout has zero ring dimension".to_string(),
-        ));
-    }
-    let w_hat_ring_count = num_w_vectors
-        .checked_mul(lp.num_blocks)
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat width overflow".to_string()))?;
-    let z_pre_ring_count = num_public_rows
-        .checked_mul(lp.inner_width())
-        .and_then(|n| n.checked_mul(lp.num_digits_fold))
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal z-pre width overflow".to_string()))?;
-    let w_hat_digit_count = w_hat_ring_count
-        .checked_mul(lp.ring_dimension)
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat digit overflow".to_string()))?;
-    if w_hat_digit_count == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "terminal w_hat digit range is empty".to_string(),
-        ));
-    }
-    let w_hat_digit_offset = if lp.m_vars >= lp.r_vars {
-        z_pre_ring_count
-            .checked_mul(lp.ring_dimension)
-            .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat offset overflow".to_string()))?
-    } else {
-        0
-    };
-    Ok(TerminalWitnessSegmentLayout {
-        w_hat_digit_offset,
-        w_hat_digit_count,
-    })
-}
-
 /// Parameters for one fold level in the computed schedule.
 #[derive(Clone, Debug)]
 pub struct FoldStep {
@@ -1253,6 +1139,58 @@ pub struct Schedule {
     pub steps: Vec<Step>,
     /// Exact total proof bytes for the schedule.
     pub total_bytes: usize,
+}
+
+impl Schedule {
+    /// Append the descriptor digest encoding for this effective schedule.
+    ///
+    /// Kept next to [`Schedule`] so protocol-affecting step field changes are
+    /// reviewed with their Fiat-Shamir binding.
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        push_usize(bytes, self.steps.len());
+        for step in &self.steps {
+            match step {
+                Step::Fold(fold) => {
+                    bytes.push(0);
+                    fold.params.append_descriptor_bytes(bytes);
+                    push_usize(bytes, fold.current_w_len);
+                    push_usize(bytes, fold.delta_fold_per_poly);
+                    push_usize(bytes, fold.w_ring);
+                    push_usize(bytes, fold.next_w_len);
+                    push_usize(bytes, fold.level_bytes);
+                }
+                Step::Direct(direct) => {
+                    bytes.push(1);
+                    push_usize(bytes, direct.current_w_len);
+                    append_direct_witness_shape_descriptor_bytes(bytes, &direct.witness_shape);
+                    push_usize(bytes, direct.direct_bytes);
+                }
+            }
+        }
+        push_usize(bytes, self.total_bytes);
+    }
+}
+
+fn push_usize(bytes: &mut Vec<u8>, value: usize) {
+    bytes.extend_from_slice(&(value as u64).to_le_bytes());
+}
+
+fn push_u32(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn append_direct_witness_shape_descriptor_bytes(bytes: &mut Vec<u8>, shape: &DirectWitnessShape) {
+    match shape {
+        DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
+            bytes.push(0);
+            push_usize(bytes, *num_elems);
+            push_u32(bytes, *bits_per_elem);
+        }
+        DirectWitnessShape::FieldElements(coeff_len) => {
+            bytes.push(1);
+            push_usize(bytes, *coeff_len);
+        }
+    }
 }
 
 /// Witness length entering the root fold, in field elements.
@@ -1433,6 +1371,25 @@ pub fn schedule_root_fold_params(schedule: &Schedule) -> Option<&LevelParams> {
     schedule_root_fold_step(schedule).map(|step| &step.params)
 }
 
+/// Return the terminal direct witness shape from a runtime schedule.
+///
+/// # Errors
+///
+/// Returns an error if the schedule does not end in a direct witness handoff.
+pub fn schedule_terminal_direct_witness_shape(
+    schedule: &Schedule,
+) -> Result<&DirectWitnessShape, AkitaError> {
+    match schedule.steps.last() {
+        Some(Step::Direct(step)) => Ok(&step.witness_shape),
+        Some(Step::Fold(_)) => Err(AkitaError::InvalidSetup(
+            "schedule must end in a terminal direct witness step".to_string(),
+        )),
+        None => Err(AkitaError::InvalidSetup(
+            "schedule is missing terminal direct witness step".to_string(),
+        )),
+    }
+}
+
 /// Resolve one scheduled level's active Akita params.
 ///
 /// Fold steps carry concrete params in the schedule. Direct steps only carry
@@ -1542,80 +1499,6 @@ mod tests {
         assert_eq!(step.current_w_len, 8);
         assert_eq!(step.witness_shape, DirectWitnessShape::FieldElements(8));
         assert_eq!(step.direct_bytes, 0);
-    }
-
-    fn segment_test_params(m_vars: usize, r_vars: usize) -> LevelParams {
-        LevelParams::params_only(
-            SisModulusFamily::Q128,
-            8,
-            3,
-            2,
-            3,
-            2,
-            SparseChallengeConfig::Uniform {
-                weight: 3,
-                nonzero_coeffs: vec![-1, 1],
-            },
-        )
-        .with_decomp(m_vars, r_vars, 2, 3, 4, 0)
-        .expect("segment test params")
-    }
-
-    #[test]
-    fn terminal_witness_segment_layout_places_w_hat_after_z_when_z_first() {
-        let lp = segment_test_params(3, 2);
-        let layout = terminal_witness_segment_layout(&lp, 5, 2).unwrap();
-
-        assert_eq!(
-            layout.w_hat_digit_offset,
-            2 * lp.inner_width() * lp.num_digits_fold * lp.ring_dimension
-        );
-        assert_eq!(
-            layout.w_hat_digit_count,
-            5 * lp.num_blocks * lp.num_digits_open * lp.ring_dimension
-        );
-    }
-
-    #[test]
-    fn terminal_witness_segment_layout_places_w_hat_first_when_w_first() {
-        let lp = segment_test_params(1, 3);
-        let layout = terminal_witness_segment_layout(&lp, 5, 2).unwrap();
-
-        assert_eq!(layout.w_hat_digit_offset, 0);
-        assert_eq!(
-            layout.w_hat_digit_count,
-            5 * lp.num_blocks * lp.num_digits_open * lp.ring_dimension
-        );
-    }
-
-    #[test]
-    fn terminal_witness_byte_helpers_split_w_hat_and_remainder() {
-        let layout = TerminalWitnessSegmentLayout {
-            w_hat_digit_offset: 2,
-            w_hat_digit_count: 3,
-        };
-        let digits = [-2, -1, 0, 1, 2, 3];
-
-        assert_eq!(
-            terminal_witness_w_hat_bytes(&digits, layout).unwrap(),
-            vec![0, 1, 2]
-        );
-        assert_eq!(
-            terminal_witness_remainder_bytes(&digits, layout).unwrap(),
-            vec![254, 255, 3]
-        );
-    }
-
-    #[test]
-    fn terminal_witness_byte_helpers_reject_bad_ranges() {
-        let layout = TerminalWitnessSegmentLayout {
-            w_hat_digit_offset: 2,
-            w_hat_digit_count: 4,
-        };
-        let digits = [0, 1, 2];
-
-        assert!(terminal_witness_w_hat_bytes(&digits, layout).is_none());
-        assert!(terminal_witness_remainder_bytes(&digits, layout).is_none());
     }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {

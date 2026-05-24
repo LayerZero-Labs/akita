@@ -66,8 +66,10 @@ dependencies = [
  "akita-challenges",
  "akita-field",
  "akita-planner",
+ "akita-serialization",
  "akita-transcript",
  "akita-types",
+ "akita-verifier",
  "tracing",
 ]
 

@@ -45,15 +45,12 @@ AKITA_NUM_VARS=32 \
 #    Trace-only (no Jolt prover) because at nv=32 the trace is ≈ 10.4 G
 #    cycles, above the current `max_trace_length = 4 G` in the guest's
 #    `#[jolt::provable]` attribute (see "Open follow-ups" below).
-#    The symlink keeps the raw trace bytes off disk while preserving the
-#    cycle-marker output.
-rm -rf /tmp/akita-recursion-targets-null
-mkdir -p /tmp/akita-recursion-targets-null
-ln -s /dev/null /tmp/akita-recursion-targets-null/akita_verify.trace
+#    `--trace-output /dev/null` keeps the raw trace bytes off disk while
+#    preserving the cycle-marker output.
 ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
     --trace-only \
-    --target-dir /tmp/akita-recursion-targets-null \
+    --trace-output /dev/null \
     --input target/akita_recursion_inputs_nv32.bin
 ```
 
@@ -134,6 +131,7 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 | --------------------- | ------------------------------------ | -------------------------------------------- |
 | `--input <path>`      | `target/akita_recursion_inputs.bin`  | Path to the blob produced by `artifact`.     |
 | `--target-dir <path>` | `/tmp/akita-recursion-targets`       | Jolt's per-program build cache.              |
+| `--trace-output <path>` | `<target-dir>/akita_verify.trace`  | Trace file path for `--trace-only`.          |
 | `--trace-only`        | off                                  | Skip preprocessing + Jolt prove/verify.      |
 
 ## How it works
@@ -149,20 +147,25 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
    preprocess/prove/verify (or just the trace under `--trace-only`),
    and forwards per-marker cycle counts through `tracing`.
 3. **`guest`** (running inside the Jolt RISC-V emulator) decodes the
-   blob and invokes `akita_verifier::verify_batched_with_policy`
-   directly — bypassing `akita-scheme::batched_verify`, which would
-   otherwise call `Instant::now()` (the Jolt runtime doesn't implement
-   `clock_gettime`, and the guest aborts there). Three
-   `start_cycle_tracking` / `end_cycle_tracking` pairs wrap
-   `deserialize_input`, `transcript_init`, and the verifier kernel.
-   The guest constructs an unbound verifier transcript and binds the canonical
-   instance descriptor inside `verify_batched_with_policy`; it must not use a
-   prover-side placeholder transcript, because Spongefish prover state may ask
-   for entropy that the Jolt guest runtime does not provide.
-   The verifier setup is decoded through the explicitly trusted cached-matrix
-   path: shape metadata and field elements are still validated, but the guest
-   skips rederiving the full public matrix from the seed because the blob is
-   produced by the host-side artifact generator.
+   blob and invokes `akita_config::batched_verify_with_config`, the
+   timer-free config-backed verifier adapter. Three `start_cycle_tracking` /
+   `end_cycle_tracking` pairs wrap `deserialize_input`, `transcript_init`,
+   and the verifier kernel.
+   The guest constructs an unbound verifier transcript and the shared
+   timer-free verifier adapter binds the canonical instance descriptor; it must
+   not use a prover-side placeholder transcript, because Spongefish prover
+   state may ask for entropy that the Jolt guest runtime does not provide.
+   This profile is a trusted host-artifact benchmark: the guest decodes the
+   verifier setup through the explicitly trusted cached-matrix path. Seed/matrix
+   shape metadata and field elements are still validated, but the guest skips
+   checking that the expanded setup matrix coefficients equal the matrix derived
+   from the seed because the blob is produced and sanity-checked by the
+   host-side artifact generator. Plain `--features guest` builds use strict
+   setup decoding; the host binary sets
+   `AKITA_RECURSION_TRUSTED_BENCHMARK_ARTIFACT=1` before Jolt compiles the
+   benchmark RISC-V ELF, because this pinned Jolt SDK hard-codes the guest
+   feature list to `guest`. A production recursion circuit must use strict
+   setup validation or bind an externally checked setup commitment.
 
 ## Why D=32 has more zkVM cycles than D=64
 
@@ -239,10 +242,10 @@ cycles at nv=20 and 4 G+ at nv=32.
 
 4. **Upstreaming candidates** — small, mechanical changes that would
    benefit any future Jolt integration with Akita:
-   - Optional feature on `akita-scheme` that gates the `Instant::now()`
-     + `tracing::info!` epilogue out of `batched_verify` (so the guest
-     could call the scheme entry point directly instead of replicating
-     its body).
+   - If the public trait entry point ever becomes timer-free and verifier-only,
+     it should delegate to the same `akita_config::batched_verify_with_config`
+     adapter; the guest should remain free of `akita-scheme`, `akita-prover`,
+     and `akita-setup` dependencies.
    - `AkitaSerialize` / `AkitaDeserialize` impls for proof-shape types
      (already added under `akita-types::proof` and used by the `glue`
      crate).

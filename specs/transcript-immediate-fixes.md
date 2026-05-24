@@ -76,16 +76,17 @@ Land the immediate Fiat-Shamir fixes that are independent of grinding:
 - Do not migrate Akita to a NARG proof tape or make proof fields transcript
   owned. The structured proof format remains in place.
 
-- Do not add compatibility aliases such as "artifact digest" wrappers. This is
-  a full cutover to deterministic setup identity naming.
+- Do not add compatibility aliases or derived digest wrapper artifacts. This is
+  a full cutover to seed-derived setup identity.
 
 ## Evaluation
 
 ### Acceptance Criteria
 
-- [ ] `AkitaInstanceDescriptor` setup binding uses deterministic setup identity
-      naming throughout, for example `SetupIdentityDigests` rather than
-      `SetupArtifactDigests`.
+- [ ] `AkitaInstanceDescriptor` setup binding derives setup identity directly
+      from the canonical `AkitaSetupSeed` bytes and descriptor-bound layout
+      metadata. No cached setup-identity artifact should be stored in expanded
+      setup state.
 - [ ] `SetupSection` binds `setup_seed_digest`, decomposition, SIS modulus
       family, level-parameter digest, and protocol feature mode, but contains no
       `shared_matrix_digest` or other expanded-matrix transcript digest.
@@ -129,17 +130,20 @@ Existing checks that must remain green:
 New or updated checks:
 
 - `akita-types`: descriptor serialization round trips for deterministic setup
-  identity; no stale shared-matrix digest field; cached digest validation
-  rejects mismatched seeds.
+  identity; no stale shared-matrix digest field; strict setup deserialization
+  rejects matrices that do not match the setup seed.
 
-- `akita-scheme` / setup integration: descriptor construction uses seed and
-  layout/schedule metadata, not a full shared matrix digest.
+- `akita-config` / verifier integration: descriptor construction uses seed and
+  layout/schedule metadata, not a full shared matrix digest, and the
+  verifier-facing config adapter is available without pulling prover/setup
+  crates into recursion guests.
 
 - `profile/akita-recursion` glue/guest, if this PR touches recursion input
-  decoding: trusted cached-digest decode path still validates structure and
-  field elements; the guest starts with `AkitaTranscript::unbound_verifier`;
-  the manually inlined verifier policy binds the same descriptor bytes as the
-  scheme verifier path.
+  decoding: the benchmark-only trusted cached-matrix decode path validates
+  structure, field elements, and seed/matrix shape equality while explicitly
+  skipping seed-to-matrix coefficient rederivation; the guest starts with
+  `AkitaTranscript::unbound_verifier` and uses the same shared
+  descriptor-binding and verifier-policy helpers as the normal verifier path.
 
 - Terminal transcript-order tests: assert the public event order is
   "current commitment/opening context, terminal logical `w_hat` absorb, sparse
@@ -177,9 +181,11 @@ The expanded shared matrix is not part of `SetupSection`. It is implied by the
 setup seed and schedule/layout metadata in the transparent path. Strict
 expanded/verifier setup decoding must validate a materialized matrix by
 rederiving or checking it against the seed; that validation is separate from
-Fiat-Shamir transcript input. Trusted cache consumers, such as host-produced
-recursion blobs, may opt into a named cached-matrix decode path that preserves
-structural/field validation while skipping the expensive rederivation.
+Fiat-Shamir transcript input. Benchmark-only trusted cache consumers, such as
+host-produced recursion profiling blobs, may opt into a named cached-matrix
+decode path that preserves structural/field validation while skipping the
+expensive rederivation. Production recursion must either use strict setup
+validation or bind an externally checked setup commitment.
 
 If Akita later supports a per-deployment setup PRG salt, custom public matrix
 derivation domain, or another setup-generation input, that input must become a
@@ -188,21 +194,20 @@ configuration knob.
 
 ### Recursion Verifier Replay
 
-The `profile/akita-recursion` guest is verifier code, even though it cannot
-call `AkitaCommitmentScheme::batched_verify` directly: the scheme wrapper
-contains host-only timing/logging (`Instant::now()`) that traps under the Jolt
-RISC-V runtime. The guest may call `akita_verifier::verify_batched_with_policy`
-directly, but it must preserve the scheme verifier's transcript policy:
+The `profile/akita-recursion` guest is verifier code. It must not depend on
+`akita-scheme`, `akita-prover`, or `akita-setup`, because those crates pull in
+host-only proving/setup concerns that are not part of verifier replay. The
+guest should call the shared timer-free config adapter exposed from
+`akita-config`, preserving the same transcript and verifier policy:
 
 1. construct an unbound verifier transcript with
    `AkitaTranscript::unbound_verifier(domain)`;
-2. derive the effective schedule and level-parameter list using the same
-   `CommitmentConfig` callbacks as the scheme verifier;
-3. build `AkitaInstanceDescriptor` from algebra, setup seed identity,
-   effective schedule, and call incidence;
-4. bind the canonical descriptor bytes before any proof absorb or challenge
+2. derive the effective schedule and descriptor level-parameter list using the
+   shared config helpers;
+3. bind the canonical descriptor bytes before any proof absorb or challenge
    squeeze; and
-5. run the same root-direct commitment check callback as the scheme verifier.
+4. run the same field-role and root-direct commitment checks as the normal
+   verifier path.
 
 The guest must not use `AkitaTranscript::new` for verifier replay. That helper
 constructs a prover-side placeholder transcript for lower-level tests and may
@@ -316,22 +321,32 @@ Update:
 
 Suggested implementation order:
 
-1. Rename setup artifact digest types and constructors to setup identity names.
-2. Remove expanded-matrix digest fields from descriptor setup binding and
-   update descriptor serialization tests.
-3. Update expanded setup serialization/deserialization so cached descriptor
-   digests validate against the seed without becoming full-matrix transcript
-   input.
+1. Remove cached setup-artifact digest state from descriptor identity. Derive
+   `SetupSection` from canonical `AkitaSetupSeed` bytes plus the
+   descriptor-bound layout/schedule metadata that determines how the transparent
+   setup is interpreted.
+2. Make the setup seed carry exact generation capacity, including generation
+   ring dimension and total generated ring elements. Strict setup decoding must
+   validate the materialized matrix against those exact seed fields; the trusted
+   profile decoder may skip only that expensive seed-to-matrix coefficient
+   check while still validating structure, field elements, and seed/matrix
+   shape equality.
+3. Move the config-backed verifier-policy adapter to the config policy layer so
+   recursion guests can verify without depending on `akita-scheme`,
+   `akita-prover`, or `akita-setup`, and verifier core remains independent of
+   runtime config policy.
 4. Add terminal-specific ring-switch challenge helpers: non-terminal returns
    `alpha`, grouped `tau0`, grouped `tau1`; terminal returns only `alpha` and
    grouped `tau1`.
 5. Split terminal direct-witness transcript absorption into
    logical-`w_hat`-before-sparse-seed and remainder-before-ring-switch phases.
-6. Update recursion guest replay if verifier policy or transcript construction
-   moved: use `unbound_verifier`, bind the canonical descriptor, and keep the
-   trusted cached-matrix decode boundary explicit.
+6. Keep the trusted cached-matrix recursion decode boundary explicit and
+   gated to benchmark artifacts; plain guest builds must use strict setup
+   validation, while the profile host may opt the Jolt-compiled benchmark ELF
+   into trusted decode with an explicit build cfg. Production recursion must
+   use strict setup validation or bind an externally checked setup commitment.
 7. Add logging and tamper tests for terminal event order, absent terminal
-   `tau0`, and malformed witness rejection.
+   `tau0`, malformed witness rejection, and final-witness/layout mismatches.
 8. Run the acceptance commands.
 
 ## References

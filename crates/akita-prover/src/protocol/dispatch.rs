@@ -76,32 +76,32 @@ macro_rules! dispatch_with_ntt {
         match __d {
             32 => {
                 const $D: usize = 32;
-                let $ntt_shared = ($ntt).get_or_build_32(&($expanded).shared_matrix)?;
+                let $ntt_shared = ($ntt).get_or_build_32(&($expanded).shared_matrix())?;
                 $body
             }
             64 => {
                 const $D: usize = 64;
-                let $ntt_shared = ($ntt).get_or_build_64(&($expanded).shared_matrix)?;
+                let $ntt_shared = ($ntt).get_or_build_64(&($expanded).shared_matrix())?;
                 $body
             }
             128 => {
                 const $D: usize = 128;
-                let $ntt_shared = ($ntt).get_or_build_128(&($expanded).shared_matrix)?;
+                let $ntt_shared = ($ntt).get_or_build_128(&($expanded).shared_matrix())?;
                 $body
             }
             256 => {
                 const $D: usize = 256;
-                let $ntt_shared = ($ntt).get_or_build_256(&($expanded).shared_matrix)?;
+                let $ntt_shared = ($ntt).get_or_build_256(&($expanded).shared_matrix())?;
                 $body
             }
             512 => {
                 const $D: usize = 512;
-                let $ntt_shared = ($ntt).get_or_build_512(&($expanded).shared_matrix)?;
+                let $ntt_shared = ($ntt).get_or_build_512(&($expanded).shared_matrix())?;
                 $body
             }
             1024 => {
                 const $D: usize = 1024;
-                let $ntt_shared = ($ntt).get_or_build_1024(&($expanded).shared_matrix)?;
+                let $ntt_shared = ($ntt).get_or_build_1024(&($expanded).shared_matrix())?;
                 $body
             }
             _ => panic!("unsupported ring dimension: {__d}"),

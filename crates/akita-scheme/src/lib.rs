@@ -1,6 +1,9 @@
 //! End-to-end Akita PCS scheme orchestration.
 
-use akita_config::{CommitmentConfig, WCommitmentConfig};
+use akita_config::{
+    batched_verify_with_config, bind_instance_descriptor_for_config,
+    validate_field_roles_for_config, CommitmentConfig, WCommitmentConfig,
+};
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
@@ -19,19 +22,15 @@ use akita_prover::{
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
-use akita_types::LevelParams;
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, scheduled_fold_execution,
-    scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint, AkitaInstanceDescriptor,
-    AkitaScheduleInputs, AlgebraSection, CallSection, ClaimIncidenceSummary, PlanSection,
-    RingCommitment, Schedule, SetupSection, Step,
+    scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint, ClaimIncidenceSummary,
+    RingCommitment, Schedule,
 };
-use akita_types::{validate_ring_subfield_role, BasisMode, RingSubfieldEncoding};
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
-use akita_verifier::{
-    verify_batched_with_policy, verify_root_direct_commitments_with_params, CommitmentVerifier,
-    VerifierClaims,
-};
+use akita_types::{BasisMode, RingSubfieldEncoding};
+use akita_types::{DirectWitnessShape, LevelParams};
+use akita_verifier::{CommitmentVerifier, VerifierClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -39,31 +38,6 @@ use std::time::Instant;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AkitaCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
-}
-
-fn validate_field_roles_for_ring<F, const D: usize, Cfg>() -> Result<(), AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: RingSubfieldEncoding<F>,
-    Cfg::ChallengeField: RingSubfieldEncoding<F>,
-{
-    validate_ring_subfield_role::<F, Cfg::ClaimField, D>("claim field")?;
-    validate_ring_subfield_role::<F, Cfg::ChallengeField, D>("challenge field")?;
-    let relative_degree =
-        <Cfg::ChallengeField as akita_field::ExtField<Cfg::ClaimField>>::EXT_DEGREE;
-    let expected_challenge_degree = Cfg::CLAIM_EXT_DEGREE
-        .checked_mul(relative_degree)
-        .ok_or_else(|| AkitaError::InvalidSetup("field tower degree overflow".to_string()))?;
-    if Cfg::CHAL_EXT_DEGREE != expected_challenge_degree {
-        return Err(AkitaError::InvalidSetup(format!(
-            "challenge field degree {} does not match claim degree {} times relative degree {}",
-            Cfg::CHAL_EXT_DEGREE,
-            Cfg::CLAIM_EXT_DEGREE,
-            relative_degree
-        )));
-    }
-    Ok(())
 }
 
 fn recursive_w_commit_layout_for_d<Cfg>(
@@ -97,86 +71,6 @@ where
     }
     let schedule = Cfg::get_params_for_prove(incidence)?;
     Ok(schedule_root_fold_step(&schedule).is_some())
-}
-
-fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
-    setup: &AkitaExpandedSetup<F>,
-    incidence: &ClaimIncidenceSummary,
-    schedule: &Schedule,
-    basis: BasisMode,
-    transcript: &mut T,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField + AkitaSerialize,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: RingSubfieldEncoding<F>,
-    Cfg::ChallengeField: RingSubfieldEncoding<F>,
-{
-    let setup_levels = descriptor_setup_levels::<F, Cfg>(incidence, schedule)?;
-
-    let descriptor = AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<F, Cfg::ClaimField, Cfg::ChallengeField, D>()?,
-        SetupSection::from_parts(
-            Cfg::decomposition(),
-            Cfg::sis_modulus_family(),
-            &setup.seed,
-            &setup_levels,
-        )
-        .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
-        PlanSection::from_schedule(schedule),
-        CallSection::from_incidence(incidence, basis)?,
-    );
-    let descriptor_bytes = descriptor
-        .canonical_bytes()
-        .map_err(|err| AkitaError::InvalidSetup(format!("descriptor serialization: {err}")))?;
-    transcript.bind_instance_bytes(&descriptor_bytes);
-    Ok(())
-}
-
-fn descriptor_setup_levels<F, Cfg>(
-    incidence: &ClaimIncidenceSummary,
-    schedule: &Schedule,
-) -> Result<Vec<LevelParams>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    let mut setup_levels = Vec::new();
-    let mut previous_next_w_len = None;
-    for (level, step) in schedule.steps.iter().enumerate() {
-        match step {
-            Step::Fold(fold) => {
-                setup_levels.push(fold.params.clone());
-                previous_next_w_len = Some(fold.next_w_len);
-            }
-            Step::Direct(direct) => {
-                if level == 0 {
-                    setup_levels.push(Cfg::get_params_for_batched_commitment(incidence)?);
-                } else {
-                    let current_w_len = previous_next_w_len.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "direct schedule step has no preceding fold".to_string(),
-                        )
-                    })?;
-                    setup_levels.push(Cfg::level_params_with_log_basis(
-                        AkitaScheduleInputs {
-                            num_vars: incidence.num_vars(),
-                            level,
-                            current_w_len,
-                        },
-                        direct.log_basis(Cfg::decomposition().field_bits()),
-                    ));
-                }
-            }
-        }
-    }
-    if setup_levels.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "descriptor cannot bind an empty schedule".to_string(),
-        ));
-    }
-    Ok(setup_levels)
 }
 
 /// Dispatch a prove-level operation to the correct ring dimension.
@@ -364,7 +258,7 @@ where
                 level,
                 current_state,
                 level_params,
-                final_log_basis,
+                final_witness_shape,
             } => dispatch_prove_terminal_level::<F, T, D, Cfg>(
                 level_params.ring_dimension,
                 ntt_cache,
@@ -374,7 +268,7 @@ where
                 transcript,
                 level,
                 level_params,
-                final_log_basis,
+                &final_witness_shape,
             )
             .map(akita_prover::SuffixLevelOutput::Terminal),
         },
@@ -393,7 +287,7 @@ fn dispatch_prove_terminal_level<F, T, const D: usize, Cfg>(
     transcript: &mut T,
     level: usize,
     level_params: &LevelParams,
-    final_log_basis: u32,
+    final_witness_shape: &DirectWitnessShape,
 ) -> Result<akita_types::TerminalLevelProof<F, Cfg::ChallengeField>, AkitaError>
 where
     F: FieldCore
@@ -420,7 +314,7 @@ where
             current_state,
             level,
             level_params,
-            final_log_basis,
+            final_witness_shape,
             |params, current_w_len| {
                 akita_types::recursive_level_layout_from_params(
                     params,
@@ -444,7 +338,7 @@ where
                 current_state,
                 level,
                 level_params,
-                final_log_basis,
+                final_witness_shape,
                 |params, current_w_len| {
                     akita_types::recursive_level_layout_from_params(
                         params,
@@ -489,7 +383,7 @@ where
         max_num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Self::ProverSetup {
-        validate_field_roles_for_ring::<F, D, Cfg>().expect("invalid Akita field tower");
+        validate_field_roles_for_config::<F, D, Cfg>().expect("invalid Akita field tower");
         akita_setup::new_prover_setup::<F, D, Cfg>(
             max_num_vars,
             max_num_polys_per_point,
@@ -565,7 +459,7 @@ where
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError> {
         let t_prove_total = Instant::now();
-        validate_field_roles_for_ring::<F, D, Cfg>()?;
+        validate_field_roles_for_config::<F, D, Cfg>()?;
         let proof = prove_batched_with_policy::<
             F,
             Cfg::ClaimField,
@@ -592,12 +486,12 @@ where
                 )
             },
             |transcript, incidence_summary, schedule, basis| {
-                bind_transcript_instance_descriptor::<F, T, D, Cfg>(
-                    &setup.expanded,
+                bind_instance_descriptor_for_config::<Cfg, T, D>(
+                    transcript,
+                    setup.expanded.seed(),
                     incidence_summary,
                     schedule,
                     basis,
-                    transcript,
                 )
             },
             |prepared_claims, schedule, next_params, transcript, basis| {
@@ -693,48 +587,7 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
-        validate_field_roles_for_ring::<F, D, Cfg>()?;
-        verify_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _, _, _, _, _>(
-            proof,
-            setup,
-            transcript,
-            claims,
-            basis,
-            |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
-            |schedule, next_inputs| {
-                scheduled_next_level_params(
-                    schedule,
-                    1,
-                    next_inputs,
-                    Cfg::level_params_with_log_basis,
-                )
-            },
-            Cfg::get_params_for_batched_commitment,
-            |transcript, incidence_summary, schedule, basis| {
-                bind_transcript_instance_descriptor::<F, T, D, Cfg>(
-                    &setup.expanded,
-                    incidence_summary,
-                    schedule,
-                    basis,
-                    transcript,
-                )
-            },
-            |witnesses,
-             setup,
-             commitments,
-             incidence_summary,
-             params,
-             direct_commitment_payload| {
-                verify_root_direct_commitments_with_params::<F, D>(
-                    witnesses,
-                    setup,
-                    commitments,
-                    incidence_summary,
-                    params,
-                    direct_commitment_payload,
-                )
-            },
-        )?;
+        batched_verify_with_config::<F, T, D, Cfg>(proof, setup, transcript, claims, basis)?;
 
         tracing::info!(
             levels = proof.num_fold_levels() + 1,

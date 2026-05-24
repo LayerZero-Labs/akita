@@ -17,36 +17,6 @@ use proptest::prelude::*;
 
 type Scheme = AkitaCommitmentScheme<DENSE_D, DenseCfg>;
 
-fn assert_terminal_event_order_if_present(
-    events: &[akita_transcript::TranscriptEvent],
-) -> Option<usize> {
-    let w_hat = first_label_index(events, labels::ABSORB_TERMINAL_W_HAT)?;
-    let sparse_seed = first_label_index_after(events, w_hat, labels::CHALLENGE_SPARSE_CHALLENGE)
-        .expect("terminal transcript must squeeze sparse seed");
-    let remainder =
-        first_label_index_after(events, sparse_seed, labels::ABSORB_TERMINAL_W_REMAINDER)
-            .expect("terminal transcript must absorb final-witness remainder");
-    let alpha = first_label_index_after(events, remainder, labels::CHALLENGE_RING_SWITCH)
-        .expect("terminal transcript must squeeze ring-switch alpha");
-    let tau1 = first_label_index_after(events, alpha, labels::CHALLENGE_TAU1)
-        .expect("terminal transcript must squeeze tau1");
-
-    assert!(w_hat < sparse_seed, "w_hat must precede sparse seed");
-    assert!(
-        sparse_seed < remainder,
-        "sparse seed must precede witness remainder"
-    );
-    assert!(remainder < alpha, "remainder must precede alpha");
-    assert!(alpha < tau1, "alpha must precede tau1");
-    assert!(
-        events[w_hat..]
-            .iter()
-            .all(|event| event_label(event) != Some(labels::CHALLENGE_TAU0)),
-        "terminal transcript window must not squeeze tau0"
-    );
-    Some(w_hat)
-}
-
 fn batch_shape(index: usize) -> Vec<usize> {
     match index {
         0 => vec![1],

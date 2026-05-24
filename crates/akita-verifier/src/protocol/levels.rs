@@ -5,7 +5,10 @@
 //! until the verifier-facing config boundary is extracted.
 
 use super::validate_level_dispatch;
-use crate::protocol::ring_switch::{ring_switch_verifier, ring_switch_verifier_after_absorb};
+use crate::protocol::ring_switch::{
+    ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchVerifyOutput,
+    TerminalRingSwitchVerifyOutput,
+};
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
 use akita_algebra::CyclotomicRing;
@@ -22,7 +25,7 @@ use akita_sumcheck::{
 };
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_HAT,
-    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -32,13 +35,13 @@ use akita_types::{
     prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
     recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
-    sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_remainder_bytes,
-    terminal_witness_segment_layout, terminal_witness_w_hat_bytes,
+    sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_segment_layout,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
     ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule,
-    Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
+    LevelParams, MRowLayout, RelationOnlyStage2Inputs, RingCommitment, RingOpeningPoint,
+    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
+    TerminalWitnessTranscriptParts,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -58,8 +61,58 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
 }
 
 struct TerminalWitnessReplay {
-    digits: Vec<i8>,
-    layout: TerminalWitnessSegmentLayout,
+    parts: TerminalWitnessTranscriptParts,
+}
+
+enum RingSwitchReplay<E: FieldCore> {
+    Intermediate(RingSwitchVerifyOutput<E>),
+    Terminal(TerminalRingSwitchVerifyOutput<E>),
+}
+
+impl<E: FieldCore> RingSwitchReplay<E> {
+    fn tau1(&self) -> &[E] {
+        match self {
+            Self::Intermediate(rs) => &rs.tau1,
+            Self::Terminal(rs) => &rs.tau1,
+        }
+    }
+
+    fn alpha(&self) -> E {
+        match self {
+            Self::Intermediate(rs) => rs.alpha,
+            Self::Terminal(rs) => rs.alpha,
+        }
+    }
+
+    fn into_stage2_parts(
+        self,
+    ) -> (
+        crate::protocol::ring_switch::RingSwitchDeferredRowEval<E>,
+        Vec<E>,
+        Vec<E>,
+        E,
+        usize,
+        usize,
+    ) {
+        match self {
+            Self::Intermediate(rs) => (
+                rs.prepared_row_eval,
+                rs.alpha_evals_y,
+                rs.tau1,
+                rs.alpha,
+                rs.col_bits,
+                rs.ring_bits,
+            ),
+            Self::Terminal(rs) => (
+                rs.prepared_row_eval,
+                rs.alpha_evals_y,
+                rs.tau1,
+                rs.alpha,
+                rs.col_bits,
+                rs.ring_bits,
+            ),
+        }
+    }
 }
 
 fn prepare_terminal_witness_replay<F, T>(
@@ -75,30 +128,13 @@ where
     if final_witness.num_elems() != final_w_len {
         return Err(AkitaError::InvalidProof);
     }
-    let digits = final_witness.packed_i8_digits()?;
-    if digits.len() != final_w_len {
+    if final_witness.packed_i8_digits()?.len() != final_w_len {
         return Err(AkitaError::InvalidProof);
     }
-    let w_hat_bytes =
-        terminal_witness_w_hat_bytes(&digits, layout).ok_or(AkitaError::InvalidProof)?;
-    transcript.record_wire_bytes(ABSORB_TERMINAL_W_HAT, &w_hat_bytes);
-    transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &w_hat_bytes);
-    Ok(TerminalWitnessReplay { digits, layout })
-}
-
-fn append_terminal_witness_remainder<F, T>(
-    transcript: &mut T,
-    replay: &TerminalWitnessReplay,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    let bytes = terminal_witness_remainder_bytes(&replay.digits, replay.layout)
-        .ok_or(AkitaError::InvalidProof)?;
-    transcript.record_wire_bytes(ABSORB_TERMINAL_W_REMAINDER, &bytes);
-    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &bytes);
-    Ok(())
+    let parts = final_witness.terminal_transcript_parts(layout)?;
+    transcript.record_wire_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
+    transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
+    Ok(TerminalWitnessReplay { parts })
 }
 
 /// Verify the intermediate-root proof payload for batched proofs whose root
@@ -553,7 +589,7 @@ where
     let rs = match &stage_input {
         RootStageInput::Intermediate {
             next_w_commitment, ..
-        } => ring_switch_verifier::<F, C, T, { D }>(
+        } => RingSwitchReplay::Intermediate(ring_switch_verifier::<F, C, T, { D }>(
             &ring_opening_points,
             &ring_multiplier_points,
             incidence_summary.claim_to_point(),
@@ -567,37 +603,39 @@ where
             incidence_summary.claim_poly_indices(),
             &row_coefficients,
             incidence_summary.num_public_rows(),
-            MRowLayout::Intermediate,
-        )?,
+        )?),
         RootStageInput::Terminal { .. } => {
             let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
-            append_terminal_witness_remainder::<F, T>(transcript, replay)?;
-            ring_switch_verifier_after_absorb::<F, C, T, { D }>(
+            RingSwitchReplay::Terminal(ring_switch_verifier_terminal::<F, C, T, { D }>(
                 &ring_opening_points,
                 &ring_multiplier_points,
                 incidence_summary.claim_to_point(),
                 &stage1_challenges,
                 w_len,
                 transcript,
+                &replay.parts,
                 batched_lp,
                 incidence_summary.num_polys_per_point(),
                 incidence_summary.claim_to_point(),
                 incidence_summary.claim_poly_indices(),
                 &row_coefficients,
                 incidence_summary.num_public_rows(),
-                MRowLayout::Terminal,
-            )?
+            )?)
         }
     };
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
-        &rs.tau1,
-        rs.alpha,
+        rs.tau1(),
+        rs.alpha(),
         v_typed,
         commitment_rows,
         y_rings,
     )?;
-    let (batching_coeff, s_claim, r_stage1) = match (&stage_input, stage1) {
-        (RootStageInput::Intermediate { .. }, Some(stage1_proof)) => {
+    let stage2_inputs = match (&stage_input, stage1, &rs) {
+        (
+            RootStageInput::Intermediate { .. },
+            Some(stage1_proof),
+            RingSwitchReplay::Intermediate(rs),
+        ) => {
             let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
             let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
             let r_stage1 = {
@@ -607,60 +645,65 @@ where
             transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
             let batching_coeff: C =
                 sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            (batching_coeff, stage1_proof.s_claim, r_stage1)
+            RelationOnlyStage2Inputs {
+                batching_coeff,
+                s_claim: stage1_proof.s_claim,
+                r_stage1,
+            }
         }
-        (RootStageInput::Terminal { .. }, None) => {
+        (RootStageInput::Terminal { .. }, None, RingSwitchReplay::Terminal(rs)) => {
             // Relation-only stage-2: skip stage-1 entirely. Dummy zeros for
             // r_stage1 + batching_coeff zero out the virtual half.
-            let r_stage1 = vec![C::zero(); rs.col_bits + rs.ring_bits];
-            (C::zero(), C::zero(), r_stage1)
+            rs.relation_only_stage2_inputs()
         }
         _ => return Err(AkitaError::InvalidProof),
     };
-    let stage2_input_claim = batching_coeff * s_claim + relation_claim;
-    let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
+    let stage2_input_claim = stage2_inputs.batching_coeff * stage2_inputs.s_claim + relation_claim;
+    let (prepared_row_eval, alpha_evals_y, tau1, alpha, col_bits, ring_bits) =
+        rs.into_stage2_parts();
+    let row_eval_source = Stage2RowEvalSource::new(prepared_row_eval);
     let stage2_verifier = match &stage_input {
         RootStageInput::Terminal { final_witness, .. } => {
             AkitaStage2Verifier::new_with_direct_witness(
-                batching_coeff,
-                s_claim,
+                stage2_inputs.batching_coeff,
+                stage2_inputs.s_claim,
                 final_witness,
                 w_len,
-                r_stage1,
-                rs.alpha_evals_y,
+                stage2_inputs.r_stage1,
+                alpha_evals_y,
                 row_eval_source,
                 &setup.expanded,
                 &ring_opening_points,
                 &ring_multiplier_points,
-                &rs.tau1,
+                &tau1,
                 v_typed,
                 commitment_rows,
                 y_rings,
                 Some(relation_claim),
-                rs.alpha,
-                rs.col_bits,
-                rs.ring_bits,
+                alpha,
+                col_bits,
+                ring_bits,
             )?
         }
         RootStageInput::Intermediate { next_w_eval, .. } => {
             AkitaStage2Verifier::new_with_claimed_w_eval(
-                batching_coeff,
-                s_claim,
+                stage2_inputs.batching_coeff,
+                stage2_inputs.s_claim,
                 *next_w_eval,
-                r_stage1,
-                rs.alpha_evals_y,
+                stage2_inputs.r_stage1,
+                alpha_evals_y,
                 row_eval_source,
                 &setup.expanded,
                 &ring_opening_points,
                 &ring_multiplier_points,
-                &rs.tau1,
+                &tau1,
                 v_typed,
                 commitment_rows,
                 y_rings,
                 Some(relation_claim),
-                rs.alpha,
-                rs.col_bits,
-                rs.ring_bits,
+                alpha,
+                col_bits,
+                ring_bits,
             )?
         }
     };
@@ -940,31 +983,14 @@ where
     let gamma = vec![L::one(); num_claims];
 
     let rs = match &proof {
-        FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, { D }>(
-            &ring_opening_points,
-            &ring_multiplier_points,
-            &claim_to_point,
-            &stage1_challenges,
-            w_len,
-            level_proof.next_w_commitment(),
-            transcript,
-            lp,
-            &[1usize],
-            &claim_to_point_poly,
-            &claim_poly_indices,
-            &gamma,
-            num_claims,
-            MRowLayout::Intermediate,
-        )?,
-        FoldProofView::Terminal(_) => {
-            let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
-            append_terminal_witness_remainder::<F, T>(transcript, replay)?;
-            ring_switch_verifier_after_absorb::<F, L, T, { D }>(
+        FoldProofView::Intermediate(level_proof) => {
+            RingSwitchReplay::Intermediate(ring_switch_verifier::<F, L, T, { D }>(
                 &ring_opening_points,
                 &ring_multiplier_points,
                 &claim_to_point,
                 &stage1_challenges,
                 w_len,
+                level_proof.next_w_commitment(),
                 transcript,
                 lp,
                 &[1usize],
@@ -972,19 +998,36 @@ where
                 &claim_poly_indices,
                 &gamma,
                 num_claims,
-                MRowLayout::Terminal,
-            )?
+            )?)
+        }
+        FoldProofView::Terminal(_) => {
+            let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
+            RingSwitchReplay::Terminal(ring_switch_verifier_terminal::<F, L, T, { D }>(
+                &ring_opening_points,
+                &ring_multiplier_points,
+                &claim_to_point,
+                &stage1_challenges,
+                w_len,
+                transcript,
+                &replay.parts,
+                lp,
+                &[1usize],
+                &claim_to_point_poly,
+                &claim_poly_indices,
+                &gamma,
+                num_claims,
+            )?)
         }
     };
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
-        &rs.tau1,
-        rs.alpha,
+        rs.tau1(),
+        rs.alpha(),
         v_typed,
         commitment_u,
         &y_rings,
     )?;
-    let (batching_coeff, s_claim, r_stage1) = match &proof {
-        FoldProofView::Intermediate(level_proof) => {
+    let stage2_inputs = match (&proof, &rs) {
+        (FoldProofView::Intermediate(level_proof), RingSwitchReplay::Intermediate(rs)) => {
             let stage1 = &level_proof.stage1;
             let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
             let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
@@ -995,54 +1038,60 @@ where
             transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
             let batching_coeff: L =
                 sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            (batching_coeff, stage1.s_claim, r_stage1)
+            RelationOnlyStage2Inputs {
+                batching_coeff,
+                s_claim: stage1.s_claim,
+                r_stage1,
+            }
         }
-        FoldProofView::Terminal(_) => {
-            let r_stage1 = vec![L::zero(); rs.col_bits + rs.ring_bits];
-            (L::zero(), L::zero(), r_stage1)
+        (FoldProofView::Terminal(_), RingSwitchReplay::Terminal(rs)) => {
+            rs.relation_only_stage2_inputs()
         }
+        _ => return Err(AkitaError::InvalidProof),
     };
-    let stage2_input_claim = batching_coeff * s_claim + relation_claim;
-    let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
+    let stage2_input_claim = stage2_inputs.batching_coeff * stage2_inputs.s_claim + relation_claim;
+    let (prepared_row_eval, alpha_evals_y, tau1, alpha, col_bits, ring_bits) =
+        rs.into_stage2_parts();
+    let row_eval_source = Stage2RowEvalSource::new(prepared_row_eval);
     let stage2_verifier = match &proof {
         FoldProofView::Terminal(terminal_proof) => AkitaStage2Verifier::new_with_direct_witness(
-            batching_coeff,
-            s_claim,
+            stage2_inputs.batching_coeff,
+            stage2_inputs.s_claim,
             &terminal_proof.final_witness,
             w_len,
-            r_stage1,
-            rs.alpha_evals_y,
+            stage2_inputs.r_stage1,
+            alpha_evals_y,
             row_eval_source,
             &setup.expanded,
             &ring_opening_points,
             &ring_multiplier_points,
-            &rs.tau1,
+            &tau1,
             v_typed,
             commitment_u,
             &y_rings,
             Some(relation_claim),
-            rs.alpha,
-            rs.col_bits,
-            rs.ring_bits,
+            alpha,
+            col_bits,
+            ring_bits,
         )?,
         FoldProofView::Intermediate(level_proof) => AkitaStage2Verifier::new_with_claimed_w_eval(
-            batching_coeff,
-            s_claim,
+            stage2_inputs.batching_coeff,
+            stage2_inputs.s_claim,
             level_proof.stage2.next_w_eval,
-            r_stage1,
-            rs.alpha_evals_y,
+            stage2_inputs.r_stage1,
+            alpha_evals_y,
             row_eval_source,
             &setup.expanded,
             &ring_opening_points,
             &ring_multiplier_points,
-            &rs.tau1,
+            &tau1,
             v_typed,
             commitment_u,
             &y_rings,
             Some(relation_claim),
-            rs.alpha,
-            rs.col_bits,
-            rs.ring_bits,
+            alpha,
+            col_bits,
+            ring_bits,
         )?,
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {

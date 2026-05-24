@@ -56,12 +56,12 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             max_num_batched_polys,
             max_num_points,
             max_stride,
+            gen_ring_dim: D,
+            total_ring_elements: max_total,
             public_matrix_seed,
         };
         let expanded = Arc::new(
-            AkitaExpandedSetup::from_parts(seed, shared_flat).map_err(|err| {
-                AkitaError::InvalidSetup(format!("setup descriptor digest: {err}"))
-            })?,
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
         );
 
         Ok(Self {
@@ -76,23 +76,6 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         AkitaVerifierSetup {
             expanded: self.expanded.clone(),
         }
-    }
-
-    /// Wrap a pre-built [`AkitaExpandedSetup`] in a prover setup by
-    /// reconstructing the shared NTT cache at ring dimension `D`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the expanded setup fails validation or if the NTT
-    /// cache cannot be built for the current field/ring-dimension pair.
-    pub fn from_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
-    where
-        F: CanonicalField + RandomSampling + Valid + AkitaSerialize,
-    {
-        expanded
-            .check()
-            .map_err(|err| AkitaError::InvalidSetup(format!("invalid expanded setup: {err}")))?;
-        Self::from_validated_expanded(expanded)
     }
 
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.
@@ -111,8 +94,8 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         F: CanonicalField,
     {
         let expanded = Arc::new(expanded);
-        let total = expanded.shared_matrix.total_ring_elements_at::<D>()?;
-        let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total)?)?;
+        let total = expanded.shared_matrix().total_ring_elements_at::<D>()?;
+        let ntt_shared = build_ntt_slot(expanded.shared_matrix().ring_view::<D>(1, total)?)?;
         Ok(Self {
             expanded,
             ntt_shared,

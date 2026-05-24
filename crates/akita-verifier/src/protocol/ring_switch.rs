@@ -8,7 +8,8 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
 };
 use akita_transcript::labels::{
-    ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
+    ABSORB_SUMCHECK_W, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0,
+    CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(feature = "zk")]
@@ -16,7 +17,8 @@ use akita_types::zk;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams, MRowLayout,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
+    RelationOnlyStage2Inputs, RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
+    TerminalWitnessTranscriptParts,
 };
 
 #[cfg(feature = "zk")]
@@ -47,6 +49,71 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub b: usize,
     /// Ring-switch challenge alpha.
     pub alpha: E,
+}
+
+/// Verifier-side terminal ring-switch output. Terminal steps have no stage-1
+/// `tau0`.
+pub(crate) struct TerminalRingSwitchVerifyOutput<E: FieldCore> {
+    /// Prepared data for deferred ring-switch row MLE evaluation.
+    pub prepared_row_eval: RingSwitchDeferredRowEval<E>,
+    /// Evaluation table of alpha powers over the ring-coordinate dimension.
+    pub alpha_evals_y: Vec<E>,
+    /// Number of upper variable bits.
+    pub col_bits: usize,
+    /// Number of lower variable bits.
+    pub ring_bits: usize,
+    /// Challenge tau1 for the stage-2 M-row combination.
+    pub tau1: Vec<E>,
+    /// Ring-switch challenge alpha.
+    pub alpha: E,
+}
+
+impl<E: FieldCore> TerminalRingSwitchVerifyOutput<E> {
+    /// Relation-only stage-2 inputs for a terminal ring switch.
+    pub(crate) fn relation_only_stage2_inputs(&self) -> RelationOnlyStage2Inputs<E> {
+        RelationOnlyStage2Inputs::new(self.col_bits + self.ring_bits)
+    }
+}
+
+struct RingSwitchVerifyCoreOutput<E: FieldCore> {
+    prepared_row_eval: RingSwitchDeferredRowEval<E>,
+    alpha_evals_y: Vec<E>,
+    col_bits: usize,
+    ring_bits: usize,
+    tau0: Option<Vec<E>>,
+    tau1: Vec<E>,
+    b: usize,
+    alpha: E,
+}
+
+impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
+    fn into_intermediate(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
+        let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
+        Ok(RingSwitchVerifyOutput {
+            prepared_row_eval: self.prepared_row_eval,
+            alpha_evals_y: self.alpha_evals_y,
+            col_bits: self.col_bits,
+            ring_bits: self.ring_bits,
+            tau0,
+            tau1: self.tau1,
+            b: self.b,
+            alpha: self.alpha,
+        })
+    }
+
+    fn into_terminal(self) -> Result<TerminalRingSwitchVerifyOutput<E>, AkitaError> {
+        if self.tau0.is_some() {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(TerminalRingSwitchVerifyOutput {
+            prepared_row_eval: self.prepared_row_eval,
+            alpha_evals_y: self.alpha_evals_y,
+            col_bits: self.col_bits,
+            ring_bits: self.ring_bits,
+            tau1: self.tau1,
+            alpha: self.alpha,
+        })
+    }
 }
 
 /// Precomputed challenge-derived data for deferred ring-switch row MLE evaluation.
@@ -130,18 +197,17 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     claim_poly_indices: &[usize],
     gamma: &[E],
     num_public_rows: usize,
-    m_row_layout: MRowLayout,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
-    // `validate_ring_dispatch` is called inside `ring_switch_verifier_after_absorb`;
+    // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
     // the outer wrapper just performs the witness absorb before delegating.
     transcript.record_wire_serde(ABSORB_SUMCHECK_W, w_commitment);
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
-    ring_switch_verifier_after_absorb::<F, E, T, D>(
+    ring_switch_verifier_core::<F, E, T, D>(
         opening_points,
         ring_multiplier_points,
         claim_to_point,
@@ -154,15 +220,15 @@ where
         claim_poly_indices,
         gamma,
         num_public_rows,
-        m_row_layout,
-    )
+        MRowLayout::Intermediate,
+    )?
+    .into_intermediate()
 }
 
-/// Variant of [`ring_switch_verifier`] that assumes the caller has already
-/// absorbed the `ABSORB_SUMCHECK_W` bytes into `transcript`.
+/// Terminal variant of [`ring_switch_verifier`].
 ///
-/// Intermediate fold levels absorb `next_w_commitment` before calling this;
-/// terminal fold levels absorb the cleartext `final_witness` instead.
+/// This owns the required terminal final-witness remainder absorb before
+/// sampling ring-switch challenges.
 ///
 /// # Errors
 ///
@@ -170,9 +236,52 @@ where
 /// inconsistent, transcript-bound challenge data has the wrong size, or
 /// ring-switch row-eval preparation fails.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "ring_switch_verifier_after_absorb")]
+#[tracing::instrument(skip_all, name = "ring_switch_verifier_terminal")]
 #[inline(never)]
-pub(crate) fn ring_switch_verifier_after_absorb<F, E, T, const D: usize>(
+pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
+    opening_points: &[RingOpeningPoint<F>],
+    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
+    claim_to_point: &[usize],
+    challenges: &[SparseChallenge],
+    w_len: usize,
+    transcript: &mut T,
+    terminal_parts: &TerminalWitnessTranscriptParts,
+    lp: &LevelParams,
+    num_polys_per_point: &[usize],
+    claim_to_point_poly: &[usize],
+    claim_poly_indices: &[usize],
+    gamma: &[E],
+    num_public_rows: usize,
+) -> Result<TerminalRingSwitchVerifyOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
+    transcript.record_wire_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
+    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
+    ring_switch_verifier_core::<F, E, T, D>(
+        opening_points,
+        ring_multiplier_points,
+        claim_to_point,
+        challenges,
+        w_len,
+        transcript,
+        lp,
+        num_polys_per_point,
+        claim_to_point_poly,
+        claim_poly_indices,
+        gamma,
+        num_public_rows,
+        MRowLayout::Terminal,
+    )?
+    .into_terminal()
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
+#[inline(never)]
+fn ring_switch_verifier_core<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
@@ -186,7 +295,7 @@ pub(crate) fn ring_switch_verifier_after_absorb<F, E, T, const D: usize>(
     gamma: &[E],
     num_public_rows: usize,
     m_row_layout: MRowLayout,
-) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
+) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
@@ -232,11 +341,13 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
         .trailing_zeros() as usize;
 
-    let tau0: Vec<E> = match m_row_layout {
-        MRowLayout::Intermediate => (0..num_sc_vars)
-            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-            .collect(),
-        MRowLayout::Terminal => Vec::new(),
+    let tau0 = match m_row_layout {
+        MRowLayout::Intermediate => Some(
+            (0..num_sc_vars)
+                .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+                .collect(),
+        ),
+        MRowLayout::Terminal => None,
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -261,7 +372,7 @@ where
         claim_to_point,
     )?;
 
-    Ok(RingSwitchVerifyOutput {
+    Ok(RingSwitchVerifyCoreOutput {
         prepared_row_eval,
         alpha_evals_y,
         col_bits,
