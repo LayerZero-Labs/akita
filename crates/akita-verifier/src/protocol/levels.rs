@@ -32,7 +32,8 @@ use akita_types::{
     prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
     recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
-    sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_segment_layout,
+    sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_remainder_bytes,
+    terminal_witness_segment_layout, terminal_witness_w_hat_bytes,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
     ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
@@ -61,10 +62,6 @@ struct TerminalWitnessReplay {
     layout: TerminalWitnessSegmentLayout,
 }
 
-fn i8_digits_to_bytes(digits: &[i8]) -> Vec<u8> {
-    digits.iter().copied().map(|digit| digit as u8).collect()
-}
-
 fn prepare_terminal_witness_replay<F, T>(
     transcript: &mut T,
     final_witness: &DirectWitnessProof<F>,
@@ -82,15 +79,8 @@ where
     if digits.len() != final_w_len {
         return Err(AkitaError::InvalidProof);
     }
-    let w_hat_start = layout.w_hat_digit_offset;
-    let w_hat_end = layout.w_hat_digit_end()?;
-    if w_hat_end > digits.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let w_hat_bytes = i8_digits_to_bytes(&digits[w_hat_start..w_hat_end]);
-    if w_hat_bytes.is_empty() {
-        return Err(AkitaError::InvalidProof);
-    }
+    let w_hat_bytes =
+        terminal_witness_w_hat_bytes(&digits, layout).ok_or(AkitaError::InvalidProof)?;
     transcript.record_wire_bytes(ABSORB_TERMINAL_W_HAT, &w_hat_bytes);
     transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &w_hat_bytes);
     Ok(TerminalWitnessReplay { digits, layout })
@@ -104,22 +94,8 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let w_hat_start = replay.layout.w_hat_digit_offset;
-    let w_hat_end = replay.layout.w_hat_digit_end()?;
-    if w_hat_end > replay.digits.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let remainder_len = replay
-        .digits
-        .len()
-        .checked_sub(replay.layout.w_hat_digit_count)
+    let bytes = terminal_witness_remainder_bytes(&replay.digits, replay.layout)
         .ok_or(AkitaError::InvalidProof)?;
-    let mut bytes = Vec::with_capacity(remainder_len);
-    bytes.extend(i8_digits_to_bytes(&replay.digits[..w_hat_start]));
-    bytes.extend(i8_digits_to_bytes(&replay.digits[w_hat_end..]));
-    if bytes.is_empty() {
-        return Err(AkitaError::InvalidProof);
-    }
     transcript.record_wire_bytes(ABSORB_TERMINAL_W_REMAINDER, &bytes);
     transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &bytes);
     Ok(())

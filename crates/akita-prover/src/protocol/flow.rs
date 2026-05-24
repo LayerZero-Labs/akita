@@ -45,13 +45,14 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, terminal_witness_segment_layout, validate_batched_inputs,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
-    AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof,
-    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
-    MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
-    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
+    schedule_root_fold_step, terminal_witness_remainder_bytes, terminal_witness_segment_layout,
+    validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
+    AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof,
+    BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
+    DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
+    IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
+    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
+    TerminalLevelProof, TerminalWitnessSegmentLayout,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -102,10 +103,6 @@ where
     )
 }
 
-fn i8_digits_to_bytes(digits: &[i8]) -> Vec<u8> {
-    digits.iter().copied().map(|digit| digit as u8).collect()
-}
-
 fn append_terminal_witness_remainder<F, T>(
     transcript: &mut T,
     logical_w: &RecursiveWitnessFlat,
@@ -115,26 +112,10 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let digits = logical_w.as_i8_digits();
-    let w_hat_start = layout.w_hat_digit_offset;
-    let w_hat_end = layout.w_hat_digit_end()?;
-    if w_hat_end > digits.len() {
-        return Err(AkitaError::InvalidSetup(
-            "terminal w_hat range exceeds final witness".to_string(),
-        ));
-    }
-    let remainder_len = digits
-        .len()
-        .checked_sub(layout.w_hat_digit_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal witness range underflow".to_string()))?;
-    let mut bytes = Vec::with_capacity(remainder_len);
-    bytes.extend(i8_digits_to_bytes(&digits[..w_hat_start]));
-    bytes.extend(i8_digits_to_bytes(&digits[w_hat_end..]));
-    if bytes.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "terminal witness remainder cannot be empty".to_string(),
-        ));
-    }
+    let bytes =
+        terminal_witness_remainder_bytes(logical_w.as_i8_digits(), layout).ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal witness remainder is invalid".to_string())
+        })?;
     transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &bytes);
     Ok(())
 }
