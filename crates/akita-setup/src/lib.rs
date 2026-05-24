@@ -86,7 +86,7 @@ where
                     && cached_points >= max_num_points
                 {
                     tracing::info!("Loaded setup from disk, rebuilding NTT caches");
-                    return AkitaProverSetup::from_expanded(expanded);
+                    return AkitaProverSetup::from_validated_expanded(expanded);
                 }
                 if let Some(storage_path) =
                     get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
@@ -506,7 +506,8 @@ mod tests {
                 let loaded_expanded =
                     load_expanded_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
                 let disk_setup =
-                    AkitaProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
+                    AkitaProverSetup::<TestF, TEST_D>::from_validated_expanded(loaded_expanded)
+                        .unwrap();
 
                 let lp = Cfg::commitment_layout(MAX_VARS).unwrap();
                 let num_coeffs = lp.num_blocks * lp.block_len;

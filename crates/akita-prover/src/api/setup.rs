@@ -92,6 +92,24 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         expanded
             .check()
             .map_err(|err| AkitaError::InvalidSetup(format!("invalid expanded setup: {err}")))?;
+        Self::from_validated_expanded(expanded)
+    }
+
+    /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.
+    ///
+    /// Use this when the caller has already run strict setup validation, for
+    /// example through checked setup deserialization. This avoids re-deriving
+    /// the seed-bound public matrix a second time while rebuilding prover NTT
+    /// caches.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the NTT cache cannot be built for the current
+    /// field/ring-dimension pair.
+    pub fn from_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
+    where
+        F: CanonicalField,
+    {
         let expanded = Arc::new(expanded);
         let total = expanded.shared_matrix.total_ring_elements_at::<D>()?;
         let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total)?)?;
