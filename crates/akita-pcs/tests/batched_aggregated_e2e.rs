@@ -313,9 +313,22 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
-        let proof =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(&CpuBackend, &prepared, prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()), &mut prover_transcript, BasisMode::Lagrange)
-            .expect("mixed batched prove");
+        let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::batched_prove(
+            &CpuBackend,
+            &prepared,
+            prove_input(
+                &pt[..],
+                &polys[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("mixed batched prove");
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();

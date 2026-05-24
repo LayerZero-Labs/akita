@@ -126,14 +126,17 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense");
-        let proof =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(&CpuBackend, &prepared, prove_inputs_from_groups(
-                    &opening_points,
-                    &polys_per_point_refs,
-                    &commitments,
-                    hints,
-                ), &mut prover_transcript, BasisMode::Lagrange)
-            .expect("multipoint batched prove");
+        let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::batched_prove(
+            &CpuBackend,
+            &prepared,
+            prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("multipoint batched prove");
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();
@@ -351,7 +354,16 @@ fn multipoint_dense_shared_commitment_round_trip() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_shared");
-        let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(&CpuBackend, &prepared, prover_claims, &mut prover_transcript, BasisMode::Lagrange)
+        let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::batched_prove(
+            &CpuBackend,
+            &prepared,
+            prover_claims,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
         .expect("shared-commitment multipoint batched prove");
 
         let mut serialized = Vec::new();
