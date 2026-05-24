@@ -26,7 +26,7 @@ use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
     LevelParams,
 };
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -284,15 +284,14 @@ fn run() -> Result<(), String> {
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();
     let mut verifier_transcript = AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
-    let opening_groups = [&openings[..]];
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            CommittedOpenings {
-                openings: opening_groups[0],
+            akita_types::CommittedOpenings {
+                openings: &openings[..],
                 commitment: &commitment,
             },
         )],
@@ -326,18 +325,11 @@ fn run() -> Result<(), String> {
     let mut roundtrip_transcript =
         AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     let openings_rt = [decoded.opening];
-    let opening_groups_rt = [&openings_rt[..]];
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut roundtrip_transcript,
-        vec![(
-            &decoded.opening_point[..],
-            CommittedOpenings {
-                openings: opening_groups_rt[0],
-                commitment: &decoded.commitment,
-            },
-        )],
+        decoded.verifier_claims(&openings_rt),
         BasisMode::Lagrange,
     )
     .map_err(|err| format!("decoded blob verify failed: {err}"))?;

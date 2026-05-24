@@ -19,7 +19,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{batched_verify_with_config, CommitmentConfig};
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
-use akita_types::{BasisMode, CommittedOpenings, VerifierClaims};
+use akita_types::BasisMode;
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
@@ -90,22 +90,13 @@ fn akita_verify(input: &[u8]) -> u32 {
     end_cycle_tracking("transcript_init");
 
     let openings = [decoded.opening];
-    let opening_groups = [&openings[..]];
-
-    let claims: VerifierClaims<F, _> = vec![(
-        &decoded.opening_point[..],
-        CommittedOpenings {
-            openings: opening_groups[0],
-            commitment: &decoded.commitment,
-        },
-    )];
 
     start_cycle_tracking("akita_verify");
     let result = batched_verify_with_config::<F, _, D, Cfg>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
-        claims,
+        decoded.verifier_claims(&openings),
         BasisMode::Lagrange,
     );
     end_cycle_tracking("akita_verify");

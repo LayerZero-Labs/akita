@@ -93,199 +93,103 @@ fn event_stream_equality_small() {
     });
 }
 
-#[test]
-#[should_panic(expected = "terminal transcript window must not squeeze tau0")]
-fn terminal_event_order_rejects_extension_tau0_limb() {
-    let events = vec![
-        TranscriptEvent::Absorb {
-            label: labels::ABSORB_TERMINAL_W_HAT.to_vec(),
-            bytes_digest: [0; 32],
-            bytes_len: 1,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SPARSE_CHALLENGE.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Absorb {
-            label: labels::ABSORB_TERMINAL_W_REMAINDER.to_vec(),
-            bytes_digest: [0; 32],
-            bytes_len: 1,
-        },
-        TranscriptEvent::Squeeze {
-            label: ext_limb_label(labels::CHALLENGE_RING_SWITCH, 0),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: ext_limb_label(labels::CHALLENGE_TAU1, 0),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: ext_limb_label(labels::CHALLENGE_TAU0, 0),
-            len: 0,
-        },
-    ];
+fn absorb_event(label: &[u8]) -> TranscriptEvent {
+    TranscriptEvent::Absorb {
+        label: label.to_vec(),
+        bytes_digest: [0; 32],
+        bytes_len: 1,
+    }
+}
 
-    let _ = assert_terminal_event_order_if_present(&events);
+fn squeeze_event(label: impl Into<Vec<u8>>) -> TranscriptEvent {
+    TranscriptEvent::Squeeze {
+        label: label.into(),
+        len: 0,
+    }
+}
+
+fn assert_terminal_order_panics(events: Vec<TranscriptEvent>, expected: &str) {
+    let panic = std::panic::catch_unwind(|| {
+        let _ = assert_terminal_event_order_if_present(&events);
+    })
+    .expect_err("malformed terminal transcript order should panic");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic>");
+    assert!(
+        message.contains(expected),
+        "expected panic containing `{expected}`, got `{message}`"
+    );
 }
 
 #[test]
-#[should_panic(expected = "terminal stage-2 sumcheck must not precede tau1")]
-fn terminal_event_order_rejects_early_stage2_squeeze() {
-    let events = vec![
-        TranscriptEvent::Absorb {
-            label: labels::ABSORB_TERMINAL_W_HAT.to_vec(),
-            bytes_digest: [0; 32],
-            bytes_len: 1,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SPARSE_CHALLENGE.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Absorb {
-            label: labels::ABSORB_TERMINAL_W_REMAINDER.to_vec(),
-            bytes_digest: [0; 32],
-            bytes_len: 1,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_RING_SWITCH.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_TAU1.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
-            len: 0,
-        },
-    ];
-
-    let _ = assert_terminal_event_order_if_present(&events);
-}
-
-#[test]
-#[should_panic(expected = "terminal alpha must not precede witness remainder")]
-fn terminal_event_order_rejects_duplicate_alpha_before_remainder() {
-    let events = vec![
-        TranscriptEvent::Absorb {
-            label: labels::ABSORB_TERMINAL_W_HAT.to_vec(),
-            bytes_digest: [0; 32],
-            bytes_len: 1,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SPARSE_CHALLENGE.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_RING_SWITCH.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Absorb {
-            label: labels::ABSORB_TERMINAL_W_REMAINDER.to_vec(),
-            bytes_digest: [0; 32],
-            bytes_len: 1,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_RING_SWITCH.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_TAU1.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
-            len: 0,
-        },
-    ];
-
-    let _ = assert_terminal_event_order_if_present(&events);
-}
-
-#[test]
-#[should_panic(expected = "terminal tau1 must not precede alpha")]
-fn terminal_event_order_rejects_duplicate_tau1_before_alpha() {
-    let events = vec![
-        TranscriptEvent::Absorb {
-            label: labels::ABSORB_TERMINAL_W_HAT.to_vec(),
-            bytes_digest: [0; 32],
-            bytes_len: 1,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SPARSE_CHALLENGE.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Absorb {
-            label: labels::ABSORB_TERMINAL_W_REMAINDER.to_vec(),
-            bytes_digest: [0; 32],
-            bytes_len: 1,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_TAU1.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_RING_SWITCH.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_TAU1.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
-            len: 0,
-        },
-    ];
-
-    let _ = assert_terminal_event_order_if_present(&events);
-}
-
-#[test]
-#[should_panic(expected = "terminal tau1 limbs must be contiguous before stage-2 sumcheck")]
-fn terminal_event_order_rejects_interleaved_tau1_limb() {
-    let events = vec![
-        TranscriptEvent::Absorb {
-            label: labels::ABSORB_TERMINAL_W_HAT.to_vec(),
-            bytes_digest: [0; 32],
-            bytes_len: 1,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SPARSE_CHALLENGE.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Absorb {
-            label: labels::ABSORB_TERMINAL_W_REMAINDER.to_vec(),
-            bytes_digest: [0; 32],
-            bytes_len: 1,
-        },
-        TranscriptEvent::Squeeze {
-            label: ext_limb_label(labels::CHALLENGE_RING_SWITCH, 0),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: ext_limb_label(labels::CHALLENGE_TAU1, 0),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: labels::CHALLENGE_SUMCHECK_ROUND.to_vec(),
-            len: 0,
-        },
-        TranscriptEvent::Squeeze {
-            label: ext_limb_label(labels::CHALLENGE_TAU1, 1),
-            len: 0,
-        },
-    ];
-
-    let _ = assert_terminal_event_order_if_present(&events);
+fn terminal_event_order_rejects_malformed_windows() {
+    for (expected, events) in [
+        (
+            "terminal transcript window must not squeeze tau0",
+            vec![
+                absorb_event(labels::ABSORB_TERMINAL_W_HAT),
+                squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
+                absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
+                squeeze_event(ext_limb_label(labels::CHALLENGE_RING_SWITCH, 0)),
+                squeeze_event(ext_limb_label(labels::CHALLENGE_TAU1, 0)),
+                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
+                squeeze_event(ext_limb_label(labels::CHALLENGE_TAU0, 0)),
+            ],
+        ),
+        (
+            "terminal stage-2 sumcheck must not precede tau1",
+            vec![
+                absorb_event(labels::ABSORB_TERMINAL_W_HAT),
+                squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
+                absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
+                squeeze_event(labels::CHALLENGE_RING_SWITCH),
+                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
+                squeeze_event(labels::CHALLENGE_TAU1),
+                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
+            ],
+        ),
+        (
+            "terminal alpha must not precede witness remainder",
+            vec![
+                absorb_event(labels::ABSORB_TERMINAL_W_HAT),
+                squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
+                squeeze_event(labels::CHALLENGE_RING_SWITCH),
+                absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
+                squeeze_event(labels::CHALLENGE_RING_SWITCH),
+                squeeze_event(labels::CHALLENGE_TAU1),
+                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
+            ],
+        ),
+        (
+            "terminal tau1 must not precede alpha",
+            vec![
+                absorb_event(labels::ABSORB_TERMINAL_W_HAT),
+                squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
+                absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
+                squeeze_event(labels::CHALLENGE_TAU1),
+                squeeze_event(labels::CHALLENGE_RING_SWITCH),
+                squeeze_event(labels::CHALLENGE_TAU1),
+                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
+            ],
+        ),
+        (
+            "terminal tau1 limbs must be contiguous before stage-2 sumcheck",
+            vec![
+                absorb_event(labels::ABSORB_TERMINAL_W_HAT),
+                squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
+                absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
+                squeeze_event(ext_limb_label(labels::CHALLENGE_RING_SWITCH, 0)),
+                squeeze_event(ext_limb_label(labels::CHALLENGE_TAU1, 0)),
+                squeeze_event(labels::CHALLENGE_SUMCHECK_ROUND),
+                squeeze_event(ext_limb_label(labels::CHALLENGE_TAU1, 1)),
+            ],
+        ),
+    ] {
+        assert_terminal_order_panics(events, expected);
+    }
 }
 
 fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut DirectWitnessProof<F> {
@@ -303,10 +207,41 @@ fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut DirectWitnessP
     }
 }
 
-fn assert_terminal_tamper_rejected_at_num_vars(
-    num_vars: usize,
-    mutate: impl FnOnce(&mut DirectWitnessProof<F>, TerminalWitnessSegmentLayout) + Send + 'static,
-) {
+#[derive(Clone, Copy)]
+enum TerminalTamper {
+    WHatDigit,
+    RemainderDigit,
+    WitnessLen,
+    PackedPayload,
+}
+
+impl TerminalTamper {
+    fn apply(self, witness: &mut DirectWitnessProof<F>, layout: TerminalWitnessSegmentLayout) {
+        let packed = packed_digits_mut(witness);
+        match self {
+            Self::WHatDigit => mutate_packed_digit(packed, layout.w_hat_digit_offset),
+            Self::RemainderDigit => {
+                let w_hat_end = layout.w_hat_digit_end().expect("terminal range");
+                let remainder_idx = if layout.w_hat_digit_offset > 0 {
+                    0
+                } else {
+                    w_hat_end
+                };
+                assert!(
+                    remainder_idx < packed.num_elems,
+                    "terminal tamper corpus must include a non-empty remainder"
+                );
+                mutate_packed_digit(packed, remainder_idx);
+            }
+            Self::WitnessLen => packed.num_elems -= 1,
+            Self::PackedPayload => {
+                packed.data.pop();
+            }
+        }
+    }
+}
+
+fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: TerminalTamper) {
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::commitment_layout(num_vars).expect("layout");
@@ -341,7 +276,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(
         let terminal_layout =
             terminal_witness_segment_layout(&layout, 1, 1).expect("terminal layout");
 
-        mutate(final_witness_mut(&mut proof), terminal_layout);
+        tamper.apply(final_witness_mut(&mut proof), terminal_layout);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
         <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
@@ -355,10 +290,15 @@ fn assert_terminal_tamper_rejected_at_num_vars(
     });
 }
 
-fn assert_terminal_tamper_rejected(
-    mutate: impl FnOnce(&mut DirectWitnessProof<F>, TerminalWitnessSegmentLayout) + Send + 'static,
-) {
-    assert_terminal_tamper_rejected_at_num_vars(10, mutate);
+fn assert_terminal_tamper_rejected(tamper: TerminalTamper) {
+    assert_terminal_tamper_rejected_at_num_vars(10, tamper);
+}
+
+fn packed_digits_mut(witness: &mut DirectWitnessProof<F>) -> &mut PackedDigits {
+    let DirectWitnessProof::PackedDigits(packed) = witness else {
+        panic!("terminal witness should use packed digits");
+    };
+    packed
 }
 
 fn mutate_packed_digit(packed: &mut PackedDigits, idx: usize) {
@@ -371,57 +311,15 @@ fn mutate_packed_digit(packed: &mut PackedDigits, idx: usize) {
 }
 
 #[test]
-fn terminal_w_hat_digit_tamper_rejects() {
-    assert_terminal_tamper_rejected(|witness, layout| {
-        assert!(
-            layout.w_hat_digit_offset > 0,
-            "current terminal corpus should place z_pre before w_hat"
-        );
-        let DirectWitnessProof::PackedDigits(packed) = witness else {
-            panic!("terminal witness should use packed digits");
-        };
-        mutate_packed_digit(packed, layout.w_hat_digit_offset);
-    });
-}
-
-#[test]
-fn terminal_remainder_digit_tamper_rejects() {
-    assert_terminal_tamper_rejected(|witness, layout| {
-        let DirectWitnessProof::PackedDigits(packed) = witness else {
-            panic!("terminal witness should use packed digits");
-        };
-        let w_hat_end = layout.w_hat_digit_end().expect("terminal range");
-        let remainder_idx = if layout.w_hat_digit_offset > 0 {
-            0
-        } else {
-            w_hat_end
-        };
-        assert!(
-            remainder_idx < packed.num_elems,
-            "terminal tamper corpus must include a non-empty remainder"
-        );
-        mutate_packed_digit(packed, remainder_idx);
-    });
-}
-
-#[test]
-fn terminal_final_witness_truncation_rejects() {
-    assert_terminal_tamper_rejected(|witness, _layout| {
-        let DirectWitnessProof::PackedDigits(packed) = witness else {
-            panic!("terminal witness should use packed digits");
-        };
-        packed.num_elems -= 1;
-    });
-}
-
-#[test]
-fn terminal_final_witness_packed_payload_truncation_rejects() {
-    assert_terminal_tamper_rejected(|witness, _layout| {
-        let DirectWitnessProof::PackedDigits(packed) = witness else {
-            panic!("terminal witness should use packed digits");
-        };
-        packed.data.pop();
-    });
+fn terminal_final_witness_tamper_rejects() {
+    for tamper in [
+        TerminalTamper::WHatDigit,
+        TerminalTamper::RemainderDigit,
+        TerminalTamper::WitnessLen,
+        TerminalTamper::PackedPayload,
+    ] {
+        assert_terminal_tamper_rejected(tamper);
+    }
 }
 
 fn terminal_shape_final_witness_mut(shape: &mut AkitaBatchedProofShape) -> &mut DirectWitnessShape {

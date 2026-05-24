@@ -16,7 +16,8 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, FlatMatrix, RingCommitment, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    AkitaVerifierSetup, CommittedOpenings, FlatMatrix, RingCommitment, VerifierClaims,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -76,6 +77,24 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
 }
 
 impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
+    /// Build the singleton verifier claim represented by this blob.
+    ///
+    /// The recursion profile currently ships exactly one opening for one
+    /// commitment. Keeping this projection here prevents host and guest replay
+    /// from growing independent claim-shaping code.
+    pub fn verifier_claims<'a>(
+        &'a self,
+        openings: &'a [F; 1],
+    ) -> VerifierClaims<'a, F, RingCommitment<F, D>> {
+        vec![(
+            &self.opening_point[..],
+            CommittedOpenings {
+                openings: &openings[..],
+                commitment: &self.commitment,
+            },
+        )]
+    }
+
     fn validate_blob_header_bounds(
         transcript_domain_len: usize,
         num_vars: usize,
@@ -172,44 +191,45 @@ where
         max_len: usize,
         context: &'static str,
     ) -> Result<Vec<u8>, SerializationError> {
-        let encoded_len =
-            u64::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let len = Self::decode_capped_len(rest, max_len)?;
+        Self::ensure_remaining(rest, len, context)?;
+        let (bytes, tail) = rest.split_at(len);
+        *rest = tail;
+        Ok(bytes.to_vec())
+    }
+
+    fn decode_capped_len(rest: &mut &[u8], max_len: usize) -> Result<usize, SerializationError> {
+        let encoded = u64::deserialize_with_mode(rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
         let len =
-            usize::try_from(encoded_len).map_err(|_| SerializationError::LengthLimitExceeded {
-                len: encoded_len,
+            usize::try_from(encoded).map_err(|_| SerializationError::LengthLimitExceeded {
+                len: encoded,
                 max: usize::MAX,
             })?;
         if len > max_len {
             return Err(SerializationError::LengthLimitExceeded {
-                len: encoded_len,
+                len: encoded,
                 max: max_len,
             });
         }
+        Ok(len)
+    }
+
+    fn decode_num_vars(rest: &mut &[u8]) -> Result<usize, SerializationError> {
+        Self::decode_capped_len(rest, MAX_BLOB_NUM_VARS)
+    }
+
+    fn ensure_remaining(
+        rest: &[u8],
+        len: usize,
+        context: &'static str,
+    ) -> Result<(), SerializationError> {
         if rest.len() < len {
             return Err(SerializationError::InvalidData(format!(
                 "{context} claims {len} bytes but only {} remain",
                 rest.len()
             )));
         }
-        let (bytes, tail) = rest.split_at(len);
-        *rest = tail;
-        Ok(bytes.to_vec())
-    }
-
-    fn decode_num_vars(rest: &mut &[u8]) -> Result<usize, SerializationError> {
-        let encoded = u64::deserialize_with_mode(rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        let num_vars =
-            usize::try_from(encoded).map_err(|_| SerializationError::LengthLimitExceeded {
-                len: encoded,
-                max: usize::MAX,
-            })?;
-        if num_vars > MAX_BLOB_NUM_VARS {
-            return Err(SerializationError::LengthLimitExceeded {
-                len: encoded,
-                max: MAX_BLOB_NUM_VARS,
-            });
-        }
-        Ok(num_vars)
+        Ok(())
     }
 
     fn encoded_field_payload_len(field_elements: usize) -> Result<usize, SerializationError> {
@@ -226,21 +246,10 @@ where
         transcript_domain_len: usize,
         num_vars: usize,
     ) -> Result<Vec<F>, SerializationError> {
-        let encoded_len =
-            u64::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        let len =
-            usize::try_from(encoded_len).map_err(|_| SerializationError::LengthLimitExceeded {
-                len: encoded_len,
-                max: usize::MAX,
-            })?;
+        let len = Self::decode_capped_len(rest, MAX_BLOB_NUM_VARS)?;
         Self::validate_blob_header_bounds(transcript_domain_len, num_vars, len)?;
         let payload_len = Self::encoded_field_payload_len(len)?;
-        if rest.len() < payload_len {
-            return Err(SerializationError::InvalidData(format!(
-                "akita-jolt opening point claims {payload_len} payload bytes but only {} remain",
-                rest.len()
-            )));
-        }
+        Self::ensure_remaining(rest, payload_len, "akita-jolt opening point")?;
         let mut point = Vec::with_capacity(len);
         for _ in 0..len {
             point.push(F::deserialize_with_mode(

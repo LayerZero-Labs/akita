@@ -291,75 +291,70 @@ pub(super) fn assert_terminal_event_order_if_present(
     let remainder =
         first_label_index_after(events, sparse_seed_end, labels::ABSORB_TERMINAL_W_REMAINDER)
             .expect("terminal transcript must absorb final-witness remainder");
-    assert_no_logical_label(
-        events,
-        w_hat + 1..remainder,
-        labels::CHALLENGE_RING_SWITCH,
-        "terminal alpha must not precede witness remainder",
-    );
-    assert_no_logical_label(
-        events,
-        w_hat + 1..remainder,
-        labels::CHALLENGE_TAU1,
-        "terminal tau1 must not precede alpha",
-    );
-    assert_no_logical_label(
-        events,
-        w_hat + 1..remainder,
-        labels::CHALLENGE_SUMCHECK_ROUND,
-        "terminal stage-2 sumcheck must not precede tau1",
-    );
     let (alpha, alpha_end) =
         first_logical_label_span_after(events, remainder, labels::CHALLENGE_RING_SWITCH)
             .expect("terminal transcript must squeeze ring-switch alpha");
-    assert_no_logical_label(
-        events,
-        remainder + 1..alpha,
-        labels::CHALLENGE_TAU1,
-        "terminal tau1 must not precede alpha",
-    );
-    assert_no_logical_label(
-        events,
-        remainder + 1..alpha,
-        labels::CHALLENGE_SUMCHECK_ROUND,
-        "terminal stage-2 sumcheck must not precede tau1",
-    );
     let (tau1, tau1_end) =
         first_logical_label_span_after(events, alpha_end, labels::CHALLENGE_TAU1)
             .expect("terminal transcript must squeeze tau1");
-    assert_no_logical_label(
-        events,
-        alpha_end..tau1,
-        labels::CHALLENGE_RING_SWITCH,
-        "terminal alpha limbs must be contiguous before tau1",
-    );
-    assert_no_logical_label(
-        events,
-        alpha_end..tau1,
-        labels::CHALLENGE_SUMCHECK_ROUND,
-        "terminal stage-2 sumcheck must not precede tau1",
-    );
     let (stage2_round, _) =
         first_logical_label_span_after(events, tau1_end, labels::CHALLENGE_SUMCHECK_ROUND)
             .expect("terminal transcript must squeeze stage-2 sumcheck after tau1");
-    assert_no_logical_label(
-        events,
-        alpha_end..events.len(),
-        labels::CHALLENGE_RING_SWITCH,
-        "terminal alpha limbs must be contiguous before tau1",
-    );
-    assert_no_logical_label(
-        events,
-        tau1_end..events.len(),
-        labels::CHALLENGE_TAU1,
-        "terminal tau1 limbs must be contiguous before stage-2 sumcheck",
-    );
-    assert_no_logical_label(
-        events,
-        tau1_end..stage2_round,
-        labels::CHALLENGE_SUMCHECK_ROUND,
-        "terminal stage-2 sumcheck must not precede tau1",
-    );
+
+    for (range, label, message) in [
+        (
+            w_hat + 1..remainder,
+            labels::CHALLENGE_RING_SWITCH,
+            "terminal alpha must not precede witness remainder",
+        ),
+        (
+            w_hat + 1..remainder,
+            labels::CHALLENGE_TAU1,
+            "terminal tau1 must not precede alpha",
+        ),
+        (
+            w_hat + 1..remainder,
+            labels::CHALLENGE_SUMCHECK_ROUND,
+            "terminal stage-2 sumcheck must not precede tau1",
+        ),
+        (
+            remainder + 1..alpha,
+            labels::CHALLENGE_TAU1,
+            "terminal tau1 must not precede alpha",
+        ),
+        (
+            remainder + 1..alpha,
+            labels::CHALLENGE_SUMCHECK_ROUND,
+            "terminal stage-2 sumcheck must not precede tau1",
+        ),
+        (
+            alpha_end..tau1,
+            labels::CHALLENGE_RING_SWITCH,
+            "terminal alpha limbs must be contiguous before tau1",
+        ),
+        (
+            alpha_end..tau1,
+            labels::CHALLENGE_SUMCHECK_ROUND,
+            "terminal stage-2 sumcheck must not precede tau1",
+        ),
+        (
+            alpha_end..events.len(),
+            labels::CHALLENGE_RING_SWITCH,
+            "terminal alpha limbs must be contiguous before tau1",
+        ),
+        (
+            tau1_end..events.len(),
+            labels::CHALLENGE_TAU1,
+            "terminal tau1 limbs must be contiguous before stage-2 sumcheck",
+        ),
+        (
+            tau1_end..stage2_round,
+            labels::CHALLENGE_SUMCHECK_ROUND,
+            "terminal stage-2 sumcheck must not precede tau1",
+        ),
+    ] {
+        assert_no_logical_label(events, range, label, message);
+    }
 
     assert!(w_hat < sparse_seed, "w_hat must precede sparse seed");
     assert!(

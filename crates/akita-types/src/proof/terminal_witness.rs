@@ -69,41 +69,6 @@ pub fn i8_digits_to_bytes(digits: &[i8]) -> Vec<u8> {
     digits.iter().copied().map(|digit| digit as u8).collect()
 }
 
-/// Extract the logical terminal `w_hat` bytes from a packed final-witness
-/// digit stream.
-#[must_use]
-pub fn terminal_witness_w_hat_bytes(
-    digits: &[i8],
-    layout: TerminalWitnessSegmentLayout,
-) -> Option<Vec<u8>> {
-    let w_hat_start = layout.w_hat_digit_offset;
-    let w_hat_end = layout.w_hat_digit_end().ok()?;
-    if w_hat_end > digits.len() {
-        return None;
-    }
-    let bytes = i8_digits_to_bytes(&digits[w_hat_start..w_hat_end]);
-    (!bytes.is_empty()).then_some(bytes)
-}
-
-/// Extract the final-witness complement that remains after the terminal
-/// `w_hat` segment has already been transcript-bound.
-#[must_use]
-pub fn terminal_witness_remainder_bytes(
-    digits: &[i8],
-    layout: TerminalWitnessSegmentLayout,
-) -> Option<Vec<u8>> {
-    let w_hat_start = layout.w_hat_digit_offset;
-    let w_hat_end = layout.w_hat_digit_end().ok()?;
-    if w_hat_end > digits.len() {
-        return None;
-    }
-    let remainder_len = digits.len().checked_sub(layout.w_hat_digit_count)?;
-    let mut bytes = Vec::with_capacity(remainder_len);
-    bytes.extend(i8_digits_to_bytes(&digits[..w_hat_start]));
-    bytes.extend(i8_digits_to_bytes(&digits[w_hat_end..]));
-    (!bytes.is_empty()).then_some(bytes)
-}
-
 /// Split a terminal final-witness digit stream into transcript-bound slices.
 ///
 /// # Errors
@@ -114,9 +79,23 @@ pub fn terminal_witness_transcript_parts(
     digits: &[i8],
     layout: TerminalWitnessSegmentLayout,
 ) -> Result<TerminalWitnessTranscriptParts, AkitaError> {
-    let w_hat = terminal_witness_w_hat_bytes(digits, layout).ok_or(AkitaError::InvalidProof)?;
-    let remainder =
-        terminal_witness_remainder_bytes(digits, layout).ok_or(AkitaError::InvalidProof)?;
+    let w_hat_start = layout.w_hat_digit_offset;
+    let w_hat_end = layout.w_hat_digit_end()?;
+    if w_hat_end > digits.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    let w_hat = i8_digits_to_bytes(&digits[w_hat_start..w_hat_end]);
+    let remainder_len = digits
+        .len()
+        .checked_sub(layout.w_hat_digit_count)
+        .ok_or(AkitaError::InvalidProof)?;
+    let mut remainder = Vec::with_capacity(remainder_len);
+    remainder.extend(i8_digits_to_bytes(&digits[..w_hat_start]));
+    remainder.extend(i8_digits_to_bytes(&digits[w_hat_end..]));
+    if w_hat.is_empty() || remainder.is_empty() {
+        return Err(AkitaError::InvalidProof);
+    }
     Ok(TerminalWitnessTranscriptParts { w_hat, remainder })
 }
 
@@ -299,21 +278,16 @@ mod tests {
     }
 
     #[test]
-    fn terminal_witness_byte_helpers_split_w_hat_and_remainder() {
+    fn terminal_witness_transcript_parts_split_w_hat_and_remainder() {
         let layout = TerminalWitnessSegmentLayout {
             w_hat_digit_offset: 2,
             w_hat_digit_count: 3,
         };
         let digits = [-2, -1, 0, 1, 2, 3];
+        let parts = terminal_witness_transcript_parts(&digits, layout).unwrap();
 
-        assert_eq!(
-            terminal_witness_w_hat_bytes(&digits, layout).unwrap(),
-            vec![0, 1, 2]
-        );
-        assert_eq!(
-            terminal_witness_remainder_bytes(&digits, layout).unwrap(),
-            vec![254, 255, 3]
-        );
+        assert_eq!(parts.w_hat, vec![0, 1, 2]);
+        assert_eq!(parts.remainder, vec![254, 255, 3]);
     }
 
     #[test]
@@ -330,15 +304,14 @@ mod tests {
     }
 
     #[test]
-    fn terminal_witness_byte_helpers_reject_bad_ranges() {
+    fn terminal_witness_transcript_parts_rejects_bad_ranges() {
         let layout = TerminalWitnessSegmentLayout {
             w_hat_digit_offset: 2,
             w_hat_digit_count: 4,
         };
         let digits = [0, 1, 2];
 
-        assert!(terminal_witness_w_hat_bytes(&digits, layout).is_none());
-        assert!(terminal_witness_remainder_bytes(&digits, layout).is_none());
+        assert!(terminal_witness_transcript_parts(&digits, layout).is_err());
     }
 
     #[test]

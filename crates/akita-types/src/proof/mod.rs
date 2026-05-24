@@ -41,10 +41,9 @@ pub use stage1::{
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
 };
 pub use terminal_witness::{
-    i8_digits_to_bytes, terminal_w_hat_bytes_from_blocks, terminal_witness_remainder_bytes,
-    terminal_witness_segment_layout, terminal_witness_segment_layout_from_counts,
-    terminal_witness_transcript_parts, terminal_witness_w_hat_bytes, RelationOnlyStage2Inputs,
-    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    i8_digits_to_bytes, terminal_w_hat_bytes_from_blocks, terminal_witness_segment_layout,
+    terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
+    RelationOnlyStage2Inputs, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 
 use akita_algebra::CyclotomicRing;
