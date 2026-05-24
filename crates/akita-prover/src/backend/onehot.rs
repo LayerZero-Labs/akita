@@ -38,14 +38,15 @@ use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
 use akita_sumcheck::SparseExtensionOpeningWitness;
-use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
-use akita_types::{FlatMatrix, RingMatrixView, RingSubfieldEncoding};
+use akita_types::{
+    DirectWitnessProof, FlatDigitBlocks, FlatRingVec, RingMatrixView, RingSubfieldEncoding,
+};
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::kernels::crt_ntt::NttSlotCache;
+use crate::compute::{CommitComputeBackend, OneHotCommitBlocks, OneHotCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{
     AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
@@ -130,7 +131,7 @@ impl OneHotIndex for usize {
 /// [`FlatBlocks::<SingleChunkEntry>::from_indices`]; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SingleChunkEntry {
+pub struct SingleChunkEntry {
     pos_in_block: u32,
     coeff_idx: u16,
 }
@@ -147,13 +148,13 @@ impl SingleChunkEntry {
 
     /// Position within the block (0..block_len).
     #[inline]
-    pub(crate) fn pos_in_block(self) -> usize {
+    pub fn pos_in_block(self) -> usize {
         self.pos_in_block as usize
     }
 
     /// Index of the single hot coefficient inside the ring element (0..D).
     #[inline]
-    pub(crate) fn coeff_idx(self) -> usize {
+    pub fn coeff_idx(self) -> usize {
         self.coeff_idx as usize
     }
 }
@@ -210,7 +211,7 @@ impl SingleChunkEntry {
 /// [`FlatBlocks::<MultiChunkEntry>::from_indices`]; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct MultiChunkEntry {
+pub struct MultiChunkEntry {
     pos_in_block: u32,
     nonzero_coeffs: Vec<u16>,
 }
@@ -228,13 +229,13 @@ impl MultiChunkEntry {
 
     /// Position within the block (0..block_len).
     #[inline]
-    pub(crate) fn pos_in_block(&self) -> usize {
+    pub fn pos_in_block(&self) -> usize {
         self.pos_in_block as usize
     }
 
     /// Hot coefficient indices inside the ring element, each `< D`.
     #[inline]
-    pub(crate) fn nonzero_coeffs(&self) -> &[u16] {
+    pub fn nonzero_coeffs(&self) -> &[u16] {
         &self.nonzero_coeffs
     }
 }
@@ -568,7 +569,7 @@ pub(crate) enum OneHotBlocks {
 
 impl OneHotBlocks {
     #[inline]
-    fn num_blocks(&self) -> usize {
+    pub(crate) fn num_blocks(&self) -> usize {
         match self {
             OneHotBlocks::SingleChunk(blocks) => blocks.num_blocks(),
             OneHotBlocks::MultiChunk(blocks) => blocks.num_blocks(),
@@ -1108,8 +1109,6 @@ impl<F, const D: usize, I: OneHotIndex> AkitaPolyOps<F, D> for OneHotPoly<F, D, 
 where
     F: FieldCore + CanonicalField + HasWide,
 {
-    type CommitCache = NttSlotCache<D>;
-
     fn num_ring_elems(&self) -> usize {
         self.total_ring_elems
     }
@@ -1529,53 +1528,43 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
-    fn commit_inner(
+    fn commit_inner<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        _ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>
+    where
+        B: CommitComputeBackend<F>,
+    {
         let blocks = self.blocks_for(block_len)?;
-        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride)?;
         let num_blocks = blocks.num_blocks();
-        let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
-        if active_a_cols > a_view.num_cols() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "active A width {active_a_cols} exceeds setup envelope {}",
-                a_view.num_cols()
-            )));
-        }
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
-
-        let t_all = match blocks {
+        let plan_blocks = match blocks {
             OneHotBlocks::SingleChunk(blocks) => {
                 let views: Vec<&[SingleChunkEntry]> =
                     (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                column_sweep_ajtai_single_chunk::<F, D>(
-                    &a_view,
-                    &views,
-                    n_a,
-                    active_a_cols,
-                    num_digits_commit,
-                )
+                OneHotCommitBlocks::SingleChunk(views)
             }
             OneHotBlocks::MultiChunk(blocks) => {
                 let views: Vec<&[MultiChunkEntry]> =
                     (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                column_sweep_ajtai_multi_chunk::<F, D>(
-                    &a_view,
-                    &views,
-                    n_a,
-                    active_a_cols,
-                    num_digits_commit,
-                )
+                OneHotCommitBlocks::MultiChunk(views)
             }
         };
+        let t_all = backend.onehot_commit_rows::<D>(
+            prepared,
+            OneHotCommitRowsPlan {
+                n_a,
+                block_len,
+                num_digits_commit,
+                blocks: plan_blocks,
+            },
+        )?;
 
         let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; num_blocks])?;
         let dst_blocks = t_hat.split_blocks_mut();
@@ -1601,52 +1590,42 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner_witness")]
-    fn commit_inner_witness(
+    fn commit_inner_witness<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        _ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
+    where
+        B: CommitComputeBackend<F>,
+    {
         let blocks = self.blocks_for(block_len)?;
-        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride)?;
-        let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
-        if active_a_cols > a_view.num_cols() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "active A width {active_a_cols} exceeds setup envelope {}",
-                a_view.num_cols()
-            )));
-        }
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
-
-        let t = match blocks {
+        let plan_blocks = match blocks {
             OneHotBlocks::SingleChunk(blocks) => {
                 let views: Vec<&[SingleChunkEntry]> =
                     (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                column_sweep_ajtai_single_chunk::<F, D>(
-                    &a_view,
-                    &views,
-                    n_a,
-                    active_a_cols,
-                    num_digits_commit,
-                )
+                OneHotCommitBlocks::SingleChunk(views)
             }
             OneHotBlocks::MultiChunk(blocks) => {
                 let views: Vec<&[MultiChunkEntry]> =
                     (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                column_sweep_ajtai_multi_chunk::<F, D>(
-                    &a_view,
-                    &views,
-                    n_a,
-                    active_a_cols,
-                    num_digits_commit,
-                )
+                OneHotCommitBlocks::MultiChunk(views)
             }
         };
+        let t = backend.onehot_commit_rows::<D>(
+            prepared,
+            OneHotCommitRowsPlan {
+                n_a,
+                block_len,
+                num_digits_commit,
+                blocks: plan_blocks,
+            },
+        )?;
 
         let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()])?;
         let dst_blocks = t_hat.split_blocks_mut();
@@ -1698,12 +1677,6 @@ where
             evals,
         )))
     }
-}
-
-fn num_cols_a(block_len: usize, num_digits_commit: usize) -> Result<usize, AkitaError> {
-    block_len
-        .checked_mul(num_digits_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))
 }
 
 fn fold_single_chunk_onehot_block<F: FieldCore, const D: usize>(
@@ -1948,7 +1921,7 @@ where
 /// any block has more than `MAX_WIDE_SHIFT_ACCUMULATIONS` hot entries (the
 /// wide accumulator would overflow) and a small-block fast path when
 /// `blocks_per_thread` is already L2-friendly.
-fn column_sweep_ajtai_single_chunk<F, const D: usize>(
+pub(crate) fn column_sweep_ajtai_single_chunk<F, const D: usize>(
     a_view: &akita_types::RingMatrixView<'_, F, D>,
     single_chunk_blocks: &[&[SingleChunkEntry]],
     n_a: usize,
@@ -2019,7 +1992,7 @@ where
 /// contributes `nonzero_coeffs.len()` shift-accumulates (not `1` like the
 /// single-chunk case), so the overflow threshold is reached at smaller block
 /// sizes when `K << D`.
-fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
+pub(crate) fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
     a_view: &akita_types::RingMatrixView<'_, F, D>,
     multi_chunk_blocks: &[&[MultiChunkEntry]],
     n_a: usize,

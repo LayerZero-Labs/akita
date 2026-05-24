@@ -1,10 +1,8 @@
 //! Prover-owned commitment kernels.
 
-use crate::kernels::crt_ntt::NttSlotCache;
-use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
-use crate::{AkitaPolyOps, AkitaProverSetup};
+use crate::{AkitaPolyOps, CommitComputeBackend};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
@@ -20,7 +18,7 @@ use akita_types::{
 /// exceeds the prover setup capacity.
 pub fn prepare_commit_inputs<F, const D: usize, P>(
     polys: &[P],
-    setup: &AkitaProverSetup<F, D>,
+    setup: &akita_types::AkitaExpandedSetup<F>,
 ) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
@@ -37,17 +35,17 @@ where
             "all polynomials in a batched commit must have the same num_vars".to_string(),
         ));
     }
-    if polys.len() > setup.expanded.seed.max_num_batched_polys {
+    if polys.len() > setup.seed.max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
             "commit received {} polynomials but setup supports at most {}",
             polys.len(),
-            setup.expanded.seed.max_num_batched_polys
+            setup.seed.max_num_batched_polys
         )));
     }
-    if num_vars > setup.expanded.seed.max_num_vars {
+    if num_vars > setup.seed.max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "commit received a polynomial with {} variables but setup supports at most {}",
-            num_vars, setup.expanded.seed.max_num_vars
+            num_vars, setup.seed.max_num_vars
         )));
     }
 
@@ -62,14 +60,16 @@ where
 /// # Errors
 ///
 /// Returns an error if an inner witness commitment or hint allocation fails.
-pub fn commit_with_params<F, const D: usize, P>(
+pub fn commit_with_params<F, const D: usize, P, B>(
     polys: &[P],
-    setup: &AkitaProverSetup<F, D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D>,
+    B: CommitComputeBackend<F>,
 {
     let b_input_len_per_poly = params.num_blocks * params.a_key.row_len() * params.num_digits_open;
     let mut b_input_digits = vec![[0i8; D]; polys.len() * b_input_len_per_poly];
@@ -85,14 +85,13 @@ where
         .try_for_each(
             |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
                 let inner = poly.commit_inner_witness(
-                    &setup.expanded.shared_matrix,
-                    &setup.ntt_shared,
+                    backend,
+                    prepared,
                     params.a_key.row_len(),
                     params.block_len,
                     params.num_digits_commit,
                     params.num_digits_open,
                     params.log_basis,
-                    setup.expanded.seed.max_stride,
                 )?;
                 dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
                 *decomposed = inner.decomposed_inner_rows;
@@ -107,12 +106,11 @@ where
         b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
         b_blinding_digits
     };
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-        &setup.ntt_shared,
-        params.b_key.row_len(),
-        setup.expanded.seed.max_stride,
-        &b_input_digits,
-    );
+    let u: Vec<CyclotomicRing<F, D>> =
+        backend.digit_rows::<D>(prepared, params.b_key.row_len(), &b_input_digits)?;
+    if u.len() != params.b_key.row_len() {
+        return Err(AkitaError::InvalidProof);
+    }
     let hint = {
         #[cfg(feature = "zk")]
         {
@@ -142,19 +140,21 @@ where
 ///
 /// Returns an error if input validation, parameter selection, or commitment
 /// execution fails.
-pub fn commit_with_policy<F, const D: usize, P, SelectParams>(
+pub fn commit_with_policy<F, const D: usize, P, B, SelectParams>(
     polys: &[P],
-    setup: &AkitaProverSetup<F, D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     select_params: SelectParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D>,
+    B: CommitComputeBackend<F>,
     SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
-    let incidence = prepare_commit_inputs::<F, D, P>(polys, setup)?;
+    let incidence = prepare_commit_inputs::<F, D, P>(polys, backend.expanded::<D>(prepared))?;
     let params = select_params(&incidence)?;
-    commit_with_params::<F, D, P>(polys, setup, &params)
+    commit_with_params::<F, D, P, B>(polys, backend, prepared, &params)
 }
 
 /// Validate a multipoint commitment request and derive its
@@ -172,7 +172,7 @@ where
 /// setup capacity, or the variable count exceeds the prover setup capacity.
 pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
     polys_per_point: &[&[P]],
-    setup: &AkitaProverSetup<F, D>,
+    setup: &akita_types::AkitaExpandedSetup<F>,
 ) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
@@ -183,11 +183,11 @@ where
             "batched_commit requires at least one opening point".to_string(),
         ));
     }
-    if polys_per_point.len() > setup.expanded.seed.max_num_points {
+    if polys_per_point.len() > setup.seed.max_num_points {
         return Err(AkitaError::InvalidInput(format!(
             "batched_commit received {} opening points but setup supports at most {}",
             polys_per_point.len(),
-            setup.expanded.seed.max_num_points
+            setup.seed.max_num_points
         )));
     }
     let first_bundle = polys_per_point.first().ok_or_else(|| {
@@ -197,10 +197,10 @@ where
         AkitaError::InvalidInput("batched_commit bundles must be nonempty".to_string())
     })?;
     let num_vars = first_poly.num_vars();
-    if num_vars > setup.expanded.seed.max_num_vars {
+    if num_vars > setup.seed.max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "batched_commit received a polynomial with {} variables but setup supports at most {}",
-            num_vars, setup.expanded.seed.max_num_vars
+            num_vars, setup.seed.max_num_vars
         )));
     }
 
@@ -222,10 +222,10 @@ where
             AkitaError::InvalidInput("batched_commit total polynomial count overflow".to_string())
         })?;
     }
-    if total_polys > setup.expanded.seed.max_num_batched_polys {
+    if total_polys > setup.seed.max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
             "batched_commit received {total_polys} polynomials but setup supports at most {}",
-            setup.expanded.seed.max_num_batched_polys
+            setup.seed.max_num_batched_polys
         )));
     }
 
@@ -246,19 +246,22 @@ where
 /// Returns an error if input validation, parameter selection, or any per-
 /// point commitment fails.
 #[allow(clippy::type_complexity)]
-pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams>(
+pub fn batched_commit_with_policy<F, const D: usize, P, B, SelectParams>(
     polys_per_point: &[&[P]],
-    setup: &AkitaProverSetup<F, D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     select_params: SelectParams,
 ) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D>,
+    B: CommitComputeBackend<F>,
     SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
-    let incidence = prepare_batched_commit_inputs::<F, D, P>(polys_per_point, setup)?;
+    let incidence =
+        prepare_batched_commit_inputs::<F, D, P>(polys_per_point, backend.expanded::<D>(prepared))?;
     let params = select_params(&incidence)?;
-    batched_commit_with_params::<F, D, P>(polys_per_point, setup, &params)
+    batched_commit_with_params::<F, D, P, B>(polys_per_point, backend, prepared, &params)
 }
 
 /// Commit one polynomial bundle per opening point using already-selected
@@ -272,18 +275,22 @@ where
 ///
 /// Returns an error if any per-point commitment fails.
 #[allow(clippy::type_complexity)]
-pub fn batched_commit_with_params<F, const D: usize, P>(
+pub fn batched_commit_with_params<F, const D: usize, P, B>(
     polys_per_point: &[&[P]],
-    setup: &AkitaProverSetup<F, D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
 ) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D>,
+    B: CommitComputeBackend<F>,
 {
     let mut out = Vec::with_capacity(polys_per_point.len());
     for polys in polys_per_point {
-        out.push(commit_with_params::<F, D, P>(polys, setup, params)?);
+        out.push(commit_with_params::<F, D, P, B>(
+            polys, backend, prepared, params,
+        )?);
     }
     Ok(out)
 }

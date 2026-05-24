@@ -4,7 +4,7 @@
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{commit_with_params, CommitmentProver};
+use akita_prover::{commit_with_params, CommitComputeBackend, CommitmentProver, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
@@ -107,6 +107,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
                 total_claims,
                 num_polys_per_point.len(),
             );
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
@@ -118,23 +119,20 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
         let commit_outputs = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
-        >>::batched_commit(&polys_per_point_refs, &setup)
+        >>::batched_commit(
+            &CpuBackend, &prepared, &polys_per_point_refs
+        )
         .expect("dense batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense");
         let proof =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
-                &setup,
-                prove_inputs_from_groups(
+            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(&CpuBackend, &prepared, prove_inputs_from_groups(
                     &opening_points,
                     &polys_per_point_refs,
                     &commitments,
                     hints,
-                ),
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+                ), &mut prover_transcript, BasisMode::Lagrange)
             .expect("multipoint batched prove");
 
         let mut serialized = Vec::new();
@@ -221,6 +219,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             total_claims,
             num_polys_per_point.len(),
         );
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
@@ -229,23 +228,20 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
         let commit_outputs = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
-        >>::batched_commit(&polys_per_point_refs, &setup)
+        >>::batched_commit(
+            &CpuBackend, &prepared, &polys_per_point_refs
+        )
         .expect("onehot batched commit");
         let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
         let proof =
-            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
-                &setup,
-                prove_inputs_from_groups(
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(&CpuBackend, &prepared, prove_inputs_from_groups(
                     &opening_points,
                     &polys_per_point_refs,
                     &commitments,
                     hints,
-                ),
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
+                ), &mut prover_transcript, BasisMode::Lagrange)
             .expect("multipoint batched prove");
 
         let mut serialized = Vec::new();
@@ -321,6 +317,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
                 total_claims,
                 NUM_POINTS,
             );
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
@@ -328,8 +325,13 @@ fn multipoint_dense_shared_commitment_round_trip() {
 
         // Commit the bundle exactly once with the shared multipoint layout.
         let (commitment, hint) =
-            commit_with_params::<F, DENSE_D, DensePoly<F, DENSE_D>>(&polys, &setup, &layout)
-                .expect("dense single commit");
+            commit_with_params::<F, DENSE_D, DensePoly<F, DENSE_D>, CpuBackend>(
+                &polys,
+                &CpuBackend,
+                &prepared,
+                &layout,
+            )
+            .expect("dense single commit");
 
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
         let polys_slice = polys.as_slice();
@@ -349,12 +351,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"multipoint_batched_e2e/dense_shared");
-        let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
-            &setup,
-            prover_claims,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
+        let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(&CpuBackend, &prepared, prover_claims, &mut prover_transcript, BasisMode::Lagrange)
         .expect("shared-commitment multipoint batched prove");
 
         let mut serialized = Vec::new();
@@ -403,6 +400,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
 #[cfg(not(feature = "zk"))]
 mod non_zk_negative_cases {
     use super::*;
+    use akita_prover::{CommitComputeBackend, CpuBackend};
 
     #[test]
     fn multipoint_dense_verify_rejects_swapped_points() {
@@ -456,6 +454,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::setup_prover(NV, total_claims, num_polys_per_point.len());
+            let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
@@ -464,7 +463,9 @@ mod non_zk_negative_cases {
             let commit_outputs = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
-            >>::batched_commit(&polys_per_point_refs, &setup)
+            >>::batched_commit(
+                &CpuBackend, &prepared, &polys_per_point_refs
+            )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
@@ -474,7 +475,8 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_prove(
-                &setup,
+                &CpuBackend,
+                &prepared,
                 prove_inputs_from_groups(
                     &opening_points,
                     &polys_per_point_refs,
@@ -540,6 +542,7 @@ mod non_zk_negative_cases {
             >>::setup_prover(
                 NV, total_claims, num_polys_per_point.len()
             );
+            let commit_prepared = CpuBackend.prepare_setup(&commit_setup).unwrap();
             // Prove setup with strictly smaller capacity than total_claims.
             let prove_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
@@ -547,6 +550,7 @@ mod non_zk_negative_cases {
             >>::setup_prover(
                 NV, total_claims - 1, num_polys_per_point.len()
             );
+            let prove_prepared = CpuBackend.prepare_setup(&prove_setup).unwrap();
             // Use the over-capacity setup so that commit succeeds; the
             // intent is to drive `batched_prove` against `prove_setup` that
             // cannot fit `total_claims` and observe the rejection there.
@@ -554,7 +558,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_commit(
-                &polys_per_point_refs, &commit_setup
+                &CpuBackend, &commit_prepared, &polys_per_point_refs
             )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
@@ -564,7 +568,8 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_prove(
-                &prove_setup,
+                &CpuBackend,
+                &prove_prepared,
                 prove_inputs_from_groups(
                     &opening_points,
                     &polys_per_point_refs,
@@ -634,6 +639,7 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::setup_prover(NV, total_claims, num_polys_per_point.len());
+            let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
@@ -642,7 +648,9 @@ mod non_zk_negative_cases {
             let commit_outputs = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
-            >>::batched_commit(&polys_per_point_refs, &setup)
+            >>::batched_commit(
+                &CpuBackend, &prepared, &polys_per_point_refs
+            )
             .expect("dense batched commit");
             let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
@@ -652,7 +660,8 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::batched_prove(
-                &setup,
+                &CpuBackend,
+                &prepared,
                 prove_inputs_from_groups(
                     &opening_points,
                     &polys_per_point_refs,

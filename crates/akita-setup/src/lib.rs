@@ -80,7 +80,7 @@ where
                     && cached_stride >= max_stride
                     && cached_points >= max_num_points
                 {
-                    tracing::info!("Loaded setup from disk, rebuilding NTT caches");
+                    tracing::info!("Loaded setup from disk; backend preparation is explicit");
                     return AkitaProverSetup::from_expanded(expanded);
                 }
                 if let Some(storage_path) =
@@ -406,9 +406,9 @@ mod tests {
             with_test_cache_dir("ntt-rebuild", || {
                 use akita_algebra::CyclotomicRing;
                 use akita_config::CommitmentConfig;
-                use akita_prover::kernels::linear::mat_vec_mul_ntt_single_i8;
                 use akita_prover::AkitaPolyOps;
                 use akita_prover::DensePoly;
+                use akita_prover::{CommitComputeBackend, CpuBackend};
 
                 const MAX_VARS: usize = 14;
 
@@ -426,24 +426,25 @@ mod tests {
                 let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
 
                 let commit_u = |setup: &AkitaProverSetup<TestF, TEST_D>| {
+                    let prepared = CpuBackend.prepare_setup(setup).unwrap();
                     let inner = poly
                         .commit_inner_witness(
-                            &setup.expanded.shared_matrix,
-                            &setup.ntt_shared,
+                            &CpuBackend,
+                            &prepared,
                             lp.a_key.row_len(),
                             lp.block_len,
                             lp.num_digits_commit,
                             lp.num_digits_open,
                             lp.log_basis,
-                            setup.expanded.seed.max_stride,
                         )
                         .unwrap();
-                    mat_vec_mul_ntt_single_i8::<TestF, TEST_D>(
-                        &setup.ntt_shared,
-                        lp.b_key.row_len(),
-                        setup.expanded.seed.max_stride,
-                        inner.decomposed_inner_rows.flat_digits(),
-                    )
+                    CpuBackend
+                        .digit_rows::<TEST_D>(
+                            &prepared,
+                            lp.b_key.row_len(),
+                            inner.decomposed_inner_rows.flat_digits(),
+                        )
+                        .unwrap()
                 };
 
                 let fresh_u = commit_u(&fresh_setup);

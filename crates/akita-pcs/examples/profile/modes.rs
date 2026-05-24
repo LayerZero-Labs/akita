@@ -11,7 +11,7 @@ use akita_field::{
 };
 use akita_field::{ExtField, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::CommitmentProver;
+use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaVerifierSetup,
@@ -77,6 +77,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
+            ProverSetup = AkitaProverSetup<FF, D>,
             ClaimField = Cfg::ClaimField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -141,6 +142,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
+            ProverSetup = AkitaProverSetup<FF, D>,
             ClaimField = Cfg::ClaimField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -208,6 +210,7 @@ fn run_onehot_mode<
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             F,
             D,
+            ProverSetup = AkitaProverSetup<F, D>,
             ClaimField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,

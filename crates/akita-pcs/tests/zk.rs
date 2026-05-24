@@ -1,12 +1,13 @@
 #![allow(missing_docs)]
 #![cfg(all(feature = "zk", feature = "planner"))]
 
+use akita_prover::{CommitComputeBackend, CpuBackend};
+
 mod common;
 
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::kernels::linear::mat_vec_mul_ntt_single_i8;
 use akita_prover::{AkitaProverSetup, CommitmentProver, QuadraticEquation};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
@@ -172,7 +173,7 @@ fn single_point_group_incidence(num_vars: usize) -> ClaimIncidenceSummary {
 }
 
 fn plain_root_d_image<const D: usize>(
-    setup: &AkitaProverSetup<F, D>,
+    prepared: &<CpuBackend as CommitComputeBackend<F>>::PreparedSetup<D>,
     poly: &DensePoly<F, D>,
     point: &[F],
     layout: &LevelParams,
@@ -205,7 +206,8 @@ fn plain_root_d_image<const D: usize>(
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
     let quad_eq = QuadraticEquation::<F, D>::new_prover(
-        &setup.ntt_shared,
+        &CpuBackend,
+        prepared,
         vec![ring_opening_point],
         vec![ring_multiplier_point],
         vec![0usize],
@@ -218,7 +220,6 @@ fn plain_root_d_image<const D: usize>(
         std::slice::from_ref(commitment),
         std::slice::from_ref(&y_ring),
         vec![CyclotomicRing::<F, D>::one()],
-        setup.expanded.seed.max_stride,
         MRowLayout::Intermediate,
     )
     .expect("debug quadratic equation");
@@ -227,12 +228,13 @@ fn plain_root_d_image<const D: usize>(
         quad_eq.d_blinding_digits().is_some(),
         "zk quadratic equation should sample D-blinding digits"
     );
-    let plain_v = mat_vec_mul_ntt_single_i8(
-        &setup.ntt_shared,
-        layout.d_key.row_len(),
-        setup.expanded.seed.max_stride,
-        quad_eq.w_hat_flat().expect("debug w_hat"),
-    );
+    let plain_v = CpuBackend
+        .digit_rows::<D>(
+            prepared,
+            layout.d_key.row_len(),
+            quad_eq.w_hat_flat().expect("debug w_hat"),
+        )
+        .expect("plain v rows");
     assert_ne!(
         quad_eq.v, plain_v,
         "debug zk v should include fresh D-blinding"
@@ -324,16 +326,24 @@ where
         let expected_opening = opening_from_poly(&poly, &point, &layout);
 
         let setup = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(commit_input, &setup)
-                .expect("first zk commit");
+        let (commitment, hint) = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
+            &CpuBackend,
+            &prepared,
+            commit_input,
+        )
+        .expect("first zk commit");
         let (rerandomized_commitment, _) =
-            <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(commit_input, &setup)
-                .expect("second zk commit");
+            <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
+                &CpuBackend,
+                &prepared,
+                commit_input,
+            )
+            .expect("second zk commit");
         assert_ne!(
             commitment, rerandomized_commitment,
             "zk commitment should re-randomize for the same polynomial at D={D}, nv={nv}"
@@ -345,7 +355,8 @@ where
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(&point, &poly_refs, &commitments[0], hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -412,16 +423,20 @@ where
         let expected_opening = opening_from_poly(&poly, &point, &layout);
 
         let setup = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(commit_input, &setup)
-                .expect("first zk commit");
+        let (commitment, hint) = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::commit(
+            &CpuBackend,
+            &prepared,
+            commit_input,
+        )
+        .expect("first zk commit");
 
         let plain_root_v = plain_root_d_image::<D>(
-            &setup,
+            &prepared,
             &poly,
             &point,
             &layout,
@@ -436,7 +451,8 @@ where
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(&point, &poly_refs, &commitments[0], hint.clone()),
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -445,7 +461,8 @@ where
 
         let mut second_prover_transcript = AkitaTranscript::<F>::new(label);
         let second_proof = <Scheme<D, Cfg<BaseCfg>> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(&point, &poly_refs, &commitments[0], hint),
             &mut second_prover_transcript,
             BasisMode::Lagrange,

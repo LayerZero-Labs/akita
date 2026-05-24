@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
 
+use akita_prover::{CommitComputeBackend, CpuBackend};
+
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::{HasWide, ReduceTo};
@@ -117,6 +119,7 @@ where
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
     let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys, 1);
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let params = Cfg::get_params_for_commitment(num_vars, num_polys, 1)
         .expect("benchmark commitment params");
 
@@ -148,8 +151,13 @@ where
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let start = Instant::now();
-                let committed = commit_with_params::<F, D, _>(&transformed_polys, &setup, &params)
-                    .expect("benchmark transformed commitment");
+                let committed = commit_with_params::<F, D, _, CpuBackend>(
+                    &transformed_polys,
+                    &CpuBackend,
+                    &prepared,
+                    &params,
+                )
+                .expect("benchmark transformed commitment");
                 total += start.elapsed();
                 black_box(committed);
             }
@@ -163,8 +171,12 @@ where
             for _ in 0..iters {
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
-                let committed = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
-                    .expect("benchmark scheme commitment");
+                let committed = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &CpuBackend,
+                    &prepared,
+                    &polys,
+                )
+                .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);
             }

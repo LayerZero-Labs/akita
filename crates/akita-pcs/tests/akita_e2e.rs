@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
 
+use akita_prover::{CommitComputeBackend, CpuBackend};
+
 #[cfg(feature = "planner")]
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
@@ -8,9 +10,9 @@ use akita_config::proof_optimized::{fp16, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::AkitaPolyOps;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
+use akita_prover::{AkitaPolyOps, AkitaProverSetup};
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -175,6 +177,7 @@ where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         FField,
         D,
+        ProverSetup = AkitaProverSetup<FField, D>,
         ClaimField = Cfg::ClaimField,
         VerifierSetup = AkitaVerifierSetup<FField>,
         Commitment = RingCommitment<FField, D>,
@@ -201,12 +204,14 @@ where
 
     let setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_prover(nv, 1, 1);
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_verifier(&setup);
     let (commitment, hint) =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::commit(
+            &CpuBackend,
+            &prepared,
             std::slice::from_ref(&poly),
-            &setup,
         )
         .unwrap();
 
@@ -216,7 +221,8 @@ where
 
     let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::batched_prove(
-        &setup,
+        &CpuBackend,
+        &prepared,
         prove_input(
             &pt[..],
             &poly_refs[..],
@@ -342,9 +348,11 @@ fn full_d64_prove_verify() {
             1,
             1,
         );
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &CpuBackend,
+            &prepared,
             std::slice::from_ref(&poly),
-            &setup,
         )
         .unwrap();
 
@@ -357,7 +365,8 @@ fn full_d64_prove_verify() {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
         let prove_start = Instant::now();
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(
                 &pt[..],
                 &poly_refs[..],
@@ -586,11 +595,13 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &CpuBackend,
+            &prepared,
             std::slice::from_ref(&poly),
-            &setup,
         )
         .unwrap();
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
@@ -601,7 +612,8 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(
                 &opening_point[..],
                 &poly_refs[..],
@@ -637,8 +649,9 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         {
             let (recomputed_commitment, _) =
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &CpuBackend,
+                    &prepared,
                     std::slice::from_ref(&reconstructed),
-                    &setup,
                 )
                 .expect("recompute commitment from direct witness");
             assert_eq!(
@@ -762,11 +775,13 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &CpuBackend,
+            &prepared,
             std::slice::from_ref(&onehot_poly),
-            &setup,
         )
         .unwrap();
 
@@ -778,7 +793,8 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(
                 &pt[..],
                 &poly_refs[..],
@@ -891,18 +907,23 @@ fn batched_onehot_same_point_round_trip() {
 
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1);
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
-        let (commitment, hint) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_group, &setup)
-                .unwrap();
+        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &CpuBackend,
+            &prepared,
+            &poly_group,
+        )
+        .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(
                 &pt[..],
                 &poly_group[..],
@@ -978,19 +999,24 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
 
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1);
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
-        let (commitment, hint) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_group, &setup)
-                .unwrap();
+        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &CpuBackend,
+            &prepared,
+            &poly_group,
+        )
+        .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(
                 &pt[..],
                 &poly_group[..],
@@ -1084,17 +1110,22 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
             NV, BATCH_SIZE, 1,
         );
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_refs, &setup)
-                .unwrap();
+        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            &CpuBackend,
+            &prepared,
+            &poly_refs,
+        )
+        .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(
                 &pt[..],
                 &poly_refs[..],

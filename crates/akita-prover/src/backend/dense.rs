@@ -18,12 +18,8 @@ use crate::backend::poly_helpers::{
     decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
     DecomposeParams,
 };
-use crate::kernels::crt_ntt::NttSlotCache;
-use crate::kernels::linear::{
-    decompose_rows_i8_into, mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_i8_dense,
-    mat_vec_mul_ntt_i8_dense_single_row, try_centered_i8,
-};
-use akita_types::FlatMatrix;
+use crate::compute::{CommitComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
+use crate::kernels::linear::{decompose_rows_i8_into, try_centered_i8};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
@@ -245,8 +241,6 @@ impl<F, const D: usize> AkitaPolyOps<F, D> for DensePoly<F, D>
 where
     F: FieldCore + CanonicalField,
 {
-    type CommitCache = NttSlotCache<D>;
-
     fn num_ring_elems(&self) -> usize {
         self.coeffs.len()
     }
@@ -440,235 +434,55 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]
-    fn commit_inner(
+    fn commit_inner<B>(
         &self,
-        _a_matrix: &FlatMatrix<F>,
-        ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        let n = self.coeffs.len();
-        let num_blocks = n.div_ceil(block_len);
-
-        if let Some(digit_planes) = self.digit_planes_for(num_digits_commit, log_basis) {
-            let digit_block_slices =
-                digit_block_slices(digit_planes, n, block_len, num_digits_commit);
-            let t_all = mat_vec_mul_ntt_dense_digits_i8::<F, D>(
-                ntt_a,
-                n_a,
-                matrix_stride,
-                &digit_block_slices,
-            );
-            let block_sizes: Vec<usize> = t_all
-                .iter()
-                .map(|t_i| t_i.len() * num_digits_open)
-                .collect();
-            let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-            let dst_blocks = t_hat.split_blocks_mut();
-            #[cfg(feature = "parallel")]
-            cfg_into_iter!(dst_blocks)
-                .zip(cfg_iter!(t_all))
-                .for_each(|(dst, t_i)| {
-                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis)
-                });
-            #[cfg(not(feature = "parallel"))]
-            dst_blocks
-                .into_iter()
-                .zip(t_all.iter())
-                .for_each(|(dst, t_i)| {
-                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis)
-                });
-
-            return Ok(t_hat);
-        }
-
-        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
-            .map(|i| {
-                let start = i * block_len;
-                if start >= n {
-                    &[] as &[CyclotomicRing<F, D>]
-                } else {
-                    &self.coeffs[start..(start + block_len).min(n)]
-                }
-            })
-            .collect();
-
-        if n_a == 1 {
-            let t = mat_vec_mul_ntt_i8_dense_single_row(
-                ntt_a,
-                matrix_stride,
-                &block_slices,
-                num_digits_commit,
-                log_basis,
-            );
-            let mut t_hat = FlatDigitBlocks::zeroed(vec![num_digits_open; t.len()])?;
-            let dst_blocks = t_hat.split_blocks_mut();
-            #[cfg(feature = "parallel")]
-            cfg_into_iter!(dst_blocks)
-                .zip(cfg_iter!(t))
-                .for_each(|(dst, t_i)| {
-                    decompose_rows_i8_into(
-                        std::slice::from_ref(t_i),
-                        dst,
-                        num_digits_open,
-                        log_basis,
-                    )
-                });
-            #[cfg(not(feature = "parallel"))]
-            dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
-                decompose_rows_i8_into(std::slice::from_ref(t_i), dst, num_digits_open, log_basis)
-            });
-            return Ok(t_hat);
-        }
-
-        let t_all = mat_vec_mul_ntt_i8_dense(
-            ntt_a,
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>
+    where
+        B: CommitComputeBackend<F>,
+    {
+        let t = self.commit_rows(
+            backend,
+            prepared,
             n_a,
-            matrix_stride,
-            &block_slices,
+            block_len,
             num_digits_commit,
             log_basis,
-        );
-
-        let block_sizes: Vec<usize> = t_all
-            .iter()
-            .map(|t_i| t_i.len() * num_digits_open)
-            .collect();
-        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-        let dst_blocks = t_hat.split_blocks_mut();
-        #[cfg(feature = "parallel")]
-        cfg_into_iter!(dst_blocks)
-            .zip(cfg_iter!(t_all))
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-        #[cfg(not(feature = "parallel"))]
-        dst_blocks
-            .into_iter()
-            .zip(t_all.iter())
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-
-        Ok(t_hat)
+        )?;
+        decompose_commit_rows::<F, D>(&t, num_digits_open, log_basis)
     }
 
-    fn commit_inner_witness(
+    fn commit_inner_witness<B>(
         &self,
-        _a_matrix: &FlatMatrix<F>,
-        ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        let n = self.coeffs.len();
-        let num_blocks = n.div_ceil(block_len);
-
-        if let Some(digit_planes) = self.digit_planes_for(num_digits_commit, log_basis) {
-            let digit_block_slices =
-                digit_block_slices(digit_planes, n, block_len, num_digits_commit);
-            let t = mat_vec_mul_ntt_dense_digits_i8::<F, D>(
-                ntt_a,
-                n_a,
-                matrix_stride,
-                &digit_block_slices,
-            );
-            let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
-            let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-            let dst_blocks = t_hat.split_blocks_mut();
-            #[cfg(feature = "parallel")]
-            cfg_into_iter!(dst_blocks)
-                .zip(cfg_iter!(t))
-                .for_each(|(dst, t_i)| {
-                    decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis)
-                });
-            #[cfg(not(feature = "parallel"))]
-            dst_blocks.into_iter().zip(t.iter()).for_each(|(dst, t_i)| {
-                decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis)
-            });
-            return Ok(CommitInnerWitness {
-                recomposed_inner_rows: t,
-                decomposed_inner_rows: t_hat,
-            });
-        }
-
-        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
-            .map(|i| {
-                let start = i * block_len;
-                if start >= n {
-                    &[] as &[CyclotomicRing<F, D>]
-                } else {
-                    &self.coeffs[start..(start + block_len).min(n)]
-                }
-            })
-            .collect();
-
-        if n_a == 1 {
-            let t_single = mat_vec_mul_ntt_i8_dense_single_row(
-                ntt_a,
-                matrix_stride,
-                &block_slices,
-                num_digits_commit,
-                log_basis,
-            );
-            let mut t_hat = FlatDigitBlocks::zeroed(vec![num_digits_open; t_single.len()])?;
-            let dst_blocks = t_hat.split_blocks_mut();
-            #[cfg(feature = "parallel")]
-            cfg_into_iter!(dst_blocks)
-                .zip(cfg_iter!(t_single))
-                .for_each(|(dst, t_i)| {
-                    decompose_rows_i8_into(
-                        std::slice::from_ref(t_i),
-                        dst,
-                        num_digits_open,
-                        log_basis,
-                    )
-                });
-            #[cfg(not(feature = "parallel"))]
-            dst_blocks
-                .into_iter()
-                .zip(t_single.iter())
-                .for_each(|(dst, t_i)| {
-                    decompose_rows_i8_into(
-                        std::slice::from_ref(t_i),
-                        dst,
-                        num_digits_open,
-                        log_basis,
-                    )
-                });
-            let t = t_single.into_iter().map(|ring| vec![ring]).collect();
-            return Ok(CommitInnerWitness {
-                recomposed_inner_rows: t,
-                decomposed_inner_rows: t_hat,
-            });
-        }
-
-        let t = mat_vec_mul_ntt_i8_dense(
-            ntt_a,
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
+    where
+        B: CommitComputeBackend<F>,
+    {
+        let t = self.commit_rows(
+            backend,
+            prepared,
             n_a,
-            matrix_stride,
-            &block_slices,
+            block_len,
             num_digits_commit,
             log_basis,
-        );
-        let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
-        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-        let dst_blocks = t_hat.split_blocks_mut();
-        #[cfg(feature = "parallel")]
-        cfg_into_iter!(dst_blocks)
-            .zip(cfg_iter!(t))
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-        #[cfg(not(feature = "parallel"))]
-        dst_blocks
-            .into_iter()
-            .zip(t.iter())
-            .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+        )?;
+        let decomposed_inner_rows = decompose_commit_rows::<F, D>(&t, num_digits_open, log_basis)?;
         Ok(CommitInnerWitness {
             recomposed_inner_rows: t,
-            decomposed_inner_rows: t_hat,
+            decomposed_inner_rows,
         })
     }
 
@@ -690,6 +504,86 @@ where
             coeffs,
         )))
     }
+}
+
+impl<F, const D: usize> DensePoly<F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    fn commit_rows<B>(
+        &self,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
+        n_a: usize,
+        block_len: usize,
+        num_digits_commit: usize,
+        log_basis: u32,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+    where
+        B: CommitComputeBackend<F>,
+    {
+        let n = self.coeffs.len();
+        let num_blocks = n.div_ceil(block_len);
+
+        if let Some(digit_planes) = self.digit_planes_for(num_digits_commit, log_basis) {
+            let digit_block_slices =
+                digit_block_slices(digit_planes, n, block_len, num_digits_commit);
+            return backend.dense_commit_rows(
+                prepared,
+                DenseCommitRowsPlan {
+                    n_a,
+                    input: DenseCommitInput::CachedDigits { digit_block_slices },
+                },
+            );
+        }
+
+        let block_slices: Vec<&[CyclotomicRing<F, D>]> = (0..num_blocks)
+            .map(|i| {
+                let start = i * block_len;
+                if start >= n {
+                    &[] as &[CyclotomicRing<F, D>]
+                } else {
+                    &self.coeffs[start..(start + block_len).min(n)]
+                }
+            })
+            .collect();
+
+        backend.dense_commit_rows(
+            prepared,
+            DenseCommitRowsPlan {
+                n_a,
+                input: DenseCommitInput::CoeffBlocks {
+                    block_slices,
+                    num_digits_commit,
+                    log_basis,
+                },
+            },
+        )
+    }
+}
+
+fn decompose_commit_rows<F, const D: usize>(
+    rows: &[Vec<CyclotomicRing<F, D>>],
+    num_digits_open: usize,
+    log_basis: u32,
+) -> Result<FlatDigitBlocks<D>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    let block_sizes: Vec<usize> = rows.iter().map(|t_i| t_i.len() * num_digits_open).collect();
+    let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
+    let dst_blocks = t_hat.split_blocks_mut();
+    #[cfg(feature = "parallel")]
+    cfg_into_iter!(dst_blocks)
+        .zip(cfg_iter!(rows))
+        .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+    #[cfg(not(feature = "parallel"))]
+    dst_blocks
+        .into_iter()
+        .zip(rows.iter())
+        .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
+
+    Ok(t_hat)
 }
 
 fn digit_block_slices<const D: usize>(

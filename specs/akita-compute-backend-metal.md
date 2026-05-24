@@ -18,46 +18,51 @@ macros. Adding Metal beside this shape would create a second execution layer
 without replacing the CPU-shaped one.
 
 This spec defines the first clean rearchitecture slice: make prover compute an
-explicit runtime-owned boundary, move the existing ring/commit CPU path behind
+explicit host-prepared boundary, move the existing ring/commit CPU path behind
 that boundary, remove CPU NTT cache ownership from protocol-facing setup and
 polynomial APIs, and record the inventory/baselines needed to review the
-cutover honestly. Metal skeleton work, field kernels, MLE kernels, sumcheck
-kernels, true hybrid scheduling, and Jolt adapter work are captured as one
-remaining-work bucket that should be expanded into its own detailed spec when
-that work becomes current.
+cutover honestly. The prepared boundary is a typed compute-backend trait with
+an associated prepared setup; the current PR implements only `CpuBackend`, whose
+prepared state is `CpuPreparedSetup<F, D>`. Migrated hot paths call named
+backend operations rather than reaching through raw CPU setup matrices or NTT
+slots. Metal skeleton work, field kernels, MLE kernels, sumcheck kernels, true
+hybrid scheduling, and Jolt adapter work are captured as one remaining-work
+bucket that should be expanded into its own detailed spec when that work
+becomes current.
 
 ## Intent
 
 ### Goal
 
-Cut over Akita's prover setup and root ring/commit compute path to a
-runtime-owned compute backend boundary, with `CpuBackend` preserving current
+Cut over Akita's prover setup and root ring/commit compute path to an explicit
+typed compute-backend operation boundary, with `CpuBackend` preserving current
 behavior exactly.
 
 The key surfaces modified by this spec are:
 
-- `akita-prover::compute`: new plan/result types, `ProverRuntime`,
-  `CpuBackend`, prepared setup caches, capability/fallback policy, and the
-  migrated ring/commit compute interface.
+- `akita-prover::compute`: new plan/result types, a const-generic compute
+  backend trait, `CpuBackend`, `CpuPreparedSetup<F, D>`, and the migrated
+  ring/commit operation interface.
 - `AkitaProverSetup`: becomes protocol/setup data only; it must not own
   `NttSlotCache`, `MultiDNttCaches`, Metal buffers, command queues, or any
   backend-prepared cache.
 - `CommitmentProver`: public prover methods are changed in one pass to require
-  an explicit runtime/backend context. There is no permanent old API plus
-  optional runtime API.
+  an explicit backend plus its typed prepared compute context. There is no
+  permanent old API plus optional prepared-context API.
 - `AkitaPolyOps`: root polynomial representation logic is cut through rather
   than bypassed. Migrated commit methods must not expose
   `CommitCache = NttSlotCache<D>` or call `mat_vec_mul_ntt_*` directly.
-- `akita-prover::protocol` and `akita-scheme`: migrated paths obtain prepared
-  setup through `ProverRuntime`; they do not thread `&setup.ntt_shared`.
+- `akita-prover::protocol` and `akita-scheme`: migrated paths receive a
+  backend and its typed prepared setup through the prover call graph; they do
+  not thread `&setup.ntt_shared`.
 - `akita-verifier` and `akita-types`: unchanged in role. They must remain free
-  of prover runtime, Metal, and backend cache dependencies.
+  of prover compute, Metal, and backend cache dependencies.
 
 ### Invariants
 
 1. Verifier-visible commitments, proofs, setup descriptors, opening claims,
-   transcript labels, and challenge order are unchanged by the CPU runtime
-   cutover.
+   transcript labels, and challenge order are unchanged by the CPU
+   compute-backend cutover.
 2. Backends must not append to or squeeze from the Fiat-Shamir transcript.
    Transcript binding remains in `akita-prover` and `akita-scheme` protocol
    flow.
@@ -74,12 +79,12 @@ The key surfaces modified by this spec are:
 7. `AkitaProverSetup` and `AkitaInstanceDescriptor` must not include device
    placement, command queue state, buffer addresses, runtime timing, or
    backend cache identity.
-8. Runtime-prepared caches are derived from the same `AkitaExpandedSetup`,
+8. Prepared compute caches are derived from the same `AkitaExpandedSetup`,
    schedule parameters, field family, ring dimension, and CRT/NTT parameter
    family as the current CPU path.
-9. Future accelerator availability is a runtime capability, not a protocol
-   assumption. The current CPU runtime must compile and run without accelerator
-   crates.
+9. Future accelerator availability is a host/backend capability, not a
+   protocol assumption. The current CPU backend path must compile and run
+   without accelerator crates.
 10. There is exactly one migrated compute path. After a path moves to
     `akita-prover::compute`, neither protocol code nor `AkitaPolyOps`
     implementations may call `NttSlotCache`, `MultiDNttCaches`,
@@ -91,6 +96,15 @@ The key surfaces modified by this spec are:
 12. No compatibility shims, deprecated aliases, or long-lived parallel APIs are
     introduced. This repo makes no backward-compatibility guarantee; update all
     call sites in one pass.
+13. Migrated const-generic prepared state must stay typed. Do not introduce
+    `Any`/downcast maps, `usize -> Box<dyn ...>` cache registries, or mutexed
+    hot-path lookup to recover `D` at runtime. Dynamic-D protocol arms may
+    prepare a new typed `CpuPreparedSetup<F, D_LEVEL>` inside the dispatch arm
+    and return `AkitaError` on unsupported dimensions.
+14. The prepared setup boundary must not become a raw accessor layer. Migrated
+    code outside `akita-prover::compute` must not call methods such as
+    `shared_matrix()`, expose `&NttSlotCache<D>`, or inspect backend-specific
+    storage. It requests named operations from the backend instead.
 
 ### Non-Goals
 
@@ -121,25 +135,41 @@ The key surfaces modified by this spec are:
       `AkitaProverSetup::from_expanded` do not build CPU NTT caches. CPU caches
       are prepared lazily by `CpuBackend` from `AkitaExpandedSetup`.
 - [ ] `CommitmentProver::commit`, `CommitmentProver::batched_commit`, and
-      `CommitmentProver::batched_prove` require an explicit
-      `ProverRuntime`/backend context after the cutover, and all in-repo
+      `CommitmentProver::batched_prove` require an explicit backend plus that
+      backend's typed prepared context after the cutover, and all in-repo
       callers are updated. No old peer API remains.
 - [ ] `AkitaPolyOps` no longer exposes `CommitCache = NttSlotCache<D>` for
       migrated commit paths. Dense, one-hot, sparse-ring, root-projection, and
       recursive witness implementations route migrated ring mat-vec work
-      through compute plans.
+      through representation-aware backend operations.
 - [ ] `akita-scheme` has no import or direct use of `NttSlotCache`,
       `MultiDNttCaches`, `dispatch_with_ntt!`, or `mat_vec_mul_ntt_*` after the
-      migrated runtime cutover.
+      migrated compute-backend cutover.
 - [ ] Migrated protocol functions in `flow.rs`, `ring_switch.rs`, and
-      `quadratic_equation.rs` obtain CPU prepared setup through
-      `ProverRuntime`; they do not accept `&NttSlotCache<D>` for migrated
+      `quadratic_equation.rs` receive an explicit backend plus typed prepared
+      setup through the call graph; they do not accept `&NttSlotCache<D>` for
+      migrated paths.
+- [ ] Backend operations that may fail on an accelerator return
+      `Result<_, AkitaError>`. This includes single-row digit mat-vec, cyclic
+      digit mat-vec, and split-eq quotient rows; future Metal backends must not
+      need to panic or silently fall back to CPU to report device or shape
+      failure.
+- [ ] Dynamic-D setup preparation returns `AkitaError` from typed dispatch arms
+      instead of panicking through CPU-cache-specific dispatch for migrated
       paths.
-- [ ] Dynamic-D setup lookup returns `AkitaError` through the runtime instead
-      of panicking through CPU-cache-specific dispatch for migrated paths.
-- [ ] `CpuBackend` implements the migrated ring/commit plan family and
+- [ ] `CpuBackend` implements the migrated ring/commit operation family and
       delegates to the existing CPU kernels internally.
-- [ ] CPU runtime proofs for `commit`, `batched_commit`, and `batched_prove`
+- [ ] The compute boundary contains no type-erased prepared-cache map, runtime
+      downcast, or mutexed hot-path lookup for const-generic prepared state.
+- [ ] The compute boundary contains no public raw prepared-setup accessor used
+      by migrated polynomial/protocol code. In particular, one-hot and
+      sparse-ring commit paths must not reach through `CpuPreparedSetup` to
+      inspect `shared_matrix` or `NttSlotCache`.
+- [ ] Representation-aware plan data needed by future out-of-crate backends is
+      readable through public plan variants/accessors. The trait must not
+      require `akita-metal` or another accelerator crate to live inside
+      `akita-prover` just to inspect one-hot or sparse-ring entries.
+- [ ] CPU backend proofs for `commit`, `batched_commit`, and `batched_prove`
       pass the existing dense, one-hot, multipoint, recursive, and transcript
       hardening tests.
 - [ ] Deterministic CPU proof bytes remain unchanged where current tests can
@@ -156,7 +186,7 @@ The key surfaces modified by this spec are:
 - [ ] `akita-verifier` still has no normal dependency path to `akita-prover`,
       `akita-metal`, Metal runtime crates, examples, benches, or prover
       polynomial backends.
-- [ ] Documentation explains the new CPU runtime selection, prepared setup
+- [ ] Documentation explains the new CPU backend selection, prepared setup
       ownership, and which accelerator/kernel families are intentionally
       deferred.
 
@@ -187,11 +217,13 @@ CPU cutover tests:
 New focused tests:
 
 - `AkitaProverSetup::from_expanded` does not build CPU NTT state.
-- `CpuBackend::prepare_setup` builds the same NTT data that
-  `AkitaProverSetup` used to build.
+- `CpuBackend::prepare_setup` builds typed CPU prepared state with the same NTT
+  data that `AkitaProverSetup` used to build.
 - No `NttSlotCache` import in `akita-scheme`.
 - No `dispatch_with_ntt!` use in migrated paths.
-- CPU runtime parity for `compute_v_rows`, `compute_r_split_eq`, `commit_w`,
+- No migrated one-hot/sparse-ring path calls a raw `shared_matrix()` prepared
+  setup accessor.
+- CPU backend parity for `compute_v_rows`, `compute_r_split_eq`, `commit_w`,
   `commit_next_w_with_policy`, dense digit mat-vec, dense coefficient mat-vec,
   single-row variants, and strided recursive variants.
 - Transcript-event equality around prover `v` absorption and the stage
@@ -206,7 +238,7 @@ New focused tests:
 ### Performance
 
 The current cutover is judged by CPU non-regression and by making future
-accelerator timings possible through explicit runtime/prepared-setup ownership.
+accelerator timings possible through explicit prepared-setup ownership.
 
 Required benchmark coverage:
 
@@ -216,9 +248,13 @@ Required benchmark coverage:
 - `cargo bench --bench onehot_batched_opening`
 - `AKITA_MODE=onehot AKITA_NUM_VARS=32 cargo run --release --example profile`
 
+`root_kernels` is a low-level CPU-kernel baseline that intentionally still
+constructs CPU NTT slots directly. End-to-end commit/opening/profile commands
+exercise the backend operation boundary.
+
 Expected outcomes:
 
-- CPU runtime through the new backend boundary is within 2% of the previous CPU
+- CPU execution through the new backend boundary is within 2% of the previous CPU
   direct-kernel median on unchanged hardware, or the regression is explained by
   benchmark variance and fixed before the cutover is considered complete.
 - CPU prepared-setup time is measured separately from repeated commit/prove
@@ -228,35 +264,41 @@ Expected outcomes:
 
 ### Architecture
 
-The first cutover replaces CPU-shaped protocol plumbing with runtime-owned
-prepared setup and compute plans.
+The first cutover replaces CPU-shaped protocol plumbing with explicitly
+prepared typed backend operations.
 
 ```mermaid
 graph TD
   Types["akita-types<br/>proof/setup/descriptor shapes"]
   Verifier["akita-verifier<br/>verification only"]
-  Prover["akita-prover<br/>protocol flow + compute plans"]
-  Cpu["CpuBackend<br/>current Rust/Rayon kernels"]
-  Scheme["akita-scheme<br/>accepts explicit runtime"]
-  Host["akita-pcs / host / future jolt-akita<br/>constructs runtime"]
+  Prover["akita-prover<br/>protocol flow + compute traits"]
+  Compute["ComputeBackend trait<br/>operation boundary"]
+  Cpu["CpuBackend + CpuPreparedSetup<br/>current Rust/Rayon kernels"]
+  Scheme["akita-scheme<br/>accepts backend + prepared setup"]
+  Host["akita-pcs / host / future jolt-akita<br/>prepares backend context"]
 
   Types --> Verifier
   Types --> Prover
-  Prover --> Cpu
+  Prover --> Compute
+  Compute --> Cpu
   Scheme --> Prover
   Host --> Scheme
 ```
 
-Host layers, examples, tests, or a future adapter construct a CPU runtime and
-pass it into the prover API. Future accelerator crates must follow the same
-shape without making `akita-scheme` or verifier crates depend on device code.
-The verifier crate remains outside this graph.
+Host layers, examples, tests, or a future adapter construct a backend, prepare
+that backend's associated setup from prover setup, and pass both into the
+prover API. The current PR wires `CpuBackend` only. Future accelerator crates
+must follow the same explicit-preparation shape without making `akita-scheme`
+or verifier crates depend on device code. The verifier crate remains outside
+this graph.
 
 ### Public API Cutover
 
 The public prover API changes in one pass. The existing method names may remain
-if their signatures gain a runtime argument, but the old setup-only methods are
-removed.
+if their signatures gain an explicit backend plus typed prepared-context
+argument, but the old setup-only methods are removed. The prepared context is
+owned by the backend that created it, so callers cannot accidentally pair an
+unrelated setup object with a cache.
 
 Representative shape:
 
@@ -273,26 +315,26 @@ where
     type BatchedProof: Clone + Send + Sync;
 
     fn commit<P, B>(
-        runtime: &mut ProverRuntime<B>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         polys: &[P],
-        setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         P: AkitaPolyOps<F, D>,
-        B: AkitaCommitBackend<F, D>;
+        B: CommitComputeBackend<F>;
 
     fn batched_commit<P, B>(
-        runtime: &mut ProverRuntime<B>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         polys_per_point: &[&[P]],
-        setup: &Self::ProverSetup,
     ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
     where
         P: AkitaPolyOps<F, D>,
-        B: AkitaCommitBackend<F, D>;
+        B: CommitComputeBackend<F>;
 
     fn batched_prove<'a, T, P, B>(
-        runtime: &mut ProverRuntime<B>,
-        setup: &Self::ProverSetup,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
@@ -300,17 +342,23 @@ where
     where
         T: Transcript<F>,
         P: AkitaPolyOps<F, D>,
-        B: AkitaCommitBackend<F, D>;
+        B: CommitComputeBackend<F>;
 }
 ```
 
 The exact generic spelling may change, but the design requirements are fixed:
 
-- runtime selection is explicit at every prover entrypoint;
+- backend and prepared compute context selection are explicit at every prover
+  entrypoint;
 - the old `Cache = NttSlotCache<D>` generic disappears from
   `CommitmentProver`;
+- migrated hot paths borrow `&B` and `&B::PreparedSetup<D>`; they do not ask a
+  mutable runtime to recover const-generic state by downcast;
+- migrated hot paths call named backend operations; they do not recover CPU
+  internals through raw prepared-setup accessors;
 - tests and benches call the new API directly;
-- no compatibility method silently constructs a CPU runtime behind the old API.
+- no compatibility method silently constructs CPU prepared setup behind the old
+  API.
 
 ### `AkitaPolyOps` Cutover
 
@@ -321,10 +369,17 @@ knowledge while removing CPU cache ownership from the trait.
 Target rules:
 
 - remove or replace `type CommitCache = NttSlotCache<D>` for migrated paths;
-- migrated methods that need backend work receive a plan builder or runtime
+- migrated methods that need backend work receive a backend plus prepared
   context rather than a CPU cache;
 - dense, one-hot, sparse-ring, root-projection, and recursive witness
-  implementations build representation-aware compute plans;
+  implementations build representation-aware operation requests and submit
+  them to the backend;
+- one-hot and sparse-ring implementations must preserve their compact
+  representation and sparse planning without reading the prepared setup's raw
+  shared matrix;
+- the representation-aware plans expose read-only views of their entries so an
+  out-of-crate backend can implement the trait without CPU internals or crate
+  privacy privileges;
 - representation-specific operations that are not migrated yet may remain CPU
   local, but they must not participate in the migrated ring/commit path through
   hidden `NttSlotCache` calls;
@@ -347,13 +402,16 @@ AkitaProverSetup<F, D>
   prover setup wrapper around AkitaExpandedSetup, no backend-prepared cache
 
 CpuPreparedSetup<F, D>
-  NttSlotCache<D>, MultiDNttCaches, CPU scratch/cached matrices
+  Arc<AkitaExpandedSetup<F>>, NttSlotCache<D>, CPU scratch/cached matrices
+  private to CpuBackend operation implementations
 
 FutureAcceleratorPreparedSetup<F, D>
   device buffers/pipelines for supported matrix slices and CRT parameter family
 ```
 
-Prepared setup is runtime-owned and keyed by:
+Prepared setup is explicitly host-layer owned and backend-typed. It is
+constructed by the backend's `prepare_setup` method and then borrowed by
+migrated prover hot paths only together with that backend. It is identified by:
 
 - expanded setup descriptor digest;
 - ring dimension `D`;
@@ -361,14 +419,26 @@ Prepared setup is runtime-owned and keyed by:
 - CRT/NTT parameter family;
 - backend name and backend cache version.
 
+The current PR must not implement this as a mutable registry of erased cache
+objects. If a protocol path needs a different const-generic ring dimension, it
+enters the typed dynamic-D dispatch arm and prepares a backend-specific
+`PreparedSetup` for `D_LEVEL` there. For the CPU backend, that concrete type is
+`CpuPreparedSetup<F, D_LEVEL>`.
+
+The current PR must also avoid a misleading halfway design where prepared setup
+is technically explicit but every migrated caller reaches through it to pull
+out CPU internals. `CpuPreparedSetup` may own `NttSlotCache<D>` and the expanded
+setup, but its raw matrix and NTT slot are not the abstraction. The abstraction
+is the backend operation methods that consume representation-aware plan data.
+
 `AkitaProverSetup::generate_with_capacity` and `from_expanded` construct or
 wrap expanded setup only. Disk-persistence or setup-cache paths must not
-eagerly rebuild CPU NTT state outside the explicit runtime-preparation path.
+eagerly rebuild CPU NTT state outside the explicit compute-preparation path.
 
-### Compute Plans
+### Compute Operations
 
-Phase-1 compute plans cover the current ring/commit work that is already tied
-to `NttSlotCache`:
+Phase-1 compute operations cover the current ring/commit work that is already
+tied to `NttSlotCache`:
 
 - shared NTT setup preparation from `AkitaExpandedSetup`;
 - dense pre-decomposed digit mat-vec equivalent to
@@ -381,29 +451,68 @@ to `NttSlotCache`:
 - `compute_r_split_eq` and quotient/cyclic rows used by ring switch;
 - `commit_w` and `commit_next_w_with_policy`.
 
-Plans contain dimensions, shape slots, representation handles, and prepared
-setup handles. They do not contain transcript objects. Protocol code performs
+Operation inputs contain dimensions, shape slots, representation handles, and
+borrowed prepared setup. Fallible backend operations return `AkitaError` so
+host/device failures and unsupported shapes are ordinary prover errors, not
+panics. They do not contain transcript objects. Protocol code performs
 transcript absorption after backend output is returned.
 
-### Runtime Selection
+### Backend And Prepared Context Selection
 
 ```rust
-pub struct ProverRuntime<B> {
-    backend: B,
-    prepared: PreparedSetupCache,
+pub trait CommitComputeBackend<F>: Send + Sync
+where
+    F: FieldCore + CanonicalField,
+{
+    type PreparedSetup<const D: usize>: Send + Sync;
+
+    fn prepare_setup<const D: usize>(
+        &self,
+        setup: &AkitaProverSetup<F, D>,
+    ) -> Result<Self::PreparedSetup<D>, AkitaError>;
+
+    fn dense_commit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        plan: DenseCommitRowsPlan<'_, F, D>,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
+
+    fn onehot_commit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        plan: OneHotCommitRowsPlan<'_>,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
+
+    fn sparse_ring_commit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        plan: SparseRingCommitRowsPlan<'_>,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
 }
 
 pub struct CpuBackend;
+
+pub struct CpuPreparedSetup<F, const D: usize> {
+    expanded: Arc<AkitaExpandedSetup<F>>,
+    ntt_shared: NttSlotCache<D>,
+}
 ```
 
 Rules:
 
 - the current PR implements only `CpuBackend`;
-- runtime selection is still explicit so future accelerators do not require a
-  second prover API;
-- no runtime path may construct hidden CPU caches outside prepared setup;
-- dynamic ring-dimension dispatch for migrated paths returns `AkitaError`
-  rather than panicking.
+- backend and prepared context selection are still explicit so future
+  accelerators do not require a second prover API;
+- no prover path may construct hidden CPU caches outside prepared setup;
+- dynamic ring-dimension dispatch for migrated paths prepares typed
+  backend-specific prepared setup inside the dispatch arm and returns
+  `AkitaError` rather than panicking;
+- migrated parallel code borrows the backend and typed prepared setup
+  immutably. It must not require `&mut` runtime access, interior mutability, or
+  runtime downcasts in the hot path;
+- `CpuPreparedSetup` fields remain implementation details. If a migrated caller
+  needs shared setup rows or an NTT slot, that is a sign the compute operation
+  boundary is missing a method.
 
 Accelerator fallback policies such as `PreferAccelerator` and
 `RequireAccelerator` are remaining work, not part of the current PR.
@@ -439,8 +548,8 @@ Implementation rules:
 
 ### Deferred Kernel Roadmap
 
-These areas are intentionally deferred to follow-up specs after the CPU runtime
-cutover is complete.
+These areas are intentionally deferred to follow-up specs after the CPU
+compute-backend cutover is complete.
 
 #### Field And MLE Kernels
 
@@ -495,7 +604,8 @@ This spec keeps only the Akita constraints needed for Jolt:
 
 - verifier-only Jolt code must be able to depend on `akita-verifier` and
   `akita-types` without `akita-prover` or `akita-metal`;
-- future Jolt host/prover code passes an Akita runtime into an adapter;
+- future Jolt host/prover code passes an Akita prepared compute context into
+  an adapter;
 - Jolt protocol order remains in `jolt-prover`;
 - Akita protocol order remains in `akita-prover`;
 - Akita should not implement fake Dory-style homomorphic RLC.
@@ -509,7 +619,7 @@ Jolt/Akita adapter spec.
    Rejected because it would accelerate a few functions while leaving protocol
    flow coupled to CPU-only caches.
 
-2. Add `*_with_runtime` APIs while preserving old setup-only APIs.
+2. Add `*_with_prepared` APIs while preserving old setup-only APIs.
    Rejected because it creates two prover surfaces and lets call sites avoid
    the cutover.
 
@@ -530,11 +640,11 @@ Jolt/Akita adapter spec.
 
 Required documentation updates:
 
-- Add `docs/compute-backends.md` describing the CPU runtime boundary, prepared
-  setup ownership, and deferred accelerator roadmap.
+- Add `docs/compute-backends.md` describing the CPU compute-backend boundary,
+  prepared setup ownership, and deferred accelerator roadmap.
 - Update `docs/crate-graph.md` for the compute module.
-- Update profiling documentation to show how to construct/select the explicit
-  CPU runtime once exposed.
+- Update profiling documentation to show how to construct/select explicit
+  `CpuBackend` preparation once exposed.
 - Add a short note that field/MLE/sumcheck/hybrid/Jolt adapter work is
   intentionally deferred from this cutover.
 
@@ -564,7 +674,7 @@ from the remaining-work placeholder below.
 
 This PR combines the earlier PR 0/1/2 ideas because they are not independently
 valuable code-review units. The spec/review record, inventory/baselines, and
-CPU runtime/API/setup/`AkitaPolyOps` cutover should land together as one real
+CPU backend/API/setup/`AkitaPolyOps` cutover should land together as one real
 code PR.
 
 Scope:
@@ -582,30 +692,33 @@ Scope:
   path;
 - inventory `AkitaPolyOps` methods and impls that participate in root commit,
   recursive witness commit, and ring-switch commit paths;
-- add `akita-prover::compute` with `ProverRuntime`, `PreparedSetupCache`,
-  plan/result types, and `CpuBackend`;
+- add `akita-prover::compute` with a typed compute-backend trait,
+  `CpuBackend`, `CpuPreparedSetup<F, D>`, operation plan/result helpers, no
+  erased prepared-cache registry, and no raw prepared-setup accessor boundary;
 - move NTT cache construction from `AkitaProverSetup` into
   `CpuBackend::prepare_setup`;
 - make `AkitaProverSetup::generate_with_capacity` and `from_expanded`
   expanded-setup-only with respect to CPU NTT state;
-- change `CommitmentProver` entrypoints to require an explicit runtime;
+- change `CommitmentProver` entrypoints to require an explicit backend plus
+  that backend's typed prepared context;
 - update all in-repo tests, benches, examples, `akita-scheme`, and aggregate
   crate call sites;
 - remove `CommitCache = NttSlotCache<D>` from migrated `AkitaPolyOps` paths;
 - route dense, one-hot, sparse-ring, root-projection, and recursive witness
-  migrated commit work through representation-aware compute plans;
+  migrated commit work through representation-aware backend operations;
 - replace migrated `dispatch_with_ntt!` and direct `NttSlotCache` protocol
-  plumbing with runtime prepared-setup lookup returning `AkitaError`;
+  plumbing with typed prepared-setup dispatch returning `AkitaError`;
 - add focused CPU parity tests and import/dependency guards needed to keep the
   new boundary honest;
 - add descriptor/transcript equality tests around prover `v` absorption and
   stage challenge squeezes;
-- update documentation for the CPU runtime boundary and deferred accelerator
-  roadmap.
+- update documentation for the CPU compute-backend boundary and deferred
+  accelerator roadmap.
 
 Done when:
 
-- the workspace compiles and tests through explicit `CpuBackend`;
+- the workspace compiles and tests through explicit `CpuBackend` preparation
+  and the compute-backend operation boundary;
 - no old setup-only prover API remains;
 - `AkitaProverSetup` does not own backend-prepared caches;
 - `akita-scheme` no longer imports `NttSlotCache`, `MultiDNttCaches`,
@@ -628,6 +741,9 @@ becomes current.
 
 Likely contents when expanded:
 
+- typed per-proof prepared schedule/session for the finite supported `D` arms,
+  so accelerator backends do not rebuild/upload prepared state at each cross-D
+  recursive transition;
 - Metal skeleton: `crates/akita-metal`, target-specific dependencies, device
   discovery, capability reporting, safe buffer wrappers, pipeline loading, one
   tiny deterministic dispatch, Apple-only smoke tests, and non-Apple compile

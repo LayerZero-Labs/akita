@@ -3,16 +3,19 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
+use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::Fp64;
-use akita_field::{AkitaError, CanonicalField};
-use akita_prover::kernels::crt_ntt::NttSlotCache;
-use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, DecomposeFoldWitness, ProverClaims,
+use akita_field::{AdditiveGroup, AkitaError, CanonicalField, HalvingField};
+use akita_pcs::{
+    AkitaPolyOps, CommitComputeBackend, CommitmentProver, CommittedPolynomials,
+    DecomposeFoldWitness, DenseCommitRowsPlan, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    ProverClaims, RecursiveWitnessCommitRowsPlan, SparseRingCommitRowsPlan,
 };
 use akita_transcript::{labels, AkitaTranscript, Transcript};
-use akita_types::FlatMatrix;
+use akita_types::AkitaExpandedSetup;
 use akita_types::{AkitaCommitment, AppendToTranscript, BasisMode, DummyProof, FlatDigitBlocks};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
+use std::sync::Arc;
 
 type F = Fp64<4294967197>;
 
@@ -38,8 +41,6 @@ impl DummyPoly {
 }
 
 impl AkitaPolyOps<F, 1> for DummyPoly {
-    type CommitCache = NttSlotCache<1>;
-
     fn num_ring_elems(&self) -> usize {
         self.coeffs.len()
     }
@@ -62,17 +63,19 @@ impl AkitaPolyOps<F, 1> for DummyPoly {
         }
     }
 
-    fn commit_inner(
+    fn commit_inner<B>(
         &self,
-        _a_matrix: &FlatMatrix<F>,
-        _ntt_a: &NttSlotCache<1>,
+        _backend: &B,
+        _prepared: &B::PreparedSetup<1>,
         _n_a: usize,
         _block_len: usize,
         _num_digits_commit: usize,
         _num_digits_open: usize,
         _log_basis: u32,
-        _matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<1>, AkitaError> {
+    ) -> Result<FlatDigitBlocks<1>, AkitaError>
+    where
+        B: CommitComputeBackend<F>,
+    {
         Ok(FlatDigitBlocks::from_blocks(vec![]))
     }
 }
@@ -80,6 +83,136 @@ impl AkitaPolyOps<F, 1> for DummyPoly {
 #[derive(Clone)]
 struct DummySetup {
     _max_num_vars: usize,
+}
+
+#[derive(Clone, Copy)]
+struct DummyBackend;
+
+impl CommitComputeBackend<F> for DummyBackend {
+    type PreparedSetup<const D: usize> = DummySetup;
+
+    fn prepare_expanded<const D: usize>(
+        &self,
+        _expanded: Arc<AkitaExpandedSetup<F>>,
+    ) -> Result<Self::PreparedSetup<D>, AkitaError> {
+        Ok(DummySetup { _max_num_vars: 0 })
+    }
+
+    fn expanded<'a, const D: usize>(
+        &self,
+        _prepared: &'a Self::PreparedSetup<D>,
+    ) -> &'a Arc<AkitaExpandedSetup<F>> {
+        unreachable!("dummy backend does not expose expanded setup")
+    }
+
+    fn dense_commit_rows<const D: usize>(
+        &self,
+        _prepared: &Self::PreparedSetup<D>,
+        _plan: DenseCommitRowsPlan<'_, F, D>,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+        unreachable!("dummy backend is not used for compute")
+    }
+
+    fn onehot_commit_rows<const D: usize>(
+        &self,
+        _prepared: &Self::PreparedSetup<D>,
+        plan: OneHotCommitRowsPlan<'_>,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+    where
+        F: HasWide,
+        <F as HasWide>::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    {
+        let _readable_by_external_backend: usize = match plan.blocks() {
+            OneHotCommitBlocks::SingleChunk(blocks) => blocks
+                .iter()
+                .flat_map(|block| block.iter())
+                .map(|entry| entry.pos_in_block() + entry.coeff_idx())
+                .sum(),
+            OneHotCommitBlocks::MultiChunk(blocks) => blocks
+                .iter()
+                .flat_map(|block| block.iter())
+                .map(|entry| {
+                    entry.pos_in_block()
+                        + entry
+                            .nonzero_coeffs()
+                            .iter()
+                            .map(|&coeff| usize::from(coeff))
+                            .sum::<usize>()
+                })
+                .sum(),
+        };
+        unreachable!("dummy backend is not used for compute")
+    }
+
+    fn sparse_ring_commit_rows<const D: usize>(
+        &self,
+        _prepared: &Self::PreparedSetup<D>,
+        plan: SparseRingCommitRowsPlan<'_>,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+    where
+        F: HasWide,
+        <F as HasWide>::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+    {
+        let _readable_by_external_backend: i64 = plan
+            .blocks()
+            .iter()
+            .flat_map(|block| block.iter())
+            .map(|entry| {
+                entry.pos_in_block() as i64 + entry.coeff_idx() as i64 + i64::from(entry.value())
+            })
+            .sum();
+        unreachable!("dummy backend is not used for compute")
+    }
+
+    fn recursive_witness_commit_rows<const D: usize>(
+        &self,
+        _prepared: &Self::PreparedSetup<D>,
+        _plan: RecursiveWitnessCommitRowsPlan<'_, D>,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+        unreachable!("dummy backend is not used for compute")
+    }
+
+    fn digit_rows<const D: usize>(
+        &self,
+        _prepared: &Self::PreparedSetup<D>,
+        _row_len: usize,
+        _digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        unreachable!("dummy backend is not used for compute")
+    }
+
+    fn cyclic_digit_rows<const D: usize>(
+        &self,
+        _prepared: &Self::PreparedSetup<D>,
+        _row_len: usize,
+        _digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        unreachable!("dummy backend is not used for compute")
+    }
+
+    fn split_eq_quotients<const D: usize>(
+        &self,
+        _prepared: &Self::PreparedSetup<D>,
+        _n_d: usize,
+        _n_b: usize,
+        _n_a: usize,
+        _w_hat: &[[i8; D]],
+        _t_hat: &[[i8; D]],
+        _z_segment: &[[i32; D]],
+        _z_pre_centered_inf_norm: u32,
+    ) -> Result<
+        (
+            Vec<CyclotomicRing<F, D>>,
+            Vec<CyclotomicRing<F, D>>,
+            Vec<CyclotomicRing<F, D>>,
+        ),
+        AkitaError,
+    >
+    where
+        F: HalvingField,
+    {
+        unreachable!("dummy backend is not used for compute")
+    }
 }
 
 #[derive(Clone)]
@@ -138,20 +271,31 @@ impl CommitmentProver<F, 1> for DummyScheme {
         setup.clone()
     }
 
-    fn commit<P: AkitaPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
+    fn commit<P, B>(
+        _backend: &B,
+        _prepared: &B::PreparedSetup<1>,
         _polys: &[P],
-        _setup: &Self::ProverSetup,
-    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
+    where
+        P: AkitaPolyOps<F, 1>,
+        B: CommitComputeBackend<F>,
+    {
         let c = AkitaCommitment(0);
         Ok((c, c))
     }
 
-    fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
-        _setup: &Self::ProverSetup,
+    fn batched_prove<'a, T, P, B>(
+        _backend: &B,
+        _prepared: &B::PreparedSetup<1>,
         claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         _basis: BasisMode,
-    ) -> Result<Self::BatchedProof, AkitaError> {
+    ) -> Result<Self::BatchedProof, AkitaError>
+    where
+        T: Transcript<F>,
+        P: AkitaPolyOps<F, 1>,
+        B: CommitComputeBackend<F>,
+    {
         for (_, payload) in claims {
             payload
                 .commitment
@@ -170,9 +314,13 @@ fn commitment_scheme_round_trip() {
     let opening_point = [F::from_u64(11), F::from_u64(13)];
 
     let psetup = DummyScheme::setup_prover(poly.num_vars(), 1, 1);
+    let prepared = DummySetup {
+        _max_num_vars: poly.num_vars(),
+    };
     let vsetup = DummyScheme::setup_verifier(&psetup);
 
-    let (commitment, hint) = DummyScheme::commit(std::slice::from_ref(&poly), &psetup).unwrap();
+    let (commitment, hint) =
+        DummyScheme::commit(&DummyBackend, &prepared, std::slice::from_ref(&poly)).unwrap();
     let opening = poly.evaluate(&opening_point);
 
     let poly_refs: [&DummyPoly; 1] = [&poly];
@@ -189,9 +337,14 @@ fn commitment_scheme_round_trip() {
             hint,
         },
     )];
-    let proof =
-        DummyScheme::batched_prove(&psetup, prove_inputs, &mut prover_t, BasisMode::Lagrange)
-            .unwrap();
+    let proof = DummyScheme::batched_prove(
+        &DummyBackend,
+        &prepared,
+        prove_inputs,
+        &mut prover_t,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
 
     let mut verifier_t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let verify_inputs = vec![(

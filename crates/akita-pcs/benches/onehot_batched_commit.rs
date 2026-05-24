@@ -1,9 +1,12 @@
 #![allow(missing_docs)]
 
+use akita_prover::{CommitComputeBackend, CpuBackend};
+
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::kernels::crt_ntt::build_ntt_slot;
 use akita_prover::kernels::linear::{decompose_rows_i8, mat_vec_mul_ntt_single_i8};
 use akita_prover::{AkitaPolyOps, CommitmentProver, OneHotPoly};
 use akita_types::{AkitaScheduleInputs, LevelParams};
@@ -50,11 +53,39 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         1,
         1,
     );
+    let single_prepared = CpuBackend.prepare_setup(&single_setup).unwrap();
+    let single_total = single_setup
+        .expanded
+        .shared_matrix
+        .total_ring_elements_at::<D>()
+        .unwrap();
+    let single_ntt = build_ntt_slot(
+        single_setup
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(1, single_total)
+            .unwrap(),
+    )
+    .unwrap();
     let batched_setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         BATCH_NUM_VARS,
         BATCH_SIZE,
         1,
     );
+    let batched_prepared = CpuBackend.prepare_setup(&batched_setup).unwrap();
+    let batched_total = batched_setup
+        .expanded
+        .shared_matrix
+        .total_ring_elements_at::<D>()
+        .unwrap();
+    let batched_ntt = build_ntt_slot(
+        batched_setup
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(1, batched_total)
+            .unwrap(),
+    )
+    .unwrap();
     let single_inputs = AkitaScheduleInputs {
         num_vars: SINGLE_NUM_VARS,
         level: 0,
@@ -72,28 +103,26 @@ fn bench_commit_breakdown(c: &mut Criterion) {
 
     let single_inner = single_poly
         .commit_inner_witness(
-            &single_setup.expanded.shared_matrix,
-            &single_setup.ntt_shared,
+            &CpuBackend,
+            &single_prepared,
             single_params.a_key.row_len(),
             single_layout.block_len,
             single_layout.num_digits_commit,
             single_layout.num_digits_open,
             single_layout.log_basis,
-            single_setup.expanded.seed.max_stride,
         )
         .expect("single inner witness");
     let batched_inner: Vec<_> = batched_polys
         .iter()
         .map(|poly| {
             poly.commit_inner_witness(
-                &batched_setup.expanded.shared_matrix,
-                &batched_setup.ntt_shared,
+                &CpuBackend,
+                &batched_prepared,
                 batch_params.a_key.row_len(),
                 batch_layout.block_len,
                 batch_layout.num_digits_commit,
                 batch_layout.num_digits_open,
                 batch_layout.log_basis,
-                batched_setup.expanded.seed.max_stride,
             )
             .expect("batched inner witness")
         })
@@ -113,8 +142,9 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &CpuBackend,
+                    &single_prepared,
                     black_box(std::slice::from_ref(&single_poly)),
-                    black_box(&single_setup),
                 )
                 .expect("single commit"),
             )
@@ -126,14 +156,13 @@ fn bench_commit_breakdown(c: &mut Criterion) {
             black_box(
                 single_poly
                     .commit_inner_witness(
-                        &single_setup.expanded.shared_matrix,
-                        &single_setup.ntt_shared,
+                        &CpuBackend,
+                        &single_prepared,
                         single_params.a_key.row_len(),
                         single_layout.block_len,
                         single_layout.num_digits_commit,
                         single_layout.num_digits_open,
                         single_layout.log_basis,
-                        single_setup.expanded.seed.max_stride,
                     )
                     .expect("single inner witness"),
             )
@@ -164,7 +193,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         b.iter(|| {
             let flat = single_inner.decomposed_inner_rows.flat_digits().to_vec();
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
-                &single_setup.ntt_shared,
+                &single_ntt,
                 single_n_b,
                 single_layout.outer_width(),
                 &flat,
@@ -178,8 +207,9 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &CpuBackend,
+                    &batched_prepared,
                     black_box(&batched_polys),
-                    black_box(&batched_setup),
                 )
                 .expect("grouped commit"),
             )
@@ -193,14 +223,13 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                     .iter()
                     .map(|poly| {
                         poly.commit_inner_witness(
-                            &batched_setup.expanded.shared_matrix,
-                            &batched_setup.ntt_shared,
+                            &CpuBackend,
+                            &batched_prepared,
                             batch_params.a_key.row_len(),
                             batch_layout.block_len,
                             batch_layout.num_digits_commit,
                             batch_layout.num_digits_open,
                             batch_layout.log_basis,
-                            batched_setup.expanded.seed.max_stride,
                         )
                         .expect("batched inner witness")
                     })
@@ -239,7 +268,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                 flat.extend_from_slice(inner.decomposed_inner_rows.flat_digits());
             }
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
-                &batched_setup.ntt_shared,
+                &batched_ntt,
                 batch_n_b,
                 batch_layout.outer_width(),
                 &flat,

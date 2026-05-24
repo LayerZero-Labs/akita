@@ -1,13 +1,11 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 
-use crate::dispatch_with_ntt;
-use crate::kernels::crt_ntt::NttSlotCache;
-use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
+use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{
-    tensor_pack_recursive_witness, MultiDNttCaches, RecursiveCommitmentHintCache,
+    tensor_pack_recursive_witness, CommitComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
 };
 use akita_algebra::eq_poly::EqPolynomial;
@@ -84,14 +82,15 @@ pub struct NextWitnessCommitment<F: FieldCore> {
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_build_w<F, const D: usize>(
+pub fn ring_switch_build_w<F, B, const D: usize>(
     quad_eq: &mut QuadraticEquation<F, D>,
-    setup: &AkitaExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     lp: &LevelParams,
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
+    B: CommitComputeBackend<F>,
 {
     {
         let x: u8 = 0;
@@ -125,9 +124,10 @@ where
         .take_w_folded()
         .ok_or_else(|| AkitaError::InvalidInput("missing w_folded in prover".to_string()))?;
 
-    let r = compute_r_split_eq::<F, D>(
+    let r = compute_r_split_eq::<F, B, D>(
+        backend,
+        prepared,
         lp,
-        setup,
         &quad_eq.challenges,
         w_hat.flat_digits(),
         #[cfg(feature = "zk")]
@@ -149,8 +149,6 @@ where
         quad_eq.num_public_rows(),
         lp.num_blocks,
         lp.inner_width(),
-        setup.seed.max_stride,
-        ntt_shared,
         quad_eq.m_row_layout(),
     )?;
     // Terminal layout drops the D-block from M and from the witness; the
@@ -488,14 +486,15 @@ where
 /// recursive inner commitment fails.
 #[tracing::instrument(skip_all, name = "commit_w")]
 #[inline(never)]
-pub fn commit_w<F, const D: usize>(
+pub fn commit_w<F, B, const D: usize>(
     w: &RecursiveWitnessFlat,
-    ntt_shared: &NttSlotCache<D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     commit_layout: &LevelParams,
-    stride: usize,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    B: CommitComputeBackend<F>,
 {
     if commit_layout.ring_dimension != D {
         return Err(AkitaError::InvalidInput(format!(
@@ -526,14 +525,14 @@ where
 
     let w_view = w.view::<F, D>()?;
     let inner = w_view.commit_inner_witness(
-        ntt_shared,
+        backend,
+        prepared,
         commit_layout.a_key.row_len(),
         commit_layout.block_len,
         commit_layout.num_blocks,
         commit_layout.num_digits_commit,
         commit_layout.num_digits_open,
         commit_layout.log_basis,
-        stride,
     )?;
 
     #[cfg(feature = "zk")]
@@ -545,12 +544,11 @@ where
     let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
     #[cfg(feature = "zk")]
     outer_input.extend_from_slice(b_blinding_digits.flat_digits());
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-        ntt_shared,
-        commit_layout.b_key.row_len(),
-        stride,
-        &outer_input,
-    );
+    let u: Vec<CyclotomicRing<F, D>> =
+        backend.digit_rows::<D>(prepared, commit_layout.b_key.row_len(), &outer_input)?;
+    if u.len() != commit_layout.b_key.row_len() {
+        return Err(AkitaError::InvalidProof);
+    }
     #[cfg(feature = "zk")]
     let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
         inner.decomposed_inner_rows,
@@ -569,75 +567,78 @@ where
 
 /// Dispatch a recursive `w` commitment to the selected ring dimension.
 ///
-/// The prover crate owns runtime-D NTT cache construction and `commit_w`
-/// execution. Callers supply the config-specific layout policy for the selected
+/// The prover crate owns typed backend preparation and `commit_w` execution.
+/// Callers supply the config-specific layout policy for the selected
 /// commitment dimension.
 ///
 /// # Errors
 ///
-/// Returns an error if layout selection, NTT cache construction, commitment, or
+/// Returns an error if layout selection, backend preparation, commitment, or
 /// D-erased hint conversion fails.
 #[allow(clippy::type_complexity)]
 #[inline(never)]
-fn dispatch_commit_w_with_layout_policy<F, L, Layout>(
+fn dispatch_commit_w_with_layout_policy<F, L, B, Layout>(
+    backend: &B,
     commit_params: LevelParams,
-    commit_ntt_cache: &mut MultiDNttCaches,
-    expanded: &AkitaExpandedSetup<F>,
+    expanded: &std::sync::Arc<AkitaExpandedSetup<F>>,
     logical_w: &RecursiveWitnessFlat,
     layout_for_d: Layout,
 ) -> Result<NextWitnessCommitment<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     L: ExtField<F>,
+    B: CommitComputeBackend<F>,
     Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let commit_d = commit_params.ring_dimension;
-    let stride = expanded.seed.max_stride;
-    dispatch_with_ntt!(
-        commit_d,
-        commit_ntt_cache,
-        expanded,
-        |D_COMMIT, ntt_shared| {
-            if L::EXT_DEGREE == 1 {
-                let commit_layout = layout_for_d(D_COMMIT, &commit_params, logical_w.len())?;
-                let (wc, wh) =
-                    commit_w::<F, { D_COMMIT }>(logical_w, ntt_shared, &commit_layout, stride)?;
-                Ok(NextWitnessCommitment {
-                    witness: None,
-                    commitment: FlatRingVec::from_commitment(&wc),
-                    hint: RecursiveCommitmentHintCache::from_typed(wh)?,
-                })
-            } else {
-                let committed_w = tensor_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
-                let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
-                let (wc, wh) =
-                    commit_w::<F, { D_COMMIT }>(&committed_w, ntt_shared, &commit_layout, stride)?;
-                Ok(NextWitnessCommitment {
-                    witness: Some(committed_w),
-                    commitment: FlatRingVec::from_commitment(&wc),
-                    hint: RecursiveCommitmentHintCache::from_typed(wh)?,
-                })
-            }
+    dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
+        let prepared_commit = backend.prepare_expanded::<D_COMMIT>(expanded.clone())?;
+        if L::EXT_DEGREE == 1 {
+            let commit_layout = layout_for_d(D_COMMIT, &commit_params, logical_w.len())?;
+            let (wc, wh) = commit_w::<F, B, { D_COMMIT }>(
+                logical_w,
+                backend,
+                &prepared_commit,
+                &commit_layout,
+            )?;
+            Ok(NextWitnessCommitment {
+                witness: None,
+                commitment: FlatRingVec::from_commitment(&wc),
+                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+            })
+        } else {
+            let committed_w = tensor_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
+            let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
+            let (wc, wh) = commit_w::<F, B, { D_COMMIT }>(
+                &committed_w,
+                backend,
+                &prepared_commit,
+                &commit_layout,
+            )?;
+            Ok(NextWitnessCommitment {
+                witness: Some(committed_w),
+                commitment: FlatRingVec::from_commitment(&wc),
+                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+            })
         }
-    )
+    })
 }
 
 /// Commit the next recursive witness using caller-supplied layout policy.
 ///
-/// The same-D fast path reuses the current level's NTT slot. Cross-D
-/// commitments are dispatched through [`MultiDNttCaches`].
+/// The same-D fast path reuses the caller's prepared backend context. Cross-D
+/// commitments prepare a typed backend context for the target ring dimension.
 ///
 /// # Errors
 ///
-/// Returns an error if layout selection, commitment, cache construction, or
+/// Returns an error if layout selection, commitment, backend preparation, or
 /// D-erased hint conversion fails.
 #[allow(clippy::type_complexity)]
 #[inline(never)]
-pub fn commit_next_w_with_policy<F, L, SameLayout, DispatchLayout, const D: usize>(
+pub fn commit_next_w_with_policy<F, L, B, SameLayout, DispatchLayout, const D: usize>(
     commit_params: &LevelParams,
-    ntt_shared: &NttSlotCache<D>,
-    commit_ntt_cache: &mut MultiDNttCaches,
-    expanded: &AkitaExpandedSetup<F>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     logical_w: &RecursiveWitnessFlat,
     same_d_layout: SameLayout,
     dispatch_layout: DispatchLayout,
@@ -645,18 +646,14 @@ pub fn commit_next_w_with_policy<F, L, SameLayout, DispatchLayout, const D: usiz
 where
     F: FieldCore + CanonicalField + RandomSampling,
     L: ExtField<F>,
+    B: CommitComputeBackend<F>,
     SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     if commit_params.ring_dimension == D {
         if L::EXT_DEGREE == 1 {
             let commit_layout = same_d_layout(commit_params, logical_w.len())?;
-            let (wc, wh) = commit_w::<F, D>(
-                logical_w,
-                ntt_shared,
-                &commit_layout,
-                expanded.seed.max_stride,
-            )?;
+            let (wc, wh) = commit_w::<F, B, D>(logical_w, backend, prepared, &commit_layout)?;
             Ok(NextWitnessCommitment {
                 witness: None,
                 commitment: FlatRingVec::from_commitment(&wc),
@@ -665,12 +662,7 @@ where
         } else {
             let committed_w = tensor_pack_recursive_witness::<F, L, D>(logical_w)?;
             let commit_layout = same_d_layout(commit_params, committed_w.len())?;
-            let (wc, wh) = commit_w::<F, D>(
-                &committed_w,
-                ntt_shared,
-                &commit_layout,
-                expanded.seed.max_stride,
-            )?;
+            let (wc, wh) = commit_w::<F, B, D>(&committed_w, backend, prepared, &commit_layout)?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
                 commitment: FlatRingVec::from_commitment(&wc),
@@ -678,10 +670,10 @@ where
             })
         }
     } else {
-        dispatch_commit_w_with_layout_policy::<F, L, DispatchLayout>(
+        dispatch_commit_w_with_layout_policy::<F, L, B, DispatchLayout>(
+            backend,
             commit_params.clone(),
-            commit_ntt_cache,
-            expanded,
+            backend.expanded::<D>(prepared),
             logical_w,
             dispatch_layout,
         )

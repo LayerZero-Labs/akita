@@ -1,14 +1,15 @@
-#![allow(missing_docs)]
 #![cfg(all(
     feature = "logging-transcript",
     feature = "planner",
     not(feature = "zk")
 ))]
+#![allow(missing_docs)]
 
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
+use akita_prover::{CommitComputeBackend, CpuBackend};
 use akita_transcript::{AkitaTranscript, LoggingTranscript};
 use akita_types::ClaimIncidenceSummary;
 use akita_verifier::CommitmentVerifier;
@@ -75,17 +76,22 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         total_claims,
         num_polys_per_point.len(),
     );
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup = <Scheme as CommitmentProver<F, DENSE_D>>::setup_verifier(&setup);
 
-    let commit_outputs =
-        <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(&polys_per_point_refs, &setup)
-            .expect("batched commit");
+    let commit_outputs = <Scheme as CommitmentProver<F, DENSE_D>>::batched_commit(
+        &CpuBackend,
+        &prepared,
+        &polys_per_point_refs,
+    )
+    .expect("batched commit");
     let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = <Scheme as CommitmentProver<F, DENSE_D>>::batched_prove(
-        &setup,
+        &CpuBackend,
+        &prepared,
         prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
         &mut prover_transcript,
         basis_mode,

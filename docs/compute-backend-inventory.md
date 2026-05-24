@@ -1,7 +1,8 @@
 # Compute Backend Inventory
 
-This inventory captures the CPU-cache and direct-kernel surface that the first
-compute-backend PR must cut over. It was gathered at commit `324d14b7` with:
+This inventory captures the pre-cutover CPU-cache and direct-kernel surface
+that the first compute-backend PR must cut over. It was gathered at commit
+`324d14b7` with:
 
 ```bash
 rg -n "NttSlotCache|MultiDNttCaches|dispatch_with_ntt!|mat_vec_mul_ntt_|commit_w|commit_next_w_with_policy|compute_v_rows|compute_r_split_eq" crates -g '*.rs'
@@ -38,24 +39,30 @@ kernel modules. They are a sizing aid, not a removal target.
 | `crates/akita-prover/src/backend/field_reduction.rs` | 2 | Current cutover: root tensor projection delegates through migrated commit path. |
 | `crates/akita-prover/src/backend/multilinear_polynomial.rs` | 4 | Current cutover: enum wrapper forwards to dense/one-hot migrated plans. |
 | `crates/akita-prover/src/backend/recursive_witness.rs` | 8 | Current cutover: recursive witness commit path becomes plan-backed. |
-| `crates/akita-prover/src/protocol/flow.rs` | 40 | Current cutover: root and recursive flow accept runtime-prepared setup. |
-| `crates/akita-prover/src/protocol/ring_switch.rs` | 25 | Current cutover: `commit_w`, next-w commitment, and ring-switch build use runtime plans. |
-| `crates/akita-prover/src/protocol/quadratic_equation.rs` | 19 | Current cutover: `compute_v_rows` and `compute_r_split_eq` use runtime plans. |
-| `crates/akita-prover/src/protocol/dispatch.rs` | 2 | Current cutover or deletion: dynamic-D cache dispatch should become runtime lookup. |
+| `crates/akita-prover/src/protocol/flow.rs` | 40 | Current cutover: root and recursive flow accept backend-prepared setup. |
+| `crates/akita-prover/src/protocol/ring_switch.rs` | 25 | Current cutover: `commit_w`, next-w commitment, and ring-switch build use backend plans. |
+| `crates/akita-prover/src/protocol/quadratic_equation.rs` | 19 | Current cutover: `compute_v_rows` and `compute_r_split_eq` use backend operations. |
+| `crates/akita-prover/src/protocol/dispatch.rs` | 2 | Current cutover or deletion: dynamic-D cache dispatch should become typed backend preparation. |
 | `crates/akita-scheme/src/lib.rs` | 22 | Current cutover: scheme must stop importing CPU cache/kernel helpers. |
-| `crates/akita-scheme/src/tests.rs` | 3 | Current cutover: tests update to runtime-backed helpers. |
+| `crates/akita-scheme/src/tests.rs` | 3 | Current cutover: tests update to backend-backed helpers. |
 | `crates/akita-setup/src/lib.rs` | 2 | Current cutover: setup constructors remain expanded-setup-only. |
-| `crates/akita-pcs/tests/commitment_contract.rs` | 5 | Current cutover: public API compile contract updates to explicit runtime. |
-| `crates/akita-pcs/tests/*.rs` | 4 | Current cutover: direct calls update with runtime/prepared setup. |
-| `crates/akita-pcs/benches/*.rs` | 10 | Current cutover: benchmark call sites update with explicit runtime. |
-| `crates/akita-pcs/examples/profile/workload.rs` | 2 | Current cutover: profiling constructs explicit CPU runtime. |
+| `crates/akita-pcs/tests/commitment_contract.rs` | 5 | Current cutover: public API compile contract updates to explicit backend. |
+| `crates/akita-pcs/tests/*.rs` | 4 | Current cutover: direct calls update with backend/prepared setup. |
+| `crates/akita-pcs/benches/*.rs` | 10 | Current cutover: benchmark call sites update with explicit backend. |
+| `crates/akita-pcs/examples/profile/workload.rs` | 2 | Current cutover: profiling constructs explicit CPU backend. |
 | `crates/akita-prover/src/kernels/crt_ntt.rs` | 10 | CPU backend internals: stay behind `CpuBackend`. |
-| `crates/akita-prover/src/kernels/ntt_cache.rs` | 15 | CPU backend internals: likely moves under compute/prepared setup ownership. |
+| `crates/akita-prover/src/kernels/ntt_cache.rs` | 15 | Historical only: the cutover should delete this dynamic-D cache wrapper rather than preserve it as a public escape hatch. |
 | `crates/akita-prover/src/kernels/linear.rs` | 61 | CPU backend internals: direct kernels remain private implementation details. |
 | `crates/akita-prover/src/kernels/mod.rs` | 2 | Current cutover: public re-exports should narrow if callers no longer need them. |
 | `crates/akita-prover/src/protocol/mod.rs` | 1 | Current cutover: public `commit_next_w_with_policy` exposure may change. |
 
 ## Current Cutover Surface
+
+The following is the pre-cutover surface. After the implementation, direct
+`NttSlotCache` usage should remain only inside CPU backend internals, low-level
+kernel modules, and low-level kernel benchmarks. `MultiDNttCaches`,
+`dispatch_with_ntt!`, `AkitaPolyOps::CommitCache`, and setup-owned
+`ntt_shared` should have no live code references.
 
 ### Setup and public API
 
@@ -71,7 +78,7 @@ kernel modules. They are a sizing aid, not a removal target.
   cache generic to `NttSlotCache<D>`.
 - `crates/akita-prover/src/api/scheme.rs:60`, `:86`, `:110`: `commit`,
   `batched_commit`, and `batched_prove` constrain `P::CommitCache` to the
-  trait cache parameter instead of accepting a runtime.
+  trait cache parameter instead of accepting a backend.
 
 ### Root commit path
 
@@ -209,8 +216,6 @@ than disappearing:
 
 - `crates/akita-prover/src/kernels/crt_ntt.rs`: CRT/NTT parameter selection and
   `NttSlotCache` construction.
-- `crates/akita-prover/src/kernels/ntt_cache.rs`: dynamic-D CPU prepared cache
-  storage. Ownership should move under `PreparedSetupCache`/`CpuBackend`.
 - `crates/akita-prover/src/kernels/linear.rs`: direct CPU mat-vec kernels,
   single-row cyclic/negacyclic variants, quotient kernels, and cached mat-vec
   implementations.
@@ -231,5 +236,6 @@ After the cutover, add checks that fail when:
 - migrated paths in `api/commitment.rs`, `protocol/flow.rs`,
   `protocol/ring_switch.rs`, or `protocol/quadratic_equation.rs` accept
   `&NttSlotCache<D>`;
-- public `CommitmentProver` methods can be called without an explicit runtime;
+- public `CommitmentProver` methods can be called without an explicit backend
+  plus typed prepared setup;
 - migrated `AkitaPolyOps` impls expose `CommitCache = NttSlotCache<D>`.

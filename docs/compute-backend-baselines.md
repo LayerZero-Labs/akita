@@ -1,9 +1,9 @@
 # Compute Backend Baselines
 
 These are local CPU baselines for the first compute-backend cutover. They are
-short-run baselines meant to catch large regressions while the runtime boundary
-is being introduced; rerun with default Criterion settings before treating a
-sub-2% delta as meaningful.
+short-run baselines meant to catch large regressions while the backend
+operation boundary is being introduced; rerun with default Criterion settings
+before treating a sub-2% delta as meaningful.
 
 ## Environment
 
@@ -34,6 +34,9 @@ measurement-time argument did not prevent those cases from collecting longer
 samples.
 
 ## Root Kernels
+
+These are low-level CPU-kernel baselines. They intentionally build CPU NTT
+state directly and do not measure the new backend operation boundary.
 
 | Benchmark | Time interval |
 | --- | ---: |
@@ -123,11 +126,20 @@ AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=error AKITA_PROFILE_ANSI=0 AKITA_MODE=on
 | Tail bytes | `31,380 bytes` |
 | Levels | `7` |
 
+After the compute-backend cutover, the profile example also emits
+`setup_expand` and `backend_prepare` timing rows before the aggregate `setup`
+row. The baseline above predates that split and should be refreshed before
+using setup preparation as a regression gate.
+
 ## Additional Profile Matrix
 
-Additional profiles were captured from commit `223d32fa` (`docs(compute):
-record cutover prep`), which is a docs-only descendant of the original baseline
-commit. Raw logs are under `/tmp/akita-metal-baselines/extra-profiles/`.
+Additional profiles were initially captured from commit `223d32fa`
+(`docs(compute): record cutover prep`), which is a docs-only descendant of the
+original baseline commit. The dense fp64 nv26 rows were refreshed on this
+compute-backend cutover branch after removing the misplaced `EqPolynomial`
+table cap and adding the explicit backend preparation split. Raw logs are under
+`/tmp/akita-metal-baselines/extra-profiles/`; refreshed fp64 rows are from the
+terminal reruns recorded in `WORKLOG-NEVER-COMMIT.md`.
 
 Command template:
 
@@ -156,25 +168,28 @@ AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=error AKITA_PROFILE_ANSI=0 AKITA_MODE=<m
 | fp16 `full_fp16_d64` | `0.141352 s` | `5.767364 s` | `2.062466 s` | `0.037458 s` | `36,816 B` | `15,536 B` | `21,280 B` | `5` | `8/8` |
 | fp32 `dense_fp32_d32` | `0.244446 s` | `6.687460 s` | `1.579170 s` | `0.021254 s` | `37,600 B` | `19,040 B` | `18,560 B` | `6` | `4/4` |
 | fp32 `dense_fp32_d64` | `0.111561 s` | `1.023532 s` | `1.044095 s` | `0.016854 s` | `41,008 B` | `19,360 B` | `21,648 B` | `5` | `4/4` |
-| fp64 `dense_fp64_d32` | `0.223420 s` | `2.221016 s` | failed | failed | failed | failed | failed | failed | not reached |
-| fp64 `dense_fp64_d64` | `0.204219 s` | `2.696530 s` | failed | failed | failed | failed | failed | failed | not reached |
+| fp64 `dense_fp64_d32` | `0.219134 s` | `2.091091 s` | `1.788981 s` | `0.018076 s` | `41,696 B` | `19,760 B` | `21,936 B` | `5` | `2/2` |
+| fp64 `dense_fp64_d64` | `0.200086 s` | `2.503449 s` | `2.146537 s` | `0.027658 s` | `52,400 B` | `22,848 B` | `29,552 B` | `6` | `2/2` |
 
-Both dense fp64 nv26 runs panic at
-`crates/akita-pcs/examples/profile/workload.rs:232:6` with
+The refreshed dense fp64 rows also report setup preparation split out from the
+aggregate setup time:
+
+| Mode | Setup expand | Backend prepare |
+| --- | ---: | ---: |
+| `dense_fp64_d32` | `0.158866 s` | `0.060265 s` |
+| `dense_fp64_d64` | `0.147241 s` | `0.052843 s` |
+
+Earlier dense fp64 nv26 runs failed with
 `InvalidSize { expected: 16777216, actual: 33554432 }` after the commit phase.
-That should be investigated before dense fp64 nv26 is used as a regression
-gate. As a diagnostic fallback only, nv25 completed:
-
-| Fallback mode | Setup | Commit | Prove | Verify | Proof total | Fold bytes | Tail bytes | Levels | Claim/challenge ext degree |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `dense_fp64_d32`, nv25 | `0.164370 s` | `1.080666 s` | `1.003147 s` | `0.014192 s` | `40,928 B` | `19,328 B` | `21,600 B` | `5` | `2/2` |
-| `dense_fp64_d64`, nv25 | `0.102718 s` | `0.916756 s` | `0.986052 s` | `0.020455 s` | `51,232 B` | `22,336 B` | `28,896 B` | `5` | `2/2` |
+That failure was the misplaced algebra table cap now removed in this PR, not an
+invalid dense fp64 profile shape.
 
 ## Notes For Comparison
 
-- These numbers include current setup-owned CPU NTT cache behavior. After the
-  cutover, compare setup preparation separately from repeated commit/prove
-  execution.
+- Rows captured before the compute-backend cutover include setup-owned CPU NTT
+  cache behavior. Rows captured after the cutover should compare setup
+  expansion, backend preparation, and repeated commit/prove execution
+  separately when those timing lines are available.
 - Treat large one-hot commit/opening changes as high signal. Treat small
   sub-2% Criterion deltas as suspect until rerun with longer default settings.
 - If a later run changes hardware load, Rust version, feature flags, or

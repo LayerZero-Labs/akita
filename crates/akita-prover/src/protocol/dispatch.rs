@@ -58,53 +58,40 @@ macro_rules! dispatch_ring_dim {
     }};
 }
 
-/// Like [`dispatch_ring_dim!`] but also lazily builds the shared NTT cache for
-/// the matched ring dimension from a [`MultiDNttCaches`](crate::MultiDNttCaches) and the
-/// shared [`akita_types::FlatMatrix`].
-///
-/// Inside the body, `$D` is a const ring dimension and `$ntt` is a
-/// [`NttSlotCache<D>`](crate::kernels::crt_ntt::NttSlotCache) reference.
-///
-/// # Panics
-///
-/// Panics at runtime if `d` is not one of the supported values.
+/// Bridge a runtime `d: usize` to a const-generic `D` context, returning an
+/// [`AkitaError`](akita_field::AkitaError) for unsupported dimensions.
 #[macro_export]
-macro_rules! dispatch_with_ntt {
-    ($d:expr, $ntt:expr, $expanded:expr,
-     |$D:ident, $ntt_shared:ident| $body:expr) => {{
+macro_rules! dispatch_ring_dim_result {
+    ($d:expr, |$D:ident| $body:expr) => {{
         let __d = $d;
         match __d {
             32 => {
                 const $D: usize = 32;
-                let $ntt_shared = ($ntt).get_or_build_32(&($expanded).shared_matrix)?;
                 $body
             }
             64 => {
                 const $D: usize = 64;
-                let $ntt_shared = ($ntt).get_or_build_64(&($expanded).shared_matrix)?;
                 $body
             }
             128 => {
                 const $D: usize = 128;
-                let $ntt_shared = ($ntt).get_or_build_128(&($expanded).shared_matrix)?;
                 $body
             }
             256 => {
                 const $D: usize = 256;
-                let $ntt_shared = ($ntt).get_or_build_256(&($expanded).shared_matrix)?;
                 $body
             }
             512 => {
                 const $D: usize = 512;
-                let $ntt_shared = ($ntt).get_or_build_512(&($expanded).shared_matrix)?;
                 $body
             }
             1024 => {
                 const $D: usize = 1024;
-                let $ntt_shared = ($ntt).get_or_build_1024(&($expanded).shared_matrix)?;
                 $body
             }
-            _ => panic!("unsupported ring dimension: {__d}"),
+            _ => Err(akita_field::AkitaError::InvalidInput(format!(
+                "unsupported ring dimension: {__d}"
+            ))),
         }
     }};
 }
@@ -126,5 +113,16 @@ mod tests {
     #[should_panic(expected = "unsupported ring dimension")]
     fn dispatch_ring_dim_unsupported_panics() {
         let _ = dispatch_ring_dim!(42, |D| D);
+    }
+
+    #[test]
+    fn dispatch_ring_dim_result_rejects_unsupported_dimension() {
+        let result: Result<usize, akita_field::AkitaError> =
+            dispatch_ring_dim_result!(42, |D| Ok(D));
+        assert!(matches!(
+            result,
+            Err(akita_field::AkitaError::InvalidInput(message))
+                if message.contains("unsupported ring dimension: 42")
+        ));
     }
 }

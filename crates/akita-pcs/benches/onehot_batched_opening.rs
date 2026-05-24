@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
 
+use akita_prover::{CommitComputeBackend, CpuBackend};
+
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
@@ -96,11 +98,13 @@ fn bench_single_case(c: &mut Criterion) {
         1,
         1,
     );
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        &CpuBackend,
+        &prepared,
         std::slice::from_ref(&poly),
-        &setup,
     )
     .expect("single commit");
 
@@ -121,7 +125,8 @@ fn bench_single_case(c: &mut Criterion) {
                 let start = Instant::now();
                 let proof =
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-                        &setup,
+                        &CpuBackend,
+                        &prepared,
                         vec![(
                             &point[..],
                             CommittedPolynomials {
@@ -143,7 +148,8 @@ fn bench_single_case(c: &mut Criterion) {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"bench/onehot-opening/single");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-        &setup,
+        &CpuBackend,
+        &prepared,
         vec![(
             &point[..],
             CommittedPolynomials {
@@ -203,12 +209,16 @@ fn bench_batched_case(c: &mut Criterion) {
         BATCH_SIZE,
         1,
     );
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let opening_groups = [&openings[..]];
-    let (commitment, hint) =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
-            .expect("grouped commit");
+    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        &CpuBackend,
+        &prepared,
+        &polys,
+    )
+    .expect("grouped commit");
     let commitments = [commitment];
     let hints = vec![hint];
 
@@ -224,7 +234,8 @@ fn bench_batched_case(c: &mut Criterion) {
                 let start = Instant::now();
                 let proof =
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-                        &setup,
+                        &CpuBackend,
+                        &prepared,
                         vec![(
                             &point[..],
                             CommittedPolynomials {
@@ -246,7 +257,8 @@ fn bench_batched_case(c: &mut Criterion) {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"bench/onehot-opening/batched");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-        &setup,
+        &CpuBackend,
+        &prepared,
         vec![(
             &point[..],
             CommittedPolynomials {

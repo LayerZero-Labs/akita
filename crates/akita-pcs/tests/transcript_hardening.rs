@@ -1,6 +1,8 @@
 #![allow(missing_docs)]
 #![cfg(all(feature = "logging-transcript", not(feature = "zk")))]
 
+use akita_prover::{CommitComputeBackend, CpuBackend};
+
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
@@ -33,10 +35,14 @@ fn event_stream_equality_small() {
         let opening = opening_from_poly(&poly, &point, &layout);
 
         let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1);
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) =
-            <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(std::slice::from_ref(&poly), &setup)
-                .expect("commit");
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+            &CpuBackend,
+            &prepared,
+            std::slice::from_ref(&poly),
+        )
+        .expect("commit");
 
         let poly_refs = [&poly];
         let commitments = [commitment];
@@ -46,7 +52,8 @@ fn event_stream_equality_small() {
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
-            &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(
                 &point,
                 &poly_refs,

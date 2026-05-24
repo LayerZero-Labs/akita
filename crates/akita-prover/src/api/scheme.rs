@@ -1,6 +1,6 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::kernels::crt_ntt::NttSlotCache;
+use crate::compute::CommitComputeBackend;
 use crate::{AkitaPolyOps, ProverClaims};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
@@ -12,10 +12,9 @@ use akita_types::BasisMode;
 /// Caller-provided root polynomials are provided as `impl AkitaPolyOps<F, D>`.
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
-pub trait CommitmentProver<F, const D: usize, Cache = NttSlotCache<D>>
+pub trait CommitmentProver<F, const D: usize>
 where
     F: FieldCore + CanonicalField,
-    Cache: Send + Sync,
 {
     /// Prover setup parameters.
     type ProverSetup: Clone + Send + Sync;
@@ -57,10 +56,14 @@ where
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
-    fn commit<P: AkitaPolyOps<F, D, CommitCache = Cache>>(
+    fn commit<P, B>(
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         polys: &[P],
-        setup: &Self::ProverSetup,
-    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>;
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
+    where
+        P: AkitaPolyOps<F, D>,
+        B: CommitComputeBackend<F>;
 
     /// Commit one polynomial bundle per opening point under a shared root
     /// layout matched to the corresponding multipoint batched prove.
@@ -83,13 +86,18 @@ where
     /// Returns an error if input validation, layout selection, or any
     /// per-point commitment fails.
     #[allow(clippy::type_complexity)]
-    fn batched_commit<P: AkitaPolyOps<F, D, CommitCache = Cache>>(
+    fn batched_commit<P, B>(
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         polys_per_point: &[&[P]],
-        setup: &Self::ProverSetup,
-    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError> {
+    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
+    where
+        P: AkitaPolyOps<F, D>,
+        B: CommitComputeBackend<F>,
+    {
         polys_per_point
             .iter()
-            .map(|polys| Self::commit(polys, setup))
+            .map(|polys| Self::commit(backend, prepared, polys))
             .collect()
     }
 
@@ -107,10 +115,15 @@ where
     /// Returns an error if any opening point is invalid or proof generation
     /// fails.
     #[allow(clippy::too_many_arguments)]
-    fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = Cache>>(
-        setup: &Self::ProverSetup,
+    fn batched_prove<'a, T, P, B>(
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
-    ) -> Result<Self::BatchedProof, AkitaError>;
+    ) -> Result<Self::BatchedProof, AkitaError>
+    where
+        T: Transcript<F>,
+        P: AkitaPolyOps<F, D>,
+        B: CommitComputeBackend<F>;
 }
