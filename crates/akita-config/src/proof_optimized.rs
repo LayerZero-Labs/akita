@@ -515,6 +515,46 @@ mod tests {
     use akita_types::DecompositionParams;
 
     #[test]
+    fn setup_level_params_from_runtime_schedule_includes_terminal_direct_level_params() {
+        use akita_challenges::SparseChallengeConfig;
+        use akita_types::{DirectStep, DirectWitnessShape, FoldStep, SisModulusFamily, Step};
+
+        let sparse = SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let fold_lp =
+            LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 1, 1, 1, sparse.clone());
+        let direct_lp = LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 1, 1, 1, sparse);
+
+        let steps = vec![
+            Step::Fold(FoldStep {
+                params: fold_lp.clone(),
+                current_w_len: 1 << 8,
+                delta_fold_per_poly: 1,
+                w_ring: 1,
+                next_w_len: 1 << 4,
+                level_bytes: 0,
+            }),
+            Step::Direct(DirectStep {
+                current_w_len: 1 << 4,
+                witness_shape: DirectWitnessShape::PackedDigits((16, 3)),
+                direct_bytes: 0,
+                commit_params: None,
+                level_params: Some(direct_lp.clone()),
+            }),
+        ];
+
+        let setup_levels = setup_level_params_from_runtime_schedule(&steps);
+        assert_eq!(setup_levels.len(), 2);
+        assert_eq!(setup_levels[0], fold_lp);
+        assert_eq!(
+            setup_levels[1], direct_lp,
+            "terminal Direct.level_params must feed setup-level params (and the transcript binding's level_params_digest); see bind_transcript_instance_descriptor"
+        );
+    }
+
+    #[test]
     #[cfg(not(feature = "zk"))]
     fn setup_matrix_envelope_covers_grouped_batch_schedules() {
         let incidence =

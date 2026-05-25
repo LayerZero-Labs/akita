@@ -7,12 +7,13 @@
 //! it without crossing through `akita-scheme`, and so the descriptor
 //! construction is sourced from a single `Cfg`-driven implementation.
 
+use crate::proof_optimized::setup_level_params_from_runtime_schedule;
 use crate::CommitmentConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
-    ClaimIncidenceSummary, PlanSection, RingSubfieldEncoding, Schedule, SetupSection, Step,
+    ClaimIncidenceSummary, PlanSection, RingSubfieldEncoding, Schedule, SetupSection,
 };
 
 /// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
@@ -46,15 +47,11 @@ where
     Cfg::ClaimField: RingSubfieldEncoding<F>,
     Cfg::ChallengeField: RingSubfieldEncoding<F>,
 {
-    let mut setup_levels = schedule
-        .steps
-        .iter()
-        .filter_map(|step| match step {
-            Step::Fold(fold) => Some(fold.params.clone()),
-            Step::Direct(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let mut setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
     if setup_levels.is_empty() {
+        // Defensive fallback: empty schedules and root-direct edge entries
+        // with no `commit_params` go through the same `Cfg`-driven path
+        // setup uses to size the shared matrix.
         setup_levels.push(Cfg::get_params_for_batched_commitment(incidence)?);
     }
 
