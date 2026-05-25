@@ -122,14 +122,6 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
 
     /// Inclusive `(min, max)` log-basis search range at one planner state.
     fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32);
-
-    /// Extra objective weight for prover work while choosing offline schedules.
-    ///
-    /// The returned penalty affects only planner selection; serialized proof
-    /// bytes remain the schedule's reported size.
-    fn planner_fold_prover_weight() -> usize {
-        0
-    }
 }
 
 pub use baseline::{

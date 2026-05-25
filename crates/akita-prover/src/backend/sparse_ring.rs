@@ -6,7 +6,7 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::IntegerChallenge;
+use akita_challenges::SparseChallenge;
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{AkitaPolyOps, CenteredCoeff, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SparseRingCoeff {
@@ -348,7 +348,7 @@ where
     #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold")]
     fn decompose_fold(
         &self,
-        challenges: &[IntegerChallenge],
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
@@ -509,11 +509,11 @@ where
 
 fn sparse_accumulate<const D: usize>(
     blocks: &SparseRingBlocks,
-    challenges: &[IntegerChallenge],
+    challenges: &[SparseChallenge],
     num_blocks: usize,
     inner_width: usize,
     num_digits: usize,
-) -> Vec<[CenteredCoeff; D]> {
+) -> Vec<[i32; D]> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -521,15 +521,15 @@ fn sparse_accumulate<const D: usize>(
 
     let actual_threads = num_threads.min(inner_width.max(1));
     let pos_chunk = inner_width.div_ceil(actual_threads);
-    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
+    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
             if pos_start >= inner_width {
                 return Vec::new();
             }
             let pos_end = (pos_start + pos_chunk).min(inner_width);
-            let mut acc = vec![[0 as CenteredCoeff; D]; pos_end - pos_start];
-            let mut rotated = vec![[0 as CenteredCoeff; D]; D];
+            let mut acc = vec![[0i32; D]; pos_end - pos_start];
+            let mut rotated = vec![[0i16; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = blocks.block(block_idx);
@@ -543,9 +543,9 @@ fn sparse_accumulate<const D: usize>(
                     let local_pos = entry.pos_in_block() * num_digits - pos_start;
                     let rot = &rotated[entry.coeff_idx()];
                     let dst = &mut acc[local_pos];
-                    let weight = CenteredCoeff::from(entry.value);
+                    let weight = entry.value as i32;
                     for k in 0..D {
-                        dst[k] += weight * rot[k];
+                        dst[k] += weight * i32::from(rot[k]);
                     }
                 }
             }

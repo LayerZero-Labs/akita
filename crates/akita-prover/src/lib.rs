@@ -10,7 +10,7 @@ pub mod kernels;
 pub mod protocol;
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{FoldingChallenges, IntegerChallenge};
+use akita_challenges::{FoldingChallenges, SparseChallenge};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
@@ -68,20 +68,15 @@ impl<'a, P, C, H> CommittedPolynomials<'a, P, C, H> {
 pub type ProverClaims<'a, F, P, C, H> =
     Vec<(OpeningPoints<'a, F>, CommittedPolynomials<'a, P, C, H>)>;
 
-/// Centered integer coefficient type for folded witnesses.
-pub type CenteredCoeff = i64;
-/// Infinity norm type for centered folded coefficients.
-pub type CenteredInfNorm = u64;
-
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
     /// Folded witness rows in ring form.
     pub z_pre: Vec<CyclotomicRing<F, D>>,
     /// Centered integer coefficients for each `z_pre` row.
-    pub centered_coeffs: Vec<[CenteredCoeff; D]>,
+    pub centered_coeffs: Vec<[i32; D]>,
     /// Infinity norm of `centered_coeffs`.
-    pub centered_inf_norm: CenteredInfNorm,
+    pub centered_inf_norm: u32,
 }
 
 /// Prover-side output of the inner Ajtai commit step.
@@ -444,13 +439,9 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     }
 
     /// Prover decompose + challenge-fold step.
-    ///
-    /// Challenges are widened to [`IntegerChallenge`] so the same hot loop
-    /// covers both the i8-coefficient flat sampler and the wider-coefficient
-    /// tensor-product sampler.
     fn decompose_fold(
         &self,
-        challenges: &[IntegerChallenge],
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -459,7 +450,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// Optional fused batched variant of [`Self::decompose_fold`].
     fn decompose_fold_batched(
         _polys: &[&Self],
-        _challenges: &[IntegerChallenge],
+        _challenges: &[SparseChallenge],
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,
@@ -467,8 +458,16 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         None
     }
 
-    /// Optional fused batched variant that can consume tensor-shaped fold
-    /// challenges without first materialising every logical block challenge.
+    /// Tensor-shaped fused batched variant that consumes factored fold
+    /// challenges directly. Only backends with a tensor-aware kernel
+    /// (currently [`OneHotPoly`]) override the default `Ok(None)`. The
+    /// flat-mode call sites continue to use [`Self::decompose_fold_batched`]
+    /// without going through this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tensor challenge container is structurally
+    /// invalid for the supplied polynomials.
     fn decompose_fold_tensor_batched(
         _polys: &[&Self],
         _challenges: &FoldingChallenges,
@@ -670,7 +669,7 @@ where
 
     fn decompose_fold(
         &self,
-        challenges: &[IntegerChallenge],
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -682,7 +681,7 @@ where
 
     fn decompose_fold_batched(
         polys: &[&Self],
-        challenges: &[IntegerChallenge],
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,

@@ -166,7 +166,6 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
     let envelope = Cfg::envelope(inputs.num_vars);
     let d = Cfg::D;
     let stage1_config = Cfg::stage1_challenge_config(d);
-    let fold_shape = Cfg::fold_challenge_shape_at_level(inputs);
 
     if inputs.level > 0 {
         if let Some(params) = sis_derived_recursive_params::<Cfg>(
@@ -176,7 +175,6 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
             &stage1_config,
             &envelope,
         ) {
-            let params = params.with_fold_challenge_shape(fold_shape);
             if let Ok(lp) = akita_types::recursive_level_layout_from_params(
                 &params,
                 inputs.current_w_len,
@@ -197,7 +195,6 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
         envelope.max_n_d,
         stage1_config,
     )
-    .with_fold_challenge_shape(fold_shape)
 }
 
 /// Proof-optimized `root_level_params_for_layout_with_log_basis` impl.
@@ -215,7 +212,6 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
-    let fold_shape = Cfg::fold_challenge_shape_at_level(inputs);
     let mut candidate_n_a = 1usize;
     let rank_cap = proof_optimized_root_a_rank_cap::<Cfg>(inputs, log_basis, &stage1_config)?;
     for _ in 0..rank_cap {
@@ -227,21 +223,12 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
             1,
             1,
             stage1_config.clone(),
-        )
-        .with_fold_challenge_shape(fold_shape);
+        );
         let root_lp =
             derived_root_commitment_layout_from_params::<Cfg>(inputs, &candidate_params, false)?;
         let derived_params = sis_derived_root_params_for_layout::<Cfg>(inputs, &root_lp)?;
-        if derived_params.a_key.row_len() <= candidate_n_a {
-            let mut result = derived_params;
-            result.a_key = akita_types::AjtaiKeyParams::try_new(
-                result.a_key.sis_family(),
-                candidate_n_a,
-                result.a_key.col_len(),
-                result.a_key.collision_inf(),
-                Cfg::D,
-            )?;
-            return Ok(result.with_layout(&root_lp));
+        if derived_params.a_key.row_len() == candidate_n_a {
+            return Ok(derived_params.with_layout(&root_lp));
         }
         candidate_n_a = derived_params.a_key.row_len();
     }
@@ -407,16 +394,12 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     let fallback = fallback_batched_root_split::<Cfg>(incidence.num_vars(), num_polys)?;
 
     let setup_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
-        setup_level_params_from_plan::<Cfg>(&plan)
+        setup_level_params_from_plan(&plan)
     } else {
         #[cfg(feature = "planner")]
         {
             let schedule = akita_planner::find_optimal_schedule::<Cfg>(cached_key)?;
-            setup_level_params_from_runtime_schedule::<Cfg>(
-                schedule.steps,
-                incidence.num_vars(),
-                setup_envelope,
-            )
+            setup_level_params_from_runtime_schedule(schedule.steps, setup_envelope)
         }
 
         #[cfg(not(feature = "planner"))]
@@ -432,63 +415,28 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     )?))
 }
 
-fn setup_level_params_from_plan<Cfg: CommitmentConfig>(
-    plan: &AkitaSchedulePlan,
-) -> Vec<LevelParams> {
-    let mut levels = Vec::new();
-    for step in &plan.steps {
-        if let AkitaPlannedStep::Fold(level) = step {
-            levels.push(level.lp.clone());
-            levels.push(Cfg::level_params_with_log_basis(
-                level.next_inputs,
-                level.next_level_log_basis,
-            ));
-        }
-    }
-    levels
-}
-
-#[cfg(feature = "planner")]
-fn next_runtime_log_basis(steps: &[Step], current_idx: usize, current_log_basis: u32) -> u32 {
-    steps
+fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
+    plan.steps
         .iter()
-        .skip(current_idx + 1)
-        .map(|step| match step {
-            Step::Fold(next) => next.params.log_basis,
-            Step::Direct(direct) => match &direct.witness_shape {
-                akita_types::DirectWitnessShape::PackedDigits((_, bits)) => *bits,
-                akita_types::DirectWitnessShape::FieldElements(_) => current_log_basis,
-            },
+        .filter_map(|step| match step {
+            AkitaPlannedStep::Fold(level) => Some(level.lp.clone()),
+            AkitaPlannedStep::Direct(_) => None,
         })
-        .next()
-        .unwrap_or(current_log_basis)
+        .collect()
 }
 
 #[cfg(feature = "planner")]
-fn setup_level_params_from_runtime_schedule<Cfg: CommitmentConfig>(
+fn setup_level_params_from_runtime_schedule(
     steps: Vec<Step>,
-    num_vars: usize,
     _setup_envelope: &CommitmentEnvelope,
 ) -> Vec<LevelParams> {
-    let mut levels = Vec::new();
-    let mut fold_level = 0usize;
-    for (idx, step) in steps.iter().enumerate() {
-        if let Step::Fold(fold_step) = step {
-            let next_inputs = AkitaScheduleInputs {
-                num_vars,
-                level: fold_level + 1,
-                current_w_len: fold_step.next_w_len,
-            };
-            let next_log_basis = next_runtime_log_basis(&steps, idx, fold_step.params.log_basis);
-            levels.push(fold_step.params.clone());
-            levels.push(Cfg::level_params_with_log_basis(
-                next_inputs,
-                next_log_basis,
-            ));
-            fold_level += 1;
-        }
-    }
-    levels
+    steps
+        .into_iter()
+        .filter_map(|step| match step {
+            Step::Fold(fold_step) => Some(fold_step.params),
+            Step::Direct(_) => None,
+        })
+        .collect()
 }
 
 fn matrix_envelope_for_levels<Cfg>(
@@ -971,48 +919,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "planner")]
-    fn runtime_schedule_successor_log_basis_comes_from_next_step() {
-        let params_with_log_basis = |log_basis| {
-            LevelParams::params_only(
-                akita_types::SisModulusFamily::Q128,
-                64,
-                log_basis,
-                1,
-                1,
-                1,
-                SparseChallengeConfig::Uniform {
-                    weight: 1,
-                    nonzero_coeffs: vec![1],
-                },
-            )
-        };
-        let fold_step = |log_basis, next_w_len| {
-            Step::Fold(akita_types::FoldStep {
-                params: params_with_log_basis(log_basis),
-                current_w_len: 64,
-                delta_fold_per_poly: 1,
-                w_ring: next_w_len / 64,
-                next_w_len,
-                level_bytes: 0,
-            })
-        };
-
-        let fold_successor = vec![fold_step(3, 128), fold_step(5, 64)];
-        assert_eq!(next_runtime_log_basis(&fold_successor, 0, 3), 5);
-
-        let direct_successor = vec![
-            fold_step(3, 64),
-            Step::Direct(akita_types::DirectStep {
-                current_w_len: 64,
-                witness_shape: akita_types::DirectWitnessShape::PackedDigits((64, 7)),
-                direct_bytes: 0,
-            }),
-        ];
-        assert_eq!(next_runtime_log_basis(&direct_successor, 0, 3), 7);
-    }
-
-    #[test]
     #[cfg(not(feature = "zk"))]
     fn setup_matrix_envelope_covers_grouped_batch_schedules() {
         let incidence =
@@ -1144,178 +1050,6 @@ pub mod fp128 {
         1,
         Some(akita_types::generated::fp128_d32_onehot_table())
     );
-
-    /// Binary onehot `D=64` preset that samples a tensor-shaped stage-1
-    /// fold challenge at the root level.
-    #[derive(Clone, Copy, Debug, Default)]
-    pub struct D64OneHotTensor;
-
-    impl akita_types::ScheduleProvider for D64OneHotTensor {
-        fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-            Some(akita_types::generated::fp128_d64_onehot_tensor_table())
-        }
-
-        fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
-            proof_optimized_schedule_key::<Self>(key)
-        }
-
-        fn schedule_plan(
-            key: akita_types::AkitaScheduleLookupKey,
-        ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-            proof_optimized_schedule_plan::<Self>(key)
-        }
-    }
-
-    impl crate::CommitmentConfig for D64OneHotTensor {
-        type Field = Field;
-        type ClaimField = Field;
-        type ChallengeField = Field;
-        const D: usize = 64;
-
-        fn decomposition() -> akita_types::DecompositionParams {
-            fp128_decomposition(1, 3)
-        }
-
-        fn stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
-            fp128_stage1_challenge_config(d)
-        }
-
-        fn fold_challenge_shape_at_level(
-            inputs: akita_types::AkitaScheduleInputs,
-        ) -> akita_challenges::TensorChallengeShape {
-            if inputs.level == 0 {
-                akita_challenges::TensorChallengeShape::Tensor
-            } else {
-                akita_challenges::TensorChallengeShape::Flat
-            }
-        }
-
-        fn sis_modulus_family() -> akita_types::SisModulusFamily {
-            akita_types::SisModulusFamily::Q128
-        }
-
-        fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
-            fp128_audited_root_rank::<Self>(role, max_num_vars)
-        }
-
-        fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
-            proof_optimized_envelope::<Self>(max_num_vars)
-        }
-
-        fn max_setup_matrix_size(
-            max_num_vars: usize,
-            max_num_batched_polys: usize,
-            max_num_points: usize,
-        ) -> Result<(usize, usize), akita_field::AkitaError> {
-            proof_optimized_max_setup_matrix_size::<Self>(
-                max_num_vars,
-                max_num_batched_polys,
-                max_num_points,
-            )
-        }
-
-        fn level_params_with_log_basis(
-            inputs: akita_types::AkitaScheduleInputs,
-            log_basis: u32,
-        ) -> akita_types::LevelParams {
-            proof_optimized_level_params_with_log_basis::<Self>(inputs, log_basis)
-        }
-
-        fn root_level_params_for_layout_with_log_basis(
-            inputs: akita_types::AkitaScheduleInputs,
-            lp: &akita_types::LevelParams,
-        ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-            proof_optimized_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
-        }
-
-        fn root_level_layout_with_log_basis(
-            inputs: akita_types::AkitaScheduleInputs,
-            log_basis: u32,
-        ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-            proof_optimized_root_level_layout_with_log_basis::<Self>(inputs, log_basis)
-        }
-
-        fn log_basis_at_level(inputs: akita_types::AkitaScheduleInputs) -> u32 {
-            proof_optimized_log_basis_at_level::<Self>(inputs)
-        }
-
-        fn log_basis_search_range(_inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
-            proof_optimized_log_basis_search_range()
-        }
-    }
-
-    #[cfg(feature = "planner")]
-    impl akita_planner::PlannerConfig for D64OneHotTensor {
-        type PlannerField = Field;
-
-        const PLANNER_D: usize = 64;
-
-        fn planner_field_bits() -> u32 {
-            <Self as crate::CommitmentConfig>::decomposition().field_bits()
-        }
-
-        fn planner_challenge_field_bits() -> u32 {
-            <Self as crate::CommitmentConfig>::decomposition().field_bits()
-                * (<Self as crate::CommitmentConfig>::CHAL_EXT_DEGREE as u32)
-        }
-
-        fn planner_extension_opening_width() -> usize {
-            <Self as crate::CommitmentConfig>::CLAIM_EXT_DEGREE
-        }
-
-        fn planner_recursive_witness_expansion() -> usize {
-            1
-        }
-
-        fn planner_recursive_public_rows() -> usize {
-            1
-        }
-
-        fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
-            <Self as crate::CommitmentConfig>::sis_modulus_family()
-        }
-
-        fn planner_stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
-            <Self as crate::CommitmentConfig>::stage1_challenge_config(d)
-        }
-
-        fn planner_schedule_plan(
-            key: akita_types::AkitaScheduleLookupKey,
-        ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-            <Self as akita_types::ScheduleProvider>::schedule_plan(key)
-        }
-
-        fn planner_root_level_layout_with_log_basis(
-            inputs: akita_types::AkitaScheduleInputs,
-            log_basis: u32,
-        ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-            <Self as crate::CommitmentConfig>::root_level_layout_with_log_basis(inputs, log_basis)
-        }
-
-        fn planner_current_level_layout_with_log_basis(
-            inputs: akita_types::AkitaScheduleInputs,
-            log_basis: u32,
-        ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-            crate::current_level_layout_with_log_basis::<Self>(inputs, log_basis)
-        }
-
-        fn planner_root_level_params_for_layout_with_log_basis(
-            inputs: akita_types::AkitaScheduleInputs,
-            lp: &akita_types::LevelParams,
-        ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-            <Self as crate::CommitmentConfig>::root_level_params_for_layout_with_log_basis(
-                inputs, lp,
-            )
-        }
-
-        fn planner_log_basis_search_range(inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
-            <Self as crate::CommitmentConfig>::log_basis_search_range(inputs)
-        }
-
-        fn planner_fold_prover_weight() -> usize {
-            3
-        }
-    }
 
     /// Concrete fp128 preset selected by a schedule-family query.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

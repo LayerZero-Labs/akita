@@ -10,7 +10,7 @@
 //! aggregation path.
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{FoldingChallenges, IntegerChallenge};
+use akita_challenges::{FoldingChallenges, SparseChallenge};
 use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
@@ -135,7 +135,7 @@ where
 
     fn decompose_fold(
         &self,
-        challenges: &[IntegerChallenge],
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -148,13 +148,12 @@ where
 
     fn decompose_fold_batched(
         polys: &[&Self],
-        challenges: &[IntegerChallenge],
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F, D>> {
-        let first = polys.first()?;
-        match **first {
+        match *polys.first()? {
             Self::Dense(_) => {
                 let mut dense_polys = Vec::with_capacity(polys.len());
                 for poly in polys {

@@ -446,11 +446,14 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
+    let total_blocks = root_lp
+        .num_blocks
+        .checked_mul(num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("batched root block count overflow".to_string()))?;
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         v_typed,
-        root_lp.num_blocks,
-        num_claims,
+        total_blocks,
         batched_lp,
         if is_terminal {
             MRowLayout::Terminal
@@ -851,8 +854,7 @@ where
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         v_typed,
-        lp.num_blocks,
-        num_claims,
+        lp.num_blocks * num_claims,
         lp,
         if is_last {
             MRowLayout::Terminal

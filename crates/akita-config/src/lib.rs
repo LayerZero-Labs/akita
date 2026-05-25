@@ -7,7 +7,7 @@
 //! bodies because they are not policy choices and would otherwise be
 //! duplicated verbatim across every config.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(feature = "planner")]
@@ -137,20 +137,14 @@ pub trait CommitmentConfig:
 
     /// Shape of the stage-1 fold-round challenge sampled at this state.
     ///
-    /// Defaults to [`TensorChallengeShape::Flat`], matching the historical
-    /// per-block sparse-challenge envelope used by every shipped preset.
-    /// Presets opt levels into [`TensorChallengeShape::Tensor`] by overriding
-    /// this hook; the planner's layout derivation reads the returned shape
-    /// through [`LevelParams::challenge_l1_mass`] and the runtime prover and
-    /// verifier dispatch to the matching sampler via
-    /// [`LevelParams::fold_challenge_shape`].
-    ///
-    /// The tensor shape requires the level's `num_blocks` to be a power of
-    /// two; the runtime sampler enforces this at use. The selector therefore
-    /// only requests tensor at planner states where a power-of-two
-    /// `num_blocks` will be chosen.
-    fn fold_challenge_shape_at_level(_inputs: AkitaScheduleInputs) -> TensorChallengeShape {
-        TensorChallengeShape::Flat
+    /// Defaults to [`akita_challenges::TensorChallengeShape::Flat`], the
+    /// representation used by every shipped flat preset. Presets that want a
+    /// tensor-shaped root fold override this hook; the default impl keeps
+    /// every flat preset on the byte-identical main path.
+    fn fold_challenge_shape_at_level(
+        _inputs: AkitaScheduleInputs,
+    ) -> akita_challenges::TensorChallengeShape {
+        akita_challenges::TensorChallengeShape::Flat
     }
 
     /// SIS modulus family used by security-floor lookups for this config.
@@ -304,7 +298,7 @@ pub trait CommitmentConfig:
             akita_types::scale_batched_root_layout(
                 &split,
                 num_claims,
-                split.challenge_l1_mass(),
+                Self::stage1_challenge_config(Self::D).l1_norm(),
                 Self::decomposition().field_bits(),
             )
         }
@@ -471,10 +465,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
-    }
-
-    fn fold_challenge_shape_at_level(_inputs: AkitaScheduleInputs) -> TensorChallengeShape {
-        TensorChallengeShape::Flat
     }
 
     fn sis_modulus_family() -> SisModulusFamily {

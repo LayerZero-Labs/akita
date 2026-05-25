@@ -8,14 +8,14 @@ use akita_algebra::ring::cyclotomic::{
     decompose_centering_threshold, BalancedDecomposePow2I8Params,
 };
 use akita_algebra::{CyclotomicRing, EqPolynomial};
-use akita_challenges::IntegerChallenge;
+use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_sumcheck::tensor_opening_split;
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
-    decompose_ring_single_digit, integer_mul_acc, try_small_i8_cache_from_ring_coeffs,
+    decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
     DecomposeParams,
 };
 use crate::kernels::crt_ntt::NttSlotCache;
@@ -27,7 +27,7 @@ use akita_types::FlatMatrix;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
-use crate::{AkitaPolyOps, CenteredCoeff, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DenseDigitCache<const D: usize> {
@@ -347,7 +347,7 @@ where
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]
     fn decompose_fold(
         &self,
-        challenges: &[IntegerChallenge],
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
@@ -378,19 +378,19 @@ where
 
         if num_digits == 1 {
             if let Some(small_coeffs) = &self.small_i8_coeffs {
-                let coeff_accum: Vec<[CenteredCoeff; D]> = {
+                let coeff_accum: Vec<[i32; D]> = {
                     let _span =
                         tracing::info_span!("dense_single_digit_cached_accumulate").entered();
                     cfg_into_iter!(0..block_len)
                         .map(|elem_idx| {
-                            let mut z_local = [0 as CenteredCoeff; D];
+                            let mut z_local = [0i32; D];
 
                             for (block_idx, c_i) in challenges.iter().enumerate() {
                                 let global_idx = block_idx * block_len + elem_idx;
                                 if global_idx >= small_coeffs.len() {
                                     continue;
                                 }
-                                integer_mul_acc::<D>(&small_coeffs[global_idx], c_i, &mut z_local);
+                                sparse_mul_acc::<D>(&small_coeffs[global_idx], c_i, &mut z_local);
                             }
 
                             z_local
@@ -402,11 +402,11 @@ where
                 return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
             }
 
-            let coeff_accum: Vec<[CenteredCoeff; D]> = {
+            let coeff_accum: Vec<[i32; D]> = {
                 let _span = tracing::info_span!("dense_single_digit_accumulate").entered();
                 cfg_into_iter!(0..block_len)
                     .map(|elem_idx| {
-                        let mut z_local = [0 as CenteredCoeff; D];
+                        let mut z_local = [0i32; D];
                         let mut digit_plane = [0i8; D];
 
                         for (block_idx, c_i) in challenges.iter().enumerate() {
@@ -416,7 +416,7 @@ where
                             }
                             let ring = &coeffs[global_idx];
                             decompose_ring_single_digit::<F, D>(ring, &mut digit_plane, &params);
-                            integer_mul_acc::<D>(&digit_plane, c_i, &mut z_local);
+                            sparse_mul_acc::<D>(&digit_plane, c_i, &mut z_local);
                         }
 
                         z_local
@@ -712,23 +712,23 @@ fn digit_block_slices<const D: usize>(
 
 fn accumulate_cached_digit_planes<const D: usize>(
     digit_planes: &[[i8; D]],
-    challenges: &[IntegerChallenge],
+    challenges: &[SparseChallenge],
     block_len: usize,
     num_digits: usize,
-) -> Vec<[CenteredCoeff; D]> {
+) -> Vec<[i32; D]> {
     let inner_width = block_len * num_digits;
     cfg_into_iter!(0..inner_width)
         .map(|inner_idx| {
             let elem_idx = inner_idx / num_digits;
             let digit_idx = inner_idx % num_digits;
-            let mut acc = [0 as CenteredCoeff; D];
+            let mut acc = [0i32; D];
             for (block_idx, challenge) in challenges.iter().enumerate() {
                 let ring_idx = block_idx * block_len + elem_idx;
                 let plane_idx = ring_idx * num_digits + digit_idx;
                 let Some(digit_plane) = digit_planes.get(plane_idx) else {
                     continue;
                 };
-                integer_mul_acc::<D>(digit_plane, challenge, &mut acc);
+                sparse_mul_acc::<D>(digit_plane, challenge, &mut acc);
             }
             acc
         })

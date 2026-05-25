@@ -136,6 +136,31 @@ impl FoldingChallenges {
         }
     }
 
+    /// Return the flat sparse-challenge slice, or `None` when the challenges
+    /// are stored in factored tensor form.
+    ///
+    /// This is the prover-side bridge that keeps non-tensor call sites on
+    /// the unchanged `&[SparseChallenge]` interface.
+    #[inline]
+    #[must_use]
+    pub fn as_sparse(&self) -> Option<&[SparseChallenge]> {
+        match self {
+            Self::Flat(challenges) => Some(challenges.as_slice()),
+            Self::Tensor(_) => None,
+        }
+    }
+
+    /// Return the factored tensor challenges, or `None` when the challenges
+    /// are stored in flat sparse form.
+    #[inline]
+    #[must_use]
+    pub fn as_tensor(&self) -> Option<&TensorChallenges> {
+        match self {
+            Self::Flat(_) => None,
+            Self::Tensor(tensor) => Some(tensor),
+        }
+    }
+
     /// Materialize logical ring challenges for prover-side fold kernels.
     ///
     /// Flat challenges widen coefficients without changing the distribution;

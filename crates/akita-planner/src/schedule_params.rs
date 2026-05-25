@@ -10,7 +10,6 @@
 
 use std::collections::HashMap;
 
-use crate::proof_size::{stage1_bytes_optimized, sumcheck_rounds};
 use crate::PlannerConfig;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::{
@@ -51,7 +50,7 @@ where
     let level_lp = scale_batched_root_layout(
         root_lp,
         num_claims,
-        root_lp.challenge_l1_mass(),
+        Cfg::planner_stage1_challenge_config(Cfg::PLANNER_D).l1_norm(),
         Cfg::planner_field_bits(),
     )?;
     let derived_root_lp =
@@ -333,11 +332,8 @@ fn basis_range<Cfg: PlannerConfig>(
 }
 
 fn level_params_from_fold_step<Cfg: PlannerConfig>(step: &FoldStep) -> LevelParams {
-    let stage1_config = Cfg::planner_stage1_challenge_config(step.params.ring_dimension);
     debug_assert_eq!(
-        step.params
-            .fold_challenge_shape
-            .effective_l1_mass(&stage1_config),
+        Cfg::planner_stage1_challenge_config(step.params.ring_dimension).l1_norm(),
         step.params.challenge_l1_mass()
     );
     step.params.clone()
@@ -369,28 +365,8 @@ fn successor_level_params_from_schedule<Cfg: PlannerConfig>(
 // DP — suffix search
 // -----------------------------------------------------------------------
 
-#[derive(Clone)]
-struct PlannedSuffix {
-    objective_cost: usize,
-    proof_bytes: usize,
-    steps: Vec<Step>,
-}
-
 /// Memo key: `(level, w_len, log_basis)`.
-type ScheduleMemo = HashMap<(usize, usize, u32), PlannedSuffix>;
-
-fn fold_prover_penalty<Cfg: PlannerConfig>(lp: &LevelParams, next_w_len: usize) -> usize {
-    let weight = Cfg::planner_fold_prover_weight();
-    if weight == 0 {
-        return 0;
-    }
-    let rounds = sumcheck_rounds(lp.ring_dimension as u32, next_w_len);
-    weight.saturating_mul(stage1_bytes_optimized(
-        rounds,
-        lp.log_basis,
-        Cfg::planner_field_bits(),
-    ))
-}
+type ScheduleMemo = HashMap<(usize, usize, u32), (usize, Vec<Step>)>;
 
 /// Find the minimum-cost suffix starting at `(level, current_w_len, current_lb)`,
 /// returning both the total bytes and the step-by-step schedule.
@@ -401,7 +377,7 @@ fn derive_optimal_suffix_schedule<Cfg>(
     current_w_len: usize,
     current_lb: u32,
     depth: usize,
-) -> Result<PlannedSuffix, AkitaError>
+) -> Result<(usize, Vec<Step>), AkitaError>
 where
     Cfg: PlannerConfig,
 {
@@ -425,21 +401,15 @@ where
             current_lb,
         )
         .is_ok();
-    let mut best = PlannedSuffix {
-        objective_cost: usize::MAX,
-        proof_bytes: usize::MAX,
-        steps: Vec::new(),
-    };
+    let mut best_cost = usize::MAX;
+    let mut best_schedule = Vec::new();
     if direct_allowed {
         let placeholder = to_direct_step::<Cfg>(current_w_len, current_lb);
         let Step::Direct(direct) = &placeholder else {
             unreachable!("to_direct_step returns Step::Direct");
         };
-        best = PlannedSuffix {
-            objective_cost: direct.direct_bytes,
-            proof_bytes: direct.direct_bytes,
-            steps: vec![placeholder],
-        };
+        best_cost = direct.direct_bytes;
+        best_schedule = vec![placeholder];
     }
 
     // Try each feasible basis for one more fold level.
@@ -454,7 +424,7 @@ where
                 continue;
             };
 
-            let mut suffix = derive_optimal_suffix_schedule::<Cfg>(
+            let (mut suffix_cost, mut suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
                 memo,
                 num_vars,
                 level + 1,
@@ -462,22 +432,22 @@ where
                 lb,
                 depth + 1,
             )?;
-            if suffix.steps.is_empty() {
+            if suffix_steps.is_empty() {
                 continue;
             }
-            let suffix_is_terminal = matches!(suffix.steps.first(), Some(Step::Direct(_)));
+            let suffix_is_terminal = matches!(suffix_steps.first(), Some(Step::Direct(_)));
             // When the suffix is a single terminal Direct step, the terminal
             // recursive fold runs with `candidate.lp` under MRowLayout::Terminal.
             // Overwrite the placeholder witness shape with the true terminal
             // shape (D-block dropped from the M-row layout) and update the
             // running suffix cost accordingly.
             let next_w_len_override = if suffix_is_terminal {
-                let old_direct_bytes = match suffix.steps.first().expect("suffix non-empty") {
+                let old_direct_bytes = match suffix_steps.first().expect("suffix non-empty") {
                     Step::Direct(direct) => direct.direct_bytes,
                     Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
                 };
                 finalize_terminal_direct_witness_shape::<Cfg>(
-                    &mut suffix.steps,
+                    &mut suffix_steps,
                     &candidate,
                     1,
                     1,
@@ -485,12 +455,11 @@ where
                     1,
                 )?;
                 let (new_direct_bytes, terminal_field_len) =
-                    match suffix.steps.first().expect("suffix non-empty") {
+                    match suffix_steps.first().expect("suffix non-empty") {
                         Step::Direct(direct) => (direct.direct_bytes, direct.current_w_len),
                         Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
                     };
-                suffix.proof_bytes = suffix.proof_bytes + new_direct_bytes - old_direct_bytes;
-                suffix.objective_cost = suffix.objective_cost + new_direct_bytes - old_direct_bytes;
+                suffix_cost = suffix_cost + new_direct_bytes - old_direct_bytes;
                 Some(terminal_field_len)
             } else {
                 None
@@ -515,7 +484,7 @@ where
                     num_vars,
                     level + 1,
                     candidate.next_w_len,
-                    &suffix.steps,
+                    &suffix_steps,
                 ) else {
                     continue;
                 };
@@ -526,15 +495,10 @@ where
                 ) + eor_bytes
             };
 
-            let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
-            let objective_cost = level_proof_size
-                .saturating_add(fold_prover_penalty::<Cfg>(
-                    &candidate.lp,
-                    candidate.next_w_len,
-                ))
-                .saturating_add(suffix.objective_cost);
-            if objective_cost < best.objective_cost {
-                let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+            let total = level_proof_size + suffix_cost;
+            if total < best_cost {
+                best_cost = total;
+                let mut steps = Vec::with_capacity(1 + suffix_steps.len());
                 steps.push(to_fold_step(
                     &candidate,
                     current_w_len,
@@ -542,19 +506,15 @@ where
                     Cfg::planner_field_bits(),
                     next_w_len_override,
                 ));
-                steps.extend(suffix.steps);
-                best = PlannedSuffix {
-                    objective_cost,
-                    proof_bytes,
-                    steps,
-                };
+                steps.extend(suffix_steps);
+                best_schedule = steps;
             }
         }
 
-        memo.insert(key, best.clone());
+        memo.insert(key, (best_cost, best_schedule.clone()));
     }
 
-    Ok(best)
+    Ok((best_cost, best_schedule))
 }
 
 // -----------------------------------------------------------------------
@@ -832,16 +792,12 @@ where
 
     let fb = Cfg::planner_field_bits();
     let root_direct_shape = DirectWitnessShape::FieldElements(root_w_len);
-    let root_direct_bytes = direct_witness_bytes(fb, &root_direct_shape);
-    let mut best = PlannedSuffix {
-        objective_cost: root_direct_bytes,
-        proof_bytes: root_direct_bytes,
-        steps: vec![Step::Direct(DirectStep {
-            current_w_len: root_w_len,
-            witness_shape: root_direct_shape,
-            direct_bytes: root_direct_bytes,
-        })],
-    };
+    let mut best_cost = direct_witness_bytes(fb, &root_direct_shape);
+    let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
+        current_w_len: root_w_len,
+        witness_shape: root_direct_shape,
+        direct_bytes: best_cost,
+    })];
     let mut memo = ScheduleMemo::new();
 
     for root_lb in basis_range::<Cfg>(num_vars, 0, root_w_len) {
@@ -849,7 +805,7 @@ where
         else {
             continue;
         };
-        let mut suffix = derive_optimal_suffix_schedule::<Cfg>(
+        let (mut suffix_cost, mut suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
             &mut memo,
             num_vars,
             1,
@@ -857,21 +813,21 @@ where
             root_lb,
             0,
         )?;
-        if suffix.steps.is_empty() {
+        if suffix_steps.is_empty() {
             continue;
         }
-        let suffix_is_terminal = matches!(suffix.steps.first(), Some(Step::Direct(_)));
+        let suffix_is_terminal = matches!(suffix_steps.first(), Some(Step::Direct(_)));
         let Ok(eor_bytes) = extension_opening_reduction_level_bytes::<Cfg>(key, 0, root_w_len)
         else {
             continue;
         };
         let next_w_len_override = if suffix_is_terminal {
-            let old_direct_bytes = match suffix.steps.first().expect("suffix non-empty") {
+            let old_direct_bytes = match suffix_steps.first().expect("suffix non-empty") {
                 Step::Direct(direct) => direct.direct_bytes,
                 Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
             };
             finalize_terminal_direct_witness_shape::<Cfg>(
-                &mut suffix.steps,
+                &mut suffix_steps,
                 &candidate,
                 num_points,
                 t_vectors,
@@ -879,12 +835,11 @@ where
                 z_vectors,
             )?;
             let (new_direct_bytes, terminal_field_len) =
-                match suffix.steps.first().expect("suffix non-empty") {
+                match suffix_steps.first().expect("suffix non-empty") {
                     Step::Direct(direct) => (direct.direct_bytes, direct.current_w_len),
                     Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
                 };
-            suffix.proof_bytes = suffix.proof_bytes + new_direct_bytes - old_direct_bytes;
-            suffix.objective_cost = suffix.objective_cost + new_direct_bytes - old_direct_bytes;
+            suffix_cost = suffix_cost + new_direct_bytes - old_direct_bytes;
             Some(terminal_field_len)
         } else {
             None
@@ -899,22 +854,17 @@ where
                 num_vars,
                 1,
                 candidate.next_w_len,
-                &suffix.steps,
+                &suffix_steps,
             ) else {
                 continue;
             };
             compute_level_proof_size::<Cfg>(&candidate, &next_level_params, z_vectors) + eor_bytes
         };
 
-        let proof_bytes = root_proof_size.saturating_add(suffix.proof_bytes);
-        let objective_cost = root_proof_size
-            .saturating_add(fold_prover_penalty::<Cfg>(
-                &candidate.lp,
-                candidate.next_w_len,
-            ))
-            .saturating_add(suffix.objective_cost);
-        if objective_cost < best.objective_cost {
-            let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+        let total = root_proof_size + suffix_cost;
+        if total < best_cost {
+            best_cost = total;
+            let mut steps = Vec::with_capacity(1 + suffix_steps.len());
             steps.push(to_fold_step(
                 &candidate,
                 root_w_len,
@@ -922,17 +872,12 @@ where
                 Cfg::planner_field_bits(),
                 next_w_len_override,
             ));
-            steps.extend(suffix.steps);
-            best = PlannedSuffix {
-                objective_cost,
-                proof_bytes,
-                steps,
-            };
+            steps.extend(suffix_steps);
+            best_steps = steps;
         }
     }
 
-    let num_folds = best
-        .steps
+    let num_folds = best_steps
         .iter()
         .filter(|s| matches!(s, Step::Fold(_)))
         .count();
@@ -942,15 +887,14 @@ where
         num_t_vectors = t_vectors,
         num_w_vectors = w_vectors,
         num_z_vectors = z_vectors,
-        total_bytes = best.proof_bytes,
-        objective_cost = best.objective_cost,
+        total_bytes = best_cost,
         fold_levels = num_folds,
         "schedule planner: computed from scratch (no offline entry)"
     );
 
     Ok(Schedule {
-        steps: best.steps,
-        total_bytes: best.proof_bytes,
+        steps: best_steps,
+        total_bytes: best_cost,
     })
 }
 

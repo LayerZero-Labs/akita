@@ -23,7 +23,7 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    akita_types::generated_schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _, _>(
+    akita_types::generated_schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _>(
         key,
         table,
         GeneratedSchedulePlanPolicy {
@@ -32,9 +32,7 @@ where
             challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
             recursive_public_rows: 1,
             extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
-            ring_subfield_embedding_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
             stage1_challenge_config: Cfg::stage1_challenge_config,
-            fold_challenge_shape_at_level: Cfg::fold_challenge_shape_at_level,
             scale_batched_root_layout: scale_batched_root_layout_with_config::<Cfg>,
             direct_level_params: direct_level_params_with_log_basis::<Cfg>,
         },
@@ -48,7 +46,7 @@ fn scale_batched_root_layout_with_config<Cfg: CommitmentConfig>(
     akita_types::scale_batched_root_layout(
         root_lp,
         num_claims,
-        root_lp.challenge_l1_mass(),
+        Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
         Cfg::decomposition().field_bits(),
     )
 }
@@ -186,7 +184,7 @@ where
         akita_types::scale_batched_root_layout(
             &root_lp,
             num_claims,
-            root_lp.challenge_l1_mass(),
+            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
             Cfg::decomposition().field_bits(),
         )
     }
@@ -276,10 +274,10 @@ mod tests {
     #[cfg(not(feature = "zk"))]
     use akita_types::generated::{
         fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
-        fp128_d64_onehot_tensor_table, fp16_d32_full_table, fp16_d32_onehot_table,
-        fp16_d64_full_table, fp16_d64_onehot_table, fp32_d32_onehot_table, fp32_d32_table,
-        fp32_d64_onehot_table, fp32_d64_table, fp64_d32_onehot_table, fp64_d32_table,
-        fp64_d64_onehot_table, fp64_d64_table, GeneratedScheduleTable,
+        fp16_d32_full_table, fp16_d32_onehot_table, fp16_d64_full_table, fp16_d64_onehot_table,
+        fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table, fp32_d64_table,
+        fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
+        GeneratedScheduleTable,
     };
     #[cfg(feature = "planner")]
     use akita_types::w_ring_element_count_with_counts;
@@ -480,9 +478,6 @@ mod tests {
         assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(fp128_d32_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp128::D64Full>(fp128_d64_full_table());
         assert_generated_table_matches_cfg_schedule::<fp128::D64OneHot>(fp128_d64_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp128::D64OneHotTensor>(
-            fp128_d64_onehot_tensor_table(),
-        );
     }
 
     #[test]
@@ -509,9 +504,6 @@ mod tests {
         assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
         assert_generated_batched_roots_are_scaled::<fp128::D64Full>(fp128_d64_full_table());
         assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
-        assert_generated_batched_roots_are_scaled::<fp128::D64OneHotTensor>(
-            fp128_d64_onehot_tensor_table(),
-        );
         assert_generated_batched_roots_are_scaled::<fp16::D32Full>(fp16_d32_full_table());
         assert_generated_batched_roots_are_scaled::<fp16::D32OneHot>(fp16_d32_onehot_table());
         assert_generated_batched_roots_are_scaled::<fp16::D64Full>(fp16_d64_full_table());

@@ -7,7 +7,7 @@ use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{
-    tensor_pack_recursive_witness, CenteredCoeff, MultiDNttCaches, RecursiveCommitmentHintCache,
+    tensor_pack_recursive_witness, MultiDNttCaches, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
 };
 use akita_algebra::eq_poly::EqPolynomial;
@@ -15,7 +15,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::FoldingChallenges;
+use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, LiftBase,
@@ -125,34 +125,65 @@ where
         .take_w_folded()
         .ok_or_else(|| AkitaError::InvalidInput("missing w_folded in prover".to_string()))?;
 
-    let r = compute_r_split_eq::<F, D>(
-        lp,
-        setup,
-        &quad_eq.integer_challenges,
-        w_hat.flat_digits(),
-        #[cfg(feature = "zk")]
-        &d_blinding_digits,
-        &decomposed_inner_rows,
-        #[cfg(feature = "zk")]
-        &b_blinding_digits,
-        &recomposed_inner_rows,
-        &w_folded,
-        quad_eq.ring_multiplier_points(),
-        quad_eq.claim_to_point(),
-        quad_eq.claim_to_point_poly(),
-        quad_eq.claim_poly_indices(),
-        quad_eq.row_coefficient_rings(),
-        &z_pre.centered_coeffs,
-        z_pre.centered_inf_norm,
-        quad_eq.y(),
-        quad_eq.num_polys_per_point(),
-        quad_eq.num_public_rows(),
-        lp.num_blocks,
-        lp.inner_width(),
-        setup.seed.max_stride,
-        ntt_shared,
-        quad_eq.m_row_layout(),
-    )?;
+    let r = if let Some(integer_challenges) = quad_eq.integer_challenges.as_deref() {
+        compute_r_split_eq::<F, _, D>(
+            lp,
+            setup,
+            integer_challenges,
+            w_hat.flat_digits(),
+            #[cfg(feature = "zk")]
+            &d_blinding_digits,
+            &decomposed_inner_rows,
+            #[cfg(feature = "zk")]
+            &b_blinding_digits,
+            &recomposed_inner_rows,
+            &w_folded,
+            quad_eq.ring_multiplier_points(),
+            quad_eq.claim_to_point(),
+            quad_eq.claim_to_point_poly(),
+            quad_eq.claim_poly_indices(),
+            quad_eq.row_coefficient_rings(),
+            &z_pre.centered_coeffs,
+            z_pre.centered_inf_norm,
+            quad_eq.y(),
+            quad_eq.num_polys_per_point(),
+            quad_eq.num_public_rows(),
+            lp.num_blocks,
+            lp.inner_width(),
+            setup.seed.max_stride,
+            ntt_shared,
+            quad_eq.m_row_layout(),
+        )?
+    } else {
+        compute_r_split_eq::<F, _, D>(
+            lp,
+            setup,
+            &quad_eq.challenges,
+            w_hat.flat_digits(),
+            #[cfg(feature = "zk")]
+            &d_blinding_digits,
+            &decomposed_inner_rows,
+            #[cfg(feature = "zk")]
+            &b_blinding_digits,
+            &recomposed_inner_rows,
+            &w_folded,
+            quad_eq.ring_multiplier_points(),
+            quad_eq.claim_to_point(),
+            quad_eq.claim_to_point_poly(),
+            quad_eq.claim_poly_indices(),
+            quad_eq.row_coefficient_rings(),
+            &z_pre.centered_coeffs,
+            z_pre.centered_inf_norm,
+            quad_eq.y(),
+            quad_eq.num_polys_per_point(),
+            quad_eq.num_public_rows(),
+            lp.num_blocks,
+            lp.inner_width(),
+            setup.seed.max_stride,
+            ntt_shared,
+            quad_eq.m_row_layout(),
+        )?
+    };
     // Terminal layout drops the D-block from M and from the witness; the
     // d-blinding column segment must also disappear so the prover witness
     // matches the verifier's column offsets.
@@ -405,16 +436,37 @@ where
     let claim_to_point_poly = quad_eq.claim_to_point_poly();
     let claim_poly_indices = quad_eq.claim_poly_indices();
     let challenges = &quad_eq.challenges;
+    let integer_challenges = quad_eq.integer_challenges.as_deref();
     if gamma.len() != claim_to_point.len() {
         return Err(AkitaError::InvalidInput(
             "ring-switch gamma length does not match claim count".to_string(),
         ));
     }
 
-    #[cfg(feature = "parallel")]
-    let (m_evals_x_result, w_result) = rayon::join(
-        || {
-            compute_m_evals_x::<F, E, D>(
+    // Dispatch on the challenge shape: the integer-challenge instantiation is
+    // used only for tensor presets; flat presets hit the SparseChallenge path
+    // which monomorphizes to main's exact compute_m_evals_x machine code.
+    let compute_m_evals = || -> Result<Vec<E>, AkitaError> {
+        if let Some(int_challenges) = integer_challenges {
+            compute_m_evals_x::<F, E, _, D>(
+                setup,
+                opening_points,
+                ring_multiplier_points,
+                claim_to_point,
+                int_challenges,
+                alpha,
+                &ring_alpha_evals_y,
+                lp,
+                &tau1,
+                num_polys_per_point,
+                claim_to_point_poly,
+                claim_poly_indices,
+                gamma,
+                num_public_rows,
+                m_row_layout,
+            )
+        } else {
+            compute_m_evals_x::<F, E, _, D>(
                 setup,
                 opening_points,
                 ring_multiplier_points,
@@ -431,28 +483,16 @@ where
                 num_public_rows,
                 m_row_layout,
             )
-        },
-        || build_w_evals_compact(w.as_i8_digits(), D, 1),
-    );
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    let (m_evals_x_result, w_result) = rayon::join(compute_m_evals, || {
+        build_w_evals_compact(w.as_i8_digits(), D, 1)
+    });
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
-        let m_evals_x = compute_m_evals_x::<F, E, D>(
-            setup,
-            opening_points,
-            ring_multiplier_points,
-            claim_to_point,
-            challenges,
-            alpha,
-            &ring_alpha_evals_y,
-            lp,
-            &tau1,
-            num_polys_per_point,
-            claim_to_point_poly,
-            claim_poly_indices,
-            gamma,
-            num_public_rows,
-            m_row_layout,
-        )?;
+        let m_evals_x = compute_m_evals()?;
         let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1);
         (Ok(m_evals_x), w_compact)
     };
@@ -741,14 +781,47 @@ pub fn build_w_evals_compact(
 ///
 /// Returns an error if the batch shape, opening-point layout, challenge count,
 /// or expanded matrix dimensions are inconsistent.
+/// Trait abstracting evaluation of a single challenge at precomputed alpha
+/// powers. Implemented for [`SparseChallenge`] and
+/// [`akita_challenges::IntegerChallenge`]; flat callers use the SparseChallenge
+/// instantiation which monomorphizes to main's exact code path.
+pub trait ChallengeEval {
+    fn eval_at_pows_dyn<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + akita_field::MulBase<F>;
+}
+
+impl ChallengeEval for SparseChallenge {
+    #[inline(always)]
+    fn eval_at_pows_dyn<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + akita_field::MulBase<F>,
+    {
+        self.eval_at_pows::<F, E, D>(alpha_pows)
+    }
+}
+
+impl ChallengeEval for akita_challenges::IntegerChallenge {
+    #[inline(always)]
+    fn eval_at_pows_dyn<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + akita_field::MulBase<F>,
+    {
+        self.eval_at_pows::<F, E, D>(alpha_pows)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
-pub fn compute_m_evals_x<F, E, const D: usize>(
+pub fn compute_m_evals_x<F, E, C, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &FoldingChallenges,
+    challenges: &[C],
     alpha: E,
     alpha_pows: &[E],
     lp: &LevelParams,
@@ -763,6 +836,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
 where
     F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    C: ChallengeEval,
 {
     if alpha_pows.len() != D {
         return Err(AkitaError::InvalidSize {
@@ -837,10 +911,10 @@ where
     let t_total_blocks = num_blocks
         .checked_mul(num_t_vectors)
         .ok_or_else(|| AkitaError::InvalidSetup("batched t block count overflow".to_string()))?;
-    if challenges.logical_len() != total_blocks {
+    if challenges.len() != total_blocks {
         return Err(AkitaError::InvalidSize {
             expected: total_blocks,
-            actual: challenges.logical_len(),
+            actual: challenges.len(),
         });
     }
     let block_len = lp.block_len;
@@ -922,7 +996,10 @@ where
     let x_len = total_cols.next_power_of_two();
     let mut out = Vec::with_capacity(x_len);
 
-    let c_alphas: Vec<E> = challenges.evals_at_pows::<F, E, D>(alpha_pows)?;
+    let c_alphas: Vec<E> = challenges
+        .iter()
+        .map(|challenge| challenge.eval_at_pows_dyn::<F, E, D>(alpha_pows))
+        .collect::<Result<_, _>>()?;
 
     let stride = setup.seed.max_stride;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride)?;
@@ -1154,8 +1231,8 @@ where
     Ok(out)
 }
 
-fn balanced_decompose_centered_i64_i8_into<const D: usize>(
-    centered: &[CenteredCoeff; D],
+fn balanced_decompose_centered_i32_i8_into<const D: usize>(
+    centered: &[i32; D],
     out: &mut [[i8; D]],
     log_basis: u32,
 ) {
@@ -1229,7 +1306,7 @@ fn emit_blinding_planes<const D: usize>(
 /// the global block index `point * block_len + blk` innermost.
 fn emit_z_pre_block_inner<const D: usize>(
     out: &mut Vec<i8>,
-    z_pre_centered: &[[CenteredCoeff; D]],
+    z_pre_centered: &[[i32; D]],
     block_len: usize,
     depth_commit: usize,
     num_digits_fold: usize,
@@ -1246,7 +1323,7 @@ fn emit_z_pre_block_inner<const D: usize>(
 
     let mut all_planes = vec![[0i8; D]; total_elems * num_digits_fold];
     for (k, z_j) in z_pre_centered.iter().enumerate() {
-        balanced_decompose_centered_i64_i8_into(
+        balanced_decompose_centered_i32_i8_into(
             z_j,
             &mut all_planes[k * num_digits_fold..(k + 1) * num_digits_fold],
             log_basis,
@@ -1294,7 +1371,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
-    z_pre_centered: &[[CenteredCoeff; D]],
+    z_pre_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
 ) -> RecursiveWitnessFlat {
@@ -1419,18 +1496,19 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
 #[cfg(test)]
 mod tests {
-    use super::balanced_decompose_centered_i64_i8_into;
+    use super::balanced_decompose_centered_i32_i8_into;
     use akita_algebra::CyclotomicRing;
     use akita_field::Prime128OffsetA7F7;
     use std::array::from_fn;
 
     #[test]
-    fn centered_i64_decompose_matches_ring_decompose() {
+    fn centered_i32_decompose_matches_ring_decompose() {
         type F = Prime128OffsetA7F7;
         const D: usize = 128;
 
-        let centered = from_fn(|i| i64::from(((37 * i as i32 + 11) % 95) - 47));
-        let ring = CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| F::from_i64(centered[i])));
+        let centered = from_fn(|i| ((37 * i as i32 + 11) % 95) - 47);
+        let ring =
+            CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| F::from_i64(centered[i] as i64)));
 
         for (num_digits, log_basis) in [
             (7usize, 3u32),
@@ -1439,13 +1517,13 @@ mod tests {
             (4usize, 6u32),
         ] {
             let mut got = vec![[0i8; D]; num_digits];
-            balanced_decompose_centered_i64_i8_into(&centered, &mut got, log_basis);
+            balanced_decompose_centered_i32_i8_into(&centered, &mut got, log_basis);
 
             let mut expected = vec![[0i8; D]; num_digits];
             ring.balanced_decompose_pow2_i8_into(&mut expected, log_basis);
             assert_eq!(
                 got, expected,
-            "centered i64 decomposition mismatch for num_digits={num_digits} log_basis={log_basis}"
+                "centered i32 decomposition mismatch for num_digits={num_digits} log_basis={log_basis}"
             );
         }
     }

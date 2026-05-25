@@ -7,13 +7,12 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{
-    sample_folding_challenges, stage1_fold_challenge_labels, FoldingChallenges,
-};
+use akita_challenges::sample_sparse_challenges;
+use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
-use akita_transcript::labels::{self, ABSORB_PROVER_V};
+use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     combine_polys, eval_poly, linear_combination, range_check_eval_from_s,
@@ -22,22 +21,18 @@ use akita_types::{
     MRowLayout, RingSliceSerializer,
 };
 
-/// Absorb the prover's `v` rows and sample the stage-1 fold challenges in the
-/// shape declared by `lp.fold_challenge_shape` (flat per-block or tensor
-/// product of two `√num_blocks`-length factors).
+/// Absorb the prover's `v` rows and sample the sparse stage-1 fold challenges.
 ///
 /// # Errors
 ///
-/// Returns an error if challenge sampling fails (e.g. shape validation,
-/// non-power-of-two block count in the tensor case, or count overflow).
+/// Returns an error if sparse challenge sampling fails.
 pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     transcript: &mut T,
     v: &[CyclotomicRing<F, D>],
     num_blocks: usize,
-    num_claims: usize,
     lp: &LevelParams,
     m_row_layout: MRowLayout,
-) -> Result<FoldingChallenges, AkitaError>
+) -> Result<Vec<SparseChallenge>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -49,13 +44,11 @@ where
     if matches!(m_row_layout, MRowLayout::Intermediate) {
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
     }
-    sample_folding_challenges::<F, T, D>(
+    sample_sparse_challenges::<F, T, D>(
         transcript,
+        CHALLENGE_STAGE1_FOLD,
         num_blocks,
-        num_claims,
         &lp.stage1_config,
-        &lp.fold_challenge_shape,
-        stage1_fold_challenge_labels(),
     )
 }
 

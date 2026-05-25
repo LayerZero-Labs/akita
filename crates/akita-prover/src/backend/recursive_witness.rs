@@ -9,7 +9,7 @@
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{FoldingChallenges, IntegerChallenge};
+use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
@@ -216,7 +216,7 @@ where
     #[tracing::instrument(skip_all, name = "RecursiveWitnessView::decompose_fold")]
     pub fn decompose_fold(
         &self,
-        challenges: &[IntegerChallenge],
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_blocks: usize,
         num_digits: usize,
@@ -237,17 +237,6 @@ where
             inner_width,
         );
         build_decompose_fold_witness::<F, D>(coeff_accum, q)
-    }
-
-    pub fn decompose_fold_tensor_batched(
-        &self,
-        _challenges: &FoldingChallenges,
-        _block_len: usize,
-        _num_blocks: usize,
-        _num_digits: usize,
-        _log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
-        Ok(None)
     }
 
     #[allow(dead_code)]
