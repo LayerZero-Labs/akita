@@ -567,7 +567,7 @@ impl Fp32ProductAccum {
         let [s0, s1] = self.0;
         let a = Fp32::<P>::from_canonical_u128_reduced(s0);
         let b = Fp32::<P>::from_canonical_u128_reduced(s1);
-        let shift = Fp32::<P>::from_canonical_u128_reduced(1u128 << 64);
+        let shift = Fp32::<P>::from_canonical_u32(Fp32::<P>::SHIFT64_MOD_P);
         a + b * shift
     }
 }

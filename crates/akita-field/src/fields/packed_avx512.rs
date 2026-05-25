@@ -5,7 +5,6 @@
 
 use super::packed::{PackedField, PackedValue};
 use crate::fields::{Fp128, Fp32, Fp64};
-use crate::FieldCore;
 use core::arch::x86_64::*;
 use core::fmt;
 use core::mem::transmute;
@@ -90,6 +89,41 @@ impl<const P: u32> PackedFp32Avx512<P> {
     #[inline(always)]
     unsafe fn from_vec(v: __m512i) -> Self {
         unsafe { transmute(v) }
+    }
+
+    #[inline(always)]
+    unsafe fn mul_c_u64(x: __m512i) -> __m512i {
+        if Self::C == 1 {
+            x
+        } else {
+            let c_vec = _mm512_set1_epi64(Self::C as i64);
+            _mm512_mul_epu32(x, c_vec)
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn mul_mersenne31_vec(a: __m512i, b: __m512i) -> __m512i {
+        unsafe {
+            const EVENS: __mmask16 = 0b0101_0101_0101_0101;
+            const ODDS: __mmask16 = 0b1010_1010_1010_1010;
+
+            let lhs_evn_dbl = _mm512_add_epi32(a, a);
+            let rhs_odd = movehdup_epi32_512(b);
+            let lhs_odd_dbl = _mm512_srli_epi64::<31>(a);
+
+            let prod_odd_dbl = _mm512_mul_epu32(lhs_odd_dbl, rhs_odd);
+            let prod_evn_dbl = _mm512_mul_epu32(lhs_evn_dbl, b);
+
+            let prod_lo_dbl =
+                _mm512_mask_blend_epi32(ODDS, prod_evn_dbl, moveldup_epi32_512(prod_odd_dbl));
+            let prod_hi =
+                _mm512_mask_blend_epi32(EVENS, prod_odd_dbl, movehdup_epi32_512(prod_evn_dbl));
+            let prod_lo = _mm512_srli_epi32::<1>(prod_lo_dbl);
+
+            let p = _mm512_set1_epi32(P as i32);
+            let folded = _mm512_add_epi32(prod_lo, prod_hi);
+            _mm512_min_epu32(folded, _mm512_sub_epi32(folded, p))
+        }
     }
 }
 
@@ -176,32 +210,51 @@ impl<const P: u32> Mul for PackedFp32Avx512<P> {
             let a = self.to_vec();
             let b = rhs.to_vec();
 
+            if Self::BITS == 31 && Self::C == 1 {
+                return Self::from_vec(Self::mul_mersenne31_vec(a, b));
+            }
+
             let prod_evn = _mm512_mul_epu32(a, b);
             let a_odd = movehdup_epi32_512(a);
             let b_odd = movehdup_epi32_512(b);
             let prod_odd = _mm512_mul_epu32(a_odd, b_odd);
 
             let mask = _mm512_set1_epi64(Self::MASK_U64 as i64);
-            let c_vec = _mm512_set1_epi64(Self::C as i64);
             let shift = _mm_set_epi64x(0, Self::BITS as i64);
 
             // Fold 1
             let evn_lo = _mm512_and_si512(prod_evn, mask);
-            let evn_hi = _mm512_srl_epi64(prod_evn, shift);
-            let evn_f1 = _mm512_add_epi64(evn_lo, _mm512_mul_epu32(evn_hi, c_vec));
+            let evn_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(prod_evn)
+            } else {
+                _mm512_srl_epi64(prod_evn, shift)
+            };
+            let evn_f1 = _mm512_add_epi64(evn_lo, Self::mul_c_u64(evn_hi));
 
             let odd_lo = _mm512_and_si512(prod_odd, mask);
-            let odd_hi = _mm512_srl_epi64(prod_odd, shift);
-            let odd_f1 = _mm512_add_epi64(odd_lo, _mm512_mul_epu32(odd_hi, c_vec));
+            let odd_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(prod_odd)
+            } else {
+                _mm512_srl_epi64(prod_odd, shift)
+            };
+            let odd_f1 = _mm512_add_epi64(odd_lo, Self::mul_c_u64(odd_hi));
 
             // Fold 2
             let evn_f1_lo = _mm512_and_si512(evn_f1, mask);
-            let evn_f1_hi = _mm512_srl_epi64(evn_f1, shift);
-            let evn_f2 = _mm512_add_epi64(evn_f1_lo, _mm512_mul_epu32(evn_f1_hi, c_vec));
+            let evn_f1_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(evn_f1)
+            } else {
+                _mm512_srl_epi64(evn_f1, shift)
+            };
+            let evn_f2 = _mm512_add_epi64(evn_f1_lo, Self::mul_c_u64(evn_f1_hi));
 
             let odd_f1_lo = _mm512_and_si512(odd_f1, mask);
-            let odd_f1_hi = _mm512_srl_epi64(odd_f1, shift);
-            let odd_f2 = _mm512_add_epi64(odd_f1_lo, _mm512_mul_epu32(odd_f1_hi, c_vec));
+            let odd_f1_hi = if Self::BITS == 31 {
+                _mm512_srli_epi64::<31>(odd_f1)
+            } else {
+                _mm512_srl_epi64(odd_f1, shift)
+            };
+            let odd_f2 = _mm512_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
 
             // Recombine even/odd
             let odd_shifted = _mm512_slli_epi64::<32>(odd_f2);
