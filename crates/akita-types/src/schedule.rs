@@ -234,8 +234,9 @@ pub struct AkitaPlannedDirectStep {
     pub witness_shape: DirectWitnessShape,
     /// Exact bytes contributed by the packed direct witness.
     pub direct_bytes: usize,
-    /// Commit-layout params for root-direct schedules (planned root step is
-    /// `Direct`). `None` for terminal Direct steps that follow a fold.
+    /// Commit-layout params for the root-direct case (planned root
+    /// step is `Direct`). See [`DirectStep::commit_params`] for the full
+    /// three-state contract; the same rules apply here.
     pub commit_params: Option<LevelParams>,
     /// SIS-secure level params for the terminal `Direct(PackedDigits)`
     /// step that sits after one or more folds. `None` for root-direct
@@ -632,9 +633,23 @@ pub struct DirectStep {
     pub witness_shape: DirectWitnessShape,
     /// Direct witness bytes.
     pub direct_bytes: usize,
-    /// Commit-layout params for root-direct schedules (the schedule's first
-    /// step is this `Direct`). `None` for terminal Direct steps that follow
-    /// a fold, where the root commit is sized by the first fold's params.
+    /// Commit-layout params for the root-direct case (the schedule's
+    /// first step is this `Direct`). Three states:
+    ///
+    /// - `Some(_)` — root-direct, committable. The verifier replays
+    ///   commitments against these params and the transcript binding
+    ///   hashes them into `SetupSection::level_params_digest`. This is
+    ///   the common case.
+    /// - `None`, schedule starts with this `Direct` — root-direct,
+    ///   *uncommittable* edge entry: a table-recorded large-`num_vars`
+    ///   entry whose singleton root layout exceeds the audited SIS
+    ///   floor. The schedule is intentionally usable for `proof_size`
+    ///   exploration and DP planning, but `get_params_for_batched_commitment`
+    ///   rejects it loudly and `setup_level_params_from_runtime_schedule`
+    ///   returns an empty list. Don't commit through such a schedule.
+    /// - `None`, schedule starts with a fold — terminal direct after
+    ///   one or more folds; the root commit layout lives on the first
+    ///   fold step instead, so this field is unused.
     pub commit_params: Option<LevelParams>,
     /// SIS-secure level params for this terminal `Direct(PackedDigits)`
     /// step (i.e. the params the prover/verifier consume as the

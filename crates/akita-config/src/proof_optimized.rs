@@ -241,15 +241,20 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     Ok(Some(matrix_envelope_for_levels::<Cfg>(&setup_levels)?))
 }
 
-/// Extract setup-level params from a materialized plan: the root step's
-/// commit layout plus every subsequent fold step's `lp` and the terminal
-/// `level_params` if the run finishes in a packed direct step.
+/// Extract setup-level params from a materialized plan: every fold
+/// step's `lp` plus the inline `LevelParams` carried on each
+/// `Direct` step (root-direct in `commit_params`,
+/// terminal-direct-after-fold in `level_params`).
 ///
-/// Both `Fold(lp)` and `Direct(commit_params | level_params)` are
-/// commitments that must be covered by setup matrices. Direct steps now
-/// carry their participating `LevelParams` inline (root-direct in
-/// `commit_params`, terminal-direct-after-fold in `level_params`); a
-/// well-formed plan has exactly one populated per Direct step.
+/// Note the asymmetry with `Cfg::get_params_for_batched_commitment`:
+/// uncommittable root-direct edge entries (table-recorded
+/// large-`num_vars` schedules whose singleton root layout exceeds the
+/// audited SIS floor) carry `commit_params: None` *and*
+/// `level_params: None`. This function silently skips those, so a
+/// pure root-direct uncommittable schedule yields an empty list.
+/// `Cfg::get_params_for_batched_commitment` rejects the same
+/// schedule with `InvalidSetup`. See [`DirectStep::commit_params`]
+/// for the design rationale.
 pub fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
     plan.steps
         .iter()
@@ -264,8 +269,14 @@ pub fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams
 }
 
 /// Extract setup-level params from a runtime `Schedule`. Mirrors
-/// [`setup_level_params_from_plan`] for schedules that did not come from
-/// the offline table (e.g. `PlannerCfg`'s DP fallback path).
+/// [`setup_level_params_from_plan`] for schedules that did not come
+/// from the offline table (e.g. `PlannerCfg`'s DP fallback path,
+/// or the root-direct fallback constructed at runtime in
+/// `prove_batched`/`verify_batched`).
+///
+/// The same asymmetry with `Cfg::get_params_for_batched_commitment`
+/// applies: a pure root-direct uncommittable schedule yields an
+/// empty list here, while the trait method rejects it loudly.
 pub fn setup_level_params_from_runtime_schedule(steps: &[akita_types::Step]) -> Vec<LevelParams> {
     steps
         .iter()
@@ -578,6 +589,120 @@ mod tests {
         assert_eq!(
             setup_levels[1], direct_lp,
             "terminal Direct.level_params must feed setup-level params (and the transcript binding's level_params_digest); see bind_transcript_instance_descriptor"
+        );
+    }
+
+    #[test]
+    fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_params_error() {
+        // Documents the deliberate asymmetry between
+        // `setup_level_params_from_runtime_schedule` (silently skips
+        // root-direct schedules with `commit_params: None`) and
+        // `Cfg::get_params_for_batched_commitment` (rejects the same
+        // schedule with a documented `InvalidSetup` message). The
+        // contract is described on `DirectStep::commit_params` and the
+        // materializer comment that branches on it; this test locks
+        // it in so neither side drifts.
+        use akita_types::{DirectStep, DirectWitnessShape, Schedule, Step};
+
+        let uncommittable = Schedule {
+            steps: vec![Step::Direct(DirectStep {
+                current_w_len: 1 << 10,
+                witness_shape: DirectWitnessShape::FieldElements(1 << 10),
+                direct_bytes: 0,
+                commit_params: None,
+                level_params: None,
+            })],
+            total_bytes: 0,
+        };
+
+        let bound = setup_level_params_from_runtime_schedule(&uncommittable.steps);
+        assert!(
+            bound.is_empty(),
+            "uncommittable root-direct schedule must produce no setup levels; \
+             see DirectStep::commit_params"
+        );
+
+        // The trait default `get_params_for_batched_commitment` reads
+        // the first step's `commit_params`. Construct a tiny stub Cfg
+        // whose `get_params_for_prove` returns the uncommittable
+        // schedule directly, bypassing the table path, so we exercise
+        // the loud-rejection branch.
+        #[derive(Clone)]
+        struct UncommittableRootDirectCfg;
+        impl CommitmentConfig for UncommittableRootDirectCfg {
+            type Field = akita_field::Fp32<251>;
+            type ClaimField = akita_field::Fp32<251>;
+            type ChallengeField = akita_field::Fp32<251>;
+            const D: usize = 8;
+            fn decomposition() -> akita_types::DecompositionParams {
+                akita_types::DecompositionParams {
+                    log_basis: 3,
+                    log_commit_bound: 8,
+                    log_open_bound: Some(8),
+                }
+            }
+            fn stage1_challenge_config(
+                _d: usize,
+            ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+                Ok(akita_challenges::SparseChallengeConfig::Uniform {
+                    weight: 1,
+                    nonzero_coeffs: vec![-1, 1],
+                })
+            }
+            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+                akita_types::SisModulusFamily::Q32
+            }
+            fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+                None
+            }
+            fn schedule_plan(
+                _key: AkitaScheduleLookupKey,
+            ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+                Ok(None)
+            }
+            fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {
+                1
+            }
+            fn envelope(_max_num_vars: usize) -> akita_types::CommitmentEnvelope {
+                akita_types::CommitmentEnvelope {
+                    max_n_a: 1,
+                    max_n_b: 1,
+                    max_n_d: 1,
+                }
+            }
+            fn max_setup_matrix_size(
+                _max_num_vars: usize,
+                _max_num_batched_polys: usize,
+                _max_num_points: usize,
+            ) -> Result<(usize, usize), AkitaError> {
+                Ok((1, 1))
+            }
+            fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+                (3, 3)
+            }
+            fn get_params_for_prove(
+                _incidence: &ClaimIncidenceSummary,
+            ) -> Result<akita_types::Schedule, AkitaError> {
+                Ok(akita_types::Schedule {
+                    steps: vec![Step::Direct(DirectStep {
+                        current_w_len: 1 << 10,
+                        witness_shape: DirectWitnessShape::FieldElements(1 << 10),
+                        direct_bytes: 0,
+                        commit_params: None,
+                        level_params: None,
+                    })],
+                    total_bytes: 0,
+                })
+            }
+        }
+
+        let incidence = ClaimIncidenceSummary::same_point(10, 1).expect("singleton");
+        let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&incidence)
+            .expect_err("uncommittable root-direct must reject get_params_for_batched_commitment");
+        assert!(
+            err.to_string()
+                .contains("root-direct schedule is missing commit params"),
+            "unexpected error: {err}"
         );
     }
 

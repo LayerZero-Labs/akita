@@ -379,9 +379,18 @@ where
                 //
                 // Tables also contain large-`num_vars` root-direct edge
                 // entries whose singleton root layout exceeds the audited
-                // SIS-floor; materialize those with `commit_params: None`
-                // (any caller that does ask gets a clean missing-layout
-                // error via `Cfg::get_params_for_batched_commitment`).
+                // SIS floor. We materialize those with `commit_params:
+                // None` *deliberately*: such schedules are valid for
+                // `proof_size` exploration and DP planning but must not
+                // be committed against. The contract is documented on
+                // [`DirectStep::commit_params`]; concretely it means
+                // `Cfg::get_params_for_batched_commitment` rejects the
+                // schedule with `InvalidSetup("root-direct schedule is
+                // missing commit params")` and
+                // `setup_level_params_from_runtime_schedule` returns
+                // an empty list. See `commit_params_uncommittable_root_direct`
+                // tests in `proof_optimized.rs` for the locked-in
+                // behavior.
                 //
                 // Terminal direct (`fold_level > 0`) leaves `commit_params`
                 // as `None`; the root commit layout lives on the first
@@ -509,5 +518,208 @@ where
     match table_entry(table, generated_schedule_lookup_key(key)) {
         Some(entry) => schedule_plan_from_table_entry::<F, _>(key, entry, policy).map(Some),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Malformed-table-entry contract tests for the materializer.
+    //!
+    //! These exercise the `AkitaError` paths the materializer must
+    //! return for inputs the table generator should never produce, so
+    //! a future regression that panics or silently accepts bad data
+    //! fails here instead of at the verifier boundary. They are direct
+    //! unit tests on `schedule_plan_from_table_entry` (and `_from_table`
+    //! for the SIS-family check) and don't go through any preset Cfg.
+    use super::*;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::Fp32;
+    use akita_types::generated::{GeneratedScheduleKey, GeneratedScheduleTable};
+    use akita_types::CommitmentEnvelope;
+
+    type Field = Fp32<251>;
+    const RING_DIMENSION: usize = 8;
+    const FIELD_BITS: u32 = 32;
+
+    fn fold_step(ring_d: u32, log_basis: u32) -> GeneratedStep {
+        GeneratedStep::Fold(GeneratedFoldStep {
+            ring_d,
+            log_basis,
+            m_vars: 0,
+            r_vars: 0,
+            n_a: 1,
+            n_b: 1,
+            n_d: 1,
+        })
+    }
+
+    fn entry_from_steps(
+        key: AkitaScheduleLookupKey,
+        steps: &'static [GeneratedStep],
+    ) -> GeneratedScheduleTableEntry {
+        GeneratedScheduleTableEntry {
+            key: GeneratedScheduleKey {
+                num_vars: key.num_vars,
+                num_commitment_groups: key.num_t_vectors,
+                num_t_vectors: key.num_t_vectors,
+                num_w_vectors: key.num_w_vectors,
+                num_z_vectors: key.num_z_vectors,
+            },
+            steps,
+        }
+    }
+
+    fn supported_stage1(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        if d != RING_DIMENSION {
+            return Err(AkitaError::InvalidSetup(format!(
+                "unsupported ring_d={d} in test stage1 chooser"
+            )));
+        }
+        Ok(SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![-1, 1],
+        })
+    }
+
+    fn default_policy() -> PlanPolicy<fn(usize) -> Result<SparseChallengeConfig, AkitaError>> {
+        PlanPolicy {
+            sis_family: SisModulusFamily::Q32,
+            ring_dimension: RING_DIMENSION,
+            root_decomp: DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: FIELD_BITS,
+                log_open_bound: Some(FIELD_BITS),
+            },
+            challenge_field_bits: FIELD_BITS,
+            recursive_public_rows: 1,
+            extension_opening_width: 1,
+            stage1_challenge_config: supported_stage1,
+            envelope: CommitmentEnvelope {
+                max_n_a: 1,
+                max_n_b: 1,
+                max_n_d: 1,
+            },
+            ring_subfield_norm_bound: 1,
+        }
+    }
+
+    fn assert_invalid_setup_contains(err: AkitaError, needle: &str) {
+        let s = err.to_string();
+        assert!(
+            s.contains(needle),
+            "expected InvalidSetup containing {needle:?}, got: {s}"
+        );
+    }
+
+    #[test]
+    fn empty_entry_rejected() {
+        let key = AkitaScheduleLookupKey::singleton(8);
+        let entry = entry_from_steps(key, Box::leak(Box::new([])));
+        let err = schedule_plan_from_table_entry::<Field, _>(key, &entry, default_policy())
+            .expect_err("empty entry must error");
+        assert_invalid_setup_contains(err, "must contain at least one step");
+    }
+
+    #[test]
+    fn fold_without_terminal_direct_rejected() {
+        let key = AkitaScheduleLookupKey::singleton(8);
+        let entry = entry_from_steps(
+            key,
+            Box::leak(Box::new([fold_step(RING_DIMENSION as u32, 3)])),
+        );
+        let err = schedule_plan_from_table_entry::<Field, _>(key, &entry, default_policy())
+            .expect_err("fold-only entry must error: no follower for the last fold");
+        assert_invalid_setup_contains(err, "ended with a fold step");
+    }
+
+    #[test]
+    fn nonterminal_direct_rejected() {
+        let key = AkitaScheduleLookupKey::singleton(8);
+        let entry = entry_from_steps(
+            key,
+            Box::leak(Box::new([
+                GeneratedStep::Direct(akita_types::generated::GeneratedDirectStep),
+                fold_step(RING_DIMENSION as u32, 3),
+            ])),
+        );
+        let err = schedule_plan_from_table_entry::<Field, _>(key, &entry, default_policy())
+            .expect_err("Direct step in non-terminal position must error");
+        assert_invalid_setup_contains(err, "generated direct step must be terminal");
+    }
+
+    #[test]
+    fn unsupported_ring_dimension_propagates_stage1_error() {
+        // Stage-1 chooser hard-fails for ring_d != RING_DIMENSION.
+        // A fold step that names a different ring_d should surface that
+        // stage1 error rather than silently fall through to envelope
+        // params.
+        let key = AkitaScheduleLookupKey::singleton(8);
+        let entry = entry_from_steps(
+            key,
+            Box::leak(Box::new([
+                fold_step(16, 3), // ring_d=16, but supported_stage1 only accepts 8
+                GeneratedStep::Direct(akita_types::generated::GeneratedDirectStep),
+            ])),
+        );
+        let err = schedule_plan_from_table_entry::<Field, _>(key, &entry, default_policy())
+            .expect_err("unsupported ring_d in fold step must propagate stage1 error");
+        assert_invalid_setup_contains(err, "unsupported ring_d");
+    }
+
+    #[test]
+    fn overflow_shaped_key_rejected() {
+        // num_vars = 64 makes 1usize.checked_shl(64) overflow on a
+        // 64-bit target; the materializer must reject the shape rather
+        // than panic.
+        let key = AkitaScheduleLookupKey::singleton(64);
+        let entry = entry_from_steps(
+            key,
+            Box::leak(Box::new([GeneratedStep::Direct(
+                akita_types::generated::GeneratedDirectStep,
+            )])),
+        );
+        let err = schedule_plan_from_table_entry::<Field, _>(key, &entry, default_policy())
+            .expect_err("num_vars=64 must overflow the witness-length shift and error");
+        assert_invalid_setup_contains(err, "root witness length overflow");
+    }
+
+    #[test]
+    fn sis_family_mismatch_rejected_at_table_layer() {
+        // `schedule_plan_from_table` is the only call site that checks
+        // table-vs-policy SIS family, so we exercise it directly here.
+        let key = AkitaScheduleLookupKey::singleton(8);
+        let entry = entry_from_steps(
+            key,
+            Box::leak(Box::new([GeneratedStep::Direct(
+                akita_types::generated::GeneratedDirectStep,
+            )])),
+        );
+        let table = GeneratedScheduleTable {
+            sis_family: SisModulusFamily::Q128, // table claims Q128
+            entries: Box::leak(Box::new([entry])),
+        };
+        // Policy says Q32 (mismatch).
+        let err = schedule_plan_from_table::<Field, _>(key, table, default_policy())
+            .expect_err("table-vs-policy SIS family mismatch must error");
+        assert_invalid_setup_contains(err, "SIS family mismatch");
+    }
+
+    #[test]
+    fn unsupported_recursive_public_rows_rejected() {
+        // The materializer only supports `recursive_public_rows = 1`
+        // today; a config that asks for anything else must be rejected
+        // up front.
+        let key = AkitaScheduleLookupKey::singleton(8);
+        let entry = entry_from_steps(
+            key,
+            Box::leak(Box::new([GeneratedStep::Direct(
+                akita_types::generated::GeneratedDirectStep,
+            )])),
+        );
+        let mut policy = default_policy();
+        policy.recursive_public_rows = 2;
+        let err = schedule_plan_from_table_entry::<Field, _>(key, &entry, policy)
+            .expect_err("recursive_public_rows != 1 must error");
+        assert_invalid_setup_contains(err, "exactly one public row");
     }
 }
