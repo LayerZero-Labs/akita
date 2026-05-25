@@ -55,19 +55,6 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 /// derived directly from the config hooks.
 pub(crate) fn proof_optimized_schedule_plan<Cfg>(
     key: AkitaScheduleLookupKey,
-) -> Result<Option<AkitaSchedulePlan>, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    proof_optimized_schedule_plan_with_envelope::<Cfg>(key, Cfg::envelope(key.num_vars))
-}
-
-/// `proof_optimized_schedule_plan` variant that takes a precomputed
-/// `envelope` so callers in tight loops over `(num_polys, num_points)`
-/// at a fixed `num_vars` can skip the per-call table scan inside
-/// `Cfg::envelope`.
-pub(crate) fn proof_optimized_schedule_plan_with_envelope<Cfg>(
-    key: AkitaScheduleLookupKey,
     envelope: CommitmentEnvelope,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
@@ -115,9 +102,11 @@ pub fn level_params_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
-    let plan =
-        proof_optimized_schedule_plan::<Cfg>(AkitaScheduleLookupKey::singleton(inputs.num_vars))?;
     let envelope = Cfg::envelope(inputs.num_vars);
+    let plan = proof_optimized_schedule_plan::<Cfg>(
+        AkitaScheduleLookupKey::singleton(inputs.num_vars),
+        envelope,
+    )?;
     akita_derive::level_params_with_log_basis(
         Cfg::sis_modulus_family(),
         Cfg::D,
@@ -232,8 +221,7 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     // The caller hoisted `envelope` out of the (num_polys, num_points)
     // loop so we skip the table scan that `Cfg::envelope` does on every
     // call.
-    let Some(plan) = proof_optimized_schedule_plan_with_envelope::<Cfg>(cached_key, envelope)?
-    else {
+    let Some(plan) = proof_optimized_schedule_plan::<Cfg>(cached_key, envelope)? else {
         return Ok(None);
     };
     let setup_levels = setup_level_params_from_plan(&plan);
@@ -406,7 +394,8 @@ macro_rules! impl_fp128_preset {
             fn schedule_plan(
                 key: akita_types::AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
+                let envelope = <Self as $crate::CommitmentConfig>::envelope(key.num_vars);
+                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key, envelope)
             }
 
             fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
@@ -503,7 +492,8 @@ macro_rules! impl_small_field_preset {
             fn schedule_plan(
                 key: akita_types::AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
+                let envelope = <Self as $crate::CommitmentConfig>::envelope(key.num_vars);
+                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key, envelope)
             }
 
             fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
