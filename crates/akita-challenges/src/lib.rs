@@ -27,7 +27,7 @@ mod config;
 mod sampler;
 mod tensor;
 
-pub use challenge::{IntegerChallenge, SparseChallenge};
+pub use challenge::{ChallengeEval, IntegerChallenge, SparseChallenge};
 pub use config::SparseChallengeConfig;
 pub use sampler::sample_sparse_challenges;
 pub use tensor::{

@@ -15,7 +15,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::ChallengeEval;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, LiftBase,
@@ -781,39 +781,6 @@ pub fn build_w_evals_compact(
 ///
 /// Returns an error if the batch shape, opening-point layout, challenge count,
 /// or expanded matrix dimensions are inconsistent.
-/// Trait abstracting evaluation of a single challenge at precomputed alpha
-/// powers. Implemented for [`SparseChallenge`] and
-/// [`akita_challenges::IntegerChallenge`]; flat callers use the SparseChallenge
-/// instantiation which monomorphizes to main's exact code path.
-pub trait ChallengeEval {
-    fn eval_at_pows_dyn<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
-    where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + akita_field::MulBase<F>;
-}
-
-impl ChallengeEval for SparseChallenge {
-    #[inline(always)]
-    fn eval_at_pows_dyn<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
-    where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + akita_field::MulBase<F>,
-    {
-        self.eval_at_pows::<F, E, D>(alpha_pows)
-    }
-}
-
-impl ChallengeEval for akita_challenges::IntegerChallenge {
-    #[inline(always)]
-    fn eval_at_pows_dyn<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
-    where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + akita_field::MulBase<F>,
-    {
-        self.eval_at_pows::<F, E, D>(alpha_pows)
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
 pub fn compute_m_evals_x<F, E, C, const D: usize>(

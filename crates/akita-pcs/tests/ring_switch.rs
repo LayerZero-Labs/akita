@@ -648,7 +648,7 @@ mod tests {
 
         let expected = multilinear_eval(&m_evals_x, &x_challenges).expect("multilinear_eval");
 
-        let prepared = prepare_ring_switch_row_eval::<F, F, D>(
+        let prepared = prepare_ring_switch_row_eval::<F, F, _, D>(
             &quad_eq.challenges,
             alpha,
             &level_params,

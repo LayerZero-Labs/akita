@@ -446,14 +446,11 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let total_blocks = root_lp
-        .num_blocks
-        .checked_mul(num_claims)
-        .ok_or_else(|| AkitaError::InvalidSetup("batched root block count overflow".to_string()))?;
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         v_typed,
-        total_blocks,
+        root_lp.num_blocks,
+        num_claims,
         batched_lp,
         if is_terminal {
             MRowLayout::Terminal
@@ -495,14 +492,17 @@ where
                 .clone()
         })
         .collect();
-    let rs = match &stage_input {
-        RootStageInput::Intermediate {
-            next_w_commitment, ..
-        } => ring_switch_verifier::<F, C, T, { D }>(
+    let rs = match (&stage_input, &stage1_challenges) {
+        (
+            RootStageInput::Intermediate {
+                next_w_commitment, ..
+            },
+            akita_challenges::FoldingChallenges::Flat(sparse),
+        ) => ring_switch_verifier::<F, C, T, _, { D }>(
             &ring_opening_points,
             &ring_multiplier_points,
             incidence_summary.claim_to_point(),
-            &stage1_challenges,
+            sparse,
             w_len,
             next_w_commitment,
             transcript,
@@ -514,17 +514,20 @@ where
             incidence_summary.num_public_rows(),
             MRowLayout::Intermediate,
         )?,
-        RootStageInput::Terminal { final_witness, .. } => {
-            // Bind the ring-switch challenges to the cleartext witness rather
-            // than to a separate commitment, mirroring the prover.
-            transcript.record_wire_serde(ABSORB_SUMCHECK_W, *final_witness);
-            transcript.append_serde(ABSORB_SUMCHECK_W, *final_witness);
-            ring_switch_verifier_after_absorb::<F, C, T, { D }>(
+        (
+            RootStageInput::Intermediate {
+                next_w_commitment, ..
+            },
+            akita_challenges::FoldingChallenges::Tensor(_),
+        ) => {
+            let int_challenges = stage1_challenges.expand_integer::<D>()?;
+            ring_switch_verifier::<F, C, T, _, { D }>(
                 &ring_opening_points,
                 &ring_multiplier_points,
                 incidence_summary.claim_to_point(),
-                &stage1_challenges,
+                &int_challenges,
                 w_len,
+                next_w_commitment,
                 transcript,
                 batched_lp,
                 incidence_summary.num_polys_per_point(),
@@ -532,8 +535,51 @@ where
                 incidence_summary.claim_poly_indices(),
                 &row_coefficients,
                 incidence_summary.num_public_rows(),
-                MRowLayout::Terminal,
+                MRowLayout::Intermediate,
             )?
+        }
+        (RootStageInput::Terminal { final_witness, .. }, _) => {
+            // Bind the ring-switch challenges to the cleartext witness rather
+            // than to a separate commitment, mirroring the prover.
+            transcript.record_wire_serde(ABSORB_SUMCHECK_W, *final_witness);
+            transcript.append_serde(ABSORB_SUMCHECK_W, *final_witness);
+            match &stage1_challenges {
+                akita_challenges::FoldingChallenges::Flat(sparse) => {
+                    ring_switch_verifier_after_absorb::<F, C, T, _, { D }>(
+                        &ring_opening_points,
+                        &ring_multiplier_points,
+                        incidence_summary.claim_to_point(),
+                        sparse,
+                        w_len,
+                        transcript,
+                        batched_lp,
+                        incidence_summary.num_polys_per_point(),
+                        incidence_summary.claim_to_point(),
+                        incidence_summary.claim_poly_indices(),
+                        &row_coefficients,
+                        incidence_summary.num_public_rows(),
+                        MRowLayout::Terminal,
+                    )?
+                }
+                akita_challenges::FoldingChallenges::Tensor(_) => {
+                    let int_challenges = stage1_challenges.expand_integer::<D>()?;
+                    ring_switch_verifier_after_absorb::<F, C, T, _, { D }>(
+                        &ring_opening_points,
+                        &ring_multiplier_points,
+                        incidence_summary.claim_to_point(),
+                        &int_challenges,
+                        w_len,
+                        transcript,
+                        batched_lp,
+                        incidence_summary.num_polys_per_point(),
+                        incidence_summary.claim_to_point(),
+                        incidence_summary.claim_poly_indices(),
+                        &row_coefficients,
+                        incidence_summary.num_public_rows(),
+                        MRowLayout::Terminal,
+                    )?
+                }
+            }
         }
     };
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
@@ -854,7 +900,8 @@ where
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         v_typed,
-        lp.num_blocks * num_claims,
+        lp.num_blocks,
+        num_claims,
         lp,
         if is_last {
             MRowLayout::Terminal
@@ -881,12 +928,15 @@ where
     let claim_poly_indices = vec![0usize; num_claims];
     let gamma = vec![L::one(); num_claims];
 
-    let rs = match &proof {
-        FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, { D }>(
+    let rs = match (&proof, &stage1_challenges) {
+        (
+            FoldProofView::Intermediate(level_proof),
+            akita_challenges::FoldingChallenges::Flat(sparse),
+        ) => ring_switch_verifier::<F, L, T, _, { D }>(
             &ring_opening_points,
             &ring_multiplier_points,
             &claim_to_point,
-            &stage1_challenges,
+            sparse,
             w_len,
             level_proof.next_w_commitment(),
             transcript,
@@ -898,15 +948,18 @@ where
             num_claims,
             MRowLayout::Intermediate,
         )?,
-        FoldProofView::Terminal(terminal_proof) => {
-            transcript.record_wire_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
-            transcript.append_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
-            ring_switch_verifier_after_absorb::<F, L, T, { D }>(
+        (
+            FoldProofView::Intermediate(level_proof),
+            akita_challenges::FoldingChallenges::Tensor(_),
+        ) => {
+            let int_challenges = stage1_challenges.expand_integer::<D>()?;
+            ring_switch_verifier::<F, L, T, _, { D }>(
                 &ring_opening_points,
                 &ring_multiplier_points,
                 &claim_to_point,
-                &stage1_challenges,
+                &int_challenges,
                 w_len,
+                level_proof.next_w_commitment(),
                 transcript,
                 lp,
                 &[1usize],
@@ -914,8 +967,49 @@ where
                 &claim_poly_indices,
                 &gamma,
                 num_claims,
-                MRowLayout::Terminal,
+                MRowLayout::Intermediate,
             )?
+        }
+        (FoldProofView::Terminal(terminal_proof), _) => {
+            transcript.record_wire_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
+            transcript.append_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
+            match &stage1_challenges {
+                akita_challenges::FoldingChallenges::Flat(sparse) => {
+                    ring_switch_verifier_after_absorb::<F, L, T, _, { D }>(
+                        &ring_opening_points,
+                        &ring_multiplier_points,
+                        &claim_to_point,
+                        sparse,
+                        w_len,
+                        transcript,
+                        lp,
+                        &[1usize],
+                        &claim_to_point_poly,
+                        &claim_poly_indices,
+                        &gamma,
+                        num_claims,
+                        MRowLayout::Terminal,
+                    )?
+                }
+                akita_challenges::FoldingChallenges::Tensor(_) => {
+                    let int_challenges = stage1_challenges.expand_integer::<D>()?;
+                    ring_switch_verifier_after_absorb::<F, L, T, _, { D }>(
+                        &ring_opening_points,
+                        &ring_multiplier_points,
+                        &claim_to_point,
+                        &int_challenges,
+                        w_len,
+                        transcript,
+                        lp,
+                        &[1usize],
+                        &claim_to_point_poly,
+                        &claim_poly_indices,
+                        &gamma,
+                        num_claims,
+                        MRowLayout::Terminal,
+                    )?
+                }
+            }
         }
     };
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(

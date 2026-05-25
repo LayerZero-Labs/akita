@@ -250,6 +250,10 @@ const PROFILE_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_d64,
     },
     ProfileMode {
+        name: "onehot_d64_tensor",
+        run: run_profile_onehot_d64_tensor,
+    },
+    ProfileMode {
         name: "full_d32",
         run: run_profile_full_d32,
     },
@@ -320,6 +324,7 @@ const ALL_PROFILE_MODE_NAMES: &[&str] = &[
     "onehot",
     "full_d64",
     "onehot_d64",
+    "onehot_d64_tensor",
     "full_d32",
     "onehot_d32",
     "onehot_fp32",
@@ -418,6 +423,22 @@ fn run_profile_onehot_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
     let title = fixed_onehot_title(64, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_d64", &title, nv, num_polys);
+}
+
+fn run_profile_onehot_d64_tensor(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D64OneHotTensor;
+    let prime = fp128_prime_label();
+    let onehot_k = onehot_k_for_num_vars(nv);
+    let title = if num_polys == 1 {
+        format!(
+            "=== onehot_d64_tensor ({prime}, D=64, 1-of-{onehot_k}, tensor-shaped root fold) ==="
+        )
+    } else {
+        format!(
+            "=== onehot_d64_tensor batched ({prime}, D=64, 1-of-{onehot_k}, tensor-shaped root fold, same-point batch={num_polys}) ==="
+        )
+    };
+    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_d64_tensor", &title, nv, num_polys);
 }
 
 fn run_profile_full_d32(nv: usize, num_polys: usize) {

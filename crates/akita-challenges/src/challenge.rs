@@ -19,6 +19,47 @@
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 use std::collections::BTreeMap;
 
+/// Trait abstracting evaluation of one sparse challenge at precomputed
+/// `alpha^k` powers. Implemented for [`SparseChallenge`] and
+/// [`IntegerChallenge`] so prover/verifier ring-switch paths can be generic
+/// over both coefficient widths. Flat call sites instantiate with
+/// `SparseChallenge`, which monomorphizes to a call equivalent to
+/// `challenge.eval_at_pows::<F, E, D>(alpha_pows)`.
+pub trait ChallengeEval {
+    /// Evaluate `self` at the supplied precomputed `alpha` powers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the challenge is malformed or if `alpha_pows`
+    /// does not have length `D`.
+    fn eval_at_pows_dyn<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + MulBase<F>;
+}
+
+impl ChallengeEval for SparseChallenge {
+    #[inline(always)]
+    fn eval_at_pows_dyn<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + MulBase<F>,
+    {
+        self.eval_at_pows::<F, E, D>(alpha_pows)
+    }
+}
+
+impl ChallengeEval for IntegerChallenge {
+    #[inline(always)]
+    fn eval_at_pows_dyn<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + MulBase<F>,
+    {
+        self.eval_at_pows::<F, E, D>(alpha_pows)
+    }
+}
+
 /// Sparse polynomial in `F[X]/(X^D+1)` represented by its non-zero terms.
 ///
 /// Sampler invariants:
