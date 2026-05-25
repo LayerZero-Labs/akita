@@ -85,21 +85,28 @@ where
 /// the envelope for level 0).
 ///
 /// Used to be `Cfg::level_params_with_log_basis`; now a free function
-/// because every preset's impl was a no-op delegator to this body and
-/// the only "override" semantics needed live in tests, which call this
-/// directly with their own `Cfg`.
+/// because every preset's impl was a no-op delegator to this body.
+///
+/// Treats `proof_optimized_schedule_plan` failures as "no plan
+/// available" and falls through to envelope-based derivation —
+/// callers that want strict materialization should use
+/// `proof_optimized_schedule_plan` directly and bubble its `Err`.
 ///
 /// # Errors
 ///
-/// Returns an error if the SIS-floor lookup fails or if `Cfg`'s schedule
-/// hooks (table lookup, envelope, stage-1 challenge config) reject the
-/// inputs.
+/// Returns an error if the inner derivation rejects the inputs (SIS
+/// floor, stage-1 challenge config, recursive layout sizing).
 pub fn level_params_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
+    // Treat a hard plan-materialization error the same as a table miss.
+    // The inner derivation handles `None` by falling through to the
+    // envelope, which is the documented "off-schedule" path here.
     let plan =
-        proof_optimized_schedule_plan::<Cfg>(AkitaScheduleLookupKey::singleton(inputs.num_vars))?;
+        proof_optimized_schedule_plan::<Cfg>(AkitaScheduleLookupKey::singleton(inputs.num_vars))
+            .ok()
+            .flatten();
     let envelope = Cfg::envelope(inputs.num_vars);
     akita_derive::level_params_with_log_basis(
         Cfg::sis_modulus_family(),
