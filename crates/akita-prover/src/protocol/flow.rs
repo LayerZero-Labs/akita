@@ -3159,8 +3159,14 @@ where
         ) && !root_tensor_projection_enabled::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(
             num_vars,
         ) {
-            let direct_incidence = akita_types::ClaimIncidenceSummary::same_point(num_vars, 1)?;
-            let commit_params = Cfg::get_params_for_batched_commitment(&direct_incidence)?;
+            // Use the real incidence (not a synthetic singleton) so the
+            // schedule's `commit_params` describe the actual layout the
+            // root-direct check below will recompute via
+            // `get_params_for_batched_commitment`. Otherwise the
+            // descriptor binds singleton-sized params while the
+            // verifier checks against batched ones.
+            let commit_params =
+                Cfg::get_params_for_batched_commitment(&prepared_claims.incidence_summary)?;
             schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }

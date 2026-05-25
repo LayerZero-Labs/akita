@@ -583,6 +583,52 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "zk"))]
+    fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
+        // Locks in the fix for the descriptor-binding bug at
+        // `akita_prover::protocol::flow` and
+        // `akita_verifier::protocol::batched`: when the planner-selected
+        // folded root cannot handle the opening shape, both sides build
+        // a fallback root-direct schedule. That schedule's
+        // `commit_params` get hashed into
+        // `SetupSection::level_params_digest` via
+        // `setup_level_params_from_runtime_schedule`, while the
+        // root-direct verification closure recomputes commitments using
+        // `Cfg::get_params_for_batched_commitment(real_incidence)`. If
+        // the fallback used a synthetic `same_point(num_vars, 1)`
+        // singleton incidence (the pre-fix behavior), the descriptor
+        // would bind singleton-sized params while verification ran
+        // against batched ones.
+        use akita_types::root_direct_schedule;
+        type Cfg = fp128::D32Full;
+        let real_incidence =
+            ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
+        let real_params =
+            Cfg::get_params_for_batched_commitment(&real_incidence).expect("batched commit params");
+        let singleton_incidence =
+            ClaimIncidenceSummary::same_point(30, 1).expect("singleton incidence");
+        let singleton_params = Cfg::get_params_for_batched_commitment(&singleton_incidence)
+            .expect("singleton commit params");
+
+        // Sanity: a non-singleton incidence should resolve to a
+        // different commit layout, otherwise the regression couldn't
+        // manifest with this fixture.
+        assert_ne!(
+            real_params, singleton_params,
+            "test fixture: pick an incidence where batched and singleton params differ"
+        );
+
+        let schedule = root_direct_schedule(real_incidence.num_vars(), real_params.clone())
+            .expect("fallback root-direct schedule");
+        let bound_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
+        assert_eq!(
+            bound_levels,
+            vec![real_params],
+            "fallback schedule must bind the real-incidence params the verifier recomputes"
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
     fn setup_matrix_envelope_covers_grouped_batch_schedules() {
         let incidence =
             ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
