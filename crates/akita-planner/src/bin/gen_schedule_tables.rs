@@ -372,7 +372,7 @@ fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() {
         return Err(
-            "usage: cargo run --release -p akita-config --features planner --bin gen_schedule_tables -- \
+            "usage: cargo run --release -p akita-planner --bin gen_schedule_tables -- \
              <output-dir> [family_module_name ...]"
                 .to_string(),
         );

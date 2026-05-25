@@ -34,7 +34,7 @@ all-features = true
 ignored = ["akita-setup", "blake2", "thiserror"]
 
 [features]
-default = ["parallel", "planner"]
+default = ["parallel"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
@@ -47,7 +47,6 @@ parallel = [
 ]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = ["akita-transcript/logging-transcript"]
-planner = ["dep:akita-planner", "akita-scheme/planner", "akita-setup/planner"]
 zk = [
   "akita-config/zk",
   "akita-prover/zk",
@@ -64,7 +63,6 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-config = { version = "0.1.0", path = "../akita-config" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
-akita-planner = { version = "0.1.0", path = "../akita-planner", optional = true }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }

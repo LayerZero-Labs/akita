@@ -26,7 +26,6 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-#[cfg(feature = "planner")]
 use akita_prover::MultilinearPolynomial;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -34,10 +33,8 @@ use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
-#[cfg(feature = "planner")]
 const DENSE_ONEHOT_K: usize = DENSE_D;
 
-#[cfg(feature = "planner")]
 fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, DENSE_D, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let mut rng = StdRng::seed_from_u64(seed);
@@ -248,17 +245,13 @@ mod non_zk_aggregated_cases {
     }
 
     aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1);
-    #[cfg(feature = "planner")]
     aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7);
-    #[cfg(feature = "planner")]
     aggregated_onehot_case!(aggregated_onehot_nv25_batch4, 25, 4);
 
     aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1);
-    #[cfg(feature = "planner")]
     aggregated_dense_case!(aggregated_dense_nv20_batch7, 20, 7);
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
     init_rayon_pool();

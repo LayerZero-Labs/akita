@@ -1,12 +1,10 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::fp128;
-#[cfg(feature = "planner")]
 use akita_config::proof_optimized::{fp16, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
-#[cfg(feature = "planner")]
 use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::AkitaPolyOps;
 use akita_prover::DensePoly;
@@ -34,7 +32,6 @@ const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const D32_TEST_NV: usize = 12;
-#[cfg(feature = "planner")]
 const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
@@ -458,7 +455,6 @@ fn full_d32_prove_verify() {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn fp16_static_dense_round_trip() {
     init_rayon_pool();
@@ -491,7 +487,6 @@ fn fp16_static_dense_round_trip() {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn fp32_static_dense_round_trip() {
     init_rayon_pool();
@@ -524,7 +519,6 @@ fn fp32_static_dense_round_trip() {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn fp64_static_dense_round_trip() {
     init_rayon_pool();
@@ -864,7 +858,6 @@ fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
     }
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn batched_onehot_same_point_round_trip() {
     init_rayon_pool();
@@ -954,7 +947,6 @@ fn batched_onehot_same_point_round_trip() {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
     init_rayon_pool();
@@ -1061,7 +1053,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
     init_rayon_pool();

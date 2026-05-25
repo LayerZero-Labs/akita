@@ -38,12 +38,23 @@ else
   esac
 fi
 
-tree="$(cargo tree -p "${pkg}" --edges normal)"
-for candidate in "${forbidden[@]}"; do
-  if grep -qE "(^|[[:space:]])${candidate}([[:space:]]|$)" <<<"${tree}"; then
-    echo "forbidden dependency found in ${pkg}: ${candidate}" >&2
-    exit 1
-  fi
+# Walk both the default-feature graph and the all-features graph so an
+# opt-in feature can't sneak a forbidden crate into a downstream build
+# (e.g. a `planner = ["dep:akita-planner"]` feature on a runtime crate).
+default_tree="$(cargo tree -p "${pkg}" --edges normal)"
+all_features_tree="$(cargo tree -p "${pkg}" --edges normal --all-features)"
+
+for label in default all-features; do
+  case "${label}" in
+    default)      tree="${default_tree}" ;;
+    all-features) tree="${all_features_tree}" ;;
+  esac
+  for candidate in "${forbidden[@]}"; do
+    if grep -qE "(^|[[:space:]])${candidate}([[:space:]]|$)" <<<"${tree}"; then
+      echo "forbidden dependency found in ${pkg} (${label}): ${candidate}" >&2
+      exit 1
+    fi
+  done
 done
 
 echo "${pkg} dependency hygiene check passed"

@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-#![cfg(all(feature = "planner", not(feature = "zk")))]
+#![cfg(not(feature = "zk"))]
 
 mod common;
 
