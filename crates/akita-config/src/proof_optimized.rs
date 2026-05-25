@@ -253,8 +253,9 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
 /// `level_params: None`. This function silently skips those, so a
 /// pure root-direct uncommittable schedule yields an empty list.
 /// `Cfg::get_params_for_batched_commitment` rejects the same
-/// schedule with `InvalidSetup`. See [`DirectStep::commit_params`]
-/// for the design rationale.
+/// schedule with `InvalidSetup`. See
+/// [`akita_types::DirectStep::commit_params`] for the design
+/// rationale.
 pub fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
     plan.steps
         .iter()
