@@ -1420,10 +1420,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         None
     }
 
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        format!("test/fp32-ring-subfield/{key:?}")
-    }
-
     fn schedule_plan(
         _key: AkitaScheduleLookupKey,
     ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
@@ -1557,10 +1553,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
 
     fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
         None
-    }
-
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        format!("test/fp32-ring-subfield/{key:?}")
     }
 
     fn schedule_plan(

@@ -114,9 +114,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Offline schedule table backing this config (preset only).
     fn schedule_table() -> Option<GeneratedScheduleTable>;
 
-    /// Stable identity for the schedule at `key`.
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String;
-
     /// Materialized plan for `key`, or `None` on table miss.
     ///
     /// # Errors
@@ -248,10 +245,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::schedule_table()
     }
 
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        Cfg::schedule_key(key)
-    }
-
     fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
         Cfg::schedule_plan(key)
     }
@@ -326,10 +319,6 @@ mod tests {
 
         fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
             None
-        }
-
-        fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-            format!("extension-role-test/{key:?}")
         }
 
         fn schedule_plan(

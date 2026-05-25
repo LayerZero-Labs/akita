@@ -11,10 +11,10 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::detect_field_modulus;
 #[cfg(any(feature = "disk-persistence", all(test, feature = "planner")))]
 use akita_types::AkitaExpandedSetup;
-#[cfg(feature = "disk-persistence")]
-use akita_types::AkitaScheduleLookupKey;
 #[cfg(all(test, feature = "planner"))]
 use akita_types::AkitaVerifierSetup;
+#[cfg(feature = "disk-persistence")]
+use akita_types::{planned_schedule_key_from_schedule, AkitaScheduleLookupKey};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
@@ -153,7 +153,21 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         max_num_batched_polys,
         max_num_points,
     );
-    let schedule = Cfg::schedule_key(schedule_lookup_key)
+    // Fingerprint the resolved schedule shape so cached setup files get
+    // invalidated when the planner's per-level (log_basis, level_count)
+    // outputs change for the same lookup key.
+    let raw_schedule = match Cfg::schedule_plan(schedule_lookup_key) {
+        Ok(Some(plan)) => planned_schedule_key_from_schedule(schedule_lookup_key, &plan),
+        _ => format!(
+            "miss_nv{}_g{}_t{}_w{}_z{}",
+            schedule_lookup_key.num_vars,
+            schedule_lookup_key.num_points,
+            schedule_lookup_key.num_t_vectors,
+            schedule_lookup_key.num_w_vectors,
+            schedule_lookup_key.num_z_vectors,
+        ),
+    };
+    let schedule = raw_schedule
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();

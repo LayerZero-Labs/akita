@@ -67,10 +67,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
         Cfg::schedule_table()
     }
 
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        format!("planner-cfg/{}", Cfg::schedule_key(key))
-    }
-
     fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
         Cfg::schedule_plan(key)
     }

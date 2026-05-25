@@ -1174,18 +1174,3 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         );
     });
 }
-
-#[test]
-fn adaptive_schedule_key_changes_when_schedule_changes() {
-    type Cfg = fp128::D64Full;
-
-    let mut distinct = std::collections::BTreeMap::new();
-    for nv in 10..=18 {
-        distinct.insert(Cfg::schedule_key(AkitaScheduleLookupKey::singleton(nv)), nv);
-    }
-
-    assert!(
-        distinct.len() >= 2,
-        "adaptive schedule key should distinguish at least two nv-dependent schedules"
-    );
-}

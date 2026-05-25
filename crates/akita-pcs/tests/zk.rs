@@ -51,10 +51,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         None
     }
 
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        format!("zk-runtime-planned/{key:?}")
-    }
-
     fn schedule_plan(
         _key: AkitaScheduleLookupKey,
     ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {

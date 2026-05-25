@@ -16,8 +16,7 @@ use akita_field::{
 use akita_types::generated::table_entry_envelope_up_to_num_vars;
 use akita_types::ClaimIncidenceSummary;
 use akita_types::{
-    planned_schedule_key_from_schedule, AkitaPlannedStep, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
+    AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
 };
 
 /// Inclusive minimum of the proof-optimized log-basis search range used by
@@ -78,25 +77,6 @@ where
             ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         },
     )
-}
-
-/// Proof-optimized `schedule_key` impl: derive a stable identifier from the
-/// planned schedule (or from the lookup key when no entry exists).
-pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
-    key: AkitaScheduleLookupKey,
-) -> String {
-    match proof_optimized_schedule_plan::<Cfg>(key) {
-        Ok(Some(plan)) => planned_schedule_key_from_schedule(key, &plan),
-        _ => format!(
-            "generated-miss/d{}/num{}/g{}t{}w{}z{}",
-            Cfg::D,
-            key.num_vars,
-            key.num_points,
-            key.num_t_vectors,
-            key.num_w_vectors,
-            key.num_z_vectors,
-        ),
-    }
 }
 
 /// Canonical "what level params would `Cfg` use here?" lookup: prefer the
@@ -384,10 +364,6 @@ macro_rules! impl_fp128_preset {
                 $table
             }
 
-            fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
-                $crate::proof_optimized::proof_optimized_schedule_key::<Self>(key)
-            }
-
             fn schedule_plan(
                 key: akita_types::AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
@@ -483,10 +459,6 @@ macro_rules! impl_small_field_preset {
 
             fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
                 $table
-            }
-
-            fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
-                $crate::proof_optimized::proof_optimized_schedule_key::<Self>(key)
             }
 
             fn schedule_plan(
