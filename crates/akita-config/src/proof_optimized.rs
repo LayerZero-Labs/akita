@@ -1068,7 +1068,6 @@ pub mod fp128 {
         D32OneHotFastVerify,
         32,
         1,
-        3,
         Some(akita_types::generated::fp128_d32_onehot_fast_verify_table())
     );
 

@@ -10,7 +10,15 @@
 //! verifier-cost term), at the cost of a small extra ûhat / F
 //! witness segment.
 //!
-//! Public entry points are the `proof_optimized_*` helpers plus the
+//! The split factor is computed *dynamically* per
+//! `LevelParams` shape via
+//! [`akita_types::apply_dynamic_tier`]: the smallest divisor of the
+//! outer width such that the chunked B' rectangle is no larger than
+//! the inner A rectangle. When `|B| <= |A|` already, the helper
+//! returns the LP unchanged (`split_factor = 1`) and the preset
+//! degrades to the legacy proof-optimised path for that shape.
+//!
+//! Public entry points are the `fast_verifier_*` helpers plus the
 //! [`impl_fp128_fast_verify_preset!`] macro that wires a fast-verify
 //! preset into the same scaffolding as `impl_fp128_preset!`.
 
@@ -22,106 +30,30 @@ use crate::proof_optimized::{
 use crate::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
-    ClaimIncidenceSummary, LevelParams,
+    apply_dynamic_tier, AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    AkitaSchedulePlan, ClaimIncidenceSummary, LevelParams,
 };
 
-/// Compute `num_digits_outer` so the balanced gadget of basis
-/// `b = 2^outer_log_basis` covers the full centered range `[-q/2, q/2)`
-/// for a `field_bits`-bit modulus.
-///
-/// Balanced range for basis `b` and depth `δ`:
-/// `max ≈ ((b/2 − 1) / (b − 1)) · b^δ`. We need `max ≥ q/2 = 2^{field_bits−1}`,
-/// i.e. `b^δ ≥ ((b − 1)/(b/2 − 1)) · 2^{field_bits−1}`. Setting `c =
-/// (b − 1)/(b/2 − 1) ≤ 2`, this gives `δ · outer_log_basis ≥
-/// field_bits − 1 + log2(c) ≤ field_bits`. The closed form
-/// `δ = ⌈(field_bits + 2) / outer_log_basis⌉` over-provisions by at
-/// most one digit (safety margin worth ≪ 1 % of witness bytes) and
-/// matches the bench's manually-tuned `(lb=2, δ=65)` choice for Q128.
-pub(crate) fn fast_verifier_num_digits_outer(field_bits: u32, outer_log_basis: u32) -> usize {
-    let numerator = (field_bits as usize) + 2;
-    numerator.div_ceil(outer_log_basis as usize)
-}
-
 /// Layer fast-verify metadata (`split_factor`, `outer_log_basis`,
-/// `num_digits_outer`, `f_key`) onto a legacy root `LevelParams`, and
-/// shrink `b_key.col_len` from the full outer width to
-/// `chunk_width = outer_width / split_factor`.
+/// `num_digits_outer`, `f_key`) onto a legacy root `LevelParams`, with
+/// the split factor chosen dynamically from the LP's own
+/// `(|A|, |B|, outer_width)` shape via [`apply_dynamic_tier`].
 ///
-/// The legacy LP is taken as-is for `(n_a, n_d, ring_dimension,
-/// log_basis, m_vars, r_vars, block_len, num_blocks,
-/// num_digits_{commit,open,fold})`. The tiered fields are derived
-/// from the modulus family + SIS floors via
-/// [`akita_types::layout::sis_derivation::tiered_b_prime_rank`] and
-/// [`akita_types::layout::sis_derivation::tiered_f_rank`].
+/// When the dynamic rule returns `split_factor = 1` (i.e. `|B| <= |A|`
+/// already) the helper returns an LP with cleared tier fields; the
+/// preset effectively degrades to the legacy proof-optimised path for
+/// that shape.
 ///
 /// # Errors
 ///
-/// Returns an error if the outer width is not divisible by
-/// `split_factor`, or if the SIS floor tables don't cover the
-/// requested `(family, D, collision, width)` tuple.
+/// Returns an error if no valid divisor of `outer_width` covers the
+/// `ceil(|B|/|A|)` target, or if the SIS floor tables don't cover the
+/// resulting `(family, D, collision, width)` tuples.
 pub(crate) fn fast_verifier_apply_to_root_lp<Cfg: CommitmentConfig>(
     legacy_root: &LevelParams,
-    split_factor: usize,
 ) -> Result<LevelParams, AkitaError> {
-    use akita_types::layout::sis_derivation::{
-        balanced_digit_delta_bound, tiered_b_prime_rank, tiered_f_rank,
-    };
-    let family = legacy_root.b_key.sis_family();
-    let d = legacy_root.ring_dimension;
-    let outer_log_basis = legacy_root.log_basis;
     let field_bits = Cfg::decomposition().field_bits();
-    let num_digits_outer = fast_verifier_num_digits_outer(field_bits, outer_log_basis);
-    let full_outer_width = legacy_root.full_outer_width();
-    if full_outer_width % split_factor != 0 {
-        return Err(AkitaError::InvalidSetup(format!(
-            "fast_verifier: outer_width {full_outer_width} not divisible by split_factor \
-             {split_factor} (legacy LP shape n_a={}, num_blocks={}, depth_open={}); pick a \
-             (n_a, r_vars, depth_open) tuple whose product is divisible by {split_factor}",
-            legacy_root.a_key.row_len(),
-            legacy_root.num_blocks,
-            legacy_root.num_digits_open,
-        )));
-    }
-    let chunk_width = full_outer_width / split_factor;
-    let t_inf_bound = legacy_root.b_key.collision_inf();
-    let n_b_prime = tiered_b_prime_rank(
-        family,
-        d as u32,
-        t_inf_bound,
-        full_outer_width,
-        split_factor,
-    )?;
-    let n_f = tiered_f_rank(
-        family,
-        d as u32,
-        outer_log_basis,
-        n_b_prime,
-        split_factor,
-        num_digits_outer,
-    )?;
-    let f_width = (n_b_prime as usize)
-        .checked_mul(split_factor)
-        .and_then(|w| w.checked_mul(num_digits_outer))
-        .ok_or_else(|| AkitaError::InvalidSetup("fast_verifier F width overflow".to_string()))?;
-    let f_collision = balanced_digit_delta_bound(outer_log_basis);
-    let tiered_b_key = akita_types::AjtaiKeyParams::new_unchecked(
-        family,
-        n_b_prime as usize,
-        chunk_width,
-        t_inf_bound,
-        d,
-    );
-    let f_key =
-        akita_types::AjtaiKeyParams::new_unchecked(family, n_f as usize, f_width, f_collision, d);
-    Ok(LevelParams {
-        split_factor,
-        outer_log_basis,
-        num_digits_outer,
-        f_key,
-        b_key: tiered_b_key,
-        ..legacy_root.clone()
-    })
+    apply_dynamic_tier(legacy_root, field_bits)
 }
 
 /// Fast-verify variant of `proof_optimized_root_level_layout_with_log_basis`.
@@ -132,10 +64,9 @@ pub(crate) fn fast_verifier_apply_to_root_lp<Cfg: CommitmentConfig>(
 pub(crate) fn fast_verifier_root_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
-    split_factor: usize,
 ) -> Result<LevelParams, AkitaError> {
     let legacy = proof_optimized_root_level_layout_with_log_basis::<Cfg>(inputs, log_basis)?;
-    fast_verifier_apply_to_root_lp::<Cfg>(&legacy, split_factor)
+    fast_verifier_apply_to_root_lp::<Cfg>(&legacy)
 }
 
 /// Fast-verify variant of
@@ -143,10 +74,9 @@ pub(crate) fn fast_verifier_root_level_layout_with_log_basis<Cfg: CommitmentConf
 pub(crate) fn fast_verifier_root_level_params_for_layout_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     lp: &LevelParams,
-    split_factor: usize,
 ) -> Result<LevelParams, AkitaError> {
     let legacy = proof_optimized_root_level_params_for_layout_with_log_basis::<Cfg>(inputs, lp)?;
-    fast_verifier_apply_to_root_lp::<Cfg>(&legacy, split_factor)
+    fast_verifier_apply_to_root_lp::<Cfg>(&legacy)
 }
 
 /// Fast-verify variant of `proof_optimized_max_setup_matrix_size`.
@@ -230,13 +160,15 @@ pub(crate) fn fast_verifier_max_setup_matrix_size<Cfg: CommitmentConfig>(
 /// fast-verify shapes by the offline generator) and post-processes
 /// the root step to layer fast-verify metadata on top — the on-disk
 /// `GeneratedFoldStep` records only `(ring_d, log_basis, m_vars,
-/// r_vars, n_a, n_b, n_d)`, so the per-Cfg fast-verify constants are
-/// re-injected here. The `n_b` stored in the table is already `n_b'`
-/// (the tier-1 B' rank) because the offline generator ran the
-/// planner DP with a tiered root LP.
+/// r_vars, n_a, n_b, n_d)`, so the tier metadata is re-derived here
+/// dynamically from the materialised root LP shape (same rule the
+/// generator used). The `n_b` stored in the table is already `n_b'`
+/// (the tier-1 B' rank for the chosen split); we re-derive the same
+/// `(split, n_b', n_F)` from `(n_a, num_blocks, num_digits_open,
+/// block_len, num_digits_commit, log_basis)` via
+/// [`apply_dynamic_tier`].
 pub(crate) fn fast_verifier_schedule_plan<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
-    split_factor: usize,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
     use akita_types::{
         w_ring_element_count_with_vector_counts_bits,
@@ -256,6 +188,12 @@ pub(crate) fn fast_verifier_schedule_plan<Cfg: CommitmentConfig>(
     // `next_inputs.current_w_len` using the EXACT same `_bits`
     // variants the base materialiser uses, so we don't introduce
     // sizing discrepancies at recursive levels.
+    //
+    // The generated entry's `n_b` is already `n_b'` for the chosen
+    // dynamic split, so before applying the tier we synthesise the
+    // legacy `n_b` from the SIS floor at the materialised root
+    // `outer_width` so `apply_dynamic_tier` reproduces the same
+    // split.
     let suffix_len = plan.steps.len();
     let next_is_direct: Vec<bool> = (1..suffix_len)
         .map(|i| matches!(plan.steps.get(i + 1), Some(AkitaPlannedStep::Direct(_))))
@@ -263,7 +201,8 @@ pub(crate) fn fast_verifier_schedule_plan<Cfg: CommitmentConfig>(
     let Some(AkitaPlannedStep::Fold(root_level)) = plan.steps.first_mut() else {
         return Ok(Some(plan));
     };
-    let tiered_lp = fast_verifier_apply_to_root_lp::<Cfg>(&root_level.lp, split_factor)?;
+    let legacy_root = synthesize_legacy_root_lp(&root_level.lp)?;
+    let tiered_lp = apply_dynamic_tier(&legacy_root, field_bits)?;
     let next_w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
         &tiered_lp,
         key.num_points,
@@ -344,13 +283,43 @@ pub(crate) fn fast_verifier_schedule_plan<Cfg: CommitmentConfig>(
     Ok(Some(plan))
 }
 
+/// Recover a legacy (non-tiered) root LP from a materialised entry's LP.
+///
+/// The base materialiser (`schedule_plan_from_generated_entry`) constructs
+/// the root LP with `b_key.col_len = full_outer_width` and
+/// `b_key.row_len = n_b_from_table`. For a fast-verify table the stored
+/// `n_b` is already `n_b'` (post-split). To re-derive the dynamic split
+/// we need the *legacy* (unchunked) `n_b`, which we recover via the SIS
+/// floor table at `outer_width` with `split_factor = 1`. This is the
+/// inverse of what the table generator did.
+fn synthesize_legacy_root_lp(materialised: &LevelParams) -> Result<LevelParams, AkitaError> {
+    use akita_types::layout::sis_derivation::tiered_b_prime_rank;
+    let outer_width = materialised.full_outer_width();
+    let family = materialised.b_key.sis_family();
+    let d = materialised.ring_dimension;
+    let t_inf_bound = materialised.b_key.collision_inf();
+    let legacy_n_b = tiered_b_prime_rank(family, d as u32, t_inf_bound, outer_width, 1)? as usize;
+    Ok(LevelParams {
+        b_key: akita_types::AjtaiKeyParams::new_unchecked(
+            family,
+            legacy_n_b,
+            outer_width,
+            t_inf_bound,
+            d,
+        ),
+        ..materialised.clone()
+    })
+}
+
 /// Fast-verify variant of `impl_fp128_preset`. Shares 99 % of its
 /// body with the legacy macro; the only differences are:
 ///
 /// * `root_level_layout_with_log_basis` /
 ///   `root_level_params_for_layout_with_log_basis` (and their planner
 ///   twins) call the `fast_verifier_*` helpers that layer the tier-1
-///   / F / ûhat-gadget metadata on the legacy LP they produce.
+///   / F / ûhat-gadget metadata on the legacy LP they produce. The
+///   split factor is chosen dynamically per LP shape via
+///   [`apply_dynamic_tier`].
 /// * `schedule_plan` post-processes the materialised plan so the
 ///   root step's `LevelParams` carries the fast-verify fields even
 ///   though the on-disk `GeneratedFoldStep` only records the legacy
@@ -359,10 +328,8 @@ pub(crate) fn fast_verifier_schedule_plan<Cfg: CommitmentConfig>(
 ///   `b_key.col_len = chunk_width = legacy_outer_width / split_factor`
 ///   is strictly smaller than the legacy outer width, so the legacy
 ///   envelope safely upper-bounds it.
-///
-/// `$split:expr` is the split factor (e.g. `3` for `D32OneHotFastVerify`).
 macro_rules! impl_fp128_fast_verify_preset {
-    ($cfg:ident, $d:expr, $log_commit_bound:expr, $split:expr, $table:expr) => {
+    ($cfg:ident, $d:expr, $log_commit_bound:expr, $table:expr) => {
         impl akita_types::ScheduleProvider for $cfg {
             fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
                 $table
@@ -375,7 +342,7 @@ macro_rules! impl_fp128_fast_verify_preset {
             fn schedule_plan(
                 key: akita_types::AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                $crate::fast_verifier::fast_verifier_schedule_plan::<Self>(key, $split)
+                $crate::fast_verifier::fast_verifier_schedule_plan::<Self>(key)
             }
         }
 
@@ -441,7 +408,7 @@ macro_rules! impl_fp128_fast_verify_preset {
             ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::fast_verifier::fast_verifier_root_level_params_for_layout_with_log_basis::<
                     Self,
-                >(inputs, lp, $split)
+                >(inputs, lp)
             }
 
             fn root_level_layout_with_log_basis(
@@ -449,7 +416,7 @@ macro_rules! impl_fp128_fast_verify_preset {
                 log_basis: u32,
             ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::fast_verifier::fast_verifier_root_level_layout_with_log_basis::<Self>(
-                    inputs, log_basis, $split,
+                    inputs, log_basis,
                 )
             }
 

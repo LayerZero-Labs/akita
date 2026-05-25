@@ -161,6 +161,144 @@ pub fn tiered_f_rank(
         .map_err(|_| AkitaError::InvalidSetup("tiered_f_rank: SIS rank exceeds u32".to_string()))
 }
 
+/// Compute the smallest tier split factor `f >= ceil(|B| / |A|)` such that
+/// `outer_width % f == 0`, treating `|A|` and `|B|` as the cell counts of the
+/// inner and outer SIS rectangles respectively (`|A| = n_a * inner_width`,
+/// `|B| = n_b * outer_width`).
+///
+/// Returns `Some(1)` when `|B| <= |A|` (no tiering needed) and `None` when
+/// no divisor of `outer_width` in `[ceil(|B|/|A|), outer_width]` exists.
+///
+/// `n_b` here is the *legacy* (unchunked) B SIS rank, not the post-split
+/// `n_b'`. Callers building tier metadata must use the legacy rank from
+/// [`min_rank_for_secure_width`] / [`tiered_b_prime_rank`] with
+/// `split_factor = 1`, *not* the chunk-width rank.
+#[inline]
+pub fn dynamic_tier_split_factor(
+    n_a: u32,
+    n_b: u32,
+    inner_width: usize,
+    outer_width: usize,
+) -> Option<usize> {
+    if outer_width == 0 || inner_width == 0 {
+        return None;
+    }
+    let a_size = (n_a as usize).checked_mul(inner_width)?;
+    let b_size = (n_b as usize).checked_mul(outer_width)?;
+    if b_size <= a_size {
+        return Some(1);
+    }
+    let min_f = b_size.div_ceil(a_size);
+    if min_f > outer_width {
+        return None;
+    }
+    (min_f..=outer_width).find(|&f| outer_width % f == 0)
+}
+
+/// Compute `num_digits_outer` so the balanced gadget of basis
+/// `b = 2^outer_log_basis` covers the full centered range `[-q/2, q/2)` for a
+/// `field_bits`-bit modulus.
+///
+/// Closed form `delta = ceil((field_bits + 2) / outer_log_basis)`
+/// over-provisions by at most one digit and matches the bench's manually
+/// tuned `(lb=2, delta=65)` choice for `Q128`.
+#[inline]
+pub fn dynamic_tier_num_digits_outer(field_bits: u32, outer_log_basis: u32) -> usize {
+    let numerator = (field_bits as usize) + 2;
+    numerator.div_ceil(outer_log_basis as usize)
+}
+
+/// Layer dynamic tier metadata onto a fully-laid-out *legacy* root
+/// `LevelParams` and return the corresponding tiered `LevelParams`.
+///
+/// Expects `legacy_lp` to be the unchunked root layout: `b_key.col_len` must
+/// equal the full outer width and `b_key.row_len` must equal the legacy SIS
+/// rank for that width. The function then:
+///
+/// 1. Computes `split_factor` via [`dynamic_tier_split_factor`].
+/// 2. If `split_factor == 1` (no tiering), returns a clone of the input with
+///    its tier fields cleared (`split_factor = 1`, empty `f_key`, etc.).
+/// 3. Otherwise re-derives `n_b' = tiered_b_prime_rank`,
+///    `n_F = tiered_f_rank`, `num_digits_outer = dynamic_tier_num_digits_outer`,
+///    and constructs a `b_key` with `col_len = outer_width / split_factor`
+///    plus a populated `f_key`.
+///
+/// # Errors
+///
+/// Returns an error if no valid divisor of `outer_width` in
+/// `[ceil(|B|/|A|), outer_width]` exists, or if the SIS floor tables don't
+/// cover the requested `(family, D, collision, width)` tuples.
+pub fn apply_dynamic_tier(
+    legacy_lp: &LevelParams,
+    field_bits: u32,
+) -> Result<LevelParams, AkitaError> {
+    let n_a = legacy_lp.a_key.row_len() as u32;
+    let n_b_legacy = legacy_lp.b_key.row_len() as u32;
+    let inner_width = legacy_lp.inner_width();
+    let outer_width = legacy_lp.full_outer_width();
+
+    let split_factor = dynamic_tier_split_factor(n_a, n_b_legacy, inner_width, outer_width)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "apply_dynamic_tier: no valid split for outer_width={outer_width}, \
+                 n_a={n_a}, n_b={n_b_legacy}, inner_width={inner_width}"
+            ))
+        })?;
+    if split_factor == 1 {
+        // No tiering needed at this shape. Return the LP with cleared tier
+        // fields so downstream consumers see a clean legacy LP.
+        return Ok(LevelParams {
+            split_factor: 1,
+            outer_log_basis: 0,
+            num_digits_outer: 0,
+            f_key: AjtaiKeyParams::new_unchecked(
+                legacy_lp.b_key.sis_family(),
+                0,
+                0,
+                0,
+                legacy_lp.ring_dimension,
+            ),
+            ..legacy_lp.clone()
+        });
+    }
+
+    let family = legacy_lp.b_key.sis_family();
+    let d = legacy_lp.ring_dimension;
+    let outer_log_basis = legacy_lp.log_basis;
+    let num_digits_outer = dynamic_tier_num_digits_outer(field_bits, outer_log_basis);
+    let chunk_width = outer_width / split_factor;
+    let t_inf_bound = legacy_lp.b_key.collision_inf();
+
+    let n_b_prime = tiered_b_prime_rank(family, d as u32, t_inf_bound, outer_width, split_factor)?;
+    let n_f = tiered_f_rank(
+        family,
+        d as u32,
+        outer_log_basis,
+        n_b_prime,
+        split_factor,
+        num_digits_outer,
+    )?;
+    let f_width = (n_b_prime as usize)
+        .checked_mul(split_factor)
+        .and_then(|w| w.checked_mul(num_digits_outer))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("apply_dynamic_tier F width overflow".to_string())
+        })?;
+    let f_collision = balanced_digit_delta_bound(outer_log_basis);
+    let tiered_b_key =
+        AjtaiKeyParams::new_unchecked(family, n_b_prime as usize, chunk_width, t_inf_bound, d);
+    let f_key = AjtaiKeyParams::new_unchecked(family, n_f as usize, f_width, f_collision, d);
+
+    Ok(LevelParams {
+        split_factor,
+        outer_log_basis,
+        num_digits_outer,
+        f_key,
+        b_key: tiered_b_key,
+        ..legacy_lp.clone()
+    })
+}
+
 /// Compute `(depth_commit, depth_open)` for one decomposition.
 pub fn decomp_depths(decomp: DecompositionParams) -> (usize, usize) {
     let field_bits = decomp.field_bits();

@@ -28,7 +28,8 @@ pub use instance_descriptor::{
     SetupArtifactDigests, SetupSection,
 };
 pub use layout::{
-    basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
+    apply_dynamic_tier, basis_weights, decomp_depths, derived_root_commitment_layout_from_params,
+    direct_witness_bytes, dynamic_tier_num_digits_outer, dynamic_tier_split_factor,
     extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
     level_layout_from_params, level_proof_bytes, monomial_weights, packed_digits_bytes,
     planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,

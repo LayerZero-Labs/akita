@@ -20,7 +20,8 @@ pub use proof_size::{
     root_extension_opening_partials, sumcheck_rounds, terminal_level_proof_bytes,
 };
 pub use sis_derivation::{
-    decomp_depths, derived_root_commitment_layout_from_params, level_layout_from_params,
+    apply_dynamic_tier, decomp_depths, derived_root_commitment_layout_from_params,
+    dynamic_tier_num_digits_outer, dynamic_tier_split_factor, level_layout_from_params,
     recursive_level_decomposition_from_root, recursive_level_layout_from_params,
     sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
     sis_secure_level_params, SisRoleWidths,

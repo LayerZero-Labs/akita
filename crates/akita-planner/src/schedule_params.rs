@@ -663,25 +663,19 @@ where
             continue;
         };
 
-        // Tiered root sizing: B' commits a contiguous slice of width
-        // `chunk_width = full_outer_width / split_factor` (one of
-        // `split_factor` slices of t̂). Legacy roots (split_factor <= 1)
-        // commit the full outer width, so `b_input_width == outer_width`.
-        let split_factor = root_lp.split_factor.max(1);
-        if split_factor > 1 && outer_width % split_factor != 0 {
-            // Cannot evenly split this (m, r) candidate into `split_factor`
-            // chunks. The planner only emits dimensionally-consistent tiered
-            // candidates; an alternative would be to relax to per-chunk
-            // widths that differ by ±1, but the current `tiered_commit`
-            // kernel assumes uniform chunks.
-            continue;
-        }
-        let b_input_width = if split_factor > 1 {
-            outer_width / split_factor
-        } else {
-            outer_width
-        };
-
+        // Per-(m, r) candidate construction.
+        //
+        // For a "fast-verify" Cfg the planner picks the tier split
+        // dynamically per candidate: build the legacy unchunked LP for
+        // the candidate first, then call `apply_dynamic_tier` to layer
+        // tier metadata on top (or return the LP unchanged if
+        // `|B| <= |A|` already). The fast-verify mode marker is
+        // `root_lp.split_factor > 1`, set by the Cfg's
+        // `planner_root_level_layout_with_log_basis`.
+        //
+        // For a legacy Cfg this collapses to the historical behaviour:
+        // a legacy LP with `b_key.col_len = outer_width` and
+        // `split_factor = 1`.
         let d = root_lp.ring_dimension;
         let Ok(a_key) = AjtaiKeyParams::try_new(
             Cfg::planner_sis_modulus_family(),
@@ -692,10 +686,31 @@ where
         ) else {
             continue;
         };
-        let Ok(b_key) = AjtaiKeyParams::try_new(
+        // Recover the legacy (unchunked) `n_b` for this candidate's
+        // `outer_width`. For a legacy Cfg `root_lp.b_key.row_len()`
+        // already IS the legacy `n_b` (and equals what we'd get from
+        // the SIS table at `outer_width`); for a fast-verify Cfg
+        // `root_lp.b_key.row_len()` is `n_b'` (post-split), so we
+        // re-derive the legacy rank for this candidate's
+        // `outer_width` directly.
+        let legacy_n_b = if root_lp.split_factor > 1 {
+            match akita_types::layout::sis_derivation::tiered_b_prime_rank(
+                Cfg::planner_sis_modulus_family(),
+                d as u32,
+                root_lp.b_key.collision_inf(),
+                outer_width,
+                1,
+            ) {
+                Ok(rank) => rank as usize,
+                Err(_) => continue,
+            }
+        } else {
+            root_lp.b_key.row_len()
+        };
+        let Ok(legacy_b_key) = AjtaiKeyParams::try_new(
             Cfg::planner_sis_modulus_family(),
-            root_lp.b_key.row_len(),
-            b_input_width,
+            legacy_n_b,
+            outer_width,
             root_lp.b_key.collision_inf(),
             d,
         ) else {
@@ -711,11 +726,11 @@ where
             continue;
         };
 
-        let candidate_lp = LevelParams {
+        let legacy_candidate_lp = LevelParams {
             ring_dimension: d,
             log_basis: root_lp.log_basis,
             a_key,
-            b_key,
+            b_key: legacy_b_key,
             d_key,
             num_blocks,
             block_len,
@@ -725,14 +740,26 @@ where
             num_digits_commit: root_lp.num_digits_commit,
             num_digits_open: root_lp.num_digits_open,
             num_digits_fold: per_poly_fold,
-            // Recursive-suffix candidate: inherit the root's tiering
-            // configuration so that the schedule cache key encodes a
-            // consistent (split_factor, outer_log_basis, ...) tuple even
-            // when subsequent fold levels are not tiered themselves.
-            split_factor: root_lp.split_factor.max(1),
-            outer_log_basis: root_lp.outer_log_basis,
-            num_digits_outer: root_lp.num_digits_outer,
-            f_key: root_lp.f_key.clone(),
+            // Construct as legacy first; tiering is applied below in
+            // fast-verify mode.
+            split_factor: 1,
+            outer_log_basis: 0,
+            num_digits_outer: 0,
+            f_key: AjtaiKeyParams::new_unchecked(Cfg::planner_sis_modulus_family(), 0, 0, 0, d),
+        };
+
+        // Fast-verify mode: layer dynamic tier metadata on top of the
+        // legacy candidate. `apply_dynamic_tier` may return
+        // `split_factor = 1` (no tiering needed for this shape) or
+        // error out if no valid divisor exists; the latter is treated
+        // as "skip this candidate".
+        let candidate_lp = if root_lp.split_factor > 1 {
+            match akita_types::apply_dynamic_tier(&legacy_candidate_lp, Cfg::planner_field_bits()) {
+                Ok(tiered) => tiered,
+                Err(_) => continue,
+            }
+        } else {
+            legacy_candidate_lp
         };
 
         let Ok((level_lp, proof_lp)) =
