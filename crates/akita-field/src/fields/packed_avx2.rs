@@ -235,11 +235,27 @@ impl<const P: u32> PackedFp32Avx2<P> {
     /// 4-way fused multiply-accumulate with a single end-reduction.
     /// Computes `sum_i a[i] * b[i]` lane-wise and canonicalizes. The key
     /// fused operation for `RingSubfieldFp4` and power-basis Fp4 multiply.
-    /// Mirrors `PackedFp32Neon::dot_product_4_vec`.
+    /// Mirrors `PackedFp32Neon::dot_product_4_vec`, including the
+    /// `BITS <= 31` carry-free fast path: four `(2^31 - 1)^2` products sum
+    /// to less than `2^64`, so partial sums never overflow a `u64` lane
+    /// and we can drop the `add_u64_with_carry` chain plus the trailing
+    /// `carry_correction`. The `if Self::BITS <= 31` is a const condition
+    /// and dead-code-eliminated at compile time.
     #[inline(always)]
     unsafe fn dot_product_4_vec(a: [__m256i; 4], b: [__m256i; 4]) -> __m256i {
         let mut sum_evn = _mm256_mul_epu32(a[0], b[0]);
         let mut sum_odd = _mm256_mul_epu32(movehdup_epi32(a[0]), movehdup_epi32(b[0]));
+
+        if Self::BITS <= 31 {
+            for i in 1..4 {
+                let prod_evn = _mm256_mul_epu32(a[i], b[i]);
+                let prod_odd = _mm256_mul_epu32(movehdup_epi32(a[i]), movehdup_epi32(b[i]));
+                sum_evn = _mm256_add_epi64(sum_evn, prod_evn);
+                sum_odd = _mm256_add_epi64(sum_odd, prod_odd);
+            }
+            return Self::solinas_reduce(sum_evn, sum_odd);
+        }
+
         let mut carry_evn = _mm256_setzero_si256();
         let mut carry_odd = _mm256_setzero_si256();
 
