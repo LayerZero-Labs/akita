@@ -35,11 +35,7 @@ impl<F: FieldCore> FlatMatrix<F> {
     /// Total number of ring elements at the generation dimension.
     #[inline]
     pub fn total_ring_elements(&self) -> usize {
-        if self.gen_ring_dim == 0 {
-            0
-        } else {
-            self.data.len() / self.gen_ring_dim
-        }
+        self.data.len().checked_div(self.gen_ring_dim).unwrap_or(0)
     }
 
     /// Ring dimension used during generation.

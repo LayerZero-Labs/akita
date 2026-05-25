@@ -409,11 +409,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// Returns 0 when `ring_dim` is unknown (compact mode).
     pub fn count(&self) -> usize {
-        if self.ring_dim == 0 {
-            0
-        } else {
-            self.coeffs.len() / self.ring_dim
-        }
+        self.coeffs.len().checked_div(self.ring_dim).unwrap_or(0)
     }
 
     /// Raw coefficient slice.
@@ -429,12 +425,15 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// Whether these coefficients can be decoded as a single ring element of
     /// dimension `d`.
     pub fn can_decode_single(&self, d: usize) -> bool {
-        self.coeffs.len() == d
+        d != 0 && self.coeffs.len() == d
     }
 
     /// Whether these coefficients can be decoded as a vector of ring elements
     /// of dimension `d`.
     pub fn can_decode_vec(&self, d: usize) -> bool {
+        if d == 0 {
+            return false;
+        }
         self.coeffs.len().is_multiple_of(d)
     }
 
@@ -471,7 +470,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// Returns [`AkitaError::InvalidProof`] if the stored ring dimension or
     /// element count does not match `D`.
     pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, AkitaError> {
-        if (self.ring_dim > 0 && self.ring_dim != D) || self.coeffs.len() != D {
+        if D == 0 || (self.ring_dim > 0 && self.ring_dim != D) || self.coeffs.len() != D {
             return Err(AkitaError::InvalidProof);
         }
         Ok(CyclotomicRing::from_slice(&self.coeffs))
@@ -505,7 +504,10 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// Returns [`AkitaError::InvalidProof`] if the stored ring dimension does
     /// not match `D` or the coefficient buffer is not an exact multiple of `D`.
     pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        if (self.ring_dim > 0 && self.ring_dim != D) || !self.coeffs.len().is_multiple_of(D) {
+        if D == 0
+            || (self.ring_dim > 0 && self.ring_dim != D)
+            || !self.coeffs.len().is_multiple_of(D)
+        {
             return Err(AkitaError::InvalidProof);
         }
         Ok(self
@@ -522,7 +524,10 @@ impl<F: FieldCore> FlatRingVec<F> {
     /// Returns [`AkitaError::InvalidProof`] if the stored ring data is not
     /// well-formed for ring dimension `D`.
     pub fn as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        if (self.ring_dim > 0 && self.ring_dim != D) || !self.coeffs.len().is_multiple_of(D) {
+        if D == 0
+            || (self.ring_dim > 0 && self.ring_dim != D)
+            || !self.coeffs.len().is_multiple_of(D)
+        {
             return Err(AkitaError::InvalidProof);
         }
         let ring_count = self.coeffs.len() / D;
@@ -3477,6 +3482,18 @@ mod tests {
             err,
             SerializationError::LengthLimitExceeded { .. }
         ));
+    }
+
+    #[test]
+    fn flat_ring_vec_checked_decoders_reject_zero_dimension() {
+        let flat = FlatRingVec::<Prime128Offset275>::from_coeffs(vec![]);
+
+        assert!(!flat.can_decode_single(0));
+        assert!(!flat.can_decode_vec(0));
+        assert!(flat.try_to_single::<0>().is_err());
+        assert!(flat.try_to_vec::<0>().is_err());
+        assert!(flat.as_ring_slice::<0>().is_err());
+        assert!(flat.try_to_ring_commitment::<0>().is_err());
     }
 
     #[test]

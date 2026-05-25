@@ -194,7 +194,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
                 "extension-opening tensor split exceeds polynomial arity".to_string(),
             ));
         }
-        if width > D || D % width != 0 {
+        if width > D || !D.is_multiple_of(width) {
             return Err(AkitaError::InvalidInput(format!(
                 "extension degree {width} does not evenly pack into dense ring degree {D}"
             )));

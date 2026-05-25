@@ -19,7 +19,7 @@
 // verified with lattice-estimator.
 
 /// SIS modulus family used to select generated security floors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SisModulusFamily {
     /// Representative q = 2^16 - 99.
     Q16,
@@ -28,13 +28,8 @@ pub enum SisModulusFamily {
     /// Representative q = 2^64 - 59.
     Q64,
     /// Representative q = 2^128 - (2^32 - 22537).
+    #[default]
     Q128,
-}
-
-impl Default for SisModulusFamily {
-    fn default() -> Self {
-        Self::Q128
-    }
 }
 
 pub fn sis_max_widths(

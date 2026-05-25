@@ -145,10 +145,7 @@ fn build_product_stage_layers<E: FieldCore>(
         let mut child_tables_by_parent = Vec::with_capacity(current_nodes.len() / arity);
         let mut current_iter = current_nodes.into_iter();
 
-        loop {
-            let Some(first_child) = current_iter.next() else {
-                break;
-            };
+        while let Some(first_child) = current_iter.next() {
             let mut child_tables = Vec::with_capacity(arity);
             child_tables.push(first_child);
             for _ in 1..arity {

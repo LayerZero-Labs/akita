@@ -10,7 +10,7 @@ fn is_probable_prime_miller_rabin(n: u128) -> bool {
     if n < 2 {
         return false;
     }
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         return n == 2;
     }
 
@@ -19,7 +19,7 @@ fn is_probable_prime_miller_rabin(n: u128) -> bool {
         if n == p {
             return true;
         }
-        if n % p == 0 {
+        if n.is_multiple_of(p) {
             return false;
         }
     }
@@ -51,7 +51,7 @@ fn is_probable_prime_miller_rabin(n: u128) -> bool {
 
 fn decompose_pow2(mut d: u128) -> (u128, u32) {
     let mut s = 0u32;
-    while d % 2 == 0 {
+    while d.is_multiple_of(2) {
         d >>= 1;
         s += 1;
     }
