@@ -59,6 +59,20 @@ pub(crate) fn proof_optimized_schedule_plan<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
+    proof_optimized_schedule_plan_with_envelope::<Cfg>(key, Cfg::envelope(key.num_vars))
+}
+
+/// `proof_optimized_schedule_plan` variant that takes a precomputed
+/// `envelope` so callers in tight loops over `(num_polys, num_points)`
+/// at a fixed `num_vars` can skip the per-call table scan inside
+/// `Cfg::envelope`.
+pub(crate) fn proof_optimized_schedule_plan_with_envelope<Cfg>(
+    key: AkitaScheduleLookupKey,
+    envelope: CommitmentEnvelope,
+) -> Result<Option<AkitaSchedulePlan>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+{
     let Some(table) = Cfg::schedule_table() else {
         return Ok(None);
     };
@@ -73,7 +87,7 @@ where
             recursive_public_rows: 1,
             extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
             stage1_challenge_config: Cfg::stage1_challenge_config,
-            envelope: Cfg::envelope(key.num_vars),
+            envelope,
             ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         },
     )
@@ -181,12 +195,17 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     let mut max_stride: usize = 1;
     let mut saw_supported_shape = false;
     for num_vars in 1..=max_num_vars {
+        // Envelope only depends on `num_vars`, so compute it once per
+        // outer iteration instead of repeating the table scan inside
+        // `Cfg::envelope` for every `(num_polys, num_points)`.
+        let envelope = Cfg::envelope(num_vars);
         for num_polys in 1..=max_num_batched_polys {
             let upper_pts = num_polys.min(max_num_points);
             for num_points in 1..=upper_pts {
                 let incidence =
                     ClaimIncidenceSummary::from_counts(num_vars, num_polys, num_points)?;
-                let Some((rows, stride)) = setup_matrix_envelope_for_shape::<Cfg>(&incidence)?
+                let Some((rows, stride)) =
+                    setup_matrix_envelope_for_shape::<Cfg>(&incidence, envelope)?
                 else {
                     continue;
                 };
@@ -208,12 +227,17 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     incidence: &ClaimIncidenceSummary,
+    envelope: CommitmentEnvelope,
 ) -> Result<Option<(usize, usize)>, AkitaError> {
     let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
 
     // Table-only: configs that want a runtime DP fallback override the
     // `max_setup_matrix_size` trait method directly (see `PlannerCfg`).
-    let Some(plan) = Cfg::schedule_plan(cached_key)? else {
+    // The caller hoisted `envelope` out of the (num_polys, num_points)
+    // loop so we skip the table scan that `Cfg::envelope` does on every
+    // call.
+    let Some(plan) = proof_optimized_schedule_plan_with_envelope::<Cfg>(cached_key, envelope)?
+    else {
         return Ok(None);
     };
     let setup_levels = setup_level_params_from_plan(&plan);
@@ -566,9 +590,11 @@ mod tests {
     fn setup_matrix_envelope_covers_grouped_batch_schedules() {
         let incidence =
             ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
-        let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence)
-            .unwrap()
-            .expect("D32 full table must contain the grouped same-point schedule");
+        let envelope = <fp128::D32Full as CommitmentConfig>::envelope(incidence.num_vars());
+        let grouped_same_point =
+            setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence, envelope)
+                .unwrap()
+                .expect("D32 full table must contain the grouped same-point schedule");
 
         let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
             .expect("setup envelope should cover generated grouped batch schedules");
