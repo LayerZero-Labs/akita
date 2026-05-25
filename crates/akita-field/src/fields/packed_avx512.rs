@@ -3,11 +3,6 @@
 //! Requires AVX-512F + AVX-512DQ. Uses native unsigned comparisons and mask
 //! registers for branchless conditionals.
 
-// The `suspicious_arithmetic_impl` allow covers the mask-or expression used
-// inside the 128-bit `Sub` impl for `PackedFp128Avx512`, which is correct
-// 128-bit subtraction wiring rather than an arithmetic bug.
-#![allow(clippy::suspicious_arithmetic_impl)]
-
 use super::packed::{PackedField, PackedValue};
 use crate::fields::ext::{Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config};
 use crate::fields::{Fp128, Fp32, Fp64};
@@ -1158,22 +1153,6 @@ impl<const P: u64> PackedField for PackedFp64Avx512<P> {
     fn broadcast(value: Self::Scalar) -> Self {
         Self([value; FP64_WIDTH])
     }
-
-    /// Override of the default `fp2_mul` to force inlining of the underlying
-    /// 8-lane `__m512i` add/mul. Mirrors `PackedFp64Neon::fp2_mul`.
-    #[inline(always)]
-    fn fp2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
-    where
-        C: Fp2Config<Self::Scalar>,
-    {
-        let v0 = a0 * b0;
-        let v1 = a1 * b1;
-        let cross = (a0 + a1) * (b0 + b1);
-        (
-            v0 + C::mul_non_residue(v1, Self::broadcast),
-            cross - v0 - v1,
-        )
-    }
 }
 
 /// Number of `Fp128` lanes in an AVX-512 packed vector.
@@ -1266,6 +1245,9 @@ impl<const P: u128> Add for PackedFp128Avx512<P> {
 
 impl<const P: u128> Sub for PackedFp128Avx512<P> {
     type Output = Self;
+    // `bw1 | bw2` below is correct 128-bit borrow wiring (mask OR), not an
+    // arithmetic bug; suppress the lint locally rather than module-wide.
+    #[allow(clippy::suspicious_arithmetic_impl)]
     #[inline]
     fn sub(self, rhs: Self) -> Self {
         unsafe {

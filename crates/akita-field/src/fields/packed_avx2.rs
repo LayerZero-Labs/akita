@@ -1190,22 +1190,6 @@ impl<const P: u64> PackedField for PackedFp64Avx2<P> {
     fn broadcast(value: Self::Scalar) -> Self {
         Self([value; FP64_WIDTH])
     }
-
-    /// Override of the default `fp2_mul` to force inlining of the underlying
-    /// 4-lane `__m256i` add/mul. Mirrors `PackedFp64Neon::fp2_mul`.
-    #[inline(always)]
-    fn fp2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
-    where
-        C: Fp2Config<Self::Scalar>,
-    {
-        let v0 = a0 * b0;
-        let v1 = a1 * b1;
-        let cross = (a0 + a1) * (b0 + b1);
-        (
-            v0 + C::mul_non_residue(v1, Self::broadcast),
-            cross - v0 - v1,
-        )
-    }
 }
 
 /// Number of `Fp128` lanes in an AVX2 packed vector.

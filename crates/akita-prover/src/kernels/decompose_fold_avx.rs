@@ -63,6 +63,10 @@ pub(crate) unsafe fn sparse_mul_acc_avx(
 
 /// `acc[i+p] += digits[i]` for `i in [0, split)`,
 /// `acc[i-split] -= digits[i]` for `i in [split, D)` (negacyclic wrap).
+//
+// `d` is unused here (the segment lengths `split` and `p` already cover the
+// whole `[0, D)` range), but the parameter is kept for API symmetry with the
+// NEON kernel in [`super::decompose_fold_neon`].
 #[inline(always)]
 unsafe fn acc_rotated_add(digits: *const i8, acc: *mut i32, d: usize, p: usize, split: usize) {
     acc_segment_add(digits, acc.add(p), split);
@@ -74,6 +78,8 @@ unsafe fn acc_rotated_add(digits: *const i8, acc: *mut i32, d: usize, p: usize, 
 
 /// `acc[i+p] -= digits[i]` for `i in [0, split)`,
 /// `acc[i-split] += digits[i]` for `i in [split, D)` (negacyclic wrap).
+//
+// `d` is unused; see `acc_rotated_add` for the NEON-parity rationale.
 #[inline(always)]
 unsafe fn acc_rotated_sub(digits: *const i8, acc: *mut i32, d: usize, p: usize, split: usize) {
     acc_segment_sub(digits, acc.add(p), split);

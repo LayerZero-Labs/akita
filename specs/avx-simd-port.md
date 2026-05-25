@@ -76,7 +76,7 @@ runtime dispatch, no new public API).
    `crates/akita-field/src/fields/packed.rs` and on the
    `decompose_fold_avx` module in
    `crates/akita-prover/src/kernels/mod.rs`. Precedence: AVX-512
-   (F + DQ + BW) > AVX2 > NEON on aarch64 > scalar.
+   (F + DQ) > AVX2 > NEON on aarch64 > scalar.
 5. **`AKITA_SCALAR_NTT=1` kill switch applies uniformly.** Same env
    var name, read by `akita_algebra::ntt::neon::use_neon_ntt` on
    aarch64 and by `poly_helpers::use_simd_decompose_fold` on x86 —
@@ -167,7 +167,7 @@ runtime dispatch, no new public API).
 - [x] **Build hygiene:** `cargo fmt --all --check` clean;
       `cargo clippy --workspace --all-targets -- -D warnings` clean
       on aarch64 stable 1.95, x86 AVX2 stable 1.95, and x86 AVX-512
-      (`target-cpu=native` on a host with `avx512{f,dq,bw}`).
+      (`target-cpu=native` on a host with `avx512{f,dq}`).
 - [x] **Tests:** `cargo test` clean on aarch64; 28 `packed_ext`
       tests, 12 NEON NTT parity tests (in `ntt::neon::tests`), 3 new
       `sparse_mul_acc_simd` `decompose-fold` parity tests.
@@ -239,7 +239,7 @@ Three build flavors:
 | ---------- | --------------------------------------------------- | -------------- |
 | `baseline` | (none)                                              | scalar `NoPacking` (`_w1` witness) |
 | `avx2`     | `-C target-cpu=x86-64-v3`                           | `packed_avx2` (`_w8`) |
-| `avx512`   | `-C target-cpu=native` (+`avx512{f,dq,bw}` on Zen 5)| `packed_avx512` (`_w16`) |
+| `avx512`   | `-C target-cpu=native` (+`avx512{f,dq}` on Zen 5)   | `packed_avx512` (`_w16`) |
 
 The `_wN` suffix is baked into Criterion bench names from
 `<F as HasPacking>::Packing::WIDTH`, so it's an unforgeable witness
@@ -298,7 +298,7 @@ PR's content.
 
 Backend selection mirrors the existing pattern in
 [`crates/akita-field/src/fields/packed.rs`](../crates/akita-field/src/fields/packed.rs):
-`packed_avx512` is gated on `target_feature = "avx512{f,dq,bw}"`,
+`packed_avx512` is gated on `target_feature = "avx512{f,dq}"`,
 `packed_avx2` on `target_feature = "avx2"`, and the cfg gates are
 mutually exclusive so exactly one packed backend is selected per build.
 The AVX2 `decompose-fold` kernel follows the same pattern in
