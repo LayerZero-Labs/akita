@@ -544,6 +544,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "cases": [],
     }
+    overall_return_code = 0
 
     for case in cases:
         case_dir = output_dir / case.case_id
@@ -554,20 +555,16 @@ def run_benchmark(args: argparse.Namespace) -> int:
             summary["run_index"] = run_index
             run_summaries.append(summary)
             if return_code != 0:
-                aggregate_summary["cases"].append(combine_case_run_summaries(run_summaries))
-                write_text(
-                    output_dir / "summary.json",
-                    json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n",
-                )
-                write_summary_csv(output_dir / "summary.csv", aggregate_summary["cases"])
-                return return_code
+                if overall_return_code == 0:
+                    overall_return_code = return_code
+                break
         aggregate_summary["cases"].append(combine_case_run_summaries(run_summaries))
 
     write_text(
         output_dir / "summary.json", json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n"
     )
     write_summary_csv(output_dir / "summary.csv", aggregate_summary["cases"])
-    return 0
+    return overall_return_code
 
 
 def load_summary(path: pathlib.Path) -> dict[str, object]:
