@@ -125,16 +125,16 @@ fn run_single_onehot_tensor(nv: usize) {
 }
 
 #[test]
-fn single_onehot_tensor_nv10() {
+fn single_onehot_tensor_nv15() {
     run_single_onehot_tensor(15);
 }
 
 #[test]
-fn single_onehot_tensor_nv15() {
+fn single_onehot_tensor_nv20() {
     run_single_onehot_tensor(20);
 }
 
 #[test]
-fn single_onehot_tensor_nv20() {
+fn single_onehot_tensor_nv22() {
     run_single_onehot_tensor(22);
 }
