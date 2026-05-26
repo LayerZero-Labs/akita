@@ -607,6 +607,10 @@ fn run_zk_dense_cursor_binding_negatives() {
             !decoded.zk_hiding.hiding_witness.is_empty(),
             "fixture should carry consumed ZK hiding witness slots"
         );
+        assert!(
+            !decoded.zk_hiding.b_blinding_digits.is_empty(),
+            "fixture should carry revealed ZK hiding commitment blinding digits"
+        );
 
         let assert_rejects = |case: &str, tamper: &dyn Fn(&mut AkitaBatchedProof<F, F>)| {
             let mut tampered = decoded.clone();
@@ -627,6 +631,10 @@ fn run_zk_dense_cursor_binding_negatives() {
 
         assert_rejects("u_blind", &|proof| {
             proof.zk_hiding.u_blind[0] += F::one();
+        });
+        assert_rejects("b_blinding_digits", &|proof| {
+            proof.zk_hiding.b_blinding_digits[0] =
+                proof.zk_hiding.b_blinding_digits[0].wrapping_add(1);
         });
         assert_rejects("first consumed hiding_witness slot", &|proof| {
             proof.zk_hiding.hiding_witness[0] += F::one();

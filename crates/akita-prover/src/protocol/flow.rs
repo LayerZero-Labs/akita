@@ -1903,7 +1903,7 @@ where
         Cfg::decomposition(),
     )?;
     let w_view = current_w.view::<F, D>()?;
-    let logical_w = current_state.logical_w().clone();
+    let logical_w = current_state.logical_w.as_ref().unwrap_or(current_w);
     let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
     drop(_setup_span);
 
@@ -1912,7 +1912,7 @@ where
         ntt_shared,
         transcript,
         &w_view,
-        &logical_w,
+        logical_w,
         &current_state.sumcheck_challenges,
         current_state.opening,
         typed_hint,
@@ -1982,7 +1982,7 @@ where
         Cfg::decomposition(),
     )?;
     let w_view = current_w.view::<F, D>()?;
-    let logical_w = current_state.logical_w().clone();
+    let logical_w = current_state.logical_w.as_ref().unwrap_or(current_w);
     let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
     drop(_setup_span);
 
@@ -1991,7 +1991,7 @@ where
         ntt_shared,
         transcript,
         &w_view,
-        &logical_w,
+        logical_w,
         &current_state.sumcheck_challenges,
         current_state.opening,
         typed_hint,
