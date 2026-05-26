@@ -249,7 +249,6 @@ jobs:
         run: |
           python3 - <<'PY'
           import json
-          import importlib.util
           import os
           import pathlib
           import sys
@@ -257,13 +256,6 @@ jobs:
           current_path = pathlib.Path(os.environ["AKITA_BENCH_ARTIFACT_DIR"]) / "summary.json"
           baseline_path = pathlib.Path(os.environ["AKITA_BENCH_MAIN_BASELINE_DIR"]) / "summary.json"
           threshold = float(os.environ["AKITA_BENCH_MAX_PROOF_SIZE_REGRESSION"])
-          report_spec = importlib.util.spec_from_file_location(
-              "profile_bench_report",
-              pathlib.Path("scripts/profile_bench_report.py"),
-          )
-          profile_bench_report = importlib.util.module_from_spec(report_spec)
-          sys.modules[report_spec.name] = profile_bench_report
-          report_spec.loader.exec_module(profile_bench_report)
 
           if not current_path.exists() or not baseline_path.exists():
               print("Benchmark summary or baseline missing; skipping proof-size threshold.")
@@ -272,13 +264,8 @@ jobs:
           def cases_by_id(summary):
               cases = summary.get("cases")
               if isinstance(cases, list):
-                  return {
-                      str(profile_bench_report.normalize_case_summary(case)["case_id"]): case
-                      for case in cases
-                  }
-              return {
-                  str(profile_bench_report.normalize_case_summary(summary)["case_id"]): summary
-              }
+                  return {str(case.get("case_id")): case for case in cases}
+              return {str(summary.get("case_id")): summary}
 
           current = cases_by_id(json.loads(current_path.read_text()))
           baseline = cases_by_id(json.loads(baseline_path.read_text()))

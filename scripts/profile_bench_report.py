@@ -599,11 +599,7 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
     num_polys = int(normalized.get("num_polys", 1))
     metadata = case_metadata(mode)
     normalized["num_polys"] = num_polys
-    normalized_case_id = case_id(mode, num_vars, num_polys)
-    existing_case_id = normalized.get("case_id")
-    if existing_case_id is not None and str(existing_case_id) != normalized_case_id:
-        normalized.setdefault("legacy_case_id", str(existing_case_id))
-    normalized["case_id"] = normalized_case_id
+    normalized["case_id"] = str(normalized.get("case_id", case_id(mode, num_vars, num_polys)))
     normalized["benchmark"] = benchmark_name(mode, num_vars, num_polys)
     normalized["field_family"] = str(normalized.get("field_family", metadata.field_family))
     normalized["workload"] = str(normalized.get("workload", metadata.workload))
@@ -687,7 +683,7 @@ def fmt_count(value: float) -> str:
 
 
 def case_status(summary: dict[str, object]) -> str:
-    return "ok" if int(summary.get("exit_code", 1)) == 0 else "fail"
+    return "ok" if int(summary.get("exit_code", 0)) == 0 else "fail"
 
 
 def section_title(summary: dict[str, object]) -> str:
