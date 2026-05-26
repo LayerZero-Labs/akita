@@ -7,7 +7,8 @@
 
 use crate::fields::ext::{
     Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
-    RingSubfieldFp4MulBackend, TowerBasisFp4, TowerBasisFp4Config,
+    RingSubfieldFp4MulBackend, RingSubfieldFp8, RingSubfieldFp8MulBackend, TowerBasisFp4,
+    TowerBasisFp4Config,
 };
 use crate::fields::packed::{HasPacking, PackedField, PackedValue};
 use crate::{FieldCore, Invertible};
@@ -705,6 +706,165 @@ where
     type Packing = PackedRingSubfieldFp4<F, F::Packing>;
 }
 
+/// Packed `RingSubfieldFp8` elements stored in transpose layout: `[PF; 8]`.
+///
+/// Each `PF` lane contains one coefficient of a degree-8 Chebyshev-basis element.
+pub struct PackedRingSubfieldFp8<F: FieldCore, PF: PackedField<Scalar = F>> {
+    /// Packed coefficients in `[1, e1, ..., e7]` order.
+    pub coeffs: [PF; 8],
+    _marker: std::marker::PhantomData<fn() -> F>,
+}
+
+impl<F, PF> Clone for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F, PF> Copy for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+}
+
+impl<F, PF> std::fmt::Debug for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PackedRingSubfieldFp8")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<F, PF> PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    /// Create a packed value from packed ring-subfield coefficients.
+    #[inline]
+    pub fn new(coeffs: [PF; 8]) -> Self {
+        Self {
+            coeffs,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<F, PF> PackedValue for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore + Valid + 'static,
+    PF: PackedField<Scalar = F>,
+{
+    type Value = RingSubfieldFp8<F>;
+    const WIDTH: usize = PF::WIDTH;
+
+    fn from_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> Self::Value,
+    {
+        let mut coeffs: [Vec<F>; 8] = std::array::from_fn(|_| Vec::with_capacity(PF::WIDTH));
+        for i in 0..PF::WIDTH {
+            let val = f(i);
+            for (j, coeff) in val.coeffs.into_iter().enumerate() {
+                coeffs[j].push(coeff);
+            }
+        }
+        Self::new(std::array::from_fn(|j| PF::from_fn(|i| coeffs[j][i])))
+    }
+
+    fn extract(&self, lane: usize) -> Self::Value {
+        RingSubfieldFp8::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
+    }
+}
+
+impl<F, PF> Add for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    type Output = Self;
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] + rhs.coeffs[i]))
+    }
+}
+
+impl<F, PF> Sub for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    type Output = Self;
+    #[inline(always)]
+    fn sub(self, rhs: Self) -> Self {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] - rhs.coeffs[i]))
+    }
+}
+
+impl<F, PF> Mul for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    type Output = Self;
+    #[inline(always)]
+    fn mul(self, rhs: Self) -> Self {
+        Self::new(PF::ring_subfield_fp8_mul(self.coeffs, rhs.coeffs))
+    }
+}
+
+impl<F, PF> PackedField for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore + Valid + RingSubfieldFp8MulBackend + 'static,
+    PF: PackedField<Scalar = F>,
+{
+    type Scalar = RingSubfieldFp8<F>;
+
+    #[inline]
+    fn broadcast(value: Self::Scalar) -> Self {
+        Self::new(std::array::from_fn(|i| PF::broadcast(value.coeffs[i])))
+    }
+
+    #[inline(always)]
+    fn square(self) -> Self {
+        Self::new(PF::ring_subfield_fp8_square(self.coeffs))
+    }
+
+    #[inline(always)]
+    fn inverse(self) -> Option<Self>
+    where
+        Self::Scalar: Invertible,
+    {
+        // Fp8 inversion uses Gaussian elimination — delegate lane by lane.
+        let mut coeffs: [Vec<F>; 8] = std::array::from_fn(|_| Vec::with_capacity(PF::WIDTH));
+        for lane in 0..PF::WIDTH {
+            let scalar = self.extract(lane);
+            let inv = scalar.inverse()?;
+            for (j, c) in inv.coeffs.into_iter().enumerate() {
+                coeffs[j].push(c);
+            }
+        }
+        Some(Self::new(std::array::from_fn(|j| {
+            PF::from_fn(|i| coeffs[j][i])
+        })))
+    }
+}
+
+impl<F> HasPacking for RingSubfieldFp8<F>
+where
+    F: FieldCore + Valid + HasPacking + RingSubfieldFp8MulBackend + 'static,
+{
+    type Packing = PackedRingSubfieldFp8<F, F::Packing>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1232,5 +1392,176 @@ mod tests {
         let unpacked = PE2::unpack_slice(&packed);
 
         assert_eq!(elems, unpacked);
+    }
+
+    // ---- RingSubfieldFp8 packed tests ----
+
+    type R8Fp64 = RingSubfieldFp8<F>;
+    type PR8Fp64 = PackedRingSubfieldFp8<F, <F as HasPacking>::Packing>;
+
+    type R8Prime31 = RingSubfieldFp8<Prime31Offset19>;
+    type PR8Prime31 =
+        PackedRingSubfieldFp8<Prime31Offset19, <Prime31Offset19 as HasPacking>::Packing>;
+
+    type R8Prime32 = RingSubfieldFp8<Prime32Offset99>;
+    type PR8Prime32 =
+        PackedRingSubfieldFp8<Prime32Offset99, <Prime32Offset99 as HasPacking>::Packing>;
+
+    use crate::fields::ext::RingSubfieldFp8;
+    use crate::Prime16Offset99;
+    type R8Fp16 = RingSubfieldFp8<Prime16Offset99>;
+    type PR8Fp16 = PackedRingSubfieldFp8<Prime16Offset99, <Prime16Offset99 as HasPacking>::Packing>;
+
+    #[test]
+    fn packed_ring_subfield_fp8_mul_fp64() {
+        let mut rng = StdRng::seed_from_u64(500);
+        let width = <PR8Fp64 as PackedValue>::WIDTH;
+        let a_elems: Vec<R8Fp64> = (0..width).map(|_| R8Fp64::random(&mut rng)).collect();
+        let b_elems: Vec<R8Fp64> = (0..width).map(|_| R8Fp64::random(&mut rng)).collect();
+
+        let pa = PR8Fp64::from_fn(|i| a_elems[i]);
+        let pb = PR8Fp64::from_fn(|i| b_elems[i]);
+        let pc = pa * pb;
+
+        for i in 0..width {
+            assert_eq!(
+                pc.extract(i),
+                a_elems[i] * b_elems[i],
+                "packed RingSubfieldFp8<Fp64> mul mismatch at lane {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp8_mul_prime31() {
+        let mut rng = StdRng::seed_from_u64(501);
+        let width = <PR8Prime31 as PackedValue>::WIDTH;
+        let a_elems: Vec<R8Prime31> = (0..width).map(|_| R8Prime31::random(&mut rng)).collect();
+        let b_elems: Vec<R8Prime31> = (0..width).map(|_| R8Prime31::random(&mut rng)).collect();
+
+        let pa = PR8Prime31::from_fn(|i| a_elems[i]);
+        let pb = PR8Prime31::from_fn(|i| b_elems[i]);
+        let pc = pa * pb;
+
+        for i in 0..width {
+            assert_eq!(
+                pc.extract(i),
+                a_elems[i] * b_elems[i],
+                "packed RingSubfieldFp8<Prime31> mul mismatch at lane {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp8_mul_prime32() {
+        let mut rng = StdRng::seed_from_u64(502);
+        let width = <PR8Prime32 as PackedValue>::WIDTH;
+        let a_elems: Vec<R8Prime32> = (0..width).map(|_| R8Prime32::random(&mut rng)).collect();
+        let b_elems: Vec<R8Prime32> = (0..width).map(|_| R8Prime32::random(&mut rng)).collect();
+
+        let pa = PR8Prime32::from_fn(|i| a_elems[i]);
+        let pb = PR8Prime32::from_fn(|i| b_elems[i]);
+        let pc = pa * pb;
+
+        for i in 0..width {
+            assert_eq!(
+                pc.extract(i),
+                a_elems[i] * b_elems[i],
+                "packed RingSubfieldFp8<Prime32> mul mismatch at lane {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_fp16_basic_arithmetic() {
+        use crate::fields::packed::HasPacking;
+        type F16 = Prime16Offset99;
+        type PF16 = <F16 as HasPacking>::Packing;
+
+        let mut rng = StdRng::seed_from_u64(600);
+        let width = PF16::WIDTH;
+        let a_elems: Vec<F16> = (0..width).map(|_| F16::random(&mut rng)).collect();
+        let b_elems: Vec<F16> = (0..width).map(|_| F16::random(&mut rng)).collect();
+        let pa = PF16::from_fn(|i| a_elems[i]);
+        let pb = PF16::from_fn(|i| b_elems[i]);
+
+        let sum = pa + pb;
+        let diff = pa - pb;
+        let prod = pa * pb;
+
+        for i in 0..width {
+            assert_eq!(
+                sum.extract(i),
+                a_elems[i] + b_elems[i],
+                "add mismatch lane {i}"
+            );
+            assert_eq!(
+                diff.extract(i),
+                a_elems[i] - b_elems[i],
+                "sub mismatch lane {i}"
+            );
+            assert_eq!(
+                prod.extract(i),
+                a_elems[i] * b_elems[i],
+                "mul mismatch lane {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp8_mul_fp16() {
+        let mut rng = StdRng::seed_from_u64(503);
+        let width = <PR8Fp16 as PackedValue>::WIDTH;
+        let a_elems: Vec<R8Fp16> = (0..width).map(|_| R8Fp16::random(&mut rng)).collect();
+        let b_elems: Vec<R8Fp16> = (0..width).map(|_| R8Fp16::random(&mut rng)).collect();
+
+        let pa = PR8Fp16::from_fn(|i| a_elems[i]);
+        let pb = PR8Fp16::from_fn(|i| b_elems[i]);
+        let pc = pa * pb;
+
+        for i in 0..width {
+            assert_eq!(
+                pc.extract(i),
+                a_elems[i] * b_elems[i],
+                "packed RingSubfieldFp8<Fp16> mul mismatch at lane {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp8_square() {
+        let mut rng = StdRng::seed_from_u64(504);
+        let width = <PR8Prime31 as PackedValue>::WIDTH;
+        let a_elems: Vec<R8Prime31> = (0..width).map(|_| R8Prime31::random(&mut rng)).collect();
+
+        let pa = PR8Prime31::from_fn(|i| a_elems[i]);
+        let sq = pa.square();
+
+        for i in 0..width {
+            assert_eq!(
+                sq.extract(i),
+                a_elems[i].square(),
+                "packed RingSubfieldFp8 square mismatch at lane {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp8_broadcast() {
+        let val = R8Fp64::new([
+            F::from_u64(1),
+            F::from_u64(2),
+            F::from_u64(3),
+            F::from_u64(4),
+            F::from_u64(5),
+            F::from_u64(6),
+            F::from_u64(7),
+            F::from_u64(8),
+        ]);
+        let packed = PR8Fp64::broadcast(val);
+        let width = <PR8Fp64 as PackedValue>::WIDTH;
+        for i in 0..width {
+            assert_eq!(packed.extract(i), val);
+        }
     }
 }

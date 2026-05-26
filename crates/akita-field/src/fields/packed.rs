@@ -63,6 +63,17 @@ pub trait PackedValue: 'static + Copy + Send + Sync {
     }
 }
 
+#[inline(always)]
+fn ring_subfield_fp8_add_phi_packed<PF: PackedField>(out: &mut [PF; 8], idx: usize, value: PF) {
+    match idx {
+        0 => out[0] = out[0] + value + value,
+        1..=7 => out[idx] = out[idx] + value,
+        8 => {}
+        9..=15 => out[16 - idx] = out[16 - idx] - value,
+        _ => unreachable!(),
+    }
+}
+
 /// Packed arithmetic over a scalar field.
 pub trait PackedField:
     PackedValue<Value = Self::Scalar> + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self>
@@ -232,6 +243,81 @@ pub trait PackedField:
 
         Some([constant.0, e1_coeff.0 + e1_coeff.1, constant.1, e1_coeff.1])
     }
+
+    /// Backend hook for multiplying packed ring-subfield degree-8 elements.
+    #[inline(always)]
+    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        let diag: [Self; 8] = std::array::from_fn(|i| a[i] * b[i]);
+        let mut out = [Self::broadcast(Self::Scalar::zero()); 8];
+        out[0] = diag[0];
+
+        for k in 1..8 {
+            let mixed = (a[0] + a[k]) * (b[0] + b[k]) - diag[0] - diag[k];
+            out[k] = out[k] + mixed;
+        }
+
+        for (i, &diag_i) in diag.iter().enumerate().skip(1) {
+            out[0] = out[0] + diag_i + diag_i;
+            ring_subfield_fp8_add_phi_packed(&mut out, i + i, diag_i);
+        }
+
+        for i in 1..8usize {
+            for j in (i + 1)..8usize {
+                let mixed = (a[i] + a[j]) * (b[i] + b[j]) - diag[i] - diag[j];
+                ring_subfield_fp8_add_phi_packed(&mut out, i + j, mixed);
+                ring_subfield_fp8_add_phi_packed(&mut out, j - i, mixed);
+            }
+        }
+
+        out
+    }
+
+    /// Backend hook for squaring packed ring-subfield degree-8 elements.
+    ///
+    /// Exploits the identity `(a_i + a_j)² - a_i² - a_j² = 2·a_i·a_j` by
+    /// computing `a_i·a_j` directly and doubling, saving one add + two subs
+    /// per cross-term compared to the Karatsuba form used in `mul`.
+    #[inline(always)]
+    fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
+        let sq: [Self; 8] = std::array::from_fn(|i| a[i] * a[i]);
+        let mut out = [Self::broadcast(Self::Scalar::zero()); 8];
+        out[0] = sq[0];
+
+        for k in 1..8 {
+            let cross = a[0] * a[k];
+            out[k] = out[k] + cross + cross;
+        }
+
+        for (i, &sq_i) in sq.iter().enumerate().skip(1) {
+            out[0] = out[0] + sq_i + sq_i;
+            ring_subfield_fp8_add_phi_packed(&mut out, i + i, sq_i);
+        }
+
+        for i in 1..8usize {
+            for j in (i + 1)..8usize {
+                let cross = a[i] * a[j];
+                let doubled = cross + cross;
+                ring_subfield_fp8_add_phi_packed(&mut out, i + j, doubled);
+                ring_subfield_fp8_add_phi_packed(&mut out, j - i, doubled);
+            }
+        }
+
+        out
+    }
+
+    /// Backend hook for inverting packed ring-subfield degree-8 elements.
+    ///
+    /// Fp8 inversion uses Gaussian elimination in the scalar path, which
+    /// cannot be expressed generically over packed lanes. `PackedRingSubfieldFp8`
+    /// overrides `PackedField::inverse` with lane-by-lane scalar delegation.
+    #[inline(always)]
+    fn ring_subfield_fp8_inverse(a: [Self; 8]) -> Option<[Self; 8]>
+    where
+        Self::Scalar: Invertible,
+    {
+        let _ = a;
+        None
+    }
 }
 
 /// Scalar fallback packed type with one lane.
@@ -353,6 +439,11 @@ impl<const P: u128> HasPacking for Fp128<P> {
 }
 
 /// Selected packed backend for `Fp16`.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+pub type Fp16Packing<const P: u32> = super::packed_neon::PackedFp16Neon<P>;
+
+/// Scalar fallback packed backend for `Fp16` (non-NEON targets).
+#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
 pub type Fp16Packing<const P: u32> = NoPacking<Fp16<P>>;
 
 impl<const P: u32> HasPacking for Fp16<P> {

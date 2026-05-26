@@ -689,7 +689,56 @@ pub trait RingSubfieldFp8MulBackend: FieldCore {
     }
 }
 
-impl<const P: u32> RingSubfieldFp8MulBackend for Fp16<P> {}
+impl<const P: u32> RingSubfieldFp8MulBackend for Fp16<P> {
+    #[inline(always)]
+    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        let al: [u32; 8] = std::array::from_fn(|i| a[i].to_limbs() as u32);
+        let bl: [u32; 8] = std::array::from_fn(|i| b[i].to_limbs() as u32);
+
+        #[inline(always)]
+        fn add_phi(out: &mut [i64; 8], idx: usize, value: i64) {
+            match idx {
+                0 => out[0] += value + value,
+                1..=7 => out[idx] += value,
+                8 => {}
+                9..=15 => out[16 - idx] -= value,
+                _ => unreachable!(),
+            }
+        }
+
+        let diag: [i64; 8] = std::array::from_fn(|i| (al[i] as i64) * (bl[i] as i64));
+        let mut out = [0i64; 8];
+        out[0] = diag[0];
+
+        for k in 1..8 {
+            let sum_a = (al[0] + al[k]) as i64;
+            let sum_b = (bl[0] + bl[k]) as i64;
+            let mixed = sum_a * sum_b - diag[0] - diag[k];
+            out[k] += mixed;
+        }
+
+        for (i, &diag_i) in diag.iter().enumerate().skip(1) {
+            out[0] += diag_i + diag_i;
+            add_phi(&mut out, i + i, diag_i);
+        }
+
+        for i in 1..8usize {
+            for j in (i + 1)..8usize {
+                let sum_a = (al[i] + al[j]) as i64;
+                let sum_b = (bl[i] + bl[j]) as i64;
+                let mixed = sum_a * sum_b - diag[i] - diag[j];
+                add_phi(&mut out, i + j, mixed);
+                add_phi(&mut out, j - i, mixed);
+            }
+        }
+
+        std::array::from_fn(|i| {
+            let v = out[i].rem_euclid(P as i64);
+            Fp16::<P>::from_canonical_u16(v as u16)
+        })
+    }
+}
+
 impl<const P: u32> RingSubfieldFp8MulBackend for Fp32<P> {}
 impl<const P: u64> RingSubfieldFp8MulBackend for Fp64<P> {}
 impl<const P: u128> RingSubfieldFp8MulBackend for Fp128<P> {}
