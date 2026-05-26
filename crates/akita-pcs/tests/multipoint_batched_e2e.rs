@@ -413,7 +413,6 @@ fn multipoint_dense_shared_commitment_round_trip() {
 #[cfg(not(feature = "zk"))]
 mod non_zk_negative_cases {
     use super::*;
-    use akita_prover::{ComputeBackendSetup, CpuBackend};
 
     #[test]
     fn multipoint_dense_verify_rejects_swapped_points() {
