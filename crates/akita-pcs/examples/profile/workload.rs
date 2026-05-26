@@ -1,4 +1,7 @@
-use crate::report::{emit_planned_schedule_summary, print_batched_proof_summary, report_timing};
+use crate::report::{
+    emit_planned_schedule_summary, emit_runtime_schedule_summary, print_batched_proof_summary,
+    report_timing,
+};
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
 use akita_field::{
@@ -257,6 +260,16 @@ fn run_prove<
             "runtime proof bytes should match the planned proof size"
         );
         emit_planned_schedule_summary(label, plan);
+    } else {
+        let incidence =
+            ClaimIncidenceSummary::same_point(pt.len(), 1).expect("same-point incidence summary");
+        let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
+        assert_eq!(
+            proof.size(),
+            schedule.total_bytes,
+            "runtime proof bytes should match the runtime schedule proof size"
+        );
+        emit_runtime_schedule_summary(label, &schedule, Cfg::decomposition().field_bits());
     }
 
     let t0 = Instant::now();

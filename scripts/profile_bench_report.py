@@ -314,7 +314,7 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             summary["tail_bytes"] = int(kvs["tail_bytes"])
             if "proof_framing_bytes" in kvs:
                 summary["proof_framing_bytes"] = int(kvs["proof_framing_bytes"])
-            if "levels" in kvs and "akita_levels" not in summary:
+            if "levels" in kvs:
                 summary["akita_levels"] = int(kvs["levels"])
         elif "profile field roles" in line and kvs.get("label") == mode:
             summary["claim_ext_degree"] = int(kvs["claim_ext_degree"])
