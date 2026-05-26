@@ -432,7 +432,8 @@ impl<E: FieldCore> ZkEqFactoredFinalRelation<E> for PolynomialStageVerifier<E> {
         //
         //   s_claim_masked = S(r) + handoff_mask.
         //
-        // `handoff_mask` is a symbolic LC over hidden pad coefficients.
+        // `handoff_mask` is the accumulated symbolic LC over hidden pad
+        // coefficients from the eq-factored claim transition.
         // Unmasking gives the true leaf input S(r), then this final relation
         // enforces:
         //

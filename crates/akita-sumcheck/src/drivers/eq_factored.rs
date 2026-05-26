@@ -19,7 +19,11 @@ use akita_transcript::Transcript;
 
 #[cfg(feature = "zk")]
 /// Prover output for an eq-factored sumcheck with plain-opening round masks.
-pub type EqFactoredMaskedProveOutput<E> = (EqFactoredSumcheckProofMasked<E>, Vec<E>);
+///
+/// The final element is the accumulated mask on the verifier's final scaled
+/// claim, following the same omitted-linear-term recurrence used by verifier
+/// relation generation.
+pub type EqFactoredMaskedProveOutput<E> = (EqFactoredSumcheckProofMasked<E>, Vec<E>, E);
 
 #[cfg(feature = "zk")]
 /// Per-instance ZK final-relation emitter for eq-factored sumchecks.
@@ -173,7 +177,7 @@ where
 #[cfg(feature = "zk")]
 fn mask_eq_factored_poly<E>(
     poly: &EqFactoredUniPoly<E>,
-    pad_poly: EqFactoredUniPoly<E>,
+    pad_poly: &EqFactoredUniPoly<E>,
     degree_bound: usize,
 ) -> Result<EqFactoredUniPoly<E>, AkitaError>
 where
@@ -196,6 +200,30 @@ where
     Ok(EqFactoredUniPoly {
         coeffs_except_linear_term: masked_coeffs,
     })
+}
+
+#[cfg(feature = "zk")]
+fn advance_eq_factored_claim_mask<E: FieldCore>(
+    previous_mask: E,
+    claim_scale: E,
+    l_at_0: E,
+    l_at_1: E,
+    pad_poly: &EqFactoredUniPoly<E>,
+    r_round: E,
+) -> E {
+    let (previous_coeff, transition_coeffs) = eq_factored_claim_transition_coeffs(
+        claim_scale,
+        l_at_0,
+        l_at_1,
+        r_round,
+        pad_poly.coeffs_except_linear_term.len(),
+    );
+    transition_coeffs
+        .iter()
+        .zip(pad_poly.coeffs_except_linear_term.iter())
+        .fold(previous_coeff * previous_mask, |acc, (&weight, &pad)| {
+            acc + weight * pad
+        })
 }
 
 #[cfg(feature = "zk")]
@@ -268,6 +296,7 @@ where
         let degree_bound = self.degree_bound();
         let input_claim = self.input_claim();
         let mut scaled_claim = input_claim;
+        let mut claim_mask = public_input_claim - input_claim;
         let mut claim_scale = E::one();
         let mut masked_round_polys = Vec::with_capacity(num_rounds);
         let mut challenges = Vec::with_capacity(num_rounds);
@@ -288,11 +317,19 @@ where
             // q~_j = q_j + rho_j. The omitted q_1 is still determined by the
             // incoming true claim, so the prover advances its private
             // `scaled_claim` with the unmasked `poly`.
-            let masked_poly = mask_eq_factored_poly(&poly, pad_poly, degree_bound)?;
+            let masked_poly = mask_eq_factored_poly(&poly, &pad_poly, degree_bound)?;
 
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &masked_poly);
             let r_i = sample_challenge(transcript);
             let (l_at_0, l_at_1) = self.current_linear_factor_evals();
+            claim_mask = advance_eq_factored_claim_mask(
+                claim_mask,
+                claim_scale,
+                l_at_0,
+                l_at_1,
+                &pad_poly,
+                r_i,
+            );
             (scaled_claim, claim_scale) =
                 advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, &poly, r_i);
             challenges.push(r_i);
@@ -304,6 +341,7 @@ where
         Ok((
             EqFactoredSumcheckProofMasked { masked_round_polys },
             challenges,
+            claim_mask,
         ))
     }
 }
@@ -361,7 +399,6 @@ where
         let mut masked_claim_scale = E::one();
         let mut challenges = Vec::with_capacity(num_rounds);
         let mut round_state = self.start_round_state()?;
-        let mut handoff_mask = ZkR1csLinearCombination::zero();
 
         transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &scaled_claim);
 
@@ -409,23 +446,20 @@ where
                 r_i,
             );
             scaled_claim_handle = masked_scaled_claim;
-            // `next_claim_mask` is eta_i for the scaled running claim. The
-            // `round_handoff_mask` is rho_0 + rho_2 r_i^2 + ...: the masked
-            // known part of q_i(r_i), used by stage-specific final relations
-            // when this round's folded witness value is handed off.
-            let (next_claim_mask, round_handoff_mask) = relations
-                .push_masked_eq_factored_round_relation::<F>(
-                    previous_masked_claim,
-                    &scaled_claim_mask,
-                    previous_coeff,
-                    masked_scaled_claim,
-                    r_i,
-                    &masked_poly.coeffs_except_linear_term,
-                    &coeffs_except_linear,
-                    hiding_cursor,
-                )?;
+            // `next_claim_mask` is eta_i for the scaled running claim. This
+            // recurrence includes the omitted-linear-term contribution induced
+            // by the previous masked claim, so final handoffs must use the
+            // accumulated mask rather than only the final round's stored terms.
+            let next_claim_mask = relations.push_masked_eq_factored_round_relation::<F>(
+                previous_masked_claim,
+                &scaled_claim_mask,
+                previous_coeff,
+                masked_scaled_claim,
+                &masked_poly.coeffs_except_linear_term,
+                &coeffs_except_linear,
+                hiding_cursor,
+            )?;
             scaled_claim_mask = next_claim_mask;
-            handoff_mask = round_handoff_mask;
             challenges.push(r_i);
             round_state.ingest_challenge(round, r_i);
         }
@@ -440,10 +474,10 @@ where
             &challenges,
             final_claim_lc,
             masked_claim_scale,
-            handoff_mask.clone(),
+            scaled_claim_mask.clone(),
             relations,
         )?;
-        Ok((challenges, handoff_mask))
+        Ok((challenges, scaled_claim_mask))
     }
 }
 

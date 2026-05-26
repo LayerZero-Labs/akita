@@ -612,11 +612,10 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         previous_mask: &ZkR1csLinearCombination<E>,
         previous_coeff: E,
         next_masked_claim: E,
-        r_round: E,
         public_coeffs_except_linear: &[E],
         transition_coeffs: &[E],
         hiding_cursor: &mut usize,
-    ) -> Result<(ZkR1csLinearCombination<E>, ZkR1csLinearCombination<E>), AkitaError>
+    ) -> Result<ZkR1csLinearCombination<E>, AkitaError>
     where
         F: FieldCore,
         E: ExtField<F>,
@@ -635,23 +634,12 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         // coefficient contributes to both the true transition and the mask
         // transition using the verifier-derived `transition_coeff`.
         debug_assert_eq!(public_coeffs_except_linear.len(), transition_coeffs.len());
-        let mut known_terms_mask = ZkR1csLinearCombination::zero();
-        let mut next_known_power = r_round * r_round;
-        for (idx, (&_public_coeff, &transition_coeff)) in public_coeffs_except_linear
+        for (&_public_coeff, &transition_coeff) in public_coeffs_except_linear
             .iter()
             .zip(transition_coeffs.iter())
-            .enumerate()
         {
             let mask_coeff = zk_ext_mask_lc::<F, E>(hiding_cursor);
             add_scaled_lc(&mut next_mask_transition, transition_coeff, &mask_coeff);
-            let known_weight = if idx == 0 {
-                E::one()
-            } else {
-                let weight = next_known_power;
-                next_known_power *= r_round;
-                weight
-            };
-            add_scaled_lc(&mut known_terms_mask, known_weight, &mask_coeff);
         }
         let mut public_transition = previous_coeff * previous_masked_claim;
         for (&public_coeff, &transition_coeff) in public_coeffs_except_linear
@@ -675,7 +663,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
             ZkR1csLinearCombination::one(),
             ZkR1csLinearCombination::zero(),
         );
-        Ok((next_mask, known_terms_mask))
+        Ok(next_mask)
     }
 
     /// Check every deferred relation against the revealed plain-opening payload.

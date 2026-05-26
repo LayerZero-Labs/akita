@@ -33,14 +33,6 @@ use akita_types::{
 };
 
 #[cfg(feature = "zk")]
-fn eq_factored_pad_eval<E: FieldCore>(pad: &EqFactoredUniPoly<E>, point: &[E]) -> E {
-    let Some(last_challenge) = point.last() else {
-        return pad.constant_term();
-    };
-    pad.eval_known_terms(last_challenge)
-}
-
-#[cfg(feature = "zk")]
 type Stage1ProveOutput<E> = (AkitaStage1Proof<E>, Vec<E>, E);
 
 #[cfg(not(feature = "zk"))]
@@ -561,13 +553,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
                         return Err(AkitaError::InvalidProof);
                     }
                     let round_pads = precommitted_stage_pads.remove(0);
-                    let final_pad = round_pads.last().cloned().ok_or(AkitaError::InvalidProof)?;
-                    let (sumcheck_proof_masked, challenges) = leaf_stage.prove_zk::<F, T, _>(
-                        transcript,
-                        |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
-                        round_pads,
-                    )?;
-                    let handoff_mask = eq_factored_pad_eval(&final_pad, &challenges);
+                    let (sumcheck_proof_masked, challenges, handoff_mask) = leaf_stage
+                        .prove_zk::<F, T, _>(
+                            transcript,
+                            |tr| {
+                                sample_ext_challenge::<F, E, T>(
+                                    tr,
+                                    labels::CHALLENGE_SUMCHECK_ROUND,
+                                )
+                            },
+                            round_pads,
+                        )?;
                     (sumcheck_proof_masked, challenges, handoff_mask)
                 };
                 #[cfg(not(feature = "zk"))]
@@ -626,7 +622,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
                     return Err(AkitaError::InvalidProof);
                 }
                 let round_pads = precommitted_stage_pads.remove(0);
-                let (sumcheck_proof_masked, next_tau) = product_stage
+                let (sumcheck_proof_masked, next_tau, _stage_claim_mask) = product_stage
                     .prove_zk_with_public_claim::<F, T, _>(
                         current_public_claim,
                         transcript,
@@ -697,15 +693,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
                 return Err(AkitaError::InvalidProof);
             }
             let round_pads = precommitted_stage_pads.remove(0);
-            let final_pad = round_pads.last().cloned().ok_or(AkitaError::InvalidProof)?;
-            let (sumcheck_proof_masked, challenges) = leaf_stage
+            let (sumcheck_proof_masked, challenges, handoff_mask) = leaf_stage
                 .prove_zk_with_public_claim::<F, T, _>(
                     current_public_claim,
                     transcript,
                     |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
                     round_pads,
                 )?;
-            let handoff_mask = eq_factored_pad_eval(&final_pad, &challenges);
             (sumcheck_proof_masked, challenges, handoff_mask)
         };
         #[cfg(not(feature = "zk"))]
