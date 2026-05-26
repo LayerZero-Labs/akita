@@ -63,9 +63,8 @@ pub(crate) fn emit_runtime_schedule_summary(label: &str, schedule: &Schedule, fi
     tracing::info!(
         label,
         levels,
-        exact_proof_bytes = schedule.total_bytes,
-        no_wrapper_bytes = schedule.total_bytes,
-        "planned schedule"
+        total_proof_bytes = schedule.total_bytes,
+        "runtime schedule"
     );
 
     for (level_idx, step) in schedule.steps.iter().enumerate() {

@@ -193,7 +193,7 @@ jobs:
               if (!previousPrRun) {
                 core.info('No previous PR baseline artifact found.');
               }
-              setBaselineOutput('previous', previousPrRun, 'the previous successful PR update');
+              setBaselineOutput('previous', previousPrRun, 'the previous PR update with a benchmark artifact');
 
               const baseRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
                 owner,
