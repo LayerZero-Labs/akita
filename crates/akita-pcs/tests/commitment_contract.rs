@@ -2,7 +2,7 @@
 #![cfg(not(feature = "zk"))]
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::Challenges;
 use akita_field::Fp64;
 use akita_field::{AkitaError, CanonicalField};
 use akita_prover::kernels::crt_ntt::NttSlotCache;
@@ -49,17 +49,17 @@ impl AkitaPolyOps<F, 1> for DummyPoly {
     }
 
     fn decompose_fold(
-        &self,
-        _challenges: &[SparseChallenge],
+        _polys: &[&Self],
+        _challenges: &Challenges,
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,
-    ) -> DecomposeFoldWitness<F, 1> {
-        DecomposeFoldWitness {
+    ) -> Result<DecomposeFoldWitness<F, 1>, AkitaError> {
+        Ok(DecomposeFoldWitness {
             z_pre: vec![],
             centered_coeffs: vec![],
             centered_inf_norm: 0,
-        }
+        })
     }
 
     fn commit_inner(

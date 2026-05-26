@@ -4,7 +4,7 @@
 use akita_algebra::ring::CyclotomicRing;
 use akita_challenges::{
     sample_folding_challenges, sample_sparse_challenges, tensor_left_digest, ChallengeLabels,
-    ChallengeShape, FoldingChallenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig,
+    ChallengeShape, Challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig,
     TensorChallenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
@@ -361,7 +361,10 @@ fn tensor_sampling_uses_two_vectors() {
     )
     .unwrap();
 
-    let FoldingChallenges::Tensor(tensor) = challenges else {
+    let Challenges::Tensor {
+        factored: tensor, ..
+    } = challenges
+    else {
         panic!("expected tensor challenges");
     };
     assert_eq!(tensor.left_len, 2);
@@ -390,7 +393,10 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
         fold_challenge_labels(),
     )
     .unwrap();
-    let FoldingChallenges::Tensor(sampled) = sampled else {
+    let Challenges::Tensor {
+        factored: sampled, ..
+    } = sampled
+    else {
         panic!("expected tensor challenges");
     };
 
@@ -477,9 +483,12 @@ fn tensor_lazy_evals_match_expanded_products() {
 
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(5));
     let lazy = challenges.evals_at_pows::<F, F, TD>(&alpha_pows).unwrap();
-    let expanded = challenges
-        .expand_integer::<TD>()
-        .unwrap()
+    // Pull the cached materialised integer products from inside the Tensor
+    // variant and compare against the factored aggregate evaluator.
+    let Challenges::Tensor { materialized, .. } = &challenges else {
+        panic!("expected tensor challenges");
+    };
+    let expanded = materialized
         .iter()
         .map(|challenge| challenge.eval_at_pows::<F, F, TD>(&alpha_pows))
         .collect::<Result<Vec<_>, _>>()

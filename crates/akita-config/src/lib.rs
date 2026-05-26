@@ -22,6 +22,7 @@ use akita_types::{
 };
 use std::marker::PhantomData;
 
+pub mod fast_verifier;
 pub mod proof_optimized;
 pub(crate) mod schedule_policy;
 pub(crate) mod sis_policy;

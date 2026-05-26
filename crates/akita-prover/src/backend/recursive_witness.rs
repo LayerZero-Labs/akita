@@ -9,7 +9,7 @@
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{Challenges, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
@@ -216,27 +216,36 @@ where
     #[tracing::instrument(skip_all, name = "RecursiveWitnessView::decompose_fold")]
     pub fn decompose_fold(
         &self,
-        challenges: &[SparseChallenge],
+        challenges: &Challenges,
         block_len: usize,
         num_blocks: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D> {
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        let sparse: &[SparseChallenge] = match challenges {
+            Challenges::Sparse { challenges, .. } => challenges,
+            Challenges::Tensor { .. } => {
+                return Err(AkitaError::InvalidSetup(
+                    "RecursiveWitnessView does not support tensor-shaped fold challenges"
+                        .to_string(),
+                ));
+            }
+        };
         let inner_width = block_len * num_digits;
-        let active_blocks = challenges.len().min(num_blocks);
+        let active_blocks = sparse.len().min(num_blocks);
 
         let q = (-F::one()).to_canonical_u128() + 1;
         let coeffs = self.coeffs;
         let coeff_accum = balanced_digit_decompose_fold_partitioned::<D>(
             coeffs,
-            challenges,
+            sparse,
             active_blocks,
             block_len,
             num_blocks,
             num_digits,
             inner_width,
         );
-        build_decompose_fold_witness::<F, D>(coeff_accum, q)
+        Ok(build_decompose_fold_witness::<F, D>(coeff_accum, q))
     }
 
     #[allow(dead_code)]

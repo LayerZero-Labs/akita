@@ -13,13 +13,11 @@ use crate::{AkitaPolyOps, DecomposeFoldWitness, RecursiveWitnessView};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{
-    sample_folding_challenges, sample_sparse_challenges, stage1_fold_challenge_labels,
-    ChallengeShape, FoldingChallenges, IntegerChallenge, SparseChallenge, TensorChallenges,
+    sample_folding_challenges, stage1_fold_challenge_labels, ChallengeShape, Challenges,
 };
-use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
-use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
+use akita_transcript::labels::ABSORB_PROVER_V;
 use akita_transcript::Transcript;
 use akita_types::{
     gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
@@ -84,7 +82,7 @@ fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
     Ok(z)
 }
 
-fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
+pub(crate) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F, D>>,
 ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
     let Some((first, rest)) = witnesses.split_first() else {
@@ -145,21 +143,11 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
 pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     /// Stage-1 proof vector `v = D · ŵ`.
     pub v: Vec<CyclotomicRing<F, D>>,
-    /// Stage-1 folding challenges (sparse representation).
-    ///
-    /// For flat (`fold_challenge_shape == Flat`) presets this carries the
-    /// full per-block challenge slice exactly as on main. For tensor presets
-    /// this is `Vec::new()` and the factored challenges live in
-    /// [`Self::tensor_challenges`] / [`Self::integer_challenges`] instead.
-    pub challenges: Vec<SparseChallenge>,
-    /// Factored tensor challenges, populated only when the level's
-    /// `fold_challenge_shape` is `Tensor`. Sibling to [`Self::challenges`].
-    pub tensor_challenges: Option<TensorChallenges>,
-    /// Materialized per-logical-block integer challenges for the tensor
-    /// branch (equivalent to `tensor_challenges.expand_integer()`). Cached
-    /// once at construction so the prover's downstream tensor consumers
-    /// don't re-materialize them.
-    pub integer_challenges: Option<Vec<IntegerChallenge>>,
+    /// Stage-1 folding challenges. The enum encapsulates both flat sparse
+    /// and tensor representations; the protocol code uses
+    /// [`Challenges::evals_at_pows`], [`Challenges::accumulate_high_half`],
+    /// etc. without inspecting the variant.
+    pub challenges: Challenges,
     /// Vector `y`.
     y: Vec<CyclotomicRing<F, D>>,
     /// Public-row opening points `(a_j, b_j)` used by the root relation.
@@ -470,7 +458,7 @@ where
             MRowLayout::Terminal => Vec::new(),
         };
 
-        let folding_challenges = sample_folding_challenges::<F, T, D>(
+        let challenges = sample_folding_challenges::<F, T, D>(
             transcript,
             lp.num_blocks,
             num_claims,
@@ -479,102 +467,48 @@ where
             stage1_fold_challenge_labels(),
         )?;
 
-        // Decompose-fold dispatch. For the flat shape this is byte-identical
-        // to main's path (sparse i8 challenges, i32 accumulator). For the
-        // tensor shape we route through the tensor-only batched kernel which
-        // internally widens to i64 and narrows to i32 at the witness boundary.
-        let (challenges, tensor_challenges, integer_challenges, z_pre) = match folding_challenges {
-            FoldingChallenges::Flat(challenges) => {
-                let num_points = opening_points.len();
-                let _span =
-                    tracing::info_span!("compute_batched_z_pre", num_points = num_points).entered();
-                let mut polys_by_point: Vec<Vec<&P>> = vec![Vec::new(); num_points];
-                let mut challenges_by_point: Vec<Vec<SparseChallenge>> =
-                    vec![Vec::new(); num_points];
-                for (claim_idx, poly) in polys.iter().enumerate() {
-                    let point_idx = claim_to_point[claim_idx];
-                    polys_by_point[point_idx].push(*poly);
-                    let challenge_offset =
-                        claim_idx.checked_mul(lp.num_blocks).ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "batched challenge offset overflow".to_string(),
-                            )
-                        })?;
-                    let next_offset =
-                        challenge_offset.checked_add(lp.num_blocks).ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "batched challenge offset overflow".to_string(),
-                            )
-                        })?;
-                    challenges_by_point[point_idx]
-                        .extend_from_slice(&challenges[challenge_offset..next_offset]);
-                }
-
-                let mut z_pre = Vec::new();
-                let mut centered_coeffs = Vec::new();
-                let mut centered_inf_norm = 0u32;
-                for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
-                    let point_challenges = &challenges_by_point[point_idx];
-                    let point_claim_count = point_polys.len();
-                    let witness = if let Some(z_point) = P::decompose_fold_batched(
-                        point_polys,
-                        point_challenges,
-                        lp.block_len,
-                        lp.num_digits_commit,
-                        lp.log_basis,
-                    ) {
-                        z_point
-                    } else {
-                        let witnesses: Vec<DecomposeFoldWitness<F, D>> = point_polys
-                            .iter()
-                            .zip(point_challenges.chunks(lp.num_blocks))
-                            .map(|(poly, poly_challenges)| {
-                                poly.decompose_fold(
-                                    poly_challenges,
-                                    lp.block_len,
-                                    lp.num_digits_commit,
-                                    lp.log_basis,
-                                )
-                            })
-                            .collect();
-                        aggregate_decompose_fold_witnesses(witnesses)?
-                    };
-                    let witness = validate_decompose_fold(witness, &lp, point_claim_count)?;
-                    centered_inf_norm = centered_inf_norm.max(witness.centered_inf_norm);
-                    z_pre.extend(witness.z_pre);
-                    centered_coeffs.extend(witness.centered_coeffs);
-                }
-
-                let z_pre = DecomposeFoldWitness {
-                    z_pre,
-                    centered_coeffs,
-                    centered_inf_norm,
-                };
-                (challenges, None, None, z_pre)
+        // Per-point chunking. For each opening point we collect the polynomial
+        // refs and the matching subset of challenge claims, then ask the poly
+        // backend's unified `decompose_fold` for the aggregated witness.
+        // `Challenges::select_claims` knows how to slice itself per the
+        // active shape (sparse: per-block; tensor: per-claim left/right
+        // factors).
+        let z_pre = {
+            let num_points = opening_points.len();
+            let _span =
+                tracing::info_span!("compute_batched_z_pre", num_points = num_points).entered();
+            let mut polys_by_point: Vec<Vec<&P>> = vec![Vec::new(); num_points];
+            let mut claim_indices_by_point: Vec<Vec<usize>> = vec![Vec::new(); num_points];
+            for (claim_idx, poly) in polys.iter().enumerate() {
+                let point_idx = claim_to_point[claim_idx];
+                polys_by_point[point_idx].push(*poly);
+                claim_indices_by_point[point_idx].push(claim_idx);
             }
-            FoldingChallenges::Tensor(tensor) => {
-                let _span = tracing::info_span!(
-                    "compute_batched_z_pre_tensor",
-                    num_points = opening_points.len()
-                )
-                .entered();
-                let mut poly_refs: Vec<&P> = Vec::with_capacity(polys.len());
-                poly_refs.extend(polys.iter().copied());
-                let z_point = P::decompose_fold_tensor_batched(
-                    &poly_refs,
-                    &FoldingChallenges::Tensor(tensor.clone()),
+
+            let mut z_pre = Vec::new();
+            let mut centered_coeffs = Vec::new();
+            let mut centered_inf_norm = 0u32;
+            for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
+                let point_challenges =
+                    challenges.select_claims::<D>(&claim_indices_by_point[point_idx])?;
+                let point_claim_count = point_polys.len();
+                let witness = P::decompose_fold(
+                    point_polys,
+                    &point_challenges,
                     lp.block_len,
                     lp.num_digits_commit,
                     lp.log_basis,
-                )?
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "tensor fold backend did not produce a witness".to_string(),
-                    )
-                })?;
-                let z_pre = validate_decompose_fold(z_point, &lp, num_claims)?;
-                let integer_challenges = tensor.expand_integer::<D>()?;
-                (Vec::new(), Some(tensor), Some(integer_challenges), z_pre)
+                )?;
+                let witness = validate_decompose_fold(witness, &lp, point_claim_count)?;
+                centered_inf_norm = centered_inf_norm.max(witness.centered_inf_norm);
+                z_pre.extend(witness.z_pre);
+                centered_coeffs.extend(witness.centered_coeffs);
+            }
+
+            DecomposeFoldWitness {
+                z_pre,
+                centered_coeffs,
+                centered_inf_norm,
             }
         };
 
@@ -603,8 +537,6 @@ where
         Ok(Self {
             v,
             challenges,
-            tensor_challenges,
-            integer_challenges,
             y,
             opening_points,
             ring_multiplier_points,
@@ -743,14 +675,20 @@ where
                 "tensor fold shape is not supported at recursive levels".to_string(),
             ));
         }
-        let total_blocks = lp.num_blocks.checked_mul(num_claims).ok_or_else(|| {
-            AkitaError::InvalidSetup("recursive multipoint challenge count overflow".to_string())
-        })?;
-        let challenges = sample_sparse_challenges::<F, T, D>(
+        // Recursive levels are flat-only by current planner construction; the
+        // recursive witness backend has no tensor batched kernel.
+        if !matches!(lp.fold_challenge_shape, ChallengeShape::Flat) {
+            return Err(AkitaError::InvalidSetup(
+                "tensor fold shape is not supported at recursive levels".to_string(),
+            ));
+        }
+        let challenges = sample_folding_challenges::<F, T, D>(
             transcript,
-            CHALLENGE_STAGE1_FOLD,
-            total_blocks,
+            lp.num_blocks,
+            num_claims,
             &lp.stage1_config,
+            &lp.fold_challenge_shape,
+            stage1_fold_challenge_labels(),
         )?;
 
         let z_pre = {
@@ -763,23 +701,14 @@ where
             let mut centered_coeffs = Vec::new();
             let mut centered_inf_norm = 0u32;
             for claim_idx in 0..num_claims {
-                let challenge_offset = claim_idx.checked_mul(lp.num_blocks).ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "recursive multipoint challenge offset overflow".into(),
-                    )
-                })?;
-                let next_offset = challenge_offset.checked_add(lp.num_blocks).ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "recursive multipoint challenge offset overflow".into(),
-                    )
-                })?;
+                let claim_challenges = challenges.select_claims::<D>(&[claim_idx])?;
                 let witness_part = witness.decompose_fold(
-                    &challenges[challenge_offset..next_offset],
+                    &claim_challenges,
                     lp.block_len,
                     lp.num_blocks,
                     lp.num_digits_commit,
                     lp.log_basis,
-                );
+                )?;
                 let witness_part = validate_decompose_fold(witness_part, &lp, 1)?;
                 centered_inf_norm = centered_inf_norm.max(witness_part.centered_inf_norm);
                 z_pre.extend(witness_part.z_pre);
@@ -809,8 +738,6 @@ where
         Ok(Self {
             v,
             challenges,
-            tensor_challenges: None,
-            integer_challenges: None,
             y,
             opening_points: ring_opening_points,
             ring_multiplier_points,
@@ -974,108 +901,9 @@ where
     }
 }
 
-/// Add only the high-half quotient contribution of `challenge * ring`.
-///
-/// Skips the first `D - pos` coefficients per challenge term that cannot
-/// contribute (degree < D), cutting iteration count roughly in half.
-/// High-half quotient accumulation trait. Implemented for [`SparseChallenge`]
-/// (flat path, identical to main) and [`IntegerChallenge`] (tensor path).
-///
-/// The compiler monomorphizes the trait impls and inlines them, so the
-/// SparseChallenge call sites in [`compute_r_split_eq`] generate the exact
-/// same machine code as main's specialised loop.
-pub trait HighHalfChallenge {
-    fn add_to_high_half<F: FieldCore + CanonicalField, const D: usize>(
-        &self,
-        quotient: &mut [F],
-        ring: &CyclotomicRing<F, D>,
-    );
-}
-
-impl HighHalfChallenge for SparseChallenge {
-    #[inline(always)]
-    fn add_to_high_half<F: FieldCore + CanonicalField, const D: usize>(
-        &self,
-        quotient: &mut [F],
-        ring: &CyclotomicRing<F, D>,
-    ) {
-        add_sparse_ring_product_high_half::<F, D>(quotient, self, ring);
-    }
-}
-
-impl HighHalfChallenge for IntegerChallenge {
-    #[inline(always)]
-    fn add_to_high_half<F: FieldCore + CanonicalField, const D: usize>(
-        &self,
-        quotient: &mut [F],
-        ring: &CyclotomicRing<F, D>,
-    ) {
-        add_integer_ring_product_high_half::<F, D>(quotient, self, ring);
-    }
-}
-
-#[inline(always)]
-fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
-    quotient: &mut [F],
-    challenge: &SparseChallenge,
-    ring: &CyclotomicRing<F, D>,
-) {
-    let rc = ring.coefficients();
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let c = F::from_i64(coeff as i64);
-        let p = pos as usize;
-        for s in (D - p)..D {
-            quotient[p + s - D] += c * rc[s];
-        }
-    }
-}
-
-/// Integer-coefficient analogue of [`add_sparse_ring_product_high_half`], used
-/// exclusively by the tensor branch (`IntegerChallenge` carries `i32` coeffs
-/// because tensor products of sparse i8 challenges can outgrow the i8 range).
-#[inline(always)]
-fn add_integer_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
-    quotient: &mut [F],
-    challenge: &IntegerChallenge,
-    ring: &CyclotomicRing<F, D>,
-) {
-    let rc = ring.coefficients();
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let c = F::from_i64(i64::from(coeff));
-        let p = pos as usize;
-        for s in (D - p)..D {
-            quotient[p + s - D] += c * rc[s];
-        }
-    }
-}
-
-/// Parallel high-half accumulation over blocks.
-///
-/// Replaces `for (i, ring) in rings { add_sparse_ring_product_high_half(...) }`
-/// with a fold-reduce giving block-level parallelism.
-fn parallel_high_half_accumulate<F, C, const D: usize>(
-    challenges: &[C],
-    rings: &[CyclotomicRing<F, D>],
-) -> Vec<F>
-where
-    F: FieldCore + CanonicalField,
-    C: HighHalfChallenge + Sync,
-{
-    cfg_fold_reduce!(
-        0..rings.len(),
-        || vec![F::zero(); D],
-        |mut acc: Vec<F>, i: usize| {
-            challenges[i].add_to_high_half::<F, D>(&mut acc, &rings[i]);
-            acc
-        },
-        |mut a: Vec<F>, b: Vec<F>| {
-            for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                *ai += *bi;
-            }
-            a
-        }
-    )
-}
+// Per-block high-half accumulation lives on the [`Challenges`] enum in
+// `akita-challenges`; the prover uses [`Challenges::accumulate_high_half`]
+// directly. See `crates/akita-challenges/src/tensor.rs`.
 
 fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
@@ -1352,10 +1180,10 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
 /// dimensions are inconsistent.
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
-pub fn compute_r_split_eq<F, C, const D: usize>(
+pub fn compute_r_split_eq<F, const D: usize>(
     lp: &LevelParams,
     _setup: &AkitaExpandedSetup<F>,
-    challenges: &[C],
+    challenges: &Challenges,
     w_hat_flat: &[[i8; D]],
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
@@ -1380,7 +1208,6 @@ pub fn compute_r_split_eq<F, C, const D: usize>(
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
-    C: HighHalfChallenge + Sync,
 {
     if num_polys_per_point.is_empty() || num_polys_per_point.contains(&0) {
         return Err(AkitaError::InvalidProof);
@@ -1433,7 +1260,7 @@ where
     let expected_challenges = num_claims
         .checked_mul(blocks_per_claim)
         .ok_or(AkitaError::InvalidProof)?;
-    if challenges.len() != expected_challenges {
+    if challenges.logical_len() != expected_challenges {
         return Err(AkitaError::InvalidProof);
     }
     let n_b = lp.b_key.row_len();
@@ -1564,7 +1391,8 @@ where
         if row_idx == 0 {
             let t_row = Instant::now();
             let _span = tracing::info_span!("challenge_fold_row").entered();
-            let quotient = parallel_high_half_accumulate::<F, _, D>(challenges, w_folded);
+            // Consistency row: Σ c_i · w_folded[i] over all (claim, block).
+            let quotient = challenges.accumulate_high_half::<F, _, D>(|i| Some(w_folded[i]));
             let mut quotient = CyclotomicRing::from_slice(&quotient);
             quotient -= consistency_z_quotient;
             result.push(quotient);
@@ -1604,30 +1432,16 @@ where
 
             // Iterate `(claim, block)` over the challenge space and route
             // each cell to its polynomial-slot in `recomposed_inner_rows`
-            // (`poly_slot * num_blocks + block_idx`). Iterating over the
-            // raw `recomposed_inner_rows.len()` would conflate poly slots
-            // with claims and overrun `challenges` whenever a group has
-            // more polynomial slots than opened claims.
-            let mut quotient = cfg_fold_reduce!(
-                0..expected_challenges,
-                || vec![F::zero(); D],
-                |mut acc: Vec<F>, i: usize| {
-                    let claim_idx = i / blocks_per_claim;
-                    let block_idx = i % blocks_per_claim;
-                    let poly_slot = poly_slot_for_claim[claim_idx];
-                    let inner_idx = poly_slot * blocks_per_claim + block_idx;
-                    if let Some(inner_row_i) = recomposed_inner_rows[inner_idx].get(a_idx) {
-                        challenges[i].add_to_high_half::<F, D>(&mut acc, inner_row_i);
-                    }
-                    acc
-                },
-                |mut a: Vec<F>, b: Vec<F>| {
-                    for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                        *ai += *bi;
-                    }
-                    a
-                }
-            );
+            // (`poly_slot * num_blocks + block_idx`). The Challenges enum
+            // owns the per-variant accumulation; we just supply the
+            // (claim, block) -> ring lookup.
+            let mut quotient = challenges.accumulate_high_half::<F, _, D>(|i| {
+                let claim_idx = i / blocks_per_claim;
+                let block_idx = i % blocks_per_claim;
+                let poly_slot = poly_slot_for_claim[claim_idx];
+                let inner_idx = poly_slot * blocks_per_claim + block_idx;
+                recomposed_inner_rows[inner_idx].get(a_idx).copied()
+            });
 
             let a_q = a_quotients[a_idx].coefficients();
             for k in 0..D {

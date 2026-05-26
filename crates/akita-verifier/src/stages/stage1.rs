@@ -7,9 +7,7 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{
-    sample_folding_challenges, stage1_fold_challenge_labels, FoldingChallenges,
-};
+use akita_challenges::{sample_folding_challenges, stage1_fold_challenge_labels, Challenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
@@ -23,7 +21,7 @@ use akita_types::{
 };
 
 /// Absorb the prover's `v` rows and sample the stage-1 fold challenges. The
-/// returned [`FoldingChallenges`] is either `Flat` (per-block sparse) or
+/// returned [`Challenges`] is either `Flat` (per-block sparse) or
 /// `Tensor` (factored left/right) depending on `lp.fold_challenge_shape`.
 ///
 /// # Errors
@@ -36,7 +34,7 @@ pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     num_claims: usize,
     lp: &LevelParams,
     m_row_layout: MRowLayout,
-) -> Result<FoldingChallenges, AkitaError>
+) -> Result<Challenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,

@@ -3,7 +3,7 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_algebra::ring::scalar_powers;
-use akita_challenges::ChallengeEval;
+use akita_challenges::Challenges;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
 };
@@ -116,11 +116,11 @@ pub(crate) struct RingSwitchSegmentLayout {
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
-pub(crate) fn ring_switch_verifier<F, E, T, C, const D: usize>(
+pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &[C],
+    challenges: &Challenges,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -133,16 +133,15 @@ pub(crate) fn ring_switch_verifier<F, E, T, C, const D: usize>(
     m_row_layout: MRowLayout,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
-    C: ChallengeEval,
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_after_absorb`;
     // the outer wrapper just performs the witness absorb before delegating.
     transcript.record_wire_serde(ABSORB_SUMCHECK_W, w_commitment);
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
-    ring_switch_verifier_after_absorb::<F, E, T, _, D>(
+    ring_switch_verifier_after_absorb::<F, E, T, D>(
         opening_points,
         ring_multiplier_points,
         claim_to_point,
@@ -173,11 +172,11 @@ where
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_after_absorb")]
 #[inline(never)]
-pub(crate) fn ring_switch_verifier_after_absorb<F, E, T, C, const D: usize>(
+pub(crate) fn ring_switch_verifier_after_absorb<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &[C],
+    challenges: &Challenges,
     w_len: usize,
     transcript: &mut T,
     lp: &LevelParams,
@@ -189,10 +188,9 @@ pub(crate) fn ring_switch_verifier_after_absorb<F, E, T, C, const D: usize>(
     m_row_layout: MRowLayout,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
-    C: ChallengeEval,
 {
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
@@ -244,7 +242,7 @@ where
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let prepared_row_eval = prepare_ring_switch_row_eval::<F, E, _, D>(
+    let prepared_row_eval = prepare_ring_switch_row_eval::<F, E, D>(
         challenges,
         alpha,
         lp,
@@ -283,8 +281,8 @@ where
 /// challenge evaluation fails.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "prepare_ring_switch_row_eval")]
-pub fn prepare_ring_switch_row_eval<F, E, C, const D: usize>(
-    challenges: &[C],
+pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
+    challenges: &Challenges,
     alpha: E,
     lp: &LevelParams,
     tau1: &[E],
@@ -299,9 +297,8 @@ pub fn prepare_ring_switch_row_eval<F, E, C, const D: usize>(
     claim_to_point: &[usize],
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + MulBase<F>,
-    C: ChallengeEval,
 {
     validate_level_dispatch::<D>(lp)?;
     let alpha_pows = scalar_powers(alpha, D);
@@ -367,10 +364,10 @@ where
     let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
-    if challenges.len() != total_blocks {
+    if challenges.logical_len() != total_blocks {
         return Err(AkitaError::InvalidSize {
             expected: total_blocks,
-            actual: challenges.len(),
+            actual: challenges.logical_len(),
         });
     }
     let block_len = lp.block_len;
@@ -424,10 +421,7 @@ where
         });
     }
 
-    let c_alphas: Vec<E> = challenges
-        .iter()
-        .map(|challenge| challenge.eval_at_pows_dyn::<F, E, D>(&alpha_pows))
-        .collect::<Result<_, _>>()?;
+    let c_alphas: Vec<E> = challenges.evals_at_pows::<F, E, D>(&alpha_pows)?;
 
     let z_first = lp.m_vars >= lp.r_vars;
 
@@ -966,8 +960,9 @@ mod tests {
     #[test]
     fn ring_switch_prepare_rejects_invalid_log_basis() {
         let lp = LevelParams::params_only(SisModulusFamily::Q32, D, 0, 1, 1, 1, stage1_config());
-        let err = match prepare_ring_switch_row_eval::<F, F, akita_challenges::SparseChallenge, D>(
-            &[],
+        let challenges = Challenges::from_sparse(Vec::new(), 0, 0).unwrap();
+        let err = match prepare_ring_switch_row_eval::<F, F, D>(
+            &challenges,
             F::one(),
             &lp,
             &[],
@@ -990,8 +985,9 @@ mod tests {
     #[test]
     fn ring_switch_prepare_rejects_zero_num_blocks() {
         let lp = LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config());
-        let err = match prepare_ring_switch_row_eval::<F, F, akita_challenges::SparseChallenge, D>(
-            &[],
+        let challenges = Challenges::from_sparse(Vec::new(), 0, 0).unwrap();
+        let err = match prepare_ring_switch_row_eval::<F, F, D>(
+            &challenges,
             F::one(),
             &lp,
             &[],

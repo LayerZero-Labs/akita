@@ -6,7 +6,7 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{Challenges, SparseChallenge};
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
@@ -292,6 +292,28 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
         });
         Ok(blocks)
     }
+
+    /// Per-poly sparse-challenge decompose+fold. Internal helper for the
+    /// batched [`AkitaPolyOps::decompose_fold`] entry point.
+    pub(super) fn decompose_fold_sparse(
+        &self,
+        challenges: &[SparseChallenge],
+        block_len: usize,
+        num_digits: usize,
+    ) -> DecomposeFoldWitness<F, D>
+    where
+        F: CanonicalField,
+    {
+        let blocks = self
+            .blocks_for(block_len)
+            .expect("SparseRingPoly::decompose_fold_sparse: invalid block_len");
+        let num_blocks = challenges.len().min(blocks.num_blocks());
+        let inner_width = block_len * num_digits;
+        let coeff_accum =
+            sparse_accumulate::<D>(blocks, challenges, num_blocks, inner_width, num_digits);
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+    }
 }
 
 impl<F, const D: usize> AkitaPolyOps<F, D> for SparseRingPoly<F, D>
@@ -347,21 +369,29 @@ where
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold")]
     fn decompose_fold(
-        &self,
-        challenges: &[SparseChallenge],
+        polys: &[&Self],
+        challenges: &Challenges,
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D> {
-        let blocks = self
-            .blocks_for(block_len)
-            .expect("SparseRingPoly::decompose_fold: invalid block_len");
-        let num_blocks = challenges.len().min(blocks.num_blocks());
-        let inner_width = block_len * num_digits;
-        let coeff_accum =
-            sparse_accumulate::<D>(blocks, challenges, num_blocks, inner_width, num_digits);
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        let sparse = match challenges {
+            Challenges::Sparse { challenges, .. } => challenges,
+            Challenges::Tensor { .. } => {
+                return Err(AkitaError::InvalidSetup(
+                    "SparseRingPoly does not support tensor-shaped fold challenges".to_string(),
+                ));
+            }
+        };
+        let num_blocks_per_claim = challenges.num_blocks_per_claim();
+        let witnesses: Vec<DecomposeFoldWitness<F, D>> = polys
+            .iter()
+            .zip(sparse.chunks(num_blocks_per_claim))
+            .map(|(poly, poly_challenges)| {
+                poly.decompose_fold_sparse(poly_challenges, block_len, num_digits)
+            })
+            .collect();
+        crate::protocol::quadratic_equation::aggregate_decompose_fold_witnesses(witnesses)
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]

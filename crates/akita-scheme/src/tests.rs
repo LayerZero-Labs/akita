@@ -752,7 +752,11 @@ fn debug_batched_root_relation_claim_matches_tables() {
                         acc + *coeff * *alpha_pow
                     })
             };
-        let c_alphas: Vec<OneHotF> = quad_eq.challenges.iter().map(eval_sparse_alpha).collect();
+        let c_alphas: Vec<OneHotF> = quad_eq
+            .challenges
+            .evals_at_pows::<OneHotF, OneHotF, ONEHOT_D>(alpha_pows)
+            .unwrap();
+        let _ = eval_sparse_alpha;
         let gadget_scalars = |levels: usize| -> Vec<OneHotF> {
             let base = OneHotF::from_canonical_u128_reduced(1u128 << batched_root_lp.log_basis);
             let mut out = Vec::with_capacity(levels);
@@ -845,39 +849,15 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let debug_d_blinding_digits = quad_eq
             .d_blinding_digits()
             .expect("debug batched D-blinding digits");
-        let mut debug_z_witnesses = batch_polys
-            .iter()
-            .zip(quad_eq.challenges.chunks(batched_root_lp.num_blocks))
-            .map(|(poly, poly_challenges)| {
-                poly.decompose_fold(
-                    poly_challenges,
-                    batched_root_lp.block_len,
-                    batched_root_lp.num_digits_commit,
-                    batched_root_lp.log_basis,
-                )
-            });
-        let mut debug_z = debug_z_witnesses.next().expect("debug batched z witness");
-        for witness in debug_z_witnesses {
-            for (dst, src) in debug_z.z_pre.iter_mut().zip(witness.z_pre.iter()) {
-                *dst += *src;
-            }
-            for (dst, src) in debug_z
-                .centered_coeffs
-                .iter_mut()
-                .zip(witness.centered_coeffs.iter())
-            {
-                for k in 0..ONEHOT_D {
-                    dst[k] += src[k];
-                }
-            }
-        }
-        debug_z.centered_inf_norm = debug_z
-            .centered_coeffs
-            .iter()
-            .flat_map(|coeffs| coeffs.iter())
-            .map(|coeff| coeff.unsigned_abs())
-            .max()
-            .unwrap_or(0);
+        let batch_poly_refs: Vec<_> = batch_polys.iter().collect();
+        let debug_z = akita_prover::AkitaPolyOps::<OneHotF, ONEHOT_D>::decompose_fold(
+            &batch_poly_refs,
+            &quad_eq.challenges,
+            batched_root_lp.block_len,
+            batched_root_lp.num_digits_commit,
+            batched_root_lp.log_basis,
+        )
+        .expect("debug batched z witness");
         let debug_y = akita_prover::protocol::quadratic_equation::generate_y::<OneHotF, ONEHOT_D>(
             &quad_eq.v,
             &batch_commitment_rows,
@@ -888,7 +868,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         )
         .expect("debug batched y");
         let debug_r =
-            akita_prover::protocol::quadratic_equation::compute_r_split_eq::<OneHotF, _, ONEHOT_D>(
+            akita_prover::protocol::quadratic_equation::compute_r_split_eq::<OneHotF, ONEHOT_D>(
                 &batched_root_lp,
                 &batch_setup.expanded,
                 &quad_eq.challenges,
@@ -942,8 +922,16 @@ fn debug_batched_root_relation_claim_matches_tables() {
             .flatten()
             .cloned()
             .collect();
-        let stored_a_inner_rows = quad_eq
-            .challenges
+        // This debug test only runs against the flat (Sparse) preset; pull
+        // the flat slice out of the Challenges enum for the per-block
+        // reference accumulation below.
+        let debug_sparse_challenges = match &quad_eq.challenges {
+            akita_challenges::Challenges::Sparse { challenges, .. } => challenges.clone(),
+            akita_challenges::Challenges::Tensor { .. } => {
+                panic!("debug_batched_root_relation_claim_matches_tables expects sparse challenges")
+            }
+        };
+        let stored_a_inner_rows = debug_sparse_challenges
             .iter()
             .zip(stored_inner_rows_flat.iter())
             .fold(
@@ -953,8 +941,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                     acc
                 },
             );
-        let reduced_a_inner_rows = quad_eq
-            .challenges
+        let reduced_a_inner_rows = debug_sparse_challenges
             .iter()
             .zip(debug_recomposed_inner_rows.iter())
             .fold(

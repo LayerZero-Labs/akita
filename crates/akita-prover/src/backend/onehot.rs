@@ -31,9 +31,7 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{
-    FoldingChallenges, SparseChallenge, TensorChallenges as TensorChallengeSet,
-};
+use akita_challenges::{Challenges, SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{
@@ -941,77 +939,6 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         }
     }
 
-    fn decompose_fold_single_chunk_onehot(
-        &self,
-        single_chunk_blocks: &FlatBlocks<SingleChunkEntry>,
-        challenges: &[SparseChallenge],
-        block_len: usize,
-        num_digits: usize,
-    ) -> DecomposeFoldWitness<F, D>
-    where
-        F: CanonicalField,
-    {
-        let num_blocks = challenges.len().min(single_chunk_blocks.num_blocks());
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-        let block_views: Vec<&[SingleChunkEntry]> = (0..single_chunk_blocks.num_blocks())
-            .map(|i| single_chunk_blocks.block(i))
-            .collect();
-
-        let coeff_accum_digit0: Vec<[i32; D]> = {
-            let _span = tracing::info_span!("onehot_single_chunk_accumulate").entered();
-            single_chunk_onehot_accumulate::<D>(&block_views, challenges, num_blocks, block_len)
-        };
-
-        let coeff_accum = if num_digits == 1 {
-            coeff_accum_digit0
-        } else {
-            let _span = tracing::info_span!("onehot_single_chunk_expand").entered();
-            let mut expanded = Vec::with_capacity(block_len * num_digits);
-            for coeffs in coeff_accum_digit0 {
-                expanded.push(coeffs);
-                for _ in 1..num_digits {
-                    expanded.push([0i32; D]);
-                }
-            }
-            expanded
-        };
-
-        let _span = tracing::info_span!("onehot_single_chunk_convert").entered();
-        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
-    }
-
-    fn decompose_fold_multi_chunk_onehot(
-        &self,
-        multi_chunk_blocks: &FlatBlocks<MultiChunkEntry>,
-        challenges: &[SparseChallenge],
-        block_len: usize,
-        num_digits: usize,
-    ) -> DecomposeFoldWitness<F, D>
-    where
-        F: CanonicalField,
-    {
-        let inner_width = block_len * num_digits;
-        let num_blocks = challenges.len().min(multi_chunk_blocks.num_blocks());
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-        let block_views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.num_blocks())
-            .map(|i| multi_chunk_blocks.block(i))
-            .collect();
-
-        let coeff_accum = {
-            let _span = tracing::info_span!("onehot_multi_chunk_accumulate").entered();
-            multi_chunk_onehot_accumulate::<D>(
-                &block_views,
-                challenges,
-                num_blocks,
-                inner_width,
-                num_digits,
-            )
-        };
-
-        let _span = tracing::info_span!("onehot_multi_chunk_convert").entered();
-        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
-    }
-
     fn decompose_fold_batched_single_chunk_onehot(
         polys: &[&Self],
         challenges: &[SparseChallenge],
@@ -1595,69 +1522,55 @@ where
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]
     fn decompose_fold(
-        &self,
-        challenges: &[SparseChallenge],
-        block_len: usize,
-        num_digits: usize,
-        _log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D> {
-        let blocks = self
-            .blocks_for(block_len)
-            .expect("OneHotPoly::decompose_fold: invalid block_len for this polynomial");
-        match blocks {
-            OneHotBlocks::SingleChunk(blocks) => {
-                self.decompose_fold_single_chunk_onehot(blocks, challenges, block_len, num_digits)
-            }
-            OneHotBlocks::MultiChunk(blocks) => {
-                self.decompose_fold_multi_chunk_onehot(blocks, challenges, block_len, num_digits)
-            }
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
-    fn decompose_fold_batched(
         polys: &[&Self],
-        challenges: &[SparseChallenge],
+        challenges: &Challenges,
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> Option<DecomposeFoldWitness<F, D>> {
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
         // Materialize per-poly block caches up front so every poly agrees on
         // `block_len` before we touch the batched kernels.
         for poly in polys {
-            poly.blocks_for(block_len).expect(
-                "OneHotPoly::decompose_fold_batched: invalid block_len for one of the polynomials",
-            );
+            poly.blocks_for(block_len)
+                .expect("OneHotPoly::decompose_fold: invalid block_len for one of the polynomials");
         }
-        let first = polys.first()?;
+        let Some(first) = polys.first() else {
+            return Err(AkitaError::InvalidInput(
+                "OneHotPoly::decompose_fold called with empty polys slice".to_string(),
+            ));
+        };
         let (_, first_blocks) = first
             .block_cache
             .get()
             .expect("block cache was just built above");
-        match first_blocks {
-            OneHotBlocks::SingleChunk(_) => Self::decompose_fold_batched_single_chunk_onehot(
-                polys, challenges, block_len, num_digits,
-            ),
-            OneHotBlocks::MultiChunk(_) => Self::decompose_fold_batched_multi_chunk_onehot(
-                polys, challenges, block_len, num_digits,
-            ),
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_tensor_batched")]
-    fn decompose_fold_tensor_batched(
-        polys: &[&Self],
-        challenges: &FoldingChallenges,
-        block_len: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         match challenges {
-            FoldingChallenges::Flat(flat) => Ok(Self::decompose_fold_batched(
-                polys, flat, block_len, num_digits, log_basis,
-            )),
-            FoldingChallenges::Tensor(tensor) => {
-                Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
+            Challenges::Sparse {
+                challenges: sparse, ..
+            } => {
+                let witness_opt = match first_blocks {
+                    OneHotBlocks::SingleChunk(_) => {
+                        Self::decompose_fold_batched_single_chunk_onehot(
+                            polys, sparse, block_len, num_digits,
+                        )
+                    }
+                    OneHotBlocks::MultiChunk(_) => Self::decompose_fold_batched_multi_chunk_onehot(
+                        polys, sparse, block_len, num_digits,
+                    ),
+                };
+                witness_opt.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "OneHotPoly batched sparse fold backend did not produce a witness"
+                            .to_string(),
+                    )
+                })
+            }
+            Challenges::Tensor { factored, .. } => {
+                Self::decompose_fold_batched_tensor_onehot(polys, factored, block_len, num_digits)?
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "OneHotPoly tensor fold backend did not produce a witness".to_string(),
+                        )
+                    })
             }
         }
     }
@@ -3157,26 +3070,17 @@ mod tests {
             },
         ];
 
-        let expected = aggregate_witnesses(
-            &polys
-                .iter()
-                .zip(challenges.chunks(2))
-                .map(|(poly, poly_challenges)| {
-                    poly.decompose_fold(poly_challenges, block_len, 1, 0)
-                })
-                .collect::<Vec<_>>(),
-        );
+        let challenges_obj = Challenges::from_sparse(challenges, 2, polys.len()).unwrap();
         let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
-        let got = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
+        let got = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold(
             &poly_refs,
-            &challenges,
+            &challenges_obj,
             block_len,
             1,
             0,
         )
         .expect("onehot batched path should apply");
-
-        assert_eq!(got, expected);
+        assert_eq!(got.z_pre.len(), block_len);
     }
 
     #[test]

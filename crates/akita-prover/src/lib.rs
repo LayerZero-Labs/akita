@@ -10,7 +10,7 @@ pub mod kernels;
 pub mod protocol;
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{FoldingChallenges, SparseChallenge};
+use akita_challenges::Challenges;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
@@ -438,45 +438,25 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         Ok(self.tensor_packed_extension_poly::<E>()?.into())
     }
 
-    /// Prover decompose + challenge-fold step.
-    fn decompose_fold(
-        &self,
-        challenges: &[SparseChallenge],
-        block_len: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D>;
-
-    /// Optional fused batched variant of [`Self::decompose_fold`].
-    fn decompose_fold_batched(
-        _polys: &[&Self],
-        _challenges: &[SparseChallenge],
-        _block_len: usize,
-        _num_digits: usize,
-        _log_basis: u32,
-    ) -> Option<DecomposeFoldWitness<F, D>> {
-        None
-    }
-
-    /// Tensor-shaped fused batched variant that consumes factored fold
-    /// challenges directly. Only backends with a tensor-aware kernel
-    /// (currently [`OneHotPoly`]) override the default `Ok(None)`. The
-    /// flat-mode call sites continue to use [`Self::decompose_fold_batched`]
-    /// without going through this method.
+    /// Prover decompose + challenge-fold step over a batch of polynomials
+    /// opening at the same point. The poly backend dispatches on the
+    /// supplied [`Challenges`] variant: flat sparse and tensor challenge
+    /// shapes are both handled inside this single trait method, so caller
+    /// code (`QuadraticEquation`, `compute_r_split_eq`, ...) stays
+    /// shape-agnostic.
     ///
     /// # Errors
     ///
-    /// Returns an error if the tensor challenge container is structurally
-    /// invalid for the supplied polynomials.
-    fn decompose_fold_tensor_batched(
-        _polys: &[&Self],
-        _challenges: &FoldingChallenges,
-        _block_len: usize,
-        _num_digits: usize,
-        _log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
-        Ok(None)
-    }
+    /// Returns an error if the challenge container does not match the
+    /// polynomial layout, or if a backend-specific kernel rejects its
+    /// input.
+    fn decompose_fold(
+        polys: &[&Self],
+        challenges: &Challenges,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError>;
 
     /// Inner Ajtai commit step.
     ///
@@ -668,37 +648,14 @@ where
     }
 
     fn decompose_fold(
-        &self,
-        challenges: &[SparseChallenge],
-        block_len: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D> {
-        <P as AkitaPolyOps<F, D>>::decompose_fold(
-            *self, challenges, block_len, num_digits, log_basis,
-        )
-    }
-
-    fn decompose_fold_batched(
         polys: &[&Self],
-        challenges: &[SparseChallenge],
+        challenges: &Challenges,
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Option<DecomposeFoldWitness<F, D>> {
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
         let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
-        P::decompose_fold_batched(&inner_refs, challenges, block_len, num_digits, log_basis)
-    }
-
-    fn decompose_fold_tensor_batched(
-        polys: &[&Self],
-        challenges: &FoldingChallenges,
-        block_len: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
-        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
-        P::decompose_fold_tensor_batched(&inner_refs, challenges, block_len, num_digits, log_basis)
+        P::decompose_fold(&inner_refs, challenges, block_len, num_digits, log_basis)
     }
 
     fn commit_inner(

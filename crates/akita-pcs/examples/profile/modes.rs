@@ -2,6 +2,7 @@ use crate::report::print_layout;
 use crate::workload::{
     onehot_k_for_num_vars, run_batched_onehot, run_dense, run_dense_for, run_onehot,
 };
+use akita_config::fast_verifier;
 use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
 use akita_config::{akita_batched_root_layout, CommitmentConfig};
 use akita_field::fields::wide::HasWide;
@@ -426,7 +427,7 @@ fn run_profile_onehot_d64(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_d64_tensor(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D64OneHotTensor;
+    type Cfg = fast_verifier::fp128::D64OneHotTensor;
     let prime = fp128_prime_label();
     let onehot_k = onehot_k_for_num_vars(nv);
     let title = if num_polys == 1 {

@@ -22,6 +22,8 @@
 //! the sampled [`SparseChallenge`] range.
 
 use crate::{sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig};
+use akita_algebra::CyclotomicRing;
+use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase};
 use akita_transcript::{labels, Transcript};
 use sha3::{Digest, Sha3_256};
@@ -81,18 +83,39 @@ pub struct TensorChallenges {
     pub num_claims: usize,
 }
 
-/// Sampled folding challenges, either already flat or tensor-structured.
+/// Stage-1 fold challenges — the single representation seen by prover and
+/// verifier protocol code, with all per-variant logic encapsulated behind
+/// methods on this enum. Protocol code never inspects the variants
+/// directly; it just calls the appropriate method
+/// ([`Self::evals_at_pows`] for verifier-side evaluation,
+/// [`Self::accumulate_high_half`] for prover-side r-quotient
+/// accumulation, etc.).
 ///
-/// This enum preserves the runtime representation chosen by
-/// [`ChallengeShape`]. Callers that need ordinary per-block polynomials
-/// can use [`FoldingChallenges::expand_integer`]; callers that can exploit the
-/// factorization can match the tensor variant directly.
+/// The `Tensor` variant eagerly materializes the per-block
+/// [`IntegerChallenge`] products so that protocol hot loops can iterate
+/// over a flat slice without paying the tensor-product cost per access.
+/// The flat sparse variant retains the i8-coefficient
+/// [`SparseChallenge`] representation that flat presets use end-to-end.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FoldingChallenges {
+pub enum Challenges {
     /// Flat challenge vector indexed as `claim * num_blocks + block`.
-    Flat(Vec<SparseChallenge>),
-    /// Tensor-structured vectors indexed as `(claim, p, q)`.
-    Tensor(TensorChallenges),
+    Sparse {
+        /// Per-(claim, block) sparse challenges.
+        challenges: Vec<SparseChallenge>,
+        /// Number of (claim, block) entries packed into one claim.
+        num_blocks_per_claim: usize,
+        /// Number of claims represented by this vector.
+        num_claims: usize,
+    },
+    /// Tensor-factored challenges plus the materialized per-(claim, block)
+    /// integer products that prover hot loops iterate over.
+    Tensor {
+        /// Factored left/right sparse challenges (one factor pair per claim).
+        factored: TensorChallenges,
+        /// `factored.expand_integer::<D>()` cache, used by prover-side
+        /// per-block accumulation. Indexed as `claim * num_blocks + block`.
+        materialized: Vec<IntegerChallenge>,
+    },
 }
 
 /// Transcript labels consumed by [`sample_folding_challenges`].
@@ -125,71 +148,92 @@ pub fn stage1_fold_challenge_labels() -> ChallengeLabels<'static> {
     }
 }
 
-impl FoldingChallenges {
+impl Challenges {
+    /// Construct flat sparse challenges from a pre-sampled vector and the
+    /// claim/block shape used to interpret it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `challenges.len()` does not match
+    /// `num_blocks_per_claim * num_claims`.
+    pub fn from_sparse(
+        challenges: Vec<SparseChallenge>,
+        num_blocks_per_claim: usize,
+        num_claims: usize,
+    ) -> Result<Self, AkitaError> {
+        let expected = num_blocks_per_claim
+            .checked_mul(num_claims)
+            .ok_or_else(|| AkitaError::InvalidSetup("challenge count overflow".to_string()))?;
+        if challenges.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: challenges.len(),
+            });
+        }
+        Ok(Self::Sparse {
+            challenges,
+            num_blocks_per_claim,
+            num_claims,
+        })
+    }
+
+    /// Construct tensor challenges from factored left/right vectors,
+    /// eagerly materializing the per-block product cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the factored input is malformed or if any tensor
+    /// product overflows its integer coefficient representation.
+    pub fn from_tensor<const D: usize>(factored: TensorChallenges) -> Result<Self, AkitaError> {
+        let materialized = factored.expand_integer::<D>()?;
+        Ok(Self::Tensor {
+            factored,
+            materialized,
+        })
+    }
+
     /// Number of logical block challenges represented by this value.
     #[inline]
     #[must_use]
     pub fn logical_len(&self) -> usize {
-        match self {
-            Self::Flat(challenges) => challenges.len(),
-            Self::Tensor(tensor) => tensor.num_claims * tensor.left_len * tensor.right_len,
-        }
+        self.num_claims() * self.num_blocks_per_claim()
     }
 
-    /// Return the flat sparse-challenge slice, or `None` when the challenges
-    /// are stored in factored tensor form.
-    ///
-    /// This is the prover-side bridge that keeps non-tensor call sites on
-    /// the unchanged `&[SparseChallenge]` interface.
+    /// Number of claims represented by this challenge set.
     #[inline]
     #[must_use]
-    pub fn as_sparse(&self) -> Option<&[SparseChallenge]> {
+    pub fn num_claims(&self) -> usize {
         match self {
-            Self::Flat(challenges) => Some(challenges.as_slice()),
-            Self::Tensor(_) => None,
+            Self::Sparse { num_claims, .. } => *num_claims,
+            Self::Tensor { factored, .. } => factored.num_claims,
         }
     }
 
-    /// Return the factored tensor challenges, or `None` when the challenges
-    /// are stored in flat sparse form.
+    /// Number of logical block challenges per claim.
     #[inline]
     #[must_use]
-    pub fn as_tensor(&self) -> Option<&TensorChallenges> {
+    pub fn num_blocks_per_claim(&self) -> usize {
         match self {
-            Self::Flat(_) => None,
-            Self::Tensor(tensor) => Some(tensor),
+            Self::Sparse {
+                num_blocks_per_claim,
+                ..
+            } => *num_blocks_per_claim,
+            Self::Tensor { factored, .. } => factored.left_len * factored.right_len,
         }
     }
 
-    /// Materialize logical ring challenges for prover-side fold kernels.
+    /// Evaluate every logical challenge at the precomputed `alpha`-powers,
+    /// in claim-major flat order. This is the boundary used by both prover
+    /// `compute_m_evals_x` and verifier `prepare_ring_switch_row_eval`.
     ///
-    /// Flat challenges widen coefficients without changing the distribution;
-    /// tensor challenges materialize `left[p] · right[q]` per logical block.
-    /// This is the boundary where a sampled challenge container becomes an
-    /// [`IntegerChallenge`].
+    /// For the sparse variant this is the canonical per-block evaluation
+    /// loop; for the tensor variant it uses the factored aggregate
+    /// formulation that avoids materializing every logical block.
     ///
     /// # Errors
     ///
-    /// Returns an error if a tensor product has malformed inputs or overflows
-    /// its integer coefficient representation.
-    pub fn expand_integer<const D: usize>(&self) -> Result<Vec<IntegerChallenge>, AkitaError> {
-        match self {
-            Self::Flat(challenges) => Ok(challenges
-                .iter()
-                .map(IntegerChallenge::from_sparse)
-                .collect()),
-            Self::Tensor(tensor) => tensor.expand_integer::<D>(),
-        }
-    }
-
-    /// Evaluate all logical challenges at a ring-switch point, in flat order.
-    ///
-    /// This is the logical per-block API: it returns one evaluation per block
-    /// regardless of whether the challenges were sampled flat or factored.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if challenge expansion or evaluation fails.
+    /// Returns an error if `alpha_pows` has the wrong length or if any
+    /// per-challenge evaluation rejects its input.
     pub fn evals_at_pows<F, E, const D: usize>(
         &self,
         alpha_pows: &[E],
@@ -199,11 +243,185 @@ impl FoldingChallenges {
         E: FieldCore + MulBase<F>,
     {
         match self {
-            Self::Flat(challenges) => challenges
+            Self::Sparse { challenges, .. } => challenges
                 .iter()
                 .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
                 .collect(),
-            Self::Tensor(tensor) => tensor.evals_at_pows::<F, E, D>(alpha_pows),
+            Self::Tensor { factored, .. } => factored.evals_at_pows::<F, E, D>(alpha_pows),
+        }
+    }
+
+    /// Slice this challenge set down to the subset whose claim indices
+    /// appear in `claim_indices`, returning a fresh `Challenges` of length
+    /// `claim_indices.len() * num_blocks_per_claim`.
+    ///
+    /// Used by `QuadraticEquation::new_prover` to chunk the global challenge
+    /// vector by opening point before handing each chunk to the poly
+    /// backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any claim index is out of range or if the tensor
+    /// expansion of the selected sub-block fails.
+    pub fn select_claims<const D: usize>(
+        &self,
+        claim_indices: &[usize],
+    ) -> Result<Self, AkitaError> {
+        match self {
+            Self::Sparse {
+                challenges,
+                num_blocks_per_claim,
+                ..
+            } => {
+                let mut selected = Vec::with_capacity(claim_indices.len() * num_blocks_per_claim);
+                for &claim_idx in claim_indices {
+                    let start = claim_idx
+                        .checked_mul(*num_blocks_per_claim)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("challenge offset overflow".to_string())
+                        })?;
+                    let end = start.checked_add(*num_blocks_per_claim).ok_or_else(|| {
+                        AkitaError::InvalidSetup("challenge offset overflow".to_string())
+                    })?;
+                    selected.extend_from_slice(challenges.get(start..end).ok_or(
+                        AkitaError::InvalidSize {
+                            expected: end,
+                            actual: challenges.len(),
+                        },
+                    )?);
+                }
+                Self::from_sparse(selected, *num_blocks_per_claim, claim_indices.len())
+            }
+            Self::Tensor { factored, .. } => {
+                let mut left = Vec::with_capacity(claim_indices.len() * factored.left_len);
+                let mut right = Vec::with_capacity(claim_indices.len() * factored.right_len);
+                for &claim_idx in claim_indices {
+                    if claim_idx >= factored.num_claims {
+                        return Err(AkitaError::InvalidInput(format!(
+                            "tensor claim index {claim_idx} out of range for {} claims",
+                            factored.num_claims
+                        )));
+                    }
+                    let left_start = claim_idx * factored.left_len;
+                    let right_start = claim_idx * factored.right_len;
+                    left.extend_from_slice(
+                        &factored.left[left_start..left_start + factored.left_len],
+                    );
+                    right.extend_from_slice(
+                        &factored.right[right_start..right_start + factored.right_len],
+                    );
+                }
+                Self::from_tensor::<D>(TensorChallenges {
+                    left,
+                    right,
+                    left_len: factored.left_len,
+                    right_len: factored.right_len,
+                    num_claims: claim_indices.len(),
+                })
+            }
+        }
+    }
+
+    /// Accumulate `Σ c_i · ring_fn(i)` over `0..self.logical_len()` into a
+    /// fresh length-`D` `F`-vector, with `ring_fn(i) = None` skipping block
+    /// `i`. The internal loop parallelises via the workspace `cfg_fold_reduce!`
+    /// macro and matches on the challenge variant once at the top.
+    ///
+    /// This is the single hook used by `compute_r_split_eq` for both the
+    /// consistency row (`ring_fn(i) = Some(w_folded[i])`) and per-A-row
+    /// accumulation (`ring_fn(i) = recomposed_inner_rows[...]`).
+    pub fn accumulate_high_half<F, R, const D: usize>(&self, ring_fn: R) -> Vec<F>
+    where
+        F: FieldCore + CanonicalField + Send + Sync,
+        R: Fn(usize) -> Option<CyclotomicRing<F, D>> + Sync,
+    {
+        let total = self.logical_len();
+        match self {
+            Self::Sparse { challenges, .. } => {
+                let challenges = challenges.as_slice();
+                cfg_fold_reduce!(
+                    0..total,
+                    || vec![F::zero(); D],
+                    |mut acc: Vec<F>, i: usize| {
+                        if let Some(ring) = ring_fn(i) {
+                            add_sparse_ring_product_high_half::<F, D>(
+                                &mut acc,
+                                &challenges[i],
+                                &ring,
+                            );
+                        }
+                        acc
+                    },
+                    |mut a: Vec<F>, b: Vec<F>| {
+                        for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                            *ai += *bi;
+                        }
+                        a
+                    }
+                )
+            }
+            Self::Tensor { materialized, .. } => {
+                let challenges = materialized.as_slice();
+                cfg_fold_reduce!(
+                    0..total,
+                    || vec![F::zero(); D],
+                    |mut acc: Vec<F>, i: usize| {
+                        if let Some(ring) = ring_fn(i) {
+                            add_integer_ring_product_high_half::<F, D>(
+                                &mut acc,
+                                &challenges[i],
+                                &ring,
+                            );
+                        }
+                        acc
+                    },
+                    |mut a: Vec<F>, b: Vec<F>| {
+                        for (ai, bi) in a.iter_mut().zip(b.iter()) {
+                            *ai += *bi;
+                        }
+                        a
+                    }
+                )
+            }
+        }
+    }
+}
+
+/// High-half quotient kernel for sparse i8 challenges. Adds
+/// `challenge * ring` to the rolled-over (degree ≥ D) tail of the product.
+/// Skips the first `D - pos` coefficients per challenge term that cannot
+/// contribute.
+#[inline(always)]
+fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
+    quotient: &mut [F],
+    challenge: &SparseChallenge,
+    ring: &CyclotomicRing<F, D>,
+) {
+    let rc = ring.coefficients();
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let c = F::from_i64(coeff as i64);
+        let p = pos as usize;
+        for s in (D - p)..D {
+            quotient[p + s - D] += c * rc[s];
+        }
+    }
+}
+
+/// Integer-coefficient analogue of [`add_sparse_ring_product_high_half`],
+/// used by the tensor branch where the cached per-block product coefficients
+/// outgrow i8.
+#[inline(always)]
+fn add_integer_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
+    quotient: &mut [F],
+    challenge: &IntegerChallenge,
+    ring: &CyclotomicRing<F, D>,
+) {
+    let rc = ring.coefficients();
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let c = F::from_i64(i64::from(coeff));
+        let p = pos as usize;
+        for s in (D - p)..D {
+            quotient[p + s - D] += c * rc[s];
         }
     }
 }
@@ -579,7 +797,7 @@ pub fn sample_folding_challenges<F, T, const D: usize>(
     cfg: &SparseChallengeConfig,
     shape: &ChallengeShape,
     labels: ChallengeLabels<'_>,
-) -> Result<FoldingChallenges, AkitaError>
+) -> Result<Challenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -587,10 +805,11 @@ where
     match shape {
         ChallengeShape::Flat => {
             let total = num_blocks.checked_mul(num_claims).ok_or_else(|| {
-                AkitaError::InvalidSetup("tensor challenge count overflow".to_string())
+                AkitaError::InvalidSetup("sparse challenge count overflow".to_string())
             })?;
-            sample_sparse_challenges::<F, T, D>(transcript, labels.flat, total, cfg)
-                .map(FoldingChallenges::Flat)
+            let challenges =
+                sample_sparse_challenges::<F, T, D>(transcript, labels.flat, total, cfg)?;
+            Challenges::from_sparse(challenges, num_blocks, num_claims)
         }
         ChallengeShape::Tensor => {
             let (left_len, right_len) = tensor_split(num_blocks)?;
@@ -614,13 +833,13 @@ where
                 right_total,
                 cfg,
             )?;
-            Ok(FoldingChallenges::Tensor(TensorChallenges {
+            Challenges::from_tensor::<D>(TensorChallenges {
                 left,
                 right,
                 left_len,
                 right_len,
                 num_claims,
-            }))
+            })
         }
     }
 }

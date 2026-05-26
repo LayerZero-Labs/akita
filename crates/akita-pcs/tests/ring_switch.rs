@@ -352,7 +352,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let m_evals_x = compute_m_evals_x::<F, F, _, D>(
+            let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
                 &[quad_eq.opening_point().clone()],
                 std::slice::from_ref(&ring_multiplier_point),
@@ -471,7 +471,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let m_evals_x = compute_m_evals_x::<F, F, _, D>(
+            let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
                 &[quad_eq.opening_point().clone()],
                 std::slice::from_ref(&ring_multiplier_point),
@@ -623,7 +623,7 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let m_evals_x = compute_m_evals_x::<F, F, _, D>(
+        let m_evals_x = compute_m_evals_x::<F, F, D>(
             &setup.expanded,
             std::slice::from_ref(&ring_opening_point),
             std::slice::from_ref(&ring_multiplier_point),
@@ -648,7 +648,7 @@ mod tests {
 
         let expected = multilinear_eval(&m_evals_x, &x_challenges).expect("multilinear_eval");
 
-        let prepared = prepare_ring_switch_row_eval::<F, F, _, D>(
+        let prepared = prepare_ring_switch_row_eval::<F, F, D>(
             &quad_eq.challenges,
             alpha,
             &level_params,

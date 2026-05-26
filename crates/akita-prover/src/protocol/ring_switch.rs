@@ -15,7 +15,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::ChallengeEval;
+use akita_challenges::Challenges;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, LiftBase,
@@ -125,65 +125,34 @@ where
         .take_w_folded()
         .ok_or_else(|| AkitaError::InvalidInput("missing w_folded in prover".to_string()))?;
 
-    let r = if let Some(integer_challenges) = quad_eq.integer_challenges.as_deref() {
-        compute_r_split_eq::<F, _, D>(
-            lp,
-            setup,
-            integer_challenges,
-            w_hat.flat_digits(),
-            #[cfg(feature = "zk")]
-            &d_blinding_digits,
-            &decomposed_inner_rows,
-            #[cfg(feature = "zk")]
-            &b_blinding_digits,
-            &recomposed_inner_rows,
-            &w_folded,
-            quad_eq.ring_multiplier_points(),
-            quad_eq.claim_to_point(),
-            quad_eq.claim_to_point_poly(),
-            quad_eq.claim_poly_indices(),
-            quad_eq.row_coefficient_rings(),
-            &z_pre.centered_coeffs,
-            z_pre.centered_inf_norm,
-            quad_eq.y(),
-            quad_eq.num_polys_per_point(),
-            quad_eq.num_public_rows(),
-            lp.num_blocks,
-            lp.inner_width(),
-            setup.seed.max_stride,
-            ntt_shared,
-            quad_eq.m_row_layout(),
-        )?
-    } else {
-        compute_r_split_eq::<F, _, D>(
-            lp,
-            setup,
-            &quad_eq.challenges,
-            w_hat.flat_digits(),
-            #[cfg(feature = "zk")]
-            &d_blinding_digits,
-            &decomposed_inner_rows,
-            #[cfg(feature = "zk")]
-            &b_blinding_digits,
-            &recomposed_inner_rows,
-            &w_folded,
-            quad_eq.ring_multiplier_points(),
-            quad_eq.claim_to_point(),
-            quad_eq.claim_to_point_poly(),
-            quad_eq.claim_poly_indices(),
-            quad_eq.row_coefficient_rings(),
-            &z_pre.centered_coeffs,
-            z_pre.centered_inf_norm,
-            quad_eq.y(),
-            quad_eq.num_polys_per_point(),
-            quad_eq.num_public_rows(),
-            lp.num_blocks,
-            lp.inner_width(),
-            setup.seed.max_stride,
-            ntt_shared,
-            quad_eq.m_row_layout(),
-        )?
-    };
+    let r = compute_r_split_eq::<F, D>(
+        lp,
+        setup,
+        &quad_eq.challenges,
+        w_hat.flat_digits(),
+        #[cfg(feature = "zk")]
+        &d_blinding_digits,
+        &decomposed_inner_rows,
+        #[cfg(feature = "zk")]
+        &b_blinding_digits,
+        &recomposed_inner_rows,
+        &w_folded,
+        quad_eq.ring_multiplier_points(),
+        quad_eq.claim_to_point(),
+        quad_eq.claim_to_point_poly(),
+        quad_eq.claim_poly_indices(),
+        quad_eq.row_coefficient_rings(),
+        &z_pre.centered_coeffs,
+        z_pre.centered_inf_norm,
+        quad_eq.y(),
+        quad_eq.num_polys_per_point(),
+        quad_eq.num_public_rows(),
+        lp.num_blocks,
+        lp.inner_width(),
+        setup.seed.max_stride,
+        ntt_shared,
+        quad_eq.m_row_layout(),
+    )?;
     // Terminal layout drops the D-block from M and from the witness; the
     // d-blinding column segment must also disappear so the prover witness
     // matches the verifier's column offsets.
@@ -436,54 +405,32 @@ where
     let claim_to_point_poly = quad_eq.claim_to_point_poly();
     let claim_poly_indices = quad_eq.claim_poly_indices();
     let challenges = &quad_eq.challenges;
-    let integer_challenges = quad_eq.integer_challenges.as_deref();
     if gamma.len() != claim_to_point.len() {
         return Err(AkitaError::InvalidInput(
             "ring-switch gamma length does not match claim count".to_string(),
         ));
     }
 
-    // Dispatch on the challenge shape: the integer-challenge instantiation is
-    // used only for tensor presets; flat presets hit the SparseChallenge path
-    // which monomorphizes to main's exact compute_m_evals_x machine code.
+    // compute_m_evals_x dispatches on the challenge shape internally via
+    // `Challenges::evals_at_pows`; the caller is shape-agnostic.
     let compute_m_evals = || -> Result<Vec<E>, AkitaError> {
-        if let Some(int_challenges) = integer_challenges {
-            compute_m_evals_x::<F, E, _, D>(
-                setup,
-                opening_points,
-                ring_multiplier_points,
-                claim_to_point,
-                int_challenges,
-                alpha,
-                &ring_alpha_evals_y,
-                lp,
-                &tau1,
-                num_polys_per_point,
-                claim_to_point_poly,
-                claim_poly_indices,
-                gamma,
-                num_public_rows,
-                m_row_layout,
-            )
-        } else {
-            compute_m_evals_x::<F, E, _, D>(
-                setup,
-                opening_points,
-                ring_multiplier_points,
-                claim_to_point,
-                challenges,
-                alpha,
-                &ring_alpha_evals_y,
-                lp,
-                &tau1,
-                num_polys_per_point,
-                claim_to_point_poly,
-                claim_poly_indices,
-                gamma,
-                num_public_rows,
-                m_row_layout,
-            )
-        }
+        compute_m_evals_x::<F, E, D>(
+            setup,
+            opening_points,
+            ring_multiplier_points,
+            claim_to_point,
+            challenges,
+            alpha,
+            &ring_alpha_evals_y,
+            lp,
+            &tau1,
+            num_polys_per_point,
+            claim_to_point_poly,
+            claim_poly_indices,
+            gamma,
+            num_public_rows,
+            m_row_layout,
+        )
     };
 
     #[cfg(feature = "parallel")]
@@ -783,12 +730,12 @@ pub fn build_w_evals_compact(
 /// or expanded matrix dimensions are inconsistent.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
-pub fn compute_m_evals_x<F, E, C, const D: usize>(
+pub fn compute_m_evals_x<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &[C],
+    challenges: &Challenges,
     alpha: E,
     alpha_pows: &[E],
     lp: &LevelParams,
@@ -801,9 +748,8 @@ pub fn compute_m_evals_x<F, E, C, const D: usize>(
     m_row_layout: MRowLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
-    C: ChallengeEval,
 {
     if alpha_pows.len() != D {
         return Err(AkitaError::InvalidSize {
@@ -878,10 +824,10 @@ where
     let t_total_blocks = num_blocks
         .checked_mul(num_t_vectors)
         .ok_or_else(|| AkitaError::InvalidSetup("batched t block count overflow".to_string()))?;
-    if challenges.len() != total_blocks {
+    if challenges.logical_len() != total_blocks {
         return Err(AkitaError::InvalidSize {
             expected: total_blocks,
-            actual: challenges.len(),
+            actual: challenges.logical_len(),
         });
     }
     let block_len = lp.block_len;
@@ -963,10 +909,7 @@ where
     let x_len = total_cols.next_power_of_two();
     let mut out = Vec::with_capacity(x_len);
 
-    let c_alphas: Vec<E> = challenges
-        .iter()
-        .map(|challenge| challenge.eval_at_pows_dyn::<F, E, D>(alpha_pows))
-        .collect::<Result<_, _>>()?;
+    let c_alphas: Vec<E> = challenges.evals_at_pows::<F, E, D>(alpha_pows)?;
 
     let stride = setup.seed.max_stride;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride)?;
