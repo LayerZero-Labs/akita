@@ -202,8 +202,9 @@ if [ "$errors" -ne 0 ]; then
 
 Rust file line-cap check failed.
 
-Split over-cap files into smaller modules. For existing baseline entries, do
-not raise the recorded count; remove the entry once the file reaches the cap.
+Split over-cap files into smaller modules. For current offenders listed in
+$baseline_path, do not raise the recorded count. Remove the entry once the file
+reaches the cap.
 EOF
     exit 1
 fi
