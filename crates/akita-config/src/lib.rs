@@ -9,7 +9,7 @@
 //! [`WCommitmentConfig`] is the derived recursive-w config used by
 //! `<Cfg>`-generic ring-degree dispatch helpers.
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::generated::GeneratedScheduleTable;
@@ -108,6 +108,20 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// `InvalidSetup` if `d` is not supported.
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
+
+    /// Stage-1 fold-round challenge shape at one schedule level.
+    ///
+    /// The default `TensorChallengeShape::Flat` matches every shipped flat
+    /// preset and is the only shape used by recursive (`level >= 1`) folds in
+    /// the current planner. Tensor-shaped fast-verifier presets (e.g.
+    /// `fast_verifier::fp128::D64OneHotTensor`) override this hook to return
+    /// `TensorChallengeShape::Tensor` for `inputs.level == 0` so that the
+    /// schedule materializer (and any DP planner) sizes
+    /// `LevelParams::num_digits_fold` and the `(m_vars, r_vars)` split using
+    /// the tensor L1 mass `omega^2` instead of the flat `omega`.
+    fn fold_challenge_shape_at_level(_inputs: AkitaScheduleInputs) -> TensorChallengeShape {
+        TensorChallengeShape::Flat
+    }
 
     /// SIS modulus family used by security-floor lookups.
     fn sis_modulus_family() -> SisModulusFamily;
@@ -236,6 +250,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 
     fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
         Cfg::stage1_challenge_config(d)
+    }
+
+    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
+        Cfg::fold_challenge_shape_at_level(inputs)
     }
 
     fn sis_modulus_family() -> SisModulusFamily {

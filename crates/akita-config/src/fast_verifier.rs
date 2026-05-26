@@ -10,8 +10,8 @@ pub mod fp128 {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::generated::GeneratedScheduleTable;
     use akita_types::{
-        AjtaiRole, AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey,
-        AkitaSchedulePlan, CommitmentEnvelope, DecompositionParams, SisModulusFamily,
+        AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
+        CommitmentEnvelope, DecompositionParams, SisModulusFamily,
     };
 
     /// Base field for the fp128 fast-verifier presets.
@@ -51,6 +51,18 @@ pub mod fp128 {
             }
         }
 
+        /// Tensor at the root level (`level == 0`), flat at every recursive
+        /// level. The schedule materializer reads this hook *before* sizing
+        /// `num_digits_fold` and the `(m_vars, r_vars)` split, so the root
+        /// step's `LevelParams` are dimensioned for `omega^2`.
+        fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
+            if inputs.level == 0 {
+                TensorChallengeShape::Tensor
+            } else {
+                TensorChallengeShape::Flat
+            }
+        }
+
         fn sis_modulus_family() -> SisModulusFamily {
             SisModulusFamily::Q128
         }
@@ -63,9 +75,7 @@ pub mod fp128 {
             key: AkitaScheduleLookupKey,
         ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
             let envelope = <Self as CommitmentConfig>::envelope(key.num_vars);
-            let plan =
-                crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key, envelope)?;
-            Ok(plan.map(apply_tensor_root_fold_shape))
+            crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key, envelope)
         }
 
         fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
@@ -98,19 +108,5 @@ pub mod fp128 {
                 crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
             )
         }
-    }
-
-    /// Apply the tensor-root policy to a generated schedule.
-    fn apply_tensor_root_fold_shape(mut plan: AkitaSchedulePlan) -> AkitaSchedulePlan {
-        for step in &mut plan.steps {
-            if let AkitaPlannedStep::Fold(level) = step {
-                level.lp.fold_challenge_shape = if level.inputs.level == 0 {
-                    TensorChallengeShape::Tensor
-                } else {
-                    TensorChallengeShape::Flat
-                };
-            }
-        }
-        plan
     }
 }
