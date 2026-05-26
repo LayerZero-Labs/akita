@@ -3,7 +3,7 @@ use crate::workload::{
     onehot_k_for_num_vars, run_batched_onehot, run_dense, run_dense_for, run_onehot,
 };
 use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
-use akita_config::{akita_batched_root_layout, CommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
 use akita_field::{
     CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, PseudoMersenneField,
@@ -11,6 +11,7 @@ use akita_field::{
 };
 use akita_field::{ExtField, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
+use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::CommitmentProver;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
@@ -561,7 +562,10 @@ pub(crate) fn run_all_profile_modes(nv: usize) {
 }
 
 fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> LevelParams {
-    Cfg::commitment_layout(nv).expect("layout")
+    Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+    )
+    .expect("layout")
 }
 
 pub(crate) fn log_active_fp128_prime_probe() {

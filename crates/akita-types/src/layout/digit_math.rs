@@ -277,31 +277,6 @@ pub fn optimal_m_r_split(
     (reduced_vars - best_r, best_r)
 }
 
-/// Baseline variant of [`optimal_m_r_split`] with `num_ring = 0` (standard
-/// power-of-two upper bound for `m_eff`).
-///
-/// # Panics
-///
-/// Panics if `log_basis` is 0 or at least 128.
-pub fn baseline_optimal_m_r_split(
-    n_a: u32,
-    challenge_l1_mass: usize,
-    log_commit_bound: u32,
-    log_basis: u32,
-    reduced_vars: usize,
-    field_bits: u32,
-) -> (usize, usize) {
-    optimal_m_r_split(
-        n_a,
-        challenge_l1_mass,
-        log_commit_bound,
-        log_basis,
-        reduced_vars,
-        0,
-        field_bits,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
