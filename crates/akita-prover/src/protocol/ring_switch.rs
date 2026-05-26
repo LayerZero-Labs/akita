@@ -2,7 +2,7 @@
 
 use crate::api::commitment::{
     validate_commit_inner_witness_shape, validate_commit_level_params,
-    validate_commit_outer_input_width,
+    validate_commit_outer_input_nonempty,
 };
 use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]
@@ -558,7 +558,7 @@ where
     let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
     #[cfg(feature = "zk")]
     outer_input.extend_from_slice(b_blinding_digits.flat_digits());
-    validate_commit_outer_input_width(outer_input.len(), expanded)?;
+    validate_commit_outer_input_nonempty(outer_input.len())?;
     let u: Vec<CyclotomicRing<F, D>> =
         backend.digit_rows::<D>(prepared, commit_layout.b_key.row_len(), &outer_input)?;
     if u.len() != commit_layout.b_key.row_len() {

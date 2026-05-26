@@ -191,15 +191,11 @@ where
     Ok(())
 }
 
-pub(crate) fn validate_commit_outer_input_width<F: FieldCore>(
-    active_width: usize,
-    setup: &AkitaExpandedSetup<F>,
-) -> Result<(), AkitaError> {
-    if active_width == 0 || active_width > setup.seed.max_stride {
-        return Err(AkitaError::InvalidSetup(format!(
-            "commit B input width {active_width} must be in 1..={}",
-            setup.seed.max_stride
-        )));
+pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<(), AkitaError> {
+    if active_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "commit B input must be nonempty".to_string(),
+        ));
     }
     Ok(())
 }
@@ -256,7 +252,6 @@ fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usi
 
 fn commit_with_validated_params<F, const D: usize, P, B>(
     polys: &[P],
-    expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
@@ -313,7 +308,7 @@ where
         b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
         b_blinding_digits
     };
-    validate_commit_outer_input_width(b_input_digits.len(), expanded)?;
+    validate_commit_outer_input_nonempty(b_input_digits.len())?;
     let u: Vec<CyclotomicRing<F, D>> =
         backend.digit_rows::<D>(prepared, params.b_key.row_len(), &b_input_digits)?;
     if u.len() != params.b_key.row_len() {
@@ -367,7 +362,7 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
     prepare_commit_inputs::<F, D, P>(polys, expanded)?;
     validate_commit_level_params::<F, D>(params, expanded)?;
-    commit_with_validated_params::<F, D, P, B>(polys, expanded, backend, prepared, params)
+    commit_with_validated_params::<F, D, P, B>(polys, backend, prepared, params)
 }
 
 /// Commit a group of polynomials using caller-supplied config policy.
@@ -396,7 +391,7 @@ where
     let incidence = prepare_commit_inputs::<F, D, P>(polys, expanded)?;
     let params = select_params(&incidence)?;
     validate_commit_level_params::<F, D>(&params, expanded)?;
-    commit_with_validated_params::<F, D, P, B>(polys, expanded, backend, prepared, &params)
+    commit_with_validated_params::<F, D, P, B>(polys, backend, prepared, &params)
 }
 
 /// Validate a multipoint commitment request and derive its
@@ -505,19 +500,12 @@ where
     let incidence = prepare_batched_commit_inputs::<F, D, P>(polys_per_point, expanded)?;
     let params = select_params(&incidence)?;
     validate_commit_level_params::<F, D>(&params, expanded)?;
-    batched_commit_with_validated_params::<F, D, P, B>(
-        polys_per_point,
-        expanded,
-        backend,
-        prepared,
-        &params,
-    )
+    batched_commit_with_validated_params::<F, D, P, B>(polys_per_point, backend, prepared, &params)
 }
 
 #[allow(clippy::type_complexity)]
 fn batched_commit_with_validated_params<F, const D: usize, P, B>(
     polys_per_point: &[&[P]],
-    expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
@@ -530,7 +518,7 @@ where
     let mut out = Vec::with_capacity(polys_per_point.len());
     for polys in polys_per_point {
         out.push(commit_with_validated_params::<F, D, P, B>(
-            polys, expanded, backend, prepared, params,
+            polys, backend, prepared, params,
         )?);
     }
     Ok(out)
@@ -563,13 +551,7 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
     prepare_batched_commit_inputs::<F, D, P>(polys_per_point, expanded)?;
     validate_commit_level_params::<F, D>(params, expanded)?;
-    batched_commit_with_validated_params::<F, D, P, B>(
-        polys_per_point,
-        expanded,
-        backend,
-        prepared,
-        params,
-    )
+    batched_commit_with_validated_params::<F, D, P, B>(polys_per_point, backend, prepared, params)
 }
 
 #[cfg(test)]
@@ -627,6 +609,15 @@ mod tests {
         assert!(matches!(
             checked_commit_b_input_len(usize::MAX, 2),
             Err(AkitaError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn commit_outer_input_validation_allows_logical_input_longer_than_setup_stride() {
+        validate_commit_outer_input_nonempty(9).expect("logical B input may exceed row stride");
+        assert!(matches!(
+            validate_commit_outer_input_nonempty(0),
+            Err(AkitaError::InvalidSetup(_))
         ));
     }
 }

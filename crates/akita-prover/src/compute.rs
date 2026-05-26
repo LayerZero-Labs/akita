@@ -381,10 +381,24 @@ pub struct CpuPreparedSetup<F: FieldCore, const D: usize> {
     ntt_shared: NttSlotCache<D>,
 }
 
-fn validate_digit_row_width(width: usize, max_stride: usize) -> Result<(), AkitaError> {
-    if width > max_stride {
-        return Err(AkitaError::InvalidInput(format!(
-            "digit row width {width} exceeds prepared setup max_stride {max_stride}"
+fn validate_digit_row_request(
+    row_len: usize,
+    max_stride: usize,
+    total_ring_elements: usize,
+) -> Result<(), AkitaError> {
+    if max_stride == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "prepared setup max_stride must be nonzero".to_string(),
+        ));
+    }
+    let required = row_len.checked_mul(max_stride).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "digit row request overflows: row_len={row_len} max_stride={max_stride}"
+        ))
+    })?;
+    if required > total_ring_elements {
+        return Err(AkitaError::InvalidSetup(format!(
+            "digit row request needs {required} setup ring elements but prepared setup has {total_ring_elements}"
         )));
     }
     Ok(())
@@ -591,7 +605,14 @@ where
         row_len: usize,
         digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        validate_digit_row_width(digits.len(), prepared.expanded.seed.max_stride)?;
+        validate_digit_row_request(
+            row_len,
+            prepared.expanded.seed.max_stride,
+            prepared
+                .expanded
+                .shared_matrix
+                .total_ring_elements_at::<D>()?,
+        )?;
         Ok(mat_vec_mul_ntt_single_i8(
             &prepared.ntt_shared,
             row_len,
@@ -611,7 +632,14 @@ where
         row_len: usize,
         digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        validate_digit_row_width(digits.len(), prepared.expanded.seed.max_stride)?;
+        validate_digit_row_request(
+            row_len,
+            prepared.expanded.seed.max_stride,
+            prepared
+                .expanded
+                .shared_matrix
+                .total_ring_elements_at::<D>()?,
+        )?;
         Ok(mat_vec_mul_ntt_single_i8_cyclic(
             &prepared.ntt_shared,
             row_len,
@@ -708,6 +736,17 @@ mod tests {
     fn cpu_digit_rows_match_direct_kernel() {
         let prepared = prepared();
         let digits = vec![[1i8; D], [-1i8; D], [2i8; D]];
+        let via_backend = CpuBackend
+            .digit_rows::<D>(&prepared, 2, &digits)
+            .expect("backend digit rows");
+        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, 8, &digits);
+        assert_eq!(via_backend, direct);
+    }
+
+    #[test]
+    fn cpu_digit_rows_accept_logical_input_longer_than_stride() {
+        let prepared = prepared();
+        let digits = vec![[1i8; D]; 12];
         let via_backend = CpuBackend
             .digit_rows::<D>(&prepared, 2, &digits)
             .expect("backend digit rows");
