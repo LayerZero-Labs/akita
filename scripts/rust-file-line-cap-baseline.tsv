@@ -1,0 +1,19 @@
+# Recorded current Rust file line-count offenders for scripts/check-rust-file-lines.sh.
+# Format: <line-count><TAB><repo-relative path>
+# Entries may not grow. Remove an entry once its file has at most 1500 lines.
+3695	crates/akita-types/src/proof/mod.rs
+3401	crates/akita-prover/src/protocol/flow.rs
+3365	crates/akita-prover/src/protocol/sumcheck/akita_stage2.rs
+3090	crates/akita-prover/src/kernels/linear.rs
+2991	crates/akita-prover/src/backend/onehot.rs
+2894	crates/akita-prover/src/protocol/sumcheck/two_round_prefix.rs
+2725	crates/akita-prover/src/protocol/sumcheck/akita_stage1.rs
+2668	crates/akita-field/src/fields/ext.rs
+2053	crates/akita-sumcheck/src/extension_opening_reduction.rs
+2048	crates/akita-scheme/src/tests.rs
+1921	crates/akita-field/src/fields/fp128.rs
+1830	crates/akita-config/src/proof_optimized.rs
+1814	crates/akita-pcs/tests/algebra.rs
+1567	crates/akita-prover/src/protocol/quadratic_equation.rs
+1506	crates/akita-types/src/field_reduction.rs
+1503	crates/akita-algebra/src/ring/cyclotomic.rs
