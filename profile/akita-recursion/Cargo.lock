@@ -81,13 +81,20 @@ dependencies = [
 name = "akita-config"
 version = "0.1.0"
 dependencies = [
- "akita-algebra",
  "akita-challenges",
+ "akita-derive",
  "akita-field",
- "akita-planner",
  "akita-transcript",
  "akita-types",
- "tracing",
+]
+
+[[package]]
+name = "akita-derive"
+version = "0.1.0"
+dependencies = [
+ "akita-challenges",
+ "akita-field",
+ "akita-types",
 ]
 
 [[package]]
@@ -126,23 +133,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "akita-planner"
-version = "0.1.0"
-dependencies = [
- "akita-algebra",
- "akita-challenges",
- "akita-field",
- "akita-types",
- "tracing",
-]
-
-[[package]]
 name = "akita-prover"
 version = "0.1.0"
 dependencies = [
  "aes",
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",
@@ -212,7 +209,6 @@ dependencies = [
 name = "akita-scheme"
 version = "0.1.0"
 dependencies = [
- "akita-algebra",
  "akita-challenges",
  "akita-config",
  "akita-field",
@@ -222,7 +218,6 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "akita-verifier",
- "rayon",
  "tracing",
 ]
 
@@ -288,6 +283,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",

@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-#![cfg(all(feature = "zk", feature = "planner"))]
+#![cfg(feature = "zk")]
 
 mod common;
 
@@ -17,8 +17,7 @@ use akita_types::{
     lagrange_weights, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
     AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup,
     AppendToTranscript, ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams,
-    FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint, ScheduleProvider,
-    SisModulusFamily,
+    FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -28,79 +27,6 @@ type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
 #[derive(Clone, Copy, Debug)]
 struct RuntimePlanned<Cfg>(PhantomData<Cfg>);
-
-impl<Cfg: CommitmentConfig> ScheduleProvider for RuntimePlanned<Cfg> {
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
-    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        format!("zk-runtime-planned/{key:?}")
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-        Ok(None)
-    }
-}
-
-impl<Cfg: CommitmentConfig> akita_planner::PlannerConfig for RuntimePlanned<Cfg> {
-    type PlannerField = Cfg::Field;
-
-    const PLANNER_D: usize = Cfg::D;
-
-    fn planner_field_bits() -> u32 {
-        Cfg::decomposition().field_bits()
-    }
-
-    fn planner_challenge_field_bits() -> u32 {
-        Cfg::decomposition().field_bits() * (Cfg::CHAL_EXT_DEGREE as u32)
-    }
-
-    fn planner_extension_opening_width() -> usize {
-        Cfg::CLAIM_EXT_DEGREE
-    }
-
-    fn planner_sis_modulus_family() -> SisModulusFamily {
-        Cfg::sis_modulus_family()
-    }
-
-    fn planner_stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
-        <Self as CommitmentConfig>::stage1_challenge_config(d)
-    }
-
-    fn planner_schedule_plan(
-        key: AkitaScheduleLookupKey,
-    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-        <Self as ScheduleProvider>::schedule_plan(key)
-    }
-
-    fn planner_root_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        <Self as CommitmentConfig>::root_level_layout_with_log_basis(inputs, log_basis)
-    }
-
-    fn planner_current_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        akita_config::current_level_layout_with_log_basis::<Self>(inputs, log_basis)
-    }
-
-    fn planner_root_level_params_for_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        <Self as CommitmentConfig>::root_level_params_for_layout_with_log_basis(inputs, lp)
-    }
-
-    fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-        <Self as CommitmentConfig>::log_basis_search_range(inputs)
-    }
-}
 
 impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
     type Field = Cfg::Field;
@@ -113,12 +39,24 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Cfg::decomposition()
     }
 
-    fn stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
+    fn stage1_challenge_config(
+        d: usize,
+    ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
         Cfg::stage1_challenge_config(d)
     }
 
     fn sis_modulus_family() -> SisModulusFamily {
         Cfg::sis_modulus_family()
+    }
+
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        None
+    }
+
+    fn schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
+        Ok(None)
     }
 
     fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
@@ -141,28 +79,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
             .max(envelope.max_n_d)
             .max(4);
         Ok((rows, 16_384))
-    }
-
-    fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams {
-        Cfg::level_params_with_log_basis(inputs, log_basis)
-    }
-
-    fn root_level_params_for_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        lp: &LevelParams,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        Cfg::root_level_params_for_layout_with_log_basis(inputs, lp)
-    }
-
-    fn root_level_layout_with_log_basis(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-    ) -> Result<LevelParams, akita_field::AkitaError> {
-        Cfg::root_level_layout_with_log_basis(inputs, log_basis)
-    }
-
-    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
-        Cfg::log_basis_at_level(inputs)
     }
 
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
@@ -508,8 +424,9 @@ fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
 fn run_zk_dense_commitment_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
     BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
-    Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
+    akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>:
+        CommitmentConfig<Field = F, ClaimField = F>,
+    Scheme<D, akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
@@ -527,12 +444,15 @@ where
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    type Cfg<Base> = RuntimePlanned<Base>;
+    type Cfg<Base> = akita_planner::test_utils::PlannerCfg<RuntimePlanned<Base>>;
 
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = Cfg::<BaseCfg>::commitment_layout(nv).expect("zk layout");
+        let layout = Cfg::<BaseCfg>::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        )
+        .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
         let evals: Vec<F> = (0..1usize << nv)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -617,14 +537,17 @@ where
 }
 
 fn run_zk_dense_cursor_binding_negatives() {
-    type Cfg = RuntimePlanned<fp128::D32Full>;
+    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
     const D: usize = fp128::D32Full::D;
     const NV: usize = 14;
     const LABEL: &[u8] = b"zk_cursor_binding_negatives";
 
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = Cfg::commitment_layout(NV).expect("zk layout");
+        let layout = Cfg::get_params_for_batched_commitment(
+            &ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+        )
+        .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_c0de_0001);
         let evals: Vec<F> = (0..1usize << NV)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -748,8 +671,9 @@ fn run_zk_dense_cursor_binding_negatives() {
 fn run_zk_dense_v_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
     BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
-    Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
+    akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>:
+        CommitmentConfig<Field = F, ClaimField = F>,
+    Scheme<D, akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
@@ -767,12 +691,15 @@ where
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    type Cfg<Base> = RuntimePlanned<Base>;
+    type Cfg<Base> = akita_planner::test_utils::PlannerCfg<RuntimePlanned<Base>>;
 
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = Cfg::<BaseCfg>::commitment_layout(nv).expect("zk layout");
+        let layout = Cfg::<BaseCfg>::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        )
+        .expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
         let evals: Vec<F> = (0..1usize << nv)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -867,7 +794,7 @@ where
 }
 
 fn run_zk_dense_batched_shape_cases() {
-    type Cfg = RuntimePlanned<fp128::D32Full>;
+    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
     const D: usize = fp128::D32Full::D;
     const NV: usize = 14;
 

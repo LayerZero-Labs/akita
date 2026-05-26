@@ -18,10 +18,34 @@ const D32_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 24;
 const D64_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 42;
 
 #[cfg(target_arch = "aarch64")]
-use akita_algebra::ntt::neon;
-
-#[cfg(target_arch = "aarch64")]
 use crate::kernels::neon_decompose_fold as decompose_fold_neon;
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+use crate::kernels::avx_decompose_fold as decompose_fold_avx;
+
+/// Whether the SIMD `decompose-fold` dispatch is enabled.
+///
+/// On aarch64 this delegates to [`akita_algebra::ntt::neon::use_neon_ntt`]
+/// so a single `AKITA_SCALAR_NTT=1` env var disables both the NEON NTT and
+/// the NEON decompose-fold for A/B benchmarks. On x86 we read the same env
+/// var locally (the NEON module isn't compiled, so we can't share the
+/// helper across crates without re-introducing a hoist into `akita-algebra`).
+#[cfg(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "avx2")
+))]
+fn use_simd_decompose_fold() -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        akita_algebra::ntt::neon::use_neon_ntt()
+    }
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    {
+        use std::sync::OnceLock;
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED.get_or_init(|| std::env::var("AKITA_SCALAR_NTT").map_or(true, |v| v != "1"))
+    }
+}
 
 pub struct DecomposeParams {
     pub threshold: u128,
@@ -270,23 +294,37 @@ pub fn sparse_mul_acc_scalar<const D: usize>(
     }
 }
 
-/// Dispatch to NEON or scalar sparse-multiply-accumulate.
+/// Dispatch to NEON / AVX2 / scalar sparse-multiply-accumulate.
 #[inline(always)]
 pub fn sparse_mul_acc<const D: usize>(
     digit_plane: &[i8],
     challenge: &SparseChallenge,
     acc: &mut [i32; D],
 ) {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "avx2")
+    ))]
     {
-        if neon::use_neon_ntt()
+        if use_simd_decompose_fold()
             && challenge
                 .coeffs
                 .iter()
                 .all(|&coeff| coeff.unsigned_abs() <= 2)
         {
+            #[cfg(target_arch = "aarch64")]
             unsafe {
                 decompose_fold_neon::sparse_mul_acc_neon(
+                    digit_plane.as_ptr(),
+                    acc.as_mut_ptr(),
+                    D,
+                    &challenge.positions,
+                    &challenge.coeffs,
+                );
+            }
+            #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+            unsafe {
+                decompose_fold_avx::sparse_mul_acc_avx(
                     digit_plane.as_ptr(),
                     acc.as_mut_ptr(),
                     D,
@@ -765,13 +803,88 @@ mod tests {
     use super::{
         balanced_ring_decompose_fold_partitioned, decompose_ring_full_challenge_accumulate,
         decompose_ring_interleaved, fill_rotated_challenge, should_use_rotated_challenge,
-        sparse_mul_acc, DecomposeParams,
+        sparse_mul_acc, sparse_mul_acc_scalar, DecomposeParams,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallenge;
     use akita_field::CanonicalField;
     use akita_field::{Fp64, Prime128Offset275};
     use akita_types::layout::digit_math::compute_num_digits_full_field;
+
+    /// SIMD-vs-scalar parity for the sparse-multiply-accumulate decompose-fold
+    /// kernel, exercising whichever SIMD backend is active (NEON / AVX2 /
+    /// AVX-512). Restricted to `|coeff| <= 2` so the SIMD fast path fires.
+    /// `D = 128` matches typical small-field schedules and gives both kernels
+    /// multiple full-width iterations to chew through.
+    #[test]
+    fn sparse_mul_acc_simd_matches_scalar_small_coeffs() {
+        const D: usize = 128;
+
+        // Construct a small-coefficient challenge that hits both positive and
+        // negative paths for both magnitudes 1 and 2. Positions cover both the
+        // pure-prefix (split == D, no wrap) and the wrap-around case.
+        let positions: Vec<u32> = (0..32u32).map(|k| k * 4).collect();
+        let coeffs: Vec<i8> = (0..32)
+            .map(|k| match k % 4 {
+                0 => 1,
+                1 => -1,
+                2 => 2,
+                _ => -2,
+            })
+            .collect();
+        let challenge = SparseChallenge { positions, coeffs };
+
+        let digit_plane: [i8; D] = std::array::from_fn(|k| (((7 * k as i64) % 13) - 6) as i8);
+
+        let mut simd_acc = [0i32; D];
+        let mut scalar_acc = [0i32; D];
+
+        sparse_mul_acc::<D>(&digit_plane, &challenge, &mut simd_acc);
+        sparse_mul_acc_scalar::<D>(&digit_plane, &challenge, &mut scalar_acc);
+
+        assert_eq!(
+            simd_acc, scalar_acc,
+            "SIMD sparse_mul_acc disagreed with scalar reference"
+        );
+    }
+
+    /// Edge case: challenge with `pos == 0` so `split == D` and the second
+    /// (wrap) segment is empty.
+    #[test]
+    fn sparse_mul_acc_simd_zero_position() {
+        const D: usize = 64;
+        let challenge = SparseChallenge {
+            positions: vec![0],
+            coeffs: vec![1],
+        };
+        let digit_plane: [i8; D] = std::array::from_fn(|k| (k as i8) - 32);
+
+        let mut simd_acc = [0i32; D];
+        let mut scalar_acc = [0i32; D];
+        sparse_mul_acc::<D>(&digit_plane, &challenge, &mut simd_acc);
+        sparse_mul_acc_scalar::<D>(&digit_plane, &challenge, &mut scalar_acc);
+
+        assert_eq!(simd_acc, scalar_acc);
+    }
+
+    /// Edge case: challenge with `pos == D - 1` so `split == 1` and the
+    /// post-split (wrap) segment is the bulk of the work.
+    #[test]
+    fn sparse_mul_acc_simd_max_position() {
+        const D: usize = 64;
+        let challenge = SparseChallenge {
+            positions: vec![(D - 1) as u32],
+            coeffs: vec![-2],
+        };
+        let digit_plane: [i8; D] = std::array::from_fn(|k| ((k as i8) - 32).wrapping_mul(3));
+
+        let mut simd_acc = [0i32; D];
+        let mut scalar_acc = [0i32; D];
+        sparse_mul_acc::<D>(&digit_plane, &challenge, &mut simd_acc);
+        sparse_mul_acc_scalar::<D>(&digit_plane, &challenge, &mut scalar_acc);
+
+        assert_eq!(simd_acc, scalar_acc);
+    }
 
     #[test]
     fn fused_full_challenge_accumulate_matches_generic_sparse_path() {

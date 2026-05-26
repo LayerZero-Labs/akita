@@ -21,7 +21,7 @@ use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, OneHotPoly};
 use akita_recursion_glue::AkitaJoltInputs;
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
     LevelParams,
@@ -142,7 +142,10 @@ fn main() {
         "generating Akita verifier-input artifact (single-poly OneHot, D=32)"
     );
 
-    let layout: LevelParams = <Cfg as CommitmentConfig>::commitment_layout(nv).expect("layout");
+    let layout: LevelParams = <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+    )
+    .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;
     let required_vars = layout.m_vars + layout.r_vars + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
@@ -199,7 +202,7 @@ fn main() {
     let openings = [opening];
 
     let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &prover_setup,
         vec![(
@@ -221,7 +224,7 @@ fn main() {
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     let opening_groups = [&openings[..]];
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
@@ -283,7 +286,7 @@ fn main() {
     // inside the Jolt emulator.
     let decoded = AkitaJoltInputs::<F, D>::read_from_bytes(&blob)
         .expect("decode jolt inputs blob (round-trip)");
-    let mut roundtrip_transcript = Blake2bTranscript::<F>::new(&decoded.transcript_domain);
+    let mut roundtrip_transcript = AkitaTranscript::<F>::new(&decoded.transcript_domain);
     let openings_rt = [decoded.opening];
     let opening_groups_rt = [&openings_rt[..]];
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(

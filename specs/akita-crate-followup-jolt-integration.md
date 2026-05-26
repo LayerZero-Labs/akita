@@ -126,7 +126,6 @@ Required local and CI checks:
 - `cargo test -p akita-config fp128_family_selector --all-features`
 - `cargo test -p akita-prover --lib`
 - `cargo test -p akita-scheme --lib`
-- `cargo test -p akita-scheme --lib --features planner`
 - `cargo test -p akita-pcs --test transcript`
 - `cargo test -p akita-pcs --test sparse_challenge`
 - `cargo test -p akita-pcs --test single_poly_e2e single_onehot_nv10 -- --exact`
