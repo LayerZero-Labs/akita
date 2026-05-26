@@ -193,7 +193,7 @@ fn make_root_lp(split_factor: usize) -> LevelParams {
     // 393_216, chunk_width = 131_072 (cleanly divisible by 3).
     let full_outer = base.full_outer_width();
     assert!(
-        full_outer % split_factor == 0,
+        full_outer.is_multiple_of(split_factor),
         "outer width {full_outer} not divisible by split factor {split_factor}",
     );
     let chunk_width = full_outer / split_factor;
@@ -664,7 +664,7 @@ impl Stats {
         let mean = s.iter().sum::<f64>() / n;
         let min = *s.first().unwrap();
         let max = *s.last().unwrap();
-        let median = if s.len() % 2 == 0 {
+        let median = if s.len().is_multiple_of(2) {
             (s[s.len() / 2 - 1] + s[s.len() / 2]) / 2.0
         } else {
             s[s.len() / 2]
