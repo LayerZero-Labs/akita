@@ -312,19 +312,26 @@ jobs:
           mkdir -p "$AKITA_BENCH_ARTIFACT_DIR"
           if [ ! -f "$AKITA_BENCH_ARTIFACT_DIR/summary.json" ]; then
             echo "Benchmark summary not found; benchmark step likely failed." > "$AKITA_BENCH_REPORT"
+            cp "$AKITA_BENCH_REPORT" "$AKITA_BENCH_COMMENT"
           else
             python3 scripts/profile_bench_report.py render \
               "$AKITA_BENCH_ARTIFACT_DIR/summary.json" \
               --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
               --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" > "$AKITA_BENCH_REPORT"
+            python3 scripts/profile_bench_report.py render \
+              "$AKITA_BENCH_ARTIFACT_DIR/summary.json" \
+              --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
+              --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" \
+              --compact > "$AKITA_BENCH_COMMENT"
           fi
           cp "$AKITA_BENCH_REPORT" "$AKITA_BENCH_ARTIFACT_DIR/report.md"
           cat "$AKITA_BENCH_REPORT" >> "$GITHUB_STEP_SUMMARY"
           {
             echo '<!-- akita-profile-bench-report -->'
             echo
-            cat "$AKITA_BENCH_REPORT"
-          } > "$AKITA_BENCH_COMMENT"
+            cat "$AKITA_BENCH_COMMENT"
+          } > "$AKITA_BENCH_COMMENT.marked"
+          mv "$AKITA_BENCH_COMMENT.marked" "$AKITA_BENCH_COMMENT"
           cp "$AKITA_BENCH_COMMENT" "$AKITA_BENCH_ARTIFACT_DIR/comment.md"
 
       - name: Upsert benchmark PR comment

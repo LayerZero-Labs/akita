@@ -151,6 +151,11 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional artifact directory containing the previous-run summary.json.",
     )
+    render_parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Render only the matrix-first PR-comment summary.",
+    )
 
     return parser.parse_args()
 
@@ -986,6 +991,14 @@ def render_report(args: argparse.Namespace) -> int:
     print()
 
     render_matrix_summary(current_cases, visible_baselines)
+    if args.compact:
+        print()
+        print(
+            "Detailed per-level schedule and proof-size breakdowns are available in "
+            "the uploaded `report.md` benchmark artifact."
+        )
+        return 0
+
     print()
 
     for index, current in enumerate(current_cases):
