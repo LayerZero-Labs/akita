@@ -61,6 +61,7 @@ use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
 /// The offset `c = 2^128 − p` and all derived constants are computed at
 /// compile time from the const-generic `P`.  Instantiating `Fp128` with a
 /// modulus that is not of this form is a compile-time error.
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Fp128<const P: u128>(pub(crate) [u64; 2]);
 
