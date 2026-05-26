@@ -2,29 +2,25 @@
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
-#[cfg(feature = "planner")]
-use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
-#[cfg(feature = "planner")]
 use akita_config::proof_optimized::{fp16, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
+use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{AkitaPolyOps, AkitaProverSetup};
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-#[cfg(not(feature = "zk"))]
-use akita_types::AkitaScheduleInputs;
+use akita_types::AkitaScheduleLookupKey;
 use akita_types::{lagrange_weights, LevelParams, RingSubfieldEncoding};
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
     RingCommitment,
 };
-use akita_types::{AkitaScheduleLookupKey, ScheduleProvider};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -38,7 +34,12 @@ const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const D32_TEST_NV: usize = 12;
-#[cfg(feature = "planner")]
+
+fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> LevelParams {
+    let incidence =
+        akita_types::ClaimIncidenceSummary::same_point(num_vars, 1).expect("singleton incidence");
+    Cfg::get_params_for_batched_commitment(&incidence).expect("singleton commitment layout")
+}
 const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
@@ -187,7 +188,7 @@ where
     Cfg::ClaimField: RingSubfieldEncoding<FField> + AkitaSerialize,
     Cfg::ChallengeField: RingSubfieldEncoding<FField> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
-    let layout = Cfg::commitment_layout(nv).expect("layout");
+    let layout = singleton_layout::<Cfg>(nv);
 
     let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
     let evals: Vec<FField> = (0..1usize << nv)
@@ -332,7 +333,7 @@ fn full_d64_prove_verify() {
         type Cfg = fp128::D64Full;
         const D: usize = Cfg::D;
 
-        let layout = Cfg::commitment_layout(FULL_TEST_NV).expect("layout");
+        let layout = singleton_layout::<Cfg>(FULL_TEST_NV);
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..1usize << FULL_TEST_NV)
@@ -468,7 +469,6 @@ fn full_d32_prove_verify() {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn fp16_static_dense_round_trip() {
     init_rayon_pool();
@@ -501,7 +501,6 @@ fn fp16_static_dense_round_trip() {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn fp32_static_dense_round_trip() {
     init_rayon_pool();
@@ -534,7 +533,6 @@ fn fp32_static_dense_round_trip() {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn fp64_static_dense_round_trip() {
     init_rayon_pool();
@@ -589,7 +587,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             plan
         };
 
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = singleton_layout::<Cfg>(nv);
 
         let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
         let evals: Vec<F> = (0..1usize << nv)
@@ -765,7 +763,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = singleton_layout::<Cfg>(nv);
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -882,7 +880,6 @@ fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
     }
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn batched_onehot_same_point_round_trip() {
     init_rayon_pool();
@@ -977,7 +974,6 @@ fn batched_onehot_same_point_round_trip() {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
     init_rayon_pool();
@@ -1089,7 +1085,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
     init_rayon_pool();
@@ -1209,74 +1204,4 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             "proof with a truncated scheduled recursive suffix must be rejected"
         );
     });
-}
-
-#[test]
-#[cfg(not(feature = "zk"))]
-fn adaptive_full_setup_covers_planned_schedule_envelope() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = fp128::D64Full;
-        const D: usize = Cfg::D;
-
-        let nv = FULL_TEST_NV;
-        let layout = Cfg::commitment_layout(nv).expect("layout");
-        let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
-                .unwrap();
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
-            .expect("schedule plan")
-            .expect("adaptive full config should expose a schedule plan");
-
-        let mut max_inner = layout.inner_width();
-        let mut max_outer = layout.outer_width();
-        let mut max_d_width = layout.d_matrix_width();
-
-        for state in plan.states().skip(1) {
-            let level_inputs = AkitaScheduleInputs {
-                num_vars: nv,
-                level: state.level,
-                current_w_len: state.current_w_len,
-            };
-            let params = Cfg::level_params_with_log_basis(
-                level_inputs,
-                Cfg::log_basis_at_level(level_inputs),
-            );
-            let recursive_layout = akita_types::recursive_level_layout_from_params(
-                &params,
-                state.current_w_len,
-                Cfg::decomposition(),
-            )
-            .expect("recursive layout");
-            max_inner = max_inner.max(recursive_layout.inner_width());
-            max_outer = max_outer.max(recursive_layout.outer_width());
-            max_d_width = max_d_width.max(recursive_layout.d_matrix_width());
-        }
-
-        let envelope = Cfg::envelope(nv);
-        let total = setup
-            .expanded
-            .shared_matrix
-            .total_ring_elements_at::<D>()
-            .unwrap();
-        assert!(total >= envelope.max_n_a * max_inner);
-        assert!(total >= envelope.max_n_b * max_outer);
-        assert!(total >= envelope.max_n_d * max_d_width);
-    });
-}
-
-#[test]
-fn adaptive_schedule_key_changes_when_schedule_changes() {
-    type Cfg = fp128::D64Full;
-
-    let mut distinct = std::collections::BTreeMap::new();
-    for nv in 10..=18 {
-        distinct.insert(Cfg::schedule_key(AkitaScheduleLookupKey::singleton(nv)), nv);
-    }
-
-    assert!(
-        distinct.len() >= 2,
-        "adaptive schedule key should distinguish at least two nv-dependent schedules"
-    );
 }

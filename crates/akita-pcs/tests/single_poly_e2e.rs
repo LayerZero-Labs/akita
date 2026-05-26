@@ -28,7 +28,10 @@ use common::*;
 fn run_single_onehot(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = OneHotCfg::commitment_layout(nv).expect("layout");
+        let layout = OneHotCfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        )
+        .expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;
         assert_eq!(total_ring * ONEHOT_K, 1usize << nv);
 
@@ -102,13 +105,16 @@ fn run_single_onehot(nv: usize) {
 // Dense helpers (D = 128)
 // ---------------------------------------------------------------------------
 
-type DenseCfg = fp128::D128Full;
+type DenseCfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
 const DENSE_D: usize = DenseCfg::D;
 
 fn run_single_dense(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = DenseCfg::commitment_layout(nv).expect("layout");
+        let layout = DenseCfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+        )
+        .expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0xface_feed_0000 + nv as u64);
         let evals: Vec<F> = (0..1usize << nv)
@@ -228,12 +234,15 @@ fn single_dense_nv20() {
 // Oversized setup: setup with max_num_vars > actual polynomial num_vars
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "planner")]
 fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
     assert!(setup_nv >= poly_nv);
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = OneHotCfg::commitment_layout(poly_nv).expect("layout");
+        let layout = OneHotCfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1)
+                .expect("singleton incidence"),
+        )
+        .expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;
         assert_eq!(total_ring * ONEHOT_K, 1usize << poly_nv);
 
@@ -304,13 +313,11 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
     });
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn single_onehot_oversized_setup_15_10() {
     run_single_onehot_oversized_setup(15, 10);
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn single_onehot_oversized_setup_20_15() {
     run_single_onehot_oversized_setup(20, 15);

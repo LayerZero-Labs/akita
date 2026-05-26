@@ -6,10 +6,11 @@
 //! can attribute total cycles to:
 //!
 //! - `deserialize_input`: blob -> typed `AkitaJoltInputs<F, D>`.
-//! - `transcript_init`:   construct the `Blake2bTranscript`.
-//! - `akita_verify`:      `verify_batched_with_policy` (the kernel that
-//!   `akita-scheme::batched_verify` wraps; we call it directly to avoid
-//!   `std::time::Instant::now()`, which traps on the Jolt RISC-V emulator).
+//! - `transcript_init`:   construct the `AkitaTranscript`.
+//! - `akita_verify`:      `akita_verifier::verify_batched` (the kernel
+//!   that `akita-scheme::batched_verify` wraps; we call it directly to
+//!   avoid `std::time::Instant::now()`, which traps on the Jolt RISC-V
+//!   emulator).
 //!
 //! Return code:
 //!
@@ -18,11 +19,10 @@
 //! - `2` — verifier rejected the proof.
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
 use akita_recursion_glue::AkitaJoltInputs;
-use akita_transcript::Blake2bTranscript;
-use akita_types::{scheduled_next_level_params, BasisMode, CommittedOpenings, VerifierClaims};
-use akita_verifier::{verify_batched_with_policy, verify_root_direct_commitments_with_params};
+use akita_transcript::AkitaTranscript;
+use akita_types::{BasisMode, CommittedOpenings, VerifierClaims};
+use akita_verifier::verify_batched;
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
@@ -78,7 +78,7 @@ fn akita_verify(input: &[u8]) -> u32 {
     end_cycle_tracking("deserialize_input");
 
     start_cycle_tracking("transcript_init");
-    let mut transcript = Blake2bTranscript::<F>::new(&decoded.transcript_domain);
+    let mut transcript = AkitaTranscript::<F>::new(&decoded.transcript_domain);
     end_cycle_tracking("transcript_init");
 
     let openings = [decoded.opening];
@@ -92,41 +92,21 @@ fn akita_verify(input: &[u8]) -> u32 {
         },
     )];
 
-    // We replicate the body of `AkitaCommitmentScheme::<D, Cfg>::batched_verify`
-    // here (verbatim except for the `Instant::now()` + final `tracing::info!`
-    // line that report wall-clock elapsed). Jolt's RISC-V runtime panics on
-    // `std::time::Instant::now()` (no `clock_gettime` support), so calling
-    // the scheme entry point directly would abort before any real verifier
-    // work runs.
+    // We call `verify_batched` directly (rather than the public
+    // `AkitaCommitmentScheme::<D, Cfg>::batched_verify` wrapper) to skip
+    // its `Instant::now()` + final `tracing::info!` wall-clock log. The
+    // Jolt RISC-V runtime panics on `std::time::Instant::now()` (no
+    // `clock_gettime` support), so the scheme entry point would abort
+    // before any real verifier work runs. The new `verify_batched`
+    // surface is `<Cfg>`-generic and routes every policy through `Cfg`
+    // internally — no closures to thread through.
     start_cycle_tracking("akita_verify");
-    let result = verify_batched_with_policy::<F, F, F, _, D, _, _, _, _>(
+    let result = verify_batched::<F, Cfg, _, D>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
         claims,
         BasisMode::Lagrange,
-        |incidence_summary| {
-            <Cfg as CommitmentConfig>::get_params_for_prove(incidence_summary)
-        },
-        |schedule, next_inputs| {
-            scheduled_next_level_params(
-                schedule,
-                1,
-                next_inputs,
-                <Cfg as CommitmentConfig>::level_params_with_log_basis,
-            )
-        },
-        <Cfg as CommitmentConfig>::get_params_for_batched_commitment,
-        |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
-            verify_root_direct_commitments_with_params::<F, D>(
-                witnesses,
-                setup,
-                commitments,
-                incidence_summary,
-                params,
-                direct_commitment_payload,
-            )
-        },
     );
     end_cycle_tracking("akita_verify");
 

@@ -597,7 +597,7 @@ pub fn verify_batched_with_policy<
     basis: BasisMode,
     select_schedule: SelectSchedule,
     next_params: NextParams,
-    direct_params: DirectParams,
+    mut direct_params: DirectParams,
     bind_transcript: BindTranscript,
     verify_direct_commitments: DirectCommitmentCheck,
 ) -> Result<(), AkitaError>
@@ -612,7 +612,7 @@ where
     T: Transcript<F>,
     SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     NextParams: FnMut(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
-    DirectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
+    DirectParams: FnMut(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
     BindTranscript:
         FnOnce(&mut T, &ClaimIncidenceSummary, &Schedule, BasisMode) -> Result<(), AkitaError>,
     DirectCommitmentCheck: FnOnce(
@@ -632,6 +632,7 @@ where
     let num_vars = prepared_claims.incidence_summary.num_vars();
     let mut schedule = select_schedule(&prepared_claims.incidence_summary)
         .map_err(|_| AkitaError::InvalidProof)?;
+    let mut root_direct_params = None;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<F, E, C, D>(
@@ -640,7 +641,11 @@ where
             alpha_bits,
         ) && !root_tensor_projection_enabled::<F, E, C, D>(num_vars)
         {
-            schedule = root_direct_schedule(num_vars).map_err(|_| AkitaError::InvalidProof)?;
+            let params = direct_params(&prepared_claims.incidence_summary)
+                .map_err(|_| AkitaError::InvalidProof)?;
+            schedule = root_direct_schedule(num_vars, params.clone())
+                .map_err(|_| AkitaError::InvalidProof)?;
+            root_direct_params = Some(params);
         }
     }
 
@@ -667,7 +672,10 @@ where
         &schedule,
         schedule_context,
         |witnesses, commitments, incidence_summary, direct_commitment_payload| {
-            let params = direct_params(incidence_summary).map_err(|_| AkitaError::InvalidProof)?;
+            let params = match root_direct_params {
+                Some(params) => params,
+                None => direct_params(incidence_summary).map_err(|_| AkitaError::InvalidProof)?,
+            };
             verify_direct_commitments(
                 witnesses,
                 setup,

@@ -26,20 +26,16 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-#[cfg(feature = "planner")]
 use akita_prover::MultilinearPolynomial;
-#[cfg(feature = "planner")]
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::AkitaBatchedProof;
+use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
-#[cfg(feature = "planner")]
 const DENSE_ONEHOT_K: usize = DENSE_D;
 
-#[cfg(feature = "planner")]
 fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, DENSE_D, u8> {
     let total_ring = layout.num_blocks * layout.block_len;
     let mut rng = StdRng::seed_from_u64(seed);
@@ -59,7 +55,8 @@ mod non_zk_aggregated_cases {
     fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         init_rayon_pool();
         run_on_large_stack(move || {
-            let layout = OneHotCfg::get_params_for_commitment(nv, batch_size, 1).expect("layout");
+            let incidence = ClaimIncidenceSummary::same_point(nv, batch_size).expect("incidence");
+            let layout = OneHotCfg::get_params_for_batched_commitment(&incidence).expect("layout");
 
             let polys: Vec<OneHotPoly<F, ONEHOT_D, u8>> = (0..batch_size)
                 .map(|idx| make_onehot_poly(&layout, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
@@ -151,7 +148,8 @@ mod non_zk_aggregated_cases {
     fn run_aggregated_dense(nv: usize, batch_size: usize) {
         init_rayon_pool();
         run_on_large_stack(move || {
-            let layout = DenseCfg::get_params_for_commitment(nv, batch_size, 1).expect("layout");
+            let incidence = ClaimIncidenceSummary::same_point(nv, batch_size).expect("incidence");
+            let layout = DenseCfg::get_params_for_batched_commitment(&incidence).expect("layout");
 
             let polys: Vec<DensePoly<F, DENSE_D>> = (0..batch_size)
                 .map(|idx| make_dense_poly(nv, 0xd3e5_0000 + (nv as u64) * 100 + idx as u64))
@@ -260,17 +258,13 @@ mod non_zk_aggregated_cases {
     }
 
     aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1);
-    #[cfg(feature = "planner")]
     aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7);
-    #[cfg(feature = "planner")]
     aggregated_onehot_case!(aggregated_onehot_nv25_batch4, 25, 4);
 
     aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1);
-    #[cfg(feature = "planner")]
     aggregated_dense_case!(aggregated_dense_nv20_batch7, 20, 7);
 }
 
-#[cfg(feature = "planner")]
 #[test]
 fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
     init_rayon_pool();
@@ -278,7 +272,8 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         const NV: usize = 20;
         const BATCH_SIZE: usize = 4;
 
-        let layout = DenseCfg::get_params_for_commitment(NV, BATCH_SIZE, 1).expect("layout");
+        let incidence = ClaimIncidenceSummary::same_point(NV, BATCH_SIZE).expect("incidence");
+        let layout = DenseCfg::get_params_for_batched_commitment(&incidence).expect("layout");
         let dense_a = make_dense_poly(NV, 0x4d10_0001);
         let dense_b = make_dense_poly(NV, 0x4d10_0002);
         let onehot_a = make_dense_cfg_onehot_poly(&layout, 0x4d10_1001);

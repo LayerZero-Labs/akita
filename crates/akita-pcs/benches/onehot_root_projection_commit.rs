@@ -12,7 +12,7 @@ use akita_field::{
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{commit_with_params, AkitaPolyOps, CommitmentProver, OneHotPoly};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::RingSubfieldEncoding;
+use akita_types::{ClaimIncidenceSummary, RingSubfieldEncoding};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
@@ -121,8 +121,10 @@ where
     let setup =
         <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys, 1).unwrap();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let params = Cfg::get_params_for_commitment(num_vars, num_polys, 1)
-        .expect("benchmark commitment params");
+    let incidence =
+        ClaimIncidenceSummary::same_point(num_vars, num_polys).expect("benchmark incidence");
+    let params =
+        Cfg::get_params_for_batched_commitment(&incidence).expect("benchmark commitment params");
 
     let mut group = c.benchmark_group(format!(
         "onehot_root_projection_commit/{label}/nv{num_vars}_np{num_polys}"

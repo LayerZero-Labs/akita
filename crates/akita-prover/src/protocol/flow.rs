@@ -446,6 +446,7 @@ pub fn prove_batched_with_policy<
     P,
     const D: usize,
     SelectSchedule,
+    SelectRootDirectParams,
     SelectRootNext,
     BindTranscript,
     ProveFolded,
@@ -455,6 +456,7 @@ pub fn prove_batched_with_policy<
     transcript: &mut T,
     basis: BasisMode,
     select_schedule: SelectSchedule,
+    select_root_direct_params: SelectRootDirectParams,
     select_root_next_params: SelectRootNext,
     bind_transcript: BindTranscript,
     prove_folded: ProveFolded,
@@ -466,6 +468,7 @@ where
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
+    SelectRootDirectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
     SelectRootNext: FnOnce(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
     BindTranscript:
         FnOnce(&mut T, &ClaimIncidenceSummary, &Schedule, BasisMode) -> Result<(), AkitaError>,
@@ -488,7 +491,8 @@ where
             alpha_bits,
         ) && !root_tensor_projection_enabled::<F, E, L, D>(num_vars)
         {
-            schedule = root_direct_schedule(num_vars)?;
+            let commit_params = select_root_direct_params(&prepared_claims.incidence_summary)?;
+            schedule = root_direct_schedule(num_vars, commit_params)?;
         }
     }
 

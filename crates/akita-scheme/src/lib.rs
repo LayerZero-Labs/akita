@@ -1,6 +1,6 @@
 //! End-to-end Akita PCS scheme orchestration.
 
-use akita_config::{CommitmentConfig, WCommitmentConfig};
+use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig, WCommitmentConfig};
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
@@ -18,12 +18,10 @@ use akita_prover::{
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
-use akita_types::LevelParams;
 use akita_types::{
     root_tensor_projection_enabled, schedule_root_fold_step, scheduled_fold_execution,
-    scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint, AkitaInstanceDescriptor,
-    AlgebraSection, CallSection, ClaimIncidenceSummary, PlanSection, RingCommitment, Schedule,
-    SetupSection, Step,
+    scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint, ClaimIncidenceSummary,
+    LevelParams, RingCommitment, Schedule,
 };
 use akita_types::{validate_ring_subfield_role, BasisMode, RingSubfieldEncoding};
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
@@ -97,50 +95,6 @@ where
     }
     let schedule = Cfg::get_params_for_prove(incidence)?;
     Ok(schedule_root_fold_step(&schedule).is_some())
-}
-
-fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
-    setup: &AkitaExpandedSetup<F>,
-    incidence: &ClaimIncidenceSummary,
-    schedule: &Schedule,
-    basis: BasisMode,
-    transcript: &mut T,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField + AkitaSerialize,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: RingSubfieldEncoding<F>,
-    Cfg::ChallengeField: RingSubfieldEncoding<F>,
-{
-    let mut setup_levels = schedule
-        .steps
-        .iter()
-        .filter_map(|step| match step {
-            Step::Fold(fold) => Some(fold.params.clone()),
-            Step::Direct(_) => None,
-        })
-        .collect::<Vec<_>>();
-    if setup_levels.is_empty() {
-        setup_levels.push(Cfg::get_params_for_batched_commitment(incidence)?);
-    }
-
-    let descriptor = AkitaInstanceDescriptor::new(
-        AlgebraSection::for_fields::<F, Cfg::ClaimField, Cfg::ChallengeField, D>()?,
-        SetupSection::from_artifact_digests(
-            Cfg::decomposition(),
-            Cfg::sis_modulus_family(),
-            setup.descriptor_digests,
-            &setup_levels,
-        ),
-        PlanSection::from_schedule(schedule),
-        CallSection::from_incidence(incidence, basis)?,
-    );
-    let descriptor_bytes = descriptor
-        .canonical_bytes()
-        .map_err(|err| AkitaError::InvalidSetup(format!("descriptor serialization: {err}")))?;
-    transcript.bind_instance_bytes(&descriptor_bytes);
-    Ok(())
 }
 
 /// Dispatch a prove-level operation to the correct ring dimension.
@@ -302,13 +256,7 @@ where
         initial_state,
         schedule,
         |level, inputs, current_log_basis| {
-            scheduled_fold_execution(
-                schedule,
-                level,
-                inputs,
-                current_log_basis,
-                Cfg::level_params_with_log_basis,
-            )
+            scheduled_fold_execution(schedule, level, inputs, current_log_basis)
         },
         |request| match request {
             akita_prover::SuffixLevelRequest::Intermediate {
@@ -584,20 +532,15 @@ where
             _,
             _,
             _,
+            _,
         >(
             expanded,
             claims,
             transcript,
             basis,
             |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
-            |schedule, next_inputs| {
-                scheduled_next_level_params(
-                    schedule,
-                    1,
-                    next_inputs,
-                    Cfg::level_params_with_log_basis,
-                )
-            },
+            Cfg::get_params_for_batched_commitment,
+            |schedule, _next_inputs| scheduled_next_level_params(schedule, 1),
             |transcript, incidence_summary, schedule, basis| {
                 bind_transcript_instance_descriptor::<F, T, D, Cfg>(
                     expanded,
@@ -717,14 +660,7 @@ where
             claims,
             basis,
             |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
-            |schedule, next_inputs| {
-                scheduled_next_level_params(
-                    schedule,
-                    1,
-                    next_inputs,
-                    Cfg::level_params_with_log_basis,
-                )
-            },
+            |schedule, _next_inputs| scheduled_next_level_params(schedule, 1),
             Cfg::get_params_for_batched_commitment,
             |transcript, incidence_summary, schedule, basis| {
                 bind_transcript_instance_descriptor::<F, T, D, Cfg>(

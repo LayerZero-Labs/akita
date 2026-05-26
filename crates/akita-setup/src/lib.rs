@@ -9,12 +9,12 @@ use akita_serialization::Valid;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 #[cfg(feature = "disk-persistence")]
 use akita_types::detect_field_modulus;
-#[cfg(any(feature = "disk-persistence", all(test, feature = "planner")))]
+#[cfg(any(feature = "disk-persistence", test))]
 use akita_types::AkitaExpandedSetup;
-#[cfg(feature = "disk-persistence")]
-use akita_types::AkitaScheduleLookupKey;
-#[cfg(all(test, feature = "planner"))]
+#[cfg(test)]
 use akita_types::AkitaVerifierSetup;
+#[cfg(feature = "disk-persistence")]
+use akita_types::{planned_schedule_key_from_schedule, AkitaScheduleLookupKey};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
@@ -153,7 +153,21 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         max_num_batched_polys,
         max_num_points,
     );
-    let schedule = Cfg::schedule_key(schedule_lookup_key)
+    // Fingerprint the resolved schedule shape so cached setup files get
+    // invalidated when the planner's per-level (log_basis, level_count)
+    // outputs change for the same lookup key.
+    let raw_schedule = match Cfg::schedule_plan(schedule_lookup_key) {
+        Ok(Some(plan)) => planned_schedule_key_from_schedule(schedule_lookup_key, &plan),
+        _ => format!(
+            "miss_nv{}_g{}_t{}_w{}_z{}",
+            schedule_lookup_key.num_vars,
+            schedule_lookup_key.num_points,
+            schedule_lookup_key.num_t_vectors,
+            schedule_lookup_key.num_w_vectors,
+            schedule_lookup_key.num_z_vectors,
+        ),
+    };
+    let schedule = raw_schedule
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
@@ -295,19 +309,13 @@ pub(crate) fn load_expanded_setup<
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;
-    #[cfg(feature = "planner")]
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-    #[cfg(feature = "planner")]
     use std::sync::Arc;
 
-    #[cfg(any(feature = "planner", feature = "disk-persistence"))]
     type Cfg = fp128::D64Full;
-    #[cfg(any(feature = "planner", feature = "disk-persistence"))]
     type TestF = fp128::Field;
-    #[cfg(any(feature = "planner", feature = "disk-persistence"))]
     const TEST_D: usize = 64;
 
-    #[cfg(feature = "planner")]
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
         let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(10, 3, 1).unwrap();
@@ -333,7 +341,11 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1, 1)
+        // D128Full has no schedule table at all; wrap in `PlannerCfg` so
+        // setup-matrix sizing falls through to DP. D32Full has a singleton
+        // table but the (max_num_vars=12, polys=1, points=1) iteration is a
+        // table hit so the inner Cfg suffices without DP.
+        new_prover_setup::<fp128::Field, 128, akita_planner::test_utils::PlannerCfg<fp128::D128Full>>(12, 1, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
         new_prover_setup::<fp128::Field, 32, fp128::D32Full>(12, 1, 1)
             .expect("small-D fp128 preset should accept the default field");
@@ -420,7 +432,11 @@ mod tests {
                 let disk_setup =
                     AkitaProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
 
-                let lp = Cfg::commitment_layout(MAX_VARS).unwrap();
+                let lp = Cfg::get_params_for_batched_commitment(
+                    &akita_types::ClaimIncidenceSummary::same_point(MAX_VARS, 1)
+                        .expect("singleton incidence"),
+                )
+                .unwrap();
                 let num_coeffs = lp.num_blocks * lp.block_len;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
