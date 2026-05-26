@@ -658,6 +658,8 @@ where
         &mut T,
     ) -> Result<RecursiveSuffixOutcome<F, C>, AkitaError>,
 {
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+
     let Some(root_step) = schedule_root_fold_step(schedule) else {
         return Err(AkitaError::InvalidSetup(
             "root schedule does not start with a fold".to_string(),

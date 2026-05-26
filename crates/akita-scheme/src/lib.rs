@@ -520,6 +520,7 @@ where
         let t_prove_total = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;
         let expanded = setup.expanded.as_ref();
+        backend.validate_prepared_setup::<D>(prepared, expanded)?;
         let expanded_arc = setup.expanded.clone();
         let proof = prove_batched_with_policy::<
             F,
