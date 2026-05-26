@@ -3822,7 +3822,7 @@ fn tiered_prepared_row_eval_matches_materialized() {
 
     let m_evals_x = compute_m_evals_x::<TF, TF, TD>(
         &setup.expanded,
-        &[ring_opening_point.clone()],
+        std::slice::from_ref(&ring_opening_point),
         std::slice::from_ref(&ring_multiplier_point),
         &[0usize],
         &quad_eq.challenges,
