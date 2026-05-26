@@ -592,7 +592,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         next_mask
     }
 
-    /// Record one masked eq-factored sumcheck round relation.
+    /// Materialize one masked eq-factored sumcheck mask transition.
     ///
     /// Eq-factored rounds do not send the full round polynomial. They send the
     /// inner polynomial coefficients except the linear term:
@@ -601,18 +601,18 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
     /// on the transcript.
     ///
     /// The omitted linear term is represented indirectly by the incoming claim,
-    /// so the verifier advances the scaled claim with a linear transition:
+    /// so the verifier advances the public scaled claim with a linear transition:
     ///
     /// `C~_i = previous_coeff * C~_{i-1} + sum_j coeff_j * q~_j`.
+    /// That public transition is replayed directly by the verifier from the
+    /// transcript-visible values. This method only advances the hidden mask:
+    ///
+    /// `eta_i = previous_coeff * eta_{i-1} + sum_j coeff_j * rho_j`.
     #[doc(hidden)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn push_masked_eq_factored_round_relation<F>(
+    pub fn push_masked_eq_factored_mask_transition<F>(
         &mut self,
-        previous_masked_claim: E,
         previous_mask: &ZkR1csLinearCombination<E>,
         previous_coeff: E,
-        next_masked_claim: E,
-        public_coeffs_except_linear: &[E],
         transition_coeffs: &[E],
         hiding_cursor: &mut usize,
     ) -> Result<ZkR1csLinearCombination<E>, AkitaError>
@@ -626,44 +626,18 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         let mut next_mask_transition = ZkR1csLinearCombination::zero();
         add_scaled_lc(&mut next_mask_transition, previous_coeff, previous_mask);
 
-        // Current eq-factored round message:
-        //
-        //   q~_j = q_j + rho_j
-        //
-        // for every stored coefficient j in [0, 2, 3, ...]. Each stored
-        // coefficient contributes to both the true transition and the mask
-        // transition using the verifier-derived `transition_coeff`.
-        debug_assert_eq!(public_coeffs_except_linear.len(), transition_coeffs.len());
-        for (&_public_coeff, &transition_coeff) in public_coeffs_except_linear
-            .iter()
-            .zip(transition_coeffs.iter())
-        {
+        // Each stored coefficient j in [0, 2, 3, ...] contributes its pad
+        // coefficient rho_j to the mask transition using the verifier-derived
+        // `transition_coeff`.
+        for &transition_coeff in transition_coeffs {
             let mask_coeff = zk_ext_mask_lc::<F, E>(hiding_cursor);
             add_scaled_lc(&mut next_mask_transition, transition_coeff, &mask_coeff);
         }
-        let mut public_transition = previous_coeff * previous_masked_claim;
-        for (&public_coeff, &transition_coeff) in public_coeffs_except_linear
-            .iter()
-            .zip(transition_coeffs.iter())
-        {
-            public_transition += transition_coeff * public_coeff;
-        }
-        let next_mask = self.new_auxiliary(
+        self.new_auxiliary(
             "masked eq-factored sumcheck next mask",
-            next_mask_transition.clone(),
+            next_mask_transition,
             ZkR1csLinearCombination::one(),
-        )?;
-        let mut transition_residual =
-            ZkR1csLinearCombination::constant(next_masked_claim - public_transition);
-        add_scaled_lc(&mut transition_residual, E::one(), &next_mask_transition);
-        add_scaled_lc(&mut transition_residual, -E::one(), &next_mask);
-        self.push_r1cs(
-            "masked eq-factored sumcheck round transition",
-            transition_residual,
-            ZkR1csLinearCombination::one(),
-            ZkR1csLinearCombination::zero(),
-        );
-        Ok(next_mask)
+        )
     }
 
     /// Check every deferred relation against the revealed plain-opening payload.
@@ -734,7 +708,8 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
 mod tests {
     use super::{
         lift_hiding_witness, zk_ext_mask_lc, zk_row_masks_from_column_masks,
-        ZkR1csLinearCombination, ZkR1csVariable, ZkR1csWitness, ZkRelationAccumulator,
+        ZkR1csLinearCombination, ZkR1csRelation, ZkR1csVariable, ZkR1csWitness,
+        ZkRelationAccumulator,
     };
     use akita_field::{ExtField, Prime128Offset275, Prime32Offset99, RingSubfieldFp4};
 
@@ -753,6 +728,48 @@ mod tests {
         relations
             .verify_all(&[F::from_u64(3), F::from_u64(4)])
             .expect("valid hiding-backed R1CS row");
+    }
+
+    #[test]
+    fn eq_factored_mask_transition_materializes_next_mask_only() {
+        let mut relations = ZkRelationAccumulator::<F>::new();
+        let mut cursor = 0usize;
+        let previous_mask = zk_ext_mask_lc::<F, F>(&mut cursor);
+        let transition_coeffs = [F::from_u64(5), F::from_u64(7)];
+
+        let next_mask = relations
+            .push_masked_eq_factored_mask_transition::<F>(
+                &previous_mask,
+                F::from_u64(3),
+                &transition_coeffs,
+                &mut cursor,
+            )
+            .expect("mask transition auxiliary");
+
+        assert_eq!(cursor, 3);
+        assert_eq!(
+            next_mask,
+            ZkR1csLinearCombination::variable(ZkR1csVariable::AuxiliaryWitness(0), F::one())
+        );
+        assert_eq!(relations.relations.len(), 1);
+        let ZkR1csRelation::GenerateAuxiliary {
+            a, b, auxiliary, ..
+        } = &relations.relations[0]
+        else {
+            panic!("eq-factored mask transition should not add a tautological R1CS row");
+        };
+        assert_eq!(*auxiliary, ZkR1csVariable::AuxiliaryWitness(0));
+        assert_eq!(b, &ZkR1csLinearCombination::one());
+
+        let hiding_witness = [F::from_u64(2), F::from_u64(11), F::from_u64(13)];
+        let witness = ZkR1csWitness::new(&hiding_witness, 0);
+        let expected = F::from_u64(3) * hiding_witness[0]
+            + transition_coeffs[0] * hiding_witness[1]
+            + transition_coeffs[1] * hiding_witness[2];
+        assert_eq!(a.evaluate(&witness), Some(expected));
+        relations
+            .verify_all(&hiding_witness)
+            .expect("auxiliary mask transition verifies");
     }
 
     #[test]

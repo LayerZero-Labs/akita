@@ -413,7 +413,6 @@ where
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, masked_poly);
             let r_i = sample_challenge(transcript);
             let (l_at_0, l_at_1) = round_state.current_linear_factor_evals();
-            let previous_masked_claim = masked_scaled_claim;
             // The eq-factored verifier never receives q_1. Instead the claim
             // transition is linear in the previous claim and the stored
             // coefficients:
@@ -434,9 +433,10 @@ where
                 r_i,
                 masked_poly.coeffs_except_linear_term.len(),
             );
-            // Advance the public masked claim using q~. The R1CS relation below
-            // proves this public transition is consistent with the hidden mask
-            // transition above, so the unmasked chain follows the true q.
+            // Advance the public masked claim using q~. This transition is
+            // verifier-local once q~ is on the transcript; the deferred
+            // relation only needs to carry the matching hidden mask transition
+            // for the final unmasked claim relation.
             (masked_scaled_claim, masked_claim_scale) = advance_eq_factored_claim(
                 masked_scaled_claim,
                 masked_claim_scale,
@@ -450,12 +450,9 @@ where
             // recurrence includes the omitted-linear-term contribution induced
             // by the previous masked claim, so final handoffs must use the
             // accumulated mask rather than only the final round's stored terms.
-            let next_claim_mask = relations.push_masked_eq_factored_round_relation::<F>(
-                previous_masked_claim,
+            let next_claim_mask = relations.push_masked_eq_factored_mask_transition::<F>(
                 &scaled_claim_mask,
                 previous_coeff,
-                masked_scaled_claim,
-                &masked_poly.coeffs_except_linear_term,
                 &coeffs_except_linear,
                 hiding_cursor,
             )?;
