@@ -292,28 +292,28 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
         });
         Ok(blocks)
     }
+}
 
-    /// Per-poly sparse-challenge decompose+fold. Internal helper for the
-    /// batched [`AkitaPolyOps::decompose_fold`] entry point.
-    pub(super) fn decompose_fold_sparse(
-        &self,
-        challenges: &[SparseChallenge],
-        block_len: usize,
-        num_digits: usize,
-    ) -> DecomposeFoldWitness<F, D>
-    where
-        F: CanonicalField,
-    {
-        let blocks = self
-            .blocks_for(block_len)
-            .expect("SparseRingPoly::decompose_fold_sparse: invalid block_len");
-        let num_blocks = challenges.len().min(blocks.num_blocks());
-        let inner_width = block_len * num_digits;
-        let coeff_accum =
-            sparse_accumulate::<D>(blocks, challenges, num_blocks, inner_width, num_digits);
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-        build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
-    }
+/// Per-poly sparse-challenge decompose+fold body, shared by every claim of
+/// the multi-poly batched [`AkitaPolyOps::decompose_fold`] entry point on
+/// [`SparseRingPoly`]. There is no batched sparse-ring kernel: each claim
+/// runs the same single-poly accumulation and the witnesses are summed by
+/// `aggregate_decompose_fold_witnesses`.
+fn sparse_ring_decompose_fold_per_claim<F: FieldCore + CanonicalField, const D: usize>(
+    poly: &SparseRingPoly<F, D>,
+    challenges: &[SparseChallenge],
+    block_len: usize,
+    num_digits: usize,
+) -> DecomposeFoldWitness<F, D> {
+    let blocks = poly
+        .blocks_for(block_len)
+        .expect("SparseRingPoly::decompose_fold: invalid block_len");
+    let num_blocks = challenges.len().min(blocks.num_blocks());
+    let inner_width = block_len * num_digits;
+    let coeff_accum =
+        sparse_accumulate::<D>(blocks, challenges, num_blocks, inner_width, num_digits);
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
 }
 
 impl<F, const D: usize> AkitaPolyOps<F, D> for SparseRingPoly<F, D>
@@ -388,7 +388,12 @@ where
             .iter()
             .zip(sparse.chunks(num_blocks_per_claim))
             .map(|(poly, poly_challenges)| {
-                poly.decompose_fold_sparse(poly_challenges, block_len, num_digits)
+                sparse_ring_decompose_fold_per_claim::<F, D>(
+                    poly,
+                    poly_challenges,
+                    block_len,
+                    num_digits,
+                )
             })
             .collect();
         crate::protocol::quadratic_equation::aggregate_decompose_fold_witnesses(witnesses)

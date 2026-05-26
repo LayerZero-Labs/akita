@@ -239,81 +239,58 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
         }
         Ok(partials)
     }
+}
 
-    /// Per-poly sparse-challenge decompose+fold. Internal helper called by
-    /// the batched [`AkitaPolyOps::decompose_fold`] entry point.
-    pub(super) fn decompose_fold_sparse(
-        &self,
-        challenges: &[SparseChallenge],
-        block_len: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> DecomposeFoldWitness<F, D> {
-        let n = self.coeffs.len();
-        let coeffs = &self.coeffs;
+/// Per-poly sparse-challenge decompose+fold body, shared by every claim of
+/// the multi-poly batched [`AkitaPolyOps::decompose_fold`] entry point on
+/// [`DensePoly`]. There is no batched dense kernel: each claim runs the
+/// same single-poly accumulation and the witnesses are summed by
+/// `aggregate_decompose_fold_witnesses`.
+fn dense_decompose_fold_per_claim<F: FieldCore + CanonicalField, const D: usize>(
+    poly: &DensePoly<F, D>,
+    challenges: &[SparseChallenge],
+    block_len: usize,
+    num_digits: usize,
+    log_basis: u32,
+) -> DecomposeFoldWitness<F, D> {
+    let n = poly.coeffs.len();
+    let coeffs = &poly.coeffs;
 
-        if let Some(digit_planes) = self.digit_planes_for(num_digits, log_basis) {
-            let coeff_accum = {
-                let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
-                accumulate_cached_digit_planes::<D>(digit_planes, challenges, block_len, num_digits)
-            };
-            let modulus = (-F::one()).to_canonical_u128() + 1;
-            return build_decompose_fold_witness::<F, D>(coeff_accum, modulus);
-        }
-
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let threshold = decompose_centering_threshold(num_digits, log_basis, q);
-        let params = DecomposeParams {
-            threshold,
-            q,
-            mask: (1i128 << log_basis) - 1,
-            half_b: 1i128 << (log_basis - 1),
-            b_val: 1i128 << log_basis,
-            log_basis,
-            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+    if let Some(digit_planes) = poly.digit_planes_for(num_digits, log_basis) {
+        let coeff_accum = {
+            let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
+            accumulate_cached_digit_planes::<D>(digit_planes, challenges, block_len, num_digits)
         };
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+        return build_decompose_fold_witness::<F, D>(coeff_accum, modulus);
+    }
 
-        if num_digits == 1 {
-            if let Some(small_coeffs) = &self.small_i8_coeffs {
-                let coeff_accum: Vec<[i32; D]> = {
-                    let _span =
-                        tracing::info_span!("dense_single_digit_cached_accumulate").entered();
-                    cfg_into_iter!(0..block_len)
-                        .map(|elem_idx| {
-                            let mut z_local = [0i32; D];
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let threshold = decompose_centering_threshold(num_digits, log_basis, q);
+    let params = DecomposeParams {
+        threshold,
+        q,
+        mask: (1i128 << log_basis) - 1,
+        half_b: 1i128 << (log_basis - 1),
+        b_val: 1i128 << log_basis,
+        log_basis,
+        overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+    };
 
-                            for (block_idx, c_i) in challenges.iter().enumerate() {
-                                let global_idx = block_idx * block_len + elem_idx;
-                                if global_idx >= small_coeffs.len() {
-                                    continue;
-                                }
-                                sparse_mul_acc::<D>(&small_coeffs[global_idx], c_i, &mut z_local);
-                            }
-
-                            z_local
-                        })
-                        .collect()
-                };
-
-                let _span = tracing::info_span!("dense_single_digit_convert").entered();
-                return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
-            }
-
+    if num_digits == 1 {
+        if let Some(small_coeffs) = &poly.small_i8_coeffs {
             let coeff_accum: Vec<[i32; D]> = {
-                let _span = tracing::info_span!("dense_single_digit_accumulate").entered();
+                let _span = tracing::info_span!("dense_single_digit_cached_accumulate").entered();
                 cfg_into_iter!(0..block_len)
                     .map(|elem_idx| {
                         let mut z_local = [0i32; D];
-                        let mut digit_plane = [0i8; D];
 
                         for (block_idx, c_i) in challenges.iter().enumerate() {
                             let global_idx = block_idx * block_len + elem_idx;
-                            if global_idx >= n {
+                            if global_idx >= small_coeffs.len() {
                                 continue;
                             }
-                            let ring = &coeffs[global_idx];
-                            decompose_ring_single_digit::<F, D>(ring, &mut digit_plane, &params);
-                            sparse_mul_acc::<D>(&digit_plane, c_i, &mut z_local);
+                            sparse_mul_acc::<D>(&small_coeffs[global_idx], c_i, &mut z_local);
                         }
 
                         z_local
@@ -325,16 +302,41 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
             return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
         }
 
-        let centered_coeffs = {
-            let _span = tracing::info_span!("dense_multi_digit_accumulate").entered();
-            balanced_ring_decompose_fold_partitioned::<F, D>(
-                coeffs, challenges, block_len, num_digits, &params,
-            )
+        let coeff_accum: Vec<[i32; D]> = {
+            let _span = tracing::info_span!("dense_single_digit_accumulate").entered();
+            cfg_into_iter!(0..block_len)
+                .map(|elem_idx| {
+                    let mut z_local = [0i32; D];
+                    let mut digit_plane = [0i8; D];
+
+                    for (block_idx, c_i) in challenges.iter().enumerate() {
+                        let global_idx = block_idx * block_len + elem_idx;
+                        if global_idx >= n {
+                            continue;
+                        }
+                        let ring = &coeffs[global_idx];
+                        decompose_ring_single_digit::<F, D>(ring, &mut digit_plane, &params);
+                        sparse_mul_acc::<D>(&digit_plane, c_i, &mut z_local);
+                    }
+
+                    z_local
+                })
+                .collect()
         };
 
-        let _span = tracing::info_span!("dense_multi_digit_convert").entered();
-        build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
+        let _span = tracing::info_span!("dense_single_digit_convert").entered();
+        return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
     }
+
+    let centered_coeffs = {
+        let _span = tracing::info_span!("dense_multi_digit_accumulate").entered();
+        balanced_ring_decompose_fold_partitioned::<F, D>(
+            coeffs, challenges, block_len, num_digits, &params,
+        )
+    };
+
+    let _span = tracing::info_span!("dense_multi_digit_convert").entered();
+    build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
 }
 
 impl<F, const D: usize> AkitaPolyOps<F, D> for DensePoly<F, D>
@@ -448,8 +450,10 @@ where
         num_digits: usize,
         log_basis: u32,
     ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
-        // DensePoly has no batched/tensor kernel; the per-poly path is the
-        // only one. Tensor-shaped challenges are not supported.
+        // DensePoly has no batched/tensor kernel; the per-claim work runs
+        // the same single-poly accumulation and the witnesses are summed
+        // by `aggregate_decompose_fold_witnesses`. Tensor-shaped challenges
+        // are not supported.
         let sparse = match challenges {
             Challenges::Sparse { challenges, .. } => challenges,
             Challenges::Tensor { .. } => {
@@ -463,7 +467,13 @@ where
             .iter()
             .zip(sparse.chunks(num_blocks_per_claim))
             .map(|(poly, poly_challenges)| {
-                poly.decompose_fold_sparse(poly_challenges, block_len, num_digits, log_basis)
+                dense_decompose_fold_per_claim::<F, D>(
+                    poly,
+                    poly_challenges,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
             })
             .collect();
         crate::protocol::quadratic_equation::aggregate_decompose_fold_witnesses(witnesses)
