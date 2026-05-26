@@ -19,7 +19,7 @@
 //! degrades to the legacy proof-optimised path for that shape.
 //!
 //! Public entry points are the `fast_verifier_*` helpers plus the
-//! [`impl_fp128_fast_verify_preset!`] macro that wires a fast-verify
+//! `impl_fp128_fast_verify_preset!` macro that wires a fast-verify
 //! preset into the same scaffolding as `impl_fp128_preset!`.
 
 use crate::proof_optimized::{

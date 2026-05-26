@@ -78,7 +78,7 @@ pub fn tiered_b_prime_rank(
             "tiered_b_prime_rank: split_factor must be ≥ 1".to_string(),
         ));
     }
-    if outer_width % split_factor != 0 {
+    if !outer_width.is_multiple_of(split_factor) {
         return Err(AkitaError::InvalidSetup(format!(
             "tiered_b_prime_rank: outer_width = {outer_width} not divisible by \
              split_factor = {split_factor}"
@@ -192,7 +192,7 @@ pub fn dynamic_tier_split_factor(
     if min_f > outer_width {
         return None;
     }
-    (min_f..=outer_width).find(|&f| outer_width % f == 0)
+    (min_f..=outer_width).find(|&f| outer_width.is_multiple_of(f))
 }
 
 /// Compute `num_digits_outer` so the balanced gadget of basis
