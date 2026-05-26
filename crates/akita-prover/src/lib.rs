@@ -464,10 +464,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// Returns `Some(Ok(witness))` when the backend implements a
     /// tensor-shaped batched kernel for the supplied [`TensorChallenges`],
     /// `Some(Err(_))` when the kernel was attempted but rejected its input,
-    /// and `None` when the backend has no tensor implementation. Tensor
-    /// folding is currently used only at the root level of fast-verifier
-    /// presets (`fast_verifier::fp128::D64OneHotTensor`); recursive levels
-    /// stay flat by planner construction.
+    /// and `None` when the backend has no tensor implementation.
     fn decompose_fold_tensor_batched(
         _polys: &[&Self],
         _tensor: &TensorChallenges,

@@ -961,9 +961,6 @@ where
     let x_len = total_cols.next_power_of_two();
     let mut out = Vec::with_capacity(x_len);
 
-    // Flat path is byte-identical to main's per-block evaluator; tensor path
-    // delegates to `Challenges::evals_at_pows`, which expands the
-    // materialized integer challenges.
     let c_alphas: Vec<E> = match challenges {
         Challenges::Sparse {
             challenges: sparse, ..

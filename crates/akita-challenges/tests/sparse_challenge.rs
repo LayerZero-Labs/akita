@@ -28,9 +28,7 @@ type F = Fp64<4294967197>;
 
 const D: usize = 32;
 
-/// Local helper: count non-zero positions in a sparse challenge. The crate no
-/// longer ships a dedicated `hamming_weight` accessor since it was only ever
-/// used by these tests.
+/// Local helper: count non-zero positions in a sparse challenge.
 fn hamming_weight(c: &SparseChallenge) -> usize {
     debug_assert_eq!(c.positions.len(), c.coeffs.len());
     c.positions.len()
@@ -420,10 +418,7 @@ fn tensor_sampling_absorbs_left_digest_before_right() {
     )
     .unwrap();
 
-    // Without the left-digest absorb, the right vector would just be a second
-    // application of `sample_sparse_challenges` on the bare transcript. That
-    // alternate vector must not match the sampled vector, otherwise the
-    // right-side challenge would not be bound to the left.
+    // The right factor must be sampled after absorbing the left digest.
     let mut nodigest_transcript = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     nodigest_transcript.append_field(b"seed", &F::from_u64(0x5151));
     let _nodigest_left = sample_sparse_challenges::<F, _, TD>(

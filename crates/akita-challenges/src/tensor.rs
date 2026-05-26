@@ -85,8 +85,7 @@ pub struct TensorChallenges {
 
 /// Stage-1 fold challenges — the single representation seen by prover and
 /// verifier protocol code, with all per-variant logic encapsulated behind
-/// methods on this enum. Protocol code never inspects the variants
-/// directly; it just calls the appropriate method
+/// methods on this enum. Protocol code calls the appropriate method
 /// ([`Self::evals_at_pows`] for verifier-side evaluation,
 /// [`Self::accumulate_high_half`] for prover-side r-quotient
 /// accumulation, etc.).

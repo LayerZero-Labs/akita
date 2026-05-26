@@ -11,10 +11,7 @@
 //! not re-validate every sampler invariant on the hot path.
 //!
 //! This module deliberately depends only on `akita-field`; it does not pull in
-//! the transcript layer or the sampler. Most consumers of this crate
-//! (`akita-types`, `akita-config`, `akita-planner`, `akita-prover`/
-//! `akita-verifier` ring-switching, etc.) only ever touch this type and never
-//! run the sampler.
+//! the transcript layer or the sampler.
 
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 use std::collections::BTreeMap;
@@ -42,8 +39,7 @@ pub struct SparseChallenge {
 /// for tensor-shaped stage-1 folding) can blow past the `i8` envelope of the
 /// individual samples. `IntegerChallenge` is the wider-coefficient form used
 /// for those composed objects so prover-side digit accumulation can stay in the
-/// integer domain. It is deliberately independent of the flat-vs-tensor
-/// sampling containers: both shapes expand into this same materialized form.
+/// integer domain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntegerChallenge {
     /// Coefficient indices (powers of `X`) where the polynomial is non-zero.

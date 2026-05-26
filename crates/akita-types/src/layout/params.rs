@@ -234,11 +234,8 @@ pub struct LevelParams {
     pub stage1_config: SparseChallengeConfig,
     /// Shape of the stage-1 fold-round challenge vector at this level.
     ///
-    /// Defaults to [`TensorChallengeShape::Flat`], which is the byte-identical
-    /// representation used by every shipped flat preset. Tensor presets opt
-    /// individual levels into [`TensorChallengeShape::Tensor`] by overriding
-    /// the corresponding `CommitmentConfig::fold_challenge_shape_at_level`
-    /// hook; the runtime prover/verifier dispatch on this field.
+    /// Defaults to [`TensorChallengeShape::Flat`]. Tensor presets set selected
+    /// levels to [`TensorChallengeShape::Tensor`] during schedule construction.
     pub fold_challenge_shape: TensorChallengeShape,
     /// Gadget decomposition depth for commitment coefficients (δ_commit).
     pub num_digits_commit: usize,
@@ -293,10 +290,7 @@ impl LevelParams {
         }
     }
 
-    /// Worst-case L1 mass of the fold-round challenge, derived from
-    /// `stage1_config` and `fold_challenge_shape`. The default flat shape
-    /// returns the configured sparse-challenge `l1_norm` (byte-identical to
-    /// main); tensor shape returns the product-bound `omega^2`.
+    /// Worst-case L1 mass of the fold-round challenge.
     #[inline]
     pub fn challenge_l1_mass(&self) -> usize {
         self.fold_challenge_shape

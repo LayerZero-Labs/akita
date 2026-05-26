@@ -55,9 +55,7 @@ pub const CHALLENGE_STAGE1_FOLD: &[u8] = b"ak/c/s1f";
 /// A tensor-shaped fold samples two sparse-challenge vectors `α_p` and `β_q`
 /// per claim, and folds with `c_{p,q} = α_p · β_q`. This label samples
 /// the `α` vector; the matching `β` vector uses
-/// [`CHALLENGE_TENSOR_FOLD_RIGHT`]. The wire byte string sits in the
-/// stage-1 fold family (`ak/c/s1...`) since that is the only stage that
-/// currently uses tensor-shaped folding.
+/// [`CHALLENGE_TENSOR_FOLD_RIGHT`].
 pub const CHALLENGE_TENSOR_FOLD_LEFT: &[u8] = b"ak/c/s1fl";
 /// Absorb a canonical digest of the tensor-left challenge vector before
 /// sampling the tensor-right vector.

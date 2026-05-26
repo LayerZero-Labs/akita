@@ -196,9 +196,6 @@ where
         num_digits: usize,
         log_basis: u32,
     ) -> Option<Result<DecomposeFoldWitness<F, D>, AkitaError>> {
-        // Tensor fold currently exists only on `OneHotPoly`. Mixed batches and
-        // dense-only batches return `None` so the caller can surface a clear
-        // setup error; production presets only use tensor at the OneHot root.
         let mut onehot_polys = Vec::with_capacity(polys.len());
         for poly in polys {
             match **poly {

@@ -1103,12 +1103,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         Some(build_decompose_fold_witness::<F, D>(coeff_accum, modulus))
     }
 
-    /// Tensor-shaped batched decompose-fold. Materialises the negacyclic
-    /// tensor product `left[p] * right[q]` per block inside a private `[i64; D]`
-    /// rotation table to handle the larger coefficient envelope, then narrows
-    /// the accumulator back to `[i32; D]` at the witness boundary so the rest
-    /// of the prover pipeline (and the flat-mode kernels) keep main's i32 path
-    /// intact. Returns an error if narrowing would overflow.
+    /// Tensor-shaped batched decompose-fold for one-hot polynomials.
     fn decompose_fold_batched_tensor_onehot(
         polys: &[&Self],
         tensor: &TensorChallengeSet,
@@ -2316,12 +2311,9 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
     chunks.into_iter().flatten().collect()
 }
 
-// Tensor-only accumulators below. These run only when the protocol selects a
-// tensor-shaped stage-1 fold; flat-mode callers never enter them and the
-// main-branch i32 / i16 kernels above are untouched. The tensor accumulators
-// use a wider `[i64; D]` buffer because the per-block challenge magnitude can
-// reach `omega^2` (vs `omega` in flat mode), then narrow back to `[i32; D]`
-// at the witness boundary via `narrow_tensor_accum_to_i32`.
+// Tensor accumulators use `[i64; D]` because each per-block challenge is a
+// product of two sparse samples. The witness boundary narrows back to
+// `[i32; D]` after checking the selected schedule's coefficient envelope.
 
 #[inline]
 fn tensor_challenges_for_block(
@@ -2468,11 +2460,7 @@ pub(super) fn single_chunk_onehot_accumulate_tensor<const D: usize>(
     chunks.into_iter().flatten().collect()
 }
 
-/// Narrow the tensor accumulator from `[i64; D]` to `[i32; D]` at the witness
-/// boundary. Returns an error if any coefficient does not fit. The caller is
-/// responsible for guaranteeing that the planner-selected schedule keeps the
-/// tensor accumulator within the i32 envelope; this check is a defensive
-/// prover-side guard, not a hot-loop branch.
+/// Narrow the tensor accumulator at the witness boundary.
 fn narrow_tensor_accum_to_i32<const D: usize>(
     accum_i64: Vec<[i64; D]>,
 ) -> Result<Vec<[i32; D]>, AkitaError> {

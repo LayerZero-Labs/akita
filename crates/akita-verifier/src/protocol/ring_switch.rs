@@ -421,9 +421,6 @@ where
         });
     }
 
-    // Flat path is byte-identical to main's per-block evaluator; tensor path
-    // delegates to `Challenges::evals_at_pows`, which expands the
-    // materialized integer challenges.
     let c_alphas: Vec<E> = match challenges {
         Challenges::Sparse {
             challenges: sparse, ..

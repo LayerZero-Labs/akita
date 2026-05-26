@@ -1,16 +1,4 @@
-//! End-to-end tests for the **tensor-shaped** stage-1 fold path on the
-//! `fast_verifier` `D64OneHotTensor` preset.
-//!
-//! Mirrors `single_poly_e2e.rs::run_single_onehot` but swaps the config from
-//! `fp128::D64OneHot` (flat sparse fold) to
-//! `fast_verifier::fp128::D64OneHotTensor` (tensor-shaped root fold + flat
-//! recursive folds). The test commits one one-hot polynomial, produces a
-//! batched proof, round-trips it through serialize/deserialize, and verifies.
-//!
-//! Coverage for `cargo test`. The runtime profile mode `onehot_d64_tensor`
-//! exercises the same code path at NV=32 as a manual benchmark, but only via
-//! `cargo run --release --example profile`; this test file is what `cargo
-//! test` / `cargo nextest` actually runs.
+//! End-to-end tests for the tensor-shaped root fold path.
 
 #![allow(missing_docs)]
 #![cfg(not(feature = "zk"))]
@@ -28,7 +16,6 @@ use akita_verifier::CommitmentVerifier;
 use common::*;
 
 const TENSOR_D: usize = D64OneHotTensor::D;
-// Same `K = D = 64` one-hot layout as the flat preset.
 const TENSOR_K: usize = TENSOR_D;
 
 fn run_single_onehot_tensor(nv: usize) {
@@ -40,8 +27,6 @@ fn run_single_onehot_tensor(nv: usize) {
         .expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;
         assert_eq!(total_ring * TENSOR_K, 1usize << nv);
-        // The whole point of the test: the root fold's challenge container is
-        // the tensor-shaped variant. Recursive levels stay flat by design.
         assert_eq!(
             layout.fold_challenge_shape,
             akita_challenges::TensorChallengeShape::Tensor,

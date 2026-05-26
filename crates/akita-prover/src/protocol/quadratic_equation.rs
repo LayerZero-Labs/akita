@@ -469,11 +469,8 @@ where
             stage1_fold_challenge_labels(),
         )?;
 
-        // Per-point chunking. For each opening point we collect the polynomial
-        // refs and the matching subset of challenge claims, then ask the poly
-        // backend for the aggregated witness. The flat sparse path is
-        // byte-identical to main; the tensor path forwards the per-point
-        // tensor factors via `decompose_fold_tensor_batched`.
+        // Per-point chunking keeps each aggregated witness aligned with one
+        // opening point's challenge claims.
         let z_pre = {
             let num_points = opening_points.len();
             let _span =
@@ -543,12 +540,13 @@ where
                     }
                     Challenges::Tensor { .. } => {
                         let selected = challenges.select_claims::<D>(point_indices)?;
-                        let Challenges::Tensor {
-                            factored: point_factored,
-                            ..
-                        } = selected
-                        else {
-                            unreachable!("select_claims on Tensor returns Tensor");
+                        let point_factored = match selected {
+                            Challenges::Tensor { factored, .. } => factored,
+                            Challenges::Sparse { .. } => {
+                                return Err(AkitaError::InvalidSetup(
+                                    "tensor claim selection returned sparse challenges".to_string(),
+                                ));
+                            }
                         };
                         match P::decompose_fold_tensor_batched(
                             point_polys,
@@ -735,8 +733,7 @@ where
             MRowLayout::Terminal => Vec::new(),
         };
 
-        // Recursive levels are flat-only by current planner construction; the
-        // recursive witness backend has no tensor batched kernel.
+        // Recursive witnesses do not implement a tensor batched fold kernel.
         if !matches!(lp.fold_challenge_shape, ChallengeShape::Flat) {
             return Err(AkitaError::InvalidSetup(
                 "tensor fold shape is not supported at recursive levels".to_string(),
@@ -751,15 +748,16 @@ where
             stage1_fold_challenge_labels(),
         )?;
 
-        // Recursive levels are flat-only (tensor was rejected above), so we
-        // can extract the sparse slice once and slice it byte-identically to
-        // main below.
+        // Tensor shapes were rejected above, so the recursive path can use the
+        // sparse challenge slice directly.
         let Challenges::Sparse {
             challenges: sparse_challenges,
             ..
         } = &challenges
         else {
-            unreachable!("recursive fold challenges are guaranteed flat above");
+            return Err(AkitaError::InvalidSetup(
+                "recursive fold sampling returned tensor challenges".to_string(),
+            ));
         };
         let z_pre = {
             let _span = tracing::info_span!(
@@ -1511,8 +1509,6 @@ where
             let t_row = Instant::now();
             let _span = tracing::info_span!("challenge_fold_row").entered();
             // Consistency row: Σ c_i · w_folded[i] over all (claim, block).
-            // Flat path is byte-identical to main; tensor path uses the
-            // `Challenges` enum's per-variant accumulation hook.
             let quotient = match challenges {
                 Challenges::Sparse {
                     challenges: sparse, ..
@@ -1564,9 +1560,6 @@ where
             // raw `recomposed_inner_rows.len()` would conflate poly slots
             // with claims and overrun `challenges` whenever a group has
             // more polynomial slots than opened claims.
-            //
-            // Flat path is byte-identical to main; tensor path delegates
-            // the per-variant fold to `Challenges::accumulate_high_half`.
             let mut quotient = match challenges {
                 Challenges::Sparse {
                     challenges: sparse, ..

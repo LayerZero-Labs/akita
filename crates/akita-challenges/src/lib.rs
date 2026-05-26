@@ -3,8 +3,7 @@
 //! Public surface:
 //!
 //! - [`SparseChallenge`] — the dependency-light data type representing one
-//!   sampled sparse polynomial in `F[X]/(X^D + 1)`. Most workspace consumers
-//!   only ever import this type.
+//!   sampled sparse polynomial in `F[X]/(X^D + 1)`.
 //! - [`SparseChallengeConfig`] — the policy enum that selects which sampling
 //!   family is used (`Uniform`, `ExactShell`, `BoundedL1Norm`) and exposes
 //!   policy questions like `l1_norm()` / `infinity_norm()` / `validate()` to
