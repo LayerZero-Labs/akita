@@ -167,61 +167,68 @@ jobs:
               return null;
             }
 
-            const prRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
-              owner,
-              repo,
-              event: 'pull_request',
-              branch: headRef,
-              status: 'completed',
-              per_page: 100,
-            });
-            const previousPrCandidates = prRunsResponse.data.workflow_runs.filter(run => {
-              if (run.head_sha === headSha) {
-                return false;
-              }
-              const prs = run.pull_requests || [];
-              return prs.length === 0 || prs.some(pr => pr.number === pullRequest.number);
-            });
-            const previousPrRun = await firstRunWithArtifact(
-              previousPrCandidates,
-              ['success', 'failure']
-            );
-            if (!previousPrRun) {
-              core.info('No previous PR baseline artifact found.');
-            }
-            setBaselineOutput('previous', previousPrRun, 'the previous successful PR update');
+            setBaselineOutput('previous', null, '');
+            setBaselineOutput('main', null, '');
 
-            const baseRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
-              owner,
-              repo,
-              event: 'push',
-              branch: baseRef,
-              status: 'completed',
-              per_page: 100,
-            });
-            const baseCandidates = baseRunsResponse.data.workflow_runs.filter(run =>
-              run.name === workflowName && run.conclusion === 'success'
-            );
-            const exactMergeBaseCandidates = mergeBaseSha
-              ? baseCandidates.filter(run => run.head_sha === mergeBaseSha)
-              : [];
-            const exactMergeBaseRun =
-              exactMergeBaseCandidates.length > 0
-                ? await firstRunWithArtifact(exactMergeBaseCandidates)
-                : null;
-            const fallbackBaseCandidates = mergeBaseSha
-              ? baseCandidates.filter(run => run.head_sha !== mergeBaseSha)
-              : baseCandidates;
-            const mainRun =
-              exactMergeBaseRun ?? await firstRunWithArtifact(fallbackBaseCandidates);
-            if (!mainRun) {
-              core.info('No main baseline artifact found.');
+            try {
+              const prRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
+                owner,
+                repo,
+                event: 'pull_request',
+                branch: headRef,
+                status: 'completed',
+                per_page: 100,
+              });
+              const previousPrCandidates = prRunsResponse.data.workflow_runs.filter(run => {
+                if (run.head_sha === headSha) {
+                  return false;
+                }
+                const prs = run.pull_requests || [];
+                return prs.length === 0 || prs.some(pr => pr.number === pullRequest.number);
+              });
+              const previousPrRun = await firstRunWithArtifact(
+                previousPrCandidates,
+                ['success', 'failure']
+              );
+              if (!previousPrRun) {
+                core.info('No previous PR baseline artifact found.');
+              }
+              setBaselineOutput('previous', previousPrRun, 'the previous successful PR update');
+
+              const baseRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
+                owner,
+                repo,
+                event: 'push',
+                branch: baseRef,
+                status: 'completed',
+                per_page: 100,
+              });
+              const baseCandidates = baseRunsResponse.data.workflow_runs.filter(run =>
+                run.name === workflowName && run.conclusion === 'success'
+              );
+              const exactMergeBaseCandidates = mergeBaseSha
+                ? baseCandidates.filter(run => run.head_sha === mergeBaseSha)
+                : [];
+              const exactMergeBaseRun =
+                exactMergeBaseCandidates.length > 0
+                  ? await firstRunWithArtifact(exactMergeBaseCandidates)
+                  : null;
+              const fallbackBaseCandidates = mergeBaseSha
+                ? baseCandidates.filter(run => run.head_sha !== mergeBaseSha)
+                : baseCandidates;
+              const mainRun =
+                exactMergeBaseRun ?? await firstRunWithArtifact(fallbackBaseCandidates);
+              if (!mainRun) {
+                core.info('No main baseline artifact found.');
+              }
+              const mainLabel =
+                mainRun && Boolean(mergeBaseSha) && mainRun.head_sha === mergeBaseSha
+                  ? `merge-base on \`${baseRef}\``
+                  : `the latest successful \`${baseRef}\` run`;
+              setBaselineOutput('main', mainRun, mainLabel);
+            } catch (error) {
+              core.warning(`Could not determine benchmark baselines: ${error.message}`);
             }
-            const mainLabel =
-              mainRun && Boolean(mergeBaseSha) && mainRun.head_sha === mergeBaseSha
-                ? `merge-base on \`${baseRef}\``
-                : `the latest successful \`${baseRef}\` run`;
-            setBaselineOutput('main', mainRun, mainLabel);
 
       - name: Download main baseline artifact
         if: always() && steps.bench-baselines.outputs.main-run-id != ''
@@ -341,31 +348,35 @@ jobs:
             const body = fs.readFileSync(commentPath, 'utf8');
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              { owner, repo, issue_number, per_page: 100 }
-            );
-            const existing = comments.find(comment =>
-              comment.user?.login === 'github-actions[bot]' &&
-              markers.some(marker => comment.body?.includes(marker))
-            );
+            try {
+              const comments = await github.paginate(
+                github.rest.issues.listComments,
+                { owner, repo, issue_number, per_page: 100 }
+              );
+              const existing = comments.find(comment =>
+                comment.user?.login === 'github-actions[bot]' &&
+                markers.some(marker => comment.body?.includes(marker))
+              );
 
-            if (existing) {
-              const response = await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-              core.info(`Updated benchmark PR comment: ${response.data.html_url}`);
-            } else {
-              const response = await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body,
-              });
-              core.info(`Created benchmark PR comment: ${response.data.html_url}`);
+              if (existing) {
+                const response = await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body,
+                });
+                core.info(`Updated benchmark PR comment: ${response.data.html_url}`);
+              } else {
+                const response = await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number,
+                  body,
+                });
+                core.info(`Created benchmark PR comment: ${response.data.html_url}`);
+              }
+            } catch (error) {
+              core.warning(`Could not upsert benchmark PR comment: ${error.message}`);
             }
 
       - name: Upload benchmark artifact
