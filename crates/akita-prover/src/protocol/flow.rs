@@ -1570,7 +1570,6 @@ where
             Ok(*y_ring + y_garbage)
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
-    #[cfg(not(feature = "zk"))]
     for prepared_point in &prepared_points {
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
