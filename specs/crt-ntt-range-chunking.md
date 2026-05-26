@@ -38,10 +38,13 @@ The primary affected surfaces are:
 - `akita-prover::kernels::crt_ntt`: protocol-facing Q16/Q32/Q64/Q128
   dispatch.
 - `akita-prover::kernels::linear`: i8 and balanced-digit NTT matvec kernels.
+- `akita-prover::protocol::quadratic_equation`: cyclic quotient and fused
+  split-eq callers that consume the same CRT/NTT cache.
 - `akita-prover::backend::dense`: dense commitment paths that call the i8
   matvec kernels.
 - `akita-prover::api::commitment`: the outer B commitment matvec.
-- `akita-pcs::examples::profile`: performance validation for dense fp16/fp32/fp64.
+- `crates/akita-pcs/examples/profile/`: performance validation for dense
+  fp16/fp32/fp64.
 
 The intended first-cut CRT profiles are:
 
@@ -87,15 +90,18 @@ root width in one chunk and enough for larger widths through range chunking.
    benchmark-specific constants:
 
    ```text
-   chunk_cols * D * floor(q / 2) * digit_abs < P_crt / 2
+   chunk_cols * D * lhs_coeff_abs * rhs_coeff_abs < P_crt / 2
    ```
 
-   where `q` is the target field modulus, `D` is the ring dimension,
-   `digit_abs = 2^(log_basis - 1)`, and `P_crt` is the product of the active CRT
-   primes.
-4. The bound must be conservative for negacyclic ring multiplication. Each
-   output coefficient of one column product is a signed sum of at most `D`
-   products of a centered setup coefficient and a balanced digit.
+   For setup-matrix coefficients, `lhs_coeff_abs = floor(q / 2)`, where `q` is
+   the target field modulus. For balanced i8 digit vectors,
+   `rhs_coeff_abs = 2^(log_basis - 1)`. For the centered-i32 `z_pre` leg of
+   fused split-eq quotient kernels, `rhs_coeff_abs = z_pre_max_abs`. `D` is the
+   ring dimension, and `P_crt` is the product of the active CRT primes.
+4. The bound must be conservative for negacyclic and cyclic ring multiplication.
+   Each output coefficient of one column product is a signed sum of at most `D`
+   products of a centered setup coefficient and a RHS coefficient bounded by
+   `rhs_coeff_abs`.
 5. A chunk size of zero is invalid. If a proposed profile cannot safely
    reconstruct even one column for a supported field and ring dimension, setup
    must fail loudly or the profile must not be selected.
@@ -111,6 +117,9 @@ root width in one chunk and enough for larger widths through range chunking.
 9. There is no backward-compatibility layer. Internal constants and dispatch
    names may be cut over in place, and all call sites must use the new range
    chunking path.
+10. Reduced Q16/Q32/Q64 profiles must cover every `NttSlotCache` user. There is
+    no hidden large-profile escape hatch for cyclic quotient paths or fused
+    split-eq paths.
 
 ### Non-Goals
 
@@ -127,6 +136,9 @@ root width in one chunk and enough for larger widths through range chunking.
 8. No fp16 single-i32 or two-i16 default profile in the first implementation.
    Those options should remain alternatives unless benchmark evidence overturns
    the three-i16 Q16 default.
+9. No separate unreduced Q32/Q64 CRT cache for quotient-only call sites. If a
+   call site consumes the reduced profile, it must be range-chunked with the
+   appropriate bound.
 
 ## Evaluation
 
@@ -143,7 +155,13 @@ root width in one chunk and enough for larger widths through range chunking.
       width and reconstructs partial sums into the target field before adding
       them.
 - [ ] The safe chunk-width helper has unit tests for fp16, fp32, fp64, Q16,
-      Q32, Q64, and too-small profiles.
+      Q32, Q64, balanced-i8 RHS bounds, centered-i32 `z_pre` RHS bounds, and
+      too-small profiles.
+- [ ] Cyclic quotient users are covered: `mat_vec_mul_ntt_single_i8_cyclic` and
+      `fused_split_eq_quotients` range-chunk with the reduced profiles.
+- [ ] Forced multi-chunk tests cover cyclic i8 matvecs and fused split-eq
+      quotient paths, including the `z_pre_max_abs` centered-i32 leg, against
+      scalar quotient references.
 - [ ] Dense fp16 D32/D64 and fp32/fp64 D32 commitment tests match the scalar
       ring-matvec reference over randomized small fixtures.
 - [ ] Existing dense and one-hot end-to-end tests continue to pass.
@@ -151,7 +169,7 @@ root width in one chunk and enough for larger widths through range chunking.
       successfully and show no proof-byte or verifier-result changes.
 - [ ] Performance results are recorded for the dense small-field targets:
       `full_fp16_d32:26:1`, `full_fp16_d64:26:1`, `dense_fp32_d32:26:1`, and
-      the re-enabled `dense_fp64_d32:26:1`.
+      `dense_fp64_d32:26:1`.
 
 ### Testing Strategy
 
@@ -171,8 +189,13 @@ Required focused tests:
   - Q128 still dispatches for supported q128 families.
 - `akita-prover::kernels::linear` tests:
   - range-chunked `mat_vec_mul_ntt_single_i8` equals a scalar ring reference;
+  - range-chunked `mat_vec_mul_ntt_single_i8_cyclic` equals a scalar cyclic
+    ring reference;
   - range-chunked dense digit kernels equal a scalar ring reference;
+  - range-chunked `fused_split_eq_quotients` equals the existing scalar
+    split-eq quotient reference for D, B, and A quotient outputs;
   - forced tiny chunk widths exercise multi-chunk accumulation deterministically;
+  - forced tiny chunk widths exercise the `z_pre_max_abs` centered-i32 bound;
   - too-small profiles that cannot fit one column are rejected.
 - End-to-end tests:
   - existing `akita-pcs` dense and one-hot tests remain green;
@@ -214,12 +237,15 @@ Expected direction:
 - Q64 setup and dense commitment should improve because each cached NTT element
   stores three i32 limbs instead of five.
 - Very wide fp32 cases may add several reconstruction chunks. The implementation
-  is acceptable only if the reduced per-column prime count beats or roughly
-  ties the extra partial reconstruction overhead on the benchmark matrix.
+  must record setup, commit, prove, verify, and proof-byte movement for review;
+  this spec does not set a fixed pass/fail threshold for those exploratory
+  measurements.
 - Proof bytes and verifier time should remain unchanged except for measurement
   noise.
 
-Approximate current dense root widths:
+Approximate current dense root widths. These use generated root-level
+`lp.log_basis` values from the schedule tables, not only the
+`CommitmentConfig::decomposition()` default.
 
 | config | root B width | proposed profile behavior |
 | --- | ---: | --- |
@@ -265,21 +291,31 @@ The implementation should add a small helper near the CRT/NTT parameter set or
 linear kernels that computes:
 
 ```text
-safe_chunk_cols(params, field_modulus, D, log_basis) -> Result<usize, AkitaError>
+safe_chunk_cols(params, D, lhs_coeff_abs, rhs_coeff_abs) -> Result<usize, AkitaError>
 ```
 
-For Q32 and Q64, exact `u128` arithmetic is enough for the proposed products.
-For Q128, the implementation can keep the current unchunked five-prime path or
-use a conservative bit-width helper, but it must not silently truncate the CRT
-product.
+For Q16, Q32, and Q64, exact `u128` arithmetic is enough for the proposed
+products. For Q128, the implementation can keep the current unchunked five-prime
+path or use a conservative bit-width helper, but it must not silently truncate
+the CRT product.
 
 The helper should use:
 
 ```text
-digit_abs = 1 << (log_basis - 1)
-coeff_abs = floor(q / 2)
-per_col_bound = D * coeff_abs * digit_abs
+per_col_bound = D * lhs_coeff_abs * rhs_coeff_abs
 safe_cols = floor((P_crt / 2 - 1) / per_col_bound)
+```
+
+Callers should provide small wrappers for the common RHS shapes:
+
+```text
+balanced_i8_chunk_cols(params, q, D, log_basis):
+    lhs_coeff_abs = floor(q / 2)
+    rhs_coeff_abs = 1 << (log_basis - 1)
+
+centered_i32_chunk_cols(params, q, D, z_pre_max_abs):
+    lhs_coeff_abs = floor(q / 2)
+    rhs_coeff_abs = z_pre_max_abs
 ```
 
 The changed kernels should preserve their current row/block parallelism where
@@ -291,15 +327,18 @@ final modular reduction in `F`.
 Initial kernel coverage should include:
 
 - `mat_vec_mul_ntt_single_i8`;
+- `mat_vec_mul_ntt_single_i8_cyclic`;
 - `mat_vec_mul_ntt_dense_digits_i8`;
 - `mat_vec_mul_ntt_digits_i8`;
 - `mat_vec_mul_ntt_i8_dense`;
+- `fused_split_eq_quotients`, including its `w_hat`, `t_hat`, and
+  `z_pre`/`z_pre_max_abs` legs;
 - the strided i8 variants used by recursive or batched paths when they share
   the same accumulation contract.
 
-Any kernel left on the old full-width accumulation path must either keep a CRT
-profile large enough for its worst-case width or be explicitly listed as out of
-scope before implementation review.
+No Q16/Q32/Q64 `NttSlotCache` user may stay on the old full-width accumulation
+path. Leaving one behind would make the smaller global profile unsafe for that
+call site. Q128 may keep the existing five-prime behavior.
 
 ### Q16 and i16 Fast Path
 
@@ -420,6 +459,8 @@ inline comments in:
   and the range-chunking dependency;
 - `crates/akita-prover/src/kernels/linear.rs`, to distinguish range chunks from
   cache tiles;
+- `crates/akita-prover/src/protocol/quadratic_equation.rs`, if quotient helper
+  comments need to name the centered-i32 `z_pre` bound;
 - `AGENTS.md` or profiling docs only if the canonical profile modes or bench
   interpretation changes.
 
@@ -427,18 +468,21 @@ inline comments in:
 
 Suggested implementation slices:
 
-1. Add a range-bound helper and focused tests using existing prime sets.
+1. Add the generalized range-bound helper and focused tests using existing
+   prime sets, balanced-i8 RHS bounds, and centered-i32 `z_pre_max_abs` bounds.
 2. Add Q16 tables, dispatch, cache variants, and tests using three D64-valid
    i16 primes.
 3. Teach `mat_vec_mul_ntt_single_i8` to range-chunk while preserving current
    output and row parallelism.
-4. Extend the helper to dense digit, generic i8, and strided kernels; validate
+4. Extend range chunking to cyclic i8 matvecs and `fused_split_eq_quotients`,
+   including the centered-i32 `z_pre` leg.
+5. Extend the helper to dense digit, generic i8, and strided kernels; validate
    fp16 D32/D64 dense profiles.
-5. Reduce Q64 to three i32 primes and validate fp64 dense profiles.
-6. Replace Q32 with four large D64-valid i16 primes and validate fp32 dense
+6. Reduce Q64 to three i32 primes and validate fp64 dense profiles.
+7. Replace Q32 with four large D64-valid i16 primes and validate fp32 dense
    profiles.
-7. Run focused tests, workspace clippy, and release profiles.
-8. Record benchmark movement in the implementation PR description and update
+8. Run focused tests, workspace clippy, and release profiles.
+9. Record benchmark movement in the implementation PR description and update
    this spec if measurements force a different prime-count choice.
 
 Risks to resolve early:
@@ -467,5 +511,6 @@ Risks to resolve early:
 - `crates/akita-config/src/proof_optimized.rs`
 - `crates/akita-prover/src/kernels/crt_ntt.rs`
 - `crates/akita-prover/src/kernels/linear.rs`
+- `crates/akita-prover/src/protocol/quadratic_equation.rs`
 - `crates/akita-prover/src/backend/dense.rs`
 - `crates/akita-prover/src/api/commitment.rs`
