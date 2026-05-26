@@ -18,10 +18,11 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::{batched_verify_with_config, CommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_recursion_glue::{AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
 use akita_transcript::AkitaTranscript;
 use akita_types::BasisMode;
+use akita_verifier::verify_batched;
 use clap::Parser;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -145,7 +146,7 @@ fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
         .map_err(|err| format!("strict input decode failed: {err}"))?;
     let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     let openings = [decoded.opening];
-    batched_verify_with_config::<F, _, D, Cfg>(
+    verify_batched::<F, Cfg, _, D>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,

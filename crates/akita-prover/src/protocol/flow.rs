@@ -2,17 +2,18 @@
 
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
+    commit_next_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
     ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
     NextWitnessCommitment, RingSwitchOutput, TerminalRingSwitchOutput,
 };
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::{
-    AkitaPolyOps, CommittedPolynomials, MultiDNttCaches, ProverClaims, QuadraticEquation,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    AkitaPolyOps, AkitaProverSetup, CommittedPolynomials, MultiDNttCaches, ProverClaims,
+    QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
     RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
+use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
@@ -20,7 +21,7 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     HalvingField, Invertible, PseudoMersenneField, RandomSampling,
 };
-use akita_serialization::AkitaSerialize;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_sumcheck::{
     check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
     prove_extension_opening_reduction, prove_sumcheck, tensor_equality_factor_eval_at_point,
@@ -45,13 +46,13 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, schedule_terminal_direct_witness_shape,
-    terminal_witness_segment_layout, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
-    AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape,
-    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
-    PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
+    schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_fold_execution,
+    scheduled_next_level_params, terminal_witness_segment_layout, validate_batched_inputs,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
+    AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
+    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof,
+    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
+    MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
     RingSubfieldEncoding, Schedule, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
 };
 
@@ -469,112 +470,6 @@ where
     }
 }
 
-/// Drive batched proving up to the config-selected folded-root policy.
-///
-/// This owns the config-free top-level prover work: validate/flatten public
-/// prover claims, derive the schedule lookup key, select the schedule through
-/// the supplied policy callback, apply the root-direct shortcut when the
-/// selected schedule says no fold is needed, and derive the first recursive
-/// schedule inputs for folded roots. Folded-root proving still runs in the
-/// caller-supplied closure while config-selected recursive commitment layouts
-/// remain outside this crate.
-///
-/// # Errors
-///
-/// Returns an error if claim preparation, schedule selection, root-direct
-/// witness construction, root-next parameter selection, or folded-root proving
-/// fails.
-#[allow(clippy::too_many_arguments)]
-pub fn prove_batched_with_policy<
-    'a,
-    F,
-    E,
-    L,
-    T,
-    P,
-    const D: usize,
-    SelectSchedule,
-    SelectRootNext,
-    BindTranscript,
-    ProveFolded,
->(
-    expanded: &AkitaExpandedSetup<F>,
-    claims: ProverClaims<'a, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
-    transcript: &mut T,
-    basis: BasisMode,
-    select_schedule: SelectSchedule,
-    select_root_next_params: SelectRootNext,
-    bind_transcript: BindTranscript,
-    prove_folded: ProveFolded,
-) -> Result<AkitaBatchedProof<F, L>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-    L: ExtField<F>,
-    T: Transcript<F>,
-    P: AkitaPolyOps<F, D>,
-    SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
-    SelectRootNext: FnOnce(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
-    BindTranscript:
-        FnOnce(&mut T, &ClaimIncidenceSummary, &Schedule, BasisMode) -> Result<(), AkitaError>,
-    ProveFolded: FnOnce(
-        PreparedBatchedProveInputs<'a, F, E, P, D>,
-        Schedule,
-        LevelParams,
-        &mut T,
-        BasisMode,
-    ) -> Result<AkitaBatchedProof<F, L>, AkitaError>,
-{
-    let prepared_claims = prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?;
-    let num_vars = prepared_claims.incidence_summary.num_vars();
-    let mut schedule = select_schedule(&prepared_claims.incidence_summary)?;
-    if let Some(root_step) = schedule_root_fold_step(&schedule) {
-        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<F, E, L, D>(
-            &prepared_claims.opening_points,
-            &root_step.params,
-            alpha_bits,
-        ) && !root_tensor_projection_enabled::<F, E, L, D>(num_vars)
-        {
-            schedule = root_direct_schedule(num_vars)?;
-        }
-    }
-
-    bind_transcript(
-        transcript,
-        &prepared_claims.incidence_summary,
-        &schedule,
-        basis,
-    )?;
-
-    if schedule_is_root_direct(&schedule) {
-        return prove_root_direct::<F, L, D, P>(
-            &prepared_claims.group_polys,
-            &prepared_claims.flat_hints,
-        );
-    }
-
-    let Some(root_step) = schedule_root_fold_step(&schedule) else {
-        return Err(AkitaError::InvalidSetup(
-            "root schedule does not start with a fold".to_string(),
-        ));
-    };
-    let next_inputs = AkitaScheduleInputs {
-        num_vars,
-        level: 1,
-        current_w_len: root_step.next_w_len,
-    };
-    let root_next_params = select_root_next_params(&schedule, next_inputs)?;
-
-    prove_folded(
-        prepared_claims,
-        schedule,
-        root_next_params,
-        transcript,
-        basis,
-    )
-}
-
 /// Build the recursive suffix from an intermediate-root handoff, then
 /// assemble the final folded batched proof.
 ///
@@ -637,297 +532,6 @@ where
         root: AkitaBatchedRootProof::new_terminal(terminal),
         steps: Vec::new(),
     }
-}
-
-/// Prove a folded batched root and assemble the recursive suffix.
-///
-/// The prover crate owns config-free folded-root preparation: root schedule
-/// shape checks, opening-point reduction, commitment row shape validation,
-/// root fold proving, recursive suffix handoff, and final proof assembly. The
-/// caller supplies the already-selected first recursive commitment params plus
-/// policy callbacks for committing root's next `w` and proving the suffix.
-///
-/// # Errors
-///
-/// Returns an error if the schedule is not folded, root inputs are malformed,
-/// root proving fails, or suffix construction fails.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub fn prove_folded_batched_with_policy<
-    'a,
-    F,
-    E,
-    C,
-    T,
-    P,
-    const D: usize,
-    CommitRootNext,
-    BuildSuffix,
->(
-    expanded: &AkitaExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D>,
-    transcript: &mut T,
-    prepared_claims: PreparedBatchedProveInputs<'a, F, E, P, D>,
-    schedule: &Schedule,
-    basis: BasisMode,
-    root_next_params: &LevelParams,
-    commit_root_next: CommitRootNext,
-    build_suffix: BuildSuffix,
-) -> Result<(AkitaBatchedProof<F, C>, usize), AkitaError>
-where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasUnreducedOps
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField,
-    E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F>
-        + ExtField<E>
-        + FrobeniusExtField<F>
-        + HasUnreducedOps
-        + FromPrimitiveInt
-        + AkitaSerialize,
-    T: Transcript<F>,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    CommitRootNext: FnOnce(
-        &mut MultiDNttCaches,
-        &RecursiveWitnessFlat,
-    ) -> Result<NextWitnessCommitment<F>, AkitaError>,
-    BuildSuffix: FnOnce(
-        &mut MultiDNttCaches,
-        &mut MultiDNttCaches,
-        RecursiveProverState<F, C>,
-        &Schedule,
-        &mut T,
-    ) -> Result<RecursiveSuffixOutcome<F, C>, AkitaError>,
-{
-    let Some(root_step) = schedule_root_fold_step(schedule) else {
-        return Err(AkitaError::InvalidSetup(
-            "root schedule does not start with a fold".to_string(),
-        ));
-    };
-
-    if prepared_claims
-        .commitments_by_point
-        .iter()
-        .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
-    {
-        return Err(AkitaError::InvalidInput(
-            "batched_prove received a commitment with the wrong length".to_string(),
-        ));
-    }
-
-    if schedule_num_fold_levels(schedule) == 1 {
-        // Root is itself the terminal fold: no recursive suffix.
-        let direct_step = match schedule.steps.get(1) {
-            Some(Step::Direct(direct_step)) => direct_step.clone(),
-            _ => {
-                return Err(AkitaError::InvalidSetup(
-                    "1-fold schedule must terminate in a direct step".to_string(),
-                ));
-            }
-        };
-        let _ = (commit_root_next, build_suffix, root_next_params);
-        let terminal = prove_terminal_root_fold_with_params::<F, E, C, T, D, P>(
-            expanded,
-            ntt_shared,
-            transcript,
-            &prepared_claims.flat_polys,
-            &prepared_claims.incidence_summary,
-            &prepared_claims.opening_points,
-            &prepared_claims.commitments_by_point,
-            prepared_claims.flat_hints,
-            &root_step.params,
-            root_step.next_w_len,
-            &direct_step.witness_shape,
-            basis,
-        )?;
-        return Ok((build_terminal_root_batched_proof::<F, C>(terminal), 1));
-    }
-
-    let mut ntt_cache = MultiDNttCaches::new();
-    let mut commit_ntt_cache = MultiDNttCaches::new();
-
-    let raw = prove_root_fold_with_params::<F, E, C, T, D, P, _>(
-        expanded,
-        ntt_shared,
-        transcript,
-        &prepared_claims.flat_polys,
-        &prepared_claims.incidence_summary,
-        &prepared_claims.opening_points,
-        &prepared_claims.commitments_by_point,
-        prepared_claims.flat_hints,
-        &root_step.params,
-        root_step.next_w_len,
-        root_next_params.log_basis,
-        basis,
-        |w| commit_root_next(&mut commit_ntt_cache, w),
-    )?;
-
-    build_folded_batched_proof_with_suffix::<F, C, D, _>(raw, |next_state| {
-        build_suffix(
-            &mut ntt_cache,
-            &mut commit_ntt_cache,
-            next_state,
-            schedule,
-            transcript,
-        )
-    })
-}
-
-/// Drive recursive fold suffix levels using caller-supplied schedule and
-/// ring-dimension policies.
-///
-/// Root config policy selects the current/next level parameters through
-/// `select_fold_execution`, and dynamic ring dispatch lives inside
-/// `prove_intermediate_level`/`prove_terminal_level`. The last suffix level
-/// is the terminal fold and produces a [`TerminalLevelProof`] instead of an
-/// intermediate [`AkitaLevelProof`]; earlier suffix levels are intermediate
-/// folds. This helper owns the config-free suffix loop and state threading.
-///
-/// # Errors
-///
-/// Returns an error if schedule selection or level proving fails. Returns an
-/// invalid-setup error when the schedule's recursive suffix is empty
-/// (root-terminal proofs do not run this helper).
-/// Per-level proving request handed to the suffix prover closure.
-pub enum SuffixLevelRequest<'a, F: FieldCore, L: FieldCore> {
-    /// Intermediate fold level — caller must commit to the next witness via
-    /// the prover's `commit_w_for_next` policy.
-    Intermediate {
-        /// Suffix level index (1-based; level 0 is the root).
-        level: usize,
-        /// Current recursive prover state entering the level.
-        current_state: &'a RecursiveProverState<F, L>,
-        /// Current level parameters from the schedule.
-        level_params: &'a LevelParams,
-        /// Successor level parameters from the schedule.
-        next_params: LevelParams,
-    },
-    /// Terminal fold level — caller emits the cleartext `final_witness` and
-    /// does not commit to a next witness.
-    Terminal {
-        /// Suffix level index for the terminal fold.
-        level: usize,
-        /// Current recursive prover state entering the terminal fold.
-        current_state: &'a RecursiveProverState<F, L>,
-        /// Current level parameters from the schedule.
-        level_params: &'a LevelParams,
-        /// Scheduled direct-witness shape used to pack the terminal witness.
-        final_witness_shape: DirectWitnessShape,
-    },
-}
-
-/// Per-level proving result returned by the suffix prover closure.
-///
-/// The `Intermediate` variant is intentionally much larger than `Terminal`
-/// (it carries the next-level commitment, hint, packed witness, and full
-/// `AkitaLevelProof`). This enum is a short-lived stack value passed through
-/// a single closure, so the size disparity has no practical cost and the
-/// `large_enum_variant` lint is suppressed locally.
-#[allow(clippy::large_enum_variant)]
-pub enum SuffixLevelOutput<F: FieldCore, L: FieldCore> {
-    /// Result of proving an intermediate suffix level.
-    Intermediate(ProveLevelOutput<F, L>),
-    /// Result of proving the terminal suffix level.
-    Terminal(TerminalLevelProof<F, L>),
-}
-
-/// Drive the recursive fold suffix using caller-supplied schedule and
-/// per-level proving policies.
-///
-/// The caller supplies a single `prove_level` closure that dispatches on
-/// [`SuffixLevelRequest`] (intermediate vs terminal) and produces the
-/// matching [`SuffixLevelOutput`]. Earlier suffix levels run intermediate
-/// folds; the last suffix level runs the terminal fold which ships the
-/// cleartext `final_witness`.
-///
-/// # Errors
-///
-/// Returns an error if schedule selection fails, level proving fails, or
-/// the closure returns the wrong [`SuffixLevelOutput`] variant for a given
-/// [`SuffixLevelRequest`]. Returns an invalid-setup error when the
-/// schedule's recursive suffix is empty (root-terminal proofs do not run
-/// this helper).
-pub fn prove_recursive_suffix_with_policy<F, L, SelectFold, ProveLevel>(
-    num_vars: usize,
-    initial_state: RecursiveProverState<F, L>,
-    schedule: &Schedule,
-    mut select_fold_execution: SelectFold,
-    mut prove_level: ProveLevel,
-) -> Result<RecursiveSuffixOutcome<F, L>, AkitaError>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-    SelectFold:
-        FnMut(usize, AkitaScheduleInputs, u32) -> Result<(LevelParams, LevelParams), AkitaError>,
-    ProveLevel: FnMut(SuffixLevelRequest<'_, F, L>) -> Result<SuffixLevelOutput<F, L>, AkitaError>,
-{
-    let planned_num_levels = schedule_num_fold_levels(schedule);
-    if planned_num_levels < 2 {
-        return Err(AkitaError::InvalidSetup(
-            "prove_recursive_suffix_with_policy expects a non-empty recursive suffix".to_string(),
-        ));
-    }
-    let terminal_level = planned_num_levels - 1;
-
-    let mut intermediate_levels = Vec::new();
-    let mut current_state = initial_state;
-    let mut level = 1usize;
-
-    while level < terminal_level {
-        let inputs = AkitaScheduleInputs {
-            num_vars,
-            level,
-            current_w_len: current_state.w.len(),
-        };
-        let (level_params, next_params) =
-            select_fold_execution(level, inputs, current_state.log_basis)?;
-        let out = prove_level(SuffixLevelRequest::Intermediate {
-            level,
-            current_state: &current_state,
-            level_params: &level_params,
-            next_params,
-        })?;
-        let SuffixLevelOutput::Intermediate(out) = out else {
-            return Err(AkitaError::InvalidSetup(
-                "prove_level returned a terminal proof for an intermediate level".to_string(),
-            ));
-        };
-        intermediate_levels.push(out.level_proof);
-        current_state = out.next_state;
-        level += 1;
-    }
-
-    debug_assert_eq!(level, terminal_level);
-    let inputs = AkitaScheduleInputs {
-        num_vars,
-        level,
-        current_w_len: current_state.w.len(),
-    };
-    let (level_params, _next_params) =
-        select_fold_execution(level, inputs, current_state.log_basis)?;
-    let final_witness_shape = schedule_terminal_direct_witness_shape(schedule)?.clone();
-    let out = prove_level(SuffixLevelRequest::Terminal {
-        level,
-        current_state: &current_state,
-        level_params: &level_params,
-        final_witness_shape,
-    })?;
-    let SuffixLevelOutput::Terminal(terminal) = out else {
-        return Err(AkitaError::InvalidSetup(
-            "prove_level returned an intermediate proof for the terminal level".to_string(),
-        ));
-    };
-
-    Ok(RecursiveSuffixOutcome {
-        intermediate_levels,
-        terminal,
-        num_levels: planned_num_levels,
-    })
 }
 
 /// Prove one recursive fold level after the caller has built its quadratic
@@ -1686,17 +1290,16 @@ where
 /// cannot be typed at `D`, layout selection fails, or recursive proving fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_recursive_level_with_policy<F, L, T, const D: usize, CurrentLayout, CommitW>(
+pub fn prove_recursive_level<F, Cfg, T, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
+    commit_ntt_cache: &mut crate::MultiDNttCaches,
     transcript: &mut T,
-    current_state: &RecursiveProverState<F, L>,
+    current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
     level: usize,
     level_params: &LevelParams,
-    next_log_basis: u32,
-    current_layout: CurrentLayout,
-    commit_w_for_next: CommitW,
-) -> Result<ProveLevelOutput<F, L>, AkitaError>
+    next_params: &LevelParams,
+) -> Result<ProveLevelOutput<F, Cfg::ChallengeField>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -1706,24 +1309,27 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
-    CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
     let current_w = &current_state.w;
-    let w_lp = current_layout(level_params, current_w.len())?;
+    let w_lp = akita_types::recursive_level_layout_from_params(
+        level_params,
+        current_w.len(),
+        Cfg::decomposition(),
+    )?;
     let w_view = current_w.view::<F, D>()?;
     let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
     drop(_setup_span);
 
-    prove_recursive_fold_with_params::<F, L, T, D, _>(
+    prove_recursive_fold_with_params::<F, Cfg::ChallengeField, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
@@ -1735,33 +1341,41 @@ where
         &current_state.commitment,
         level,
         &w_lp,
-        next_log_basis,
-        commit_w_for_next,
+        next_params.log_basis,
+        |w| {
+            use akita_config::CommitmentConfig as _;
+            crate::commit_next_w::<F, Cfg, D>(
+                next_params,
+                ntt_shared,
+                commit_ntt_cache,
+                expanded,
+                w,
+                akita_config::WCommitmentConfig::<{ D }, Cfg>::decomposition(),
+            )
+        },
     )
 }
 
-/// Terminal-fold analogue of [`prove_recursive_level_with_policy`].
+/// Terminal-fold analogue of [`prove_recursive_level`].
 ///
-/// Same input shape minus the next-witness commitment policy; the terminal
-/// fold ships `final_witness` in cleartext (packed digits) instead of
-/// committing.
+/// The terminal fold ships `final_witness` in cleartext (packed digits)
+/// instead of committing to a next witness.
 ///
 /// # Errors
 ///
-/// Returns an error if the policy callback fails to produce the current
-/// level's layout or the underlying terminal fold prover fails.
+/// Returns an error if the recursive layout derivation fails or the
+/// underlying terminal fold prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_recursive_level_with_policy<F, L, T, const D: usize, CurrentLayout>(
+pub fn prove_terminal_recursive_level<F, Cfg, T, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
-    current_state: &RecursiveProverState<F, L>,
+    current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
     level: usize,
     level_params: &LevelParams,
     final_witness_shape: &DirectWitnessShape,
-    current_layout: CurrentLayout,
-) -> Result<TerminalLevelProof<F, L>, AkitaError>
+) -> Result<TerminalLevelProof<F, Cfg::ChallengeField>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -1771,23 +1385,27 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    L: RingSubfieldEncoding<F>
+    Cfg: akita_config::CommitmentConfig<Field = F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
-    CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup_terminal", level).entered();
 
     let current_w = &current_state.w;
-    let w_lp = current_layout(level_params, current_w.len())?;
+    let w_lp = akita_types::recursive_level_layout_from_params(
+        level_params,
+        current_w.len(),
+        Cfg::decomposition(),
+    )?;
     let w_view = current_w.view::<F, D>()?;
     let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
     drop(_setup_span);
 
-    prove_terminal_recursive_fold_with_params::<F, L, T, D>(
+    prove_terminal_recursive_fold_with_params::<F, Cfg::ChallengeField, T, D>(
         expanded,
         ntt_shared,
         transcript,
@@ -3321,6 +2939,400 @@ where
             final_witness,
         ),
     )
+}
+
+// ===========================================================================
+// `<Cfg>`-generic top-level prove orchestration
+// ===========================================================================
+
+/// Dispatch a prove-level operation to the correct ring dimension.
+///
+/// Handles the fast-path (`level_d == D`) and the dynamic dispatch path.
+/// `#[inline(never)]` isolates the monomorphized match arms in their own
+/// stack frame.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn dispatch_prove_level<F, T, const D: usize, Cfg>(
+    level_d: usize,
+    ntt_cache: &mut MultiDNttCaches,
+    expanded: &AkitaExpandedSetup<F>,
+    setup_ntt_shared: &NttSlotCache<D>,
+    commit_ntt_cache: &mut MultiDNttCaches,
+    current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
+    transcript: &mut T,
+    level: usize,
+    level_params: &LevelParams,
+    next_params: LevelParams,
+) -> Result<ProveLevelOutput<F, Cfg::ChallengeField>, AkitaError>
+where
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
+{
+    if level_d == D {
+        prove_recursive_level::<F, Cfg, T, D>(
+            expanded,
+            setup_ntt_shared,
+            commit_ntt_cache,
+            transcript,
+            current_state,
+            level,
+            level_params,
+            &next_params,
+        )
+    } else {
+        crate::dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
+            prove_recursive_level::<F, Cfg, T, { D_LEVEL }>(
+                expanded,
+                ntt_shared,
+                commit_ntt_cache,
+                transcript,
+                current_state,
+                level,
+                level_params,
+                &next_params,
+            )
+        })
+    }
+}
+
+/// Dispatch a terminal prove-level operation to the correct ring dimension.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn dispatch_prove_terminal_level<F, T, const D: usize, Cfg>(
+    level_d: usize,
+    ntt_cache: &mut MultiDNttCaches,
+    expanded: &AkitaExpandedSetup<F>,
+    setup_ntt_shared: &NttSlotCache<D>,
+    current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
+    transcript: &mut T,
+    level: usize,
+    level_params: &LevelParams,
+    final_witness_shape: &DirectWitnessShape,
+) -> Result<TerminalLevelProof<F, Cfg::ChallengeField>, AkitaError>
+where
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
+{
+    if level_d == D {
+        prove_terminal_recursive_level::<F, Cfg, T, D>(
+            expanded,
+            setup_ntt_shared,
+            transcript,
+            current_state,
+            level,
+            level_params,
+            final_witness_shape,
+        )
+    } else {
+        crate::dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
+            prove_terminal_recursive_level::<F, Cfg, T, { D_LEVEL }>(
+                expanded,
+                ntt_shared,
+                transcript,
+                current_state,
+                level,
+                level_params,
+                final_witness_shape,
+            )
+        })
+    }
+}
+
+/// Drive the recursive fold levels (after the root) and resolve the scheduled
+/// packed terminal direct-witness shape.
+#[allow(clippy::too_many_arguments)]
+fn prove_recursive_suffix<F, T, const D: usize, Cfg>(
+    setup: &AkitaProverSetup<F, D>,
+    ntt_cache: &mut MultiDNttCaches,
+    commit_ntt_cache: &mut MultiDNttCaches,
+    num_vars: usize,
+    transcript: &mut T,
+    initial_state: RecursiveProverState<F, Cfg::ChallengeField>,
+    schedule: &Schedule,
+) -> Result<RecursiveSuffixOutcome<F, Cfg::ChallengeField>, AkitaError>
+where
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField
+        + Valid,
+    T: Transcript<F>,
+    Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
+{
+    let planned_num_levels = schedule_num_fold_levels(schedule);
+    if planned_num_levels < 2 {
+        return Err(AkitaError::InvalidSetup(
+            "prove_recursive_suffix expects a non-empty recursive suffix".to_string(),
+        ));
+    }
+    let terminal_level = planned_num_levels - 1;
+
+    let mut intermediate_levels = Vec::new();
+    let mut current_state = initial_state;
+    let mut level = 1usize;
+
+    while level < terminal_level {
+        let inputs = AkitaScheduleInputs {
+            num_vars,
+            level,
+            current_w_len: current_state.w.len(),
+        };
+        let (level_params, next_params) =
+            scheduled_fold_execution(schedule, level, inputs, current_state.log_basis)?;
+        let out = dispatch_prove_level::<F, T, D, Cfg>(
+            level_params.ring_dimension,
+            ntt_cache,
+            &setup.expanded,
+            &setup.ntt_shared,
+            commit_ntt_cache,
+            &current_state,
+            transcript,
+            level,
+            &level_params,
+            next_params,
+        )?;
+        intermediate_levels.push(out.level_proof);
+        current_state = out.next_state;
+        level += 1;
+    }
+
+    debug_assert_eq!(level, terminal_level);
+    let inputs = AkitaScheduleInputs {
+        num_vars,
+        level,
+        current_w_len: current_state.w.len(),
+    };
+    let (level_params, next_params) =
+        scheduled_fold_execution(schedule, level, inputs, current_state.log_basis)?;
+    let final_witness_shape = schedule_terminal_direct_witness_shape(schedule)?;
+    let terminal = dispatch_prove_terminal_level::<F, T, D, Cfg>(
+        level_params.ring_dimension,
+        ntt_cache,
+        &setup.expanded,
+        &setup.ntt_shared,
+        &current_state,
+        transcript,
+        level,
+        &level_params,
+        final_witness_shape,
+    )?;
+    let _ = next_params;
+
+    Ok(RecursiveSuffixOutcome {
+        intermediate_levels,
+        terminal,
+        num_levels: planned_num_levels,
+    })
+}
+
+/// Top-level `<Cfg>`-generic prove entry point.
+///
+/// Closure-free orchestration: schedule selection, root-direct fallback,
+/// descriptor binding, root proving (folded or terminal), and recursive
+/// suffix proving are all sourced directly from `Cfg`.
+///
+/// # Errors
+///
+/// Returns an error when prepared claims, schedule selection, descriptor
+/// binding, root proving, or recursive suffix proving fails.
+pub fn prove_batched<'a, F, Cfg, T, P, const D: usize>(
+    setup: &AkitaProverSetup<F, D>,
+    claims: ProverClaims<'a, Cfg::ClaimField, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+    transcript: &mut T,
+    basis: BasisMode,
+) -> Result<AkitaBatchedProof<F, Cfg::ChallengeField>, AkitaError>
+where
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HasUnreducedOps
+        + HalvingField
+        + FromPrimitiveInt
+        + PseudoMersenneField
+        + Valid
+        + AkitaSerialize,
+    Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
+    T: Transcript<F>,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+{
+    let prepared_claims =
+        prepare_batched_prove_inputs::<F, Cfg::ClaimField, P, D>(&setup.expanded, claims)?;
+    let num_vars = prepared_claims.incidence_summary.num_vars();
+
+    let mut schedule = Cfg::get_params_for_prove(&prepared_claims.incidence_summary)?;
+    if let Some(root_step) = schedule_root_fold_step(&schedule) {
+        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
+        if !folded_root_supports_opening_shape::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(
+            &prepared_claims.opening_points,
+            &root_step.params,
+            alpha_bits,
+        ) && !root_tensor_projection_enabled::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(
+            num_vars,
+        ) {
+            // Use the real incidence (not a synthetic singleton) so the
+            // schedule's `commit_params` describe the actual layout the
+            // root-direct check below will recompute via
+            // `get_params_for_batched_commitment`. Otherwise the
+            // descriptor binds singleton-sized params while the
+            // verifier checks against batched ones.
+            let commit_params =
+                Cfg::get_params_for_batched_commitment(&prepared_claims.incidence_summary)?;
+            schedule = root_direct_schedule(num_vars, commit_params)?;
+        }
+    }
+
+    bind_transcript_instance_descriptor::<F, T, D, Cfg>(
+        &setup.expanded,
+        &prepared_claims.incidence_summary,
+        &schedule,
+        basis,
+        transcript,
+    )?;
+
+    if schedule_is_root_direct(&schedule) {
+        return prove_root_direct::<F, Cfg::ChallengeField, D, P>(
+            &prepared_claims.group_polys,
+            &prepared_claims.flat_hints,
+        );
+    }
+
+    let Some(root_step) = schedule_root_fold_step(&schedule) else {
+        return Err(AkitaError::InvalidSetup(
+            "root schedule does not start with a fold".to_string(),
+        ));
+    };
+
+    if prepared_claims
+        .commitments_by_point
+        .iter()
+        .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
+    {
+        return Err(AkitaError::InvalidInput(
+            "batched_prove received a commitment with the wrong length".to_string(),
+        ));
+    }
+
+    let root_next_params = scheduled_next_level_params(&schedule, 1)?;
+
+    if schedule_num_fold_levels(&schedule) == 1 {
+        // Root is the terminal fold; no recursive suffix.
+        let direct_step = match schedule.steps.get(1) {
+            Some(Step::Direct(direct_step)) => direct_step.clone(),
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "1-fold schedule must terminate in a direct step".to_string(),
+                ));
+            }
+        };
+        let final_witness_shape = &direct_step.witness_shape;
+        let terminal = prove_terminal_root_fold_with_params::<
+            F,
+            Cfg::ClaimField,
+            Cfg::ChallengeField,
+            T,
+            D,
+            P,
+        >(
+            &setup.expanded,
+            &setup.ntt_shared,
+            transcript,
+            &prepared_claims.flat_polys,
+            &prepared_claims.incidence_summary,
+            &prepared_claims.opening_points,
+            &prepared_claims.commitments_by_point,
+            prepared_claims.flat_hints,
+            &root_step.params,
+            root_step.next_w_len,
+            final_witness_shape,
+            basis,
+        )?;
+        return Ok(build_terminal_root_batched_proof::<F, Cfg::ChallengeField>(
+            terminal,
+        ));
+    }
+
+    let mut ntt_cache = MultiDNttCaches::new();
+    let mut commit_ntt_cache = MultiDNttCaches::new();
+
+    let raw = prove_root_fold_with_params::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, P, _>(
+        &setup.expanded,
+        &setup.ntt_shared,
+        transcript,
+        &prepared_claims.flat_polys,
+        &prepared_claims.incidence_summary,
+        &prepared_claims.opening_points,
+        &prepared_claims.commitments_by_point,
+        prepared_claims.flat_hints,
+        &root_step.params,
+        root_step.next_w_len,
+        root_next_params.log_basis,
+        basis,
+        |w| {
+            commit_next_w::<F, Cfg, D>(
+                &root_next_params,
+                &setup.ntt_shared,
+                &mut commit_ntt_cache,
+                &setup.expanded,
+                w,
+                Cfg::decomposition(),
+            )
+        },
+    )?;
+
+    build_folded_batched_proof_with_suffix::<F, Cfg::ChallengeField, D, _>(raw, |next_state| {
+        prove_recursive_suffix::<F, T, D, Cfg>(
+            setup,
+            &mut ntt_cache,
+            &mut commit_ntt_cache,
+            num_vars,
+            transcript,
+            next_state,
+            &schedule,
+        )
+    })
+    .map(|(proof, _total_levels)| proof)
 }
 
 #[cfg(test)]

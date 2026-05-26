@@ -122,10 +122,9 @@ the baseline planner.
 
 - [x] `cargo test --all` passes (default features = `parallel`).
 - [x] `cargo test --all --features zk` passes.
-- [x] `cargo test --all --no-default-features --features planner`
-      passes.
+- [x] `cargo test --all --no-default-features` passes.
 - [x] `cargo clippy --all -- -D warnings` clean under default, `zk`,
-      and `no-default-features+planner` configurations.
+      and `no-default-features` configurations.
 - [x] `cargo fmt -q` produces no diff.
 - [x] `cargo run -p akita-planner --release --bin akita-planner --
       --validate` reports all baselines match.
@@ -407,10 +406,8 @@ Done in the following order, all on `quang/akita-fix-tail`:
 7. Regenerate the generated schedule tables under both default and
    `zk` features; confirm no diffs (planner choices are stable).
 8. Run `cargo fmt -q`, `cargo clippy --all -- -D warnings`,
-   `cargo test --all`, `cargo test --all --features zk`,
-   `cargo test --all --no-default-features --features planner`,
-   and `cargo run -p akita-planner --release --bin akita-planner --
-   --validate`.
+   `cargo test --all`, `cargo test --all --features zk`, and
+   `cargo test --all --no-default-features`.
 
 Risks resolved during implementation:
 

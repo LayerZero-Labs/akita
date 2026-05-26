@@ -29,16 +29,13 @@ pub use instance_descriptor::{
     ProtocolFeatureSet, SetupSection,
 };
 pub use layout::{
-    basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
-    extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
-    level_layout_from_params, level_proof_bytes, monomial_weights, packed_digits_bytes,
-    planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
-    recursive_level_decomposition_from_root, recursive_level_layout_from_params,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    root_extension_opening_partials, sis_derived_recursive_params_for_layout,
-    sis_derived_root_params_for_layout, sis_secure_level_params, sumcheck_rounds,
+    basis_weights, decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
+    field_bytes, gadget_row_scalars, lagrange_weights, level_layout_from_params, level_proof_bytes,
+    monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
+    proof_ring_vec_bytes, recursive_level_layout_from_params, reduce_inner_opening_to_ring_element,
+    ring_opening_point_from_field, root_extension_opening_partials, sumcheck_rounds,
     terminal_level_proof_bytes, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix, LevelParams,
-    MRowLayout, RingMatrixView, RingOpeningPoint, SisModulusFamily, SisRoleWidths,
+    MRowLayout, RingMatrixView, RingOpeningPoint, SisModulusFamily,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
@@ -73,17 +70,15 @@ pub use proof::{
 };
 pub use schedule::{
     detect_field_modulus, exact_planned_level_execution, generated_schedule_lookup_key,
-    generated_schedule_plan_from_table, planned_log_basis_at_level_from_schedule,
     planned_schedule_key_from_schedule, r_decomp_levels, root_current_w_len, root_direct_schedule,
     scale_batched_root_layout, schedule_from_plan, schedule_is_root_direct,
-    schedule_num_fold_levels, schedule_plan_from_generated_entry, schedule_root_fold_params,
-    schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_fold_execution,
-    scheduled_next_level_params, split_batched_root_params,
+    schedule_num_fold_levels, schedule_root_fold_step, schedule_terminal_direct_witness_shape,
+    scheduled_fold_execution, scheduled_next_level_params, split_batched_root_params,
     split_batched_root_params_from_schedule_plan, validate_opening_points_for_claims,
-    w_ring_element_count, w_ring_element_count_with_counts,
-    w_ring_element_count_with_counts_for_layout, AkitaPlannedDirectStep, AkitaPlannedLevel,
-    AkitaPlannedLevelExecution, AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep, FoldStep, GeneratedSchedulePlanPolicy,
-    Schedule, ScheduleProvider, Step,
+    w_ring_element_count, w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
+    w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState,
+    AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep,
+    FoldStep, Schedule, Step,
 };
 pub use transcript::AppendToTranscript;

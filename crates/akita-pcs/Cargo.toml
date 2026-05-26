@@ -34,11 +34,10 @@ all-features = true
 ignored = ["akita-setup", "blake2", "thiserror"]
 
 [features]
-default = ["parallel", "planner"]
+default = ["parallel"]
 parallel = [
   "dep:rayon",
   "akita-algebra/parallel",
-  "akita-config/parallel",
   "akita-field/parallel",
   "akita-prover/parallel",
   "akita-scheme/parallel",
@@ -48,11 +47,6 @@ parallel = [
 ]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = ["akita-transcript/logging-transcript"]
-planner = [
-  "akita-config/planner",
-  "akita-scheme/planner",
-  "akita-setup/planner",
-]
 zk = [
   "akita-config/zk",
   "akita-prover/zk",
@@ -82,11 +76,13 @@ rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"
 
 [dev-dependencies]
+akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
+  "test-utils",
+] }
 rand = "0.8"
 criterion = { version = "0.5", features = ["html_reports"] }
 num-bigint = "0.4.6"
 proptest = "1.6"
-akita-planner = { version = "0.1.0", path = "../akita-planner" }
 ark-bn254 = { git = "https://github.com/arkworks-rs/algebra", rev = "3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9", features = [
   "scalar_field",
 ] }
@@ -108,14 +104,6 @@ harness = false
 
 [[bench]]
 name = "akita_e2e"
-harness = false
-
-[[bench]]
-name = "onehot_batched_commit"
-harness = false
-
-[[bench]]
-name = "onehot_batched_opening"
 harness = false
 
 [[bench]]

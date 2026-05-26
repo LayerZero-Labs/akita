@@ -46,7 +46,6 @@ graph TD
   Config --> Algebra
   Config --> Field
   Config --> Types
-  Config -. "planner feature" .-> Planner
   Verifier --> Algebra
   Verifier --> Challenges
   Verifier --> Field
@@ -96,10 +95,14 @@ graph TD
   `akita-algebra`, and `akita-field`. Its internals are grouped into public
   proof-shape preparation, protocol replay, and stage verifier modules.
 - `akita-config` owns concrete runtime presets and generated-schedule lookup.
-  Offline planner search is available only through the `planner` feature.
+  It does not depend on `akita-planner`; runtime DP fallback is opt-in
+  for tests via `akita_planner::test_utils::PlannerCfg<Cfg>` (the
+  `test-utils` feature is enabled in `[dev-dependencies]` of the runtime
+  crates that exercise it).
 - `akita-planner` owns DP search, proof-size exploration, SIS planning, and
-  planner inspection binaries. Runtime verifier/prover crates must not depend
-  on it.
+  planner inspection binaries. Runtime verifier/prover crates must not
+  depend on it; `scripts/check-crate-deps.sh` enforces this on both the
+  default and `--all-features` `cargo tree` graphs.
 - `akita-prover` owns polynomial backends, prover setup artifacts, NTT/matrix
   kernels, recursive witness construction, ring-switch witness construction,
   proving orchestration, and its Akita-specific sumcheck stage provers.

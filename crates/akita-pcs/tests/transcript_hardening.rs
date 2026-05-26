@@ -35,7 +35,11 @@ fn event_stream_equality_small() {
     init_rayon_pool();
     run_on_large_stack(move || {
         let num_vars = 10;
-        let layout = OneHotCfg::commitment_layout(num_vars).expect("layout");
+        let layout = OneHotCfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(num_vars, 1)
+                .expect("singleton incidence"),
+        )
+        .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly(&poly, &point, &layout);
@@ -244,7 +248,11 @@ impl TerminalTamper {
 fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: TerminalTamper) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = OneHotCfg::commitment_layout(num_vars).expect("layout");
+        let layout = OneHotCfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(num_vars, 1)
+                .expect("singleton incidence"),
+        )
+        .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly(&poly, &point, &layout);
@@ -345,7 +353,11 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let num_vars = 10;
-        let layout = OneHotCfg::commitment_layout(num_vars).expect("layout");
+        let layout = OneHotCfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(num_vars, 1)
+                .expect("singleton incidence"),
+        )
+        .expect("layout");
         let poly = make_onehot_poly(&layout, 0x5151);
         let point = random_point(num_vars, 0x6161);
 

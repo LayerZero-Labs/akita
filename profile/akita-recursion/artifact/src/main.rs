@@ -197,8 +197,10 @@ fn run() -> Result<(), String> {
         "generating Akita verifier-input artifact (single-poly OneHot, D=32)"
     );
 
-    let layout: LevelParams = <Cfg as CommitmentConfig>::commitment_layout(nv)
-        .map_err(|err| format!("failed to derive commitment layout: {err}"))?;
+    let layout: LevelParams = <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+    )
+    .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;
     let required_vars = layout.m_vars + layout.r_vars + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and

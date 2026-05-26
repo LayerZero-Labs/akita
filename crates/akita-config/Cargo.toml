@@ -15,34 +15,16 @@ description = "Runtime configuration presets and schedule policy for the Akita p
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
-[package.metadata.cargo-machete]
-ignored = ["akita-algebra"]
-
 [features]
-default = ["parallel"]
-parallel = ["akita-planner?/parallel", "akita-verifier?/parallel"]
-planner = ["dep:akita-planner"]
-verifier-adapter = ["dep:akita-verifier"]
-zk = ["akita-planner?/zk", "akita-types/zk", "akita-verifier?/zk"]
+default = []
+zk = ["akita-derive/zk", "akita-types/zk"]
 
 [dependencies]
-akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
+akita-derive = { version = "0.1.0", path = "../akita-derive" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
-akita-planner = { version = "0.1.0", path = "../akita-planner", optional = true }
-akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
-akita-verifier = { version = "0.1.0", path = "../akita-verifier", optional = true, default-features = false }
-tracing = "0.1"
-
-[[bin]]
-name = "gen_schedule_tables"
-required-features = ["planner"]
-
-[[bin]]
-name = "tune_small_field_schedules"
-required-features = ["planner"]
 
 [lints]
 workspace = true

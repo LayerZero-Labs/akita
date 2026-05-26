@@ -147,14 +147,16 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
    preprocess/prove/verify (or just the trace under `--trace-only`),
    and forwards per-marker cycle counts through `tracing`.
 3. **`guest`** (running inside the Jolt RISC-V emulator) decodes the
-   blob and invokes `akita_config::batched_verify_with_config`, the
-   timer-free config-backed verifier adapter. Three `start_cycle_tracking` /
-   `end_cycle_tracking` pairs wrap `deserialize_input`, `transcript_init`,
-   and the verifier kernel.
-   The guest constructs an unbound verifier transcript and the shared
-   timer-free verifier adapter binds the canonical instance descriptor; it must
-   not use a prover-side placeholder transcript, because Spongefish prover
-   state may ask for entropy that the Jolt guest runtime does not provide.
+   blob and invokes `akita_verifier::verify_batched` directly —
+   bypassing `akita-scheme::batched_verify`, which would otherwise
+   call `Instant::now()` (the Jolt runtime doesn't implement
+   `clock_gettime`, and the guest aborts there). Three
+   `start_cycle_tracking` / `end_cycle_tracking` pairs wrap
+   `deserialize_input`, `transcript_init`, and the verifier kernel.
+   The guest constructs an unbound verifier transcript and the verifier binds
+   the canonical instance descriptor; it must not use a prover-side placeholder
+   transcript, because Spongefish prover state may ask for entropy that the Jolt
+   guest runtime does not provide.
    This profile is a trusted host-artifact benchmark: the guest decodes the
    verifier setup through the explicitly trusted cached-matrix path. Seed/matrix
    shape metadata and field elements are still validated, but the guest skips
