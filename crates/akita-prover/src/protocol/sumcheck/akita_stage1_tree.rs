@@ -689,12 +689,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
         }
 
         let batched_leaf_coeffs = combine_polys(&current_weights, &leaf_coeffs);
-        let mut leaf_stage = PolynomialStageProver::new(
-            s_table,
-            &current_tau,
-            current_claim,
-            batched_leaf_coeffs.clone(),
-        )?;
+        let mut leaf_stage =
+            PolynomialStageProver::new(s_table, &current_tau, current_claim, batched_leaf_coeffs)?;
         #[cfg(feature = "zk")]
         let (leaf_sumcheck_proof_masked, r_stage1, handoff_mask) = {
             if precommitted_stage_pads.len() != 1 {

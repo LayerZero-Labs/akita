@@ -2393,7 +2393,7 @@ where
             #[cfg(feature = "zk")]
             sumcheck_proof_masked,
         },
-        rho: rho.to_vec(),
+        rho,
         final_claim,
         factors_by_point,
     })
