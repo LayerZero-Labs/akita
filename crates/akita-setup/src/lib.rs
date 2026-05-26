@@ -399,12 +399,30 @@ mod tests {
     }
 
     #[test]
-    fn setup_accepts_field_coupled_presets() {
-        #[cfg(feature = "planner")]
-        new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1, 1)
-            .expect("default fp128 D=128 preset should accept the fp128 field");
+    fn setup_accepts_generated_field_coupled_preset() {
         new_prover_setup::<fp128::Field, 32, fp128::D32Full>(12, 1, 1)
             .expect("small-D fp128 preset should accept the default field");
+    }
+
+    #[cfg(feature = "planner")]
+    #[test]
+    fn setup_accepts_planner_backed_field_coupled_preset() {
+        new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1, 1)
+            .expect("planner-backed fp128 D=128 preset should accept the fp128 field");
+    }
+
+    #[cfg(not(feature = "planner"))]
+    #[test]
+    fn planner_backed_setup_requires_planner_feature() {
+        let err = match new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1, 1) {
+            Ok(_) => panic!("planner-backed fp128 D=128 preset should require planner support"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string()
+                .contains("setup matrix sizing found no generated schedules"),
+            "unexpected D=128 setup error without planner: {err}"
+        );
     }
 
     #[cfg(feature = "disk-persistence")]
