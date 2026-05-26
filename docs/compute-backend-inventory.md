@@ -46,7 +46,6 @@ kernel modules. They are a sizing aid, not a removal target.
 | `crates/akita-scheme/src/lib.rs` | 22 | Current cutover: scheme must stop importing CPU cache/kernel helpers. |
 | `crates/akita-scheme/src/tests.rs` | 3 | Current cutover: tests update to backend-backed helpers. |
 | `crates/akita-setup/src/lib.rs` | 2 | Current cutover: setup constructors remain expanded-setup-only. |
-| `crates/akita-pcs/tests/commitment_contract.rs` | 5 | Current cutover: public API compile contract updates to explicit backend. |
 | `crates/akita-pcs/tests/*.rs` | 4 | Current cutover: direct calls update with backend/prepared setup. |
 | `crates/akita-pcs/benches/*.rs` | 10 | Current cutover: benchmark call sites update with explicit backend. |
 | `crates/akita-pcs/examples/profile/workload.rs` | 2 | Current cutover: profiling constructs explicit CPU backend. |

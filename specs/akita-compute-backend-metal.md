@@ -219,8 +219,6 @@ Required baseline checks:
 
 CPU cutover tests:
 
-- Update `crates/akita-pcs/tests/commitment_contract.rs` for the new
-  `CommitmentProver` shape; this is the public API compile test.
 - Existing integration tests under `crates/akita-pcs/tests/`, especially
   `single_poly_e2e.rs`, `multipoint_batched_e2e.rs`,
   `batched_aggregated_e2e.rs`, `ring_switch.rs`, `stage1_roundtrip.rs`,
