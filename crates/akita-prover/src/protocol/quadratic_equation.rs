@@ -769,11 +769,7 @@ where
             // point). Recover `num_points` from the commitment length
             // and `lp`'s tiered outer row count.
             let expected_outer = lp.outer_commitment_rows();
-            let recursive_num_points = if expected_outer == 0 {
-                1
-            } else {
-                commitment.len() / expected_outer
-            };
+            let recursive_num_points = commitment.len().checked_div(expected_outer).unwrap_or(1);
             generate_y_tiered::<F, D>(
                 y_v_slice,
                 commitment,
