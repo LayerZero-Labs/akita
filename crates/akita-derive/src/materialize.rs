@@ -6,7 +6,7 @@
 //! single `CommitmentConfig::schedule_plan` entry point; planner DP only runs
 //! on table miss when the `planner` feature is enabled.
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField};
 use akita_types::generated::{
     table_entry, GeneratedFoldStep, GeneratedScheduleTable, GeneratedScheduleTableEntry,
@@ -56,6 +56,13 @@ pub struct PlanPolicy<Stage1Config> {
     /// [`crate::root_direct_commit_layout`] when materializing a root-direct
     /// table entry.
     pub ring_subfield_norm_bound: u32,
+    /// Per-level fold-round challenge shape. Mirrors
+    /// `CommitmentConfig::fold_challenge_shape_at_level`. The materializer
+    /// stamps the returned shape onto each fold step's `LevelParams`
+    /// **before** sizing `num_digits_fold` and the `(m_vars, r_vars)` split,
+    /// so a tensor preset gets `LevelParams::challenge_l1_mass()` resolved
+    /// against `omega^2` instead of `omega`.
+    pub fold_challenge_shape: fn(AkitaScheduleInputs) -> TensorChallengeShape,
 }
 
 fn generated_level_params<Stage1Config>(
@@ -141,6 +148,7 @@ where
         stage1_challenge_config,
         envelope,
         ring_subfield_norm_bound,
+        fold_challenge_shape,
     } = policy;
 
     if entry.steps.is_empty() {
@@ -182,7 +190,13 @@ where
                     level: fold_level,
                     current_w_len,
                 };
-                let params = generated_level_params(sis_family, *level, &stage1_challenge_config)?;
+                // Stamp the per-level fold shape onto `params` *before*
+                // `level_layout_from_params` derives `num_digits_fold` and the
+                // (m_vars, r_vars) split. `LevelParams::challenge_l1_mass()`
+                // resolves against this field, so a tensor preset gets
+                // sized for `omega^2` here rather than `omega`.
+                let params = generated_level_params(sis_family, *level, &stage1_challenge_config)?
+                    .with_fold_challenge_shape(fold_challenge_shape(inputs));
                 let level_decomp = if fold_level == 0 {
                     DecompositionParams {
                         log_basis: level.log_basis,
@@ -257,11 +271,16 @@ where
 
                 let (next_level_params, next_commit_coeffs) = match next_generated_step {
                     GeneratedStep::Fold(next_level) => {
+                        // Stamp the per-level shape on the forward-looking
+                        // next-level params too, so downstream consumers of
+                        // `AkitaPlannedLevel::next_level_params` see a
+                        // consistent shape field.
                         let next_level_params = generated_level_params(
                             sis_family,
                             *next_level,
                             &stage1_challenge_config,
-                        )?;
+                        )?
+                        .with_fold_challenge_shape(fold_challenge_shape(next_inputs));
                         let coeffs =
                             next_level_params.b_key.row_len() * next_level_params.ring_dimension;
                         (next_level_params, coeffs)
@@ -600,6 +619,7 @@ mod tests {
                 max_n_d: 1,
             },
             ring_subfield_norm_bound: 1,
+            fold_challenge_shape: |_| TensorChallengeShape::Flat,
         }
     }
 

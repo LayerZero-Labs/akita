@@ -36,7 +36,12 @@ rand = "0.8"
 
 [features]
 default = []
-parallel = ["dep:rayon", "akita-field/parallel", "akita-sumcheck/parallel"]
+parallel = [
+  "dep:rayon",
+  "akita-challenges/parallel",
+  "akita-field/parallel",
+  "akita-sumcheck/parallel",
+]
 zk = ["akita-config/zk", "akita-types/zk", "rand_core/getrandom"]
 
 [lints]
