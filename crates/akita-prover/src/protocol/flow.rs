@@ -1571,14 +1571,17 @@ where
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
     #[cfg(not(feature = "zk"))]
-    let y_rings_masked = y_rings.clone();
-
     for prepared_point in &prepared_points {
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
+    #[cfg(feature = "zk")]
     for y_ring in &y_rings_masked {
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+    }
+    #[cfg(not(feature = "zk"))]
+    for y_ring in &y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
     let internal_claims = y_rings
@@ -4288,7 +4291,7 @@ mod tests {
         let mut transcript =
             AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
         #[cfg(feature = "zk")]
-        let mut zk_hiding = ZkHidingProverState::new(vec![F::zero(); 16]);
+        let mut zk_hiding = ZkHidingProverState::new((1..=16).map(F::from_u64).collect::<Vec<_>>());
         let reduction = prove_recursive_extension_opening_reduction::<F, E, _>(
             &logical_w,
             &point,
