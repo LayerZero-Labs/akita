@@ -2107,8 +2107,8 @@ impl<F: FieldCore + Valid + RingSubfieldFp8MulBackend> Invertible for RingSubfie
                 aug.swap(col, pivot);
             }
             let inv = aug[col][col].inverse()?;
-            for j in col..=8 {
-                aug[col][j] *= inv;
+            for entry in &mut aug[col][col..=8] {
+                *entry *= inv;
             }
             for row in 0..8 {
                 if row == col {
@@ -2118,8 +2118,12 @@ impl<F: FieldCore + Valid + RingSubfieldFp8MulBackend> Invertible for RingSubfie
                 if factor.is_zero() {
                     continue;
                 }
-                for j in col..=8 {
-                    aug[row][j] -= factor * aug[col][j];
+                let pivot_row = aug[col];
+                for (target, pivot) in aug[row][col..=8]
+                    .iter_mut()
+                    .zip(pivot_row[col..=8].iter().copied())
+                {
+                    *target -= factor * pivot;
                 }
             }
         }

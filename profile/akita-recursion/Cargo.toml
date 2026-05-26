@@ -5,7 +5,7 @@
 #   * apply Jolt's `[patch.crates-io]` overrides — `jolt-core` targets
 #     a16z's `arkworks-algebra` fork and won't compile against the upstream
 #     crates;
-#   * pin a separate `rust-toolchain.toml` to channel `1.94` with the
+#   * pin a separate `rust-toolchain.toml` to channel `1.95` with the
 #     RISC-V targets the Jolt CLI needs;
 #   * isolate the Jolt-only transitive dep graph (jolt-core, dory-pcs,
 #     zeroos, ...) from the main Akita workspace.

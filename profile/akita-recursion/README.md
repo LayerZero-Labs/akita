@@ -6,7 +6,7 @@ per-phase cycle counts (`deserialize_input`, `transcript_init`,
 execution and confirms Jolt accepts it.
 
 This directory is a **standalone Cargo sub-workspace** (it's excluded
-from the parent Akita workspace). It pins Rust `1.94` plus the
+from the parent Akita workspace). It pins Rust `1.95` plus the
 RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 `arkworks-algebra`.
 
@@ -138,9 +138,9 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
    preprocess/prove/verify (or just the trace under `--trace-only`),
    and forwards per-marker cycle counts through `tracing`.
 3. **`guest`** (running inside the Jolt RISC-V emulator) decodes the
-   blob and invokes `akita_verifier::verify_batched_with_policy`
-   directly — bypassing `akita-scheme::batched_verify`, which would
-   otherwise call `Instant::now()` (the Jolt runtime doesn't implement
+   blob and invokes `akita_verifier::verify_batched` directly —
+   bypassing `akita-scheme::batched_verify`, which would otherwise
+   call `Instant::now()` (the Jolt runtime doesn't implement
    `clock_gettime`, and the guest aborts there). Three
    `start_cycle_tracking` / `end_cycle_tracking` pairs wrap
    `deserialize_input`, `transcript_init`, and the verifier kernel.

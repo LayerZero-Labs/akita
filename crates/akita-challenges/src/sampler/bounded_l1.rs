@@ -241,12 +241,9 @@ mod tests {
     #[test]
     fn suffix_count_row_one_matches_closed_form() {
         // count(1, b) = 1 + 2 * min(M, b),
-        for b in 0..COLS_32 {
+        for (b, &actual) in BOUNDED_L1_SUFFIX_TABLE_32[0].iter().enumerate() {
             let expected = 1 + 2 * COEFFS_BOUND_32.min(b) as u128;
-            assert_eq!(
-                BOUNDED_L1_SUFFIX_TABLE_32[0][b], expected,
-                "count(1, {b}) should be 1 + 2*min(M, b)",
-            );
+            assert_eq!(actual, expected, "count(1, {b}) should be 1 + 2*min(M, b)",);
         }
     }
 

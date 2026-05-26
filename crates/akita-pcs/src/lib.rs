@@ -1,7 +1,3 @@
-#![cfg_attr(
-    all(target_arch = "x86_64", target_feature = "avx512f"),
-    feature(stdarch_x86_avx512)
-)]
 //! # Akita PCS
 //!
 //! A high performance and modular implementation of the Akita polynomial commitment scheme.

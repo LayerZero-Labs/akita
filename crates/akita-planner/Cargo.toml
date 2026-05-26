@@ -2,7 +2,7 @@
 name = "akita-planner"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = [
   "Markos Georghiades <mgeorghiades@a16z.com>",
   "Quang Dao <qvd@andrew.cmu.edu>",
@@ -19,20 +19,22 @@ readme = "../../README.md"
 ignored = ["akita-algebra"]
 
 [dependencies]
-akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
+akita-config = { version = "0.1.0", path = "../akita-config" }
+akita-derive = { version = "0.1.0", path = "../akita-derive" }
+akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
 
 [features]
 default = []
 parallel = ["akita-algebra/parallel", "akita-field/parallel"]
-zk = ["akita-types/zk"]
-
-[[bin]]
-name = "akita-planner"
-path = "src/bin/akita-planner.rs"
+zk = ["akita-config/zk", "akita-derive/zk", "akita-types/zk"]
+# Test-only utilities. Gates `PlannerCfg<Cfg>` (the DP-routing `Cfg` wrapper
+# used by cross-crate test fixtures). Off by default so production callers
+# never include it.
+test-utils = []
 
 [lints]
 workspace = true

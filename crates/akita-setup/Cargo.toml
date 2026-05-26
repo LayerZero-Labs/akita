@@ -2,7 +2,7 @@
 name = "akita-setup"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = [
   "Markos Georghiades <mgeorghiades@a16z.com>",
   "Quang Dao <qvd@andrew.cmu.edu>",
@@ -17,7 +17,6 @@ readme = "../../README.md"
 
 [features]
 default = []
-planner = ["akita-config/planner"]
 parallel = [
   "akita-algebra/parallel",
   "akita-field/parallel",
@@ -34,6 +33,11 @@ akita-prover = { version = "0.1.0", path = "../akita-prover" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
+
+[dev-dependencies]
+akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
+  "test-utils",
+] }
 
 [lints]
 workspace = true

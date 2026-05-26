@@ -58,6 +58,7 @@ jobs:
           scripts/check-crate-deps.sh akita-verifier
           scripts/check-crate-deps.sh akita-prover
           scripts/check-crate-deps.sh akita-config
+          scripts/check-crate-deps.sh akita-derive
           scripts/check-crate-deps.sh akita-setup
           scripts/check-crate-deps.sh akita-scheme
 
@@ -93,11 +94,9 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
       - name: Run tests (all non-zk features)
-        run: cargo nextest run --no-default-features --features parallel,planner,disk-persistence
+        run: cargo nextest run --no-default-features --features parallel,disk-persistence
       - name: Run tests (all features)
         run: cargo nextest run --all-features
-      - name: Planner validation
-        run: cargo run -p akita-planner --bin akita-planner -- --validate
 
   typos:
     name: Typos

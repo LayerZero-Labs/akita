@@ -551,7 +551,7 @@ where
     }
 
     if let Some(mut t) = t {
-        for (dst, src) in t.iter_mut().zip(t_wide.into_iter()) {
+        for (dst, src) in t.iter_mut().zip(t_wide) {
             *dst += src.reduce();
         }
         t
@@ -769,7 +769,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             chunks = self.indices.len()
         )
         .entered();
-        if D % width != 0 {
+        if !D.is_multiple_of(width) {
             return Err(AkitaError::InvalidInput(
                 "tensor width must divide root ring dimension".to_string(),
             ));
@@ -1862,11 +1862,9 @@ where
 {
     let num_blocks = blocks.len();
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
-    let block_tile = if accum_bytes > 0 {
-        (L2_TILE_BUDGET / accum_bytes).max(1)
-    } else {
-        num_blocks
-    };
+    let block_tile = L2_TILE_BUDGET
+        .checked_div(accum_bytes)
+        .map_or(num_blocks, |tile| tile.max(1));
 
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads().min(num_blocks).max(1);

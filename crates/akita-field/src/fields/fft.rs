@@ -95,13 +95,13 @@ fn smallest_prime_factor(n: usize) -> usize {
         return n;
     }
     for &p in &[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31] {
-        if n % p == 0 {
+        if n.is_multiple_of(p) {
             return p;
         }
     }
     let mut i = 37;
     while i * i <= n {
-        if n % i == 0 {
+        if n.is_multiple_of(i) {
             return i;
         }
         i += 2;
@@ -686,24 +686,6 @@ impl<F: FieldCore + FromPrimitiveInt + Invertible + std::fmt::Debug> SmoothDomai
         }
         extension
     }
-}
-
-/// Compute a primitive `n`-th root of unity from a multiplicative
-/// generator: returns `g^{(p−1)/n}`. Caller must ensure `n` divides
-/// the order of `g`.
-///
-/// Most callers should prefer [`primitive_nth_root`].
-///
-/// # Panics
-/// If `n` does not divide `p − 1`.
-pub fn primitive_root_of_unity<F: FieldCore>(g: F, p_minus_1: u128, n: usize) -> F {
-    assert_eq!(
-        p_minus_1 % (n as u128),
-        0,
-        "n={n} must divide p-1={p_minus_1}"
-    );
-    let exp = p_minus_1 / (n as u128);
-    field_pow_u128(g, exp)
 }
 
 /// Primitive `n`-th root of unity in `F`, derived from
