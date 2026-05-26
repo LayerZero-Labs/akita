@@ -1,11 +1,11 @@
-//! AVX-512 packed backends for Fp32, Fp64, Fp128.
+//! AVX-512 packed backends for Fp16, Fp32, Fp64, Fp128.
 //!
 //! Requires AVX-512F + AVX-512DQ. Uses native unsigned comparisons and mask
 //! registers for branchless conditionals.
 
 use super::packed::{PackedField, PackedValue};
 use crate::fields::ext::{Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config};
-use crate::fields::{Fp128, Fp32, Fp64};
+use crate::fields::{Fp128, Fp16, Fp32, Fp64};
 use crate::Invertible;
 use core::arch::x86_64::*;
 use core::fmt;
@@ -49,6 +49,25 @@ unsafe fn mul64_64_512(x: __m512i, y: __m512i) -> (__m512i, __m512i) {
     let res_lo = _mm512_mask_blend_epi32(0b0101_0101_0101_0101, t1_lo, mul_ll);
 
     (res_hi, res_lo)
+}
+
+/// Chebyshev φ fold-back for AVX-512 `__m512i` accumulators (K=8).
+#[inline(always)]
+unsafe fn avx512_ring_subfield_fp8_add_phi<const P: u32>(
+    out: &mut [__m512i; 8],
+    idx: usize,
+    value: __m512i,
+) {
+    match idx {
+        0 => {
+            out[0] =
+                PackedFp32Avx512::<P>::add_vec(out[0], PackedFp32Avx512::<P>::add_vec(value, value))
+        }
+        1..=7 => out[idx] = PackedFp32Avx512::<P>::add_vec(out[idx], value),
+        8 => {}
+        9..=15 => out[16 - idx] = PackedFp32Avx512::<P>::sub_vec(out[16 - idx], value),
+        _ => unreachable!(),
+    }
 }
 
 /// Number of `Fp32` lanes in an AVX-512 packed vector.
@@ -924,6 +943,84 @@ impl<const P: u32> PackedField for PackedFp32Avx512<P> {
             ]
         }
     }
+
+    #[inline(always)]
+    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        unsafe {
+            let a = a.map(Self::to_vec);
+            let b = b.map(Self::to_vec);
+            let zero = _mm512_setzero_si512();
+            let mut out = [zero; 8];
+
+            let diag: [__m512i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], b[i]));
+            out[0] = diag[0];
+
+            for k in 1..8 {
+                let mixed = Self::sub_vec(
+                    Self::sub_vec(
+                        Self::mul_vec(Self::add_vec(a[0], a[k]), Self::add_vec(b[0], b[k])),
+                        diag[0],
+                    ),
+                    diag[k],
+                );
+                out[k] = Self::add_vec(out[k], mixed);
+            }
+
+            for (i, &diag_i) in diag.iter().enumerate().skip(1) {
+                out[0] = Self::add_vec(out[0], Self::add_vec(diag_i, diag_i));
+                avx512_ring_subfield_fp8_add_phi::<P>(&mut out, i + i, diag_i);
+            }
+
+            for i in 1..8usize {
+                for j in (i + 1)..8usize {
+                    let mixed = Self::sub_vec(
+                        Self::sub_vec(
+                            Self::mul_vec(Self::add_vec(a[i], a[j]), Self::add_vec(b[i], b[j])),
+                            diag[i],
+                        ),
+                        diag[j],
+                    );
+                    avx512_ring_subfield_fp8_add_phi::<P>(&mut out, i + j, mixed);
+                    avx512_ring_subfield_fp8_add_phi::<P>(&mut out, j - i, mixed);
+                }
+            }
+
+            out.map(|v| Self::from_vec(v))
+        }
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
+        unsafe {
+            let a = a.map(Self::to_vec);
+            let zero = _mm512_setzero_si512();
+            let mut out = [zero; 8];
+
+            let sq: [__m512i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], a[i]));
+            out[0] = sq[0];
+
+            for k in 1..8 {
+                let cross = Self::mul_vec(a[0], a[k]);
+                out[k] = Self::add_vec(out[k], Self::add_vec(cross, cross));
+            }
+
+            for (i, &sq_i) in sq.iter().enumerate().skip(1) {
+                out[0] = Self::add_vec(out[0], Self::add_vec(sq_i, sq_i));
+                avx512_ring_subfield_fp8_add_phi::<P>(&mut out, i + i, sq_i);
+            }
+
+            for i in 1..8usize {
+                for j in (i + 1)..8usize {
+                    let cross = Self::mul_vec(a[i], a[j]);
+                    let doubled = Self::add_vec(cross, cross);
+                    avx512_ring_subfield_fp8_add_phi::<P>(&mut out, i + j, doubled);
+                    avx512_ring_subfield_fp8_add_phi::<P>(&mut out, j - i, doubled);
+                }
+            }
+
+            out.map(|v| Self::from_vec(v))
+        }
+    }
 }
 
 /// Number of `Fp64` lanes in an AVX-512 packed vector.
@@ -1372,6 +1469,307 @@ impl<const P: u128> PackedField for PackedFp128Avx512<P> {
         Self {
             lo: [value.0[0]; FP128_WIDTH],
             hi: [value.0[1]; FP128_WIDTH],
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PackedFp16Avx512 — 16 lanes of Fp16 in __m512i (widened to u32)
+// ---------------------------------------------------------------------------
+
+/// Number of packed `Fp16` lanes in an AVX-512 vector.
+///
+/// Each u16 element is widened to u32 for arithmetic, so 16 lanes
+/// fit in one `__m512i` (16 × 32 = 512 bits).
+pub const FP16_WIDTH: usize = 16;
+
+/// AVX-512 packed `Fp16` backend: 16 lanes, stored as `[u16; 16]`,
+/// widened to u32 in `__m512i` for all arithmetic.
+#[derive(Clone, Copy)]
+pub struct PackedFp16Avx512<const P: u32> {
+    vals: [u16; FP16_WIDTH],
+}
+
+impl<const P: u32> PackedFp16Avx512<P> {
+    const BITS: u32 = 32 - P.leading_zeros();
+
+    /// Widen 16 u16 values to 16 u32 values in `__m512i`.
+    #[inline(always)]
+    unsafe fn widen(x: &[u16; FP16_WIDTH]) -> __m512i {
+        let lo = _mm256_loadu_si256(x.as_ptr().cast());
+        _mm512_cvtepu16_epi32(lo)
+    }
+
+    /// Truncate 16 u32 values (in [0, P)) back to `[u16; 16]`.
+    #[inline(always)]
+    unsafe fn narrow(v: __m512i) -> [u16; FP16_WIDTH] {
+        let lo = _mm512_cvtepi32_epi16(v);
+        let mut out = [0u16; FP16_WIDTH];
+        _mm256_storeu_si256(out.as_mut_ptr().cast(), lo);
+        out
+    }
+
+    #[inline(always)]
+    unsafe fn add_vec(a: __m512i, b: __m512i) -> __m512i {
+        let p32 = _mm512_set1_epi32(P as i32);
+        let t = _mm512_add_epi32(a, b);
+        let u = _mm512_sub_epi32(t, p32);
+        _mm512_min_epu32(t, u)
+    }
+
+    #[inline(always)]
+    unsafe fn sub_vec(a: __m512i, b: __m512i) -> __m512i {
+        let p32 = _mm512_set1_epi32(P as i32);
+        let t = _mm512_sub_epi32(a, b);
+        let u = _mm512_add_epi32(t, p32);
+        _mm512_min_epu32(t, u)
+    }
+
+    #[inline(always)]
+    unsafe fn mul_vec(a: __m512i, b: __m512i) -> __m512i {
+        let prod = _mm512_mullo_epi32(a, b);
+        Self::solinas_reduce(prod)
+    }
+
+    /// Three-fold Solinas reduction of 16 u32 products in `__m512i`.
+    #[inline(always)]
+    unsafe fn solinas_reduce(prod: __m512i) -> __m512i {
+        let mask = _mm512_set1_epi32((1u32 << Self::BITS) as i32 - 1);
+        let c = _mm512_set1_epi32(Fp16::<P>::C as i32);
+        let shift = _mm_set_epi64x(0, Self::BITS as i64);
+
+        let fold = |x: __m512i| -> __m512i {
+            let lo = _mm512_and_si512(x, mask);
+            let hi = _mm512_srl_epi32(x, shift);
+            _mm512_add_epi32(lo, _mm512_mullo_epi32(hi, c))
+        };
+
+        let f1 = fold(prod);
+        let f2 = fold(f1);
+        let f3 = fold(f2);
+
+        let p32 = _mm512_set1_epi32(P as i32);
+        _mm512_min_epu32(f3, _mm512_sub_epi32(f3, p32))
+    }
+}
+
+impl<const P: u32> PackedValue for PackedFp16Avx512<P> {
+    type Value = Fp16<P>;
+    const WIDTH: usize = FP16_WIDTH;
+
+    fn from_fn<F>(f: F) -> Self
+    where
+        F: FnMut(usize) -> Self::Value,
+    {
+        let vals: [Fp16<P>; FP16_WIDTH] = std::array::from_fn(f);
+        Self {
+            vals: vals.map(|v| v.to_limbs()),
+        }
+    }
+
+    fn extract(&self, lane: usize) -> Self::Value {
+        Fp16::from_canonical_u16(self.vals[lane])
+    }
+}
+
+impl<const P: u32> fmt::Debug for PackedFp16Avx512<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.vals.iter()).finish()
+    }
+}
+
+impl<const P: u32> Default for PackedFp16Avx512<P> {
+    fn default() -> Self {
+        Self {
+            vals: [0; FP16_WIDTH],
+        }
+    }
+}
+
+impl<const P: u32> PartialEq for PackedFp16Avx512<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.vals == other.vals
+    }
+}
+
+impl<const P: u32> Eq for PackedFp16Avx512<P> {}
+
+impl<const P: u32> Add for PackedFp16Avx512<P> {
+    type Output = Self;
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self {
+        unsafe {
+            let a = Self::widen(&self.vals);
+            let b = Self::widen(&rhs.vals);
+            Self {
+                vals: Self::narrow(Self::add_vec(a, b)),
+            }
+        }
+    }
+}
+
+impl<const P: u32> Sub for PackedFp16Avx512<P> {
+    type Output = Self;
+    #[inline(always)]
+    fn sub(self, rhs: Self) -> Self {
+        unsafe {
+            let a = Self::widen(&self.vals);
+            let b = Self::widen(&rhs.vals);
+            Self {
+                vals: Self::narrow(Self::sub_vec(a, b)),
+            }
+        }
+    }
+}
+
+impl<const P: u32> Mul for PackedFp16Avx512<P> {
+    type Output = Self;
+    #[inline(always)]
+    fn mul(self, rhs: Self) -> Self {
+        unsafe {
+            let a = Self::widen(&self.vals);
+            let b = Self::widen(&rhs.vals);
+            Self {
+                vals: Self::narrow(Self::mul_vec(a, b)),
+            }
+        }
+    }
+}
+
+impl<const P: u32> AddAssign for PackedFp16Avx512<P> {
+    #[inline(always)]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u32> SubAssign for PackedFp16Avx512<P> {
+    #[inline(always)]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u32> MulAssign for PackedFp16Avx512<P> {
+    #[inline(always)]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
+/// Chebyshev φ fold-back for AVX-512 Fp16 `__m512i` accumulators (K=8).
+#[inline(always)]
+unsafe fn avx512_ring_subfield_fp8_add_phi_16<const P: u32>(
+    out: &mut [__m512i; 8],
+    idx: usize,
+    value: __m512i,
+) {
+    match idx {
+        0 => {
+            out[0] =
+                PackedFp16Avx512::<P>::add_vec(out[0], PackedFp16Avx512::<P>::add_vec(value, value))
+        }
+        1..=7 => out[idx] = PackedFp16Avx512::<P>::add_vec(out[idx], value),
+        8 => {}
+        9..=15 => out[16 - idx] = PackedFp16Avx512::<P>::sub_vec(out[16 - idx], value),
+        _ => unreachable!(),
+    }
+}
+
+impl<const P: u32> PackedField for PackedFp16Avx512<P> {
+    type Scalar = Fp16<P>;
+
+    #[inline]
+    fn broadcast(value: Self::Scalar) -> Self {
+        Self {
+            vals: [value.to_limbs(); FP16_WIDTH],
+        }
+    }
+
+    #[inline(always)]
+    fn square(self) -> Self {
+        self * self
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        unsafe {
+            let a: [__m512i; 8] = std::array::from_fn(|i| Self::widen(&a[i].vals));
+            let b: [__m512i; 8] = std::array::from_fn(|i| Self::widen(&b[i].vals));
+            let zero = _mm512_setzero_si512();
+            let mut out = [zero; 8];
+
+            let diag: [__m512i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], b[i]));
+            out[0] = diag[0];
+
+            for k in 1..8 {
+                let mixed = Self::sub_vec(
+                    Self::sub_vec(
+                        Self::mul_vec(Self::add_vec(a[0], a[k]), Self::add_vec(b[0], b[k])),
+                        diag[0],
+                    ),
+                    diag[k],
+                );
+                out[k] = Self::add_vec(out[k], mixed);
+            }
+
+            for (i, &diag_i) in diag.iter().enumerate().skip(1) {
+                out[0] = Self::add_vec(out[0], Self::add_vec(diag_i, diag_i));
+                avx512_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + i, diag_i);
+            }
+
+            for i in 1..8usize {
+                for j in (i + 1)..8usize {
+                    let mixed = Self::sub_vec(
+                        Self::sub_vec(
+                            Self::mul_vec(Self::add_vec(a[i], a[j]), Self::add_vec(b[i], b[j])),
+                            diag[i],
+                        ),
+                        diag[j],
+                    );
+                    avx512_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + j, mixed);
+                    avx512_ring_subfield_fp8_add_phi_16::<P>(&mut out, j - i, mixed);
+                }
+            }
+
+            std::array::from_fn(|i| Self {
+                vals: Self::narrow(out[i]),
+            })
+        }
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
+        unsafe {
+            let a: [__m512i; 8] = std::array::from_fn(|i| Self::widen(&a[i].vals));
+            let zero = _mm512_setzero_si512();
+            let mut out = [zero; 8];
+
+            let sq: [__m512i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], a[i]));
+            out[0] = sq[0];
+
+            for k in 1..8 {
+                let cross = Self::mul_vec(a[0], a[k]);
+                out[k] = Self::add_vec(out[k], Self::add_vec(cross, cross));
+            }
+
+            for (i, &sq_i) in sq.iter().enumerate().skip(1) {
+                out[0] = Self::add_vec(out[0], Self::add_vec(sq_i, sq_i));
+                avx512_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + i, sq_i);
+            }
+
+            for i in 1..8usize {
+                for j in (i + 1)..8usize {
+                    let cross = Self::mul_vec(a[i], a[j]);
+                    let doubled = Self::add_vec(cross, cross);
+                    avx512_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + j, doubled);
+                    avx512_ring_subfield_fp8_add_phi_16::<P>(&mut out, j - i, doubled);
+                }
+            }
+
+            std::array::from_fn(|i| Self {
+                vals: Self::narrow(out[i]),
+            })
         }
     }
 }

@@ -442,8 +442,27 @@ impl<const P: u128> HasPacking for Fp128<P> {
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub type Fp16Packing<const P: u32> = super::packed_neon::PackedFp16Neon<P>;
 
-/// Scalar fallback packed backend for `Fp16` (non-NEON targets).
-#[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+/// Selected packed backend for `Fp16`.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512dq"
+))]
+pub type Fp16Packing<const P: u32> = super::packed_avx512::PackedFp16Avx512<P>;
+
+/// Selected packed backend for `Fp16`.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
+))]
+pub type Fp16Packing<const P: u32> = super::packed_avx2::PackedFp16Avx2<P>;
+
+/// Scalar fallback packed backend for `Fp16`.
+#[cfg(not(any(
+    all(target_arch = "aarch64", target_feature = "neon"),
+    all(target_arch = "x86_64", target_feature = "avx2")
+)))]
 pub type Fp16Packing<const P: u32> = NoPacking<Fp16<P>>;
 
 impl<const P: u32> HasPacking for Fp16<P> {

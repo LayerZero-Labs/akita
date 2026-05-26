@@ -1,10 +1,10 @@
-//! AVX2 packed backends for Fp32, Fp64, Fp128.
+//! AVX2 packed backends for Fp16, Fp32, Fp64, Fp128.
 //!
 //! Techniques adapted from plonky2 (Goldilocks) and plonky3 (Mersenne-31).
 
 use super::packed::{PackedField, PackedValue};
 use crate::fields::ext::{Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config};
-use crate::fields::{Fp128, Fp32, Fp64};
+use crate::fields::{Fp128, Fp16, Fp32, Fp64};
 use crate::Invertible;
 use core::arch::x86_64::*;
 use core::fmt;
@@ -50,6 +50,25 @@ unsafe fn mul64_64_256(x: __m256i, y: __m256i) -> (__m256i, __m256i) {
     let res_lo = _mm256_blend_epi32::<0b10101010>(mul_ll, t1_lo);
 
     (res_hi, res_lo)
+}
+
+/// Chebyshev φ fold-back for AVX2 `__m256i` accumulators (K=8).
+#[inline(always)]
+unsafe fn avx2_ring_subfield_fp8_add_phi<const P: u32>(
+    out: &mut [__m256i; 8],
+    idx: usize,
+    value: __m256i,
+) {
+    match idx {
+        0 => {
+            out[0] =
+                PackedFp32Avx2::<P>::add_vec(out[0], PackedFp32Avx2::<P>::add_vec(value, value))
+        }
+        1..=7 => out[idx] = PackedFp32Avx2::<P>::add_vec(out[idx], value),
+        8 => {}
+        9..=15 => out[16 - idx] = PackedFp32Avx2::<P>::sub_vec(out[16 - idx], value),
+        _ => unreachable!(),
+    }
 }
 
 /// Number of `Fp32` lanes in an AVX2 packed vector.
@@ -940,6 +959,84 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
             ]
         }
     }
+
+    #[inline(always)]
+    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        unsafe {
+            let a = a.map(Self::to_vec);
+            let b = b.map(Self::to_vec);
+            let zero = _mm256_setzero_si256();
+            let mut out = [zero; 8];
+
+            let diag: [__m256i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], b[i]));
+            out[0] = diag[0];
+
+            for k in 1..8 {
+                let mixed = Self::sub_vec(
+                    Self::sub_vec(
+                        Self::mul_vec(Self::add_vec(a[0], a[k]), Self::add_vec(b[0], b[k])),
+                        diag[0],
+                    ),
+                    diag[k],
+                );
+                out[k] = Self::add_vec(out[k], mixed);
+            }
+
+            for (i, &diag_i) in diag.iter().enumerate().skip(1) {
+                out[0] = Self::add_vec(out[0], Self::add_vec(diag_i, diag_i));
+                avx2_ring_subfield_fp8_add_phi::<P>(&mut out, i + i, diag_i);
+            }
+
+            for i in 1..8usize {
+                for j in (i + 1)..8usize {
+                    let mixed = Self::sub_vec(
+                        Self::sub_vec(
+                            Self::mul_vec(Self::add_vec(a[i], a[j]), Self::add_vec(b[i], b[j])),
+                            diag[i],
+                        ),
+                        diag[j],
+                    );
+                    avx2_ring_subfield_fp8_add_phi::<P>(&mut out, i + j, mixed);
+                    avx2_ring_subfield_fp8_add_phi::<P>(&mut out, j - i, mixed);
+                }
+            }
+
+            out.map(|v| Self::from_vec(v))
+        }
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
+        unsafe {
+            let a = a.map(Self::to_vec);
+            let zero = _mm256_setzero_si256();
+            let mut out = [zero; 8];
+
+            let sq: [__m256i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], a[i]));
+            out[0] = sq[0];
+
+            for k in 1..8 {
+                let cross = Self::mul_vec(a[0], a[k]);
+                out[k] = Self::add_vec(out[k], Self::add_vec(cross, cross));
+            }
+
+            for (i, &sq_i) in sq.iter().enumerate().skip(1) {
+                out[0] = Self::add_vec(out[0], Self::add_vec(sq_i, sq_i));
+                avx2_ring_subfield_fp8_add_phi::<P>(&mut out, i + i, sq_i);
+            }
+
+            for i in 1..8usize {
+                for j in (i + 1)..8usize {
+                    let cross = Self::mul_vec(a[i], a[j]);
+                    let doubled = Self::add_vec(cross, cross);
+                    avx2_ring_subfield_fp8_add_phi::<P>(&mut out, i + j, doubled);
+                    avx2_ring_subfield_fp8_add_phi::<P>(&mut out, j - i, doubled);
+                }
+            }
+
+            out.map(|v| Self::from_vec(v))
+        }
+    }
 }
 
 /// Number of `Fp64` lanes in an AVX2 packed vector.
@@ -1434,6 +1531,317 @@ impl<const P: u128> PackedField for PackedFp128Avx2<P> {
         Self {
             lo: [value.0[0]; FP128_WIDTH],
             hi: [value.0[1]; FP128_WIDTH],
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PackedFp16Avx2 — 16 lanes of Fp16 in __m256i
+// ---------------------------------------------------------------------------
+
+/// Number of packed `Fp16` lanes in an AVX2 vector.
+pub const FP16_WIDTH: usize = 16;
+
+/// AVX2 packed `Fp16` backend: 16 lanes in `__m256i`.
+///
+/// Arithmetic widens to u32 (two `__m256i`) for modular reduction,
+/// then narrows back to u16.
+#[derive(Clone, Copy)]
+pub struct PackedFp16Avx2<const P: u32> {
+    vals: [u16; FP16_WIDTH],
+}
+
+impl<const P: u32> PackedFp16Avx2<P> {
+    const BITS: u32 = 32 - P.leading_zeros();
+
+    #[inline(always)]
+    fn to_vec(self) -> __m256i {
+        unsafe { transmute::<[u16; FP16_WIDTH], __m256i>(self.vals) }
+    }
+
+    #[inline(always)]
+    fn from_vec(v: __m256i) -> Self {
+        Self {
+            vals: unsafe { transmute::<__m256i, [u16; FP16_WIDTH]>(v) },
+        }
+    }
+
+    /// Zero-extend the lower 8 u16 lanes to 8 u32 lanes.
+    #[inline(always)]
+    unsafe fn widen_lo(x: __m256i) -> __m256i {
+        _mm256_cvtepu16_epi32(_mm256_castsi256_si128(x))
+    }
+
+    /// Zero-extend the upper 8 u16 lanes to 8 u32 lanes.
+    #[inline(always)]
+    unsafe fn widen_hi(x: __m256i) -> __m256i {
+        _mm256_cvtepu16_epi32(_mm256_extracti128_si256::<1>(x))
+    }
+
+    /// Pack two `__m256i` of 8 u32 lanes (values in [0, P)) back to one
+    /// `__m256i` of 16 u16 lanes in the correct order.
+    #[inline(always)]
+    unsafe fn narrow(lo_u32: __m256i, hi_u32: __m256i) -> __m256i {
+        let packed = _mm256_packus_epi32(lo_u32, hi_u32);
+        _mm256_permute4x64_epi64::<0xD8>(packed)
+    }
+
+    #[inline(always)]
+    unsafe fn add_vec(a: __m256i, b: __m256i) -> __m256i {
+        let p32 = _mm256_set1_epi32(P as i32);
+        let sum_lo = _mm256_add_epi32(Self::widen_lo(a), Self::widen_lo(b));
+        let sum_hi = _mm256_add_epi32(Self::widen_hi(a), Self::widen_hi(b));
+        let red_lo = _mm256_min_epu32(sum_lo, _mm256_sub_epi32(sum_lo, p32));
+        let red_hi = _mm256_min_epu32(sum_hi, _mm256_sub_epi32(sum_hi, p32));
+        Self::narrow(red_lo, red_hi)
+    }
+
+    #[inline(always)]
+    unsafe fn sub_vec(a: __m256i, b: __m256i) -> __m256i {
+        let p32 = _mm256_set1_epi32(P as i32);
+        let diff_lo = _mm256_add_epi32(_mm256_sub_epi32(Self::widen_lo(a), Self::widen_lo(b)), p32);
+        let diff_hi = _mm256_add_epi32(_mm256_sub_epi32(Self::widen_hi(a), Self::widen_hi(b)), p32);
+        let red_lo = _mm256_min_epu32(diff_lo, _mm256_sub_epi32(diff_lo, p32));
+        let red_hi = _mm256_min_epu32(diff_hi, _mm256_sub_epi32(diff_hi, p32));
+        Self::narrow(red_lo, red_hi)
+    }
+
+    /// Widen-multiply-reduce: widens both halves to u32, multiplies,
+    /// applies three Solinas folds, and narrows back to u16.
+    #[inline(always)]
+    unsafe fn mul_vec(a: __m256i, b: __m256i) -> __m256i {
+        let a_lo = Self::widen_lo(a);
+        let a_hi = Self::widen_hi(a);
+        let b_lo = Self::widen_lo(b);
+        let b_hi = Self::widen_hi(b);
+        let prod_lo = _mm256_mullo_epi32(a_lo, b_lo);
+        let prod_hi = _mm256_mullo_epi32(a_hi, b_hi);
+        Self::solinas_reduce_16(prod_lo, prod_hi)
+    }
+
+    /// Three-fold Solinas reduction of two `__m256i` of u32 products back
+    /// to one `__m256i` of 16 u16 values. Mirrors `PackedFp16Neon::solinas_reduce_16`.
+    #[inline(always)]
+    unsafe fn solinas_reduce_16(prod_lo: __m256i, prod_hi: __m256i) -> __m256i {
+        let mask = _mm256_set1_epi32((1u32 << Self::BITS) as i32 - 1);
+        let c = _mm256_set1_epi32(Fp16::<P>::C as i32);
+        let shift = _mm_set_epi64x(0, Self::BITS as i64);
+
+        let fold = |x: __m256i| -> __m256i {
+            let lo = _mm256_and_si256(x, mask);
+            let hi = _mm256_srl_epi32(x, shift);
+            _mm256_add_epi32(lo, _mm256_mullo_epi32(hi, c))
+        };
+
+        let f1_lo = fold(prod_lo);
+        let f1_hi = fold(prod_hi);
+        let f2_lo = fold(f1_lo);
+        let f2_hi = fold(f1_hi);
+        let f3_lo = fold(f2_lo);
+        let f3_hi = fold(f2_hi);
+
+        let p32 = _mm256_set1_epi32(P as i32);
+        let red_lo = _mm256_min_epu32(f3_lo, _mm256_sub_epi32(f3_lo, p32));
+        let red_hi = _mm256_min_epu32(f3_hi, _mm256_sub_epi32(f3_hi, p32));
+        Self::narrow(red_lo, red_hi)
+    }
+}
+
+impl<const P: u32> PackedValue for PackedFp16Avx2<P> {
+    type Value = Fp16<P>;
+    const WIDTH: usize = FP16_WIDTH;
+
+    fn from_fn<F>(f: F) -> Self
+    where
+        F: FnMut(usize) -> Self::Value,
+    {
+        let vals: [Fp16<P>; FP16_WIDTH] = std::array::from_fn(f);
+        Self {
+            vals: vals.map(|v| v.to_limbs()),
+        }
+    }
+
+    fn extract(&self, lane: usize) -> Self::Value {
+        Fp16::from_canonical_u16(self.vals[lane])
+    }
+}
+
+impl<const P: u32> fmt::Debug for PackedFp16Avx2<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.vals.iter()).finish()
+    }
+}
+
+impl<const P: u32> Default for PackedFp16Avx2<P> {
+    fn default() -> Self {
+        Self {
+            vals: [0; FP16_WIDTH],
+        }
+    }
+}
+
+impl<const P: u32> PartialEq for PackedFp16Avx2<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.vals == other.vals
+    }
+}
+
+impl<const P: u32> Eq for PackedFp16Avx2<P> {}
+
+impl<const P: u32> Add for PackedFp16Avx2<P> {
+    type Output = Self;
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self {
+        unsafe { Self::from_vec(Self::add_vec(self.to_vec(), rhs.to_vec())) }
+    }
+}
+
+impl<const P: u32> Sub for PackedFp16Avx2<P> {
+    type Output = Self;
+    #[inline(always)]
+    fn sub(self, rhs: Self) -> Self {
+        unsafe { Self::from_vec(Self::sub_vec(self.to_vec(), rhs.to_vec())) }
+    }
+}
+
+impl<const P: u32> Mul for PackedFp16Avx2<P> {
+    type Output = Self;
+    #[inline(always)]
+    fn mul(self, rhs: Self) -> Self {
+        unsafe { Self::from_vec(Self::mul_vec(self.to_vec(), rhs.to_vec())) }
+    }
+}
+
+impl<const P: u32> AddAssign for PackedFp16Avx2<P> {
+    #[inline(always)]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<const P: u32> SubAssign for PackedFp16Avx2<P> {
+    #[inline(always)]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<const P: u32> MulAssign for PackedFp16Avx2<P> {
+    #[inline(always)]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
+/// Chebyshev φ fold-back for AVX2 Fp16 `__m256i` accumulators (K=8).
+#[inline(always)]
+unsafe fn avx2_ring_subfield_fp8_add_phi_16<const P: u32>(
+    out: &mut [__m256i; 8],
+    idx: usize,
+    value: __m256i,
+) {
+    match idx {
+        0 => {
+            out[0] =
+                PackedFp16Avx2::<P>::add_vec(out[0], PackedFp16Avx2::<P>::add_vec(value, value))
+        }
+        1..=7 => out[idx] = PackedFp16Avx2::<P>::add_vec(out[idx], value),
+        8 => {}
+        9..=15 => out[16 - idx] = PackedFp16Avx2::<P>::sub_vec(out[16 - idx], value),
+        _ => unreachable!(),
+    }
+}
+
+impl<const P: u32> PackedField for PackedFp16Avx2<P> {
+    type Scalar = Fp16<P>;
+
+    #[inline]
+    fn broadcast(value: Self::Scalar) -> Self {
+        Self {
+            vals: [value.to_limbs(); FP16_WIDTH],
+        }
+    }
+
+    #[inline(always)]
+    fn square(self) -> Self {
+        self * self
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        unsafe {
+            let a = a.map(Self::to_vec);
+            let b = b.map(Self::to_vec);
+            let zero = _mm256_setzero_si256();
+            let mut out = [zero; 8];
+
+            let diag: [__m256i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], b[i]));
+            out[0] = diag[0];
+
+            for k in 1..8 {
+                let mixed = Self::sub_vec(
+                    Self::sub_vec(
+                        Self::mul_vec(Self::add_vec(a[0], a[k]), Self::add_vec(b[0], b[k])),
+                        diag[0],
+                    ),
+                    diag[k],
+                );
+                out[k] = Self::add_vec(out[k], mixed);
+            }
+
+            for (i, &diag_i) in diag.iter().enumerate().skip(1) {
+                out[0] = Self::add_vec(out[0], Self::add_vec(diag_i, diag_i));
+                avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + i, diag_i);
+            }
+
+            for i in 1..8usize {
+                for j in (i + 1)..8usize {
+                    let mixed = Self::sub_vec(
+                        Self::sub_vec(
+                            Self::mul_vec(Self::add_vec(a[i], a[j]), Self::add_vec(b[i], b[j])),
+                            diag[i],
+                        ),
+                        diag[j],
+                    );
+                    avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + j, mixed);
+                    avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, j - i, mixed);
+                }
+            }
+
+            out.map(|v| Self::from_vec(v))
+        }
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
+        unsafe {
+            let a = a.map(Self::to_vec);
+            let zero = _mm256_setzero_si256();
+            let mut out = [zero; 8];
+
+            let sq: [__m256i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], a[i]));
+            out[0] = sq[0];
+
+            for k in 1..8 {
+                let cross = Self::mul_vec(a[0], a[k]);
+                out[k] = Self::add_vec(out[k], Self::add_vec(cross, cross));
+            }
+
+            for (i, &sq_i) in sq.iter().enumerate().skip(1) {
+                out[0] = Self::add_vec(out[0], Self::add_vec(sq_i, sq_i));
+                avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + i, sq_i);
+            }
+
+            for i in 1..8usize {
+                for j in (i + 1)..8usize {
+                    let cross = Self::mul_vec(a[i], a[j]);
+                    let doubled = Self::add_vec(cross, cross);
+                    avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + j, doubled);
+                    avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, j - i, doubled);
+                }
+            }
+
+            out.map(|v| Self::from_vec(v))
         }
     }
 }
