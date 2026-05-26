@@ -23,6 +23,7 @@ RSS_PATTERNS = [
     re.compile(r"^\s*(\d+)\s+maximum resident set size$", re.MULTILINE),
 ]
 ONEHOT_ARITY = 256
+ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
 REQUIRED_RUN_METRICS = (
     "setup_s",
     "commit_s",
@@ -58,24 +59,20 @@ class CaseMetadata:
 
 
 CASE_METADATA: dict[str, CaseMetadata] = {
-    "full": CaseMetadata("fp128", "dense", "dense", "adaptive"),
-    "full_d64": CaseMetadata("fp128", "dense", "dense", "D64"),
-    "full_d32": CaseMetadata("fp128", "dense", "dense", "D32"),
-    "onehot": CaseMetadata("fp128", "onehot", "one-hot", "adaptive"),
-    "onehot_d64": CaseMetadata("fp128", "onehot", "one-hot", "D64"),
-    "onehot_d32": CaseMetadata("fp128", "onehot", "one-hot", "D32"),
-    "onehot_fp32": CaseMetadata("fp32", "onehot", "one-hot", "D32"),
-    "onehot_fp32_d32": CaseMetadata("fp32", "onehot", "one-hot", "D32"),
-    "onehot_fp32_d64": CaseMetadata("fp32", "onehot", "one-hot", "D64"),
+    "dense_fp128_d32": CaseMetadata("fp128", "dense", "dense", "D32"),
+    "dense_fp128_d64": CaseMetadata("fp128", "dense", "dense", "D64"),
+    "onehot_fp128_d32": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
+    "onehot_fp128_d64": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    "onehot_fp32_d32": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
+    "onehot_fp32_d64": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
     "dense_fp32_d32": CaseMetadata("fp32", "dense", "dense", "D32"),
     "dense_fp32_d64": CaseMetadata("fp32", "dense", "dense", "D64"),
-    "onehot_fp16_d32": CaseMetadata("fp16", "onehot", "one-hot", "D32"),
-    "onehot_fp16_d64": CaseMetadata("fp16", "onehot", "one-hot", "D64"),
-    "full_fp16_d32": CaseMetadata("fp16", "dense", "dense", "D32"),
-    "full_fp16_d64": CaseMetadata("fp16", "dense", "dense", "D64"),
-    "onehot_fp64": CaseMetadata("fp64", "onehot", "one-hot", "D64"),
-    "onehot_fp64_d32": CaseMetadata("fp64", "onehot", "one-hot", "D32"),
-    "onehot_fp64_d64": CaseMetadata("fp64", "onehot", "one-hot", "D64"),
+    "onehot_fp16_d32": CaseMetadata("fp16", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
+    "onehot_fp16_d64": CaseMetadata("fp16", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    "dense_fp16_d32": CaseMetadata("fp16", "dense", "dense", "D32"),
+    "dense_fp16_d64": CaseMetadata("fp16", "dense", "dense", "D64"),
+    "onehot_fp64_d32": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
+    "onehot_fp64_d64": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
     "dense_fp64_d32": CaseMetadata("fp64", "dense", "dense", "D32"),
     "dense_fp64_d64": CaseMetadata("fp64", "dense", "dense", "D64"),
 }
@@ -90,7 +87,7 @@ def case_metadata(mode: str) -> CaseMetadata:
             field_family = family
             break
     workload = "onehot" if "onehot" in mode else "dense"
-    workload_label = "one-hot" if workload == "onehot" else "dense"
+    workload_label = ONEHOT_WORKLOAD_LABEL if workload == "onehot" else "dense"
     config_match = re.search(r"_d(\d+)$", mode)
     config = f"D{config_match.group(1)}" if config_match else "custom"
     return CaseMetadata(field_family, workload, workload_label, config)
@@ -113,7 +110,7 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument(
         "--output-dir", required=True, help="Directory where logs and summary.json are written."
     )
-    run_parser.add_argument("--mode", default="onehot", help="Benchmark mode.")
+    run_parser.add_argument("--mode", default="onehot_fp128_d32", help="Benchmark mode.")
     run_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     run_parser.add_argument(
         "--num-polys",
@@ -604,12 +601,12 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
     num_polys = int(normalized.get("num_polys", 1))
     metadata = case_metadata(mode)
     normalized["num_polys"] = num_polys
-    normalized["case_id"] = str(normalized.get("case_id", case_id(mode, num_vars, num_polys)))
+    normalized["case_id"] = case_id(mode, num_vars, num_polys)
     normalized["benchmark"] = benchmark_name(mode, num_vars, num_polys)
-    normalized["field_family"] = str(normalized.get("field_family", metadata.field_family))
-    normalized["workload"] = str(normalized.get("workload", metadata.workload))
-    normalized["workload_label"] = str(normalized.get("workload_label", metadata.workload_label))
-    normalized["config"] = str(normalized.get("config", metadata.config))
+    normalized["field_family"] = metadata.field_family
+    normalized["workload"] = metadata.workload
+    normalized["workload_label"] = metadata.workload_label
+    normalized["config"] = metadata.config
     return normalized
 
 

@@ -29,22 +29,6 @@ fn fp128_prime_label() -> String {
     }
 }
 
-fn best_full_d(nv: usize) -> usize {
-    let key = AkitaScheduleLookupKey::singleton(nv);
-    fp128::best_full_schedule(key)
-        .expect("best full schedule selection")
-        .map(|selection| selection.preset.ring_dimension())
-        .unwrap_or(32)
-}
-
-fn best_onehot_d(nv: usize, num_polys: usize) -> usize {
-    let key = AkitaScheduleLookupKey::new(nv, num_polys, num_polys, 1);
-    fp128::best_onehot_schedule(key)
-        .expect("best onehot schedule selection")
-        .map(|selection| selection.preset.ring_dimension())
-        .unwrap_or(32)
-}
-
 fn run_dense_mode<
     const D: usize,
     Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
@@ -238,40 +222,36 @@ struct ProfileMode {
 
 const PROFILE_MODES: &[ProfileMode] = &[
     ProfileMode {
-        name: "full",
-        run: run_profile_full,
+        name: "dense_fp128_d32",
+        run: run_profile_dense_fp128_d32,
     },
     ProfileMode {
-        name: "onehot",
-        run: run_profile_onehot,
+        name: "dense_fp128_d64",
+        run: run_profile_dense_fp128_d64,
     },
     ProfileMode {
-        name: "full_d64",
-        run: run_profile_full_d64,
+        name: "onehot_fp128_d32",
+        run: run_profile_onehot_fp128_d32,
     },
     ProfileMode {
-        name: "onehot_d64",
-        run: run_profile_onehot_d64,
+        name: "onehot_fp128_d64",
+        run: run_profile_onehot_fp128_d64,
     },
     ProfileMode {
-        name: "full_d32",
-        run: run_profile_full_d32,
+        name: "dense_fp16_d32",
+        run: run_profile_dense_fp16_d32,
     },
     ProfileMode {
-        name: "onehot_d32",
-        run: run_profile_onehot_d32,
+        name: "dense_fp16_d64",
+        run: run_profile_dense_fp16_d64,
     },
     ProfileMode {
-        name: "onehot_fp32",
-        run: run_profile_onehot_fp32,
+        name: "onehot_fp16_d32",
+        run: run_profile_onehot_fp16_d32,
     },
     ProfileMode {
-        name: "onehot_fp32_d32",
-        run: run_profile_onehot_fp32_d32,
-    },
-    ProfileMode {
-        name: "onehot_fp32_d64",
-        run: run_profile_onehot_fp32_d64,
+        name: "onehot_fp16_d64",
+        run: run_profile_onehot_fp16_d64,
     },
     ProfileMode {
         name: "dense_fp32_d32",
@@ -282,32 +262,12 @@ const PROFILE_MODES: &[ProfileMode] = &[
         run: run_profile_dense_fp32_d64,
     },
     ProfileMode {
-        name: "onehot_fp16_d32",
-        run: run_profile_onehot_fp16_d32,
+        name: "onehot_fp32_d32",
+        run: run_profile_onehot_fp32_d32,
     },
     ProfileMode {
-        name: "full_fp16_d32",
-        run: run_profile_full_fp16_d32,
-    },
-    ProfileMode {
-        name: "onehot_fp16_d64",
-        run: run_profile_onehot_fp16_d64,
-    },
-    ProfileMode {
-        name: "full_fp16_d64",
-        run: run_profile_full_fp16_d64,
-    },
-    ProfileMode {
-        name: "onehot_fp64",
-        run: run_profile_onehot_fp64,
-    },
-    ProfileMode {
-        name: "onehot_fp64_d32",
-        run: run_profile_onehot_fp64_d32,
-    },
-    ProfileMode {
-        name: "onehot_fp64_d64",
-        run: run_profile_onehot_fp64_d64,
+        name: "onehot_fp32_d64",
+        run: run_profile_onehot_fp32_d64,
     },
     ProfileMode {
         name: "dense_fp64_d32",
@@ -317,29 +277,33 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "dense_fp64_d64",
         run: run_profile_dense_fp64_d64,
     },
+    ProfileMode {
+        name: "onehot_fp64_d32",
+        run: run_profile_onehot_fp64_d32,
+    },
+    ProfileMode {
+        name: "onehot_fp64_d64",
+        run: run_profile_onehot_fp64_d64,
+    },
 ];
 
 const ALL_PROFILE_MODE_NAMES: &[&str] = &[
-    "full",
-    "onehot",
-    "full_d64",
-    "onehot_d64",
-    "full_d32",
-    "onehot_d32",
-    "onehot_fp32",
-    "onehot_fp32_d32",
-    "onehot_fp32_d64",
+    "dense_fp128_d32",
+    "dense_fp128_d64",
+    "onehot_fp128_d32",
+    "onehot_fp128_d64",
+    "dense_fp16_d32",
+    "dense_fp16_d64",
+    "onehot_fp16_d32",
+    "onehot_fp16_d64",
     "dense_fp32_d32",
     "dense_fp32_d64",
-    "onehot_fp16_d32",
-    "full_fp16_d32",
-    "onehot_fp16_d64",
-    "full_fp16_d64",
-    "onehot_fp64",
-    "onehot_fp64_d32",
-    "onehot_fp64_d64",
+    "onehot_fp32_d32",
+    "onehot_fp32_d64",
     "dense_fp64_d32",
     "dense_fp64_d64",
+    "onehot_fp64_d32",
+    "onehot_fp64_d64",
 ];
 
 fn assert_singleton_mode(mode: &str, num_polys: usize) {
@@ -349,14 +313,14 @@ fn assert_singleton_mode(mode: &str, num_polys: usize) {
     );
 }
 
-fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
+fn fp128_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
     let onehot_k = onehot_k_for_num_vars(nv);
     let prime = fp128_prime_label();
     if num_polys == 1 {
-        format!("=== onehot_d{d} ({prime}, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
+        format!("=== onehot_fp128_d{d} (fp128, {prime}, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
     } else {
         format!(
-            "=== onehot_d{d} batched ({prime}, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
+            "=== onehot_fp128_d{d} batched (fp128, {prime}, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
         )
     }
 }
@@ -364,10 +328,10 @@ fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
 fn small_field_onehot_title(field_label: &str, d: usize, nv: usize, num_polys: usize) -> String {
     let onehot_k = onehot_k_for_num_vars(nv);
     if num_polys == 1 {
-        format!("=== onehot_{field_label} ({field_label}, D={d}, 1-of-{onehot_k}, generated small-field schedule) ===")
+        format!("=== onehot_{field_label}_d{d} ({field_label}, D={d}, 1-of-{onehot_k}, generated small-field schedule) ===")
     } else {
         format!(
-            "=== onehot_{field_label} batched ({field_label}, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}, generated small-field schedule) ==="
+            "=== onehot_{field_label}_d{d} batched ({field_label}, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}, generated small-field schedule) ==="
         )
     }
 }
@@ -378,72 +342,38 @@ fn small_field_dense_title(field_label: &str, d: usize) -> String {
     )
 }
 
-fn run_profile_full(nv: usize, num_polys: usize) {
-    assert_singleton_mode("full", num_polys);
-    let d = best_full_d(nv);
-    let prime = fp128_prime_label();
-    let title = format!("=== full ({prime}, D={d}, dense) ===");
-    match d {
-        32 => run_dense_mode::<32, fp128::D32Full>("full", &title, nv),
-        64 => run_dense_mode::<64, fp128::D64Full>("full", &title, nv),
-        _ => unreachable!(),
-    }
-}
-
-fn run_profile_onehot(nv: usize, num_polys: usize) {
-    let onehot_k = onehot_k_for_num_vars(nv);
-    let d = best_onehot_d(nv, num_polys);
-    let prime = fp128_prime_label();
-    let title = if num_polys == 1 {
-        format!("=== onehot ({prime}, D={d}, 1-of-{onehot_k}) ===")
-    } else {
-        format!(
-            "=== onehot batched ({prime}, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
-        )
-    };
-    match d {
-        32 => run_onehot_mode::<32, fp128::D32OneHot>("onehot", &title, nv, num_polys),
-        64 => run_onehot_mode::<64, fp128::D64OneHot>("onehot", &title, nv, num_polys),
-        _ => unreachable!(),
-    }
-}
-
-fn run_profile_full_d64(nv: usize, num_polys: usize) {
+fn run_profile_dense_fp128_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64Full;
-    assert_singleton_mode("full_d64", num_polys);
+    assert_singleton_mode("dense_fp128_d64", num_polys);
     let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
-        "full_d64",
-        &format!("=== full_d64 ({prime}, D=64 dense, log_commit_bound=128) ==="),
+        "dense_fp128_d64",
+        &format!("=== dense_fp128_d64 (fp128, {prime}, D=64 dense, log_commit_bound=128) ==="),
         nv,
     );
 }
 
-fn run_profile_onehot_d64(nv: usize, num_polys: usize) {
+fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
-    let title = fixed_onehot_title(64, nv, num_polys);
-    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_d64", &title, nv, num_polys);
+    let title = fp128_onehot_title(64, nv, num_polys);
+    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
 }
 
-fn run_profile_full_d32(nv: usize, num_polys: usize) {
+fn run_profile_dense_fp128_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32Full;
-    assert_singleton_mode("full_d32", num_polys);
+    assert_singleton_mode("dense_fp128_d32", num_polys);
     let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
-        "full_d32",
-        &format!("=== full_d32 ({prime}, D=32 dense, log_commit_bound=128) ==="),
+        "dense_fp128_d32",
+        &format!("=== dense_fp128_d32 (fp128, {prime}, D=32 dense, log_commit_bound=128) ==="),
         nv,
     );
 }
 
-fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
+fn run_profile_onehot_fp128_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32OneHot;
-    let title = fixed_onehot_title(32, nv, num_polys);
-    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_d32", &title, nv, num_polys);
-}
-
-fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp32_d32_with_label("onehot_fp32", nv, num_polys);
+    let title = fp128_onehot_title(32, nv, num_polys);
+    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d32", &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp32_d32(nv: usize, num_polys: usize) {
@@ -486,11 +416,11 @@ fn run_profile_onehot_fp16_d32(nv: usize, num_polys: usize) {
     run_onehot_mode_for::<fp16::Field, { Cfg::D }, Cfg>("onehot_fp16_d32", &title, nv, num_polys);
 }
 
-fn run_profile_full_fp16_d32(nv: usize, num_polys: usize) {
+fn run_profile_dense_fp16_d32(nv: usize, num_polys: usize) {
     type Cfg = fp16::D32Full;
-    assert_singleton_mode("full_fp16_d32", num_polys);
+    assert_singleton_mode("dense_fp16_d32", num_polys);
     let title = small_field_dense_title("fp16", Cfg::D);
-    run_dense_mode_for::<fp16::Field, { Cfg::D }, Cfg>("full_fp16_d32", &title, nv);
+    run_dense_mode_for::<fp16::Field, { Cfg::D }, Cfg>("dense_fp16_d32", &title, nv);
 }
 
 fn run_profile_onehot_fp16_d64(nv: usize, num_polys: usize) {
@@ -499,15 +429,11 @@ fn run_profile_onehot_fp16_d64(nv: usize, num_polys: usize) {
     run_onehot_mode_for::<fp16::Field, { Cfg::D }, Cfg>("onehot_fp16_d64", &title, nv, num_polys);
 }
 
-fn run_profile_full_fp16_d64(nv: usize, num_polys: usize) {
+fn run_profile_dense_fp16_d64(nv: usize, num_polys: usize) {
     type Cfg = fp16::D64Full;
-    assert_singleton_mode("full_fp16_d64", num_polys);
+    assert_singleton_mode("dense_fp16_d64", num_polys);
     let title = small_field_dense_title("fp16", Cfg::D);
-    run_dense_mode_for::<fp16::Field, { Cfg::D }, Cfg>("full_fp16_d64", &title, nv);
-}
-
-fn run_profile_onehot_fp64(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp64_d64_with_label("onehot_fp64", nv, num_polys);
+    run_dense_mode_for::<fp16::Field, { Cfg::D }, Cfg>("dense_fp16_d64", &title, nv);
 }
 
 fn run_profile_onehot_fp64_d32(nv: usize, num_polys: usize) {

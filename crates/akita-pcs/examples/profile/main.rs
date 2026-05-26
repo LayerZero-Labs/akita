@@ -47,7 +47,7 @@ fn main() {
         .unwrap_or(25);
     let num_polys = env_usize("AKITA_NUM_POLYS", 1);
 
-    let mode = env::var("AKITA_MODE").unwrap_or_else(|_| "full".to_string());
+    let mode = env::var("AKITA_MODE").unwrap_or_else(|_| "dense_fp128_d32".to_string());
     let enable_trace = env_flag("AKITA_PROFILE_TRACE", true);
     let enable_ansi = env_flag("AKITA_PROFILE_ANSI", true);
     let span_events = if env_flag("AKITA_PROFILE_SPAN_CLOSES", true) {

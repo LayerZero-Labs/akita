@@ -21,15 +21,15 @@ The benchmark matrix is:
 
 | Field family | Workload | Variables | Polys | Notes |
 | --- | --- | ---: | ---: | --- |
-| fp16 | one-hot | 32 | 1 | Fixed generated small-field D32 schedule. |
+| fp16 | 1-of-256 one-hot | 32 | 1 | Fixed generated small-field D32 schedule. |
 | fp16 | dense | 26 | 1 | Fixed generated small-field D32 schedule. |
-| fp32 | one-hot | 32 | 1 | Fixed generated small-field D32 schedule. |
+| fp32 | 1-of-256 one-hot | 32 | 1 | Fixed generated small-field D32 schedule. |
 | fp32 | dense | 26 | 1 | Fixed generated small-field D32 schedule. |
-| fp64 | one-hot | 32 | 1 | Fixed generated small-field D32 schedule. |
+| fp64 | 1-of-256 one-hot | 32 | 1 | Fixed generated small-field D32 schedule. |
 | fp64 | dense | 26 | 1 | D32 target; must complete once PR #105's eq-table sizing fix is merged. |
-| fp128 | one-hot | 32 | 1 | Existing adaptive fp128 one-hot profile behavior. |
-| fp128 | dense | 26 | 1 | Existing adaptive fp128 full/dense profile behavior, represented as dense in reports. |
-| fp128 | one-hot batched | 30 | 4 | Preserve current same-point batched one-hot coverage. |
+| fp128 | 1-of-256 one-hot | 32 | 1 | Explicit fp128 D32 profile mode. |
+| fp128 | dense | 26 | 1 | Explicit fp128 D32 profile mode. |
+| fp128 | 1-of-256 one-hot batched | 30 | 4 | Preserve current same-point batched one-hot coverage on explicit fp128 D32 mode. |
 
 The implementation affects benchmark infrastructure only:
 
@@ -53,7 +53,7 @@ It also includes a targeted test cleanup:
 5. Dense fp64 at `nv=26` must produce and verify a proof after PR #105 is merged. It must not panic at `crates/akita-pcs/examples/profile/workload.rs` during `batched_prove`.
 6. PR comments stay readable for the full matrix. Detailed per-level tables must remain available in artifacts, but they should not dominate the default PR comment.
 7. The profile report has stable machine-readable output. `summary.json` remains the canonical artifact, and a flat `summary.csv` or equivalent tabular artifact must be emitted for spreadsheet-friendly inspection.
-8. Benchmark mode naming in user-facing output must distinguish field family and workload. Dense workloads should be displayed as dense even when existing internal fp128 names use "full".
+8. Benchmark mode naming in user-facing output must distinguish field family, workload, and ring dimension. One-hot workloads should display their `1-of-256` sparsity. Dense workloads should be named dense in both checked-in profile modes and reports.
 9. Regular debug E2E tests should not duplicate the full fp128 batched one-hot `nv30 x np4` benchmark shape. The oversized-tail schedule invariant should be checked at schedule/materialization level, while recursive-suffix truncation rejection should stay covered by a smaller E2E fixture.
 
 ### Non-Goals
@@ -133,7 +133,7 @@ Performance expectations:
 - Render the PR comment as a single matrix table first, followed by short notes about baselines, samples, and artifacts.
 - Move verbose per-level tables to `report.md` or per-case markdown artifacts, linked or named from the comment.
 
-`crates/akita-pcs/examples/profile/modes.rs` owns profile mode dispatch. The implementation should make dense/small-field naming consistent enough that report generation does not need fragile special cases. If the code keeps internal names such as `full_fp16_d64`, the report must still present them as dense workloads. If names are changed, perform a full cutover of checked-in mode lists and workflow references.
+`crates/akita-pcs/examples/profile/modes.rs` owns profile mode dispatch. Profile mode names should be explicit about field family, workload, and ring dimension, such as `onehot_fp128_d32` and `dense_fp128_d32`; do not keep compatibility aliases for old bare names.
 
 `crates/akita-pcs/examples/profile/workload.rs` owns the dense profile proof path. The dense fp64 panic should be fixed at the root cause of the shape mismatch, not by skipping verification, lowering `nv`, adding a special failure waiver, or excluding fp64 dense from the matrix.
 
@@ -184,7 +184,7 @@ Suggested implementation order:
 Risks to resolve first:
 
 - The dense fp64 panic is blocked on PR #105's eq-table sizing fix; do not land a benchmark-only workaround for it.
-- Renaming `full` to `dense` can accidentally break mode dispatch if all checked-in call sites are not updated together.
+- Renaming profile modes can accidentally break dispatch if all checked-in call sites are not updated together.
 - The proof-size baseline for newly added cases will be absent until main has a successful artifact with the new matrix; the threshold logic must continue to skip missing baseline cases.
 
 ## References
