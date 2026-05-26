@@ -136,7 +136,7 @@ cargo fmt --all --check
 taplo fmt --check
 cargo clippy --all --all-targets --all-features -- -D warnings
 cargo clippy --all --all-targets --no-default-features -- -D warnings
-cargo nextest run --no-default-features --features parallel,planner,disk-persistence
+cargo nextest run --no-default-features --features parallel,disk-persistence
 cargo nextest run --all-features
 cargo doc -q --no-deps --all-features
 cargo deny check bans licenses sources advisories

@@ -710,6 +710,12 @@ impl<const P: u32> PackedFp32Neon<P> {
         carry_hi: uint64x2_t,
     ) -> uint32x4_t {
         unsafe {
+            if Self::BITS == 31 {
+                return Self::solinas_reduce_with_carry_bits31(
+                    prod_lo, prod_hi, carry_lo, carry_hi,
+                );
+            }
+
             let mask = vdupq_n_u64(Self::MASK_U64);
             let neg_bits = vdupq_n_s64(-(Self::BITS as i64));
             let c = vdup_n_u32(Self::C);
@@ -770,6 +776,71 @@ impl<const P: u32> PackedFp32Neon<P> {
 
                 vcombine_u32(vmovn_u64(out_lo), vmovn_u64(out_hi))
             }
+        }
+    }
+
+    /// `solinas_reduce_with_carry` specialised for `BITS == 31` (Mersenne31
+    /// and any pseudo-Mersenne `Fp32<P>` with `P = 2^31 - C`). Sibling of
+    /// `solinas_reduce_bits31`: a separate function that swaps the
+    /// variable-amount `vshlq_u64(.., neg_bits)` for the immediate-shift
+    /// `vshrq_n_u64::<31>`, reducing shift-count register pressure and
+    /// dispatch port pressure. Since `BITS == 31` implies `BITS < 32`, the
+    /// `else` branch of the canonicalisation can be dropped.
+    #[inline(always)]
+    fn solinas_reduce_with_carry_bits31(
+        prod_lo: uint64x2_t,
+        prod_hi: uint64x2_t,
+        carry_lo: uint64x2_t,
+        carry_hi: uint64x2_t,
+    ) -> uint32x4_t {
+        unsafe {
+            let mask = vdupq_n_u64((1u64 << 31) - 1);
+            let c = vdup_n_u32(Self::C);
+
+            // Fold 1 with carry correction
+            let f1_lo = vaddq_u64(
+                vaddq_u64(
+                    vandq_u64(prod_lo, mask),
+                    Self::mul_c_u64(vshrq_n_u64::<31>(prod_lo), c),
+                ),
+                Self::carry_correction(carry_lo),
+            );
+            let f1_hi = vaddq_u64(
+                vaddq_u64(
+                    vandq_u64(prod_hi, mask),
+                    Self::mul_c_u64(vshrq_n_u64::<31>(prod_hi), c),
+                ),
+                Self::carry_correction(carry_hi),
+            );
+
+            // Fold 2
+            let f2_lo = vaddq_u64(
+                vandq_u64(f1_lo, mask),
+                Self::mul_c_u64(vshrq_n_u64::<31>(f1_lo), c),
+            );
+            let f2_hi = vaddq_u64(
+                vandq_u64(f1_hi, mask),
+                Self::mul_c_u64(vshrq_n_u64::<31>(f1_hi), c),
+            );
+
+            let (reduced_lo, reduced_hi) = if Self::TWO_FOLD_FOUR_PRODUCT_OK {
+                (f2_lo, f2_hi)
+            } else {
+                (
+                    vaddq_u64(
+                        vandq_u64(f2_lo, mask),
+                        Self::mul_c_u64(vshrq_n_u64::<31>(f2_lo), c),
+                    ),
+                    vaddq_u64(
+                        vandq_u64(f2_hi, mask),
+                        Self::mul_c_u64(vshrq_n_u64::<31>(f2_hi), c),
+                    ),
+                )
+            };
+
+            let result = vcombine_u32(vmovn_u64(reduced_lo), vmovn_u64(reduced_hi));
+            let p = vdupq_n_u32(P);
+            vminq_u32(result, vsubq_u32(result, p))
         }
     }
 }

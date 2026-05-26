@@ -3,6 +3,7 @@ members = [
   "crates/akita-algebra",
   "crates/akita-challenges",
   "crates/akita-config",
+  "crates/akita-derive",
   "crates/akita-field",
   "crates/akita-pcs",
   "crates/akita-scheme",

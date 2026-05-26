@@ -103,7 +103,10 @@ where
     assert_eq!(Cfg::D, D);
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
-    let layout = Cfg::commitment_layout(poly_nv).expect("layout");
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1).expect("singleton incidence"),
+    )
+    .expect("layout");
 
     let mut rng = StdRng::seed_from_u64(0xdead_beef_0000 + poly_nv as u64);
     let evals: Vec<F> = (0..1usize << poly_nv)
@@ -169,7 +172,10 @@ where
     assert_eq!(Cfg::D, D);
 
     let k = D;
-    let layout = Cfg::commitment_layout(poly_nv).expect("layout");
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1).expect("singleton incidence"),
+    )
+    .expect("layout");
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(
         total_ring * k,
@@ -232,7 +238,6 @@ where
 /// Batched dense round-trip: commit `commit_batch` dense polynomials of
 /// `poly_nv` variables into a single grouped commitment, then run
 /// `batched_prove`/`batched_verify` at one shared opening point.
-#[cfg(feature = "planner")]
 fn run_dense_batched_e2e<Cfg, const D: usize>(
     setup_nv: usize,
     setup_polys: usize,
@@ -245,7 +250,10 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     assert_eq!(Cfg::D, D);
     assert!(commit_batch >= 1);
 
-    let layout = Cfg::commitment_layout(poly_nv).expect("layout");
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(poly_nv, 1).expect("singleton incidence"),
+    )
+    .expect("layout");
     let polys: Vec<DensePoly<F, D>> = (0..commit_batch)
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe_0000 + idx as u64);
@@ -311,7 +319,6 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 /// the layout the prover will use, which is
 /// [`akita_batched_root_layout(nv, setup_polys)`] — i.e., sized for the
 /// setup's `max_num_batched_polys`, not for a lone poly.
-#[cfg(feature = "planner")]
 fn run_onehot_batched_e2e<Cfg, const D: usize>(
     setup_nv: usize,
     setup_polys: usize,
@@ -325,7 +332,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     assert!(commit_batch >= 1);
 
     let k = D;
-    let layout = akita_config::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
+    let layout = akita_planner::test_utils::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
         .expect("batched layout");
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(total_ring * k, 1usize << poly_nv);
@@ -445,7 +452,6 @@ macro_rules! preset_module {
             /// explicitly rejects this with `AkitaError::InvalidInput("commit
             /// received N polynomials but setup supports at most M")`, which
             /// our `.expect("batched … commit")` turns into a panic.
-            #[cfg(feature = "planner")]
             #[test]
             #[should_panic(expected = "commit received 2 polynomials but setup supports at most 1")]
             fn small_setup_batch_panics() {
@@ -457,7 +463,6 @@ macro_rules! preset_module {
 
             // --- Group 3: larger setup than what commit/prove/verify use ----
 
-            #[cfg(feature = "planner")]
             #[test]
             fn large_setup_nv_passes() {
                 init_rayon_pool();
@@ -466,7 +471,6 @@ macro_rules! preset_module {
                 });
             }
 
-            #[cfg(feature = "planner")]
             #[test]
             fn large_setup_batch_passes() {
                 init_rayon_pool();
@@ -479,37 +483,40 @@ macro_rules! preset_module {
     };
 }
 
+// Wrap every preset in `PlannerCfg` so multipoint/batched setup sizing falls
+// through to DP. Tables-only configs (`D128*` has no table at all) would
+// otherwise reject these sizing iterations.
 preset_module!(
     d128_full,
-    fp128::D128Full,
+    akita_planner::test_utils::PlannerCfg<fp128::D128Full>,
     128,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
     d64_full,
-    fp128::D64Full,
+    akita_planner::test_utils::PlannerCfg<fp128::D64Full>,
     64,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
     d64_onehot,
-    fp128::D64OneHot,
+    akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>,
     64,
     run_onehot_e2e,
     run_onehot_batched_e2e
 );
 preset_module!(
     d32_full,
-    fp128::D32Full,
+    akita_planner::test_utils::PlannerCfg<fp128::D32Full>,
     32,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
     d32_onehot,
-    fp128::D32OneHot,
+    akita_planner::test_utils::PlannerCfg<fp128::D32OneHot>,
     32,
     run_onehot_e2e,
     run_onehot_batched_e2e

@@ -261,11 +261,14 @@ mod tests {
     #[test]
     fn ring_multiplier_root_rows_match_direct_relation_claim() {
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
+        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let lp = Cfg::commitment_layout(NV).expect("lp");
+        let lp = Cfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+        )
+        .expect("lp");
 
         let mut rng = StdRng::seed_from_u64(0x5151_5eed);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -386,11 +389,14 @@ mod tests {
     #[test]
     fn full_root_rows_match_direct_relation_claim() {
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
+        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let lp = Cfg::commitment_layout(NV).expect("lp");
+        let lp = Cfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+        )
+        .expect("lp");
 
         let mut rng = StdRng::seed_from_u64(0x5eed_cafe);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -540,11 +546,14 @@ mod tests {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
+        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let level_params = Cfg::commitment_layout(NV).expect("commitment layout");
+        let level_params = Cfg::get_params_for_batched_commitment(
+            &akita_types::ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
+        )
+        .expect("commitment layout");
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..(1usize << NV))
