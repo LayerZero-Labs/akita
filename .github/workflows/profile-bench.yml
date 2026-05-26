@@ -310,20 +310,31 @@ jobs:
           AKITA_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
         run: |
           mkdir -p "$AKITA_BENCH_ARTIFACT_DIR"
-          if [ ! -f "$AKITA_BENCH_ARTIFACT_DIR/summary.json" ]; then
-            echo "Benchmark summary not found; benchmark step likely failed." > "$AKITA_BENCH_REPORT"
-            cp "$AKITA_BENCH_REPORT" "$AKITA_BENCH_COMMENT"
-          else
-            python3 scripts/profile_bench_report.py render \
-              "$AKITA_BENCH_ARTIFACT_DIR/summary.json" \
-              --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
-              --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" > "$AKITA_BENCH_REPORT"
-            python3 scripts/profile_bench_report.py render \
-              "$AKITA_BENCH_ARTIFACT_DIR/summary.json" \
-              --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
-              --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" \
-              --compact > "$AKITA_BENCH_COMMENT"
+          summary_path="$AKITA_BENCH_ARTIFACT_DIR/summary.json"
+          if [ ! -f "$summary_path" ]; then
+            case_args=()
+            while IFS= read -r case_spec; do
+              if [ -n "$case_spec" ]; then
+                case_args+=(--case "$case_spec")
+              fi
+            done <<< "$AKITA_BENCH_CASES"
+
+            python3 scripts/profile_bench_report.py failure-summary \
+              --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
+              --mode "$AKITA_BENCH_MODE" \
+              --failure-phase "benchmark workflow" \
+              --error "Benchmark step failed before writing summary.json." \
+              "${case_args[@]}"
           fi
+          python3 scripts/profile_bench_report.py render \
+            "$summary_path" \
+            --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
+            --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" > "$AKITA_BENCH_REPORT"
+          python3 scripts/profile_bench_report.py render \
+            "$summary_path" \
+            --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
+            --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" \
+            --compact > "$AKITA_BENCH_COMMENT"
           cp "$AKITA_BENCH_REPORT" "$AKITA_BENCH_ARTIFACT_DIR/report.md"
           cat "$AKITA_BENCH_REPORT" >> "$GITHUB_STEP_SUMMARY"
           {

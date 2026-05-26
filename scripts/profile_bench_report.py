@@ -154,6 +154,41 @@ def parse_args() -> argparse.Namespace:
         help="Render only the matrix-first PR-comment summary.",
     )
 
+    failure_parser = subparsers.add_parser(
+        "failure-summary",
+        help="Write a structured failure summary when the benchmark step produced none.",
+    )
+    failure_parser.add_argument(
+        "--output-dir", required=True, help="Directory where summary files are written."
+    )
+    failure_parser.add_argument("--mode", default="onehot_fp128_d32", help="Benchmark mode.")
+    failure_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
+    failure_parser.add_argument(
+        "--num-polys",
+        type=int,
+        default=1,
+        help="Number of same-point polynomials in the benchmark case.",
+    )
+    failure_parser.add_argument(
+        "--case",
+        action="append",
+        default=[],
+        help=(
+            "Benchmark case as NUM_VARS:NUM_POLYS or MODE:NUM_VARS:NUM_POLYS. "
+            "Can be repeated."
+        ),
+    )
+    failure_parser.add_argument(
+        "--failure-phase",
+        default="benchmark workflow",
+        help="Failure phase to show in the rendered report.",
+    )
+    failure_parser.add_argument(
+        "--error",
+        default="benchmark step failed before writing summary.json",
+        help="Error message to show in the rendered report.",
+    )
+
     return parser.parse_args()
 
 
@@ -588,6 +623,47 @@ def run_benchmark(args: argparse.Namespace) -> int:
     )
     write_summary_csv(output_dir / "summary.csv", aggregate_summary["cases"])
     return overall_return_code
+
+
+def write_failure_summary(args: argparse.Namespace) -> int:
+    output_dir = pathlib.Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    collected_at = datetime.now(timezone.utc).isoformat()
+
+    cases = []
+    for case in configured_cases(args):
+        metadata = case_metadata(case.mode)
+        cases.append(
+            {
+                "schema_version": 3,
+                "benchmark": benchmark_name(case.mode, case.num_vars, case.num_polys),
+                "mode": case.mode,
+                "field_family": metadata.field_family,
+                "workload": metadata.workload,
+                "workload_label": metadata.workload_label,
+                "config": metadata.config,
+                "num_vars": case.num_vars,
+                "num_polys": case.num_polys,
+                "case_id": case.case_id,
+                "collected_at": collected_at,
+                "runs": 0,
+                "samples": [],
+                "exit_code": 1,
+                "failure_phase": args.failure_phase,
+                "error": args.error,
+            }
+        )
+
+    aggregate_summary: dict[str, object] = {
+        "schema_version": 2,
+        "generated_at": collected_at,
+        "cases": cases,
+    }
+    write_text(
+        output_dir / "summary.json", json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n"
+    )
+    write_summary_csv(output_dir / "summary.csv", cases)
+    return 0
 
 
 def load_summary(path: pathlib.Path) -> dict[str, object]:
@@ -1148,6 +1224,8 @@ def main() -> int:
         return run_benchmark(args)
     if args.command == "render":
         return render_report(args)
+    if args.command == "failure-summary":
+        return write_failure_summary(args)
     raise ValueError(f"unsupported command: {args.command}")
 
 
