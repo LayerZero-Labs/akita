@@ -9,7 +9,7 @@
 
 ## Summary
 
-Extend the profile benchmark CI from a small fp128/fp32 sample into a compact cross-prime coverage matrix that times one-hot and dense workloads for fp16, fp32, fp64, and fp128. The workflow should reduce samples from 5 to 3, keep the existing fp128 batched one-hot coverage, fix the current dense fp64 profile failure, and replace the long per-case PR comment with a matrix-first report that remains readable as coverage grows.
+Extend the profile benchmark CI from a small fp128/fp32 sample into a compact cross-prime coverage matrix that times one-hot and dense workloads for fp16, fp32, fp64, and fp128. The workflow should reduce samples from 5 to 3, keep the existing fp128 batched one-hot coverage, include the dense fp64 cell once the eq-table sizing fix from PR #105 is available, replace the long per-case PR comment with a matrix-first report that remains readable as coverage grows, and slim regular test coverage that duplicated the heavy batched one-hot benchmark shape.
 
 ## Intent
 
@@ -26,7 +26,7 @@ The benchmark matrix is:
 | fp32 | one-hot | 32 | 1 | Fixed generated small-field schedule. |
 | fp32 | dense | 26 | 1 | Fixed generated small-field schedule. |
 | fp64 | one-hot | 32 | 1 | Fixed generated small-field schedule. |
-| fp64 | dense | 26 | 1 | Must complete without the current dense profile size panic. |
+| fp64 | dense | 26 | 1 | Must complete once PR #105's eq-table sizing fix is merged. |
 | fp128 | one-hot | 32 | 1 | Existing adaptive fp128 one-hot profile behavior. |
 | fp128 | dense | 26 | 1 | Existing adaptive fp128 full/dense profile behavior, represented as dense in reports. |
 | fp128 | one-hot batched | 30 | 4 | Preserve current same-point batched one-hot coverage. |
@@ -39,16 +39,22 @@ The implementation affects benchmark infrastructure only:
 - `crates/akita-pcs/examples/profile/workload.rs`
 - `crates/akita-pcs/examples/profile/report.rs`
 
+It also includes a targeted test cleanup:
+
+- `crates/akita-config/src/proof_optimized.rs`
+- `crates/akita-pcs/tests/akita_e2e.rs`
+
 ### Invariants
 
 1. Benchmark coverage is explicit and reproducible. The CI workflow must list the benchmark cases directly or derive them from one checked-in matrix definition; it must not hide case expansion in ad hoc shell logic.
 2. Each successful case emits setup, commit, prove, verify, proof-size, proof-accounting, proof-level, field-role, tail-shape, and RSS metrics. Missing required metrics remain a benchmark failure.
 3. Proof-size regression checks stay case-local. A case compares only to a baseline with the same stable case id; absent baseline cases are skipped rather than compared across fields or modes.
-4. The benchmark does not change proof, transcript, serialization, setup, schedule selection, or verifier semantics. Any code touched to fix dense fp64 must preserve existing prover/verifier consistency and pass the normal profile verification path.
-5. Dense fp64 at `nv=26` must produce and verify a proof. It must not panic at `crates/akita-pcs/examples/profile/workload.rs` during `batched_prove`.
+4. The benchmark does not change proof, transcript, serialization, setup, schedule selection, or verifier semantics. Dense fp64 depends on the eq-table sizing fix in PR #105; this spec should not add a profile-only workaround for that protocol-side issue.
+5. Dense fp64 at `nv=26` must produce and verify a proof after PR #105 is merged. It must not panic at `crates/akita-pcs/examples/profile/workload.rs` during `batched_prove`.
 6. PR comments stay readable for the full matrix. Detailed per-level tables must remain available in artifacts, but they should not dominate the default PR comment.
 7. The profile report has stable machine-readable output. `summary.json` remains the canonical artifact, and a flat `summary.csv` or equivalent tabular artifact must be emitted for spreadsheet-friendly inspection.
 8. Benchmark mode naming in user-facing output must distinguish field family and workload. Dense workloads should be displayed as dense even when existing internal fp128 names use "full".
+9. Regular debug E2E tests should not duplicate the full fp128 batched one-hot `nv30 x np4` benchmark shape. The oversized-tail schedule invariant should be checked at schedule/materialization level, while recursive-suffix truncation rejection should stay covered by a smaller E2E fixture.
 
 ### Non-Goals
 
@@ -64,7 +70,7 @@ The implementation affects benchmark infrastructure only:
 
 - [ ] `.github/workflows/profile-bench.yml` sets `AKITA_BENCH_RUNS` to `3`.
 - [ ] The profile benchmark workflow runs exactly the 9 matrix cases listed in this spec.
-- [ ] `dense fp64 nv26` completes setup, commit, prove, verify, proof summary, and proof accounting without panicking.
+- [ ] `dense fp64 nv26` completes setup, commit, prove, verify, proof summary, and proof accounting without panicking after PR #105 is merged.
 - [ ] Every case has a stable case id containing field family, workload, variable count, and polynomial count.
 - [ ] The rendered PR comment contains a compact matrix summary with one row per case and columns for status, setup, commit, prove, verify, max RSS, proof size, and baseline deltas when available.
 - [ ] Per-level schedule and proof-size breakdowns remain available in uploaded artifacts for every successful case.
@@ -72,6 +78,9 @@ The implementation affects benchmark infrastructure only:
 - [ ] A flat tabular artifact, preferably `summary.csv`, is uploaded with one row per case.
 - [ ] The proof-size regression threshold still compares matching case ids against the main baseline and ignores cases missing from older baselines.
 - [ ] The profile report handles partial failures by naming the failing case and phase clearly in the generated artifact.
+- [ ] `akita-pcs::akita_e2e` no longer runs the full `batched_onehot_4x30_keeps_folding_past_oversized_tail` proof in debug tests.
+- [ ] The fp128 batched one-hot `nv30 x np4` final-witness bound remains covered by a fast schedule-level test.
+- [ ] Recursive-suffix truncation rejection remains covered by a smaller batched one-hot E2E test.
 
 ### Testing Strategy
 
@@ -88,8 +97,9 @@ Focused implementation checks:
 - `python3 scripts/profile_bench_report.py render <tmpdir>/summary.json` to verify the compact report shape.
 - A synthetic baseline render check with at least one missing baseline case, proving new cases do not break comparison against older artifacts.
 - A parser/render fixture or unit-style script check proving that failed cases are represented with case id and phase instead of disappearing from the output.
+- A focused test check for the batched one-hot schedule-level bound and the smaller E2E truncation fixture.
 
-The dense fp64 fix should include either a focused regression test for the shape that panics today or an implementation note explaining why the release profile run is the correct regression check. The failure to guard against is:
+The dense fp64 fix is tracked in PR #105. This benchmark PR should merge/rebase that fix before final full-matrix verification. The failure to guard against is:
 
 ```text
 dense_fp64_* nv26: InvalidSize { expected: 16777216, actual: 33554432 }
@@ -144,6 +154,9 @@ Performance expectations:
 5. Add compatibility aliases for old mode names.
    Rejected under the repo's no-backward-compatibility policy. Benchmark mode names are internal developer tooling; checked-in references should be cut over directly.
 
+6. Keep the full `batched_onehot_4x30_keeps_folding_past_oversized_tail` test in `akita-pcs::akita_e2e`.
+   Rejected because the same production-shape case is intentionally preserved in benchmark CI, and the expensive debug test was mostly guarding a generated schedule bound that can be checked without producing a full proof.
+
 ## Documentation
 
 Update benchmark-facing documentation where appropriate:
@@ -151,6 +164,7 @@ Update benchmark-facing documentation where appropriate:
 - `README.md` or a profile-specific README section if one exists for CI benchmark expectations.
 - The PR body for the implementation should include the final matrix, run-count change, first full-matrix CI runtime, and any known runner variance.
 - If dense/full naming is changed, document the new names in the profile example help/error output or nearby source comments.
+- No user-facing documentation is needed for the test cleanup; the test names and assertions should make the replacement coverage clear.
 
 No paper, protocol, serialization, transcript, or verifier documentation changes are required because this spec changes benchmark coverage and reporting only.
 
@@ -159,16 +173,17 @@ No paper, protocol, serialization, transcript, or verifier documentation changes
 Suggested implementation order:
 
 1. Fix or normalize profile mode names and labels so field family and workload are available in summary data.
-2. Fix the dense fp64 `nv26` profile failure and verify it through the normal prove/verify path.
+2. Merge/rebase the dense fp64 eq-table sizing fix from PR #105 and verify it through the normal prove/verify path.
 3. Update the benchmark matrix and reduce `AKITA_BENCH_RUNS` from 5 to 3.
 4. Extend `profile_bench_report.py` to emit compact matrix markdown and `summary.csv`.
 5. Keep detailed per-level reports in artifacts rather than the default PR comment.
-6. Re-run focused local release profile checks.
-7. Let GitHub Actions produce the first full 9-case, 3-sample run and record the elapsed time in the implementation PR.
+6. Replace the heavy batched one-hot debug E2E coverage with a schedule-level bound test plus a smaller truncation E2E fixture.
+7. Re-run focused local release profile checks.
+8. Let GitHub Actions produce the first full 9-case, 3-sample run and record the elapsed time in the implementation PR.
 
 Risks to resolve first:
 
-- The dense fp64 panic may indicate an extension-field dense opening shape bug rather than a reporting issue.
+- The dense fp64 panic is blocked on PR #105's eq-table sizing fix; do not land a benchmark-only workaround for it.
 - Renaming `full` to `dense` can accidentally break mode dispatch if all checked-in call sites are not updated together.
 - The proof-size baseline for newly added cases will be absent until main has a successful artifact with the new matrix; the threshold logic must continue to skip missing baseline cases.
 
@@ -184,3 +199,4 @@ Risks to resolve first:
 - `crates/akita-pcs/examples/profile/report.rs`
 - PR #104 benchmark comment: `https://github.com/LayerZero-Labs/akita/pull/104#issuecomment-4527174043`
 - PR #104 benchmark run: `https://github.com/LayerZero-Labs/akita/actions/runs/26428943234`
+- Dense fp64 eq-table sizing fix: `https://github.com/LayerZero-Labs/akita/pull/105`

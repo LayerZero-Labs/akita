@@ -1,7 +1,5 @@
 use crate::report::print_layout;
-use crate::workload::{
-    onehot_k_for_num_vars, run_batched_onehot, run_dense, run_dense_for, run_onehot,
-};
+use crate::workload::{onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot};
 use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
@@ -51,6 +49,7 @@ fn run_dense_mode<
     const D: usize,
     Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
 >(
+    label: &str,
     title: &str,
     nv: usize,
 ) {
@@ -58,7 +57,7 @@ fn run_dense_mode<
     let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout);
-    run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
+    run_dense_for::<F, D, Cfg>(label, nv, &layout, plan.as_ref());
 }
 
 fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -381,8 +380,8 @@ fn run_profile_full(nv: usize, num_polys: usize) {
     let prime = fp128_prime_label();
     let title = format!("=== full ({prime}, D={d}, dense) ===");
     match d {
-        32 => run_dense_mode::<32, fp128::D32Full>(&title, nv),
-        64 => run_dense_mode::<64, fp128::D64Full>(&title, nv),
+        32 => run_dense_mode::<32, fp128::D32Full>("full", &title, nv),
+        64 => run_dense_mode::<64, fp128::D64Full>("full", &title, nv),
         _ => unreachable!(),
     }
 }
@@ -410,6 +409,7 @@ fn run_profile_full_d64(nv: usize, num_polys: usize) {
     assert_singleton_mode("full_d64", num_polys);
     let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
+        "full_d64",
         &format!("=== full_d64 ({prime}, D=64 dense, log_commit_bound=128) ==="),
         nv,
     );
@@ -426,6 +426,7 @@ fn run_profile_full_d32(nv: usize, num_polys: usize) {
     assert_singleton_mode("full_d32", num_polys);
     let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
+        "full_d32",
         &format!("=== full_d32 ({prime}, D=32 dense, log_commit_bound=128) ==="),
         nv,
     );

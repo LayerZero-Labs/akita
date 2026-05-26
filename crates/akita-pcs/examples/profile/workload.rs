@@ -1,5 +1,4 @@
 use crate::report::{emit_planned_schedule_summary, print_batched_proof_summary, report_timing};
-use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
 use akita_field::{
@@ -22,8 +21,6 @@ use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
-
-type F = fp128::Field;
 
 pub(crate) const ONEHOT_K: usize = 256;
 
@@ -357,34 +354,6 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
 
     run_prove::<FF, D, Cfg, _>(label, &setup, &poly, &original_pt, opening, plan);
-}
-
-pub(crate) fn run_dense<
-    const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
->(
-    nv: usize,
-    layout: &LevelParams,
-    plan: Option<&AkitaSchedulePlan>,
-) where
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-            F,
-            D,
-            ClaimField = F,
-            VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F, F>,
-            CommitHint = AkitaCommitmentHint<F, D>,
-        > + CommitmentVerifier<
-            F,
-            D,
-            ClaimField = F,
-            VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F, F>,
-        >,
-{
-    run_dense_for::<F, D, Cfg>("dense", nv, layout, plan);
 }
 
 pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
