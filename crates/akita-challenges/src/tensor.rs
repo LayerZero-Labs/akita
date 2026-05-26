@@ -456,7 +456,7 @@ impl TensorChallenges {
 
     /// Evaluate reduced tensor products in logical block order.
     ///
-    /// This mirrors [`FoldingChallenges::evals_at_pows`] for the tensor payload:
+    /// This mirrors [`Challenges::evals_at_pows`] for the tensor payload:
     /// it produces one field element per logical block without returning the
     /// intermediate [`IntegerChallenge`] values.
     ///

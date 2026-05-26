@@ -2518,34 +2518,6 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
-    fn aggregate_witnesses<F: FieldCore, const D: usize>(
-        witnesses: &[DecomposeFoldWitness<F, D>],
-    ) -> DecomposeFoldWitness<F, D> {
-        let mut acc = witnesses[0].clone();
-        for witness in &witnesses[1..] {
-            for (dst, src) in acc.z_pre.iter_mut().zip(witness.z_pre.iter()) {
-                *dst += *src;
-            }
-            for (dst, src) in acc
-                .centered_coeffs
-                .iter_mut()
-                .zip(witness.centered_coeffs.iter())
-            {
-                for k in 0..D {
-                    dst[k] += src[k];
-                }
-            }
-        }
-        acc.centered_inf_norm = acc
-            .centered_coeffs
-            .iter()
-            .flat_map(|coeffs| coeffs.iter())
-            .map(|coeff| coeff.unsigned_abs())
-            .max()
-            .unwrap_or(0);
-        acc
-    }
-
     fn materialize_onehot_as_dense<F, const D: usize, I>(
         poly: &OneHotPoly<F, D, I>,
     ) -> DensePoly<F, D>

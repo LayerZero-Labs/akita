@@ -11,7 +11,7 @@
 //!   `akita-config`, `akita-types`, and `akita-planner`.
 //! - [`sample_sparse_challenges`] — the transcript-driven sampler that turns
 //!   a config plus a Fiat-Shamir transcript into challenges.
-//! - [`ChallengeShape`] / [`FoldingChallenges`] — tensor-aware folding
+//! - [`ChallengeShape`] / [`Challenges`] — tensor-aware folding
 //!   challenge selection and sampled challenge containers.
 //! - [`TensorChallenges`] — the tensor-only factored representation used when
 //!   a folding round samples left/right challenge vectors instead of one flat
