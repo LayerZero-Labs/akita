@@ -177,6 +177,10 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         print_layout(&layout);
         run_onehot::<FF, D, Cfg>(label, nv, &layout, plan.as_ref());
     } else {
+        let schedule_key = AkitaScheduleLookupKey::new(nv, num_polys, num_polys, 1);
+        let plan = Cfg::schedule_plan(schedule_key)
+            .expect("schedule plan")
+            .expect("batched onehot schedule should be generated");
         let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
@@ -192,7 +196,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             );
         }
         print_layout(&layout);
-        run_batched_onehot::<FF, D, Cfg>(label, nv, num_polys, &layout);
+        run_batched_onehot::<FF, D, Cfg>(label, nv, num_polys, &layout, Some(&plan));
     }
 }
 

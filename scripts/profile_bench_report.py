@@ -30,7 +30,12 @@ REQUIRED_RUN_METRICS = (
     "verify_total_s",
     "proof_size_bytes",
     "accounted_bytes",
+    "max_rss_kib",
+    "claim_ext_degree",
+    "challenge_ext_degree",
+    "akita_levels",
 )
+REQUIRED_RUN_SEQUENCES = ("planned_levels", "proof_levels")
 
 
 @dataclass(frozen=True)
@@ -188,6 +193,14 @@ def require_int(summary: dict[str, object], key: str) -> int:
 
 def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
     missing = [key for key in REQUIRED_RUN_METRICS if summary.get(key) is None]
+    for key in REQUIRED_RUN_SEQUENCES:
+        value = summary.get(key)
+        if not isinstance(value, list) or not value:
+            missing.append(key)
+    if summary.get("tail_num_elems") is None:
+        missing.append("tail_num_elems")
+    if summary.get("tail_bits_per_elem") is None and summary.get("tail_encoding") != "field_elements":
+        missing.append("tail_bits_per_elem")
     proof_size = summary.get("proof_size_bytes")
     accounted = summary.get("accounted_bytes")
     if proof_size is not None and accounted is not None and int(proof_size) != int(accounted):
@@ -446,6 +459,14 @@ def infer_failure_phase(summary: dict[str, object], first_missing: str | None = 
         "proof_size_bytes": "proof summary",
         "accounted_bytes": "proof accounting",
         "consistent_proof_accounting": "proof accounting",
+        "max_rss_kib": "memory",
+        "claim_ext_degree": "field roles",
+        "challenge_ext_degree": "field roles",
+        "akita_levels": "proof levels",
+        "planned_levels": "planned levels",
+        "proof_levels": "proof levels",
+        "tail_num_elems": "tail shape",
+        "tail_bits_per_elem": "tail shape",
     }
     if first_missing in phase_by_metric:
         return phase_by_metric[first_missing]
@@ -578,7 +599,11 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
     num_polys = int(normalized.get("num_polys", 1))
     metadata = case_metadata(mode)
     normalized["num_polys"] = num_polys
-    normalized["case_id"] = str(normalized.get("case_id", case_id(mode, num_vars, num_polys)))
+    normalized_case_id = case_id(mode, num_vars, num_polys)
+    existing_case_id = normalized.get("case_id")
+    if existing_case_id is not None and str(existing_case_id) != normalized_case_id:
+        normalized.setdefault("legacy_case_id", str(existing_case_id))
+    normalized["case_id"] = normalized_case_id
     normalized["benchmark"] = benchmark_name(mode, num_vars, num_polys)
     normalized["field_family"] = str(normalized.get("field_family", metadata.field_family))
     normalized["workload"] = str(normalized.get("workload", metadata.workload))

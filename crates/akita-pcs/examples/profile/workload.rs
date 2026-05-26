@@ -430,6 +430,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     nv: usize,
     num_polys: usize,
     layout: &LevelParams,
+    plan: Option<&AkitaSchedulePlan>,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -535,6 +536,14 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ChallengeField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ChallengeField, D>(label, &proof);
+    if let Some(plan) = plan {
+        assert_eq!(
+            proof.size(),
+            plan.exact_proof_bytes,
+            "runtime proof bytes should match the planned proof size"
+        );
+        emit_planned_schedule_summary(label, plan);
+    }
     tracing::info!(
         label,
         claim_ext_degree = Cfg::CLAIM_EXT_DEGREE,

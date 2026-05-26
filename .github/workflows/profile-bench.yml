@@ -143,12 +143,13 @@ jobs:
               core.setOutput(`${prefix}-label`, run ? label : '');
             }
 
-            async function firstRunWithArtifact(runs) {
+            async function firstRunWithArtifact(runs, allowedConclusions = ['success']) {
+              const allowedConclusionSet = new Set(allowedConclusions);
               for (const run of runs) {
                 if (run.id === currentRunId) {
                   continue;
                 }
-                if (run.name !== workflowName || run.conclusion !== 'success') {
+                if (run.name !== workflowName || !allowedConclusionSet.has(run.conclusion)) {
                   continue;
                 }
                 const artifactsResponse = await github.rest.actions.listWorkflowRunArtifacts({
@@ -182,7 +183,10 @@ jobs:
               const prs = run.pull_requests || [];
               return prs.length === 0 || prs.some(pr => pr.number === pullRequest.number);
             });
-            const previousPrRun = await firstRunWithArtifact(previousPrCandidates);
+            const previousPrRun = await firstRunWithArtifact(
+              previousPrCandidates,
+              ['success', 'failure']
+            );
             if (!previousPrRun) {
               core.info('No previous PR baseline artifact found.');
             }
@@ -239,12 +243,13 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Enforce proof-size regression threshold
-        if: github.event_name == 'pull_request' && steps.bench-baselines.outputs.main-run-id != ''
+        if: always() && github.event_name == 'pull_request' && steps.bench-baselines.outputs.main-run-id != ''
         env:
           AKITA_BENCH_MAX_PROOF_SIZE_REGRESSION: "1.05"
         run: |
           python3 - <<'PY'
           import json
+          import importlib.util
           import os
           import pathlib
           import sys
@@ -252,6 +257,13 @@ jobs:
           current_path = pathlib.Path(os.environ["AKITA_BENCH_ARTIFACT_DIR"]) / "summary.json"
           baseline_path = pathlib.Path(os.environ["AKITA_BENCH_MAIN_BASELINE_DIR"]) / "summary.json"
           threshold = float(os.environ["AKITA_BENCH_MAX_PROOF_SIZE_REGRESSION"])
+          report_spec = importlib.util.spec_from_file_location(
+              "profile_bench_report",
+              pathlib.Path("scripts/profile_bench_report.py"),
+          )
+          profile_bench_report = importlib.util.module_from_spec(report_spec)
+          sys.modules[report_spec.name] = profile_bench_report
+          report_spec.loader.exec_module(profile_bench_report)
 
           if not current_path.exists() or not baseline_path.exists():
               print("Benchmark summary or baseline missing; skipping proof-size threshold.")
@@ -260,14 +272,21 @@ jobs:
           def cases_by_id(summary):
               cases = summary.get("cases")
               if isinstance(cases, list):
-                  return {str(case.get("case_id")): case for case in cases}
-              return {str(summary.get("case_id")): summary}
+                  return {
+                      str(profile_bench_report.normalize_case_summary(case)["case_id"]): case
+                      for case in cases
+                  }
+              return {
+                  str(profile_bench_report.normalize_case_summary(summary)["case_id"]): summary
+              }
 
           current = cases_by_id(json.loads(current_path.read_text()))
           baseline = cases_by_id(json.loads(baseline_path.read_text()))
           failures = []
 
           for case_id, current_case in current.items():
+              if int(current_case.get("exit_code", 0)) != 0:
+                  continue
               baseline_case = baseline.get(case_id)
               if not baseline_case:
                   continue
