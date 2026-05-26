@@ -371,6 +371,52 @@ pub fn zk_push_linear_zero<E: FieldCore>(
     );
 }
 
+/// Return the next claim mask for one masked compressed standard sumcheck round.
+///
+/// Compressed rounds send `[g~_0, g~_2, g~_3, ...]`; the masked linear term is
+/// implicitly recovered from the previous public masked claim. If
+/// `eta_{i-1}` masks the previous claim and the stored pad coefficients are
+/// `[rho_0, rho_2, rho_3, ...]`, then the omitted pad coefficient is
+///
+/// `rho_1 = eta_{i-1} - 2 * rho_0 - sum_{j >= 2} rho_j`.
+///
+/// Therefore the next claim mask is the public-challenge linear combination
+///
+/// `eta_i = r * eta_{i-1} + (1 - 2r) * rho_0
+///        + sum_{j >= 2} (r^j - r) * rho_j`.
+///
+/// The sumcheck chain equation itself is tautological for the public compressed
+/// message, so no separate R1CS row is needed for this transition.
+#[doc(hidden)]
+pub fn zk_masked_compressed_round_claim_mask<F, E>(
+    previous_mask: &ZkR1csLinearCombination<E>,
+    public_coeffs_except_linear: &[E],
+    r_round: E,
+    hiding_cursor: &mut usize,
+) -> ZkR1csLinearCombination<E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let mut next_mask = ZkR1csLinearCombination::zero();
+    add_scaled_lc(&mut next_mask, r_round, previous_mask);
+
+    let mut next_higher_power = r_round * r_round;
+    for idx in 0..public_coeffs_except_linear.len() {
+        let mask_coeff = zk_ext_mask_lc::<F, E>(hiding_cursor);
+        let weight = if idx == 0 {
+            E::one() - r_round - r_round
+        } else {
+            let weight = next_higher_power - r_round;
+            next_higher_power *= r_round;
+            weight
+        };
+        add_scaled_lc(&mut next_mask, weight, &mask_coeff);
+    }
+
+    next_mask
+}
+
 /// Accumulates ZK plain-opening R1CS rows for one verifier level.
 ///
 /// Ordinary rows have the form `<A, X> * <B, X> = <C, X>`, while
@@ -543,55 +589,6 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         (next_mask, round_sum_mask)
     }
 
-    /// Consume one masked compressed standard sumcheck round and return the next
-    /// claim mask.
-    ///
-    /// Compressed rounds send `[g~_0, g~_2, g~_3, ...]`; the masked linear term is
-    /// implicitly recovered from the previous public masked claim. If
-    /// `eta_{i-1}` masks the previous claim and the stored pad coefficients are
-    /// `[rho_0, rho_2, rho_3, ...]`, then the omitted pad coefficient is
-    ///
-    /// `rho_1 = eta_{i-1} - 2 * rho_0 - sum_{j >= 2} rho_j`.
-    ///
-    /// Therefore the next claim mask is the public-challenge linear combination
-    ///
-    /// `eta_i = r * eta_{i-1} + (1 - 2r) * rho_0
-    ///        + sum_{j >= 2} (r^j - r) * rho_j`.
-    ///
-    /// The sumcheck chain equation itself is tautological for the public
-    /// compressed message, so no separate R1CS row is needed for this transition.
-    #[doc(hidden)]
-    pub fn push_masked_compressed_round_relation<F>(
-        &mut self,
-        _description: &'static str,
-        previous_mask: &ZkR1csLinearCombination<E>,
-        public_coeffs_except_linear: &[E],
-        r_round: E,
-        hiding_cursor: &mut usize,
-    ) -> ZkR1csLinearCombination<E>
-    where
-        F: FieldCore,
-        E: ExtField<F>,
-    {
-        let mut next_mask = ZkR1csLinearCombination::zero();
-        add_scaled_lc(&mut next_mask, r_round, previous_mask);
-
-        let mut next_higher_power = r_round * r_round;
-        for (idx, &_public_coeff) in public_coeffs_except_linear.iter().enumerate() {
-            let mask_coeff = zk_ext_mask_lc::<F, E>(hiding_cursor);
-            let weight = if idx == 0 {
-                E::one() - r_round - r_round
-            } else {
-                let weight = next_higher_power - r_round;
-                next_higher_power *= r_round;
-                weight
-            };
-            add_scaled_lc(&mut next_mask, weight, &mask_coeff);
-        }
-
-        next_mask
-    }
-
     /// Materialize one masked eq-factored sumcheck mask transition.
     ///
     /// Eq-factored rounds do not send the full round polynomial. They send the
@@ -707,9 +704,9 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
 #[cfg(test)]
 mod tests {
     use super::{
-        lift_hiding_witness, zk_ext_mask_lc, zk_row_masks_from_column_masks,
-        ZkR1csLinearCombination, ZkR1csRelation, ZkR1csVariable, ZkR1csWitness,
-        ZkRelationAccumulator,
+        lift_hiding_witness, zk_ext_mask_lc, zk_masked_compressed_round_claim_mask,
+        zk_row_masks_from_column_masks, ZkR1csLinearCombination, ZkR1csRelation, ZkR1csVariable,
+        ZkR1csWitness, ZkRelationAccumulator,
     };
     use akita_field::{ExtField, Prime128Offset275, Prime32Offset99, RingSubfieldFp4};
 
@@ -728,6 +725,29 @@ mod tests {
         relations
             .verify_all(&[F::from_u64(3), F::from_u64(4)])
             .expect("valid hiding-backed R1CS row");
+    }
+
+    #[test]
+    fn compressed_round_claim_mask_is_side_effect_free() {
+        let mut cursor = 0usize;
+        let previous_mask = zk_ext_mask_lc::<F, F>(&mut cursor);
+        let masked_coeffs_except_linear = [F::from_u64(17), F::from_u64(19)];
+        let r = F::from_u64(3);
+
+        let next_mask = zk_masked_compressed_round_claim_mask::<F, F>(
+            &previous_mask,
+            &masked_coeffs_except_linear,
+            r,
+            &mut cursor,
+        );
+
+        assert_eq!(cursor, 3);
+        let hiding_witness = [F::from_u64(2), F::from_u64(11), F::from_u64(13)];
+        let witness = ZkR1csWitness::new(&hiding_witness, 0);
+        let expected = r * hiding_witness[0]
+            + (F::one() - r - r) * hiding_witness[1]
+            + (r * r - r) * hiding_witness[2];
+        assert_eq!(next_mask.evaluate(&witness), Some(expected));
     }
 
     #[test]

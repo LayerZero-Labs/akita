@@ -22,7 +22,9 @@ use akita_algebra::uni_poly::UniPoly;
 use akita_algebra::EqPolynomial;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 #[cfg(feature = "zk")]
-use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
+use akita_r1cs::{
+    zk_masked_compressed_round_claim_mask, ZkR1csLinearCombination, ZkRelationAccumulator,
+};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::{labels, Transcript};
 #[cfg(feature = "parallel")]
@@ -2169,8 +2171,7 @@ impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, masked_poly);
             let r_i = sample_challenge(transcript);
             challenges.push(r_i);
-            let next_claim_mask = relations.push_masked_compressed_round_relation::<F>(
-                "masked extension-opening reduction round chain",
+            let next_claim_mask = zk_masked_compressed_round_claim_mask::<F, E>(
                 &claim_mask,
                 &masked_poly.coeffs_except_linear_term,
                 r_i,
