@@ -20,13 +20,14 @@ Update it when a protocol invariant changes or a new verifier-facing surface is 
 cargo fmt --all --check
 cargo clippy --all --all-targets --all-features -- -D warnings
 cargo clippy --all --all-targets --no-default-features -- -D warnings
-cargo nextest run --no-default-features --features parallel,planner,disk-persistence
+cargo nextest run --no-default-features --features parallel,disk-persistence
 cargo nextest run --all-features
 cargo doc -q --no-deps --all-features
 cargo deny check bans licenses sources advisories
 scripts/check-crate-deps.sh akita-verifier
 scripts/check-crate-deps.sh akita-prover
 scripts/check-crate-deps.sh akita-config
+scripts/check-crate-deps.sh akita-derive
 scripts/check-crate-deps.sh akita-setup
 scripts/check-crate-deps.sh akita-scheme
 ```

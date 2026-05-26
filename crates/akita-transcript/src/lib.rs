@@ -51,15 +51,6 @@ where
     fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8>;
 }
 
-/// Sample `n` scalar challenges under the same transcript label.
-pub fn sample_challenge_scalars<F, T>(transcript: &mut T, label: &[u8], n: usize) -> Vec<F>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    (0..n).map(|_| transcript.challenge_scalar(label)).collect()
-}
-
 /// Append an extension-field element by absorbing its base-field coordinates.
 pub fn append_ext_field<F, E, T>(transcript: &mut T, label: &[u8], x: &E)
 where

@@ -183,9 +183,7 @@ CI additionally runs:
 
 ```bash
 cargo nextest run
-cargo nextest run --features planner
 cargo nextest run --all-features
-cargo run -p akita-planner --bin akita-planner -- --validate
 ```
 
 Focused ZK checks:

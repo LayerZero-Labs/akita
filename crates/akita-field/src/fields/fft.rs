@@ -688,24 +688,6 @@ impl<F: FieldCore + FromPrimitiveInt + Invertible + std::fmt::Debug> SmoothDomai
     }
 }
 
-/// Compute a primitive `n`-th root of unity from a multiplicative
-/// generator: returns `g^{(p−1)/n}`. Caller must ensure `n` divides
-/// the order of `g`.
-///
-/// Most callers should prefer [`primitive_nth_root`].
-///
-/// # Panics
-/// If `n` does not divide `p − 1`.
-pub fn primitive_root_of_unity<F: FieldCore>(g: F, p_minus_1: u128, n: usize) -> F {
-    assert_eq!(
-        p_minus_1 % (n as u128),
-        0,
-        "n={n} must divide p-1={p_minus_1}"
-    );
-    let exp = p_minus_1 / (n as u128);
-    field_pow_u128(g, exp)
-}
-
 /// Primitive `n`-th root of unity in `F`, derived from
 /// [`SmoothFftField::SMOOTH_OMEGA`] as
 /// `omega_n = SMOOTH_OMEGA ^ (SMOOTH_SUBGROUP_ORDER / n)`. Requires

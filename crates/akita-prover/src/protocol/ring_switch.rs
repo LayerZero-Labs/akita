@@ -16,6 +16,7 @@ use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
+use akita_config::CommitmentConfig as _;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, LiftBase,
@@ -609,35 +610,44 @@ where
     )
 }
 
-/// Commit the next recursive witness using caller-supplied layout policy.
+/// Commit the next recursive witness.
 ///
-/// The same-D fast path reuses the current level's NTT slot. Cross-D
-/// commitments are dispatched through [`MultiDNttCaches`].
+/// The same-`D` fast path reuses the current level's NTT slot and applies
+/// `same_d_decomposition` as the `recursive_level_layout_from_params`
+/// decomposition. Cross-`D` commitments dispatch through
+/// [`MultiDNttCaches`] and always use the `WCommitmentConfig::<D_COMMIT,
+/// Cfg>::decomposition()` recursive-w decomposition for the dispatched ring
+/// dimension.
+///
+/// Callers pin `same_d_decomposition` per call site:
+/// - root → first recursive commit: `Cfg::decomposition()` (the root
+///   decomposition).
+/// - recursive → recursive commit: `WCommitmentConfig::<D, Cfg>::decomposition()`.
 ///
 /// # Errors
 ///
 /// Returns an error if layout selection, commitment, cache construction, or
-/// D-erased hint conversion fails.
-#[allow(clippy::type_complexity)]
+/// `D`-erased hint conversion fails.
 #[inline(never)]
-pub fn commit_next_w_with_policy<F, L, SameLayout, DispatchLayout, const D: usize>(
+pub fn commit_next_w<F, Cfg, const D: usize>(
     commit_params: &LevelParams,
     ntt_shared: &NttSlotCache<D>,
     commit_ntt_cache: &mut MultiDNttCaches,
     expanded: &AkitaExpandedSetup<F>,
     logical_w: &RecursiveWitnessFlat,
-    same_d_layout: SameLayout,
-    dispatch_layout: DispatchLayout,
+    same_d_decomposition: akita_types::DecompositionParams,
 ) -> Result<NextWitnessCommitment<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    L: ExtField<F>,
-    SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
-    DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
+    Cfg: akita_config::CommitmentConfig<Field = F>,
 {
     if commit_params.ring_dimension == D {
-        if L::EXT_DEGREE == 1 {
-            let commit_layout = same_d_layout(commit_params, logical_w.len())?;
+        if <Cfg::ChallengeField as ExtField<F>>::EXT_DEGREE == 1 {
+            let commit_layout = akita_types::recursive_level_layout_from_params(
+                commit_params,
+                logical_w.len(),
+                same_d_decomposition,
+            )?;
             let (wc, wh) = commit_w::<F, D>(
                 logical_w,
                 ntt_shared,
@@ -650,8 +660,13 @@ where
                 hint: RecursiveCommitmentHintCache::from_typed(wh)?,
             })
         } else {
-            let committed_w = tensor_pack_recursive_witness::<F, L, D>(logical_w)?;
-            let commit_layout = same_d_layout(commit_params, committed_w.len())?;
+            let committed_w =
+                tensor_pack_recursive_witness::<F, Cfg::ChallengeField, D>(logical_w)?;
+            let commit_layout = akita_types::recursive_level_layout_from_params(
+                commit_params,
+                committed_w.len(),
+                same_d_decomposition,
+            )?;
             let (wc, wh) = commit_w::<F, D>(
                 &committed_w,
                 ntt_shared,
@@ -665,14 +680,38 @@ where
             })
         }
     } else {
-        dispatch_commit_w_with_layout_policy::<F, L, DispatchLayout>(
+        dispatch_commit_w_with_layout_policy::<F, Cfg::ChallengeField, _>(
             commit_params.clone(),
             commit_ntt_cache,
             expanded,
             logical_w,
-            dispatch_layout,
+            |commit_d, commit_params, current_w_len| {
+                recursive_w_commit_layout_for_d::<Cfg>(commit_d, commit_params, current_w_len)
+            },
         )
     }
+}
+
+/// Recursive `w` commitment layout for a runtime-selected ring dimension.
+///
+/// Public so scheme-side integration tests that drive `commit_next_w` at a
+/// non-`D` recursive level can pick the matching layout without
+/// re-implementing the multi-`D` dispatch.
+pub fn recursive_w_commit_layout_for_d<Cfg>(
+    commit_d: usize,
+    commit_params: &LevelParams,
+    current_w_len: usize,
+) -> Result<LevelParams, AkitaError>
+where
+    Cfg: akita_config::CommitmentConfig,
+{
+    crate::dispatch_ring_dim!(commit_d, |D_COMMIT| {
+        akita_types::recursive_level_layout_from_params(
+            commit_params,
+            current_w_len,
+            akita_config::WCommitmentConfig::<{ D_COMMIT }, Cfg>::decomposition(),
+        )
+    })
 }
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.

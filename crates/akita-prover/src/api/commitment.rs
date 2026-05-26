@@ -6,6 +6,7 @@ use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::masking::sample_blinding_digits;
 use crate::{AkitaPolyOps, AkitaProverSetup};
 use akita_algebra::CyclotomicRing;
+use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
@@ -133,30 +134,6 @@ where
     Ok((RingCommitment { u }, hint))
 }
 
-/// Commit a group of polynomials using caller-supplied config policy.
-///
-/// The prover crate owns config-free input validation and commitment execution;
-/// the caller supplies only the layout-selection policy.
-///
-/// # Errors
-///
-/// Returns an error if input validation, parameter selection, or commitment
-/// execution fails.
-pub fn commit_with_policy<F, const D: usize, P, SelectParams>(
-    polys: &[P],
-    setup: &AkitaProverSetup<F, D>,
-    select_params: SelectParams,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
-{
-    let incidence = prepare_commit_inputs::<F, D, P>(polys, setup)?;
-    let params = select_params(&incidence)?;
-    commit_with_params::<F, D, P>(polys, setup, &params)
-}
-
 /// Validate a multipoint commitment request and derive its
 /// `ClaimIncidenceSummary`.
 ///
@@ -232,40 +209,11 @@ where
     ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
 }
 
-/// Commit one polynomial bundle per opening point using a caller-supplied
-/// layout-selection policy.
-///
-/// The policy callback receives the full multipoint incidence and returns the
-/// shared root commitment layout. Every per-point bundle is then committed
-/// with that one layout via [`commit_with_params`], guaranteeing that the
-/// produced commitments are compatible with the layout `batched_prove` will
-/// select for the same incidence.
-///
-/// # Errors
-///
-/// Returns an error if input validation, parameter selection, or any per-
-/// point commitment fails.
-#[allow(clippy::type_complexity)]
-pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams>(
-    polys_per_point: &[&[P]],
-    setup: &AkitaProverSetup<F, D>,
-    select_params: SelectParams,
-) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
-{
-    let incidence = prepare_batched_commit_inputs::<F, D, P>(polys_per_point, setup)?;
-    let params = select_params(&incidence)?;
-    batched_commit_with_params::<F, D, P>(polys_per_point, setup, &params)
-}
-
 /// Commit one polynomial bundle per opening point using already-selected
 /// level parameters.
 ///
 /// The caller has already resolved the shared root commitment layout (e.g.
-/// via [`batched_commit_with_policy`]); this function owns only the prover-
+/// via [`crate::batched_commit`]); this function owns only the prover-
 /// side matrix work for the supplied concrete layout.
 ///
 /// # Errors
@@ -286,4 +234,48 @@ where
         out.push(commit_with_params::<F, D, P>(polys, setup, params)?);
     }
     Ok(out)
+}
+
+/// Commit a group of polynomials.
+///
+/// Routes through `Cfg::get_params_for_batched_commitment` so all per-config
+/// layout decisions land in the trait body.
+///
+/// # Errors
+///
+/// Returns an error if input validation, parameter selection, or commitment
+/// execution fails.
+pub fn commit<F, Cfg, P, const D: usize>(
+    polys: &[P],
+    setup: &AkitaProverSetup<F, D>,
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    Cfg: CommitmentConfig<Field = F>,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+{
+    let incidence = prepare_commit_inputs::<F, D, P>(polys, setup)?;
+    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+    commit_with_params::<F, D, P>(polys, setup, &params)
+}
+
+/// Commit one polynomial bundle per opening point.
+///
+/// # Errors
+///
+/// Returns an error if input validation, parameter selection, or any
+/// per-point commitment fails.
+#[allow(clippy::type_complexity)]
+pub fn batched_commit<F, Cfg, P, const D: usize>(
+    polys_per_point: &[&[P]],
+    setup: &AkitaProverSetup<F, D>,
+) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    Cfg: CommitmentConfig<Field = F>,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+{
+    let incidence = prepare_batched_commit_inputs::<F, D, P>(polys_per_point, setup)?;
+    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+    batched_commit_with_params::<F, D, P>(polys_per_point, setup, &params)
 }

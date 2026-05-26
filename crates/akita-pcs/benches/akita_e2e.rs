@@ -253,7 +253,10 @@ fn bench_onehot_phases<
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
+    let layout = Cfg::get_params_for_batched_commitment(
+        &akita_types::ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence"),
+    )
+    .expect("benchmark layout");
     let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
 
