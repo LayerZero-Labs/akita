@@ -1,7 +1,7 @@
 //! Fast-verify preset support: tiered-commitment root LP layering.
 //!
 //! These helpers post-process the materialized root `LevelParams`
-//! returned by [`crate::proof_optimized::proof_optimized_schedule_plan`]
+//! returned by `crate::proof_optimized::proof_optimized_schedule_plan`
 //! to inject the tier-1 / F / ûhat-gadget metadata required by
 //! `specs/tiered_commit.md` §3. A "fast-verify" preset is a production
 //! preset whose root commits through a chunked B' + outer F matrix
@@ -19,7 +19,7 @@
 //!
 //! Public entry points are [`fast_verifier_schedule_plan`],
 //! [`fast_verifier_max_setup_matrix_size`], and the
-//! [`impl_fp128_fast_verify_preset!`] macro that wires a fast-verify
+//! `impl_fp128_fast_verify_preset!` macro that wires a fast-verify
 //! preset into the same scaffolding as `impl_fp128_preset!` but
 //! routes `schedule_plan` through the tier post-processor.
 
@@ -102,7 +102,7 @@ pub fn fast_verifier_max_setup_matrix_size<Cfg: CommitmentConfig>(
     Ok((max_rows, max_stride))
 }
 
-/// Fast-verify variant of [`proof_optimized_schedule_plan`].
+/// Fast-verify variant of `proof_optimized_schedule_plan`.
 ///
 /// Reads from the Cfg's generated schedule table (sized for the
 /// fast-verify shapes by the offline generator) and post-processes
