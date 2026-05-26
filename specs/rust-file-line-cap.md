@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao         |
 | Created     | 2026-05-26        |
 | Status      | proposed          |
-| PR          |                   |
+| PR          | #110              |
 
 ## Summary
 
