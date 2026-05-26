@@ -19,11 +19,11 @@ env:
   AKITA_BENCH_MODE: onehot
   AKITA_BENCH_RUNS: "3"
   AKITA_BENCH_CASES: |
-    onehot_fp16_d64:32:1
-    full_fp16_d64:26:1
-    onehot_fp32:32:1
-    dense_fp32_d64:26:1
-    onehot_fp64:32:1
+    onehot_fp16_d32:32:1
+    full_fp16_d32:26:1
+    onehot_fp32_d32:32:1
+    dense_fp32_d32:26:1
+    onehot_fp64_d32:32:1
     onehot:32:1
     full:26:1
     onehot:30:4

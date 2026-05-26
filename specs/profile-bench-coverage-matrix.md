@@ -21,12 +21,12 @@ The benchmark matrix is:
 
 | Field family | Workload | Variables | Polys | Notes |
 | --- | --- | ---: | ---: | --- |
-| fp16 | one-hot | 32 | 1 | Fixed generated small-field schedule. |
-| fp16 | dense | 26 | 1 | Fixed generated small-field schedule. |
-| fp32 | one-hot | 32 | 1 | Fixed generated small-field schedule. |
-| fp32 | dense | 26 | 1 | Fixed generated small-field schedule. |
-| fp64 | one-hot | 32 | 1 | Fixed generated small-field schedule. |
-| fp64 | dense | 26 | 1 | Must complete once PR #105's eq-table sizing fix is merged. |
+| fp16 | one-hot | 32 | 1 | Fixed generated small-field D32 schedule. |
+| fp16 | dense | 26 | 1 | Fixed generated small-field D32 schedule. |
+| fp32 | one-hot | 32 | 1 | Fixed generated small-field D32 schedule. |
+| fp32 | dense | 26 | 1 | Fixed generated small-field D32 schedule. |
+| fp64 | one-hot | 32 | 1 | Fixed generated small-field D32 schedule. |
+| fp64 | dense | 26 | 1 | D32 target; must complete once PR #105's eq-table sizing fix is merged. |
 | fp128 | one-hot | 32 | 1 | Existing adaptive fp128 one-hot profile behavior. |
 | fp128 | dense | 26 | 1 | Existing adaptive fp128 full/dense profile behavior, represented as dense in reports. |
 | fp128 | one-hot batched | 30 | 4 | Preserve current same-point batched one-hot coverage. |
