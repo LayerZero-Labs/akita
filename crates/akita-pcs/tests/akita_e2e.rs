@@ -33,6 +33,7 @@ type F = fp128::Field;
 const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
+const SAME_POINT_ONEHOT_BATCH_SIZE: usize = 4;
 const D32_TEST_NV: usize = 12;
 
 fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> LevelParams {
@@ -889,39 +890,42 @@ fn batched_onehot_same_point_round_trip() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = akita_batched_root_layout::<Cfg>(nv, 2).expect("layout");
+        let layout =
+            akita_batched_root_layout::<Cfg>(nv, SAME_POINT_ONEHOT_BATCH_SIZE).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
         assert_eq!(total_chunks * ONEHOT_K, total_field);
 
-        let mut rng_a = StdRng::seed_from_u64(0x1234_5678);
-        let mut rng_b = StdRng::seed_from_u64(0x8765_4321);
-        let indices_a: Vec<Option<usize>> = (0..total_chunks)
-            .map(|_| Some(rng_a.gen_range(0..ONEHOT_K)))
+        let polys: Vec<OneHotPoly<F, D>> = (0..SAME_POINT_ONEHOT_BATCH_SIZE)
+            .map(|poly_idx| {
+                let mut rng = StdRng::seed_from_u64(0x1234_5678 + poly_idx as u64);
+                let indices: Vec<Option<usize>> = (0..total_chunks)
+                    .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+                    .collect();
+                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
+            })
             .collect();
-        let indices_b: Vec<Option<usize>> = (0..total_chunks)
-            .map(|_| Some(rng_b.gen_range(0..ONEHOT_K)))
-            .collect();
-        let poly_a = OneHotPoly::<F, D>::new(ONEHOT_K, indices_a).unwrap();
-        let poly_b = OneHotPoly::<F, D>::new(ONEHOT_K, indices_b).unwrap();
+        let poly_group: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
         let pt = random_point(nv);
-        let openings = [
-            opening_from_poly(&poly_a, &pt, &layout),
-            opening_from_poly(&poly_b, &pt, &layout),
-        ];
+        let openings: Vec<F> = polys
+            .iter()
+            .map(|poly| opening_from_poly(poly, &pt, &layout))
+            .collect();
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1)
-                .unwrap();
+        let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+            nv,
+            SAME_POINT_ONEHOT_BATCH_SIZE,
+            1,
+        )
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let poly_group = [&poly_a, &poly_b];
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
             &CpuBackend,
@@ -983,39 +987,42 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = akita_batched_root_layout::<Cfg>(nv, 2).expect("layout");
+        let layout =
+            akita_batched_root_layout::<Cfg>(nv, SAME_POINT_ONEHOT_BATCH_SIZE).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
         assert_eq!(total_chunks * ONEHOT_K, total_field);
 
-        let mut rng_a = StdRng::seed_from_u64(0x1234_5678);
-        let mut rng_b = StdRng::seed_from_u64(0x8765_4321);
-        let indices_a: Vec<Option<usize>> = (0..total_chunks)
-            .map(|_| Some(rng_a.gen_range(0..ONEHOT_K)))
+        let polys: Vec<OneHotPoly<F, D>> = (0..SAME_POINT_ONEHOT_BATCH_SIZE)
+            .map(|poly_idx| {
+                let mut rng = StdRng::seed_from_u64(0x8765_4321 + poly_idx as u64);
+                let indices: Vec<Option<usize>> = (0..total_chunks)
+                    .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+                    .collect();
+                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
+            })
             .collect();
-        let indices_b: Vec<Option<usize>> = (0..total_chunks)
-            .map(|_| Some(rng_b.gen_range(0..ONEHOT_K)))
-            .collect();
-        let poly_a = OneHotPoly::<F, D>::new(ONEHOT_K, indices_a).unwrap();
-        let poly_b = OneHotPoly::<F, D>::new(ONEHOT_K, indices_b).unwrap();
+        let poly_group: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
         let pt = random_point(nv);
-        let openings = [
-            opening_from_poly(&poly_a, &pt, &layout),
-            opening_from_poly(&poly_b, &pt, &layout),
-        ];
+        let openings: Vec<F> = polys
+            .iter()
+            .map(|poly| opening_from_poly(poly, &pt, &layout))
+            .collect();
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1)
-                .unwrap();
+        let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+            nv,
+            SAME_POINT_ONEHOT_BATCH_SIZE,
+            1,
+        )
+        .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let poly_group = [&poly_a, &poly_b];
         let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             &setup,
             &CpuBackend,
