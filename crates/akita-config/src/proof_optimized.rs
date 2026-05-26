@@ -1,11 +1,7 @@
-//! Concrete proof-optimized commitment configs for the default fp128 protocol.
+//! Proof-optimized commitment config presets.
 //!
-//! Each config is a plain unit struct that wires its required
-//! [`CommitmentConfig`] hooks to the policy-agnostic SIS primitives in
-//! [`akita_derive`] and the generated schedule tables in [`akita_types`].
-//! A preset only declares its `(D, LOG_COMMIT_BOUND)` decomposition, its
-//! sparse stage-1 family, the generated schedule table that backs it, and
-//! (when applicable) the audited root-rank floor.
+//! Presets are unit structs that bind [`CommitmentConfig`] hooks to
+//! [`akita_derive`] SIS primitives and generated schedule tables.
 
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope};
 use akita_field::AkitaError;
@@ -19,40 +15,20 @@ use akita_types::{
     AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
 };
 
-/// Inclusive minimum of the proof-optimized log-basis search range used by
-/// every preset.
+/// Minimum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 2;
-/// Inclusive maximum of the proof-optimized log-basis search range used by
-/// every preset.
+/// Maximum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 
 // ---------------------------------------------------------------------------
-// `<Cfg>`-generic policy helpers consumed by the planner / materializer.
-//
-// These four free functions are the proof-optimized expression of "given
-// `Cfg`'s envelope and schedule table, derive the level params for a fold
-// or direct step." They are passed as fn pointers into
-// `akita_derive::PlanPolicy` (materializer) and `akita-planner`'s internal
-// `SearchOptions` (DP). Their bodies stay here — not in `akita_derive` —
-// because they consult `Cfg::envelope` / `Cfg::schedule_plan`, which only
-// exist at the `akita-config` layer.
+// `<Cfg>`-generic policy helpers for the planner and materializer.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Trait-shaped wrappers consumed by the macros below.
-//
-// Each wrapper implements one required `CommitmentConfig` method by routing
-// through the planned schedule table when available and falling back to the
-// `akita_derive` SIS primitives otherwise. Per-preset constants (decomposition,
-// stage-1 challenge family, audited root-rank floor) are inlined into the
-// macros rather than living as separate helpers.
 // ---------------------------------------------------------------------------
 
 /// Proof-optimized `schedule_plan` impl.
-///
-/// Materializes the matching entry from `Cfg::schedule_table()` through the
-/// planner's `schedule_plan_from_table` materializer with a `PlanPolicy`
-/// derived directly from the config hooks.
 pub(crate) fn proof_optimized_schedule_plan<Cfg>(
     key: AkitaScheduleLookupKey,
     envelope: CommitmentEnvelope,
@@ -80,24 +56,12 @@ where
     )
 }
 
-/// Canonical "what level params would `Cfg` use here?" lookup: prefer the
-/// exact planned level when the public inputs match the offline schedule
-/// table, otherwise derive SIS-secure recursive params (or fall back to
-/// the envelope for level 0).
-///
-/// Used to be `Cfg::level_params_with_log_basis`; now a free function
-/// because every preset's impl was a no-op delegator to this body.
+/// Lookup level params from the table, or derive SIS-secure fallback params.
 ///
 /// # Errors
 ///
-/// Bubbles plan-materialization errors (SIS-family mismatch in a
-/// corrupt table, stage-1 reject, layout sizing overflow) through to
-/// the caller — a hard `Err` here means the `Cfg`/table pair is
-/// malformed and must not be papered over with envelope-derived
-/// params, since those would silently disagree with the schedule the
-/// table actually encodes. Also returns an error if the inner
-/// derivation rejects the inputs (SIS floor, stage-1 challenge
-/// config, recursive layout sizing).
+/// Returns plan-materialization or inner-derivation errors. A table error is
+/// hard: falling back would silently disagree with the encoded schedule.
 pub fn level_params_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
@@ -120,8 +84,7 @@ pub fn level_params_with_log_basis<Cfg: CommitmentConfig>(
     )
 }
 
-/// Proof-optimized `envelope` impl: combine the audited rank floor with the
-/// maximum rank reached by any planned level for `max_num_vars`.
+/// Proof-optimized `envelope` impl.
 pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
     max_num_vars: usize,
 ) -> CommitmentEnvelope {
@@ -146,15 +109,8 @@ pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
 
 /// Size the shared setup matrix from the planned schedule.
 ///
-/// The planner can pick non-monotone `(n_a, n_b, n_d)` ranks across
-/// `num_vars` and `num_polys`, so the final envelope is the max over every
-/// committable sub-shape `(num_vars', num_polys', num_points')` with
-/// `1 <= num_vars' <= max_num_vars`,
-/// `1 <= num_polys' <= max_num_batched_polys`, and
-/// `1 <= num_points' <= num_polys'.min(max_num_points)`. Without this, a
-/// runtime commit at a smaller variable count or differently shaped batch
-/// can pick a schedule with strictly larger row count than the all-up
-/// envelope.
+/// Planned ranks are not monotone across shapes, so scan all supported
+/// sub-shapes and keep the maximum row count and stride.
 pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -229,21 +185,10 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     Ok(Some(matrix_envelope_for_levels::<Cfg>(&setup_levels)?))
 }
 
-/// Extract setup-level params from a materialized plan: every fold
-/// step's `lp` plus the inline `LevelParams` carried on each
-/// `Direct` step (root-direct in `commit_params`,
-/// terminal-direct-after-fold in `level_params`).
+/// Extract setup-level params from a materialized plan.
 ///
-/// Note the asymmetry with `Cfg::get_params_for_batched_commitment`:
-/// uncommittable root-direct edge entries (table-recorded
-/// large-`num_vars` schedules whose singleton root layout exceeds the
-/// audited SIS floor) carry `commit_params: None` *and*
-/// `level_params: None`. This function silently skips those, so a
-/// pure root-direct uncommittable schedule yields an empty list.
-/// `Cfg::get_params_for_batched_commitment` rejects the same
-/// schedule with `InvalidSetup`. See
-/// [`akita_types::DirectStep::commit_params`] for the design
-/// rationale.
+/// Uncommittable root-direct entries carry no setup params and are skipped
+/// here; `Cfg::get_params_for_batched_commitment` rejects them loudly.
 pub fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
     plan.steps
         .iter()
@@ -257,15 +202,9 @@ pub fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams
         .collect()
 }
 
-/// Extract setup-level params from a runtime `Schedule`. Mirrors
-/// [`setup_level_params_from_plan`] for schedules that did not come
-/// from the offline table (e.g. `PlannerCfg`'s DP fallback path,
-/// or the root-direct fallback constructed at runtime in
-/// `prove_batched`/`verify_batched`).
+/// Extract setup-level params from a runtime `Schedule`.
 ///
-/// The same asymmetry with `Cfg::get_params_for_batched_commitment`
-/// applies: a pure root-direct uncommittable schedule yields an
-/// empty list here, while the trait method rejects it loudly.
+/// Mirrors [`setup_level_params_from_plan`] for fallback schedules.
 pub fn setup_level_params_from_runtime_schedule(steps: &[akita_types::Step]) -> Vec<LevelParams> {
     steps
         .iter()
@@ -335,11 +274,7 @@ where
 // Per-preset CommitmentConfig macro
 // ---------------------------------------------------------------------------
 
-/// Generate a complete [`CommitmentConfig`] impl for one fp128 preset.
-///
-/// Each preset only ships its `(D, LOG_COMMIT_BOUND)` decomposition and the
-/// optional generated schedule table. Every other trait method is a one-line
-/// delegation to the proof-optimized helpers above.
+/// Generate a [`CommitmentConfig`] impl for one fp128 preset.
 macro_rules! impl_fp128_preset {
     ($cfg:ident, $d:expr, $log_commit_bound:expr, $table:expr) => {
         impl $crate::CommitmentConfig for $cfg {
