@@ -113,6 +113,11 @@ surface is exactly this built-in list.
   for root commitment, another for opening/decompose-fold, another for tensor
   projection, and another for ring-switch rows, as long as every prepared
   context validates against the same expanded setup digests.
+- Prepared setup validation happens at operation-context construction and at
+  public prover API entry, before any transcript absorption or backend kernel
+  execution. Individual kernel implementations may assume their context has
+  already been validated, but public helpers must not let an unvalidated
+  `(backend, prepared)` pair reach an operation cluster.
 - Operation outputs crossing backend boundaries are canonical Akita-owned data
   structures in this PR: `FlatDigitBlocks`, `CommitInnerWitness`,
   `DecomposeFoldWitness`, `Vec<CyclotomicRing<_, _>>`,
@@ -122,6 +127,13 @@ surface is exactly this built-in list.
 - If the same concrete backend handles several operation clusters, it may reuse
   one prepared context for those clusters. If different backends handle
   different clusters, each backend owns and validates its own prepared context.
+- Direct root witnesses are an explicit source capability, not a hidden default
+  on every root polynomial. APIs that may select a root-direct schedule must
+  require `DirectRootWitnessSource` or a folded-only policy that rejects
+  root-direct before that path is reached. A source that implements the
+  capability may still return `AkitaError` for malformed or unsupported direct
+  witness shapes; the serialized `DirectWitnessProof` semantics remain
+  verifier-owned and unchanged.
 - Verifier-facing crates remain free of prover-only polynomial representation
   bounds. This cutover must not move `DensePoly`, `OneHotPoly`, new source
   traits, or backend kernels into verifier APIs.
@@ -201,6 +213,21 @@ surface is exactly this built-in list.
       values can be used for different operation clusters in one prover call.
       The test may use dummy CPU-equivalent backends, but the type signature
       must prove the operation stack is heterogeneous.
+- [ ] Lower-level commit APIs compile with a custom source that implements only
+      shape plus commit-source capabilities. They must not require opening,
+      tensor, or direct-witness capabilities.
+- [ ] Public proving APIs that can select root-direct require
+      `DirectRootWitnessSource`, while folded-only helpers or policies can be
+      used without that capability after root-direct is rejected.
+- [ ] Operation-stack construction or public API validation rejects a prepared
+      setup built from a different expanded setup for at least one non-commit
+      operation cluster.
+- [ ] Cross-`D` recursive witness commitment validates the newly prepared target
+      dimension context before use and rejects a mismatched prepared context.
+- [ ] Implementation review checks include forbidden-pattern greps:
+      `rg -n "AkitaPolyOps" crates`, public protocol/API bounds on
+      `ProverComputeBackend`, and public closed input-source enums used as the
+      custom polynomial extension point.
 - [ ] The implementation PR includes a short grep/check section in its
       description showing that `AkitaPolyOps` is gone from crate source.
 
@@ -251,6 +278,16 @@ New or strengthened tests:
   can implement the commitment kernel for `CpuBackend` without changing an
   Akita source enum, and that a custom local ring-switch relation view can do
   the same for the ring-switch kernel.
+- Strengthen `crates/akita-pcs/tests/commitment_contract.rs` so its local
+  custom source view implements an Akita kernel trait for `CpuBackend`. This is
+  the orphan-rule canary: the source view is local to the downstream-like test,
+  while the backend trait and backend type are Akita-owned.
+- Add a root-direct capability test or compile-time helper showing that
+  commit-only paths do not require `DirectRootWitnessSource`, and proving paths
+  that may choose root-direct do.
+- Add prepared-context mismatch tests for a non-commit operation context and
+  for recursive witness commitment when the target `D` is prepared through a
+  dispatch arm.
 
 ### Performance
 
@@ -465,6 +502,21 @@ The exact spelling may differ, but these constraints are fixed:
   contexts use the same backend and prepared setup type;
 - a heterogeneous prover stack is the case where one or more contexts use
   different backend types or prepared setup values.
+
+Validation ownership is fixed even if the exact constructors change:
+
+- `OperationCtx::new` or the equivalent constructor takes explicit
+  `&AkitaExpandedSetup<F>` metadata and calls
+  `backend.validate_prepared_setup::<D>(prepared, expanded)`;
+- `ProverComputeStack::new` validates every contained operation context against
+  the same expanded setup before the prover starts transcript work;
+- lower-level public helpers that accept a single operation context validate
+  that context at entry;
+- dynamic-`D` recursive witness commitment prepares the target-dimension
+  context inside the dispatch arm and validates it before calling the commit
+  kernel;
+- validation failure is always `AkitaError::InvalidSetup` or a more specific
+  existing setup error, never a panic or silent CPU fallback.
 
 The backend side should use a small number of operation clusters:
 
@@ -754,6 +806,26 @@ This is acceptable if it is the new capability bundle, not a deprecated alias
 or algorithm-bearing replacement mega-trait. Internal APIs should prefer the
 smallest capability bound that expresses what they use.
 
+Capability boundaries for the main public and semi-public APIs:
+
+| Surface | Required source capabilities | Required operation context/kernels | Notes |
+| --- | --- | --- | --- |
+| `prepare_commit_inputs`, `prepare_batched_commit_inputs` | `RootPolyShape` | none | Shape validation only. No commit/opening/tensor/direct bound. |
+| `commit_with_params`, `commit_with_policy`, `batched_commit_with_policy` | `RootPolyShape + RootCommitSource` | commit context plus `RootCommitKernel<CommitView, F, D>` and B-side digit rows | Lower-level commit APIs must remain capability-minimal. |
+| `AkitaCommitmentScheme::commit`, `AkitaCommitmentScheme::batched_commit` | `RootPolyShape + RootCommitSource`; additionally `RootTensorSource` when the config-generic wrapper may perform root tensor projection before commit | commit context plus root commit kernel; tensor context only if the wrapper performs projection through a backend | If this cannot be expressed ergonomically with conditional bounds, the scheme wrapper may require `RootTensorSource`, but lower-level commit APIs must not. |
+| `prove_root_direct` | `DirectRootWitnessSource` | none | This path produces verifier-visible `DirectWitnessProof` values exactly as today. |
+| `prove_batched_with_policy` and `AkitaCommitmentScheme::batched_prove` | `RootPolyShape + RootOpeningSource + RootTensorSource + DirectRootWitnessSource` for APIs that may select root-direct | opening, tensor, commit-next, and ring-switch contexts as used by the selected schedule | A custom source without direct-witness support must use a folded-only policy/helper that rejects root-direct before this path, rather than relying on a hidden dense fallback. |
+| root extension-opening reduction preparation/proving | `RootTensorSource` and, for dense fallback, explicit direct-witness-capable tensor view support | tensor context plus `TensorProjectionKernel`/`TensorProjectionBatchKernel` | Sparse batch paths must stay batch kernels. Dense fallback is explicit CPU tensor behavior, not a polynomial default. |
+| root fold evaluation and decompose-fold | `RootOpeningSource` and matching batch source for batched decompose | opening context plus `OpeningFoldKernel`/`OpeningBatchKernel` | Includes base and ring multiplier points. |
+| `QuadraticEquation::new_prover` | root opening/decompose sources for root claims; recursive witness view sources for recursive claims | opening context for decompose-fold and digit rows used by hint construction | It must not require tensor/direct capabilities merely to build quadratic equations. |
+| `ring_switch_build_w`, `compute_r_split_eq` | ring-switch relation/quotient source views, not root polynomial sources | ring-switch context plus relation/quotient kernels and cyclic rows for blinding | Relation/quotient views carry the currently validated `w_hat`, `t_hat`, `z` segment, and norm metadata. |
+| `commit_w`, `commit_next_w_with_policy` | recursive witness commit source, not root polynomial source | commit context plus recursive witness commit kernel and B-side digit rows | Cross-`D` dispatch prepares and validates a target-dimension commit context inside the dispatch arm. |
+
+The full `AkitaRootPoly` marker is acceptable only on top-level convenience
+APIs whose behavior can reach every root capability through config-selected
+schedules. Lower-level implementation helpers should use the smallest row in
+this table that matches their work.
+
 ### Tensor Cutover Details
 
 Tensor operations are the easiest place to accidentally keep the old design in
@@ -937,7 +1009,9 @@ Suggested implementation sequence for one code PR:
 9. Delete `AkitaPolyOps`, its blanket `&P` impl, and the old monolithic
    `ProverComputeBackend` public boundary.
 10. Remove compatibility imports/re-exports and update docs.
-11. Run the full checks and profiling commands named above.
+11. Run forbidden-pattern greps for `AkitaPolyOps`, public
+    `ProverComputeBackend` protocol/API bounds, and public closed source enums.
+12. Run the full checks and profiling commands named above.
 
 Risks to resolve during implementation:
 
@@ -978,7 +1052,8 @@ Expected implementation diff:
 Rough size estimate for the implementation PR: 24 to 42 files touched, about
 2.4k to 4.0k lines added and 1.8k to 3.2k lines removed. The final diff should
 feel like replacing the old abstraction boundaries, not adding a parallel layer
-beside them.
+beside them. Before final review, the old layer must be deleted rather than
+left as a compatibility path beside the new one.
 
 ## References
 
