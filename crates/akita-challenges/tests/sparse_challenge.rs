@@ -1,7 +1,6 @@
 #![allow(missing_docs)]
 #![cfg(not(feature = "zk"))]
 
-use akita_algebra::ring::CyclotomicRing;
 use akita_challenges::{
     sample_folding_challenges, sample_sparse_challenges, tensor_left_digest, ChallengeLabels,
     ChallengeShape, Challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig,
@@ -42,16 +41,15 @@ fn l1_norm(c: &SparseChallenge) -> u64 {
         .sum()
 }
 
-/// Local helper: convert an integer challenge to a dense ring element. Used
-/// only by the tensor cross-checks against the dense `CyclotomicRing` product.
+/// Local helper: convert an integer challenge to dense ring coefficients.
 fn integer_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
     c: &IntegerChallenge,
-) -> CyclotomicRing<F, D> {
+) -> [F; D] {
     let mut out = [F::zero(); D];
     for (&pos, &coeff) in c.positions.iter().zip(c.coeffs.iter()) {
         out[pos as usize] += F::from_i64(i64::from(coeff));
     }
-    CyclotomicRing::from_coefficients(out)
+    out
 }
 
 /// Local helper: scalar power table `[1, alpha, alpha^2, ..., alpha^{D-1}]`.
@@ -65,10 +63,10 @@ fn scalar_powers<F: FieldCore, const D: usize>(alpha: F) -> Vec<F> {
         .collect()
 }
 
-/// Local helper: convert to a dense ring element for layout/validation tests.
+/// Local helper: convert to dense ring coefficients for layout/validation tests.
 fn sparse_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
     c: &SparseChallenge,
-) -> Result<CyclotomicRing<F, D>, &'static str> {
+) -> Result<[F; D], &'static str> {
     if c.positions.len() != c.coeffs.len() {
         return Err("positions and coeffs must have same length");
     }
@@ -88,7 +86,32 @@ fn sparse_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
         seen[idx] = true;
         out[idx] += F::from_i64(coeff as i64);
     }
-    Ok(CyclotomicRing::from_coefficients(out))
+    Ok(out)
+}
+
+fn dense_hamming_weight<F: FieldCore, const D: usize>(coeffs: &[F; D]) -> usize {
+    coeffs.iter().filter(|coeff| !coeff.is_zero()).count()
+}
+
+fn dense_negacyclic_mul<F: FieldCore, const D: usize>(lhs: &[F; D], rhs: &[F; D]) -> [F; D] {
+    let mut out = [F::zero(); D];
+    for (i, &left) in lhs.iter().enumerate() {
+        if left.is_zero() {
+            continue;
+        }
+        for (j, &right) in rhs.iter().enumerate() {
+            if right.is_zero() {
+                continue;
+            }
+            let degree = i + j;
+            if degree < D {
+                out[degree] += left * right;
+            } else {
+                out[degree - D] -= left * right;
+            }
+        }
+    }
+    out
 }
 
 #[test]
@@ -98,10 +121,10 @@ fn sparse_challenge_to_dense_lays_out_coefficients() {
         coeffs: vec![1, -1, 1],
     };
     let dense = sparse_challenge_to_dense::<F, D>(&s).unwrap();
-    assert_eq!(dense.hamming_weight(), 3);
-    assert_eq!(dense.coefficients()[0], F::one());
-    assert_eq!(dense.coefficients()[7], -F::one());
-    assert_eq!(dense.coefficients()[12], F::one());
+    assert_eq!(dense_hamming_weight(&dense), 3);
+    assert_eq!(dense[0], F::one());
+    assert_eq!(dense[7], -F::one());
+    assert_eq!(dense[12], F::one());
 }
 
 #[test]
@@ -333,8 +356,10 @@ fn tensor_product_matches_dense_ring_product() {
     };
 
     let product = IntegerChallenge::tensor_product::<TD>(&left, &right).unwrap();
-    let dense_product = sparse_challenge_to_dense::<F, TD>(&left).unwrap()
-        * sparse_challenge_to_dense::<F, TD>(&right).unwrap();
+    let dense_product = dense_negacyclic_mul(
+        &sparse_challenge_to_dense::<F, TD>(&left).unwrap(),
+        &sparse_challenge_to_dense::<F, TD>(&right).unwrap(),
+    );
 
     assert_eq!(integer_challenge_to_dense::<F, TD>(&product), dense_product);
 }
@@ -478,12 +503,12 @@ fn tensor_lazy_evals_match_expanded_products() {
 
     let alpha_pows = scalar_powers::<F, TD>(F::from_u64(5));
     let lazy = challenges.evals_at_pows::<F, F, TD>(&alpha_pows).unwrap();
-    // Pull the cached materialised integer products from inside the Tensor
-    // variant and compare against the factored aggregate evaluator.
-    let Challenges::Tensor { materialized, .. } = &challenges else {
+    let Challenges::Tensor { factored } = &challenges else {
         panic!("expected tensor challenges");
     };
-    let expanded = materialized
+    let expanded = factored
+        .expand_integer::<TD>()
+        .unwrap()
         .iter()
         .map(|challenge| challenge.eval_at_pows::<F, F, TD>(&alpha_pows))
         .collect::<Result<Vec<_>, _>>()

@@ -114,14 +114,17 @@ where
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Option<Result<crate::DecomposeFoldWitness<F, D>, AkitaError>> {
-        match *polys.first()? {
+    ) -> Result<Option<crate::DecomposeFoldWitness<F, D>>, AkitaError> {
+        let Some(first) = polys.first() else {
+            return Ok(None);
+        };
+        match *first {
             RootTensorProjectionPoly::Dense(_) => {
                 let mut dense_polys = Vec::with_capacity(polys.len());
                 for poly in polys {
                     match *poly {
                         RootTensorProjectionPoly::Dense(inner) => dense_polys.push(inner),
-                        RootTensorProjectionPoly::Sparse(_) => return None,
+                        RootTensorProjectionPoly::Sparse(_) => return Ok(None),
                     }
                 }
                 <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
@@ -139,7 +142,7 @@ where
                         RootTensorProjectionPoly::Sparse(inner) => {
                             sparse_polys.push(inner.as_ref())
                         }
-                        RootTensorProjectionPoly::Dense(_) => return None,
+                        RootTensorProjectionPoly::Dense(_) => return Ok(None),
                     }
                 }
                 <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(

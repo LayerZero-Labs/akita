@@ -968,7 +968,7 @@ where
             .iter()
             .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
             .collect::<Result<_, _>>()?,
-        Challenges::Tensor { .. } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
+        Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
     };
 
     let stride = setup.seed.max_stride;

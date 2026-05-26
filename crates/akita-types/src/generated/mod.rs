@@ -195,7 +195,7 @@ pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q128,
-            entries: fp128_d64_onehot_tensor_zk::FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES,
+            entries: fp128_d64_onehot_zk::FP128_D64_ONEHOT_ZK_SCHEDULES,
         }
     }
     #[cfg(not(feature = "zk"))]
@@ -210,7 +210,7 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
     {
         GeneratedScheduleTable {
             sis_family: SisModulusFamily::Q128,
-            entries: fp128_d64_onehot_zk::FP128_D64_ONEHOT_ZK_SCHEDULES,
+            entries: fp128_d64_onehot_tensor_zk::FP128_D64_ONEHOT_TENSOR_ZK_SCHEDULES,
         }
     }
     #[cfg(not(feature = "zk"))]

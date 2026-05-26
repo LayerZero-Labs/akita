@@ -461,18 +461,17 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
 
     /// Optional tensor-shaped batched variant of [`Self::decompose_fold`].
     ///
-    /// Returns `Some(Ok(witness))` when the backend implements a
-    /// tensor-shaped batched kernel for the supplied [`TensorChallenges`],
-    /// `Some(Err(_))` when the kernel was attempted but rejected its input,
-    /// and `None` when the backend has no tensor implementation.
+    /// Returns `Ok(Some(witness))` when the backend implements a tensor-shaped
+    /// batched kernel, `Ok(None)` when it does not, and `Err(_)` when the
+    /// backend attempted the tensor fold but rejected its input.
     fn decompose_fold_tensor_batched(
         _polys: &[&Self],
         _tensor: &TensorChallenges,
         _block_len: usize,
         _num_digits: usize,
         _log_basis: u32,
-    ) -> Option<Result<DecomposeFoldWitness<F, D>, AkitaError>> {
-        None
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        Ok(None)
     }
 
     /// Inner Ajtai commit step.
@@ -693,7 +692,7 @@ where
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Option<Result<DecomposeFoldWitness<F, D>, AkitaError>> {
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
         P::decompose_fold_tensor_batched(&inner_refs, tensor, block_len, num_digits, log_basis)
     }

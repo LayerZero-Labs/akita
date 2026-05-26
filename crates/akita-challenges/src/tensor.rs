@@ -22,8 +22,6 @@
 //! the sampled [`SparseChallenge`] range.
 
 use crate::{sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig};
-use akita_algebra::CyclotomicRing;
-use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase};
 use akita_transcript::{labels, Transcript};
 use sha3::{Digest, Sha3_256};
@@ -85,16 +83,7 @@ pub struct TensorChallenges {
 
 /// Stage-1 fold challenges — the single representation seen by prover and
 /// verifier protocol code, with all per-variant logic encapsulated behind
-/// methods on this enum. Protocol code calls the appropriate method
-/// ([`Self::evals_at_pows`] for verifier-side evaluation,
-/// [`Self::accumulate_high_half`] for prover-side r-quotient
-/// accumulation, etc.).
-///
-/// The `Tensor` variant eagerly materializes the per-block
-/// [`IntegerChallenge`] products so that protocol hot loops can iterate
-/// over a flat slice without paying the tensor-product cost per access.
-/// The flat sparse variant retains the i8-coefficient
-/// [`SparseChallenge`] representation that flat presets use end-to-end.
+/// challenge-domain methods such as [`Self::evals_at_pows`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Challenges {
     /// Flat challenge vector indexed as `claim * num_blocks + block`.
@@ -106,14 +95,10 @@ pub enum Challenges {
         /// Number of claims represented by this vector.
         num_claims: usize,
     },
-    /// Tensor-factored challenges plus the materialized per-(claim, block)
-    /// integer products that prover hot loops iterate over.
+    /// Tensor-factored challenges.
     Tensor {
         /// Factored left/right sparse challenges (one factor pair per claim).
         factored: TensorChallenges,
-        /// `factored.expand_integer::<D>()` cache, used by prover-side
-        /// per-block accumulation. Indexed as `claim * num_blocks + block`.
-        materialized: Vec<IntegerChallenge>,
     },
 }
 
@@ -184,11 +169,8 @@ impl Challenges {
     /// Returns an error if the factored input is malformed or if any tensor
     /// product overflows its integer coefficient representation.
     pub fn from_tensor<const D: usize>(factored: TensorChallenges) -> Result<Self, AkitaError> {
-        let materialized = factored.expand_integer::<D>()?;
-        Ok(Self::Tensor {
-            factored,
-            materialized,
-        })
+        factored.validate::<D>()?;
+        Ok(Self::Tensor { factored })
     }
 
     /// Number of logical block challenges represented by this value.
@@ -321,112 +303,97 @@ impl Challenges {
             }
         }
     }
-
-    /// Accumulate `Σ c_i · ring_fn(i)` over `0..self.logical_len()` into a
-    /// fresh length-`D` `F`-vector, with `ring_fn(i) = None` skipping block
-    /// `i`. The internal loop parallelises via the workspace `cfg_fold_reduce!`
-    /// macro and matches on the challenge variant once at the top.
-    ///
-    /// This is the single hook used by `compute_r_split_eq` for both the
-    /// consistency row (`ring_fn(i) = Some(w_folded[i])`) and per-A-row
-    /// accumulation (`ring_fn(i) = recomposed_inner_rows[...]`).
-    pub fn accumulate_high_half<F, R, const D: usize>(&self, ring_fn: R) -> Vec<F>
-    where
-        F: FieldCore + CanonicalField + Send + Sync,
-        R: Fn(usize) -> Option<CyclotomicRing<F, D>> + Sync,
-    {
-        let total = self.logical_len();
-        match self {
-            Self::Sparse { challenges, .. } => {
-                let challenges = challenges.as_slice();
-                cfg_fold_reduce!(
-                    0..total,
-                    || vec![F::zero(); D],
-                    |mut acc: Vec<F>, i: usize| {
-                        if let Some(ring) = ring_fn(i) {
-                            add_sparse_ring_product_high_half::<F, D>(
-                                &mut acc,
-                                &challenges[i],
-                                &ring,
-                            );
-                        }
-                        acc
-                    },
-                    |mut a: Vec<F>, b: Vec<F>| {
-                        for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                            *ai += *bi;
-                        }
-                        a
-                    }
-                )
-            }
-            Self::Tensor { materialized, .. } => {
-                let challenges = materialized.as_slice();
-                cfg_fold_reduce!(
-                    0..total,
-                    || vec![F::zero(); D],
-                    |mut acc: Vec<F>, i: usize| {
-                        if let Some(ring) = ring_fn(i) {
-                            add_integer_ring_product_high_half::<F, D>(
-                                &mut acc,
-                                &challenges[i],
-                                &ring,
-                            );
-                        }
-                        acc
-                    },
-                    |mut a: Vec<F>, b: Vec<F>| {
-                        for (ai, bi) in a.iter_mut().zip(b.iter()) {
-                            *ai += *bi;
-                        }
-                        a
-                    }
-                )
-            }
-        }
-    }
-}
-
-/// High-half quotient kernel for sparse i8 challenges. Adds
-/// `challenge * ring` to the rolled-over (degree ≥ D) tail of the product.
-/// Skips the first `D - pos` coefficients per challenge term that cannot
-/// contribute.
-#[inline(always)]
-fn add_sparse_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
-    quotient: &mut [F],
-    challenge: &SparseChallenge,
-    ring: &CyclotomicRing<F, D>,
-) {
-    let rc = ring.coefficients();
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let c = F::from_i64(coeff as i64);
-        let p = pos as usize;
-        for s in (D - p)..D {
-            quotient[p + s - D] += c * rc[s];
-        }
-    }
-}
-
-/// Integer-coefficient analogue of [`add_sparse_ring_product_high_half`],
-/// used by the tensor branch where the cached per-block product coefficients
-/// outgrow i8.
-#[inline(always)]
-fn add_integer_ring_product_high_half<F: FieldCore + CanonicalField, const D: usize>(
-    quotient: &mut [F],
-    challenge: &IntegerChallenge,
-    ring: &CyclotomicRing<F, D>,
-) {
-    let rc = ring.coefficients();
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let c = F::from_i64(i64::from(coeff));
-        let p = pos as usize;
-        for s in (D - p)..D {
-            quotient[p + s - D] += c * rc[s];
-        }
-    }
 }
 
 impl TensorChallenges {
+    /// Validate the tensor challenge shape and all sparse challenge factors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if left/right vector lengths do not match
+    /// `num_claims * len`, dimensions are not powers of two, the total block
+    /// count overflows, or any sparse factor is malformed for ring dimension
+    /// `D`.
+    pub fn validate<const D: usize>(&self) -> Result<(), AkitaError> {
+        if !self.left_len.is_power_of_two() || !self.right_len.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(
+                "tensor challenge dimensions must be powers of two".to_string(),
+            ));
+        }
+        self.total_blocks()?;
+        self.validate_lengths()?;
+        for challenge in self.left.iter().chain(self.right.iter()) {
+            challenge.validate::<D>()?;
+        }
+        Ok(())
+    }
+
+    /// Number of logical block challenges represented by one claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `left_len * right_len` overflows.
+    pub fn blocks_per_claim(&self) -> Result<usize, AkitaError> {
+        self.left_len
+            .checked_mul(self.right_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))
+    }
+
+    /// Total logical block challenges across all claims.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if count arithmetic overflows.
+    pub fn total_blocks(&self) -> Result<usize, AkitaError> {
+        self.num_claims
+            .checked_mul(self.blocks_per_claim()?)
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".to_string()))
+    }
+
+    /// Return the factored challenges for one claim-major logical block.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tensor shape is malformed or `block_idx` is out
+    /// of range.
+    pub fn factors_for_logical_block(
+        &self,
+        block_idx: usize,
+    ) -> Result<(usize, usize, &SparseChallenge, &SparseChallenge), AkitaError> {
+        if !self.left_len.is_power_of_two() || !self.right_len.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(
+                "tensor challenge dimensions must be powers of two".to_string(),
+            ));
+        }
+        self.validate_lengths()?;
+        let blocks_per_claim = self.blocks_per_claim()?;
+        let total_blocks = self
+            .num_claims
+            .checked_mul(blocks_per_claim)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("tensor challenge count overflow".to_string())
+            })?;
+        if block_idx >= total_blocks {
+            return Err(AkitaError::InvalidInput(format!(
+                "tensor block index {block_idx} out of range for {total_blocks} blocks"
+            )));
+        }
+
+        let claim_idx = block_idx / blocks_per_claim;
+        let local_idx = block_idx % blocks_per_claim;
+        let left_idx = claim_idx * self.left_len + (local_idx / self.right_len);
+        let right_idx = claim_idx * self.right_len + (local_idx % self.right_len);
+        let left = self.left.get(left_idx).ok_or(AkitaError::InvalidSize {
+            expected: left_idx + 1,
+            actual: self.left.len(),
+        })?;
+        let right = self.right.get(right_idx).ok_or(AkitaError::InvalidSize {
+            expected: right_idx + 1,
+            actual: self.right.len(),
+        })?;
+        Ok((claim_idx, local_idx, left, right))
+    }
+
     /// Materialize tensor products into logical block order.
     ///
     /// This expansion is intentionally separate from the evaluation helpers
@@ -438,18 +405,12 @@ impl TensorChallenges {
     /// Returns an error if any tensor product has malformed inputs or overflows
     /// its integer coefficient representation.
     pub fn expand_integer<const D: usize>(&self) -> Result<Vec<IntegerChallenge>, AkitaError> {
-        self.validate_lengths()?;
-        let mut out = Vec::with_capacity(self.num_claims * self.left_len * self.right_len);
-        for claim_idx in 0..self.num_claims {
-            let left_start = claim_idx * self.left_len;
-            let right_start = claim_idx * self.right_len;
-            for p in 0..self.left_len {
-                let left = &self.left[left_start + p];
-                for q in 0..self.right_len {
-                    let right = &self.right[right_start + q];
-                    out.push(IntegerChallenge::tensor_product::<D>(left, right)?);
-                }
-            }
+        self.validate::<D>()?;
+        let total_blocks = self.total_blocks()?;
+        let mut out = Vec::with_capacity(total_blocks);
+        for block_idx in 0..total_blocks {
+            let (_, _, left, right) = self.factors_for_logical_block(block_idx)?;
+            out.push(IntegerChallenge::tensor_product::<D>(left, right)?);
         }
         Ok(out)
     }

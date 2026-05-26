@@ -45,6 +45,7 @@ use std::sync::{Arc, OnceLock};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+use crate::backend::tensor_fold::{fill_rotated_tensor_challenge, narrow_tensor_accum_to_i32};
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{
@@ -1158,7 +1159,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                         tensor,
                         expected_blocks,
                         block_len,
-                    )
+                    )?
                 };
                 let coeff_accum_digit0 = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
                 let coeff_accum = if num_digits == 1 {
@@ -1203,7 +1204,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                         expected_blocks,
                         inner_width,
                         num_digits,
-                    )
+                    )?
                 };
                 let coeff_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
                 build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
@@ -1644,11 +1645,8 @@ where
         block_len: usize,
         num_digits: usize,
         _log_basis: u32,
-    ) -> Option<Result<DecomposeFoldWitness<F, D>, AkitaError>> {
-        match Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits) {
-            Ok(witness_opt) => witness_opt.map(Ok),
-            Err(err) => Some(Err(err)),
-        }
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
@@ -2315,55 +2313,13 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
 // product of two sparse samples. The witness boundary narrows back to
 // `[i32; D]` after checking the selected schedule's coefficient envelope.
 
-#[inline]
-fn tensor_challenges_for_block(
-    tensor: &TensorChallengeSet,
-    block_idx: usize,
-) -> (&SparseChallenge, &SparseChallenge) {
-    let blocks_per_claim = tensor.left_len * tensor.right_len;
-    let claim_idx = block_idx / blocks_per_claim;
-    let local_idx = block_idx % blocks_per_claim;
-    let left_idx = claim_idx * tensor.left_len + (local_idx / tensor.right_len);
-    let right_idx = claim_idx * tensor.right_len + (local_idx % tensor.right_len);
-    (&tensor.left[left_idx], &tensor.right[right_idx])
-}
-
-fn fill_rotated_tensor_challenge<const D: usize>(
-    table: &mut [[i64; D]],
-    left: &SparseChallenge,
-    right: &SparseChallenge,
-) {
-    debug_assert!(D.is_power_of_two());
-    debug_assert!(table.len() >= D);
-    let mut dense = [0i64; D];
-    for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
-        for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
-            let degree = left_pos as usize + right_pos as usize;
-            let (base_pos, base_sign) = if degree < D {
-                (degree, 1i64)
-            } else {
-                (degree - D, -1i64)
-            };
-            let coeff = i64::from(left_coeff) * i64::from(right_coeff) * base_sign;
-            dense[base_pos] += coeff;
-        }
-    }
-
-    for (shift, row) in table.iter_mut().enumerate().take(D) {
-        row[shift..D].copy_from_slice(&dense[..D - shift]);
-        for (dst, src) in row[..shift].iter_mut().zip(dense[D - shift..].iter()) {
-            *dst = -*src;
-        }
-    }
-}
-
 pub(super) fn multi_chunk_onehot_accumulate_tensor<const D: usize>(
     multi_chunk_blocks: &[&[MultiChunkEntry]],
     tensor: &TensorChallengeSet,
     num_blocks: usize,
     inner_width: usize,
     num_digits: usize,
-) -> Vec<[i64; D]> {
+) -> Result<Vec<[i64; D]>, AkitaError> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -2376,7 +2332,7 @@ pub(super) fn multi_chunk_onehot_accumulate_tensor<const D: usize>(
         .map(|tid| {
             let pos_start = tid * pos_chunk;
             if pos_start >= inner_width {
-                return Vec::new();
+                return Ok(Vec::new());
             }
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let len = pos_end - pos_start;
@@ -2390,8 +2346,8 @@ pub(super) fn multi_chunk_onehot_accumulate_tensor<const D: usize>(
                     continue;
                 }
 
-                let (left, right) = tensor_challenges_for_block(tensor, block_idx);
-                fill_rotated_tensor_challenge::<D>(&mut rotated, left, right);
+                let (_, _, left, right) = tensor.factors_for_logical_block(block_idx)?;
+                fill_rotated_tensor_challenge::<D>(&mut rotated, left, right)?;
 
                 for entry in &entries[lo..hi] {
                     let local_pos = entry.pos_in_block() * num_digits - pos_start;
@@ -2405,11 +2361,11 @@ pub(super) fn multi_chunk_onehot_accumulate_tensor<const D: usize>(
                 }
             }
 
-            acc
+            Ok(acc)
         })
-        .collect();
+        .collect::<Result<_, AkitaError>>()?;
 
-    chunks.into_iter().flatten().collect()
+    Ok(chunks.into_iter().flatten().collect())
 }
 
 pub(super) fn single_chunk_onehot_accumulate_tensor<const D: usize>(
@@ -2417,7 +2373,7 @@ pub(super) fn single_chunk_onehot_accumulate_tensor<const D: usize>(
     tensor: &TensorChallengeSet,
     num_blocks: usize,
     block_len: usize,
-) -> Vec<[i64; D]> {
+) -> Result<Vec<[i64; D]>, AkitaError> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -2441,8 +2397,8 @@ pub(super) fn single_chunk_onehot_accumulate_tensor<const D: usize>(
                     continue;
                 }
 
-                let (left, right) = tensor_challenges_for_block(tensor, block_idx);
-                fill_rotated_tensor_challenge::<D>(&mut rotated, left, right);
+                let (_, _, left, right) = tensor.factors_for_logical_block(block_idx)?;
+                fill_rotated_tensor_challenge::<D>(&mut rotated, left, right)?;
 
                 for entry in &entries[lo..hi] {
                     let dst = &mut acc[entry.pos_in_block() - pos_start];
@@ -2453,30 +2409,11 @@ pub(super) fn single_chunk_onehot_accumulate_tensor<const D: usize>(
                 }
             }
 
-            acc
+            Ok(acc)
         })
-        .collect();
+        .collect::<Result<_, AkitaError>>()?;
 
-    chunks.into_iter().flatten().collect()
-}
-
-/// Narrow the tensor accumulator at the witness boundary.
-fn narrow_tensor_accum_to_i32<const D: usize>(
-    accum_i64: Vec<[i64; D]>,
-) -> Result<Vec<[i32; D]>, AkitaError> {
-    let mut out = Vec::with_capacity(accum_i64.len());
-    for row in accum_i64 {
-        let mut narrowed = [0i32; D];
-        for (dst, src) in narrowed.iter_mut().zip(row.iter()) {
-            *dst = i32::try_from(*src).map_err(|_| {
-                AkitaError::InvalidSetup(format!(
-                    "tensor fold accumulator overflowed i32 envelope (value = {src})"
-                ))
-            })?;
-        }
-        out.push(narrowed);
-    }
-    Ok(out)
+    Ok(chunks.into_iter().flatten().collect())
 }
 
 /// Test-only helpers for this module that need access to private invariants
