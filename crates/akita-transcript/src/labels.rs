@@ -54,6 +54,22 @@ pub const CHALLENGE_STOP_CONDITION: &[u8] = b"ak/c/st";
 pub const ABSORB_PROVER_V: &[u8] = b"ak/a/v";
 /// Challenge label for stage-1 fold (sampling sparse `c_i`).
 pub const CHALLENGE_STAGE1_FOLD: &[u8] = b"ak/c/s1f";
+/// Challenge label for the left factor of a tensor-shaped fold round.
+///
+/// A tensor-shaped fold samples two sparse-challenge vectors `α_p` and `β_q`
+/// per claim, and folds with `c_{p,q} = α_p · β_q`. This label samples
+/// the `α` vector; the matching `β` vector uses
+/// [`CHALLENGE_TENSOR_FOLD_RIGHT`].
+pub const CHALLENGE_TENSOR_FOLD_LEFT: &[u8] = b"ak/c/s1fl";
+/// Absorb a canonical digest of the tensor-left challenge vector before
+/// sampling the tensor-right vector.
+///
+/// Binding the right vector to the left through this absorb prevents an
+/// adversary from choosing `β` adaptively after observing `α`.
+pub const ABSORB_TENSOR_FOLD_LEFT: &[u8] = b"ak/a/s1tl";
+/// Challenge label for the right factor of a tensor-shaped fold round.
+/// See [`CHALLENGE_TENSOR_FOLD_LEFT`].
+pub const CHALLENGE_TENSOR_FOLD_RIGHT: &[u8] = b"ak/c/s1fr";
 
 /// Absorb field-element evaluation claims for γ-batching.
 pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
@@ -91,6 +107,9 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_STOP_CONDITION,
     ABSORB_PROVER_V,
     CHALLENGE_STAGE1_FOLD,
+    CHALLENGE_TENSOR_FOLD_LEFT,
+    ABSORB_TENSOR_FOLD_LEFT,
+    CHALLENGE_TENSOR_FOLD_RIGHT,
     ABSORB_EVAL_OPENINGS_FIELD,
     CHALLENGE_EVAL_BATCH,
     ABSORB_SUMCHECK_W,
