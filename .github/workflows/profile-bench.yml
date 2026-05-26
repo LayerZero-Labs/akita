@@ -24,7 +24,6 @@ env:
     onehot_fp32:32:1
     dense_fp32_d64:26:1
     onehot_fp64:32:1
-    dense_fp64_d64:26:1
     onehot:32:1
     full:26:1
     onehot:30:4

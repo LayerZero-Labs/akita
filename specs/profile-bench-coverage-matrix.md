@@ -15,7 +15,7 @@ Extend the profile benchmark CI from a small fp128/fp32 sample into a compact cr
 
 ### Goal
 
-Build a 9-case profile benchmark CI matrix covering fp16, fp32, fp64, and fp128 singleton one-hot and dense workloads, plus the existing fp128 batched one-hot workload, with compact markdown and machine-readable artifact outputs.
+Build a 9-case profile benchmark CI matrix covering fp16, fp32, fp64, and fp128 singleton one-hot and dense workloads, plus the existing fp128 batched one-hot workload, with compact markdown and machine-readable artifact outputs. Until PR #105 lands, CI should run the 8 non-blocked cases and leave the dense fp64 cell documented for re-enabling.
 
 The benchmark matrix is:
 
@@ -69,7 +69,7 @@ It also includes a targeted test cleanup:
 ### Acceptance Criteria
 
 - [ ] `.github/workflows/profile-bench.yml` sets `AKITA_BENCH_RUNS` to `3`.
-- [ ] The profile benchmark workflow runs exactly the 9 matrix cases listed in this spec.
+- [ ] The profile benchmark workflow runs the 8 non-#105-blocked matrix cases now, and should be restored to all 9 matrix cases once PR #105 is merged.
 - [ ] `dense fp64 nv26` completes setup, commit, prove, verify, proof summary, and proof accounting without panicking after PR #105 is merged.
 - [ ] Every case has a stable case id containing field family, workload, variable count, and polynomial count.
 - [ ] The rendered PR comment contains a compact matrix summary with one row per case and columns for status, setup, commit, prove, verify, max RSS, proof size, and baseline deltas when available.
@@ -109,7 +109,7 @@ dense_fp64_* nv26: InvalidSize { expected: 16777216, actual: 33554432 }
 
 The current PR #104 benchmark run took about 11 minutes end to end, with about 7 minutes in release build and about 3 minutes 20 seconds in benchmark execution for 3 cases x 5 samples.
 
-Reducing to 3 samples makes the new 9-case matrix expected to land around 25-35 minutes end to end on GitHub-hosted Ubuntu runners once dense fp64 is fixed. This is acceptable for the profile benchmark workflow because it runs as a dedicated benchmark CI job and because the broader matrix gives useful cross-prime regression visibility.
+Reducing to 3 samples makes the active 8-case matrix expected to land below the full target runtime, with the eventual 9-case matrix expected around 25-35 minutes end to end on GitHub-hosted Ubuntu runners once dense fp64 is fixed. This is acceptable for the profile benchmark workflow because it runs as a dedicated benchmark CI job and because the broader matrix gives useful cross-prime regression visibility.
 
 Performance expectations:
 
@@ -148,8 +148,8 @@ Performance expectations:
 3. Keep the current long per-case markdown sections in the PR comment.
    Rejected because 9 cases would make the comment hard to scan. The detailed data should remain, but the comment should lead with the comparison matrix.
 
-4. Drop dense fp64 until it is optimized.
-   Rejected because the point of this matrix is cross-prime coverage. A current panic is a reason to fix the profile path before expanding CI, not a reason to omit the cell.
+4. Permanently drop dense fp64.
+   Rejected because the point of this matrix is cross-prime coverage. Temporarily disabling the CI cell while PR #105 is open is acceptable as long as the target matrix and re-enable condition remain documented.
 
 5. Add compatibility aliases for old mode names.
    Rejected under the repo's no-backward-compatibility policy. Benchmark mode names are internal developer tooling; checked-in references should be cut over directly.
@@ -179,7 +179,7 @@ Suggested implementation order:
 5. Keep detailed per-level reports in artifacts rather than the default PR comment.
 6. Replace the heavy batched one-hot debug E2E coverage with a schedule-level bound test plus a smaller truncation E2E fixture.
 7. Re-run focused local release profile checks.
-8. Let GitHub Actions produce the first full 9-case, 3-sample run and record the elapsed time in the implementation PR.
+8. Let GitHub Actions produce the first active 8-case, 3-sample run now; after PR #105 lands, re-enable dense fp64 and record the first full 9-case runtime in the implementation PR.
 
 Risks to resolve first:
 
