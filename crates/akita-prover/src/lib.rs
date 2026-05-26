@@ -12,7 +12,7 @@ pub mod protocol;
 pub use akita_config::bind_transcript_instance_descriptor;
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::Challenges;
+use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
@@ -439,25 +439,44 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         Ok(self.tensor_packed_extension_poly::<E>()?.into())
     }
 
-    /// Prover decompose + challenge-fold step over a batch of polynomials
-    /// opening at the same point. The poly backend dispatches on the
-    /// supplied [`Challenges`] variant: flat sparse and tensor challenge
-    /// shapes are both handled inside this single trait method, so caller
-    /// code (`QuadraticEquation`, `compute_r_split_eq`, ...) stays
-    /// shape-agnostic.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the challenge container does not match the
-    /// polynomial layout, or if a backend-specific kernel rejects its
-    /// input.
+    /// Prover decompose + challenge-fold step.
     fn decompose_fold(
-        polys: &[&Self],
-        challenges: &Challenges,
+        &self,
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError>;
+    ) -> DecomposeFoldWitness<F, D>;
+
+    /// Optional fused batched variant of [`Self::decompose_fold`].
+    fn decompose_fold_batched(
+        _polys: &[&Self],
+        _challenges: &[SparseChallenge],
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Option<DecomposeFoldWitness<F, D>> {
+        None
+    }
+
+    /// Optional tensor-shaped batched variant of [`Self::decompose_fold`].
+    ///
+    /// Returns `Some(Ok(witness))` when the backend implements a
+    /// tensor-shaped batched kernel for the supplied [`TensorChallenges`],
+    /// `Some(Err(_))` when the kernel was attempted but rejected its input,
+    /// and `None` when the backend has no tensor implementation. Tensor
+    /// folding is currently used only at the root level of fast-verifier
+    /// presets (`fast_verifier::fp128::D64OneHotTensor`); recursive levels
+    /// stay flat by planner construction.
+    fn decompose_fold_tensor_batched(
+        _polys: &[&Self],
+        _tensor: &TensorChallenges,
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Option<Result<DecomposeFoldWitness<F, D>, AkitaError>> {
+        None
+    }
 
     /// Inner Ajtai commit step.
     ///
@@ -649,14 +668,37 @@ where
     }
 
     fn decompose_fold(
-        polys: &[&Self],
-        challenges: &Challenges,
+        &self,
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+    ) -> DecomposeFoldWitness<F, D> {
+        <P as AkitaPolyOps<F, D>>::decompose_fold(
+            *self, challenges, block_len, num_digits, log_basis,
+        )
+    }
+
+    fn decompose_fold_batched(
+        polys: &[&Self],
+        challenges: &[SparseChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Option<DecomposeFoldWitness<F, D>> {
         let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
-        P::decompose_fold(&inner_refs, challenges, block_len, num_digits, log_basis)
+        P::decompose_fold_batched(&inner_refs, challenges, block_len, num_digits, log_basis)
+    }
+
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        tensor: &TensorChallenges,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Option<Result<DecomposeFoldWitness<F, D>, AkitaError>> {
+        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
+        P::decompose_fold_tensor_batched(&inner_refs, tensor, block_len, num_digits, log_basis)
     }
 
     fn commit_inner(

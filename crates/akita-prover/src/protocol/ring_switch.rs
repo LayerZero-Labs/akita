@@ -412,10 +412,32 @@ where
         ));
     }
 
-    // compute_m_evals_x dispatches on the challenge shape internally via
-    // `Challenges::evals_at_pows`; the caller is shape-agnostic.
-    let compute_m_evals = || -> Result<Vec<E>, AkitaError> {
-        compute_m_evals_x::<F, E, D>(
+    #[cfg(feature = "parallel")]
+    let (m_evals_x_result, w_result) = rayon::join(
+        || {
+            compute_m_evals_x::<F, E, D>(
+                setup,
+                opening_points,
+                ring_multiplier_points,
+                claim_to_point,
+                challenges,
+                alpha,
+                &ring_alpha_evals_y,
+                lp,
+                &tau1,
+                num_polys_per_point,
+                claim_to_point_poly,
+                claim_poly_indices,
+                gamma,
+                num_public_rows,
+                m_row_layout,
+            )
+        },
+        || build_w_evals_compact(w.as_i8_digits(), D, 1),
+    );
+    #[cfg(not(feature = "parallel"))]
+    let (m_evals_x_result, w_result) = {
+        let m_evals_x = compute_m_evals_x::<F, E, D>(
             setup,
             opening_points,
             ring_multiplier_points,
@@ -431,16 +453,7 @@ where
             gamma,
             num_public_rows,
             m_row_layout,
-        )
-    };
-
-    #[cfg(feature = "parallel")]
-    let (m_evals_x_result, w_result) = rayon::join(compute_m_evals, || {
-        build_w_evals_compact(w.as_i8_digits(), D, 1)
-    });
-    #[cfg(not(feature = "parallel"))]
-    let (m_evals_x_result, w_result) = {
-        let m_evals_x = compute_m_evals()?;
+        )?;
         let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1);
         (Ok(m_evals_x), w_compact)
     };
@@ -787,7 +800,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     m_row_layout: MRowLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
     if alpha_pows.len() != D {
@@ -948,7 +961,18 @@ where
     let x_len = total_cols.next_power_of_two();
     let mut out = Vec::with_capacity(x_len);
 
-    let c_alphas: Vec<E> = challenges.evals_at_pows::<F, E, D>(alpha_pows)?;
+    // Flat path is byte-identical to main's per-block evaluator; tensor path
+    // delegates to `Challenges::evals_at_pows`, which expands the
+    // materialized integer challenges.
+    let c_alphas: Vec<E> = match challenges {
+        Challenges::Sparse {
+            challenges: sparse, ..
+        } => sparse
+            .iter()
+            .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
+            .collect::<Result<_, _>>()?,
+        Challenges::Tensor { .. } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
+    };
 
     let stride = setup.seed.max_stride;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride)?;

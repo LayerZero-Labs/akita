@@ -492,9 +492,6 @@ where
                 .clone()
         })
         .collect();
-    // Both the intermediate and terminal verifier paths now accept the
-    // `Challenges` enum directly; the per-variant dispatch happens inside
-    // `prepare_ring_switch_row_eval` via `Challenges::evals_at_pows`.
     let rs = match &stage_input {
         RootStageInput::Intermediate {
             next_w_commitment, ..
@@ -515,6 +512,8 @@ where
             MRowLayout::Intermediate,
         )?,
         RootStageInput::Terminal { final_witness, .. } => {
+            // Bind the ring-switch challenges to the cleartext witness rather
+            // than to a separate commitment, mirroring the prover.
             transcript.record_wire_serde(ABSORB_SUMCHECK_W, *final_witness);
             transcript.append_serde(ABSORB_SUMCHECK_W, *final_witness);
             ring_switch_verifier_after_absorb::<F, C, T, { D }>(

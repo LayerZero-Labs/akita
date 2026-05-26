@@ -10,7 +10,7 @@
 //! aggregation path.
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::Challenges;
+use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
@@ -134,73 +134,85 @@ where
     }
 
     fn decompose_fold(
-        polys: &[&Self],
-        challenges: &Challenges,
+        &self,
+        challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
-        // If all polys are the same kind, delegate to the dedicated backend's
-        // batched path. Otherwise fall back to per-poly: each backend handles
-        // one claim's challenges via `Challenges::select_claims`, then we
-        // aggregate the per-poly witnesses.
-        let all_dense = polys.iter().all(|p| matches!(p, Self::Dense(_)));
-        let all_onehot = polys.iter().all(|p| matches!(p, Self::OneHot(_)));
-        if all_dense {
-            let mut dense_polys: Vec<&DensePoly<F, D>> = Vec::with_capacity(polys.len());
-            for poly in polys {
-                if let Self::Dense(inner) = **poly {
-                    dense_polys.push(inner);
-                }
-            }
-            return <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold(
-                &dense_polys,
-                challenges,
-                block_len,
-                num_digits,
-                log_basis,
-            );
+    ) -> DecomposeFoldWitness<F, D> {
+        match self {
+            Self::Dense(poly) => poly.decompose_fold(challenges, block_len, num_digits, log_basis),
+            Self::OneHot(poly) => poly.decompose_fold(challenges, block_len, num_digits, log_basis),
         }
-        if all_onehot {
-            let mut onehot_polys: Vec<&OneHotPoly<F, D, I>> = Vec::with_capacity(polys.len());
-            for poly in polys {
-                if let Self::OneHot(inner) = **poly {
-                    onehot_polys.push(inner);
+    }
+
+    fn decompose_fold_batched(
+        polys: &[&Self],
+        challenges: &[SparseChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Option<DecomposeFoldWitness<F, D>> {
+        match *polys.first()? {
+            Self::Dense(_) => {
+                let mut dense_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match **poly {
+                        Self::Dense(inner) => dense_polys.push(inner),
+                        Self::OneHot(_) => return None,
+                    }
                 }
-            }
-            return <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold(
-                &onehot_polys,
-                challenges,
-                block_len,
-                num_digits,
-                log_basis,
-            );
-        }
-        // Mixed Dense/OneHot: per-poly fallback. Each backend gets a single
-        // claim's challenges sliced via `Challenges::select_claims`, runs its
-        // own batched-of-one path, and we aggregate the resulting witnesses.
-        let mut witnesses = Vec::with_capacity(polys.len());
-        for (claim_idx, poly) in polys.iter().enumerate() {
-            let claim_challenges = challenges.select_claims::<D>(&[claim_idx])?;
-            let witness = match **poly {
-                Self::Dense(inner) => <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold(
-                    std::slice::from_ref(&inner),
-                    &claim_challenges,
+                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
+                    &dense_polys,
+                    challenges,
                     block_len,
                     num_digits,
                     log_basis,
-                )?,
-                Self::OneHot(inner) => <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold(
-                    std::slice::from_ref(&inner),
-                    &claim_challenges,
+                )
+            }
+            Self::OneHot(_) => {
+                let mut onehot_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match **poly {
+                        Self::OneHot(inner) => onehot_polys.push(inner),
+                        Self::Dense(_) => return None,
+                    }
+                }
+                <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_batched(
+                    &onehot_polys,
+                    challenges,
                     block_len,
                     num_digits,
                     log_basis,
-                )?,
-            };
-            witnesses.push(witness);
+                )
+            }
         }
-        crate::protocol::quadratic_equation::aggregate_decompose_fold_witnesses(witnesses)
+    }
+
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        tensor: &TensorChallenges,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Option<Result<DecomposeFoldWitness<F, D>, AkitaError>> {
+        // Tensor fold currently exists only on `OneHotPoly`. Mixed batches and
+        // dense-only batches return `None` so the caller can surface a clear
+        // setup error; production presets only use tensor at the OneHot root.
+        let mut onehot_polys = Vec::with_capacity(polys.len());
+        for poly in polys {
+            match **poly {
+                Self::OneHot(inner) => onehot_polys.push(inner),
+                Self::Dense(_) => return None,
+            }
+        }
+        <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+            &onehot_polys,
+            tensor,
+            block_len,
+            num_digits,
+            log_basis,
+        )
     }
 
     fn commit_inner(

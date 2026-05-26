@@ -97,64 +97,15 @@ where
     }
 
     fn decompose_fold(
-        polys: &[&Self],
-        challenges: &akita_challenges::Challenges,
+        &self,
+        challenges: &[akita_challenges::SparseChallenge],
         block_len: usize,
         num_digits: usize,
         log_basis: u32,
-    ) -> Result<crate::DecomposeFoldWitness<F, D>, AkitaError> {
-        // Split the heterogeneous slice into Dense and Sparse subsets,
-        // delegating each to the appropriate backend's batched fold.
-        let Some(first) = polys.first() else {
-            return Err(AkitaError::InvalidInput(
-                "RootTensorProjectionPoly::decompose_fold called with empty polys slice"
-                    .to_string(),
-            ));
-        };
-        match first {
-            Self::Dense(_) => {
-                let mut dense_polys = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match poly {
-                        Self::Dense(d) => dense_polys.push(d),
-                        Self::Sparse(_) => {
-                            return Err(AkitaError::InvalidInput(
-                                "RootTensorProjectionPoly mixed Dense/Sparse not supported"
-                                    .to_string(),
-                            ));
-                        }
-                    }
-                }
-                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold(
-                    &dense_polys,
-                    challenges,
-                    block_len,
-                    num_digits,
-                    log_basis,
-                )
-            }
-            Self::Sparse(_) => {
-                let mut sparse_polys = Vec::with_capacity(polys.len());
-                for poly in polys {
-                    match poly {
-                        Self::Sparse(s) => sparse_polys.push(s.as_ref()),
-                        Self::Dense(_) => {
-                            return Err(AkitaError::InvalidInput(
-                                "RootTensorProjectionPoly mixed Dense/Sparse not supported"
-                                    .to_string(),
-                            ));
-                        }
-                    }
-                }
-                <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold(
-                    &sparse_polys,
-                    challenges,
-                    block_len,
-                    num_digits,
-                    log_basis,
-                )
-            }
-        }
+    ) -> crate::DecomposeFoldWitness<F, D> {
+        dispatch_root_projection!(self, poly => {
+            poly.decompose_fold(challenges, block_len, num_digits, log_basis)
+        })
     }
 
     fn commit_inner(

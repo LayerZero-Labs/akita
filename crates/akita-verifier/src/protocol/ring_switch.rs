@@ -133,7 +133,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     m_row_layout: MRowLayout,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
@@ -188,7 +188,7 @@ pub(crate) fn ring_switch_verifier_after_absorb<F, E, T, const D: usize>(
     m_row_layout: MRowLayout,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt,
+    F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
@@ -297,7 +297,7 @@ pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
     claim_to_point: &[usize],
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + MulBase<F>,
 {
     validate_level_dispatch::<D>(lp)?;
@@ -421,7 +421,18 @@ where
         });
     }
 
-    let c_alphas: Vec<E> = challenges.evals_at_pows::<F, E, D>(&alpha_pows)?;
+    // Flat path is byte-identical to main's per-block evaluator; tensor path
+    // delegates to `Challenges::evals_at_pows`, which expands the
+    // materialized integer challenges.
+    let c_alphas: Vec<E> = match challenges {
+        Challenges::Sparse {
+            challenges: sparse, ..
+        } => sparse
+            .iter()
+            .map(|challenge| challenge.eval_at_pows::<F, E, D>(&alpha_pows))
+            .collect::<Result<_, _>>()?,
+        Challenges::Tensor { .. } => challenges.evals_at_pows::<F, E, D>(&alpha_pows)?,
+    };
 
     let z_first = lp.m_vars >= lp.r_vars;
 
