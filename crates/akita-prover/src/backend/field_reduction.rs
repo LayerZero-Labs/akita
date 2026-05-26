@@ -108,6 +108,51 @@ where
         })
     }
 
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        tensor: &akita_challenges::TensorChallenges,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Option<Result<crate::DecomposeFoldWitness<F, D>, AkitaError>> {
+        match *polys.first()? {
+            RootTensorProjectionPoly::Dense(_) => {
+                let mut dense_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match *poly {
+                        RootTensorProjectionPoly::Dense(inner) => dense_polys.push(inner),
+                        RootTensorProjectionPoly::Sparse(_) => return None,
+                    }
+                }
+                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+                    &dense_polys,
+                    tensor,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
+            }
+            RootTensorProjectionPoly::Sparse(_) => {
+                let mut sparse_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match *poly {
+                        RootTensorProjectionPoly::Sparse(inner) => {
+                            sparse_polys.push(inner.as_ref())
+                        }
+                        RootTensorProjectionPoly::Dense(_) => return None,
+                    }
+                }
+                <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+                    &sparse_polys,
+                    tensor,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
+            }
+        }
+    }
+
     fn commit_inner(
         &self,
         a_matrix: &akita_types::FlatMatrix<F>,

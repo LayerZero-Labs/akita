@@ -196,20 +196,40 @@ where
         num_digits: usize,
         log_basis: u32,
     ) -> Option<Result<DecomposeFoldWitness<F, D>, AkitaError>> {
-        let mut onehot_polys = Vec::with_capacity(polys.len());
-        for poly in polys {
-            match **poly {
-                Self::OneHot(inner) => onehot_polys.push(inner),
-                Self::Dense(_) => return None,
+        match *polys.first()? {
+            Self::Dense(_) => {
+                let mut dense_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match **poly {
+                        Self::Dense(inner) => dense_polys.push(inner),
+                        Self::OneHot(_) => return None,
+                    }
+                }
+                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+                    &dense_polys,
+                    tensor,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
+            }
+            Self::OneHot(_) => {
+                let mut onehot_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match **poly {
+                        Self::OneHot(inner) => onehot_polys.push(inner),
+                        Self::Dense(_) => return None,
+                    }
+                }
+                <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+                    &onehot_polys,
+                    tensor,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
             }
         }
-        <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
-            &onehot_polys,
-            tensor,
-            block_len,
-            num_digits,
-            log_basis,
-        )
     }
 
     fn commit_inner(
