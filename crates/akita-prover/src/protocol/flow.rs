@@ -107,10 +107,20 @@ impl<F: FieldCore, L: FieldCore> RecursiveProverState<F, L> {
 
 /// Cursor into the proof-level hiding witness allocated at batched-prove start.
 #[cfg(feature = "zk")]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ZkHidingProverState<F: FieldCore> {
     hiding_witness: Vec<F>,
     cursor: usize,
+}
+
+/// Top-level hiding commitment pieces fixed before transcript replay starts.
+#[cfg(feature = "zk")]
+#[derive(Debug, PartialEq, Eq)]
+pub struct ZkHidingCommitment<F: FieldCore> {
+    /// Wire-visible commitment to the proof-level hiding witness.
+    pub u_blind: Vec<F>,
+    /// Dedicated short Ajtai blinding digits used for `u_blind`.
+    pub b_blinding_digits: Vec<i8>,
 }
 
 #[cfg(feature = "zk")]
@@ -122,7 +132,7 @@ impl<F: FieldCore> ZkHidingProverState<F> {
         }
     }
 
-    fn take_values(&mut self, len: usize) -> Result<Vec<F>, AkitaError> {
+    fn take_values(&mut self, len: usize) -> Result<&[F], AkitaError> {
         let end = self
             .cursor
             .checked_add(len)
@@ -130,8 +140,7 @@ impl<F: FieldCore> ZkHidingProverState<F> {
         let values = self
             .hiding_witness
             .get(self.cursor..end)
-            .ok_or(AkitaError::InvalidProof)?
-            .to_vec();
+            .ok_or(AkitaError::InvalidProof)?;
         self.cursor = end;
         Ok(values)
     }
@@ -140,7 +149,7 @@ impl<F: FieldCore> ZkHidingProverState<F> {
     where
         L: ExtField<F>,
     {
-        Ok(L::from_base_slice(&self.take_values(L::EXT_DEGREE)?))
+        Ok(L::from_base_slice(self.take_values(L::EXT_DEGREE)?))
     }
 
     fn take_ring<const D: usize>(&mut self) -> Result<(usize, CyclotomicRing<F, D>), AkitaError> {
@@ -148,6 +157,17 @@ impl<F: FieldCore> ZkHidingProverState<F> {
         let coeffs = self.take_values(D)?;
         let ring = CyclotomicRing::from_coefficients(from_fn(|idx| coeffs[idx]));
         Ok((start, ring))
+    }
+
+    fn into_proof(self, commitment: ZkHidingCommitment<F>) -> Result<ZkHidingProof<F>, AkitaError> {
+        if self.cursor != self.hiding_witness.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(ZkHidingProof {
+            u_blind: commitment.u_blind,
+            hiding_witness: self.hiding_witness,
+            b_blinding_digits: commitment.b_blinding_digits,
+        })
     }
 
     fn take_next_w_eval_mask<L>(&mut self) -> Result<L, AkitaError>
@@ -260,7 +280,7 @@ pub struct ProveLevelOutput<F: FieldCore, L: FieldCore> {
 pub struct RootLevelRawOutput<F: FieldCore, L: FieldCore, const D: usize> {
     /// Proof-level ZK hiding commitment fixed before root challenges.
     #[cfg(feature = "zk")]
-    pub zk_hiding: ZkHidingProof<F>,
+    pub zk_hiding_commitment: ZkHidingCommitment<F>,
     /// Gamma-combined public y-rings, one per opening point.
     pub y_rings: Vec<CyclotomicRing<F, D>>,
     /// Optional extension-opening reduction payload for folded root openings.
@@ -291,6 +311,9 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
     pub intermediate_levels: Vec<AkitaLevelProof<F, L>>,
     /// Terminal fold proof shipping `final_witness` in cleartext.
     pub terminal: TerminalLevelProof<F, L>,
+    /// Proof-level ZK hiding witness state after all suffix masks are consumed.
+    #[cfg(feature = "zk")]
+    pub zk_hiding: ZkHidingProverState<F>,
     /// Total fold-level count reached, including the root level and the
     /// terminal level.
     pub num_levels: usize,
@@ -591,7 +614,7 @@ fn build_zk_hiding_context<F, E, L, const D: usize>(
     num_vars: usize,
     num_claims: usize,
     num_root_points: usize,
-) -> Result<(ZkHidingProof<F>, ZkHidingProverState<F>), AkitaError>
+) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F>,
@@ -675,9 +698,8 @@ where
         &hiding_witness,
     )?;
     Ok((
-        ZkHidingProof {
+        ZkHidingCommitment {
             u_blind,
-            hiding_witness: hiding_witness.clone(),
             b_blinding_digits,
         },
         ZkHidingProverState::new(hiding_witness),
@@ -858,7 +880,7 @@ where
 {
     let RootLevelRawOutput {
         #[cfg(feature = "zk")]
-        zk_hiding,
+        zk_hiding_commitment,
         y_rings,
         extension_opening_reduction,
         v,
@@ -875,8 +897,12 @@ where
     let RecursiveSuffixOutcome {
         intermediate_levels,
         terminal,
+        #[cfg(feature = "zk")]
+        zk_hiding,
         num_levels,
     } = suffix;
+    #[cfg(feature = "zk")]
+    let zk_hiding = zk_hiding.into_proof(zk_hiding_commitment)?;
     let root = AkitaBatchedRootProof::new_two_stage_with_extension_opening_reduction::<D>(
         y_rings,
         extension_opening_reduction,
@@ -1872,7 +1898,7 @@ pub fn prove_recursive_level<F, Cfg, T, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
     commit_ntt_cache: &mut crate::MultiDNttCaches,
     transcript: &mut T,
-    current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
+    current_state: RecursiveProverState<F, Cfg::ChallengeField>,
     level: usize,
     level_params: &LevelParams,
     next_params: &LevelParams,
@@ -1896,15 +1922,25 @@ where
 {
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
-    let current_w = &current_state.w;
+    let RecursiveProverState {
+        w: current_w,
+        logical_w,
+        commitment,
+        hint,
+        log_basis: _,
+        sumcheck_challenges,
+        opening,
+        #[cfg(feature = "zk")]
+        zk_hiding,
+    } = current_state;
     let w_lp = akita_types::recursive_level_layout_from_params(
         level_params,
         current_w.len(),
         Cfg::decomposition(),
     )?;
     let w_view = current_w.view::<F, D>()?;
-    let logical_w = current_state.logical_w.as_ref().unwrap_or(current_w);
-    let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
+    let logical_w = logical_w.as_ref().unwrap_or(&current_w);
+    let typed_hint: AkitaCommitmentHint<F, D> = hint.to_typed::<D>()?;
     drop(_setup_span);
 
     prove_recursive_fold_with_params::<F, Cfg::ChallengeField, T, D, _>(
@@ -1913,15 +1949,15 @@ where
         transcript,
         &w_view,
         logical_w,
-        &current_state.sumcheck_challenges,
-        current_state.opening,
+        &sumcheck_challenges,
+        opening,
         typed_hint,
-        &current_state.commitment,
+        &commitment,
         level,
         &w_lp,
         next_params.log_basis,
         #[cfg(feature = "zk")]
-        current_state.zk_hiding.clone(),
+        zk_hiding,
         |w| {
             use akita_config::CommitmentConfig as _;
             crate::commit_next_w::<F, Cfg, D>(
@@ -2497,7 +2533,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, const D: usize, CommitW>(
     row_coefficients: Vec<C>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<C>>,
-    #[cfg(feature = "zk")] zk_hiding_proof: ZkHidingProof<F>,
+    #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
@@ -2568,7 +2604,7 @@ where
         expected_w_len,
         next_log_basis,
         #[cfg(feature = "zk")]
-        zk_hiding_proof,
+        zk_hiding_commitment,
         #[cfg(feature = "zk")]
         zk_hiding,
         quad_eq,
@@ -2609,7 +2645,7 @@ pub fn prove_root_fold_with_params<F, E, C, T, const D: usize, P, CommitW>(
     root_params: &LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
-    #[cfg(feature = "zk")] zk_hiding_proof: ZkHidingProof<F>,
+    #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
     commit_w_for_next: CommitW,
@@ -2788,7 +2824,7 @@ where
             row_coefficient_rings,
             extension_opening_reduction,
             #[cfg(feature = "zk")]
-            zk_hiding_proof,
+            zk_hiding_commitment,
             #[cfg(feature = "zk")]
             zk_hiding,
         );
@@ -2932,7 +2968,7 @@ where
         expected_w_len,
         next_log_basis,
         #[cfg(feature = "zk")]
-        zk_hiding_proof,
+        zk_hiding_commitment,
         #[cfg(feature = "zk")]
         zk_hiding,
         quad_eq,
@@ -3416,7 +3452,7 @@ pub fn prove_root_fold_from_quadratic<F, C, T, const D: usize, CommitW>(
     lp: &akita_types::LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
-    #[cfg(feature = "zk")] zk_hiding_proof: ZkHidingProof<F>,
+    #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
@@ -3592,7 +3628,7 @@ where
 
     Ok(RootLevelRawOutput {
         #[cfg(feature = "zk")]
-        zk_hiding: zk_hiding_proof,
+        zk_hiding_commitment,
         #[cfg(feature = "zk")]
         y_rings: y_rings_masked,
         #[cfg(not(feature = "zk"))]
@@ -3791,7 +3827,7 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     expanded: &AkitaExpandedSetup<F>,
     setup_ntt_shared: &NttSlotCache<D>,
     commit_ntt_cache: &mut MultiDNttCaches,
-    current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
+    current_state: RecursiveProverState<F, Cfg::ChallengeField>,
     transcript: &mut T,
     level: usize,
     level_params: &LevelParams,
@@ -3953,7 +3989,7 @@ where
             &setup.expanded,
             &setup.ntt_shared,
             commit_ntt_cache,
-            &current_state,
+            current_state,
             transcript,
             level,
             &level_params,
@@ -3987,6 +4023,8 @@ where
     Ok(RecursiveSuffixOutcome {
         intermediate_levels,
         terminal,
+        #[cfg(feature = "zk")]
+        zk_hiding: current_state.zk_hiding,
         num_levels: planned_num_levels,
     })
 }
@@ -4088,7 +4126,7 @@ where
     let root_next_params = scheduled_next_level_params(&schedule, 1)?;
 
     #[cfg(feature = "zk")]
-    let (zk_hiding_proof, mut zk_hiding_state) =
+    let (zk_hiding_commitment, mut zk_hiding_state) =
         build_zk_hiding_context::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(
             &setup.expanded,
             &setup.ntt_shared,
@@ -4099,7 +4137,7 @@ where
             prepared_claims.incidence_summary.num_points(),
         )?;
     #[cfg(feature = "zk")]
-    transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &zk_hiding_proof.u_blind);
+    transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &zk_hiding_commitment.u_blind);
 
     if schedule_num_fold_levels(&schedule) == 1 {
         // Root is the terminal fold; no recursive suffix.
@@ -4142,6 +4180,8 @@ where
             #[cfg(feature = "zk")]
             &mut zk_hiding_state,
         )?;
+        #[cfg(feature = "zk")]
+        let zk_hiding_proof = zk_hiding_state.into_proof(zk_hiding_commitment)?;
         return Ok(build_terminal_root_batched_proof::<F, Cfg::ChallengeField>(
             #[cfg(feature = "zk")]
             zk_hiding_proof,
@@ -4165,7 +4205,7 @@ where
         root_step.next_w_len,
         root_next_params.log_basis,
         #[cfg(feature = "zk")]
-        zk_hiding_proof,
+        zk_hiding_commitment,
         #[cfg(feature = "zk")]
         zk_hiding_state,
         basis,
