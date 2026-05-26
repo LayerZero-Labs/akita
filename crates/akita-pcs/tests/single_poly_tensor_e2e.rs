@@ -219,3 +219,13 @@ fn single_onehot_tensor_nv22() {
 fn single_dense_tensor_nv15() {
     run_single_dense_tensor(15);
 }
+
+#[test]
+fn single_dense_tensor_nv20() {
+    run_single_dense_tensor(20);
+}
+
+#[test]
+fn single_dense_tensor_nv22() {
+    run_single_dense_tensor(22);
+}

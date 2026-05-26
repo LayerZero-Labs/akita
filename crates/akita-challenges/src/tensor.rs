@@ -292,6 +292,7 @@ impl Challenges {
                 Self::from_sparse(selected, *num_blocks_per_claim, claim_indices.len())
             }
             Self::Tensor { factored, .. } => {
+                factored.validate_lengths()?;
                 let mut left = Vec::with_capacity(claim_indices.len() * factored.left_len);
                 let mut right = Vec::with_capacity(claim_indices.len() * factored.right_len);
                 for &claim_idx in claim_indices {
