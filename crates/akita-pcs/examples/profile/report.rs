@@ -67,10 +67,15 @@ pub(crate) fn emit_runtime_schedule_summary(label: &str, schedule: &Schedule, fi
         "runtime schedule"
     );
 
-    for (level_idx, step) in schedule.steps.iter().enumerate() {
-        let Step::Fold(level) = step else {
-            continue;
-        };
+    for (level_idx, level) in schedule
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            Step::Fold(level) => Some(level),
+            Step::Direct(_) => None,
+        })
+        .enumerate()
+    {
         let lp = &level.params;
         tracing::info!(
             label,
