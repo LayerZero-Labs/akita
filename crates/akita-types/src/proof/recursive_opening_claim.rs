@@ -46,9 +46,9 @@ pub struct RecursiveOpeningClaim<F: FieldCore> {
     /// per-claim LPs are grouped via [`LevelParams::groups`](crate::LevelParams)
     /// and dispatched through the multi-group commit kernel.
     pub per_claim_lp: Option<LevelParams>,
-    /// Tiered routing marker (book §5.4): `Some(t)` on every chunk
-    /// claim of a routed tiered S handle so consecutive chunk claims
-    /// merge into one commitment group with `claim_count = k` carrying
-    /// `tier = Some(t)`. `None` for ordinary claims and the meta claim.
+    /// Tiered routing marker (book §5.4): `Some(t)` on the gamma-folded
+    /// chunks claim of a routed tiered S handle, so the verifier can select
+    /// the shared D_chunk/B_chunk relation. `None` for ordinary claims and
+    /// the meta claim.
     pub tier_marker: Option<TieredSetupParams>,
 }

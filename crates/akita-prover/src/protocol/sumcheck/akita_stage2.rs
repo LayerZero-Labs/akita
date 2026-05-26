@@ -2820,7 +2820,11 @@ mod tests {
     fn stage2_fused_round2_transition_matches_two_pass_reference() {
         let col_bits = 3usize;
         let ring_bits = 2usize;
-        let live_x_cols = 6usize;
+        // Use the padded live_x_cols directly so the construction does not
+        // pad and reassign live_x_cols (which would desynchronise the test
+        // helper `fold_compact_to_round2` from the prover's actual w_table
+        // size).
+        let live_x_cols = 1usize << col_bits;
         let b = 8usize;
         let half = (b / 2) as i8;
         let y_len = 1usize << ring_bits;
@@ -2908,7 +2912,9 @@ mod tests {
     fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
         let col_bits = 3usize;
         let ring_bits = 4usize;
-        let live_x_cols = 6usize;
+        // See `stage2_fused_round2_transition_matches_two_pass_reference`
+        // for why this uses the padded live_x_cols directly.
+        let live_x_cols = 1usize << col_bits;
         let b = 8usize;
         let half = (b / 2) as i8;
         let y_len = 1usize << ring_bits;

@@ -266,9 +266,9 @@ pub struct GroupLayout {
 /// per-chunk D-check rows; the setup MLE still uses the shared D prefix, so
 /// verifier work remains independent of `k` up to the chunk-index eq factor.
 ///
-/// where `group_b_count(g) = tier.num_chunks * n_B_chunk` for tier-marked
-/// groups (book §5.4 per-chunk B-checks under shared `B_chunk`) and
-/// `n_B_g` for un-tiered groups.
+/// where tier-marked chunks are gamma-folded into one chunks group with
+/// shared `B_chunk`, so they contribute `n_B_chunk` rows rather than a
+/// `k`-multiplied B range.
 ///
 /// # 10-vs-15 check-group enumeration (book §5.5 + §5.6)
 ///
@@ -1076,9 +1076,9 @@ impl LevelParams {
     /// is the number of distinct public y-rings (one per opening point).
     ///
     /// The B range sums per-group tier-aware B contributions:
-    /// `tier.num_chunks * n_B_chunk` for tier-marked groups (book §5.4
-    /// per-chunk B-checks under shared `B_chunk`) and `n_B_g` for
-    /// un-tiered groups. The order matches the prover's per-group
+    /// gamma-folded tier-marked chunks contribute one shared `n_B_chunk`
+    /// range, and un-tiered groups contribute `n_B_g`. The order matches
+    /// the prover's per-group
     /// `commitment_cyclic_rows` emission in `compute_r_split_eq`.
     ///
     /// The D range is joint for un-tiered split commitments and expands to

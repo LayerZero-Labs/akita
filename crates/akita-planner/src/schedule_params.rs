@@ -184,11 +184,9 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
     };
     let (w_ring, natural_next_w_len) = if let Some(s_lp) = &s_lp_in {
         let num_eval_rows = if incoming_tier.is_tiered() {
-            // Phase 5 grouping merges k chunks into ONE commitment
-            // group (sharing chunk_lp + tier marker) so the next-level
-            // multi-claim infra sees three opening points: W, the
-            // tiered chunks group (claim_count = k, one shared point),
-            // and meta. `num_eval_rows = 3` per the merged grouping.
+            // Phase 5 gamma-folding turns the k chunks into ONE chunks
+            // claim, so the next-level multi-claim infra sees three
+            // opening points: W, chunks, and meta.
             3
         } else {
             2
@@ -218,9 +216,9 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
     // * un-tiered cascade (`incoming_tier.shrink_factor == 1`, book
     //   §5.3): 2 groups `(W, S)`;
     // * tiered cascade (`incoming_tier.is_tiered()`, book §5.4): 3
-    //   groups `(W, chunks, meta)` — the tiered chunks expand into a
-    //   `claim_count = k` group and the meta commit sits alongside as
-    //   a third opening point;
+    //   groups `(W, chunks, meta)` — the k tiered chunks are gamma-folded
+    //   into one chunks claim and the meta commit sits alongside as a
+    //   third opening point;
     // * singleton: 1 group (only `W`).
     let (num_eval_rows, num_commitment_groups) =
         match (s_lp_in.is_some(), incoming_tier.is_tiered()) {

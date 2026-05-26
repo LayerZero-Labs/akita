@@ -20,12 +20,22 @@
 
 mod common;
 
+#[cfg(feature = "op-counter")]
+use akita_challenges::{sample_stage1_challenges, SparseChallengeConfig, Stage1ChallengeShape};
 use akita_config::{
     BareCfg, ClaimReductionCascadeCfg, ClaimReductionCfg, CommitmentConfig, TieredClaimReductionCfg,
 };
 use akita_pcs::AkitaCommitmentScheme;
+#[cfg(feature = "op-counter")]
+use akita_prover::AkitaProverSetup;
 use akita_prover::CommitmentProver;
 use akita_transcript::Blake2bTranscript;
+#[cfg(feature = "op-counter")]
+use akita_transcript::Transcript;
+#[cfg(feature = "op-counter")]
+use akita_types::{AjtaiKeyParams, GroupSpec, TieredSetupParams};
+#[cfg(feature = "op-counter")]
+use akita_verifier::prepare_m_eval;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use std::sync::Mutex;
@@ -753,7 +763,7 @@ fn tiered_dense_default_cascade_fires() {
             DenseCfg::planner_setup_shrink_factor(),
             2,
             "default DenseCfg should advertise the smallest tiered shape (f=2) so \
-             the force-routing gate engages; un-tiered (f=1) blocks on audit S-8",
+             the force-routing gate engages; un-tiered (f=1) does not route today",
         );
 
         // NV=19 is the smallest schedulable NV under dense `f = 2`
@@ -1715,6 +1725,119 @@ fn parse_nvs_env(var: &str, default: &[usize]) -> Vec<usize> {
 // ---------------------------------------------------------------------
 // Verifier op-counter measurement (audit GAP-2 / SCOPE-4).
 // ---------------------------------------------------------------------
+
+#[cfg(feature = "op-counter")]
+fn synthetic_tiered_setup_eval_ops(shrink_factor: usize) -> u64 {
+    const D_LOCAL: usize = 32;
+    const LOCAL_CHUNK_BLOCKS: usize = 4;
+
+    let tier = TieredSetupParams::new(shrink_factor).expect("power-of-two tier");
+    let stage1_config = SparseChallengeConfig::Uniform {
+        weight: 1,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    let outer = LevelParams {
+        ring_dimension: D_LOCAL,
+        log_basis: 2,
+        a_key: AjtaiKeyParams::new_unchecked(1, 1, 0, D_LOCAL),
+        b_key: AjtaiKeyParams::new_unchecked(1, 1, 0, D_LOCAL),
+        d_key: AjtaiKeyParams::new_unchecked(1, 1, 0, D_LOCAL),
+        num_blocks: LOCAL_CHUNK_BLOCKS,
+        block_len: 1,
+        m_vars: 0,
+        r_vars: 2,
+        stage1_config: stage1_config.clone(),
+        stage1_challenge_shape: Stage1ChallengeShape::Flat,
+        use_setup_claim_reduction: true,
+        num_digits_commit: 1,
+        num_digits_open: 1,
+        num_digits_fold: 1,
+        groups: None,
+    };
+    let mut chunk_spec = GroupSpec::from_outer(&outer);
+    chunk_spec.tier = Some(tier);
+    let tiered_lp = LevelParams {
+        groups: Some(vec![chunk_spec, GroupSpec::from_outer(&outer)]),
+        ..outer.clone()
+    };
+    let claim_group_sizes = [tier.num_chunks, 1usize];
+    let num_eval_rows = claim_group_sizes.len();
+    let total_blocks = tier.num_chunks * LOCAL_CHUNK_BLOCKS + outer.num_blocks;
+
+    let mut transcript = Blake2bTranscript::<F>::new(b"tiered_setup_e2e/shared_chunk_opcount");
+    let challenges = sample_stage1_challenges::<F, _, D_LOCAL>(
+        &mut transcript,
+        total_blocks,
+        1,
+        &stage1_config,
+        &Stage1ChallengeShape::Flat,
+    )
+    .expect("stage1 challenges");
+    let alpha = transcript.challenge_scalar(akita_transcript::labels::CHALLENGE_RING_SWITCH);
+    let tau1: Vec<F> = (0..12).map(|i| F::from_u64(17 + i as u64)).collect();
+    let num_claims = claim_group_sizes.iter().sum::<usize>();
+    let gamma: Vec<F> = (0..num_claims)
+        .map(|i| F::from_u64(101 + i as u64))
+        .collect();
+    let mut claim_to_point = Vec::with_capacity(num_claims);
+    claim_to_point.extend(std::iter::repeat_n(0usize, tier.num_chunks));
+    claim_to_point.push(1);
+
+    let prepared = prepare_m_eval::<F, D_LOCAL>(
+        &challenges,
+        alpha,
+        &tiered_lp,
+        &tau1,
+        &claim_group_sizes,
+        &gamma,
+        num_eval_rows,
+        num_eval_rows,
+        &claim_to_point,
+    )
+    .expect("prepare tiered M eval");
+    let setup = AkitaProverSetup::<F, D_LOCAL>::generate_with_capacity(2, 1, 1, 1, 64)
+        .expect("synthetic setup");
+    let x_challenges: Vec<F> = (0..16).map(|i| F::from_u64(211 + i as u64)).collect();
+    let (row_bits, col_bits, coeff_bits) =
+        prepared.setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
+    let r_setup: Vec<F> = (0..row_bits + col_bits + coeff_bits)
+        .map(|i| F::from_u64(307 + i as u64))
+        .collect();
+
+    akita_field::op_counter::reset();
+    akita_field::op_counter::set_enabled(true);
+    prepared
+        .eval_setup_weight_at_point::<D_LOCAL>(&x_challenges, &setup.expanded, alpha, &r_setup)
+        .expect("setup eval");
+    akita_field::op_counter::set_enabled(false);
+    akita_field::op_counter::snapshot().setup_ops
+}
+
+/// Regression for book §5.5 line 752: with the local chunk size fixed,
+/// tiered shared D_chunk/B_chunk setup evaluation must not carry a length-k
+/// chunk factor. The old path used `eval_offset_eq_tensor(..., [local, chunk])`
+/// and grew roughly with `k = f^2`; the closed-form contraction grows with
+/// the number of chunk bits instead.
+#[cfg(feature = "op-counter")]
+#[test]
+#[ignore = "op-counter regression; run with --features op-counter --ignored"]
+fn tiered_shared_chunk_setup_eval_op_count_is_sublinear_in_k() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    let f2 = synthetic_tiered_setup_eval_ops(2);
+    let f4 = synthetic_tiered_setup_eval_ops(4);
+    let f8 = synthetic_tiered_setup_eval_ops(8);
+
+    eprintln!("shared chunk setup eval ops: f=2 {f2}, f=4 {f4}, f=8 {f8}");
+    assert!(
+        f8 < f2.saturating_mul(8),
+        "setup eval grew too close to linear in k: f=2 ops={f2}, f=8 ops={f8}"
+    );
+    assert!(
+        f4 < f2.saturating_mul(4),
+        "setup eval grew too close to linear in k: f=2 ops={f2}, f=4 ops={f4}"
+    );
+}
 
 /// Per-config verifier op-count record captured by the op-counter
 /// measurement tests (`tiered_dense_cascade_verifier_op_count` /

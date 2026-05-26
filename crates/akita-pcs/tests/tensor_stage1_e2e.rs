@@ -312,7 +312,10 @@ fn tensor_stage1_dense_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 15;
+        // Planner selects root-direct for dense CR shapes below NV=20; the
+        // root-fold path the test must exercise only fires at NV>=20. Lower
+        // NVs are covered by smaller-shape unit tests.
+        const NV: usize = 20;
         const D: usize = DENSE_D;
         type Scheme = AkitaCommitmentScheme<D, TensorDenseCfg>;
 
@@ -361,7 +364,9 @@ fn tensor_stage1_rejects_tampered_s_claim() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 12;
+        // Planner selects root-direct for onehot CR shapes at NV<17; the
+        // root-fold path the test must exercise only fires at NV>=17.
+        const NV: usize = 17;
         const D: usize = ONEHOT_D;
         type Scheme = AkitaCommitmentScheme<D, TensorOneHotCfg>;
 
@@ -417,7 +422,10 @@ fn tensor_stage1_same_point_batched_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 12;
+        // Planner selects root-direct for onehot CR shapes at small NV on
+        // the same-point batched root with 2 claims; root-fold fires at
+        // NV>=18 for this shape.
+        const NV: usize = 18;
         const D: usize = ONEHOT_D;
         type Scheme = AkitaCommitmentScheme<D, TensorOneHotCfg>;
 
@@ -471,14 +479,24 @@ fn tensor_stage1_multipoint_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 12;
+        // Planner selects root-direct for onehot CR shapes at small NV; the
+        // root-fold path the test must exercise fires at NV>=18 for this
+        // multipoint shape.
+        const NV: usize = 18;
         const D: usize = ONEHOT_D;
         type Scheme = AkitaCommitmentScheme<D, TensorOneHotCfg>;
 
         let point_group_sizes = [vec![1], vec![1]];
         let total_claims = 2usize;
-        let layout = akita_config::akita_batched_root_layout::<TensorOneHotCfg>(NV, total_claims)
-            .expect("multipoint layout");
+        // The poly construction layout must match the per-point commit
+        // layout that `batched_commit` will derive internally; otherwise
+        // OneHotPoly's cached block_len clashes between the opening and
+        // commit calls. Build the multipoint batch summary directly and
+        // call the same `tensor_root_layout` helper the `TensorOneHotCfg`
+        // commit path uses.
+        let batch = AkitaRootBatchSummary::from_claim_group_sizes(&[1, 1], point_group_sizes.len())
+            .expect("multipoint batch summary");
+        let layout = tensor_root_layout::<OneHotCfg>(NV, NV, batch).expect("multipoint layout");
         let point_polys = [
             vec![make_onehot_poly(&layout, 0x715e_0010)],
             vec![make_onehot_poly(&layout, 0x715e_0020)],

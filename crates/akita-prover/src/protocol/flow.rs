@@ -1591,12 +1591,10 @@ where
     // Phase 5 grouping (book §5.4): consecutive claims that share the
     // same per-claim LP AND carry the same `Some(tier)` marker collapse
     // into ONE `GroupSpec` with `claim_count = run_length` and the
-    // tier mark preserved. This is the routed-tiered chunks pattern:
-    // a tiered handle expands to `k` claims with identical `chunk_lp`
-    // (and `tier_per_claim[i] = Some(t)`), which here become one
-    // commitment group with `claim_count = k` carrying `tier = Some(t)`.
-    // All other patterns produce one group per claim, matching the
-    // existing slice F shape.
+    // tier mark preserved. The routed-tiered path now gamma-folds the
+    // k chunks before this function, so the normal chunks group has
+    // `claim_count = 1`; the merge rule remains generic for tests and
+    // other multi-claim callers.
     let mut batch_groups: Vec<GroupSpec> = Vec::new();
     let mut batch_claim_group_sizes: Vec<usize> = Vec::new();
     let mut prev_lp: Option<&LevelParams> = None;
@@ -1783,10 +1781,9 @@ where
 
     // Phase 5: aggregate per-claim hints and per-claim commitment u-vectors
     // into per-GROUP entries (one entry per `claim_group_sizes` slot).
-    // For chunks-as-1-group with `claim_count = k`, this concatenates
-    // the `k` chunk hints into one hint with `inner_opening_digits.len() == k`
-    // and concatenates the `k` chunk u-vectors into one group u-vector.
-    // For un-tiered (claim_group_sizes == [1; N]), this is a no-op
+    // The routed tiered chunks have already been gamma-folded into one
+    // chunks claim; for un-tiered (claim_group_sizes == [1; N]) this is a
+    // no-op
     // restructuring that produces one entry per claim.
     let mut group_hints: Vec<AkitaCommitmentHint<F, D>> = Vec::new();
     let mut group_us: Vec<Vec<CyclotomicRing<F, D>>> = Vec::new();

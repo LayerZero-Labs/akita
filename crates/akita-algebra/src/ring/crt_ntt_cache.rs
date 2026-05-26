@@ -214,18 +214,35 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
 
 /// Build an NTT slot cache for a row-major coefficient buffer.
 ///
-/// `data` holds `num_rows * num_cols * D` field coefficients encoding a
-/// `num_rows × num_cols` matrix of `CyclotomicRing<F, D>` elements.
+/// `data` must hold exactly `num_rows * num_cols * D` field coefficients
+/// encoding a `num_rows × num_cols` matrix of `CyclotomicRing<F, D>` elements.
 ///
 /// # Errors
 ///
-/// Returns an error if no CRT+NTT parameter set matches the field modulus and ring degree.
+/// Returns an error if `data.len()` does not match `num_rows * num_cols * D`,
+/// if the dimensions overflow `usize`, or if no CRT+NTT parameter set matches
+/// the field modulus and ring degree.
 #[tracing::instrument(skip_all, name = "build_ntt_slot")]
 pub fn build_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
     data: &[F],
     num_rows: usize,
     num_cols: usize,
 ) -> Result<NttSlotCache<D>, AkitaError> {
+    let expected_len = num_rows
+        .checked_mul(num_cols)
+        .and_then(|n| n.checked_mul(D))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "NTT slot dimensions overflow: num_rows={num_rows} num_cols={num_cols} D={D}"
+            ))
+        })?;
+    if data.len() != expected_len {
+        return Err(AkitaError::InvalidSetup(format!(
+            "NTT slot data length mismatch: expected num_rows*num_cols*D = \
+             {num_rows}*{num_cols}*{D} = {expected_len} field elements, got {}",
+            data.len()
+        )));
+    }
     let params = select_crt_ntt_params::<F, D>()?;
     Ok(build_ntt_slot_from_params(data, num_rows, num_cols, params))
 }

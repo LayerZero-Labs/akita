@@ -888,7 +888,7 @@ macro_rules! impl_fp128_preset {
                 // CR-on presets size the shared `S` polynomial against the
                 // setup matrix the prover/verifier actually allocate, so the
                 // planner DP can DISCOVER the cascade rather than only
-                // execute it via the force-routing gate (audit S-8).
+                // execute it via the force-routing gate.
                 // CR-off presets keep the default `0`, which short-circuits
                 // the cascade-penalty cost term.
                 if <Self as $crate::CommitmentConfig>::use_setup_claim_reduction() {
@@ -917,33 +917,30 @@ macro_rules! impl_fp128_preset {
                 //     `(m_S, r_S)` to be `>= log_2(8) = 3` on each
                 //     axis, which only kicks in around NV >= 22 at
                 //     `D = 128` (lower at `D = 64`). The
-                //     `setup_claim_reduction_e2e` regression suite
-                //     runs at NV ∈ {12, 15} where `f = 8` does not
-                //     schedule at all.
+                //     setup-claim-reduction regression suite includes
+                //     small shapes below that f=8 floor.
                 //   - `f = 1` (un-tiered) does not pass the
-                //     force-routing gate yet (audit S-8: the
-                //     `level_proof_bytes` cost model does not credit
-                //     the shared-per-chunk-matrix MLE collapse the
-                //     book promises in §5.5 lines 751–754, so the DP
-                //     unwinds the cascade as "more expensive" even
-                //     though the actual proof bytes shrink). The
-                //     force-routing gate fires only on tiered shapes
+                //     force-routing gate. The remaining planner gap is
+                //     objective-level: `level_proof_bytes` prices wire
+                //     bytes, not verifier setup-evaluation/storage
+                //     savings from the §5.5 shared-matrix collapse.
+                //     The gate fires only on tiered shapes
                 //     (`level_tier.is_tiered()`), so `f = 1` would
                 //     silently disable the cascade for the production
                 //     default.
                 //
                 // `f = 2` is the smallest tiered shape that:
-                //   - schedules at every NV the regression suite
-                //     touches (smallest = NV 12 at `setup_claim_*`),
+                //   - schedules at every small CR-on shape covered by
+                //     the regression suite,
                 //   - engages the force-routing gate so cascade fires
                 //     by default for users of `DenseCfg` /
                 //     `OneHotCfg`.
                 //
                 // Audit DRIFT-4 / SCOPE-5 disposition (option a):
                 // keep `f = 2` as the production default until either
-                //   (a) audit S-8's shared-matrix collapse lands and
-                //       the planner discovers the cascade
-                //       unprompted, OR
+                //   (a) the planner objective starts pricing the
+                //       setup-evaluation/storage savings and discovers
+                //       the cascade unprompted, OR
                 //   (b) Jolt's smallest production NV is confirmed
                 //       to be `>= 22`, at which point flipping to
                 //       `f = 8` is a one-line change here.

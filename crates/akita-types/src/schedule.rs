@@ -1004,11 +1004,10 @@ fn w_ring_element_count_with_counts<F: CanonicalField>(
     num_points: usize,
 ) -> usize {
     // Inference rule for the legacy entry points that don't carry
-    // claim_group_sizes: one claim per group. Book §5.4 tier-merged
-    // groups (e.g. k chunk claims merged into one tiered group with
-    // claim_count = k) must use [`w_ring_element_count_with_claim_groups`]
-    // directly so the per-group `claim_count` reaches the layout
-    // computation.
+    // claim_group_sizes: one claim per group. Book §5.4 routed chunks
+    // are gamma-folded before sizing, while any diagnostic grouped
+    // multi-claim shape must use [`w_ring_element_count_with_claim_groups`]
+    // directly so the per-group `claim_count` reaches the layout computation.
     let inferred_sizes: Vec<usize> = if num_commitment_groups == 0 {
         Vec::new()
     } else {
@@ -1028,8 +1027,7 @@ fn w_ring_element_count_with_counts<F: CanonicalField>(
 
 /// Inner helper that takes the explicit per-group `claim_count` from
 /// `claim_group_sizes` so the per-group layout matches the prover's
-/// `build_w_coeffs` exactly (book §5.4 tier-merged chunks contribute
-/// `claim_count = k` rather than 1).
+/// `build_w_coeffs` exactly.
 fn w_ring_element_count_inner<F: CanonicalField>(
     lp: &LevelParams,
     claim_group_sizes: &[usize],
@@ -1101,8 +1099,7 @@ pub fn w_ring_element_count_with_claim_groups<F: CanonicalField>(
     claim_group_sizes: &[usize],
     num_points: usize,
 ) -> usize {
-    // Honor the per-group `claim_count` so tier-merged groups
-    // (book §5.4: chunks merged into one group with claim_count = k)
+    // Honor the per-group `claim_count` so grouped diagnostic shapes
     // produce the same runtime size as the prover's `build_w_coeffs`.
     w_ring_element_count_inner::<F>(lp, claim_group_sizes, claim_group_sizes.len(), num_points)
 }

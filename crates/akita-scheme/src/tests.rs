@@ -87,6 +87,25 @@ fn same_point_batched_root_preserves_opening_geometry() {
     }
 }
 
+/// Setup-claim-reduction sumcheck shape derived from public level params.
+///
+/// Mirrors `PreparedMEval::setup_claim_reduction_dims` so the test helper
+/// can predict the proof shape from public inputs alone for shapes that
+/// emit a setup-claim-reduction payload (book §5.4).
+fn setup_claim_reduction_shape(
+    lp: &akita_types::LevelParams,
+    num_commitment_groups: usize,
+    num_eval_rows: usize,
+) -> Option<(usize, usize)> {
+    if !lp.use_setup_claim_reduction {
+        return None;
+    }
+    let rows = lp.m_row_count(num_commitment_groups, num_eval_rows);
+    let row_bits = rows.next_power_of_two().trailing_zeros() as usize;
+    let coeff_bits = lp.ring_dimension.trailing_zeros() as usize;
+    Some((row_bits + coeff_bits, 2))
+}
+
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
@@ -125,7 +144,7 @@ fn expected_same_point_batched_shape(
         v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
         stage2_sumcheck: (root_rounds, 3),
-        stage2_setup_claim_reduction: None,
+        stage2_setup_claim_reduction: setup_claim_reduction_shape(&root_lp, 1, 1),
         next_commit_coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
     };
     let first_level_params = next_level_params.clone();
@@ -161,7 +180,7 @@ fn expected_same_point_batched_shape(
             v_coeffs: current_lp.d_key.row_len() * current_lp.ring_dimension,
             stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << current_lp.log_basis),
             stage2_sumcheck: (rounds, 3),
-            stage2_setup_claim_reduction: None,
+            stage2_setup_claim_reduction: setup_claim_reduction_shape(&current_lp, 1, 1),
             next_commit_coeffs: next_level_params.b_key.row_len()
                 * next_level_params.ring_dimension,
         }));

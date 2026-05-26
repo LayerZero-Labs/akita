@@ -253,8 +253,8 @@ pub fn untiered_setup_group_lp(
 /// carries the tier shape the previous level used to emit `S`:
 /// `un_tiered()` is the book §5.3 un-tiered 2-group `(W, S)` cascade;
 /// `is_tiered()` is the book §5.4 tiered 3-group `(W, chunks, meta)`
-/// cascade where the chunks group has `claim_count = k` and the meta
-/// group commits the concatenated chunk B-commitments.
+/// cascade where the k chunks are gamma-folded into one chunks claim and
+/// the meta group commits the concatenated chunk B-commitments.
 ///
 /// Pass `None` for `s_lp_in` and `un_tiered()` for `incoming_tier` when
 /// the level runs single-group (only `W`).
@@ -832,13 +832,9 @@ pub fn planned_joint_w_ring_with_setup_group_tiered(
     }
     let n_a = outer_lp.a_key.row_len();
     let k = tier.num_chunks;
-    // Phase 5 / book §5.4 routed-tier shape: at the next level the
-    // routed S claim expands into `k + 1` claims forming THREE
-    // commitment groups via the merge rule (chunks-as-1-group with
-    // `claim_count = k` carrying `tier = Some(t)`, plus W and meta as
-    // standard 1-claim groups). The merge rule is applied in
-    // `prove_recursive_multi_fold_with_params` and mirrored on the
-    // verifier side.
+    // Phase 5 / book §5.4 routed-tier shape after gamma folding: at the
+    // next level the routed S claim contributes ONE aggregated chunks
+    // claim plus one meta claim, forming THREE commitment groups with W.
     //
     // Meta-tier LP: the meta polynomial concatenates the k chunk B-side
     // commitment vectors (length `k * n_B_chunk` ring elements, padded
@@ -1365,11 +1361,9 @@ mod tests {
         let tier = TieredSetupParams::new(2).expect("f=2");
         let s_lp = tiered_setup_group_lp(&base, setup_field_len, tier).expect("tiered s_lp");
         let tiered = planned_joint_w_ring_with_setup_group_tiered(128, &base, &s_lp, tier, 2);
-        // The tiered joint output sums the per-chunk contributions times
-        // `k = 4` plus a meta-tier overhead — it must be strictly
-        // larger than zero and capture the per-chunk multiplier.
+        // The tiered joint output includes the aggregated chunks claim plus
+        // meta-tier overhead; it must remain finite and non-zero.
         assert!(tiered > 0);
-        // Per-chunk S contribution * k must scale with k.
         let s_lp_double = tiered_setup_group_lp(
             &base,
             setup_field_len,

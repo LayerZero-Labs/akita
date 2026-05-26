@@ -21,10 +21,30 @@ fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usi
     acc.add_assign_pointwise_mul_with_params(lhs, rhs, params);
 }
 
+/// Assert that the cache holds enough elements to be reinterpreted as
+/// `num_rows × num_cols` row-major matrix view.
+///
+/// Panics with a clear message when the requested shape exceeds the cache,
+/// instead of letting a downstream slice-index panic surface from inside
+/// a parallel callback.
+#[inline]
+fn assert_slot_dims_fit<const D: usize>(slot: &NttSlotCache<D>, num_rows: usize, num_cols: usize) {
+    let needed = num_rows
+        .checked_mul(num_cols)
+        .expect("NTT slot dispatch dimensions overflow usize");
+    let cache_len = slot.total_elements();
+    assert!(
+        needed <= cache_len,
+        "NTT slot cache too small for requested view: {num_rows}*{num_cols}={needed} elements, \
+         cache holds {cache_len}",
+    );
+}
+
 macro_rules! dispatch_slot {
     ($slot:expr, $num_rows:expr, $num_cols:expr, $func:ident $(, $arg:expr)*) => {{
         let nr: usize = $num_rows;
         let nc: usize = $num_cols;
+        assert_slot_dims_fit($slot, nr, nc);
         match $slot {
             NttSlotCache::Q32 { neg, params: p, .. } => {
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
@@ -1503,6 +1523,7 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
     num_cols: usize,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
+    assert_slot_dims_fit(slot, num_rows, num_cols);
     match slot {
         NttSlotCache::Q32 { neg, params: p, .. } => {
             let rows: Vec<&[_]> = (0..num_rows)
@@ -1533,6 +1554,7 @@ pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: 
     num_cols: usize,
     vec: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>> {
+    assert_slot_dims_fit(slot, num_rows, num_cols);
     match slot {
         NttSlotCache::Q32 { cyc, params: p, .. } => {
             let rows: Vec<&[_]> = (0..num_rows)

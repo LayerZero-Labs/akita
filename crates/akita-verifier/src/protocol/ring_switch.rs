@@ -50,6 +50,7 @@ pub struct PreparedMEval<F: FieldCore> {
     alpha: F,
     alpha_pows: Vec<F>,
     challenge_evals: PreparedChallengeEvals<F>,
+    tau1: Vec<F>,
     eq_tau1: Vec<F>,
     total_blocks: usize,
     num_blocks: usize,
@@ -109,12 +110,11 @@ impl<F: FieldCore> PreparedMEvalSplit<F> {
 
 /// Tier-aware B-row count contributed by a single commitment group.
 ///
-/// Untiered groups contribute `n_B = spec.b_key.row_len()` rows (the
-/// standard B-binding family). Tier-marked groups contribute
-/// `tier.num_chunks * n_B_chunk` rows under shared `B_chunk` (book §5.4
-/// per-chunk B-checks). This helper mirrors
-/// [`LevelParams::total_b_row_count`] but operates directly on a
-/// [`GroupLayout`] so the M-eval path can iterate `group_layouts` once.
+/// Untiered groups contribute `claim_count * n_B` rows. After the tiered
+/// chunk claims are gamma-folded, tier-marked groups normally have
+/// `claim_count = 1`; diagnostic pre-fold shapes may still pass a larger
+/// count, and the raw setup evaluator handles their shared chunk axis by
+/// closed-form equality contraction rather than a length-`k` factor.
 #[inline]
 fn group_b_row_count(layout: &GroupLayout) -> usize {
     // After Drift 3 γ-aggregation each tier-marked chunks group carries
@@ -526,6 +526,7 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         alpha,
         alpha_pows,
         challenge_evals,
+        tau1: tau1.to_vec(),
         eq_tau1,
         total_blocks,
         num_blocks,
@@ -1025,13 +1026,10 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             self.n_d
         };
         let b_start = row_layout.original_b.start;
-        // Tier-aware total B-row count: per book §5.4 line 752, tier-marked
-        // groups contribute `tier.num_chunks * n_B_chunk` rows under shared
-        // `B_chunk` (block-diagonal). Group iteration order matches the
-        // prover's `commitment_cyclic_rows` assembly in `compute_r_split_eq`,
-        // which concatenates per-claim B-output rows in the natural group
-        // order (W, chunks, meta, …). The verifier's `eq_tau1` indexing
-        // tracks a running B-offset per group to mirror that order.
+        // Tier-aware total B-row count. The on-wire tiered path normally
+        // gamma-folds chunks into one chunks claim; if a diagnostic pre-fold
+        // shape supplies multiple chunk rows, the setup evaluator contracts
+        // the shared chunk axis without materializing a length-k factor.
         let d_weights = &self.eq_tau1[d_start..(d_start + total_d_row_count)];
 
         let (w_len, t_len, z_len) = self.segment_lengths_grouped();
@@ -2375,14 +2373,19 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         }
 
         let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
-        let inner_width = self.inner_width;
         for compound_dig in 0..(self.depth_fold * self.depth_commit) {
             let dc = compound_dig / self.depth_fold;
             let df = compound_dig % self.depth_fold;
             for global_blk in 0..z_total_blocks {
-                let point_idx = global_blk / self.block_len;
                 let blk = global_blk % self.block_len;
-                let phys_k = point_idx * inner_width + blk * self.depth_commit + dc;
+                // The A binding is point-independent: all opening points
+                // read into the same A columns `local_k = blk * depth_commit
+                // + dc`. The prover's `compute_m_evals_x` z_base and the
+                // verifier's `eval_split_at_point` z_base_setup both use
+                // this convention; indexing with `point_idx * inner_width +
+                // local_k` here would silently disagree on multipoint
+                // shapes where `point_idx > 0`.
+                let local_k = blk * self.depth_commit + dc;
                 let x_idx = compound_dig * z_total_blocks + global_blk;
                 let eq = eq_weight_at_index(x_challenges, offset_z + x_idx);
                 if eq.is_zero() {
@@ -2391,7 +2394,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 for row in 0..self.n_a {
                     add_ring(
                         a_start + row,
-                        &a_view.row(row)[phys_k],
+                        &a_view.row(row)[local_k],
                         -(eq * fold_gadget[df]),
                     )?;
                 }
@@ -2795,19 +2798,18 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             };
             let b_weights = &self.eq_tau1[b_base..b_base + b_weights_count];
             let d_weights_count = group_d_row_count(layout, self.n_d, tiered_d_relation);
-            let group_d_weights = if tiered_d_relation {
-                let base = if group_role == 0 {
+            let d_base = if tiered_d_relation {
+                if group_role == 0 {
                     row_layout.w_d.start
                 } else if is_meta_group {
                     row_layout.meta_d.start
                 } else {
                     row_layout.original_d.start + d_running_offset
-                };
-                &self.eq_tau1[base..base + d_weights_count]
+                }
             } else {
-                let d_start = row_layout.original_d.start;
-                &self.eq_tau1[d_start..d_start + self.n_d]
+                row_layout.original_d.start
             };
+            let group_d_weights = &self.eq_tau1[d_base..d_base + d_weights_count.max(self.n_d)];
             let group_a_weights = if group_role == 0 {
                 &self.eq_tau1[row_layout.w_a.clone()]
             } else if is_meta_group {
@@ -2816,41 +2818,12 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 &self.eq_tau1[row_layout.original_a.clone()]
             };
 
-            // Per-claim D row-factors: tier-marked groups slice
-            // group_d_weights as `claim_within * n_d .. (claim_within + 1) *
-            // n_d`. Un-tiered groups always read the first n_d window.
             let d_chunk_count = if tiered_d_relation && is_tiered {
                 layout.claim_count
             } else {
                 1
             };
-            let d_row_factors: Vec<F> = (0..d_chunk_count)
-                .map(|claim_within| {
-                    let base = claim_within * self.n_d;
-                    group_d_weights[base..base + self.n_d]
-                        .iter()
-                        .zip(eq_row.iter())
-                        .take(self.n_d)
-                        .map(|(w, e)| *w * *e)
-                        .sum::<F>()
-                })
-                .collect();
-
-            // Per-claim B row-factors: tier-marked groups slice
-            // b_weights as `claim_within * n_b_chunk .. (claim_within + 1) *
-            // n_b_chunk`.
             let b_chunk_count = if is_tiered { layout.claim_count } else { 1 };
-            let b_row_factors: Vec<F> = (0..b_chunk_count)
-                .map(|claim_within| {
-                    let base = claim_within * n_b_chunk;
-                    b_weights[base..base + n_b_chunk]
-                        .iter()
-                        .zip(eq_row.iter())
-                        .take(n_b_chunk)
-                        .map(|(w, e)| *w * *e)
-                        .sum::<F>()
-                })
-                .collect();
 
             // A row-factor: A is one shared block per group (book §5.4
             // line 728-729 — one combined Ajtai binding).
@@ -2863,16 +2836,11 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
             // W block: D-matrix rows × ŵ digit columns.
             //
-            // Phase 5 book §5.5 line 752 chunk-axis amortisation. For
-            // tier-marked groups the per-(dig, chunk, blk) sum factors
-            // by hoisting `dig` to an outer loop and computing the
-            // inner (chunk, blk) sum via `eval_offset_eq_tensor` with
-            // factors `[eq_col_per_dig, d_row_factors]`. Per-chunk
-            // `d_factor` becomes a 1-D tensor factor instead of a
-            // claim_within-indexed scalar; the chunk-axis bits of
-            // x_local are folded by the offset-eq carry DP in
-            // `O(num_blocks_chunk + k)` per dig (vs the prior
-            // `O(num_blocks_chunk · k · log x_bits)` per dig).
+            // Book §5.5 line 752 chunk-axis contraction. For tier-marked
+            // groups the shared D_chunk block is evaluated once over the
+            // local block axis, then the chunk-high bits of the M-row point
+            // and x-column point are contracted as
+            // `eq(row_chunk_bits, col_chunk_bits)` in `O(log k)`.
             let mut w_inner = F::zero();
             let chunk_axis_amortised = is_tiered && d_chunk_count > 1;
             if chunk_axis_amortised {
@@ -2890,14 +2858,28 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                         };
                     }
                     let c_dig = c_base + dig * group_blocks;
-                    w_inner += eval_offset_eq_tensor(
+                    w_inner += eval_shared_chunk_axis_contraction(
                         x_challenges,
                         c_dig,
-                        F::one(),
-                        &[&f_blk, &d_row_factors[..]],
-                    );
+                        &f_blk,
+                        &self.tau1,
+                        d_base,
+                        &eq_row[..self.n_d],
+                        d_chunk_count,
+                    )?;
                 }
             } else {
+                let d_row_factors: Vec<F> = (0..d_chunk_count)
+                    .map(|claim_within| {
+                        let base = claim_within * self.n_d;
+                        group_d_weights[base..base + self.n_d]
+                            .iter()
+                            .zip(eq_row.iter())
+                            .take(self.n_d)
+                            .map(|(w, e)| *w * *e)
+                            .sum::<F>()
+                    })
+                    .collect();
                 for dig in 0..spec.num_digits_open {
                     for local_blk in 0..group_blocks {
                         let claim_within = local_blk / spec.num_blocks;
@@ -2927,14 +2909,9 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
             // T block: B-matrix rows × t̂ digit columns.
             //
-            // Phase 5 book §5.5 line 752 chunk-axis amortisation
-            // (same shape as the W block above): hoist `compound` to
-            // outer loop and fold the chunk axis via
-            // `eval_offset_eq_tensor` with factors
-            // `[eq_col_per_compound, b_row_factors]`. For tier-marked
-            // groups `local_col = block_idx * n_a * num_digits_open
-            // + compound` is chunk-independent (book §5.4 line 752
-            // shared B_chunk col indexing).
+            // Same shared-axis contraction as D_chunk: B_chunk's local
+            // column is chunk-independent, and only the equality between
+            // row-chunk and column-chunk bits remains.
             let mut t_inner = F::zero();
             let t_chunk_amortised = is_tiered && b_chunk_count > 1;
             if t_chunk_amortised {
@@ -2951,14 +2928,28 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                         };
                     }
                     let c_compound = c_base + compound * group_blocks;
-                    t_inner += eval_offset_eq_tensor(
+                    t_inner += eval_shared_chunk_axis_contraction(
                         x_challenges,
                         c_compound,
-                        F::one(),
-                        &[&f_blk, &b_row_factors[..]],
-                    );
+                        &f_blk,
+                        &self.tau1,
+                        b_base,
+                        &eq_row[..n_b_chunk],
+                        b_chunk_count,
+                    )?;
                 }
             } else {
+                let b_row_factors: Vec<F> = (0..b_chunk_count)
+                    .map(|claim_within| {
+                        let base = claim_within * n_b_chunk;
+                        b_weights[base..base + n_b_chunk]
+                            .iter()
+                            .zip(eq_row.iter())
+                            .take(n_b_chunk)
+                            .map(|(w, e)| *w * *e)
+                            .sum::<F>()
+                    })
+                    .collect();
                 for a_idx in 0..self.n_a {
                     for digit_idx in 0..spec.num_digits_open {
                         let compound = a_idx * spec.num_digits_open + digit_idx;
@@ -3065,6 +3056,157 @@ fn eq_weight_at_index<F: FieldCore>(challenges: &[F], index: usize) -> F {
                 acc * (F::one() - challenge)
             }
         })
+}
+
+#[inline]
+fn eq_bit_or_zero<F: FieldCore>(challenges: &[F], bit_idx: usize, bit: usize) -> F {
+    if bit_idx < challenges.len() {
+        if bit == 1 {
+            challenges[bit_idx]
+        } else {
+            F::one() - challenges[bit_idx]
+        }
+    } else if bit == 0 {
+        F::one()
+    } else {
+        F::zero()
+    }
+}
+
+#[inline]
+fn bit_len(value: usize) -> usize {
+    (usize::BITS - value.leading_zeros()) as usize
+}
+
+#[inline]
+fn usize_bit(value: usize, bit_idx: usize) -> usize {
+    if bit_idx < usize::BITS as usize {
+        (value >> bit_idx) & 1
+    } else {
+        0
+    }
+}
+
+fn contracted_offset_eq<F: FieldCore>(
+    lhs_challenges: &[F],
+    lhs_offset: usize,
+    rhs_challenges: &[F],
+    rhs_offset: usize,
+    shared_bits: usize,
+) -> F {
+    let mut state = [[F::zero(); 2]; 2];
+    state[0][0] = F::one();
+    let bit_limit = lhs_challenges
+        .len()
+        .max(rhs_challenges.len())
+        .max(shared_bits)
+        .max(bit_len(lhs_offset))
+        .max(bit_len(rhs_offset))
+        + 1;
+
+    for bit_idx in 0..bit_limit {
+        let mut next = [[F::zero(); 2]; 2];
+        let local_bits: &[usize] = if bit_idx < shared_bits { &[0, 1] } else { &[0] };
+        let lhs_offset_bit = usize_bit(lhs_offset, bit_idx);
+        let rhs_offset_bit = usize_bit(rhs_offset, bit_idx);
+        for (lhs_carry, row) in state.iter().enumerate() {
+            for (rhs_carry, &prefix_weight) in row.iter().enumerate() {
+                if prefix_weight.is_zero() {
+                    continue;
+                }
+                for &local_bit in local_bits {
+                    let lhs_sum = lhs_offset_bit + local_bit + lhs_carry;
+                    let rhs_sum = rhs_offset_bit + local_bit + rhs_carry;
+                    let lhs_bit = lhs_sum & 1;
+                    let rhs_bit = rhs_sum & 1;
+                    let lhs_next_carry = lhs_sum >> 1;
+                    let rhs_next_carry = rhs_sum >> 1;
+                    next[lhs_next_carry][rhs_next_carry] += prefix_weight
+                        * eq_bit_or_zero(lhs_challenges, bit_idx, lhs_bit)
+                        * eq_bit_or_zero(rhs_challenges, bit_idx, rhs_bit);
+                }
+            }
+        }
+        state = next;
+    }
+
+    state[0][0]
+}
+
+fn eval_shared_chunk_axis_contraction<F: FieldCore>(
+    x_challenges: &[F],
+    x_offset: usize,
+    x_local_factor: &[F],
+    row_challenges: &[F],
+    row_offset: usize,
+    row_local_factor: &[F],
+    chunk_count: usize,
+) -> Result<F, AkitaError> {
+    if !chunk_count.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tiered shared chunk contraction requires power-of-two chunk count, got {chunk_count}"
+        )));
+    }
+    if !x_local_factor.len().is_power_of_two() || !row_local_factor.len().is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tiered shared chunk contraction requires power-of-two local axes, got x_local={} row_local={}",
+            x_local_factor.len(),
+            row_local_factor.len()
+        )));
+    }
+
+    let x_local_bits = x_local_factor.len().trailing_zeros() as usize;
+    let row_local_bits = row_local_factor.len().trailing_zeros() as usize;
+    let chunk_bits = chunk_count.trailing_zeros() as usize;
+    if x_challenges.len() < x_local_bits {
+        return Err(AkitaError::InvalidSize {
+            expected: x_local_bits,
+            actual: x_challenges.len(),
+        });
+    }
+    if row_challenges.len() < row_local_bits {
+        return Err(AkitaError::InvalidSize {
+            expected: row_local_bits,
+            actual: row_challenges.len(),
+        });
+    }
+    let x_eq_low = EqPolynomial::evals(&x_challenges[..x_local_bits]);
+    let row_eq_low = EqPolynomial::evals(&row_challenges[..row_local_bits]);
+    let x_carries = summarize_pow2_block_carries(
+        &x_eq_low,
+        x_offset & (x_local_factor.len() - 1),
+        x_local_factor,
+    );
+    let row_carries = summarize_pow2_block_carries(
+        &row_eq_low,
+        row_offset & (row_local_factor.len() - 1),
+        row_local_factor,
+    );
+    let x_high = &x_challenges[x_local_bits..];
+    let row_high = &row_challenges[row_local_bits..];
+    let x_offset_high = x_offset >> x_local_bits;
+    let row_offset_high = row_offset >> row_local_bits;
+    let mut out = F::zero();
+    for (x_carry, &x_weight) in x_carries.iter().enumerate() {
+        if x_weight.is_zero() {
+            continue;
+        }
+        for (row_carry, &row_weight) in row_carries.iter().enumerate() {
+            if row_weight.is_zero() {
+                continue;
+            }
+            out += x_weight
+                * row_weight
+                * contracted_offset_eq(
+                    x_high,
+                    x_offset_high + x_carry,
+                    row_high,
+                    row_offset_high + row_carry,
+                    chunk_bits,
+                );
+        }
+    }
+    Ok(out)
 }
 
 #[inline]
@@ -3247,6 +3389,52 @@ mod tests {
             right_len: 2,
             num_claims: 1,
         })
+    }
+
+    #[test]
+    fn shared_chunk_axis_contraction_matches_explicit_sum() {
+        let x_challenges: Vec<F> = (0..12).map(|i| F::from_u64(3 + i as u64)).collect();
+        let row_challenges: Vec<F> = (0..10).map(|i| F::from_u64(31 + i as u64)).collect();
+        let x_local = vec![
+            F::from_u64(2),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(11),
+        ];
+        let row_local = vec![F::from_u64(13), F::from_u64(17)];
+        let x_offset = 19usize;
+        let row_offset = 6usize;
+        let chunk_count = 8usize;
+
+        let got = eval_shared_chunk_axis_contraction(
+            &x_challenges,
+            x_offset,
+            &x_local,
+            &row_challenges,
+            row_offset,
+            &row_local,
+            chunk_count,
+        )
+        .expect("closed-form contraction");
+
+        let mut expected = F::zero();
+        for chunk in 0..chunk_count {
+            for (x_local_idx, &x_factor) in x_local.iter().enumerate() {
+                for (row_local_idx, &row_factor) in row_local.iter().enumerate() {
+                    expected += eq_weight_at_index(
+                        &x_challenges,
+                        x_offset + x_local_idx + x_local.len() * chunk,
+                    ) * x_factor
+                        * eq_weight_at_index(
+                            &row_challenges,
+                            row_offset + row_local_idx + row_local.len() * chunk,
+                        )
+                        * row_factor;
+                }
+            }
+        }
+
+        assert_eq!(got, expected);
     }
 
     #[test]

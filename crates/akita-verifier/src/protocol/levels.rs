@@ -12,7 +12,7 @@ use crate::{
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::trace;
 use akita_algebra::ring::{mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_single_i8, NttSlotCache};
-use akita_algebra::{CyclotomicRing, EqPolynomial};
+use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
@@ -407,9 +407,9 @@ where
 /// Soundness: if any chunk_polys[j] deviates from its public
 /// S-derived form, the aggregated `chunk_poly_agg` deviates with
 /// probability `1 - O(1/|F|)` over uniform γ, and the L+1 M-relation
-/// check fails. The recombined_setup_opening check (Σ_j eq_high(j) ·
-/// chunk_opening_j == y_setup) anchors the per-chunk MLE evaluations
-/// to the routed S opening before γ-aggregation.
+/// check fails. The routed setup opening is checked once against the
+/// full public setup polynomial; the chunks claim opening is then
+/// evaluated once on `chunk_poly_agg`, avoiding k per-chunk MLE openings.
 #[allow(clippy::too_many_arguments)]
 fn expand_tiered_setup_claims<F, T, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
@@ -455,8 +455,9 @@ where
     let meta_w_len = meta_input_pow2 * D;
     let alpha_bits = D.trailing_zeros() as usize;
 
-    // Slice the verifier-derived `r_x`-fixed setup polynomial for per-chunk
-    // opening MLEs. Cost is k chunks × chunk_n × D field ops.
+    // Slice the verifier-derived `r_x`-fixed setup polynomial for public
+    // tiered commitment material. The setup-opening MLE itself is checked
+    // once below; it is not recombined from k per-chunk openings.
     let live_n_s = row_count * col_count;
     let n_s = live_n_s.next_power_of_two();
     let log_shrink = tier.log2_shrink()? as usize;
@@ -472,34 +473,22 @@ where
         chunk_lp.m_vars + log_shrink,
         tier,
     )?;
-    let r_high_start = alpha_bits + chunk_lp.r_vars;
-    let m_high_start = alpha_bits + chunk_lp.r_vars + log_shrink + chunk_lp.m_vars;
-    let eq_high_r = EqPolynomial::evals(&opening_point[r_high_start..r_high_start + log_shrink]);
-    let eq_high_m = EqPolynomial::evals(&opening_point[m_high_start..m_high_start + log_shrink]);
     let mut s_rings = setup_rings;
     s_rings.resize(n_s, CyclotomicRing::<F, D>::zero());
 
-    // Compute per-chunk slices and per-chunk MLE openings.
-    let mut chunk_slices: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(tier.num_chunks);
-    let mut chunk_openings: Vec<F> = Vec::with_capacity(tier.num_chunks);
-    let mut recombined_setup_opening = F::zero();
-    for (j, indices) in chunk_indices.iter().enumerate() {
-        let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
-        let chunk_opening = dense_ring_opening_at_point::<F, D>(
-            &chunk_slice,
-            &chunk_opening_point,
-            &chunk_lp,
-            alpha_bits,
-        )?;
-        let high_m = j / tier.shrink_factor;
-        let high_r = j % tier.shrink_factor;
-        recombined_setup_opening += eq_high_m[high_m] * eq_high_r[high_r] * chunk_opening;
-        chunk_slices.push(chunk_slice);
-        chunk_openings.push(chunk_opening);
-    }
+    let recombined_setup_opening =
+        dense_ring_opening_at_point::<F, D>(&s_rings, &opening_point, &full_s_lp, alpha_bits)?;
     if recombined_setup_opening != y_setup {
-        tracing::debug!("[expand_tiered_setup_claims] recombined setup opening mismatch");
+        tracing::debug!("[expand_tiered_setup_claims] setup opening mismatch");
         return Err(AkitaError::InvalidProof);
+    }
+
+    // Compute per-chunk slices used for public chunk commitments and the
+    // gamma-aggregated chunks claim.
+    let mut chunk_slices: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(tier.num_chunks);
+    for indices in &chunk_indices {
+        let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
+        chunk_slices.push(chunk_slice);
     }
 
     // γ-folding step: bind γ to k chunk u_j + meta u_meta first.
@@ -523,11 +512,12 @@ where
         }
     }
 
-    // Aggregated opening: Σ_j γ_j · chunk_opening_j (linear by MLE).
-    let mut chunk_opening_agg = F::zero();
-    for j in 0..tier.num_chunks {
-        chunk_opening_agg += gamma_chunk[j] * chunk_openings[j];
-    }
+    let chunk_opening_agg = dense_ring_opening_at_point::<F, D>(
+        &chunk_poly_agg,
+        &chunk_opening_point,
+        &chunk_lp,
+        alpha_bits,
+    )?;
 
     // u_agg_fresh: commit chunk_poly_agg under chunk_lp via standard chain.
     let ntt_shared = setup.ntt_shared_get_or_init::<D>()?;

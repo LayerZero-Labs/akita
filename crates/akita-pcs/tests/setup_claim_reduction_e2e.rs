@@ -113,7 +113,7 @@ fn setup_claim_reduction_onehot_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 12;
+        const NV: usize = 17;
         const D: usize = ONEHOT_D;
         type Scheme = AkitaCommitmentScheme<D, ClaimReductionOneHotCfg>;
 
@@ -237,7 +237,7 @@ fn setup_claim_reduction_rejects_tampered_m_setup_eval() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 12;
+        const NV: usize = 17;
         const D: usize = ONEHOT_D;
         type Scheme = AkitaCommitmentScheme<D, ClaimReductionOneHotCfg>;
 
@@ -301,7 +301,7 @@ fn setup_claim_reduction_rejects_tampered_s_opening_value() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 12;
+        const NV: usize = 17;
         const D: usize = ONEHOT_D;
         type Scheme = AkitaCommitmentScheme<D, ClaimReductionOneHotCfg>;
 

@@ -679,10 +679,10 @@ where
         validate_stage1_accumulator_headroom(&lp, num_claims)?;
         let group_layouts = lp.group_layouts(claim_group_sizes, num_eval_rows)?;
         for (commitment, layout) in commitments.iter().zip(group_layouts.iter()) {
-            // Phase 5: a tier-marked group with `claim_count = k`
-            // aggregates `k` per-chunk B-side commitments into one
-            // group-level u-vector of length `k * n_B_chunk`. Other
-            // groups have one claim and one u-vector of length `n_B`.
+            // Phase 5: routed tiered chunks are gamma-folded before this
+            // relation, so the normal chunks group has one B-side
+            // commitment vector. The grouping logic remains generic for
+            // diagnostic multi-claim shapes.
             let expected = layout.claim_count * layout.spec.b_key.row_len();
             if commitment.len() != expected {
                 return Err(AkitaError::InvalidInput(format!(

@@ -405,12 +405,12 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
 
     let m_rows = tiered_lp.m_row_count(claim_group_sizes.len(), num_eval_rows);
     let total_b_rows = tiered_lp.total_b_row_count(claim_group_sizes.len());
-    // Tier-aware total: W.b + tier.num_chunks * chunks.b + meta.b
+    // Gamma-folded tier-aware total: W.b + shared chunks.b + meta.b.
+    // The chunks claim has `k` logical claims but only one shared B_chunk
+    // row range in the verifier M-layout.
     assert_eq!(
         total_b_rows,
-        outer_lp.b_key.row_len()
-            + tier.num_chunks * chunks_spec.b_key.row_len()
-            + outer_lp.b_key.row_len()
+        outer_lp.b_key.row_len() + chunks_spec.b_key.row_len() + outer_lp.b_key.row_len()
     );
 
     let mut transcript = Blake2bTranscript::<F>::new(b"multi_group_commit/tiered_invariant");
