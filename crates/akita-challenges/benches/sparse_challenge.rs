@@ -23,9 +23,8 @@
 use akita_challenges::{sample_sparse_challenges, SparseChallengeConfig};
 use akita_field::Prime128OffsetA7F7;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
-use akita_transcript::{Blake2bTranscript, Transcript};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::hint::black_box;
+use akita_transcript::{AkitaTranscript, Transcript};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 // 128-bit base field used by the production stage-1 path; matches the field
 // used by the broader e2e benches in `akita-pcs`.
@@ -38,8 +37,8 @@ const D: usize = 32;
 /// larger counts emphasize the amortized per-challenge decode cost.
 const BATCH_SIZES: &[usize] = &[1, 1 << 6, 1 << 12, 1 << 15];
 
-fn fresh_transcript() -> Blake2bTranscript<F> {
-    let mut t = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+fn fresh_transcript() -> AkitaTranscript<F> {
+    let mut t = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     // Seed once with a non-empty transcript so we are not measuring the
     // empty-transcript fast path.
     t.append_field(b"bench-seed", &F::from_u64(0xC0FFEE));

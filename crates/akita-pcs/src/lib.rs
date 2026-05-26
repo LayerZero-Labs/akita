@@ -1,7 +1,3 @@
-#![cfg_attr(
-    all(target_arch = "x86_64", target_feature = "avx512f"),
-    feature(stdarch_x86_avx512)
-)]
 //! # Akita PCS
 //!
 //! A high performance and modular implementation of the Akita polynomial commitment scheme.
@@ -61,5 +57,5 @@ pub use akita_field::{
 pub use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, ProverClaims};
 pub use akita_scheme::AkitaCommitmentScheme;
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+pub use akita_transcript::{AkitaTranscript, Transcript};
 pub use akita_types::{BasisMode, BlockOrder};

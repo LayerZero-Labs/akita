@@ -6,7 +6,7 @@ use akita_sumcheck::{
     prove_sumcheck, tensor_opening_split, BatchedExtensionOpeningReductionProver,
     BatchedExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
 };
-use akita_transcript::{labels, sample_ext_challenge, Blake2bTranscript, Transcript};
+use akita_transcript::{labels, sample_ext_challenge, AkitaTranscript, Transcript};
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
@@ -158,7 +158,7 @@ where
                 let mut prover =
                     BatchedExtensionOpeningReductionProver::new(terms.clone(), input_claim)
                         .unwrap();
-                let mut transcript = <Blake2bTranscript<F> as Transcript<F>>::new(b"bench/eor");
+                let mut transcript = <AkitaTranscript<F> as Transcript<F>>::new(b"bench/eor");
                 let start = Instant::now();
                 let proof =
                     prove_sumcheck::<F, _, E, _, _>(&mut prover, &mut transcript, |transcript| {

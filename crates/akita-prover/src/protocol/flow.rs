@@ -43,14 +43,15 @@ use akita_types::{
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
     relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
-    root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
-    schedule_num_fold_levels, schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
-    AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape,
-    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
-    PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
-    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    root_extension_opening_partials, root_tensor_projection_enabled,
+    sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
+    schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs,
+    AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits,
+    ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof,
+    FlatRingVec, IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
+    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
+    TerminalLevelProof,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -141,7 +142,7 @@ where
             .map(E::lift_base)
             .ok_or_else(|| AkitaError::InvalidInput("empty root y-ring".to_string()));
     }
-    if D % <E as ExtField<F>>::EXT_DEGREE != 0
+    if !D.is_multiple_of(<E as ExtField<F>>::EXT_DEGREE)
         || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
     {
         return Err(AkitaError::InvalidInput(
@@ -447,6 +448,7 @@ pub fn prove_batched_with_policy<
     const D: usize,
     SelectSchedule,
     SelectRootNext,
+    BindTranscript,
     ProveFolded,
 >(
     expanded: &AkitaExpandedSetup<F>,
@@ -455,6 +457,7 @@ pub fn prove_batched_with_policy<
     basis: BasisMode,
     select_schedule: SelectSchedule,
     select_root_next_params: SelectRootNext,
+    bind_transcript: BindTranscript,
     prove_folded: ProveFolded,
 ) -> Result<AkitaBatchedProof<F, L>, AkitaError>
 where
@@ -465,6 +468,8 @@ where
     P: AkitaPolyOps<F, D>,
     SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     SelectRootNext: FnOnce(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
+    BindTranscript:
+        FnOnce(&mut T, &ClaimIncidenceSummary, &Schedule, BasisMode) -> Result<(), AkitaError>,
     ProveFolded: FnOnce(
         PreparedBatchedProveInputs<'a, F, E, P, D>,
         Schedule,
@@ -487,6 +492,13 @@ where
             schedule = root_direct_schedule(num_vars)?;
         }
     }
+
+    bind_transcript(
+        transcript,
+        &prepared_claims.incidence_summary,
+        &schedule,
+        basis,
+    )?;
 
     if schedule_is_root_direct(&schedule) {
         return prove_root_direct::<F, L, D, P>(
@@ -1850,7 +1862,10 @@ where
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut openings = Vec::with_capacity(incidence_summary.num_claims());
-    let mut partials = Vec::with_capacity(incidence_summary.num_claims() * width);
+    let mut partials = Vec::with_capacity(root_extension_opening_partials(
+        width,
+        incidence_summary.num_claims(),
+    ));
     let mut row_partials_by_claim = Vec::with_capacity(incidence_summary.num_claims());
     {
         let _span =
@@ -3269,7 +3284,7 @@ where
 mod tests {
     use super::*;
     use akita_field::{Fp2, Fp32, LiftBase, NegOneNr};
-    use akita_transcript::Blake2bTranscript;
+    use akita_transcript::AkitaTranscript;
     #[cfg(feature = "zk")]
     use akita_types::FlatDigitBlocks;
     use akita_types::{AkitaSetupSeed, FlatMatrix};
@@ -3278,16 +3293,17 @@ mod tests {
     type E = Fp2<F, NegOneNr>;
 
     fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup {
-            seed: AkitaSetupSeed {
+        AkitaExpandedSetup::from_parts(
+            AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 4,
                 max_num_points: 2,
                 max_stride: 1,
                 public_matrix_seed: [0u8; 32],
             },
-            shared_matrix: FlatMatrix::from_flat_data(vec![F::zero()], 1),
-        }
+            FlatMatrix::from_flat_data(vec![F::zero()], 1),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -3357,7 +3373,7 @@ mod tests {
                 });
 
         let mut transcript =
-            Blake2bTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
+            AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
         let reduction = prove_recursive_extension_opening_reduction::<F, E, _>(
             &logical_w,
             &point,

@@ -2,7 +2,8 @@
 
 use crate::fields::ext::{
     Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
-    RingSubfieldFp4MulBackend, TowerBasisFp4, TowerBasisFp4Config, UnitNr,
+    RingSubfieldFp4MulBackend, RingSubfieldFp8, RingSubfieldFp8MulBackend, TowerBasisFp4,
+    TowerBasisFp4Config, UnitNr,
 };
 use crate::{
     pseudo_mersenne_modulus, AkitaError, FieldCore, FromPrimitiveInt, PseudoMersenneField,
@@ -152,11 +153,21 @@ where
     }
 }
 
+impl<F> FrobeniusExtField<F> for RingSubfieldFp8<F>
+where
+    F: PseudoMersenneField + Valid + RingSubfieldFp8MulBackend,
+{
+    #[inline]
+    fn frobenius_pow(self, power: usize) -> Self {
+        frobenius_pow_via_base_modulus::<F, Self>(self, power)
+    }
+}
+
 /// Return the first `width` elements of the canonical extension basis.
 ///
-/// For [`RingSubfieldFp4`] this is the fixed ring-subfield basis
-/// `[1, e1, e2, e3]`, so the chosen Moore-type theta family is aligned with
-/// the coefficient packing basis used by `embed_subfield`.
+/// For [`RingSubfieldFp4`] and [`RingSubfieldFp8`] this is the fixed
+/// ring-subfield basis `[1, e1, ...]`, so the chosen Moore-type theta family
+/// is aligned with the coefficient packing basis used by `embed_subfield`.
 ///
 /// # Errors
 ///
@@ -408,6 +419,26 @@ where
     }
 }
 
+impl<F> ExtField<F> for RingSubfieldFp8<F>
+where
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp8MulBackend,
+{
+    const EXT_DEGREE: usize = 8;
+
+    #[inline]
+    fn from_base_slice(coeffs: &[F]) -> Self {
+        assert_eq!(coeffs.len(), 8);
+        Self::new([
+            coeffs[0], coeffs[1], coeffs[2], coeffs[3], coeffs[4], coeffs[5], coeffs[6], coeffs[7],
+        ])
+    }
+
+    #[inline]
+    fn to_base_vec(&self) -> Vec<F> {
+        self.coeffs.to_vec()
+    }
+}
+
 impl<F: FieldCore> LiftBase<F> for F {
     #[inline]
     fn lift_base(x: F) -> Self {
@@ -503,6 +534,35 @@ where
 impl<F> MulBase<F> for RingSubfieldFp4<F>
 where
     F: FieldCore + Valid + RingSubfieldFp4MulBackend,
+{
+    #[inline]
+    fn mul_base(self, x: F) -> Self {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] * x))
+    }
+}
+
+impl<F> LiftBase<F> for RingSubfieldFp8<F>
+where
+    F: FieldCore + Valid + RingSubfieldFp8MulBackend,
+{
+    #[inline]
+    fn lift_base(x: F) -> Self {
+        Self::new([
+            x,
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+            F::zero(),
+        ])
+    }
+}
+
+impl<F> MulBase<F> for RingSubfieldFp8<F>
+where
+    F: FieldCore + Valid + RingSubfieldFp8MulBackend,
 {
     #[inline]
     fn mul_base(self, x: F) -> Self {

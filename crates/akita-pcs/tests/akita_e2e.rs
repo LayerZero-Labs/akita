@@ -4,7 +4,7 @@
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 #[cfg(feature = "planner")]
-use akita_config::proof_optimized::{fp32, fp64};
+use akita_config::proof_optimized::{fp16, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
@@ -13,7 +13,7 @@ use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 #[cfg(not(feature = "zk"))]
 use akita_types::AkitaScheduleInputs;
 use akita_types::{lagrange_weights, LevelParams, RingSubfieldEncoding};
@@ -214,7 +214,7 @@ where
     let commitments = [commitment];
     let hints = vec![hint];
 
-    let mut prover_transcript = Blake2bTranscript::<FField>::new(transcript_label);
+    let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::batched_prove(
         &setup,
         prove_input(
@@ -316,11 +316,11 @@ fn opening_from_poly<FField: CanonicalField, const D: usize, P: AkitaPolyOps<FFi
 }
 
 #[test]
-fn full_d128_prove_verify() {
+fn full_d64_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D64Full;
         const D: usize = Cfg::D;
 
         let layout = Cfg::commitment_layout(FULL_TEST_NV).expect("layout");
@@ -354,7 +354,7 @@ fn full_d128_prove_verify() {
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
         let prove_start = Instant::now();
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
@@ -384,7 +384,7 @@ fn full_d128_prove_verify() {
 
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
         let verify_start = Instant::now();
         let verify_result =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
@@ -408,7 +408,7 @@ fn full_d128_prove_verify() {
             proof_bytes,
             proof_kib = proof_bytes as f64 / 1024.0,
             levels = total_fold_levels,
-            "full-d128/nv{FULL_TEST_NV} e2e"
+            "full-d64/nv{FULL_TEST_NV} e2e"
         );
     });
 }
@@ -436,7 +436,7 @@ fn full_d32_prove_verify() {
         let openings = [opening];
         let opening_groups = [&openings[..]];
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/full-d32");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32");
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
@@ -448,6 +448,39 @@ fn full_d32_prove_verify() {
         assert!(
             result.is_ok(),
             "D32 verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[cfg(feature = "planner")]
+#[test]
+fn fp16_static_dense_round_trip() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type FSmall = fp16::Field;
+        type Cfg = fp16::D32Full;
+        const D: usize = Cfg::D;
+
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+            make_dense_fixture::<FSmall, D, Cfg>(SMALL_FIELD_TEST_NV, b"akita_e2e/fp16-static");
+
+        let commitments = [commitment];
+        let openings = [opening];
+        let mut verifier_transcript = AkitaTranscript::<FSmall>::new(b"akita_e2e/fp16-static");
+        let result =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<FSmall, D>>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input(&opening_point[..], &openings[..], &commitments[0]),
+                BasisMode::Lagrange,
+            );
+
+        assert!(
+            result.is_ok(),
+            "fp16 static verification must pass: {:?}",
             result.err()
         );
     });
@@ -468,7 +501,7 @@ fn fp32_static_dense_round_trip() {
 
         let commitments = [commitment];
         let openings = [opening];
-        let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"akita_e2e/fp32-static");
+        let mut verifier_transcript = AkitaTranscript::<FSmall>::new(b"akita_e2e/fp32-static");
         let result =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<FSmall, D>>::batched_verify(
                 &proof,
@@ -501,7 +534,7 @@ fn fp64_static_dense_round_trip() {
 
         let commitments = [commitment];
         let openings = [opening];
-        let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"akita_e2e/fp64-static");
+        let mut verifier_transcript = AkitaTranscript::<FSmall>::new(b"akita_e2e/fp64-static");
         let result =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<FSmall, D>>::batched_verify(
                 &proof,
@@ -566,7 +599,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
@@ -624,8 +657,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
                 .expect("deserialize direct-root proof");
         assert_eq!(decoded, proof);
 
-        let mut verifier_transcript =
-            Blake2bTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -643,11 +675,11 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 }
 
 #[test]
-fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
+fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D64Full;
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
@@ -685,7 +717,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         let openings = [opening];
         let opening_groups = [&openings[..]];
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/adaptive-full-mixed");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/adaptive-full-mixed");
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -744,7 +776,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
@@ -789,7 +821,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             );
         }
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -868,7 +900,7 @@ fn batched_onehot_same_point_round_trip() {
         let commitments = [commitment];
         let hints = vec![hint];
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
@@ -891,7 +923,7 @@ fn batched_onehot_same_point_round_trip() {
         let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let opening_groups = [&openings[..]];
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
@@ -956,7 +988,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let hints = vec![hint];
 
         let mut prover_transcript =
-            Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
+            AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
@@ -996,7 +1028,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         }
 
         let mut verifier_transcript =
-            Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
+            AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let opening_groups = [&openings[..]];
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &malformed,
@@ -1060,7 +1092,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         let commitments = [commitment];
         let hints = vec![hint];
 
-        let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
@@ -1093,7 +1125,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             "test fixture must include a recursive suffix to cover truncation"
         );
 
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
         let opening_groups = [&openings[..]];
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
@@ -1110,8 +1142,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
 
         let mut truncated = decoded.clone();
         truncated.steps.remove(0);
-        let mut truncated_transcript =
-            Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
+        let mut truncated_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
         let truncated_result =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                 &truncated,
@@ -1133,7 +1164,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D64Full;
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
@@ -1183,7 +1214,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
 
 #[test]
 fn adaptive_schedule_key_changes_when_schedule_changes() {
-    type Cfg = fp128::D128Full;
+    type Cfg = fp128::D64Full;
 
     let mut distinct = std::collections::BTreeMap::new();
     for nv in 10..=18 {

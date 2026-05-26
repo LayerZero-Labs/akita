@@ -14,7 +14,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::labels::{
     ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD, CHALLENGE_EVAL_BATCH,
 };
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::AkitaTranscript;
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::BlockOrder;
 use akita_types::ClaimIncidenceSummary;
@@ -317,7 +317,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
     let commitments = [commitment];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -551,7 +551,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             })
             .unzip();
 
-        let mut transcript = Blake2bTranscript::<OneHotF>::new(b"debug/relation-claim/batched");
+        let mut transcript = AkitaTranscript::<OneHotF>::new(b"debug/relation-claim/batched");
         append_batched_commitments_to_transcript(&batch_commitments, &mut transcript);
         for pt in &padded_point {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
@@ -1274,8 +1274,7 @@ fn debug_onehot_batched_profile_compare() {
         let single_opening_groups = [&single_openings[..]];
 
         let _single_prove_span = tracing::info_span!("debug_single_prove").entered();
-        let mut single_prover_transcript =
-            Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single");
+        let mut single_prover_transcript = AkitaTranscript::<OneHotF>::new(b"debug/onehot/single");
         let single_proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
             &single_setup,
             vec![(
@@ -1296,7 +1295,7 @@ fn debug_onehot_batched_profile_compare() {
         <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
             &single_proof,
             &single_verifier_setup,
-            &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single"),
+            &mut AkitaTranscript::<OneHotF>::new(b"debug/onehot/single"),
             vec![(
                 &single_point[..],
                 CommittedOpenings {
@@ -1325,8 +1324,7 @@ fn debug_onehot_batched_profile_compare() {
         let batch_hints = vec![batch_hint];
 
         let _batched_prove_span = tracing::info_span!("debug_batched_prove").entered();
-        let mut batch_prover_transcript =
-            Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched");
+        let mut batch_prover_transcript = AkitaTranscript::<OneHotF>::new(b"debug/onehot/batched");
         let batch_proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
             &batch_setup,
             vec![(
@@ -1348,7 +1346,7 @@ fn debug_onehot_batched_profile_compare() {
         <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
             &batch_proof,
             &batch_verifier_setup,
-            &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched"),
+            &mut AkitaTranscript::<OneHotF>::new(b"debug/onehot/batched"),
             vec![(
                 &batch_point[..],
                 CommittedOpenings {
@@ -1455,7 +1453,7 @@ fn batched_root_direct_fast_path_round_trip() {
 
     let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-root-direct");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1492,7 +1490,7 @@ fn batched_root_direct_fast_path_round_trip() {
     let round_trip = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
     assert_eq!(round_trip, proof);
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-root-direct");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct");
     let opening_groups = [&openings[..]];
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &round_trip,
@@ -1543,8 +1541,7 @@ fn batched_root_direct_rejects_wrong_opening() {
 
     let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
-    let mut prover_transcript =
-        Blake2bTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1562,7 +1559,7 @@ fn batched_root_direct_rejects_wrong_opening() {
     assert!(proof.is_root_direct());
 
     let mut verifier_transcript =
-        Blake2bTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
+        AkitaTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
     let opening_groups = [&openings[..]];
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
@@ -1608,7 +1605,7 @@ fn batched_verify_passes_for_consistent_openings() {
         dense_opening(&evals_b, &opening_point),
     ];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1629,7 +1626,7 @@ fn batched_verify_passes_for_consistent_openings() {
     proof.serialize_uncompressed(&mut bytes).unwrap();
     let proof = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove");
     let opening_groups = [&openings[..]];
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
@@ -1689,7 +1686,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let commitments = [commitment];
     let hints = vec![hint];
 
-    let mut prover_transcript = Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
+    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     let proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
         &setup,
         vec![(
@@ -1748,7 +1745,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     assert_eq!(decoded, proof);
 
     let opening_groups = [&openings[..]];
-    let mut verifier_transcript = Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
+    let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
         &decoded,
         &verifier_setup,
@@ -1794,7 +1791,7 @@ fn batched_verify_rejects_wrong_opening() {
     ];
     openings[1] += F::one();
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/bad");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1810,7 +1807,7 @@ fn batched_verify_rejects_wrong_opening() {
     )
     .unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/bad");
     let opening_groups = [&openings[..]];
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
@@ -1857,7 +1854,7 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
         dense_opening(&evals_b, &opening_point),
     ];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/oversized");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1888,7 +1885,7 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
     oversized_openings.push(F::zero());
     let oversized_opening_groups = [&oversized_openings[..]];
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/batched-prove/oversized");
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &oversized_proof,
         &verifier_setup,
@@ -1932,7 +1929,7 @@ fn verify_passes_for_consistent_opening() {
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -1948,7 +1945,7 @@ fn verify_passes_for_consistent_opening() {
     )
     .unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -1990,7 +1987,7 @@ fn verify_rejects_wrong_opening() {
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
     let commitments = [commitment];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -2009,7 +2006,7 @@ fn verify_rejects_wrong_opening() {
     let wrong_opening = opening + F::one();
     let wrong_openings = [wrong_opening];
     let wrong_opening_groups = [&wrong_openings[..]];
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2047,7 +2044,7 @@ fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
     let opening_groups = [&openings[..]];
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
         <Scheme as CommitmentVerifier<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
@@ -2092,7 +2089,7 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
     let commitments = [commitment];
     let openings = [opening];
     let opening_groups = [&openings[..]];
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
     <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &decoded,
         &verifier_setup,
@@ -2153,7 +2150,7 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
 
     let openings = [opening];
     let commitments = [commitment];
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
     let err = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2200,7 +2197,7 @@ fn monomial_basis_prove_verify_round_trip() {
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/monomial");
     let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
@@ -2216,7 +2213,7 @@ fn monomial_basis_prove_verify_round_trip() {
     )
     .unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/monomial");
     let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2266,7 +2263,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    let mut prover_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
+    let mut prover_transcript = AkitaTranscript::<DirectF>::new(b"test/tiny-direct");
     let proof = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::batched_prove(
         &setup,
         vec![(
@@ -2297,7 +2294,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     )
     .unwrap());
 
-    let mut verifier_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
+    let mut verifier_transcript = AkitaTranscript::<DirectF>::new(b"test/tiny-direct");
     <DirectScheme as CommitmentVerifier<DirectF, DIRECT_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2847,7 +2844,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     let poly_refs = [&poly];
     let commitments = [commitment];
     let mut prover_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
         vec![(
@@ -2883,7 +2880,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
 
     let openings = [opening];
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2901,7 +2898,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
 
     let wrong_openings = [opening + SmallE::one()];
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2919,7 +2916,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
 
     let wrong_point = [point[0] + SmallE::one()];
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -2987,7 +2984,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
     let openings = [opening_a, opening_b];
 
     let mut prover_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
         vec![(
@@ -3020,7 +3017,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
     );
 
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -3038,7 +3035,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
 
     let wrong_openings = [opening_a, opening_b + SmallE::one()];
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -3111,7 +3108,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     let openings_b = [opening_b];
 
     let mut prover_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
     let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
         &setup,
         vec![
@@ -3154,7 +3151,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     );
 
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
     <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,
@@ -3181,7 +3178,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
 
     let wrong_openings_b = [opening_b + SmallE::one()];
     let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,

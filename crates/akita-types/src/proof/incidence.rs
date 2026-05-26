@@ -507,7 +507,7 @@ mod tests {
     use super::super::CommittedOpenings;
     use super::*;
     use akita_field::{Fp2, Fp64, NegOneNr};
-    use akita_transcript::{labels, Blake2bTranscript, Transcript};
+    use akita_transcript::{labels, AkitaTranscript, Transcript};
 
     type TranscriptField = Fp64<4294967197>;
 
@@ -520,8 +520,7 @@ mod tests {
     }
 
     fn incidence_shape_challenge(summary: &ClaimIncidenceSummary) -> TranscriptField {
-        let mut transcript =
-            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut transcript = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
         append_claim_incidence_shape_to_transcript(summary, &mut transcript).unwrap();
         transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION)
     }
@@ -661,8 +660,7 @@ mod tests {
     fn row_local_coefficients_sample_only_for_non_singleton_rows() {
         let summary =
             ClaimIncidenceSummary::from_point_polys(1, vec![2, 1]).expect("valid incidence");
-        let mut transcript =
-            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut transcript = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
         append_claim_incidence_shape_to_transcript(&summary, &mut transcript).unwrap();
 
         let coeffs = sample_public_row_coefficients::<TranscriptField, TranscriptField, _>(
@@ -785,8 +783,7 @@ mod tests {
     fn extension_row_coefficients_sample_for_non_singleton_rows() {
         type E = Fp2<TranscriptField, NegOneNr>;
         let summary = ClaimIncidenceSummary::same_point(1, 2).expect("valid same-point incidence");
-        let mut transcript =
-            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut transcript = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
         let coeffs =
             sample_public_row_coefficients::<TranscriptField, E, _>(&summary, &mut transcript)

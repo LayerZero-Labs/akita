@@ -3,7 +3,7 @@
 use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::kernels::matrix::{derive_public_matrix_flat, sample_public_matrix_seed};
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
-use akita_serialization::{SerializationError, Valid};
+use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup};
 use std::sync::Arc;
 
@@ -40,7 +40,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         max_stride: usize,
     ) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + RandomSampling,
+        F: CanonicalField + RandomSampling + AkitaSerialize,
     {
         let max_total = max_rows
             .checked_mul(max_stride)
@@ -49,16 +49,18 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
         let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total)?)?;
 
-        let expanded = Arc::new(AkitaExpandedSetup {
-            seed: AkitaSetupSeed {
-                max_num_vars,
-                max_num_batched_polys,
-                max_num_points,
-                max_stride,
-                public_matrix_seed,
-            },
-            shared_matrix: shared_flat,
-        });
+        let seed = AkitaSetupSeed {
+            max_num_vars,
+            max_num_batched_polys,
+            max_num_points,
+            max_stride,
+            public_matrix_seed,
+        };
+        let expanded = Arc::new(
+            AkitaExpandedSetup::from_parts(seed, shared_flat).map_err(|err| {
+                AkitaError::InvalidSetup(format!("setup descriptor digest: {err}"))
+            })?,
+        );
 
         Ok(Self {
             expanded,
@@ -95,7 +97,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> Valid for AkitaProverSetup<F, D> {
+impl<F: FieldCore + Valid + AkitaSerialize, const D: usize> Valid for AkitaProverSetup<F, D> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()
     }

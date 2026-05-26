@@ -2,7 +2,7 @@
 name = "akita-pcs"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = [
   "Markos Georghiades <mgeorghiades@a16z.com>",
   "Quang Dao <qvd@andrew.cmu.edu>",
@@ -47,6 +47,7 @@ parallel = [
   "akita-verifier/parallel",
 ]
 disk-persistence = ["akita-setup/disk-persistence"]
+logging-transcript = ["akita-transcript/logging-transcript"]
 planner = [
   "akita-config/planner",
   "akita-scheme/planner",
@@ -84,6 +85,7 @@ blake2 = "0.10.6"
 rand = "0.8"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 num-bigint = "0.4.6"
+proptest = "1.6"
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
 ark-bn254 = { git = "https://github.com/arkworks-rs/algebra", rev = "3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9", features = [
   "scalar_field",

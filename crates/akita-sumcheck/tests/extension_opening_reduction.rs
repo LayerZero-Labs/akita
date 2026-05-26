@@ -15,15 +15,15 @@ use akita_sumcheck::{
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_transcript::labels as tr_labels;
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::{AkitaTranscript, Transcript};
 
 type F = Prime128Offset275;
 
-fn new_transcript() -> Blake2bTranscript<F> {
-    <Blake2bTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
+fn new_transcript() -> AkitaTranscript<F> {
+    <AkitaTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
 }
 
-fn sample_round(tr: &mut Blake2bTranscript<F>) -> F {
+fn sample_round(tr: &mut AkitaTranscript<F>) -> F {
     tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND)
 }
 
@@ -363,12 +363,15 @@ fn sparse_tensor_factor_matches_dense_factor_rounds() {
     )
     .unwrap();
 
-    let expected_claim =
-        BatchedExtensionOpeningReductionProver::input_claim_from_terms(&[dense_term.clone()])
-            .unwrap();
+    let expected_claim = BatchedExtensionOpeningReductionProver::input_claim_from_terms(
+        std::slice::from_ref(&dense_term),
+    )
+    .unwrap();
     assert_eq!(
-        BatchedExtensionOpeningReductionProver::input_claim_from_terms(&[lazy_term.clone()])
-            .unwrap(),
+        BatchedExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
+            &lazy_term,
+        ))
+        .unwrap(),
         expected_claim
     );
 

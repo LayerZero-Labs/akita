@@ -18,9 +18,10 @@ use akita_types::layout::digit_math::{
 use akita_types::schedule_from_plan;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_current_w_len, scale_batched_root_layout, terminal_level_proof_bytes,
-    w_ring_element_count_with_counts, AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DirectStep, DirectWitnessShape, FoldStep, LevelParams, Schedule, Step,
+    root_current_w_len, root_extension_opening_partials, scale_batched_root_layout,
+    terminal_level_proof_bytes, w_ring_element_count_with_counts, AjtaiKeyParams,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape, FoldStep,
+    LevelParams, Schedule, Step,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -189,11 +190,7 @@ fn extension_opening_reduction_level_bytes<Cfg: PlannerConfig>(
     }
     let (partials, opening_vars) = if fold_level == 0 {
         (
-            key.num_w_vectors.checked_mul(width).ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "root extension-opening partial count overflow".to_string(),
-                )
-            })?,
+            root_extension_opening_partials(width, key.num_w_vectors),
             key.num_vars,
         )
     } else {
@@ -353,7 +350,7 @@ fn successor_level_params_from_schedule<Cfg: PlannerConfig>(
         .expect("optimal suffix schedule must contain at least one step")
     {
         Step::Fold(step) => Ok(level_params_from_fold_step::<Cfg>(step)),
-        Step::Direct(step) => Cfg::planner_current_level_layout_with_log_basis(
+        Step::Direct(step) => Cfg::planner_direct_level_params_with_log_basis(
             AkitaScheduleInputs {
                 num_vars,
                 level,
@@ -395,7 +392,7 @@ where
     // direct steps still need a derivable level layout because the previous
     // fold commits to this terminal witness.
     let direct_allowed = level == 0
-        || Cfg::planner_current_level_layout_with_log_basis(
+        || Cfg::planner_direct_level_params_with_log_basis(
             AkitaScheduleInputs {
                 num_vars,
                 level,
@@ -750,18 +747,10 @@ where
         .map(|plan| schedule_from_plan(&plan, Cfg::planner_field_bits())))
 }
 
-/// Find the optimal schedule for a root schedule lookup key.
-///
-/// **Offline fast path.** Each `(Cfg, num_vars, shape)` that ships with
-/// the crate has a pre-computed entry in `Cfg::schedule_plan` (the
-/// generated schedule tables in `akita-types`). Keys outside that generated
-/// envelope fall back to the DP search.
-///
-/// # Errors
-///
-/// Returns an error if vector counts are invalid, if the witness length
-/// overflows, or if the config's offline-table lookup fails.
-pub fn find_optimal_schedule<Cfg>(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>
+fn find_optimal_schedule_impl<Cfg>(
+    key: AkitaScheduleLookupKey,
+    allow_offline_schedule: bool,
+) -> Result<Schedule, AkitaError>
 where
     Cfg: PlannerConfig,
 {
@@ -781,17 +770,19 @@ where
     }
     let num_vars = key.num_vars;
 
-    if let Some(schedule) = offline_schedule_for_key::<Cfg>(key)? {
-        tracing::debug!(
-            num_vars,
-            num_points,
-            num_t_vectors = t_vectors,
-            num_w_vectors = w_vectors,
-            num_z_vectors = z_vectors,
-            total_bytes = schedule.total_bytes,
-            "schedule planner: served from offline schedule tables"
-        );
-        return Ok(schedule);
+    if allow_offline_schedule {
+        if let Some(schedule) = offline_schedule_for_key::<Cfg>(key)? {
+            tracing::debug!(
+                num_vars,
+                num_points,
+                num_t_vectors = t_vectors,
+                num_w_vectors = w_vectors,
+                num_z_vectors = z_vectors,
+                total_bytes = schedule.total_bytes,
+                "schedule planner: served from offline schedule tables"
+            );
+            return Ok(schedule);
+        }
     }
 
     let root_w_len = 1usize
@@ -904,6 +895,37 @@ where
         steps: best_steps,
         total_bytes: best_cost,
     })
+}
+
+/// Find the optimal schedule for a root schedule lookup key.
+///
+/// **Offline fast path.** Each `(Cfg, num_vars, shape)` that ships with
+/// the crate has a pre-computed entry in `Cfg::schedule_plan` (the
+/// generated schedule tables in `akita-types`). Keys outside that generated
+/// envelope fall back to the DP search.
+///
+/// # Errors
+///
+/// Returns an error if vector counts are invalid, if the witness length
+/// overflows, or if the config's offline-table lookup fails.
+pub fn find_optimal_schedule<Cfg>(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>
+where
+    Cfg: PlannerConfig,
+{
+    find_optimal_schedule_impl::<Cfg>(key, true)
+}
+
+/// Find the optimal schedule without consulting generated offline tables.
+///
+/// This is the entry point for regenerating schedule tables: it avoids
+/// accidentally copying stale rows from the table currently being refreshed.
+pub fn find_optimal_schedule_from_scratch<Cfg>(
+    key: AkitaScheduleLookupKey,
+) -> Result<Schedule, AkitaError>
+where
+    Cfg: PlannerConfig,
+{
+    find_optimal_schedule_impl::<Cfg>(key, false)
 }
 
 #[cfg(test)]

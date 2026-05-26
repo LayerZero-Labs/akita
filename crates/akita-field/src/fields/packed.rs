@@ -3,7 +3,7 @@
 use crate::fields::ext::{
     power_basis_fp4_mul_coeffs, Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
 };
-use crate::fields::{Fp128, Fp32, Fp64};
+use crate::fields::{Fp128, Fp16, Fp32, Fp64};
 use crate::{FieldCore, Invertible};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use num_traits::{One, Zero};
@@ -352,6 +352,13 @@ impl<const P: u128> HasPacking for Fp128<P> {
     type Packing = Fp128Packing<P>;
 }
 
+/// Selected packed backend for `Fp16`.
+pub type Fp16Packing<const P: u32> = NoPacking<Fp16<P>>;
+
+impl<const P: u32> HasPacking for Fp16<P> {
+    type Packing = Fp16Packing<P>;
+}
+
 /// Selected packed backend for `Fp32`.
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub type Fp32Packing<const P: u32> = super::packed_neon::PackedFp32Neon<P>;
@@ -414,12 +421,12 @@ impl<const P: u64> HasPacking for Fp64<P> {
     type Packing = Fp64Packing<P>;
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::{HasPacking, PackedField, PackedValue};
     use crate::fields::{
-        Prime128Offset275, Prime24Offset3, Prime31Offset19, Prime32Offset99, Prime40Offset195,
-        Prime64Offset59,
+        Fp32, Prime128Offset275, Prime24Offset3, Prime31Offset19, Prime32Offset99,
+        Prime40Offset195, Prime64Offset59,
     };
     use crate::{CanonicalField, FieldCore, RandomSampling};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -496,6 +503,34 @@ mod tests {
         let p = PF::broadcast(val);
         for lane in 0..PF::WIDTH {
             assert_eq!(p.extract(lane), val);
+        }
+    }
+
+    fn check_packed_fp32_edge_lanes<const P: u32, PF>()
+    where
+        PF: PackedField<Scalar = Fp32<P>> + PackedValue<Value = Fp32<P>>,
+    {
+        let p_minus_one = Fp32::<P>::from_canonical_u32(P - 1);
+        let p_minus_two = Fp32::<P>::from_canonical_u32(P - 2);
+        let values = [
+            Fp32::<P>::zero(),
+            Fp32::<P>::one(),
+            p_minus_two,
+            p_minus_one,
+        ];
+        let a = PF::from_fn(|i| values[i % values.len()]);
+        let b = PF::from_fn(|i| values[(i + 1) % values.len()]);
+
+        let add = a + b;
+        let sub = a - b;
+        let mul = a * b;
+
+        for lane in 0..PF::WIDTH {
+            let lhs = values[lane % values.len()];
+            let rhs = values[(lane + 1) % values.len()];
+            assert_eq!(add.extract(lane), lhs + rhs, "packed add edge lane {lane}");
+            assert_eq!(sub.extract(lane), lhs - rhs, "packed sub edge lane {lane}");
+            assert_eq!(mul.extract(lane), lhs * rhs, "packed mul edge lane {lane}");
         }
     }
 
@@ -580,6 +615,23 @@ mod tests {
         type F = Prime31Offset19;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa31_bb31_cc31_dd31);
+    }
+
+    #[test]
+    fn packed_fp32_31b_edge_lanes() {
+        type F = Prime31Offset19;
+        type PF = <F as HasPacking>::Packing;
+        check_packed_fp32_edge_lanes::<
+            { crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
+            PF,
+        >();
+    }
+
+    #[test]
+    fn packed_mersenne31_edge_lanes() {
+        type F = Fp32<{ (1u32 << 31) - 1 }>;
+        type PF = <F as HasPacking>::Packing;
+        check_packed_fp32_edge_lanes::<{ (1u32 << 31) - 1 }, PF>();
     }
 
     #[test]

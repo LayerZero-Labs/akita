@@ -530,7 +530,7 @@ where
                 .to_string(),
         ));
     }
-    if D % E::EXT_DEGREE != 0 || !(D / E::EXT_DEGREE).is_power_of_two() {
+    if !D.is_multiple_of(E::EXT_DEGREE) || !(D / E::EXT_DEGREE).is_power_of_two() {
         return Err(AkitaError::InvalidInput(
             "claim-field degree must divide the ring dimension into power-of-two slots".to_string(),
         ));
@@ -682,7 +682,7 @@ where
         });
     }
 
-    if D % L::EXT_DEGREE != 0 || !(D / L::EXT_DEGREE).is_power_of_two() {
+    if !D.is_multiple_of(L::EXT_DEGREE) || !(D / L::EXT_DEGREE).is_power_of_two() {
         return Err(AkitaError::InvalidInput(
             "challenge-field degree must divide the ring dimension into power-of-two slots"
                 .to_string(),
@@ -755,7 +755,7 @@ where
     if k == 1 {
         return Ok(point.to_vec());
     }
-    if !k.is_power_of_two() || D % k != 0 {
+    if !k.is_power_of_two() || !D.is_multiple_of(k) {
         return Err(AkitaError::InvalidInput(
             "extension degree must be a power of two dividing D".to_string(),
         ));
@@ -805,7 +805,7 @@ where
     if <L as ExtField<F>>::EXT_DEGREE == 1 {
         return true;
     }
-    if D % <L as ExtField<F>>::EXT_DEGREE != 0
+    if !D.is_multiple_of(<L as ExtField<F>>::EXT_DEGREE)
         || !(D / <L as ExtField<F>>::EXT_DEGREE).is_power_of_two()
     {
         return false;
@@ -850,7 +850,7 @@ where
         && width.is_power_of_two()
         && D.is_power_of_two()
         && D >= double_width
-        && D % width == 0
+        && D.is_multiple_of(width)
         && num_vars >= D.trailing_zeros() as usize
 }
 
@@ -879,16 +879,17 @@ mod tests {
     type L = RingSubfieldFp4<F>;
 
     fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup {
-            seed: AkitaSetupSeed {
+        AkitaExpandedSetup::from_parts(
+            AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 8,
                 max_num_points: 2,
                 max_stride: 1,
                 public_matrix_seed: [0u8; 32],
             },
-            shared_matrix: FlatMatrix::from_flat_data(vec![F::zero()], 1),
-        }
+            FlatMatrix::from_flat_data(vec![F::zero()], 1),
+        )
+        .unwrap()
     }
 
     #[test]

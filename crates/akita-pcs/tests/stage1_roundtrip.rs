@@ -3,7 +3,7 @@
 
 use akita_field::Prime128Offset275;
 use akita_prover::AkitaStage1Prover;
-use akita_transcript::{labels, Blake2bTranscript};
+use akita_transcript::{labels, AkitaTranscript};
 use akita_types::reorder_stage1_coords;
 use akita_verifier::AkitaStage1Verifier;
 
@@ -34,13 +34,13 @@ fn assert_stage1_roundtrip(
 
     let prover = AkitaStage1Prover::new(&witness, &tau0, b, live_x_cols, col_bits, ring_bits)
         .expect("stage1 prover should build");
-    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (proof, r_stage1) = prover
         .prove(&mut prover_transcript)
         .expect("stage1 proof should succeed");
 
     let verifier = AkitaStage1Verifier::new(tau0, b);
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let verified_r = verifier
         .verify(&proof, &mut verifier_transcript)
         .expect("stage1 verification should succeed");
