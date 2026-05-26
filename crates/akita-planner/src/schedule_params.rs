@@ -125,10 +125,9 @@ pub(crate) struct SearchOptions {
     /// Inclusive `(min, max)` log-basis search range at a state.
     pub log_basis_search_range: fn(AkitaScheduleInputs) -> (u32, u32),
     /// Per-level fold-round challenge shape; mirrors
-    /// `CommitmentConfig::fold_challenge_shape_at_level`. Threaded through
-    /// the DP search so a tensor preset's `LevelParams::challenge_l1_mass()`
-    /// resolves against `omega^2` whenever the planner derives
-    /// `num_digits_fold` and the `(m_vars, r_vars)` split.
+    /// `CommitmentConfig::fold_challenge_shape_at_level`. The table fast path
+    /// uses this through schedule materialization; the from-scratch root DP
+    /// search still derives candidates from flat default params.
     pub fold_challenge_shape: fn(AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
 }
 

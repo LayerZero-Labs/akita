@@ -1,4 +1,4 @@
-//! Fast-verifier presets that trade a tensor-shaped fold challenge for cheaper
+//! Tensor-verifier presets that trade a tensor-shaped fold challenge for cheaper
 //! verifier-side challenge evaluation.
 
 use crate::CommitmentConfig;
@@ -14,7 +14,7 @@ pub mod fp128 {
         CommitmentEnvelope, DecompositionParams, SisModulusFamily,
     };
 
-    /// Base field for the fp128 fast-verifier presets.
+    /// Base field for the fp128 tensor-verifier presets.
     pub type Field = Prime128OffsetA7F7;
 
     /// Binary onehot `D=64` preset that samples a tensor-shaped stage-1 fold

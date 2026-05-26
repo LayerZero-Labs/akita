@@ -20,8 +20,8 @@ use akita_types::{
 };
 use std::marker::PhantomData;
 
-pub mod fast_verifier;
 pub mod proof_optimized;
+pub mod tensor_verifier;
 mod transcript_binding;
 pub use proof_optimized::{
     matrix_envelope_for_levels, setup_level_params_from_plan,
@@ -113,11 +113,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// The default `TensorChallengeShape::Flat` matches every shipped flat
     /// preset and is the only shape used by recursive (`level >= 1`) folds in
-    /// the current planner. Tensor-shaped fast-verifier presets (e.g.
-    /// `fast_verifier::fp128::D64OneHotTensor`) override this hook to return
-    /// `TensorChallengeShape::Tensor` for `inputs.level == 0` so that the
-    /// schedule materializer (and any DP planner) sizes
-    /// `LevelParams::num_digits_fold` and the `(m_vars, r_vars)` split using
+    /// the current planner. Tensor-shaped verifier presets (e.g.
+    /// `tensor_verifier::fp128::D64OneHotTensor`) override this hook to return
+    /// `TensorChallengeShape::Tensor` for `inputs.level == 0` so generated
+    /// schedule-table materialization stamps the table-backed root layout with
     /// the tensor L1 mass `omega^2` instead of the flat `omega`.
     fn fold_challenge_shape_at_level(_inputs: AkitaScheduleInputs) -> TensorChallengeShape {
         TensorChallengeShape::Flat

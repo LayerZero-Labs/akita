@@ -46,7 +46,7 @@ The key implementation surfaces are:
   `decompose_fold_tensor_batched` kernels.
 - `akita-verifier`: preserves the flat verifier path and adds
   `PreparedChallengeEvals::Tensor` for factored deferred ring-switch row replay.
-- `akita-config::fast_verifier::fp128::D64OneHotTensor`: enables tensor
+- `akita-config::tensor_verifier::fp128::D64OneHotTensor`: enables tensor
   challenges for the root fold of the fp128 `D=64` one-hot preset and keeps
   recursive levels flat.
 - `akita-types::generated`: adds schedule tables for the tensor one-hot preset,
@@ -63,9 +63,11 @@ The key implementation surfaces are:
    first, a canonical SHA3-256 digest of the left vector and shape is absorbed,
    and the right vector is sampled from the updated transcript.
    `tensor_sampling_absorbs_left_digest_before_right` protects this invariant.
-3. Tensor dimensions are powers of two and multiply to the level's
-   `num_blocks`. `tensor_split(num_blocks)` splits `2^r` into balanced
-   dimensions `2^{floor(r/2)}` and `2^{ceil(r/2)}`.
+3. Sampled tensor dimensions come from `tensor_split(num_blocks)`, which splits
+   `2^r` into balanced dimensions `2^{floor(r/2)}` and `2^{ceil(r/2)}`. The
+   lower-level `TensorChallenges` container stores explicit left/right lengths
+   and validates power-of-two dimensions, vector lengths, and product size, but
+   it does not require manually constructed tensors to use the balanced split.
 4. The logical block order is unchanged. For claim `c` and local block
    `b = p * right_len + q`, the logical challenge is the negacyclic ring product
    `left[c, p] * right[c, q]`.
@@ -90,17 +92,22 @@ The key implementation surfaces are:
 9. Tensor verifier summaries must be equivalent to expanded flat summaries for
    every offset/carry case used by structured row replay. This is protected by
    `factored_carry_summary_matches_flat_for_tensor_challenges`.
-10. The fold-bound and schedule planner must account for the larger effective
-    L1 mass of `left_p * right_q`. `LevelParams::challenge_l1_mass()` returns
-    `cfg.l1_norm()` for flat and `cfg.l1_norm()^2` for tensor.
+10. `LevelParams::challenge_l1_mass()` returns `cfg.l1_norm()` for flat and
+    `cfg.l1_norm()^2` for tensor. Generated tensor schedule entries stamp the
+    root fold shape before singleton layout derivation, so the table-backed
+    singleton root layout is sized with the tensor mass. The runtime DP planner
+    and batched-root scaling are not fully tensor-mass-aware in this branch.
 11. Tensor presets require backend tensor kernels. The tensor path fails with
     `AkitaError` if a backend does not implement the tensor-shaped fold kernel;
     it does not silently expand through an unoptimized fallback.
 12. Tensor challenges do not add proof object fields. Challenges remain
     Fiat-Shamir-derived; proof shape changes only through the schedule selected
     for a tensor preset, not through serialized challenge payloads.
-13. Verifier-reachable tensor validation rejects malformed shapes or challenge
-    encodings with `AkitaError`, not by panicking.
+13. Verifier-reachable tensor validation rejects malformed encodings with
+    `AkitaError`, not by panicking. Today this covers malformed sparse factors,
+    non-power-of-two dimensions, length mismatches, and product mismatches
+    against the expected block count; it does not reject an otherwise valid
+    unbalanced explicit factorization.
 14. The implemented preset applies only the tensor-challenge optimization.
     Claim-reduction sumcheck for setup-side verifier cost is not implemented in
     this branch.
@@ -109,7 +116,7 @@ The key implementation surfaces are:
 
 1. No implementation of claim-reduction sumcheck or shared-matrix commitment.
 2. No default migration of existing production presets to tensor challenges.
-   This branch introduces an explicit fast-verifier preset.
+   This branch introduces an explicit tensor-verifier preset.
 3. No generic tensor support for arbitrary non-power-of-two block counts.
 4. No verifier compatibility with historical tensor transcript experiments.
    Tensor labels and digest bytes are canonical for this branch.
@@ -139,9 +146,9 @@ The key implementation surfaces are:
       homogeneous dense, one-hot, sparse-ring, and root-projection backends.
 - [x] Multipoint/same-point batching can select point-local tensor claim subsets
       without losing the factorized shape.
-- [x] `LevelParams` and schedule derivation use the tensor effective L1 mass for
-      fold digit sizing.
-- [x] A dedicated fp128 `D=64` one-hot fast-verifier preset exists and sets the
+- [x] `LevelParams` exposes the tensor effective L1 mass, and generated tensor
+      schedule entries use it for singleton root fold digit sizing.
+- [x] A dedicated fp128 `D=64` one-hot tensor-verifier preset exists and sets the
       root fold to tensor while keeping recursive folds flat.
 - [x] Generated schedule tables exist for the tensor preset and ZK tensor preset.
 - [x] The profile example exposes `AKITA_MODE=onehot_d64_tensor`.
@@ -214,10 +221,13 @@ AKITA_MODE=onehot_d64_tensor AKITA_NUM_VARS=<nv> cargo run --release -p akita-pc
 ```
 
 Tensor products increase the effective per-logical-block L1 envelope from
-`omega` to `omega^2`. This branch sizes fold decomposition through
-`LevelParams::challenge_l1_mass()` and uses dedicated generated schedule tables
-for the tensor preset, so performance and proof-size comparisons must be made
-against that preset's schedule, not by only changing the sampler at runtime.
+`omega` to `omega^2`. This branch sizes the table-backed singleton tensor root
+through `LevelParams::challenge_l1_mass()` and uses dedicated generated schedule
+tables for the tensor preset, so performance and proof-size comparisons must be
+made against that preset's generated schedule, not by only changing the sampler
+at runtime. Batched-root scaling currently maxes the singleton tensor digit
+count against a flat-mass batched bound; it does not recompute fold digits with
+`omega^2 * num_claims`.
 
 ## Design
 
@@ -253,7 +263,10 @@ Challenges enum
 `ChallengeShape` is a selector, not sampled state. `Challenges` is the runtime
 state. The flat variant stores `Vec<SparseChallenge>` with explicit
 `num_blocks_per_claim` and `num_claims`. The tensor variant stores
-`TensorChallenges { left, right, left_len, right_len, num_claims }`.
+`TensorChallenges { left, right, left_len, right_len, num_claims }`. Sampling
+uses the balanced `tensor_split(num_blocks)` shape; explicit tensor containers
+may carry any power-of-two factorization whose product matches the expected
+block count.
 
 The tensor sampler uses the same sparse challenge families as the flat sampler.
 The crucial difference is interpretation: a sampled tensor factor is a normal
@@ -410,10 +423,28 @@ This feeds the existing fold decomposition formulas:
 beta = challenge_l1_mass * num_claims * 2^(r_vars + log_basis - 1)
 ```
 
-The fp128 fast-verifier preset is:
+The implemented tensor preset relies on generated schedule tables. When
+materializing a generated fold entry, `akita-derive` stamps the configured
+fold shape onto the generated level params before deriving the singleton root
+layout, so that singleton fold digits and the `(m_vars, r_vars)` split observe
+`omega^2` for tensor roots.
+
+Two current limitations are intentionally reflected in this spec:
+
+- Batched-root scaling calls `scale_batched_root_layout` with the flat
+  stage-1 L1 norm. For tensor roots, this preserves the already-sized singleton
+  tensor fold digits and only increases them if the flat-mass batched bound is
+  larger; it does not apply `omega^2 * num_claims`.
+- The offline DP fallback carries a `fold_challenge_shape` hook, but the
+  from-scratch root search still derives root candidates through flat default
+  params and flat-mass batched scaling. The public tensor preset is therefore
+  expected to use its generated table, not runtime DP search, for production
+  schedule selection.
+
+The fp128 tensor-verifier preset is:
 
 ```text
-akita_config::fast_verifier::fp128::D64OneHotTensor
+akita_config::tensor_verifier::fp128::D64OneHotTensor
 ```
 
 It uses the fp128 `D=64` exact-shell sparse challenge family:
@@ -477,7 +508,8 @@ tensor preset. Remaining merge-readiness work should focus on verification:
 2. Compare `onehot_d64` and `onehot_d64_tensor` profile output for the PR's
    target `AKITA_NUM_VARS` values.
 3. Confirm generated tensor schedule tables are accepted by normal config lookup
-   and do not require planner fallback in production paths.
+   and do not require planner fallback in production paths; runtime DP fallback
+   is not the tensor-aware scheduling source for this branch.
 4. Confirm ZK builds still compile with the generated ZK tensor table, even
    though the non-ZK e2e test is the primary behavior test in this branch.
 5. Separately justify the removal of `crates/akita-pcs/tests/commitment_contract.rs`
@@ -491,5 +523,5 @@ tensor preset. Remaining merge-readiness work should focus on verification:
 - `crates/akita-challenges/src/challenge.rs`
 - `crates/akita-prover/src/protocol/quadratic_equation.rs`
 - `crates/akita-verifier/src/protocol/ring_switch/tensor_challenges.rs`
-- `crates/akita-config/src/fast_verifier.rs`
+- `crates/akita-config/src/tensor_verifier.rs`
 - `crates/akita-pcs/tests/single_poly_tensor_e2e.rs`
