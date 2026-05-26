@@ -5,7 +5,7 @@
 | Author(s)   | @quangvdao                                 |
 | Created     | 2026-05-26                                 |
 | Status      | proposed                                   |
-| PR          | TBD                                        |
+| PR          | #108                                       |
 
 ## Summary
 
