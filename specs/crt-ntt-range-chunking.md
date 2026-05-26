@@ -45,16 +45,16 @@ The primary affected surfaces are:
 
 The intended first-cut CRT profiles are:
 
-| profile | current | proposed | purpose |
+| profile | current | first-cut default | purpose |
 | --- | ---: | ---: | --- |
 | Q16 | fp16 D <= 64 currently falls through to Q32 | 3 x i16 | fp16, D <= 64 |
 | Q32 | 6 x i16 | 4 x i16 | fp32, D <= 64 |
 | Q64 | 5 x i32 | 3 x i32 | fp64, D <= 1024; small-field D > 64 fallback |
 | Q128 | 5 x i32 | unchanged | fp128, D <= 1024 |
 
-For Q16, the intended default is three large i16 NTT primes below `2^14` with
-`128 | (p - 1)`, so the same set supports D32 and D64 fp16 presets. A suitable
-starting set is:
+For Q16, the intended default is exactly three large i16 NTT primes below
+`2^14` with `128 | (p - 1)`, so the same set supports D32 and D64 fp16
+presets. The default set is:
 
 ```text
 16001, 15361, 15233
@@ -303,7 +303,8 @@ scope before implementation review.
 
 ### Q16 and i16 Fast Path
 
-The right fp16/Q16 fast path is three D64-valid i16 primes plus range chunking.
+The right fp16/Q16 fast path, and the first implementation target, is three
+D64-valid i16 primes plus range chunking.
 
 Two i16 primes are too small for a useful fp16 dense path. Their product is
 about `2^28`, which is enough for only tens of columns after accounting for
@@ -316,7 +317,7 @@ the default. A 30-bit NTT prime supports only a few hundred fp16 columns per
 range chunk at D32/D64 with `log_basis = 2`, so it still creates many chunks,
 and it gives up the existing i16 NTT and NEON lane shape.
 
-Three i16 primes are the best first-pass Q16 target. With the D64-valid set
+Three i16 primes are the default first-pass Q16 target. With the D64-valid set
 `16001, 15361, 15233`, the safe chunk width is about `894k` columns for D32 and
 about `447k` columns for D64 at `log_basis = 2`. That keeps the common fp16
 inner-A kernels and nv26 outer-B kernels single-chunk, while the widest current
@@ -427,11 +428,12 @@ inline comments in:
 Suggested implementation slices:
 
 1. Add a range-bound helper and focused tests using existing prime sets.
-2. Teach `mat_vec_mul_ntt_single_i8` to range-chunk while preserving current
+2. Add Q16 tables, dispatch, cache variants, and tests using three D64-valid
+   i16 primes.
+3. Teach `mat_vec_mul_ntt_single_i8` to range-chunk while preserving current
    output and row parallelism.
-3. Extend the helper to dense digit, generic i8, and strided kernels.
-4. Add Q16 tables, dispatch, cache variants, and tests using three D64-valid
-   i16 primes; validate fp16 D32/D64 dense profiles.
+4. Extend the helper to dense digit, generic i8, and strided kernels; validate
+   fp16 D32/D64 dense profiles.
 5. Reduce Q64 to three i32 primes and validate fp64 dense profiles.
 6. Replace Q32 with four large D64-valid i16 primes and validate fp32 dense
    profiles.
