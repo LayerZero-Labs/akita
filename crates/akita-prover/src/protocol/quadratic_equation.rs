@@ -1036,6 +1036,12 @@ where
     F: FieldCore + CanonicalField + Send + Sync,
     R: Fn(usize) -> Option<CyclotomicRing<F, D>> + Sync,
 {
+    let tensor_products = match challenges {
+        Challenges::Tensor { factored: _ } => Some(tensor_products.ok_or_else(|| {
+            AkitaError::InvalidSetup("tensor fold products were not materialized".to_string())
+        })?),
+        Challenges::Sparse { .. } => None,
+    };
     let total = challenges.logical_len();
     let out = cfg_fold_reduce!(
         0..total,
@@ -1063,11 +1069,6 @@ where
             a
         }
     );
-    if matches!(challenges, Challenges::Tensor { factored: _ }) && tensor_products.is_none() {
-        return Err(AkitaError::InvalidSetup(
-            "tensor fold products were not materialized".to_string(),
-        ));
-    }
     Ok(out)
 }
 

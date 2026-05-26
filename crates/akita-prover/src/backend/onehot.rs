@@ -2385,6 +2385,9 @@ pub(super) fn single_chunk_onehot_accumulate_tensor<const D: usize>(
     let chunks: Vec<Vec<[i64; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
+            if pos_start >= block_len {
+                return Ok(Vec::new());
+            }
             let pos_end = (pos_start + pos_chunk).min(block_len);
             let len = pos_end - pos_start;
             let mut acc = vec![[0i64; D]; len];
