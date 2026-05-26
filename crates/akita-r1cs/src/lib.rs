@@ -134,14 +134,6 @@ impl<'a, E: FieldCore> ZkR1csWitness<'a, E> {
     }
 }
 
-fn add_scaled_lc<E: FieldCore>(
-    target: &mut ZkR1csLinearCombination<E>,
-    scale: E,
-    source: &ZkR1csLinearCombination<E>,
-) {
-    target.add_scaled(scale, source);
-}
-
 /// Consume one hiding-witness slot as a linear combination over `E`.
 pub fn zk_base_mask_lc<E: FieldCore>(hiding_cursor: &mut usize) -> ZkR1csLinearCombination<E> {
     let variable = ZkR1csVariable::HiddenWitness(*hiding_cursor);
@@ -399,7 +391,7 @@ where
     E: ExtField<F>,
 {
     let mut next_mask = ZkR1csLinearCombination::zero();
-    add_scaled_lc(&mut next_mask, r_round, previous_mask);
+    next_mask.add_scaled(r_round, previous_mask);
 
     let mut next_higher_power = r_round * r_round;
     for idx in 0..public_coeffs_except_linear.len() {
@@ -411,7 +403,7 @@ where
             next_higher_power *= r_round;
             weight
         };
-        add_scaled_lc(&mut next_mask, weight, &mask_coeff);
+        next_mask.add_scaled(weight, &mask_coeff);
     }
 
     next_mask
@@ -496,7 +488,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         mask: &ZkR1csLinearCombination<E>,
     ) -> ZkR1csLinearCombination<E> {
         let mut true_value = ZkR1csLinearCombination::constant(masked_value);
-        add_scaled_lc(&mut true_value, -E::one(), mask);
+        true_value.add_scaled(-E::one(), mask);
         true_value
     }
 
@@ -563,13 +555,13 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
             } else {
                 E::one()
             };
-            add_scaled_lc(&mut round_sum_mask, weight, mask_coeff);
+            round_sum_mask.add_scaled(weight, mask_coeff);
         }
 
         let mut chain_residual =
             ZkR1csLinearCombination::constant(public_round_sum - previous_masked_claim);
-        add_scaled_lc(&mut chain_residual, E::one(), previous_mask);
-        add_scaled_lc(&mut chain_residual, -E::one(), &round_sum_mask);
+        chain_residual.add_scaled(E::one(), previous_mask);
+        chain_residual.add_scaled(-E::one(), &round_sum_mask);
         self.push_r1cs(
             description,
             chain_residual,
@@ -582,7 +574,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         let mut next_mask = ZkR1csLinearCombination::zero();
         let mut r_power = E::one();
         for mask_coeff in &mask_coeffs {
-            add_scaled_lc(&mut next_mask, r_power, mask_coeff);
+            next_mask.add_scaled(r_power, mask_coeff);
             r_power *= r_round;
         }
 
@@ -621,14 +613,14 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         //
         //   eta_i = previous_coeff * eta_{i-1} + sum_j coeff_j * rho_j.
         let mut next_mask_transition = ZkR1csLinearCombination::zero();
-        add_scaled_lc(&mut next_mask_transition, previous_coeff, previous_mask);
+        next_mask_transition.add_scaled(previous_coeff, previous_mask);
 
         // Each stored coefficient j in [0, 2, 3, ...] contributes its pad
         // coefficient rho_j to the mask transition using the verifier-derived
         // `transition_coeff`.
         for &transition_coeff in transition_coeffs {
             let mask_coeff = zk_ext_mask_lc::<F, E>(hiding_cursor);
-            add_scaled_lc(&mut next_mask_transition, transition_coeff, &mask_coeff);
+            next_mask_transition.add_scaled(transition_coeff, &mask_coeff);
         }
         self.new_auxiliary(
             "masked eq-factored sumcheck next mask",
