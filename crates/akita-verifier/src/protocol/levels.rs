@@ -48,6 +48,8 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
 use akita_types::dispatch_trace_inner_product_check;
 #[cfg(feature = "zk")]
+use akita_types::SetupRoleDimensions;
+#[cfg(feature = "zk")]
 use akita_types::ZkHidingProof;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
@@ -145,8 +147,14 @@ where
         root_params.num_digits_fold,
         num_ring,
     )?;
+    let hiding_role_dimensions = SetupRoleDimensions::for_batched_shape(&hiding_params, &[1], 1)?;
     let witness_rings = field_evals_to_rings::<F, D>(&evals)?;
-    let mut b_input_digits = direct_decomposed_inner_rows(&witness_rings, setup, &hiding_params)?;
+    let mut b_input_digits = direct_decomposed_inner_rows(
+        &witness_rings,
+        setup,
+        &hiding_params,
+        hiding_role_dimensions,
+    )?;
     append_direct_blinding::<F, D>(
         &mut b_input_digits,
         &proof.b_blinding_digits,

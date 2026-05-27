@@ -23,7 +23,7 @@ use akita_transcript::labels::ABSORB_PROVER_V;
 use akita_transcript::Transcript;
 use akita_types::{
     gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
-    RingSliceSerializer,
+    RingSliceSerializer, SetupRoleDimensions,
 };
 use akita_types::{AkitaExpandedSetup, ClaimIncidenceSummary, LevelParams};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -426,6 +426,16 @@ where
                 ));
             }
         }
+        let setup_dimensions =
+            SetupRoleDimensions::for_batched_shape(&lp, num_polys_per_point, num_claims)?;
+        #[cfg(not(feature = "zk"))]
+        let d_setup_width = setup_dimensions.d_setup_width;
+        #[cfg(not(feature = "zk"))]
+        let _ = stride;
+        #[cfg(feature = "zk")]
+        let _ = setup_dimensions;
+        #[cfg(feature = "zk")]
+        let d_setup_width = stride;
         if row_coefficient_rings.len() != num_claims {
             return Err(AkitaError::InvalidInput(
                 "batched prover row coefficient length does not match claim count".to_string(),
@@ -533,7 +543,7 @@ where
                 let v = compute_v_rows(
                     ntt_d,
                     lp.d_key.row_len(),
-                    stride,
+                    d_setup_width,
                     &w_hat,
                     #[cfg(feature = "zk")]
                     &d_blinding_digits,
@@ -692,6 +702,15 @@ where
                 "recursive multipoint ring-multiplier layout mismatch".to_string(),
             ));
         }
+        let setup_dimensions = SetupRoleDimensions::for_batched_shape(&lp, &[1], num_claims)?;
+        #[cfg(not(feature = "zk"))]
+        let d_setup_width = setup_dimensions.d_setup_width;
+        #[cfg(not(feature = "zk"))]
+        let _ = stride;
+        #[cfg(feature = "zk")]
+        let _ = setup_dimensions;
+        #[cfg(feature = "zk")]
+        let d_setup_width = stride;
 
         let w_hat = {
             let _span = tracing::info_span!("decompose_recursive_multipoint_w_hat").entered();
@@ -735,7 +754,7 @@ where
                 let v = compute_v_rows(
                     ntt_d,
                     lp.d_key.row_len(),
-                    stride,
+                    d_setup_width,
                     &w_hat,
                     #[cfg(feature = "zk")]
                     &d_blinding_digits,
@@ -1433,6 +1452,19 @@ where
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
     let n_a = lp.a_key.row_len();
+    let setup_dimensions =
+        SetupRoleDimensions::for_batched_shape(lp, num_polys_per_point, num_claims)?;
+    #[cfg(not(feature = "zk"))]
+    let d_setup_width = setup_dimensions.d_setup_width;
+    #[cfg(not(feature = "zk"))]
+    let _ = stride;
+    #[cfg(feature = "zk")]
+    let d_setup_width = stride;
+    #[cfg(not(feature = "zk"))]
+    let b_setup_width = setup_dimensions.b_setup_width;
+    #[cfg(feature = "zk")]
+    let b_setup_width = stride;
+    let a_setup_width = setup_dimensions.a_setup_width;
     // Terminal layout drops the D-rows from M (and from `y`). All structural
     // offsets must use `n_d_active`, not `n_d`, to match the verifier.
     let n_d_active = match m_row_layout {
@@ -1464,9 +1496,9 @@ where
         n_d_active,
         n_b,
         n_a,
-        stride,
-        stride,
-        stride,
+        d_setup_width,
+        b_setup_width,
+        a_setup_width,
         w_hat_flat,
         t_hat.flat_digits(),
         first_z_segment,
@@ -1489,9 +1521,9 @@ where
             0,
             0,
             n_a,
-            stride,
-            stride,
-            stride,
+            d_setup_width,
+            b_setup_width,
+            a_setup_width,
             &[],
             &[],
             z_segment,
@@ -1512,7 +1544,7 @@ where
             add_blinding_cyclic_rows(
                 ntt_shared,
                 n_b,
-                stride,
+                b_setup_width,
                 t_hat.flat_digits().len(),
                 blinding,
                 &mut rows,
@@ -1523,7 +1555,7 @@ where
         repeated_b_commitment_rows(
             ntt_shared,
             n_b,
-            stride,
+            b_setup_width,
             t_hat,
             #[cfg(feature = "zk")]
             b_blinding_digits,

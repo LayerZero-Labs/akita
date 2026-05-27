@@ -11,6 +11,7 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
     AkitaCommitmentHint, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams, RingCommitment,
+    SetupRoleDimensions,
 };
 
 /// Validate a singleton commitment request against prover setup capacity.
@@ -63,10 +64,12 @@ where
 /// # Errors
 ///
 /// Returns an error if an inner witness commitment or hint allocation fails.
-pub fn commit_with_params<F, const D: usize, P>(
+fn commit_group_with_setup_widths<F, const D: usize, P>(
     polys: &[P],
     setup: &AkitaProverSetup<F, D>,
     params: &LevelParams,
+    a_setup_width: usize,
+    b_setup_width: usize,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -93,7 +96,7 @@ where
                     params.num_digits_commit,
                     params.num_digits_open,
                     params.log_basis,
-                    setup.expanded.seed.max_stride,
+                    a_setup_width,
                 )?;
                 dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
                 *decomposed = inner.decomposed_inner_rows;
@@ -111,7 +114,7 @@ where
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         &setup.ntt_shared,
         params.b_key.row_len(),
-        setup.expanded.seed.max_stride,
+        b_setup_width,
         &b_input_digits,
     );
     let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
@@ -121,6 +124,43 @@ where
         vec![b_blinding_digits],
     );
     Ok((RingCommitment { u }, hint))
+}
+
+/// Commit a group of polynomials using already-selected level parameters.
+///
+/// Config/schedule policy chooses `params`; this function owns only the
+/// prover-side matrix work for the supplied concrete layout.
+///
+/// # Errors
+///
+/// Returns an error if an inner witness commitment or hint allocation fails.
+pub fn commit_with_params<F, const D: usize, P>(
+    polys: &[P],
+    setup: &AkitaProverSetup<F, D>,
+    params: &LevelParams,
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+{
+    if polys.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "commit requires at least one polynomial".to_string(),
+        ));
+    }
+    let role_dimensions =
+        SetupRoleDimensions::for_batched_shape(params, &[polys.len()], polys.len())?;
+    #[cfg(not(feature = "zk"))]
+    let b_setup_width = role_dimensions.b_setup_width;
+    #[cfg(feature = "zk")]
+    let b_setup_width = setup.expanded.seed.max_stride;
+    commit_group_with_setup_widths(
+        polys,
+        setup,
+        params,
+        role_dimensions.a_setup_width,
+        b_setup_width,
+    )
 }
 
 /// Validate a multipoint commitment request and derive its
@@ -218,9 +258,32 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
+    if polys_per_point.is_empty() || polys_per_point.iter().any(|polys| polys.is_empty()) {
+        return Err(AkitaError::InvalidInput(
+            "batched commit requires at least one polynomial per point".to_string(),
+        ));
+    }
+    let num_polys_per_point: Vec<usize> = polys_per_point.iter().map(|polys| polys.len()).collect();
+    let num_claims = num_polys_per_point.iter().try_fold(0usize, |acc, &count| {
+        acc.checked_add(count).ok_or_else(|| {
+            AkitaError::InvalidInput("batched commit polynomial count overflow".to_string())
+        })
+    })?;
+    let role_dimensions =
+        SetupRoleDimensions::for_batched_shape(params, &num_polys_per_point, num_claims)?;
+    #[cfg(not(feature = "zk"))]
+    let b_setup_width = role_dimensions.b_setup_width;
+    #[cfg(feature = "zk")]
+    let b_setup_width = setup.expanded.seed.max_stride;
     let mut out = Vec::with_capacity(polys_per_point.len());
     for polys in polys_per_point {
-        out.push(commit_with_params::<F, D, P>(polys, setup, params)?);
+        out.push(commit_group_with_setup_widths::<F, D, P>(
+            polys,
+            setup,
+            params,
+            role_dimensions.a_setup_width,
+            b_setup_width,
+        )?);
     }
     Ok(out)
 }

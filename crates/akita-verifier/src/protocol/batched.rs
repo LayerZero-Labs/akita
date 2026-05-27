@@ -15,9 +15,9 @@ use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_is_root_direct, schedule_root_fold_step, scheduled_next_level_params,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep, AkitaSetupSeed, AkitaVerifierSetup,
-    BasisMode, ClaimIncidenceSummary, DirectWitnessProof, LevelParams, RingCommitment,
-    RingSubfieldEncoding, Schedule, VerifierClaims,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep, AkitaVerifierSetup, BasisMode,
+    ClaimIncidenceSummary, DirectWitnessProof, LevelParams, RingCommitment, RingSubfieldEncoding,
+    Schedule, SetupRoleDimensions, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -127,7 +127,7 @@ fn checked_root_direct_witness_rings<const D: usize>(
 
 fn validate_root_direct_recommitment_shape<F, const D: usize>(
     witnesses: &[DirectWitnessProof<F>],
-    setup_seed: &AkitaSetupSeed,
+    setup: &AkitaVerifierSetup<F>,
     incidence_summary: &ClaimIncidenceSummary,
     params: &LevelParams,
 ) -> Result<(), AkitaError>
@@ -147,30 +147,30 @@ where
         ));
     }
 
-    let a_required_cols = params
-        .block_len
-        .checked_mul(params.num_digits_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("direct A width overflow".to_string()))?;
-    if setup_seed.max_stride < a_required_cols {
-        return Err(AkitaError::InvalidSetup(
-            "shared matrix stride is too small for direct A layout".to_string(),
-        ));
-    }
-    let per_witness_outer_cols = params
-        .num_blocks
-        .checked_mul(params.a_key.row_len())
-        .and_then(|cols| cols.checked_mul(params.num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
+    let total_claims =
+        incidence_summary
+            .num_polys_per_point()
+            .iter()
+            .try_fold(0usize, |acc, &count| {
+                acc.checked_add(count).ok_or_else(|| {
+                    AkitaError::InvalidSetup("direct claim count overflow".to_string())
+                })
+            })?;
+    let role_dimensions = SetupRoleDimensions::for_batched_shape(
+        params,
+        incidence_summary.num_polys_per_point(),
+        total_claims,
+    )?;
+    setup
+        .expanded
+        .a_setup_view::<D>(role_dimensions)
+        .map(|_| ())?;
+    setup
+        .expanded
+        .b_setup_view::<D>(role_dimensions)
+        .map(|_| ())?;
     let mut claim_offset = 0usize;
     for &point_size in incidence_summary.num_polys_per_point() {
-        let b_required_cols = point_size
-            .checked_mul(per_witness_outer_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
-        if setup_seed.max_stride < b_required_cols {
-            return Err(AkitaError::InvalidSetup(
-                "shared matrix stride is too small for direct B layout".to_string(),
-            ));
-        }
         let group_end = claim_offset
             .checked_add(point_size)
             .ok_or(AkitaError::InvalidProof)?;
@@ -228,14 +228,12 @@ pub(crate) fn direct_decomposed_inner_rows<F, const D: usize>(
     witness_rings: &[CyclotomicRing<F, D>],
     setup: &AkitaVerifierSetup<F>,
     params: &LevelParams,
+    role_dimensions: SetupRoleDimensions,
 ) -> Result<Vec<[i8; D]>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
-    let a_matrix = setup
-        .expanded
-        .shared_matrix
-        .ring_view::<D>(params.a_key.row_len(), setup.expanded.seed.max_stride)?;
+    let a_matrix = setup.expanded.a_setup_view::<D>(role_dimensions)?;
     let a_rows: Vec<_> = a_matrix.rows().collect();
     let out_capacity = params
         .num_blocks
@@ -302,6 +300,7 @@ fn recommit_direct_witness_group<F, const D: usize>(
     group_witnesses: &[DirectWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
     params: &LevelParams,
+    role_dimensions: SetupRoleDimensions,
     #[cfg(feature = "zk")] blinding_digits: &[i8],
 ) -> Result<RingCommitment<F, D>, AkitaError>
 where
@@ -314,12 +313,20 @@ where
             .ok_or(AkitaError::InvalidProof)?
             .coeffs();
         let witness_rings = field_evals_to_rings::<F, D>(field_witness)?;
-        outer_input.extend(direct_decomposed_inner_rows(&witness_rings, setup, params)?);
+        outer_input.extend(direct_decomposed_inner_rows(
+            &witness_rings,
+            setup,
+            params,
+            role_dimensions,
+        )?);
     }
 
     #[cfg(feature = "zk")]
     append_direct_blinding::<F, D>(&mut outer_input, blinding_digits, params)?;
 
+    #[cfg(not(feature = "zk"))]
+    let b_matrix = setup.expanded.b_setup_view::<D>(role_dimensions)?;
+    #[cfg(feature = "zk")]
     let b_matrix = setup
         .expanded
         .shared_matrix
@@ -370,11 +377,17 @@ where
     if total_group_polys != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
-    validate_root_direct_recommitment_shape::<F, D>(
-        witnesses,
-        &setup.expanded.seed,
-        incidence_summary,
+    validate_root_direct_recommitment_shape::<F, D>(witnesses, setup, incidence_summary, params)?;
+    let total_claims = incidence_summary
+        .num_polys_per_point()
+        .iter()
+        .try_fold(0usize, |acc, &count| {
+            acc.checked_add(count).ok_or(AkitaError::InvalidProof)
+        })?;
+    let role_dimensions = SetupRoleDimensions::for_batched_shape(
         params,
+        incidence_summary.num_polys_per_point(),
+        total_claims,
     )?;
 
     let mut claim_offset = 0usize;
@@ -387,6 +400,7 @@ where
             group_witnesses,
             setup,
             params,
+            role_dimensions,
             #[cfg(feature = "zk")]
             &b_blinding_digits[group_idx],
         )?;
@@ -649,7 +663,11 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
-    use akita_types::{AjtaiKeyParams, FlatRingVec, SisModulusFamily};
+    use akita_types::{
+        AjtaiKeyParams, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, FlatRingVec,
+        SisModulusFamily,
+    };
+    use std::sync::Arc;
 
     type F = Fp32<251>;
     const D: usize = 32;
@@ -665,13 +683,24 @@ mod tests {
         ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid incidence summary")
     }
 
+    fn verifier_setup(seed: AkitaSetupSeed) -> AkitaVerifierSetup<F> {
+        let field_len = seed.max_setup_len.checked_mul(D).expect("test setup fits");
+        let shared_matrix = FlatMatrix::from_flat_data(vec![F::zero(); field_len], D);
+        AkitaVerifierSetup {
+            expanded: Arc::new(
+                AkitaExpandedSetup::from_parts(seed, shared_matrix)
+                    .expect("test setup descriptor digest"),
+            ),
+        }
+    }
+
     #[test]
     fn root_direct_recommitment_rejects_undersized_setup_stride() {
         let params =
             LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
                 .with_decomp(1, 0, 2, 1, 1, 0)
                 .expect("valid direct layout");
-        let setup_seed = AkitaSetupSeed {
+        let setup = verifier_setup(AkitaSetupSeed {
             max_num_vars: 6,
             max_num_batched_polys: 1,
             max_num_points: 1,
@@ -679,13 +708,13 @@ mod tests {
             max_setup_len: 3,
             public_matrix_seed: [0u8; 32],
             zk_blinding_seed: [1u8; 32],
-        };
+        });
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
             vec![F::zero(); 64],
         ))];
         let err = validate_root_direct_recommitment_shape::<F, D>(
             &witnesses,
-            &setup_seed,
+            &setup,
             &incidence_summary(6),
             &params,
         )
@@ -700,7 +729,7 @@ mod tests {
                 .with_decomp(1, 0, 2, 1, 1, 0)
                 .expect("valid direct layout");
         params.b_key = AjtaiKeyParams::new_unchecked(SisModulusFamily::Q32, 1, 128, 0, D);
-        let setup_seed = AkitaSetupSeed {
+        let setup = verifier_setup(AkitaSetupSeed {
             max_num_vars: 6,
             max_num_batched_polys: 1,
             max_num_points: 1,
@@ -708,13 +737,13 @@ mod tests {
             max_setup_len: 128,
             public_matrix_seed: [0u8; 32],
             zk_blinding_seed: [1u8; 32],
-        };
+        });
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
             vec![F::zero(); 32],
         ))];
         let err = validate_root_direct_recommitment_shape::<F, D>(
             &witnesses,
-            &setup_seed,
+            &setup,
             &incidence_summary(6),
             &params,
         )
