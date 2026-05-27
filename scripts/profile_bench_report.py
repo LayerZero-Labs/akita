@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import html
 import json
 import os
@@ -22,6 +23,7 @@ RSS_PATTERNS = [
     re.compile(r"^\s*(\d+)\s+maximum resident set size$", re.MULTILINE),
 ]
 ONEHOT_ARITY = 256
+ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
 REQUIRED_RUN_METRICS = (
     "setup_s",
     "commit_s",
@@ -29,7 +31,12 @@ REQUIRED_RUN_METRICS = (
     "verify_total_s",
     "proof_size_bytes",
     "accounted_bytes",
+    "max_rss_kib",
+    "claim_ext_degree",
+    "challenge_ext_degree",
+    "akita_levels",
 )
+REQUIRED_RUN_SEQUENCES = ("planned_levels", "proof_levels")
 
 
 @dataclass(frozen=True)
@@ -43,6 +50,62 @@ class BenchmarkCaseSpec:
         return case_id(self.mode, self.num_vars, self.num_polys)
 
 
+@dataclass(frozen=True)
+class CaseMetadata:
+    field_family: str
+    workload: str
+    workload_label: str
+    config: str
+
+
+CASE_METADATA: dict[str, CaseMetadata] = {
+    "dense_fp128_d32": CaseMetadata("fp128", "dense", "dense", "D32"),
+    "dense_fp128_d64": CaseMetadata("fp128", "dense", "dense", "D64"),
+    "onehot_fp128_d32": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
+    "onehot_fp128_d64": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    "onehot_fp128_d64_tensor": CaseMetadata(
+        "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 tensor"
+    ),
+    "onehot_fp32_d32": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
+    "onehot_fp32_d64": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    "dense_fp32_d32": CaseMetadata("fp32", "dense", "dense", "D32"),
+    "dense_fp32_d64": CaseMetadata("fp32", "dense", "dense", "D64"),
+    "onehot_fp16_d32": CaseMetadata("fp16", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
+    "onehot_fp16_d64": CaseMetadata("fp16", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    "dense_fp16_d32": CaseMetadata("fp16", "dense", "dense", "D32"),
+    "dense_fp16_d64": CaseMetadata("fp16", "dense", "dense", "D64"),
+    "onehot_fp64_d32": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
+    "onehot_fp64_d64": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    "dense_fp64_d32": CaseMetadata("fp64", "dense", "dense", "D32"),
+    "dense_fp64_d64": CaseMetadata("fp64", "dense", "dense", "D64"),
+}
+
+
+def case_metadata(mode: str) -> CaseMetadata:
+    if mode in CASE_METADATA:
+        return CASE_METADATA[mode]
+    field_family = "fp128"
+    for family in ("fp16", "fp32", "fp64", "fp128"):
+        if family in mode:
+            field_family = family
+            break
+    workload = "onehot" if "onehot" in mode else "dense"
+    workload_label = ONEHOT_WORKLOAD_LABEL if workload == "onehot" else "dense"
+    config_match = re.search(r"_d(\d+)$", mode)
+    config = f"D{config_match.group(1)}" if config_match else "custom"
+    return CaseMetadata(field_family, workload, workload_label, config)
+
+
+def workload_slug(metadata: CaseMetadata, num_polys: int) -> str:
+    if metadata.workload == "onehot" and num_polys > 1:
+        return "onehot-batched"
+    return metadata.workload
+
+
+def slugify_config(config: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", config.lower()).strip("-") or "custom"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run and render the Akita profile benchmark report."
@@ -54,7 +117,7 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument(
         "--output-dir", required=True, help="Directory where logs and summary.json are written."
     )
-    run_parser.add_argument("--mode", default="onehot", help="Benchmark mode.")
+    run_parser.add_argument("--mode", default="onehot_fp128_d32", help="Benchmark mode.")
     run_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     run_parser.add_argument(
         "--num-polys",
@@ -91,6 +154,46 @@ def parse_args() -> argparse.Namespace:
         "--previous-baseline-dir",
         default="",
         help="Optional artifact directory containing the previous-run summary.json.",
+    )
+    render_parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Render only the matrix-first PR-comment summary.",
+    )
+
+    failure_parser = subparsers.add_parser(
+        "failure-summary",
+        help="Write a structured failure summary when the benchmark step produced none.",
+    )
+    failure_parser.add_argument(
+        "--output-dir", required=True, help="Directory where summary files are written."
+    )
+    failure_parser.add_argument("--mode", default="onehot_fp128_d32", help="Benchmark mode.")
+    failure_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
+    failure_parser.add_argument(
+        "--num-polys",
+        type=int,
+        default=1,
+        help="Number of same-point polynomials in the benchmark case.",
+    )
+    failure_parser.add_argument(
+        "--case",
+        action="append",
+        default=[],
+        help=(
+            "Benchmark case as NUM_VARS:NUM_POLYS or MODE:NUM_VARS:NUM_POLYS. "
+            "Can be repeated."
+        ),
+    )
+    failure_parser.add_argument(
+        "--failure-phase",
+        default="benchmark workflow",
+        help="Failure phase to show in the rendered report.",
+    )
+    failure_parser.add_argument(
+        "--error",
+        default="benchmark step failed before writing summary.json",
+        help="Error message to show in the rendered report.",
     )
 
     return parser.parse_args()
@@ -134,6 +237,14 @@ def require_int(summary: dict[str, object], key: str) -> int:
 
 def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
     missing = [key for key in REQUIRED_RUN_METRICS if summary.get(key) is None]
+    for key in REQUIRED_RUN_SEQUENCES:
+        value = summary.get(key)
+        if not isinstance(value, list) or not value:
+            missing.append(key)
+    if summary.get("tail_num_elems") is None:
+        missing.append("tail_num_elems")
+    if summary.get("tail_bits_per_elem") is None and summary.get("tail_encoding") != "field_elements":
+        missing.append("tail_bits_per_elem")
     proof_size = summary.get("proof_size_bytes")
     accounted = summary.get("accounted_bytes")
     if proof_size is not None and accounted is not None and int(proof_size) != int(accounted):
@@ -153,20 +264,32 @@ SAMPLE_METRICS = TIMING_SAMPLE_METRICS + ("max_rss_kib",)
 
 
 def case_id(mode: str, num_vars: int, num_polys: int) -> str:
-    return f"{mode}-nv{num_vars}-np{num_polys}"
+    metadata = case_metadata(mode)
+    config = slugify_config(metadata.config)
+    return (
+        f"{metadata.field_family}-{workload_slug(metadata, num_polys)}"
+        f"-nv{num_vars}-np{num_polys}-{config}"
+    )
 
 
 def benchmark_name(mode: str, num_vars: int, num_polys: int = 1) -> str:
-    if mode == "onehot":
+    metadata = case_metadata(mode)
+    if metadata.workload == "onehot":
         if num_polys > 1:
             return (
-                f"{num_polys} same-point 1-of-{ONEHOT_ARITY} one-hot polynomials "
-                f"with {num_vars} variables each"
+                f"{metadata.field_family} {metadata.config} same-point "
+                f"1-of-{ONEHOT_ARITY} one-hot x{num_polys} with {num_vars} variables"
             )
-        return f"1-of-{ONEHOT_ARITY} one-hot with {num_vars} variables"
+        return (
+            f"{metadata.field_family} {metadata.config} 1-of-{ONEHOT_ARITY} one-hot "
+            f"with {num_vars} variables"
+        )
     if num_polys > 1:
-        return f"{num_polys} same-point {mode} polynomials with {num_vars} variables each"
-    return f"{mode} with {num_vars} variables"
+        return (
+            f"{metadata.field_family} {metadata.config} dense x{num_polys} "
+            f"with {num_vars} variables"
+        )
+    return f"{metadata.field_family} {metadata.config} dense with {num_vars} variables"
 
 
 def parse_case_spec(spec: str, default_mode: str) -> BenchmarkCaseSpec:
@@ -194,10 +317,15 @@ def configured_cases(args: argparse.Namespace) -> list[BenchmarkCaseSpec]:
 
 
 def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> dict[str, object]:
+    metadata = case_metadata(mode)
     summary: dict[str, object] = {
         "schema_version": 3,
         "benchmark": benchmark_name(mode, num_vars, num_polys),
         "mode": mode,
+        "field_family": metadata.field_family,
+        "workload": metadata.workload,
+        "workload_label": metadata.workload_label,
+        "config": metadata.config,
         "num_vars": num_vars,
         "num_polys": num_polys,
         "case_id": case_id(mode, num_vars, num_polys),
@@ -230,7 +358,7 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             summary["tail_bytes"] = int(kvs["tail_bytes"])
             if "proof_framing_bytes" in kvs:
                 summary["proof_framing_bytes"] = int(kvs["proof_framing_bytes"])
-            if "levels" in kvs and "akita_levels" not in summary:
+            if "levels" in kvs:
                 summary["akita_levels"] = int(kvs["levels"])
         elif "profile field roles" in line and kvs.get("label") == mode:
             summary["claim_ext_degree"] = int(kvs["claim_ext_degree"])
@@ -355,11 +483,43 @@ def run_benchmark_case(
                 "profile run exited successfully but did not emit required metrics: "
                 + ", ".join(missing)
             )
+            summary["failure_phase"] = infer_failure_phase(summary, missing[0])
             summary["exit_code"] = 1
             return_code = 1
+    else:
+        summary["error"] = f"profile run failed with exit code {return_code}"
+        summary["failure_phase"] = infer_failure_phase(summary)
 
     write_text(output_dir / "summary.json", json.dumps(summary, indent=2, sort_keys=True) + "\n")
     return summary, return_code
+
+
+def infer_failure_phase(summary: dict[str, object], first_missing: str | None = None) -> str:
+    phase_by_metric = {
+        "setup_s": "setup",
+        "commit_s": "commit",
+        "prove_total_s": "prove",
+        "verify_total_s": "verify",
+        "proof_size_bytes": "proof summary",
+        "accounted_bytes": "proof accounting",
+        "consistent_proof_accounting": "proof accounting",
+        "max_rss_kib": "memory",
+        "claim_ext_degree": "field roles",
+        "challenge_ext_degree": "field roles",
+        "akita_levels": "proof levels",
+        "planned_levels": "planned levels",
+        "proof_levels": "proof levels",
+        "tail_num_elems": "tail shape",
+        "tail_bits_per_elem": "tail shape",
+    }
+    if first_missing in phase_by_metric:
+        return phase_by_metric[first_missing]
+    for metric, phase in phase_by_metric.items():
+        if metric == "consistent_proof_accounting":
+            continue
+        if summary.get(metric) is None:
+            return phase
+    return "unknown"
 
 
 def compact_sample_summary(summary: dict[str, object]) -> dict[str, object]:
@@ -371,6 +531,46 @@ def compact_sample_summary(summary: dict[str, object]) -> dict[str, object]:
         if key in summary:
             sample[key] = summary[key]
     return sample
+
+
+SUMMARY_CSV_COLUMNS = (
+    "case_id",
+    "status",
+    "failure_phase",
+    "field_family",
+    "workload",
+    "config",
+    "mode",
+    "num_vars",
+    "num_polys",
+    "runs",
+    "setup_s",
+    "commit_s",
+    "prove_total_s",
+    "verify_total_s",
+    "max_rss_kib",
+    "proof_size_bytes",
+    "accounted_bytes",
+    "akita_fold_bytes",
+    "tail_bytes",
+    "proof_framing_bytes",
+    "akita_levels",
+    "tail_num_elems",
+    "tail_bits_per_elem",
+    "exit_code",
+    "error",
+)
+
+
+def write_summary_csv(path: pathlib.Path, cases: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=SUMMARY_CSV_COLUMNS)
+        writer.writeheader()
+        for case in cases:
+            row = {column: case.get(column, "") for column in SUMMARY_CSV_COLUMNS}
+            row["status"] = case_status(case)
+            writer.writerow(row)
 
 
 def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, object]:
@@ -387,6 +587,13 @@ def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, 
     if rss_values:
         combined["max_rss_kib"] = max(rss_values)
 
+    failed = [summary for summary in summaries if int(summary.get("exit_code", 0)) != 0]
+    if failed:
+        latest_failure = failed[-1]
+        combined["exit_code"] = latest_failure.get("exit_code", 1)
+        combined["error"] = latest_failure.get("error", "profile run failed")
+        combined["failure_phase"] = latest_failure.get("failure_phase", "unknown")
+
     return combined
 
 
@@ -402,6 +609,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "cases": [],
     }
+    overall_return_code = 0
 
     for case in cases:
         case_dir = output_dir / case.case_id
@@ -412,17 +620,56 @@ def run_benchmark(args: argparse.Namespace) -> int:
             summary["run_index"] = run_index
             run_summaries.append(summary)
             if return_code != 0:
-                aggregate_summary["cases"].append(combine_case_run_summaries(run_summaries))
-                write_text(
-                    output_dir / "summary.json",
-                    json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n",
-                )
-                return return_code
+                if overall_return_code == 0:
+                    overall_return_code = return_code
+                break
         aggregate_summary["cases"].append(combine_case_run_summaries(run_summaries))
 
     write_text(
         output_dir / "summary.json", json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n"
     )
+    write_summary_csv(output_dir / "summary.csv", aggregate_summary["cases"])
+    return overall_return_code
+
+
+def write_failure_summary(args: argparse.Namespace) -> int:
+    output_dir = pathlib.Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    collected_at = datetime.now(timezone.utc).isoformat()
+
+    cases = []
+    for case in configured_cases(args):
+        metadata = case_metadata(case.mode)
+        cases.append(
+            {
+                "schema_version": 3,
+                "benchmark": benchmark_name(case.mode, case.num_vars, case.num_polys),
+                "mode": case.mode,
+                "field_family": metadata.field_family,
+                "workload": metadata.workload,
+                "workload_label": metadata.workload_label,
+                "config": metadata.config,
+                "num_vars": case.num_vars,
+                "num_polys": case.num_polys,
+                "case_id": case.case_id,
+                "collected_at": collected_at,
+                "runs": 0,
+                "samples": [],
+                "exit_code": 1,
+                "failure_phase": args.failure_phase,
+                "error": args.error,
+            }
+        )
+
+    aggregate_summary: dict[str, object] = {
+        "schema_version": 2,
+        "generated_at": collected_at,
+        "cases": cases,
+    }
+    write_text(
+        output_dir / "summary.json", json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n"
+    )
+    write_summary_csv(output_dir / "summary.csv", cases)
     return 0
 
 
@@ -435,9 +682,14 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
     mode = str(normalized["mode"])
     num_vars = int(normalized["num_vars"])
     num_polys = int(normalized.get("num_polys", 1))
+    metadata = case_metadata(mode)
     normalized["num_polys"] = num_polys
-    normalized["case_id"] = str(normalized.get("case_id", case_id(mode, num_vars, num_polys)))
+    normalized["case_id"] = case_id(mode, num_vars, num_polys)
     normalized["benchmark"] = benchmark_name(mode, num_vars, num_polys)
+    normalized["field_family"] = metadata.field_family
+    normalized["workload"] = metadata.workload
+    normalized["workload_label"] = metadata.workload_label
+    normalized["config"] = metadata.config
     return normalized
 
 
@@ -515,12 +767,19 @@ def fmt_count(value: float) -> str:
     return f"{int(round(value)):,}"
 
 
+def case_status(summary: dict[str, object]) -> str:
+    return "ok" if int(summary.get("exit_code", 0)) == 0 else "fail"
+
+
 def section_title(summary: dict[str, object]) -> str:
+    field_family = str(summary.get("field_family", case_metadata(str(summary["mode"])).field_family))
+    workload_label = str(summary.get("workload_label", "workload"))
+    config = str(summary.get("config", "config"))
     num_polys = int(summary.get("num_polys", 1))
     num_vars = int(summary["num_vars"])
     if num_polys == 1:
-        return f"Single Polynomial x {num_vars} Variables"
-    return f"{num_polys} Polynomials x {num_vars} Variables"
+        return f"{field_family} {workload_label} {config} nv{num_vars}"
+    return f"{field_family} {workload_label} {config} nv{num_vars} x{num_polys}"
 
 
 @dataclass(frozen=True)
@@ -558,6 +817,93 @@ def render_metric_row(
 
     columns.append(metric.value_formatter(float(current_value)))
     return f"| {metric.name} | " + " | ".join(columns) + f" | {metric.unit} |"
+
+
+def fmt_optional_seconds(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "n/a"
+    return fmt_seconds(float(value))
+
+
+def fmt_optional_mib(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "n/a"
+    return fmt_mib(float(value))
+
+
+def fmt_optional_bytes(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "n/a"
+    return fmt_bytes(float(value))
+
+
+def proof_size_delta(current: dict[str, object], baseline: dict[str, object] | None) -> str:
+    if baseline is None:
+        return "n/a"
+    current_size = current.get("proof_size_bytes")
+    baseline_size = baseline.get("proof_size_bytes")
+    if current_size is None or baseline_size in (None, 0):
+        return "n/a"
+    delta = (float(current_size) / float(baseline_size) - 1.0) * 100.0
+    sign = "+" if delta >= 0.0 else ""
+    return f"{sign}{delta:.2f}%"
+
+
+def render_matrix_summary(
+    current_cases: list[dict[str, object]],
+    visible_baselines: list[tuple[str, dict[str, dict[str, object]] | None]],
+) -> None:
+    baseline_columns = [label for label, summaries in visible_baselines if summaries is not None]
+    headers = [
+        "Status",
+        "Case",
+        "Mode",
+        "Setup s",
+        "Commit s",
+        "Prove s",
+        "Verify s",
+        "RSS MiB",
+        "Proof B",
+    ]
+    headers.extend(f"{label} proof Δ" for label in baseline_columns)
+    print("| " + " | ".join(headers) + " |")
+    print("| " + " | ".join(["---"] * len(headers)) + " |")
+
+    for current in current_cases:
+        case_label = (
+            f"{current.get('field_family')} {current.get('workload_label')} "
+            f"{current.get('config')} nv{current['num_vars']} np{current.get('num_polys', 1)}"
+        )
+        row = [
+            case_status(current),
+            md_text(case_label),
+            code_text(current["mode"]),
+            fmt_optional_seconds(current, "setup_s"),
+            fmt_optional_seconds(current, "commit_s"),
+            fmt_optional_seconds(current, "prove_total_s"),
+            fmt_optional_seconds(current, "verify_total_s"),
+            fmt_optional_mib(current, "max_rss_kib"),
+            fmt_optional_bytes(current, "proof_size_bytes"),
+        ]
+        for _label, summaries in visible_baselines:
+            if summaries is None:
+                continue
+            row.append(proof_size_delta(current, summaries.get(str(current["case_id"]))))
+        print("| " + " | ".join(row) + " |")
+
+    failing_cases = [case for case in current_cases if case_status(case) != "ok"]
+    if failing_cases:
+        print()
+        print("Failed cases:")
+        for case in failing_cases:
+            print(
+                f"- {code_text(case['case_id'])}: phase "
+                f"{code_text(case.get('failure_phase', 'unknown'))}; "
+                f"{md_text(case.get('error', 'profile run failed'))}."
+            )
 
 
 def sample_range(summary: dict[str, object], key: str) -> tuple[float, float] | None:
@@ -724,16 +1070,35 @@ def render_report(args: argparse.Namespace) -> int:
     print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
     print()
 
+    render_matrix_summary(current_cases, visible_baselines)
+    if args.compact:
+        print()
+        print(
+            "Detailed per-level schedule and proof-size breakdowns are available in "
+            "the uploaded `report.md` benchmark artifact."
+        )
+        return 0
+
+    print()
+
     for index, current in enumerate(current_cases):
-        validate_case_consistency(current)
+        if case_status(current) == "ok":
+            validate_case_consistency(current)
         if len(current_cases) > 1:
-            print(f"### {section_title(current)}")
+            print("<details>")
+            print(f"<summary>{html.escape(section_title(current), quote=False)} details</summary>")
             print()
         print(
             "- Benchmark: "
             f"{code_text(benchmark_name(current['mode'], int(current['num_vars']), int(current.get('num_polys', 1))))}"
         )
-        if current["mode"] == "onehot":
+        print(f"- Status: `{case_status(current)}`.")
+        if current.get("error"):
+            print(
+                f"- Failure: phase `{current.get('failure_phase', 'unknown')}`; "
+                f"{md_text(current['error'])}."
+            )
+        if current.get("workload") == "onehot":
             num_polys = int(current.get("num_polys", 1))
             if num_polys > 1:
                 print(
@@ -851,6 +1216,9 @@ def render_report(args: argparse.Namespace) -> int:
         if isinstance(proof_levels, list) and proof_levels:
             print()
             render_proof_levels(proof_levels)
+        if len(current_cases) > 1:
+            print()
+            print("</details>")
         if index + 1 < len(current_cases):
             print()
 
@@ -863,6 +1231,8 @@ def main() -> int:
         return run_benchmark(args)
     if args.command == "render":
         return render_report(args)
+    if args.command == "failure-summary":
+        return write_failure_summary(args)
     raise ValueError(f"unsupported command: {args.command}")
 
 

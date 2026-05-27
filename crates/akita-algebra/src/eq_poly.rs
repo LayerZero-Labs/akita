@@ -14,8 +14,15 @@
 //! **least-significant bit** (bit 0) and `r[n-1]` to the MSB.
 
 use crate::{AkitaError, FieldCore};
-use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
 use std::marker::PhantomData;
+use std::mem;
+
+/// Maximum memory budget for one materialized equality-table allocation family.
+///
+/// This is deliberately separate from serialization's generic sequence cap:
+/// equality tables may be larger than serialized proof vectors, but verifier-
+/// reachable code still needs an explicit allocation ceiling.
+pub const MAX_MATERIALIZED_EQ_TABLE_BYTES: usize = 1 << 30;
 
 /// Utilities for the equality polynomial `eq(x, y) = Πᵢ (xᵢ yᵢ + (1 − xᵢ)(1 − yᵢ))`.
 pub struct EqPolynomial<E: FieldCore>(PhantomData<E>);
@@ -29,13 +36,35 @@ impl<E: FieldCore> EqPolynomial<E> {
         let len = 1usize
             .checked_shl(shift)
             .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".to_string()))?;
-        if len > DEFAULT_MAX_SEQUENCE_LEN {
-            return Err(AkitaError::InvalidSize {
-                expected: DEFAULT_MAX_SEQUENCE_LEN,
-                actual: len,
-            });
-        }
         Ok(len)
+    }
+
+    fn check_element_budget(label: &str, len: usize) -> Result<(), AkitaError> {
+        let elem_size = mem::size_of::<E>().max(1);
+        let bytes = len.checked_mul(elem_size).ok_or_else(|| {
+            AkitaError::InvalidInput(format!("{label} byte-size overflow for {len} elements"))
+        })?;
+        if bytes > MAX_MATERIALIZED_EQ_TABLE_BYTES {
+            return Err(AkitaError::InvalidInput(format!(
+                "{label} requires {bytes} bytes, exceeding equality-table budget of {MAX_MATERIALIZED_EQ_TABLE_BYTES} bytes"
+            )));
+        }
+        Ok(())
+    }
+
+    fn checked_table_len(label: &str, num_vars: usize) -> Result<usize, AkitaError> {
+        let len = Self::table_len(num_vars)?;
+        Self::check_element_budget(label, len)?;
+        Ok(len)
+    }
+
+    fn zero_vec(label: &str, len: usize) -> Result<Vec<E>, AkitaError> {
+        let mut out = Vec::new();
+        out.try_reserve_exact(len).map_err(|_| {
+            AkitaError::InvalidInput(format!("{label} allocation failed for {len} elements"))
+        })?;
+        out.resize(len, E::zero());
+        Ok(out)
     }
 
     /// Compute the MLE of the equality polynomial at two points:
@@ -92,8 +121,8 @@ impl<E: FieldCore> EqPolynomial<E> {
     ///
     /// Uses **little-endian** index order.
     pub fn evals_serial(r: &[E], scaling_factor: Option<E>) -> Result<Vec<E>, AkitaError> {
-        let size = Self::table_len(r.len())?;
-        let mut evals = vec![E::zero(); size];
+        let size = Self::checked_table_len("eq evaluation table", r.len())?;
+        let mut evals = Self::zero_vec("eq evaluation table", size)?;
         evals[0] = scaling_factor.unwrap_or(E::one());
         let mut len = 1usize;
         for &t in r.iter().rev() {
@@ -123,11 +152,18 @@ impl<E: FieldCore> EqPolynomial<E> {
         r: &[E],
         scaling_factor: Option<E>,
     ) -> Result<Vec<Vec<E>>, AkitaError> {
-        Self::table_len(r.len())?;
+        let final_len = Self::table_len(r.len())?;
+        let total_len = final_len
+            .checked_mul(2)
+            .and_then(|len| len.checked_sub(1))
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("cached eq table total length overflow".to_string())
+            })?;
+        Self::check_element_budget("cached eq tables", total_len)?;
         let mut result = Vec::with_capacity(r.len() + 1);
         let mut layer_len = 1usize;
         for _ in 0..=r.len() {
-            result.push(vec![E::zero(); layer_len]);
+            result.push(Self::zero_vec("cached eq table layer", layer_len)?);
             layer_len = layer_len.saturating_mul(2);
         }
         result[0][0] = scaling_factor.unwrap_or(E::one());
@@ -152,8 +188,8 @@ impl<E: FieldCore> EqPolynomial<E> {
     pub fn evals_parallel(r: &[E], scaling_factor: Option<E>) -> Result<Vec<E>, AkitaError> {
         use rayon::prelude::*;
 
-        let final_size = Self::table_len(r.len())?;
-        let mut evals = vec![E::zero(); final_size];
+        let final_size = Self::checked_table_len("eq evaluation table", r.len())?;
+        let mut evals = Self::zero_vec("eq evaluation table", final_size)?;
         evals[0] = scaling_factor.unwrap_or(E::one());
         let mut size = 1;
 
@@ -236,9 +272,38 @@ mod tests {
     }
 
     #[test]
-    fn evals_rejects_oversized_dimension() {
-        let r = vec![F::one(); 25];
-        assert!(EqPolynomial::evals(&r).is_err());
+    fn materialized_budget_is_not_the_serialization_sequence_cap() {
+        let entries = akita_serialization::DEFAULT_MAX_SEQUENCE_LEN
+            .checked_mul(2)
+            .unwrap();
+        EqPolynomial::<F>::check_element_budget("test eq table", entries).unwrap();
+    }
+
+    #[test]
+    fn evals_rejects_tables_over_materialized_budget() {
+        let max_entries = MAX_MATERIALIZED_EQ_TABLE_BYTES / mem::size_of::<F>().max(1);
+        EqPolynomial::<F>::check_element_budget("test eq table", max_entries).unwrap();
+        assert!(EqPolynomial::<F>::check_element_budget("test eq table", max_entries + 1).is_err());
+    }
+
+    #[test]
+    fn evals_cached_rejects_total_layer_budget_overflow() {
+        let max_entries = MAX_MATERIALIZED_EQ_TABLE_BYTES / mem::size_of::<F>().max(1);
+        let mut final_len = 1usize;
+        let mut vars = 0usize;
+        loop {
+            let total_len = final_len
+                .checked_mul(2)
+                .and_then(|len| len.checked_sub(1))
+                .unwrap();
+            if total_len > max_entries {
+                break;
+            }
+            final_len = final_len.checked_mul(2).unwrap();
+            vars += 1;
+        }
+        let r = vec![F::one(); vars];
+        assert!(EqPolynomial::<F>::evals_cached(&r).is_err());
     }
 
     #[test]

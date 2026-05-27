@@ -125,10 +125,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "akita-verifier",
- "blake2 0.10.6",
- "rand_core 0.6.4",
  "rayon",
- "thiserror",
  "tracing",
 ]
 
@@ -139,7 +136,6 @@ dependencies = [
  "aes",
  "akita-algebra",
  "akita-challenges",
- "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",
@@ -283,7 +279,6 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
- "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",

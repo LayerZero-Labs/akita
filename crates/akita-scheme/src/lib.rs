@@ -1,6 +1,6 @@
 //! End-to-end Akita PCS scheme orchestration.
 
-use akita_config::CommitmentConfig;
+use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig, WCommitmentConfig};
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
@@ -9,21 +9,28 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
-use akita_prover::kernels::crt_ntt::NttSlotCache;
+use akita_prover::dispatch_ring_dim_result;
 use akita_prover::{
-    batched_commit, commit, prove_batched, AkitaPolyOps, AkitaProverSetup, CommitmentProver,
-    ProverClaims, RootTensorProjectionPoly,
+    batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
+    prove_folded_batched_with_policy, prove_recursive_level_with_policy, AkitaPolyOps,
+    AkitaProverSetup, CommitmentComputeBackend, CommitmentProver, ProveLevelOutput, ProverClaims,
+    ProverComputeBackend, RecursiveProverState, RecursiveSuffixOutcome, RootTensorProjectionPoly,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
-use akita_types::AkitaVerifierSetup;
 use akita_types::{
-    root_tensor_projection_enabled, schedule_root_fold_step, AkitaBatchedProof,
-    AkitaCommitmentHint, ClaimIncidenceSummary, RingCommitment,
+    root_tensor_projection_enabled, schedule_root_fold_step, scheduled_fold_execution,
+    scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint, ClaimIncidenceSummary,
+    LevelParams, RingCommitment, Schedule,
 };
 use akita_types::{validate_ring_subfield_role, BasisMode, RingSubfieldEncoding};
-use akita_verifier::{verify_batched, CommitmentVerifier, VerifierClaims};
+use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
+use akita_verifier::{
+    verify_batched_with_policy, verify_root_direct_commitments_with_params, CommitmentVerifier,
+    VerifierClaims,
+};
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
@@ -57,6 +64,23 @@ where
     Ok(())
 }
 
+fn recursive_w_commit_layout_for_d<Cfg>(
+    commit_d: usize,
+    commit_params: &LevelParams,
+    current_w_len: usize,
+) -> Result<LevelParams, AkitaError>
+where
+    Cfg: CommitmentConfig,
+{
+    dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
+        akita_types::recursive_level_layout_from_params(
+            commit_params,
+            current_w_len,
+            WCommitmentConfig::<{ D_COMMIT }, Cfg>::decomposition(),
+        )
+    })
+}
+
 fn should_transform_root_commitment<F, const D: usize, Cfg>(
     incidence: &ClaimIncidenceSummary,
 ) -> Result<bool, AkitaError>
@@ -71,6 +95,287 @@ where
     }
     let schedule = Cfg::get_params_for_prove(incidence)?;
     Ok(schedule_root_fold_step(&schedule).is_some())
+}
+
+/// Dispatch a prove-level operation to the correct ring dimension.
+///
+/// Handles the fast-path (`level_d == D`) and the dynamic dispatch path.
+/// `#[inline(never)]` isolates the monomorphized match arms in their own
+/// stack frame.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn dispatch_prove_level<F, T, B, const D: usize, Cfg>(
+    level_d: usize,
+    expanded: &Arc<AkitaExpandedSetup<F>>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    current_state: RecursiveProverState<F, Cfg::ChallengeField>,
+    transcript: &mut T,
+    level: usize,
+    level_params: &LevelParams,
+    next_params: LevelParams,
+) -> Result<ProveLevelOutput<F, Cfg::ChallengeField>, AkitaError>
+where
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField,
+    T: Transcript<F>,
+    B: ProverComputeBackend<F>,
+    Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
+{
+    if level_d == D {
+        prove_recursive_level_with_policy::<F, Cfg::ChallengeField, T, B, D, _, _>(
+            expanded.as_ref(),
+            backend,
+            prepared,
+            transcript,
+            current_state,
+            level,
+            level_params,
+            next_params.log_basis,
+            |params, current_w_len| {
+                akita_types::recursive_level_layout_from_params(
+                    params,
+                    current_w_len,
+                    Cfg::decomposition(),
+                )
+            },
+            |w| {
+                akita_prover::commit_next_w_with_policy::<F, Cfg::ChallengeField, B, _, _, D>(
+                    &next_params,
+                    expanded,
+                    backend,
+                    prepared,
+                    w,
+                    |params, current_w_len| {
+                        akita_types::recursive_level_layout_from_params(
+                            params,
+                            current_w_len,
+                            WCommitmentConfig::<{ D }, Cfg>::decomposition(),
+                        )
+                    },
+                    recursive_w_commit_layout_for_d::<Cfg>,
+                )
+            },
+        )
+    } else {
+        dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+            let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
+            prove_recursive_level_with_policy::<F, Cfg::ChallengeField, T, B, { D_LEVEL }, _, _>(
+                expanded.as_ref(),
+                backend,
+                &level_prepared,
+                transcript,
+                current_state,
+                level,
+                level_params,
+                next_params.log_basis,
+                |params, current_w_len| {
+                    akita_types::recursive_level_layout_from_params(
+                        params,
+                        current_w_len,
+                        Cfg::decomposition(),
+                    )
+                },
+                |w| {
+                    akita_prover::commit_next_w_with_policy::<
+                        F,
+                        Cfg::ChallengeField,
+                        B,
+                        _,
+                        _,
+                        { D_LEVEL },
+                    >(
+                        &next_params,
+                        expanded,
+                        backend,
+                        &level_prepared,
+                        w,
+                        |params, current_w_len| {
+                            akita_types::recursive_level_layout_from_params(
+                                params,
+                                current_w_len,
+                                WCommitmentConfig::<{ D_LEVEL }, Cfg>::decomposition(),
+                            )
+                        },
+                        recursive_w_commit_layout_for_d::<Cfg>,
+                    )
+                },
+            )
+        })
+    }
+}
+
+/// Drive the recursive fold levels (after the root) and resolve the terminal
+/// `log_basis` for the packed-digit direct witness.
+///
+/// The selected planner schedule is authoritative: it determines the fold
+/// count, per-level `LevelParams`, successor params, and terminal direct
+/// witness basis.
+#[allow(clippy::too_many_arguments)]
+fn prove_recursive_suffix<F, T, B, const D: usize, Cfg>(
+    expanded: &Arc<AkitaExpandedSetup<F>>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    num_vars: usize,
+    transcript: &mut T,
+    initial_state: RecursiveProverState<F, Cfg::ChallengeField>,
+    schedule: &Schedule,
+) -> Result<RecursiveSuffixOutcome<F, Cfg::ChallengeField>, AkitaError>
+where
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField
+        + Valid,
+    T: Transcript<F>,
+    B: ProverComputeBackend<F>,
+    Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
+{
+    akita_prover::prove_recursive_suffix_with_policy::<F, Cfg::ChallengeField, _, _>(
+        num_vars,
+        initial_state,
+        schedule,
+        |level, inputs, current_log_basis| {
+            scheduled_fold_execution(schedule, level, inputs, current_log_basis)
+        },
+        |request| match request {
+            akita_prover::SuffixLevelRequest::Intermediate {
+                level,
+                current_state,
+                level_params,
+                next_params,
+            } => dispatch_prove_level::<F, T, B, D, Cfg>(
+                level_params.ring_dimension,
+                expanded,
+                backend,
+                prepared,
+                *current_state,
+                transcript,
+                level,
+                level_params,
+                next_params,
+            )
+            .map(akita_prover::SuffixLevelOutput::Intermediate),
+            akita_prover::SuffixLevelRequest::Terminal {
+                level,
+                current_state,
+                level_params,
+                final_log_basis,
+            } => dispatch_prove_terminal_level::<F, T, B, D, Cfg>(
+                level_params.ring_dimension,
+                expanded,
+                backend,
+                prepared,
+                current_state,
+                transcript,
+                level,
+                level_params,
+                final_log_basis,
+            )
+            .map(akita_prover::SuffixLevelOutput::Terminal),
+        },
+    )
+}
+
+/// Dispatch a terminal prove-level operation to the correct ring dimension.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn dispatch_prove_terminal_level<F, T, B, const D: usize, Cfg>(
+    level_d: usize,
+    expanded: &Arc<AkitaExpandedSetup<F>>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    current_state: &mut RecursiveProverState<F, Cfg::ChallengeField>,
+    transcript: &mut T,
+    level: usize,
+    level_params: &LevelParams,
+    final_log_basis: u32,
+) -> Result<akita_types::TerminalLevelProof<F, Cfg::ChallengeField>, AkitaError>
+where
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField,
+    T: Transcript<F>,
+    B: ProverComputeBackend<F>,
+    Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
+{
+    if level_d == D {
+        akita_prover::prove_terminal_recursive_level_with_policy::<F, Cfg::ChallengeField, T, B, D, _>(
+            expanded.as_ref(),
+            backend,
+            prepared,
+            transcript,
+            current_state,
+            level,
+            level_params,
+            final_log_basis,
+            |params, current_w_len| {
+                akita_types::recursive_level_layout_from_params(
+                    params,
+                    current_w_len,
+                    Cfg::decomposition(),
+                )
+            },
+        )
+    } else {
+        dispatch_ring_dim_result!(level_d, |D_LEVEL| {
+            let level_prepared = backend.prepare_expanded::<D_LEVEL>(expanded.clone())?;
+            akita_prover::prove_terminal_recursive_level_with_policy::<
+                F,
+                Cfg::ChallengeField,
+                T,
+                B,
+                { D_LEVEL },
+                _,
+            >(
+                expanded.as_ref(),
+                backend,
+                &level_prepared,
+                transcript,
+                current_state,
+                level,
+                level_params,
+                final_log_basis,
+                |params, current_w_len| {
+                    akita_types::recursive_level_layout_from_params(
+                        params,
+                        current_w_len,
+                        Cfg::decomposition(),
+                    )
+                },
+            )
+        })
+    }
 }
 
 impl<F, const D: usize, Cfg> CommitmentProver<F, D> for AkitaCommitmentScheme<D, Cfg>
@@ -104,14 +409,13 @@ where
         max_num_vars: usize,
         max_num_polys_per_point: usize,
         max_num_points: usize,
-    ) -> Self::ProverSetup {
-        validate_field_roles_for_ring::<F, D, Cfg>().expect("invalid Akita field tower");
+    ) -> Result<Self::ProverSetup, AkitaError> {
+        validate_field_roles_for_ring::<F, D, Cfg>()?;
         akita_setup::new_prover_setup::<F, D, Cfg>(
             max_num_vars,
             max_num_polys_per_point,
             max_num_points,
         )
-        .expect("commitment setup failed")
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
@@ -119,10 +423,16 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
-    fn commit<P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
-        polys: &[P],
+    fn commit<P, B>(
         setup: &Self::ProverSetup,
-    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
+        polys: &[P],
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
+    where
+        P: AkitaPolyOps<F, D>,
+        B: CommitmentComputeBackend<F>,
+    {
         if let Some(first) = polys.first() {
             let incidence = ClaimIncidenceSummary::same_point(first.num_vars(), polys.len())?;
             if should_transform_root_commitment::<F, D, Cfg>(&incidence)? {
@@ -130,20 +440,40 @@ where
                     .iter()
                     .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
                     .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?;
-                return commit::<F, Cfg, RootTensorProjectionPoly<F, D>, D>(&transformed, setup);
+                return commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, B, _>(
+                    &transformed,
+                    setup.expanded.as_ref(),
+                    backend,
+                    prepared,
+                    Cfg::get_params_for_batched_commitment,
+                );
             }
         }
-        commit::<F, Cfg, P, D>(polys, setup)
+        commit_with_policy::<F, D, P, B, _>(
+            polys,
+            setup.expanded.as_ref(),
+            backend,
+            prepared,
+            Cfg::get_params_for_batched_commitment,
+        )
     }
 
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
-    fn batched_commit<P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
-        polys_per_point: &[&[P]],
+    fn batched_commit<P, B>(
         setup: &Self::ProverSetup,
-    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError> {
-        let incidence =
-            akita_prover::prepare_batched_commit_inputs::<F, D, P>(polys_per_point, setup)?;
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
+        polys_per_point: &[&[P]],
+    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError>
+    where
+        P: AkitaPolyOps<F, D>,
+        B: CommitmentComputeBackend<F>,
+    {
+        let incidence = akita_prover::prepare_batched_commit_inputs::<F, D, P>(
+            polys_per_point,
+            setup.expanded.as_ref(),
+        )?;
         if should_transform_root_commitment::<F, D, Cfg>(&incidence)? {
             let transformed: Vec<Vec<RootTensorProjectionPoly<F, D>>> = polys_per_point
                 .iter()
@@ -156,24 +486,131 @@ where
                 .collect::<Result<_, _>>()?;
             let transformed_refs: Vec<&[RootTensorProjectionPoly<F, D>]> =
                 transformed.iter().map(Vec::as_slice).collect();
-            return batched_commit::<F, Cfg, RootTensorProjectionPoly<F, D>, D>(
+            return batched_commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, B, _>(
                 &transformed_refs,
-                setup,
+                setup.expanded.as_ref(),
+                backend,
+                prepared,
+                Cfg::get_params_for_batched_commitment,
             );
         }
-        batched_commit::<F, Cfg, P, D>(polys_per_point, setup)
+        batched_commit_with_policy::<F, D, P, B, _>(
+            polys_per_point,
+            setup.expanded.as_ref(),
+            backend,
+            prepared,
+            Cfg::get_params_for_batched_commitment,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
-    fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
+    fn batched_prove<'a, T, P, B>(
         setup: &Self::ProverSetup,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
-    ) -> Result<Self::BatchedProof, AkitaError> {
+    ) -> Result<Self::BatchedProof, AkitaError>
+    where
+        T: Transcript<F>,
+        P: AkitaPolyOps<F, D>,
+        B: ProverComputeBackend<F>,
+    {
         let t_prove_total = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;
-        let proof = prove_batched::<F, Cfg, T, P, D>(setup, claims, transcript, basis)?;
+        let expanded = setup.expanded.as_ref();
+        backend.validate_prepared_setup::<D>(prepared, expanded)?;
+        let expanded_arc = setup.expanded.clone();
+        let proof = prove_batched_with_policy::<
+            F,
+            Cfg::ClaimField,
+            Cfg::ChallengeField,
+            T,
+            P,
+            D,
+            _,
+            _,
+            _,
+            _,
+            _,
+        >(
+            expanded,
+            claims,
+            transcript,
+            basis,
+            |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
+            Cfg::get_params_for_batched_commitment,
+            |schedule, _next_inputs| scheduled_next_level_params(schedule, 1),
+            |transcript, incidence_summary, schedule, basis| {
+                bind_transcript_instance_descriptor::<F, T, D, Cfg>(
+                    expanded,
+                    incidence_summary,
+                    schedule,
+                    basis,
+                    transcript,
+                )
+            },
+            |prepared_claims, schedule, next_params, transcript, basis| {
+                let num_vars = prepared_claims.incidence_summary.num_vars();
+                prove_folded_batched_with_policy::<
+                        F,
+                        Cfg::ClaimField,
+                        Cfg::ChallengeField,
+                        T,
+                        P,
+                        B,
+                        D,
+                        _,
+                        _,
+                    >(
+                        expanded,
+                        backend,
+                        prepared,
+                        transcript,
+                        prepared_claims,
+                        &schedule,
+                        basis,
+                        &next_params,
+                        |w| {
+                            akita_prover::commit_next_w_with_policy::<
+                                F,
+                                Cfg::ChallengeField,
+                                B,
+                                _,
+                                _,
+                                D,
+                            >(
+                                &next_params,
+                                &expanded_arc,
+                                backend,
+                                prepared,
+                                w,
+                                |params, current_w_len| {
+                                    akita_types::recursive_level_layout_from_params(
+                                        params,
+                                        current_w_len,
+                                        Cfg::decomposition(),
+                                    )
+                                },
+                                recursive_w_commit_layout_for_d::<Cfg>,
+                            )
+                        },
+                        |next_state, schedule, transcript| {
+                            prove_recursive_suffix::<F, T, B, D, Cfg>(
+                                &expanded_arc,
+                                backend,
+                                prepared,
+                                num_vars,
+                                transcript,
+                                next_state,
+                                schedule,
+                            )
+                        },
+                    )
+                    .map(|(proof, _total_levels)| proof)
+            },
+        )?;
 
         tracing::info!(
             levels = proof.num_fold_levels() + usize::from(proof.root.as_fold().is_some()),
@@ -217,7 +654,40 @@ where
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;
-        verify_batched::<F, Cfg, T, D>(proof, setup, transcript, claims, basis)?;
+        verify_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _, _, _, _, _>(
+            proof,
+            setup,
+            transcript,
+            claims,
+            basis,
+            |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
+            |schedule, _next_inputs| scheduled_next_level_params(schedule, 1),
+            Cfg::get_params_for_batched_commitment,
+            |transcript, incidence_summary, schedule, basis| {
+                bind_transcript_instance_descriptor::<F, T, D, Cfg>(
+                    &setup.expanded,
+                    incidence_summary,
+                    schedule,
+                    basis,
+                    transcript,
+                )
+            },
+            |witnesses,
+             setup,
+             commitments,
+             incidence_summary,
+             params,
+             direct_commitment_payload| {
+                verify_root_direct_commitments_with_params::<F, D>(
+                    witnesses,
+                    setup,
+                    commitments,
+                    incidence_summary,
+                    params,
+                    direct_commitment_payload,
+                )
+            },
+        )?;
 
         tracing::info!(
             levels = proof.num_fold_levels() + 1,

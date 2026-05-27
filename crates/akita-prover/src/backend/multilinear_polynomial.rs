@@ -14,9 +14,8 @@ use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
-use akita_types::FlatMatrix;
 
-use crate::kernels::crt_ntt::NttSlotCache;
+use crate::compute::CommitmentComputeBackend;
 use crate::{
     AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly,
 };
@@ -67,8 +66,6 @@ where
     F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
 {
-    type CommitCache = NttSlotCache<D>;
-
     fn num_ring_elems(&self) -> usize {
         match self {
             Self::Dense(poly) => poly.num_ring_elems(),
@@ -236,75 +233,73 @@ where
         }
     }
 
-    fn commit_inner(
+    fn commit_inner<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
         match self {
             Self::Dense(poly) => poly.commit_inner(
-                a_matrix,
-                ntt_a,
+                backend,
+                prepared,
                 n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
-                matrix_stride,
             ),
             Self::OneHot(poly) => poly.commit_inner(
-                a_matrix,
-                ntt_a,
+                backend,
+                prepared,
                 n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
-                matrix_stride,
             ),
         }
     }
 
-    fn commit_inner_witness(
+    fn commit_inner_witness<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
+        B: CommitmentComputeBackend<F>,
     {
         match self {
             Self::Dense(poly) => poly.commit_inner_witness(
-                a_matrix,
-                ntt_a,
+                backend,
+                prepared,
                 n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
-                matrix_stride,
             ),
             Self::OneHot(poly) => poly.commit_inner_witness(
-                a_matrix,
-                ntt_a,
+                backend,
+                prepared,
                 n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
-                matrix_stride,
             ),
         }
     }
