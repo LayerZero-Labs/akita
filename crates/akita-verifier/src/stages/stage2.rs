@@ -3,9 +3,7 @@
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling,
-};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 #[cfg(feature = "zk")]
 use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 #[cfg(feature = "zk")]
@@ -195,7 +193,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
 
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField,
     E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
 {
     #[allow(clippy::too_many_arguments)]
@@ -405,7 +403,7 @@ where
 
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField,
     E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
 {
     fn num_rounds(&self) -> usize {
@@ -450,7 +448,7 @@ where
 #[cfg(feature = "zk")]
 impl<'a, F, E, const D: usize> ZkSumcheckFinalRelation<E> for AkitaStage2Verifier<'a, F, E, D>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField,
     E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
 {
     /// Record the deferred relation tying the stage-2 masked input to the

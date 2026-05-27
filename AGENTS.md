@@ -31,7 +31,7 @@ Workspace members under `crates/`:
 - `akita-verifier` — verifier replay (no prover-only polynomial backends). Public surface is `<Cfg>`-generic: `verify_batched::<F, Cfg, T, D>` (lives in `protocol::batched`). Dep tree excludes `akita-planner`
 - `akita-prover` — commitment, proving, setup expansion, recursive/ring-switch witnesses, polynomial backends. Public surface is `<Cfg>`-generic: `prove_batched` (in `protocol::flow`), `commit` / `batched_commit` (in `api::commitment`), `recursive_w_commit_layout_for_d` (in `protocol::ring_switch`), and `bind_transcript_instance_descriptor` re-exported from `akita-config`. Multi-`D` dispatch helpers live here (not in scheme). Dep tree excludes `akita-planner`
 - `akita-scheme` — thin end-to-end `AkitaCommitmentScheme` glue; each `CommitmentProver`/`CommitmentVerifier` method is a one-line call into the prover/verifier `<Cfg>`-generic API. Dep tree excludes `akita-planner`
-- `akita-planner` — offline schedule search (`find_optimal_schedule::<Cfg>(key, allow_table_fast_path)`) plus the `gen_schedule_tables` binary that emits the generated tables. The `test_utils::PlannerCfg<Cfg>` DP-routing wrapper is gated behind the `test-utils` feature so production callers never link it. Depends on `akita-config` (Cfg-generic API). Sits ABOVE `akita-config` and is excluded from the prover/verifier/scheme/setup dep tree
+- `akita-planner` — offline schedule search (`find_optimal_schedule::<Cfg>(key, ScheduleSearchMode)`) plus the `gen_schedule_tables` binary that emits the generated tables. The family list and key cross-product live in `akita_planner::generated_families` and are shared by the binary and the drift-guard test. The `test_utils::PlannerCfg<Cfg>` DP-routing wrapper is gated behind the `test-utils` feature so production callers never link it. Depends on `akita-config` (Cfg-generic API). Sits ABOVE `akita-config` and is excluded from the prover/verifier/scheme/setup dep tree
 - `akita-pcs` — umbrella crate with examples, benches, integration tests, public re-exports
 
 ## Key Abstractions
@@ -80,7 +80,7 @@ Deferred items are in [`specs/transcript-hardening.md`](specs/transcript-hardeni
 
 ## Profiling
 
-Canonical: `AKITA_MODE=onehot AKITA_NUM_VARS=32 cargo run --release --example profile`.
+Canonical: `AKITA_MODE=onehot_fp128_d32 AKITA_NUM_VARS=32 cargo run --release --example profile`.
 
 Knobs (`AKITA_MODE`, `AKITA_NUM_VARS`, `AKITA_PROFILE_TRACE`, `AKITA_PROFILE_LOG`, `AKITA_PROFILE_ANSI`, `AKITA_PROFILE_SPAN_CLOSES`, `AKITA_ALLOW_DEBUG_PROFILE`): defaults and details in `examples/profile.rs`. `RAYON_NUM_THREADS` caps Rayon threads; `--no-default-features` disables `parallel`. The `--release` guard can be bypassed with `AKITA_ALLOW_DEBUG_PROFILE=1`.
 

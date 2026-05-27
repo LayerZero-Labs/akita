@@ -1,5 +1,6 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
+use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::generated::GeneratedScheduleKey;
 use crate::{ClaimIncidenceSummary, DirectWitnessShape, LevelParams, RingOpeningPoint};
 use akita_challenges::SparseChallengeConfig;
@@ -687,6 +688,50 @@ pub struct Schedule {
     pub total_bytes: usize,
 }
 
+impl Schedule {
+    /// Append the descriptor digest encoding for this effective schedule.
+    ///
+    /// Kept next to [`Schedule`] so protocol-affecting step field changes are
+    /// reviewed with their Fiat-Shamir binding.
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        push_usize(bytes, self.steps.len());
+        for step in &self.steps {
+            match step {
+                Step::Fold(fold) => {
+                    bytes.push(0);
+                    fold.params.append_descriptor_bytes(bytes);
+                    push_usize(bytes, fold.current_w_len);
+                    push_usize(bytes, fold.delta_fold_per_poly);
+                    push_usize(bytes, fold.w_ring);
+                    push_usize(bytes, fold.next_w_len);
+                    push_usize(bytes, fold.level_bytes);
+                }
+                Step::Direct(direct) => {
+                    bytes.push(1);
+                    push_usize(bytes, direct.current_w_len);
+                    append_direct_witness_shape_descriptor_bytes(bytes, &direct.witness_shape);
+                    push_usize(bytes, direct.direct_bytes);
+                }
+            }
+        }
+        push_usize(bytes, self.total_bytes);
+    }
+}
+
+fn append_direct_witness_shape_descriptor_bytes(bytes: &mut Vec<u8>, shape: &DirectWitnessShape) {
+    match shape {
+        DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
+            bytes.push(0);
+            push_usize(bytes, *num_elems);
+            push_u32(bytes, *bits_per_elem);
+        }
+        DirectWitnessShape::FieldElements(coeff_len) => {
+            bytes.push(1);
+            push_usize(bytes, *coeff_len);
+        }
+    }
+}
+
 /// Witness length entering the root fold, in field elements.
 pub fn root_current_w_len(lp: &LevelParams) -> usize {
     lp.num_blocks
@@ -869,6 +914,25 @@ pub fn schedule_root_fold_step(schedule: &Schedule) -> Option<&FoldStep> {
     match schedule.steps.first() {
         Some(Step::Fold(step)) => Some(step),
         Some(Step::Direct(_)) | None => None,
+    }
+}
+
+/// Return the terminal direct witness shape from a runtime schedule.
+///
+/// # Errors
+///
+/// Returns an error if the schedule does not end in a direct witness handoff.
+pub fn schedule_terminal_direct_witness_shape(
+    schedule: &Schedule,
+) -> Result<&DirectWitnessShape, AkitaError> {
+    match schedule.steps.last() {
+        Some(Step::Direct(step)) => Ok(&step.witness_shape),
+        Some(Step::Fold(_)) => Err(AkitaError::InvalidSetup(
+            "schedule must end in a terminal direct witness step".to_string(),
+        )),
+        None => Err(AkitaError::InvalidSetup(
+            "schedule is missing terminal direct witness step".to_string(),
+        )),
     }
 }
 

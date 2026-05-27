@@ -8,24 +8,38 @@
 | Branch    | `quang/setup-layout-repack` |
 | PR         | #112 |
 
+## Scope
+
+This PR is a spec-only cleanup PR. It records the target layout and the
+downstream setup-claim-offloading constraints, but it does not change Rust
+code, proof bytes, setup serialization, generated tables, or benchmarks.
+
+The next implementation branch should re-implement from current `main` using
+this spec, not continue the older prototype commits that used to live on this
+branch.
+
 ## Summary
 
 Akita currently stores one shared public setup vector in `FlatMatrix`, but most
-call sites view that vector through a single rectangular envelope:
+call sites view that vector through one rectangular envelope:
 
 ```text
 ring_view(role_rows, setup.seed.max_stride)
 ```
 
-where `max_stride` is the maximum column width needed by any A, B, or D role
-over all supported shapes. This makes every role row pay for the same stride,
-even when its natural width is smaller. The extra row holes are harmless for
-correctness, but they inflate setup capacity, complicate setup-claim
-offloading, and force the weight evaluator to reason about
-`row * max_stride + col` pullbacks.
+Here `max_stride` is the maximum column width needed by any A, B, or D role
+over all supported shapes. This padding is harmless for correctness, but it
+does three bad things:
 
-This spec proposes removing the global setup stride contract. Each role should
-view the same raw `FlatMatrix` prefix using its natural width:
+- it inflates setup capacity;
+- it makes the physical layout look like a single global row stride even
+  though A, B, and D have different natural widths;
+- it complicates setup-claim offloading by forcing the weight evaluator to
+  reason about `row * max_stride + col` instead of the actual role map.
+
+The target layout removes the global setup-stride contract. There is still one
+shared random setup object, denoted `S`, but A, B, and D are packed prefix views
+of it:
 
 ```text
 A: ring_view(n_a, a_setup_width)
@@ -33,95 +47,52 @@ B: ring_view(n_b, b_setup_width)
 D: ring_view(n_d, d_setup_width)
 ```
 
-The setup still consists of one shared flat random vector. The roles are still
-prefix views of that vector; they are not disjoint stored matrices. The only
-change is that row layout is packed per role instead of padded to one global
-stride.
+These role matrices are not stored disjointly as `A || B || D`. They overlap as
+prefix views of the same raw setup vector. If a raw setup index is reached by
+more than one role view, later setup-claim offloading adds the corresponding
+role weights at that shared coordinate.
 
-ZK blinding tails should not be folded into this packed base matrix. They have
-different, group-local semantics, they are much smaller than the base W/T/Z
-segments, and they do not need to participate in the main setup-claim
-offloading path. The target design is:
+ZK blinding tails are not part of this base setup object. They have separate,
+smaller, point-local semantics and should use a dedicated ZK setup seed/domain.
 
-```text
-base setup seed/matrix: A, B, D base matrices only
-ZK setup seed/domain:   small B-blinding and D-blinding matrices
-```
+## Notation
 
-The verifier can evaluate the ZK blinding terms directly from the ZK setup
-seed, while the offloaded matrix claim remains over the raw base setup matrix
-`M_setup`.
-
-## Motivation
-
-### Setup Size
-
-Today setup generation allocates:
+`S` is the base shared setup object. For layout discussion, `S[lambda]` is a
+ring element. For setup-claim offloading, expose its coefficient axis:
 
 ```text
-max_rows * max_stride
+S(lambda, y) = coefficient y of S[lambda]
 ```
 
-ring elements at the setup generation dimension.
-
-The packed layout only needs:
+The flattened coefficient vector is:
 
 ```text
-max_setup_len = max over supported levels/shapes of {
-  n_a * a_setup_width,
-  n_b * b_setup_width,
-  n_d * d_setup_width
-}
+S^flat[lambda * D_setup + y]
 ```
 
-This can be substantially smaller whenever the largest row count and largest
-column width occur in different roles or different schedule shapes.
+If code or prose uses `M_setup`, it should mean the selected committed prefix
+of this same object, not `S_full` and not an alpha-evaluated matrix.
 
-### Setup Claim Offloading
-
-The offloaded setup matrix claim should be over the raw setup vector:
+The alpha-evaluated matrices are:
 
 ```text
-M_raw(shared_idx, coeff_idx)
+A_alpha, B_alpha, D_alpha
 ```
 
-With the current stride layout, role coordinates map to raw indices as:
-
-```text
-shared_idx = role_row * max_stride + role_col
-```
-
-At a random sumcheck point, evaluating the corresponding weight requires a
-mixed-radix equality pullback with carry behavior from `max_stride`.
-
-With packed role views, the role maps become:
-
-```text
-A: shared_idx = a_row * a_setup_width + a_col
-B: shared_idx = b_row * b_setup_width + b_col
-D: shared_idx = d_row * d_setup_width + d_col
-```
-
-where each width is the actual role width. This is still a pullback, but it is
-the intended packed setup layout rather than an artifact of an envelope stride.
+They are verifier-local evaluations of ring entries at the Stage-2 point
+`alpha`. They are not preprocessing commitment targets.
 
 ## Current Layout
 
-The relevant storage type is:
-
-```text
-crates/akita-types/src/layout/flat_matrix.rs
-```
-
-`FlatMatrix` stores raw field data plus `gen_ring_dim`. At verifier ring
-dimension `D`, it can be viewed as any prefix of D-sized ring elements:
+`FlatMatrix` is already flexible enough for the target representation. It
+stores raw field data plus a generation ring dimension, and it can view a
+prefix as a matrix of ring elements:
 
 ```text
 ring_view::<D>(num_rows, num_cols)
 ```
 
-The storage layer is already flexible enough. The global stride is imposed by
-metadata and call sites:
+The global stride is imposed by setup metadata and call sites:
 
 ```text
 AkitaSetupSeed {
@@ -136,236 +107,88 @@ AkitaProverSetup::generate_with_capacity(...)
 ```
 
 Then prover and verifier paths pass `setup.seed.max_stride` to role views.
+Representative uses include inner witness commitment, outer B multiplication,
+root-direct recomputation, ring-switch quotient kernels, and
+`compute_setup_contribution`.
 
-Examples:
+## Target Base Setup Layout
 
-```text
-commit_inner_witness(..., setup.expanded.seed.max_stride)
-mat_vec_mul_ntt_single_i8(..., setup.expanded.seed.max_stride, ...)
-setup.shared_matrix.ring_view::<D>(params.a_key.row_len(), setup.expanded.seed.max_stride)
-setup.shared_matrix.ring_view::<D>(r_max, setup.seed.max_stride)
-```
+### Role Dimensions
 
-## Target Layout
-
-### Role Widths
-
-For a level/proof shape, define the setup role widths:
+For one concrete level/proof shape, define:
 
 ```text
-a_setup_width = lp.inner_width()
-              = lp.block_len * lp.num_digits_commit
-
-d_setup_width = prepared.depth_open * prepared.num_blocks * prepared.num_claims
-              = n_cols_w
-
-b_setup_width = max(num_polys_per_point) * n_a * prepared.depth_open * prepared.num_blocks
-              = n_cols_t
+W_A = a_setup_width
+W_B = b_setup_width
+W_D = d_setup_width
 ```
 
-The B width is intentionally based on `max(num_polys_per_point)`, not the total
-number of T vectors, because the current verifier/prover grouped layout uses a
-group-local B matrix width and maps each point's `poly_idx` through
-`group_offsets[point_idx]` only when forming the `r_x` equality target.
-
-These are setup-view widths, not necessarily the serialized key column widths
-stored in `LevelParams`. The existing verifier checks that
-`lp.a_key.col_len()`, `lp.b_key.col_len()`, and `lp.d_key.col_len()` are large
-enough for the runtime shape. PR 01 should preserve that distinction: compute
-the packed role width from the prepared proof shape, validate the corresponding
-key width is at least that large, and only then take the packed setup view. In
-particular, do not blindly substitute `lp.outer_width()` for the grouped B
-setup width unless the shape really is the same.
-
-These widths are the base setup widths. They intentionally exclude ZK blinding
-tail columns.
-
-### ZK Blinding Split
-
-Under `feature = "zk"`, B/D blinding terms should be generated from a separate
-ZK setup seed or domain, not by extending the base B/D setup widths.
-
-Use one seed field with role-separated PRG labels, or two explicit seed fields:
+The base active widths are:
 
 ```text
-zk_blinding_seed
-
-ZK_B_BLINDING(point_idx, b_row, local, coeff_idx)
-ZK_D_BLINDING(d_row, local, coeff_idx)
+W_A = block_len * depth_commit
 ```
-
-The B and D ZK shapes remain:
 
 ```text
-b_blinding_digit_planes_per_point =
-  blinding_digit_plane_count(n_b, D, log_basis)
-
-b_blinding_segment_len =
-  num_points * b_blinding_digit_planes_per_point
-
-d_blinding_segment_len =
-  blinding_digit_plane_count(n_d, D, log_basis)   // intermediate M-row layout
-  0                                               // terminal M-row layout
+W_D = num_claims * num_blocks * depth_open
 ```
-
-B differs from D because B blinding is point/group-local. The witness segment
-contains `num_points` consecutive B blinding groups, but the setup randomness
-needed for each group is only:
 
 ```text
-ZK_B_BLINDING(point_idx, b_row, local)
-where local < b_blinding_digit_planes_per_point
+W_B = max(num_polys_per_point) * n_a * num_blocks * depth_open
 ```
 
-D has one global tail:
+The maximum over `num_polys_per_point` is deliberate. A B row is
+point/group-local: at point `p`, the row sees only the `n_p` polynomial slots
+opened at that point. A single packed B width is still used; slots beyond the
+local `n_p` are zero for that point.
+
+The base packed setup footprint for the active shape is:
 
 ```text
-ZK_D_BLINDING(d_row, local)
-where local < d_blinding_segment_len
+N_active^R = max(n_a * W_A, n_b * W_B, n_d * W_D)
 ```
 
-The verifier should evaluate these terms directly:
+This counts ring slots. For coefficient-level setup-claim delegation:
 
 ```text
-b_blinding_part =
-  sum_{idx = 0}^{b_blinding_segment_len - 1}
-    eq_full_vec(b_blinding_offset + idx)
-    * sum_{b_row = 0}^{n_b - 1}
-        eq_tau1[b_start + point_idx * n_b + b_row]
-        * eval_ring_at_pows(
-            ZK_B_BLINDING(point_idx, b_row, local),
-            alpha_pows
-          )
-
-where point_idx = idx / b_blinding_digit_planes_per_point
-      local     = idx % b_blinding_digit_planes_per_point
-
-d_blinding_part =
-  sum_{local = 0}^{d_blinding_segment_len - 1}
-    eq_full_vec(d_blinding_offset + local)
-    * sum_{d_row = 0}^{n_d_active - 1}
-        eq_tau1[d_start + d_row]
-        * eval_ring_at_pows(
-            ZK_D_BLINDING(d_row, local),
-            alpha_pows
-          )
+N_active^F = D_setup * N_active^R
 ```
 
-This local verifier work is intentionally outside the base `M_setup` matrix
-claim. If we later want to offload ZK blinding too, that should be a separate
-small claim over the ZK setup seed/domain, not an expansion of the base setup
-matrix.
-
-The verifier cost is proportional to the number of ZK blinding digit planes:
-
-```text
-O(num_points * n_b * b_blinding_digit_planes_per_point
-  + n_d_active * d_blinding_segment_len)
-```
-
-That is the small, irregular term we intentionally keep local. The base
-offloading path should not pay for these columns in `M_setup`, and the ZK PRG
-indices should not include `group_message_planes` or `w_len`; those are witness
-segment offsets, not physical columns in the base setup matrix.
+A/B/D dimensions are not generally powers of two. Only protocol axes such as
+`num_blocks = 2^r` are power-of-two aligned.
 
 ### Capacity
 
-The config/setup capacity function should return a single packed length:
-
-```text
-max_setup_len
-```
-
-computed as the maximum role footprint across all generated setup levels and
-supported batch shapes:
-
-```text
-max_setup_len = max(
-  n_a * a_setup_width,
-  n_b * b_setup_width,
-  n_d * d_setup_width
-)
-```
-
-Do not add ZK blinding tail widths to `max_setup_len`. Those tail matrices are
-owned by the separate ZK setup seed/domain described above.
-
-This is a maximum, not a sum. A/B/D are all prefix views over one shared
-`FlatMatrix`; they are not three disjoint matrices placed back-to-back. The
-same physical `shared_idx` may be reached by more than one role view. That
-aliasing is intentional and the setup-claim weight for a physical index is the
-sum of all role contributions that land there. PR 01 changes the physical
-aliasing pattern from `role_row * max_stride + role_col` to natural-width
-prefix maps, so the setup descriptor and cache identity must treat it as a new
-layout.
-
-### Role Views
-
-Introduce role-view helpers instead of scattering shape math through prover and
-verifier code:
-
-```text
-setup_a_view(setup, lp) -> ring_view(n_a, a_setup_width)
-setup_b_view(setup, prepared_or_shape) -> ring_view(n_b, b_setup_width)
-setup_d_view(setup, prepared_or_shape) -> ring_view(n_d, d_setup_width)
-```
-
-The helper names and module location are implementation choices. The important
-property is that callers stop spelling `setup.seed.max_stride`.
-
-## Protocol Impact
-
-This is a protocol-visible setup layout change.
-
-- The base setup seed serialization or setup layout domain tag changes.
-- Under `feature = "zk"`, the ZK blinding seed/domain is distinct from the base
-  setup seed/domain.
-- Setup descriptor digests and disk cache keys change.
-- Old expanded setups and old disk-cache artifacts are unsupported in the new
-  format. They should not be decoded, adapted, or migrated.
-- Existing proof bytes do not need to remain valid.
-- No backward-compatibility shim is required.
-
-The public setup remains transparent and deterministic. A vector prefix of
-uniform random ring elements is still uniform random, and every role matrix is
-still obtained from a prefix of the same shared vector. The security argument
-does not rely on the artificial row padding created by `max_stride`.
-
-## Implementation Plan
-
-### 1. Add Packed Setup Envelope Types
-
-Replace the two-number envelope:
+The implementation branch should replace the two-number envelope:
 
 ```text
 (max_rows, max_stride)
 ```
 
-with an explicit packed-capacity value. Prefer a named type to prevent
-regressing into row/stride thinking:
+with an explicit packed capacity:
 
 ```text
 SetupMatrixEnvelope {
-    max_setup_len: usize,
+    max_setup_len: usize,   // ring slots at setup generation dimension
 }
 ```
 
-If a named type creates too much churn in the first patch, a direct
-`max_setup_len: usize` return is acceptable, but the spec recommends a type.
-Role-footprint diagnostics can be derived locally from `SetupRoleDimensions`
-when needed; they must not be serialized setup metadata or cache identity.
-
-Affected areas:
+where:
 
 ```text
-crates/akita-config/src/lib.rs
-crates/akita-config/src/proof_optimized.rs
-crates/akita-planner/src/test_utils.rs
-crates/akita-setup/src/lib.rs
-crates/akita-prover/src/api/setup.rs
+max_setup_len = max over supported levels/shapes of {
+  n_a * W_A,
+  n_b * W_B,
+  n_d * W_D
+}
 ```
 
-### 2. Change Setup Seed Metadata
+This is a maximum, not a sum. A/B/D remain overlapping prefix views of one
+shared setup vector.
+
+Do not add ZK blinding tail widths to `max_setup_len`.
+
+### Setup Seed Metadata
 
 Change:
 
@@ -382,237 +205,434 @@ to:
 AkitaSetupSeed {
     max_setup_len,
     public_matrix_seed,      // base A/B/D setup only
-    zk_blinding_seed,        // feature = "zk"; or equivalent domain separation
+    zk_blinding_seed,        // or equivalent separated ZK domain
     ...
 }
 ```
 
-Update serialization, validation, descriptor digests, and tests.
+This is a protocol-visible setup layout change:
 
-This is a full cutover. Do not add legacy decoding, migration, or compatibility
-shims. Do add a semantic layout boundary so the packed format is unambiguous.
-The preferred option is a serialized setup-layout domain tag in
-`AkitaSetupSeed`. An acceptable alternative is a fixed packed-setup domain tag
-in every setup artifact digest, instance descriptor, and disk cache file name.
-Do not introduce numbered setup/cache names. Under `feature = "zk"`, the
-ZK blinding seed/domain must also be bound in the descriptor.
+- setup seed serialization or a setup-layout domain tag changes;
+- setup descriptor digests and disk cache keys change;
+- old expanded setups and old cache artifacts are unsupported;
+- no backward-compatibility shim is required.
 
-The setup load/validation path must also check the physical matrix length at
-the setup generation dimension against the packed envelope. For the first
-implementation, use the simple exact rule:
+Use exact cache identity initially:
 
 ```text
 setup.shared_matrix.total_ring_elements() == setup.seed.max_setup_len
 ```
 
-Role views at smaller ring dimensions can still use
+Role views at smaller ring dimensions may still use
 `total_ring_elements_at::<D>()`; that is a view-capacity check, not the seed's
 physical-length identity check.
 
-Do not support larger cached supersets in this PR. Cache reuse is exact for the
-requested setup metadata; incompatible artifacts are rejected or regenerated.
+### Role View Helpers
 
-Affected areas:
-
-```text
-crates/akita-types/src/proof/setup.rs
-crates/akita-types/src/instance_descriptor.rs
-crates/akita-types/src/proof/batch.rs
-crates/akita-setup/src/lib.rs
-crates/akita-prover/src/api/setup.rs
-crates/akita-verifier/src/proof/claims.rs
-```
-
-### 3. Add ZK Blinding Setup Domain
-
-When `feature = "zk"` is enabled, stop reading B/D blinding columns from
-`setup.shared_matrix`. Introduce a small setup evaluator such as:
+The implementation should centralize role-view construction rather than
+scattering shape math:
 
 ```text
-zk_b_blinding_ring(setup, point_idx, b_row, local) -> CyclotomicRing<F, D>
-zk_d_blinding_ring(setup, d_row, local) -> CyclotomicRing<F, D>
+setup_a_view(setup, dimensions) -> ring_view(n_a, W_A)
+setup_b_view(setup, dimensions) -> ring_view(n_b, W_B)
+setup_d_view(setup, dimensions) -> ring_view(n_d, W_D)
 ```
 
-Both functions derive ring coefficients from `zk_blinding_seed` with
-role-separated labels. They should be used by both prover witness construction
-and verifier replay. They should not build a large `FlatMatrix` view and should
-not extend `b_setup_width` or `d_setup_width`.
+The exact module is an implementation choice. The invariant is that prover and
+verifier callers stop spelling `setup.seed.max_stride`.
 
-This is part of the same setup-layout branch. Do not create a separate layout
-sub-stack for ZK blinding. PR 01 should route the blinding tails through this
-separate domain rather than preserving the old shared-stride columns as a
-temporary shim.
+## Role Column Order
 
-### 4. Generate Packed Setup Capacity
+The setup role column order is a view used by the current folding step. It is
+not a separate committed setup object.
 
-Change setup generation from:
+Root witnesses are digit-fast today, and root one-hot commitment only occurs at
+the root. Therefore root setup views must stay digit-fast, including the A
+view.
+
+Recursive folded witnesses are block-fast. For recursive levels where we use
+setup-claim delegation, D/B should use block-fast views, and recursive A should
+also use a block-fast view if recursive setup offloading is enabled.
+
+Let `B = 2^r`, `delta = depth_open`, `delta_c = depth_commit`,
+`L = block_len`, `K = max_p n_p`, and `C = num_claims`.
+
+Root digit-fast D/B/A views:
 
 ```text
-derive_public_matrix_flat(max_rows * max_stride, seed)
+j_D_root(c, b, d) = (c * B + b) * delta + d
 ```
-
-to:
 
 ```text
-derive_public_matrix_flat(max_setup_len, seed)
+j_B_root(s_p, b, a, d)
+  = s_p * (n_a * delta * B) + b * (n_a * delta) + a * delta + d
 ```
 
-The NTT cache can continue to build over:
+```text
+j_A_root(b_z, d_c) = b_z * delta_c + d_c
+```
+
+Recursive block-fast D/B views:
+
+```text
+j_D_rec(c, b, d) = b + B * (c + C * d)
+```
+
+```text
+j_B_rec(s_p, b, a, d)
+  = b + B * (s_p + K * (a * delta + d))
+```
+
+Optional recursive block-fast A view:
+
+```text
+j_A_rec(b_z, d_c) = b_z + L_bar * d_c
+```
+
+where `L_bar` is the power-of-two block width used for the recursive A view.
+This may pad the recursive A column view, so it should be enabled only if the
+recursive setup-offload evaluator benefits from it.
+
+The root A constraint is not optional: root A must remain digit-fast for
+efficient one-hot folding.
+
+## NTT Cache and Kernels
+
+The NTT cache material can still be built over the flat setup prefix:
 
 ```text
 ring_view(1, total_ring_elements_at_D)
 ```
 
-because it is already over the full flat vector and does not depend on role
-stride.
+The cache itself does not need a global row stride. The important hot-path
+invariant is that kernels consume contiguous row slices for the role view they
+are multiplying.
 
-This statement only applies to the cache material itself. Any kernel that
-turns the flat cache back into logical role rows must be cut over to packed
-role widths.
-
-### 5. Cut Over A/B/D Role Reads
-
-Replace every role read that uses `setup.seed.max_stride` with a natural-width
-view. Important paths include:
+Any kernel that turns the flat cache back into logical rows must accept
+role-specific widths and, where relevant, a role-column-order view:
 
 ```text
-crates/akita-prover/src/api/commitment.rs
-crates/akita-prover/src/backend/{dense,onehot,sparse_ring,recursive_witness,field_reduction,multilinear_polynomial}.rs
-crates/akita-prover/src/kernels/linear.rs
-crates/akita-prover/src/protocol/ring_switch.rs
-crates/akita-verifier/src/protocol/batched.rs
-crates/akita-verifier/src/protocol/slice_mle/setup_contribution.rs
-crates/akita-verifier/src/protocol/slice_mle/zk_blinding.rs
+D-cyclic rows: d_row * W_D + d_col
+B-cyclic rows: b_row * W_B + b_col
+A-cyclic rows: a_row * W_A + a_col
+A-neg rows:    a_row * W_A + a_col
 ```
 
-Where the backend trait currently accepts `matrix_stride`, rename or replace it
-with the natural role width. This is an API cleanup, not a compatibility layer.
-For `zk_blinding.rs`, the cutover is stronger: remove its dependency on the
-base shared-matrix B/D views for blinding tails and use the ZK setup evaluator.
-
-### 6. Cut Over Fused NTT Quotient Kernel
-
-`fused_split_eq_quotients` currently accepts one `stride` and slices cached NTT
-rows as:
+`fused_split_eq_quotients` must not keep the same-stride invariant:
 
 ```text
 &cache[i * stride .. (i + 1) * stride]
 ```
 
-That is a same-stride invariant, not just an implementation detail. PR 01 must
-replace this API with one that can address the packed A/B/D role rows
-independently. A reasonable shape is:
+for all roles. It should receive separate D/B/A row slices or separate
+role-width parameters. The goal is to preserve row-contiguous cache access
+without forcing a fake global stride.
+
+## ZK Blinding Split
+
+Under `feature = "zk"`, B/D blinding terms should not be columns of the base
+setup matrix. They should be derived from a separate ZK setup seed/domain:
 
 ```text
-D-cyclic rows: d_row * d_setup_width + d_col
-B-cyclic rows: b_row * b_setup_width + b_col
-A-cyclic rows: a_row * a_setup_width + a_col
-A-neg rows:    a_row * a_setup_width + a_col
+ZK_B_BLINDING(point_idx, b_row, local, coeff_idx)
+ZK_D_BLINDING(d_row, local, coeff_idx)
 ```
 
-The helper below the dispatch layer should receive separate row slices for D,
-B, and A rather than one shared `cyc_rows` array. This keeps the one-pass/tiled
-cache reuse optimization, but removes the false assumption that D, B, and A
-have the same physical row width.
+B is point-local:
 
-### 7. Rewrite Fused Setup Contribution
+```text
+b_blinding_digit_planes_per_point =
+  blinding_digit_plane_count(n_b, D, log_basis)
 
-Today `compute_setup_contribution` fuses A/B/D through one temporary view:
+b_blinding_segment_len =
+  num_points * b_blinding_digit_planes_per_point
+```
+
+D is global and is absent in terminal M-row layout:
+
+```text
+d_blinding_segment_len =
+  blinding_digit_plane_count(n_d, D, log_basis)   // intermediate
+  0                                               // terminal
+```
+
+The verifier can evaluate ZK blinding directly from the ZK domain. This work is
+intentionally outside the base `S` claim. If ZK blinding is ever offloaded, it
+should be a separate small claim over the ZK domain, not an expansion of the
+base A/B/D setup matrix.
+
+## Setup Contribution After Repack
+
+Today the direct verifier can fuse A/B/D through one temporary view:
 
 ```text
 ring_view(r_max, setup.seed.max_stride)
 ```
 
-After repacking, it should compute the same scalar as the sum of packed role
-prefix contributions for the base setup matrix:
+After repacking, the direct verifier should compute the same scalar as the sum
+of packed role-prefix contributions:
 
 ```text
-D contribution over d_row * d_setup_width + d_col
-B contribution over b_row * b_setup_width + b_col
-A contribution over a_row * a_setup_width + a_col
+D contribution over d_row * W_D + d_col
+B contribution over b_row * W_B + b_col
+A contribution over a_row * W_A + a_col
 ```
 
-This can still share precomputed column weights, but it should no longer need
-the stride-based row/column envelope. ZK blinding parts are not included in
-this base setup contribution; they are evaluated by the separate ZK blinding
-path.
+ZK blinding parts are not included in this base setup contribution.
 
-This step is the riskiest part of PR 01. It should land with equivalence tests
-that compare old-style fixture expectations to the new packed calculation on
-small shapes.
+This direct computation is still local verification. It is the correctness
+baseline for the later setup-claim-offloading work.
 
-### 8. Update Validation
+## Downstream Setup-Claim Offloading Constraints
 
-Verifier-reachable validation must reject undersized setups with `AkitaError`,
-not panic.
+This PR does not implement setup-claim offloading, but the layout must be
+chosen so the offloading path is clean.
 
-New checks should prove:
+### Committed Object
+
+Commit to the flat coefficient vector of the setup prefix:
 
 ```text
-setup.shared_matrix.total_ring_elements_at::<D>() >= required_role_len
+S^flat[lambda * D_setup + y]
 ```
 
-for every role view requested. Avoid unchecked indexing in hot verifier paths;
-validate once at setup/prepared-layout boundaries where possible.
+not to `S(alpha)` and not to alpha-evaluated A/B/D matrices.
+
+The alpha powers live in the structured weight:
+
+```text
+omega_S(lambda, y) = omega_bar_S(lambda) * alpha^y
+```
+
+This is important: preprocessing can commit to `S`, but it cannot commit to
+`S_alpha`, because `alpha` is transcript-dependent.
+
+### Prefix Ladder
+
+Do not force the verifier to pay for `S_full` if the active shape is smaller.
+
+Preprocessing should commit to one setup commitment for each power-of-two flat
+coefficient prefix in a ladder:
+
+```text
+N_min <= N <= N_max
+```
+
+At runtime:
+
+```text
+N_prefix = 2^ceil(log2(N_active^F))
+```
+
+Delegate only if:
+
+```text
+N_prefix >= N_min
+```
+
+Do not round a smaller active claim up to `N_min`; below the threshold, the
+verifier should use the direct setup computation.
+
+Initial choices:
+
+```text
+D_setup = 32
+N_min = 2^23 field coefficients
+```
+
+If a proof level has `D != D_setup`, setup delegation is rejected at that level
+and direct setup verification is used.
+
+The first implementation should make only the root and, at most, the first
+recursive level eligible; the prefix gate decides whether delegation actually
+fires.
+
+### Inner Product Shape
+
+The delegated setup value is:
+
+```text
+sigma_S = <S_{<= N_setup}, omega_S>
+```
+
+where:
+
+```text
+omega_bar_S(lambda)
+  = sum of D/B/A role weights that pull back to raw setup slot lambda
+```
+
+and:
+
+```text
+omega_S(lambda, y) = omega_bar_S(lambda) * alpha^y
+```
+
+Overlapping A/B/D prefix coordinates are handled by addition in
+`omega_bar_S`.
+
+The product-sumcheck terminal point is:
+
+```text
+rho = (rho_lambda, rho_y)
+```
+
+and the verifier-side weight evaluator should use:
+
+```text
+omega_tilde_S(rho_lambda, rho_y)
+  = omega_bar_tilde_S(rho_lambda)
+    * MLE(1, alpha, ..., alpha^(D_setup - 1))(rho_y)
+```
+
+The terminal setup-side value is:
+
+```text
+s_rho = S_tilde_{<= N_setup}(rho_lambda, rho_y)
+```
+
+The intended recursive route is to carry this selected-prefix setup opening
+claim into the next recursive fold and batch it with the folded-witness
+opening, rather than verify a nested setup PCS inside the same level.
+
+### A/J Weight
+
+Do not materialize `A J`. Akita already represents the paper's `A J z_hat`
+term by moving `J` to the weight side.
+
+At the root, the compact A column is:
+
+```text
+j_A_root(b_z, d_c) = b_z * delta_c + d_c
+```
+
+The folded z coordinate is block-fast:
+
+```text
+x_Z(p, d_f, d_c, b_z)
+  = b_z + L * (p + P * (d_f + delta_f * d_c))
+```
+
+The useful adjoint vector is:
+
+```text
+eta_Z(b_z, d_c)
+  = - sum_p sum_{d_f} g_f[d_f]
+      eq(r_x, offset_z + x_Z(p, d_f, d_c, b_z))
+```
+
+The A contribution to the coefficient-weight tensor is:
+
+```text
+omega_A(iota_A(a, j_A_root(b_z, d_c)), y)
+  = alpha^y * eq(tau_1, A_a) * eta_Z(b_z, d_c)
+```
+
+The root setup-offload evaluator should evaluate the row-aware root A slice
+directly. Because root A is digit-fast while the folded z side is block-fast,
+the exact evaluator needs a carry-DP style contraction. This is the right
+long-term choice because root one-hot requires digit-fast A.
+
+If setup offloading is enabled at a recursive folded level, recursive A may use
+the block-fast view so the large `b_z` axis factors as an equality inner
+product instead of entering the carry transducer.
+
+### Transcript Binding
+
+The setup-offload implementation must bind:
+
+- the setup seed/digest and packed layout tag;
+- `D_setup`;
+- selected `N_setup`;
+- the selected prefix commitment;
+- the batching/incidence shape;
+- `sigma_S`;
+- `r_x`, `tau_1`, and `alpha`;
+- the role-column view choices used to define `omega_S`.
+
+## Implementation Plan for the Repack Branch
+
+The implementation branch should land as a fresh branch from current `main`.
+Suggested commit boundaries:
+
+1. Add packed setup envelope/types and remove `max_stride` from setup metadata.
+2. Update setup generation/cache identity to use exact `max_setup_len`.
+3. Add role-view helpers and cut over direct A/B/D reads.
+4. Cut over prover commitment paths to pass natural role widths.
+5. Cut over fused NTT quotient kernels to role-width row slices.
+6. Rewrite direct `compute_setup_contribution` as explicit packed D/B/A sums.
+7. Split ZK B/D blinding into the separate ZK setup seed/domain.
+8. Add focused equivalence tests and then broader end-to-end tests.
+
+The direct verifier should continue to work before setup-claim offloading is
+introduced.
 
 ## Tests
 
-Minimum tests for PR 01:
+Minimum tests for the implementation branch:
 
 - `FlatMatrix` can view the same raw vector through multiple packed shapes.
 - Setup generation creates exactly `max_setup_len` ring elements.
-- Current-format setup validation checks physical matrix length equals
-  `seed.max_setup_len`.
-- Cache validation rejects smaller or physically mismatched current-format setup
-  artifacts.
+- Setup validation checks physical matrix length equals `seed.max_setup_len`.
+- Cache validation rejects smaller or physically mismatched setup artifacts.
 - A/B/D role-view helpers reject insufficient setup length.
-- `fused_split_eq_quotients` has a test where A, B, and D use different role
-  widths, so the old one-stride row slicing would fail.
-- `compute_setup_contribution` matches the existing test fixture after changing
-  the fixture from `r_max * max_stride` to packed role widths.
-- Direct witness recomputation still verifies root direct commitments.
-- B/D blinding tests derive their entries from `zk_blinding_seed` and no longer
-  allocate tail columns in the base setup matrix.
+- `fused_split_eq_quotients` covers different D/B/A role widths.
+- Direct `compute_setup_contribution` matches the old logical formula on small
+  batched fixtures after converting fixtures from `r_max * max_stride` to
+  packed role widths.
+- Root direct witness recomputation still verifies commitments.
+- ZK B/D blinding tests derive entries from `zk_blinding_seed` and no longer
+  allocate blinding tail columns in the base setup matrix.
 
-Required commands before making the implementation PR ready:
+For the later offloading branches:
 
-```bash
-cargo fmt -q
-cargo clippy --all --message-format=short -q -- -D warnings
-cargo test
-```
+- materialized `<S_{<= N_setup}, omega_S>` equals direct setup contribution;
+- `omega_S` has alpha on the weight side;
+- root A/J evaluator matches materialized `eta_Z` and the row-aware A slice;
+- recursive block-fast D/B and optional recursive block-fast A evaluators match
+  materialized weights;
+- selected-prefix opening claims are transcript-bound and batched with the next
+  recursive folded-witness opening.
 
 ## Non-Goals
 
-- No setup claim offloading proof in this PR.
-- No new matrix-claim sumcheck.
-- No ZK blinding offload. ZK blinding remains a small local verifier term from
-  a separate setup seed/domain.
-- No `f`/meta commitment work; that belongs to the three-tier commitment PR.
-- No Jolt-style path-generated stack automation.
-- No backward-compatibility support for old setup artifacts.
+- No Rust implementation in this spec-only PR.
+- No setup-claim offloading proof in the layout repack implementation branch.
+- No new matrix-claim sumcheck in the layout repack implementation branch.
+- No ZK blinding offload in the base setup claim.
+- No full-`S_full` runtime opening when a shorter committed prefix covers the
+  active proof.
+- No legacy `max_stride` compatibility layer.
+- No materialization of `A J`.
+- No change to the physical `w_hat || t_hat || z_hat || r_hat` witness segment
+  order beyond selecting role-column views that match the current folding step.
 
 ## Open Questions
 
-1. Should role-view helpers live in `akita-types` next to `FlatMatrix`, or in
-   prover/verifier-facing modules that already know `LevelParams` and prepared
-   batch shape?
-2. Do generated schedule tables need to encode any new setup-length objective,
-   or is the packed capacity purely a setup-envelope computation over existing
-   `LevelParams`?
+1. Where should role-view helpers live: `akita-types` near `FlatMatrix`, or
+   prover/verifier-facing modules that know the prepared runtime shape?
+2. Should generated setup tables eventually advertise selectable prefix sizes,
+   or is the prefix ladder purely derived from `max_setup_len`?
+3. For recursive setup offloading, is the recursive block-fast A view worth the
+   possible `L_bar` padding, or should recursive offload initially restrict to
+   D/B if A padding is awkward?
+4. What is the exact NTT cache API that keeps contiguous row slices while
+   supporting root digit-fast and recursive block-fast views?
+5. Should the offload gate remain one global `N_min = 2^23`, or should it later
+   depend on the pair `(base field, extension field)` after matrix-MLE
+   benchmarks?
+6. What is the exact closure rule for the last eligible delegated setup claim
+   if there is no subsequent recursive fold available to batch the setup-prefix
+   opening?
 
-## Acceptance Criteria
+## Acceptance Criteria for This Spec PR
 
-- `max_stride` is removed from `AkitaSetupSeed`.
-- Setup layout domain separation makes the packed format explicit
-  without legacy decoding or migration.
-- Setup capacity is expressed as packed `max_setup_len`.
-- Setup generation no longer allocates `max_rows * max_stride`.
-- Prover and verifier role matrix views use natural widths.
-- ZK B/D blinding tails are not counted in `max_setup_len` and are derived from
-  a separate ZK setup seed/domain.
-- The fused NTT quotient path no longer has a same-stride row slicing
-  invariant.
-- `compute_setup_contribution` no longer depends on a global setup stride.
-- Existing proofs generated in-tree verify under the new setup layout.
-- Documentation in `STACK.md` remains accurate for the rest of the stack.
+- The PR diff contains only durable planning/spec documents.
+- The spec states that committed setup offloading uses `S`, not `S_alpha`.
+- The spec records the prefix-ladder plan and the initial `D_setup = 32`,
+  `N_min = 2^23` decisions.
+- The spec records root digit-fast and recursive block-fast role-view policy,
+  including the root A/one-hot constraint.
+- The spec records that ZK blinding is outside the base setup matrix.
+- The implementation plan is explicit enough to restart the code work from
+  current `main`.

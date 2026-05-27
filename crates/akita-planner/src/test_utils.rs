@@ -26,7 +26,7 @@ use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
     schedule_from_plan, AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
     ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, LevelParams, Schedule,
-    SetupMatrixEnvelope, SisModulusFamily,
+    SisModulusFamily,
 };
 
 use crate::find_optimal_schedule;
@@ -83,7 +83,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+    ) -> Result<(usize, usize), AkitaError> {
         // The inner cfg's table-only sizing is a lower bound — it can miss
         // batched shapes that aren't in the generated table. We must iterate
         // every `(nv, polys, points)` shape ourselves and consult DP on
@@ -99,7 +99,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
                  ({max_num_batched_polys})"
             )));
         }
-        let mut max_setup_len: usize = 1;
+        let mut max_rows: usize = 1;
+        let mut max_stride: usize = 1;
         for num_vars in 1..=max_num_vars {
             for num_polys in 1..=max_num_batched_polys {
                 let upper_pts = num_polys.min(max_num_points);
@@ -108,12 +109,13 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
                         ClaimIncidenceSummary::from_counts(num_vars, num_polys, num_points)?;
                     let schedule = <Self as CommitmentConfig>::get_params_for_prove(&incidence)?;
                     let setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
-                    let envelope = matrix_envelope_for_levels::<Self>(&setup_levels)?;
-                    max_setup_len = max_setup_len.max(envelope.max_setup_len);
+                    let (rows, stride) = matrix_envelope_for_levels::<Self>(&setup_levels)?;
+                    max_rows = max_rows.max(rows);
+                    max_stride = max_stride.max(stride);
                 }
             }
         }
-        SetupMatrixEnvelope::from_max_setup_len(max_setup_len)
+        Ok((max_rows, max_stride))
     }
 
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
@@ -131,7 +133,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
         if let Some(plan) = Cfg::schedule_plan(key)? {
             return Ok(schedule_from_plan(&plan, Cfg::decomposition().field_bits()));
         }
-        find_optimal_schedule::<Self>(key, true)
+        find_optimal_schedule::<Self>(key, crate::ScheduleSearchMode::RuntimeTableSeeded)
     }
 }
 

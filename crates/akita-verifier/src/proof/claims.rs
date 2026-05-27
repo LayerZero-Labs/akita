@@ -74,18 +74,18 @@ mod tests {
     type E = Fp2<F, NegOneNr>;
 
     fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup::from_parts(
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 4,
                 max_num_points: 2,
-                max_setup_len: 1,
+                max_stride: 1,
+                gen_ring_dim: 1,
+                total_ring_elements: 1,
                 public_matrix_seed: [0u8; 32],
-                zk_blinding_seed: [1u8; 32],
             },
             FlatMatrix::from_flat_data(vec![F::zero()], 1),
         )
-        .unwrap()
     }
 
     #[test]

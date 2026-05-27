@@ -1,14 +1,16 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 
-use crate::dispatch_with_ntt;
-use crate::kernels::crt_ntt::NttSlotCache;
-use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
+use crate::api::commitment::{
+    validate_commit_inner_witness_shape, validate_commit_level_params,
+    validate_commit_outer_input_nonempty,
+};
+use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{
-    tensor_pack_recursive_witness, MultiDNttCaches, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat,
+    tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
+    RecursiveWitnessFlat, RingSwitchComputeBackend,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
@@ -16,21 +18,22 @@ use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
-use akita_config::CommitmentConfig as _;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, LiftBase,
     MulBase, RandomSampling,
 };
 use akita_transcript::labels::{
-    ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
+    ABSORB_SUMCHECK_W, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0,
+    CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
-    FlatRingVec, LevelParams, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingSubfieldEncoding, SetupRoleDimensions,
+    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup,
+    DirectWitnessProof, FlatDigitBlocks, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
+    TerminalWitnessSegmentLayout,
 };
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -85,14 +88,15 @@ pub struct NextWitnessCommitment<F: FieldCore> {
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_build_w<F, const D: usize>(
+pub fn ring_switch_build_w<F, B, const D: usize>(
     quad_eq: &mut QuadraticEquation<F, D>,
-    setup: &AkitaExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     lp: &LevelParams,
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
+    B: RingSwitchComputeBackend<F>,
 {
     {
         let x: u8 = 0;
@@ -126,9 +130,10 @@ where
         .take_w_folded()
         .ok_or_else(|| AkitaError::InvalidInput("missing w_folded in prover".to_string()))?;
 
-    let r = compute_r_split_eq::<F, D>(
+    let r = compute_r_split_eq::<F, B, D>(
+        backend,
+        prepared,
         lp,
-        setup,
         &quad_eq.challenges,
         w_hat.flat_digits(),
         #[cfg(feature = "zk")]
@@ -150,7 +155,6 @@ where
         quad_eq.num_public_rows(),
         lp.num_blocks,
         lp.inner_width(),
-        ntt_shared,
         quad_eq.m_row_layout(),
     )?;
     // Terminal layout drops the D-block from M and from the witness; the
@@ -301,6 +305,50 @@ where
     )
 }
 
+/// Terminal variant of [`ring_switch_finalize`].
+///
+/// The terminal fold binds logical `w_hat` before fold challenge sampling.
+/// This function binds the remaining final-witness bytes before ring-switch
+/// challenge sampling.
+///
+/// # Errors
+///
+/// Returns an error if terminal witness slicing fails, the final witness does
+/// not match the ring-switch witness, or ring-switch finalization fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_terminal<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: &RecursiveWitnessFlat,
+    final_witness: &DirectWitnessProof<F>,
+    terminal_layout: TerminalWitnessSegmentLayout,
+    lp: &LevelParams,
+) -> Result<RingSwitchOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
+    let gamma = quad_eq
+        .gamma()
+        .iter()
+        .copied()
+        .map(E::lift_base)
+        .collect::<Vec<_>>();
+    ring_switch_finalize_terminal_with_gamma::<F, E, T, D>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        final_witness,
+        terminal_layout,
+        lp,
+        &gamma,
+    )
+}
+
 /// Complete ring switching with caller-supplied proof-scalar batching
 /// coefficients.
 ///
@@ -339,6 +387,50 @@ where
         lp,
         gamma,
         m_row_layout,
+    )
+}
+
+/// Terminal variant of [`ring_switch_finalize_with_gamma`].
+///
+/// This owns the terminal final-witness remainder absorb before sampling
+/// ring-switch challenges.
+///
+/// # Errors
+///
+/// Returns an error if terminal witness slicing fails, the supplied gamma
+/// vector has the wrong shape, or ring-switch finalization fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_terminal_with_gamma<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: &RecursiveWitnessFlat,
+    final_witness: &DirectWitnessProof<F>,
+    terminal_layout: TerminalWitnessSegmentLayout,
+    lp: &LevelParams,
+    gamma: &[E],
+) -> Result<RingSwitchOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
+    let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
+    if final_witness.packed_i8_digits()?.as_slice() != w.as_i8_digits() {
+        return Err(AkitaError::InvalidInput(
+            "terminal final witness does not match ring-switch witness".to_string(),
+        ));
+    }
+    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+    ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        lp,
+        gamma,
+        MRowLayout::Terminal,
     )
 }
 
@@ -390,9 +482,12 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
         .trailing_zeros() as usize;
 
-    let tau0: Vec<E> = (0..num_sc_vars)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-        .collect();
+    let tau0: Vec<E> = match m_row_layout {
+        MRowLayout::Intermediate => (0..num_sc_vars)
+            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+            .collect(),
+        MRowLayout::Terminal => Vec::new(),
+    };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();
@@ -488,16 +583,16 @@ where
 /// recursive inner commitment fails.
 #[tracing::instrument(skip_all, name = "commit_w")]
 #[inline(never)]
-pub fn commit_w<F, const D: usize>(
+pub fn commit_w<F, B, const D: usize>(
     w: &RecursiveWitnessFlat,
-    ntt_shared: &NttSlotCache<D>,
+    expanded: &AkitaExpandedSetup<F>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     commit_layout: &LevelParams,
-    a_setup_width: usize,
-    b_setup_width: usize,
-    #[cfg(feature = "zk")] zk_blinding_seed: &akita_types::ZkBlindingSeed,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
+    B: CommitmentComputeBackend<F>,
 {
     if commit_layout.ring_dimension != D {
         return Err(AkitaError::InvalidInput(format!(
@@ -511,6 +606,8 @@ where
             actual: w.len(),
         });
     }
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    validate_commit_level_params::<F, D>(commit_layout, expanded)?;
 
     let num_ring_elems = w.len() / D;
     tracing::debug!(
@@ -528,38 +625,37 @@ where
 
     let w_view = w.view::<F, D>()?;
     let inner = w_view.commit_inner_witness(
-        ntt_shared,
+        backend,
+        prepared,
         commit_layout.a_key.row_len(),
         commit_layout.block_len,
         commit_layout.num_blocks,
         commit_layout.num_digits_commit,
         commit_layout.num_digits_open,
         commit_layout.log_basis,
-        a_setup_width,
+    )?;
+    validate_commit_inner_witness_shape(
+        &inner,
+        commit_layout.num_blocks,
+        commit_layout.a_key.row_len(),
+        commit_layout.num_digits_open,
+        commit_layout.log_basis,
     )?;
 
     #[cfg(feature = "zk")]
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(commit_layout.b_key.row_len(), commit_layout.log_basis)?;
-    let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
-    #[cfg_attr(not(feature = "zk"), allow(unused_mut))]
-    let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-        ntt_shared,
-        commit_layout.b_key.row_len(),
-        b_setup_width,
-        &outer_input,
-    );
     #[cfg(feature = "zk")]
-    {
-        let blinding_rows = akita_types::zk::b_blinding_negacyclic_rows::<F, D>(
-            zk_blinding_seed,
-            0,
-            commit_layout.b_key.row_len(),
-            b_blinding_digits.flat_digits(),
-        );
-        for (row, blinding_row) in u.iter_mut().zip(blinding_rows) {
-            *row += blinding_row;
-        }
+    let mut outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
+    #[cfg(not(feature = "zk"))]
+    let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
+    #[cfg(feature = "zk")]
+    outer_input.extend_from_slice(b_blinding_digits.flat_digits());
+    validate_commit_outer_input_nonempty(outer_input.len())?;
+    let u: Vec<CyclotomicRing<F, D>> =
+        backend.digit_rows::<D>(prepared, commit_layout.b_key.row_len(), &outer_input)?;
+    if u.len() != commit_layout.b_key.row_len() {
+        return Err(AkitaError::InvalidProof);
     }
     #[cfg(feature = "zk")]
     let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
@@ -577,131 +673,42 @@ where
     Ok((RingCommitment { u }, hint))
 }
 
-fn recursive_commit_setup_widths(
-    commit_layout: &LevelParams,
-) -> Result<(usize, usize), AkitaError> {
-    let role_dimensions = SetupRoleDimensions::for_batched_shape(commit_layout, &[1], 1)?;
-    let b_setup_width = role_dimensions.b_setup_width;
-    Ok((role_dimensions.a_setup_width, b_setup_width))
-}
-
 /// Dispatch a recursive `w` commitment to the selected ring dimension.
 ///
-/// The prover crate owns runtime-D NTT cache construction and `commit_w`
-/// execution. Callers supply the config-specific layout policy for the selected
+/// The prover crate owns typed backend preparation and `commit_w` execution.
+/// Callers supply the config-specific layout policy for the selected
 /// commitment dimension.
 ///
 /// # Errors
 ///
-/// Returns an error if layout selection, NTT cache construction, commitment, or
+/// Returns an error if layout selection, backend preparation, commitment, or
 /// D-erased hint conversion fails.
 #[allow(clippy::type_complexity)]
 #[inline(never)]
-fn dispatch_commit_w_with_layout_policy<F, L, Layout>(
+fn dispatch_commit_w_with_layout_policy<F, L, B, Layout>(
+    backend: &B,
     commit_params: LevelParams,
-    commit_ntt_cache: &mut MultiDNttCaches,
-    expanded: &AkitaExpandedSetup<F>,
+    expanded: &std::sync::Arc<AkitaExpandedSetup<F>>,
     logical_w: &RecursiveWitnessFlat,
     layout_for_d: Layout,
 ) -> Result<NextWitnessCommitment<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     L: ExtField<F>,
+    B: CommitmentComputeBackend<F>,
     Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let commit_d = commit_params.ring_dimension;
-    dispatch_with_ntt!(
-        commit_d,
-        commit_ntt_cache,
-        expanded,
-        |D_COMMIT, ntt_shared| {
-            if L::EXT_DEGREE == 1 {
-                let commit_layout = layout_for_d(D_COMMIT, &commit_params, logical_w.len())?;
-                let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(&commit_layout)?;
-                let (wc, wh) = commit_w::<F, { D_COMMIT }>(
-                    logical_w,
-                    ntt_shared,
-                    &commit_layout,
-                    a_setup_width,
-                    b_setup_width,
-                    #[cfg(feature = "zk")]
-                    &expanded.seed.zk_blinding_seed,
-                )?;
-                Ok(NextWitnessCommitment {
-                    witness: None,
-                    commitment: FlatRingVec::from_commitment(&wc),
-                    hint: RecursiveCommitmentHintCache::from_typed(wh)?,
-                })
-            } else {
-                let committed_w = tensor_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
-                let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
-                let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(&commit_layout)?;
-                let (wc, wh) = commit_w::<F, { D_COMMIT }>(
-                    &committed_w,
-                    ntt_shared,
-                    &commit_layout,
-                    a_setup_width,
-                    b_setup_width,
-                    #[cfg(feature = "zk")]
-                    &expanded.seed.zk_blinding_seed,
-                )?;
-                Ok(NextWitnessCommitment {
-                    witness: Some(committed_w),
-                    commitment: FlatRingVec::from_commitment(&wc),
-                    hint: RecursiveCommitmentHintCache::from_typed(wh)?,
-                })
-            }
-        }
-    )
-}
-
-/// Commit the next recursive witness.
-///
-/// The same-`D` fast path reuses the current level's NTT slot and applies
-/// `same_d_decomposition` as the `recursive_level_layout_from_params`
-/// decomposition. Cross-`D` commitments dispatch through
-/// [`MultiDNttCaches`] and always use the `WCommitmentConfig::<D_COMMIT,
-/// Cfg>::decomposition()` recursive-w decomposition for the dispatched ring
-/// dimension.
-///
-/// Callers pin `same_d_decomposition` per call site:
-/// - root → first recursive commit: `Cfg::decomposition()` (the root
-///   decomposition).
-/// - recursive → recursive commit: `WCommitmentConfig::<D, Cfg>::decomposition()`.
-///
-/// # Errors
-///
-/// Returns an error if layout selection, commitment, cache construction, or
-/// `D`-erased hint conversion fails.
-#[inline(never)]
-pub fn commit_next_w<F, Cfg, const D: usize>(
-    commit_params: &LevelParams,
-    ntt_shared: &NttSlotCache<D>,
-    commit_ntt_cache: &mut MultiDNttCaches,
-    expanded: &AkitaExpandedSetup<F>,
-    logical_w: &RecursiveWitnessFlat,
-    same_d_decomposition: akita_types::DecompositionParams,
-) -> Result<NextWitnessCommitment<F>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
-    Cfg: akita_config::CommitmentConfig<Field = F>,
-{
-    if commit_params.ring_dimension == D {
-        if <Cfg::ChallengeField as ExtField<F>>::EXT_DEGREE == 1 {
-            let commit_layout = akita_types::recursive_level_layout_from_params(
-                commit_params,
-                logical_w.len(),
-                same_d_decomposition,
-            )?;
-            let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(&commit_layout)?;
-            let (wc, wh) = commit_w::<F, D>(
+    dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
+        let prepared_commit = backend.prepare_expanded::<D_COMMIT>(expanded.clone())?;
+        if L::EXT_DEGREE == 1 {
+            let commit_layout = layout_for_d(D_COMMIT, &commit_params, logical_w.len())?;
+            let (wc, wh) = commit_w::<F, B, { D_COMMIT }>(
                 logical_w,
-                ntt_shared,
+                expanded.as_ref(),
+                backend,
+                &prepared_commit,
                 &commit_layout,
-                a_setup_width,
-                b_setup_width,
-                #[cfg(feature = "zk")]
-                &expanded.seed.zk_blinding_seed,
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
@@ -709,22 +716,75 @@ where
                 hint: RecursiveCommitmentHintCache::from_typed(wh)?,
             })
         } else {
-            let committed_w =
-                tensor_pack_recursive_witness::<F, Cfg::ChallengeField, D>(logical_w)?;
-            let commit_layout = akita_types::recursive_level_layout_from_params(
-                commit_params,
-                committed_w.len(),
-                same_d_decomposition,
-            )?;
-            let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(&commit_layout)?;
-            let (wc, wh) = commit_w::<F, D>(
+            let committed_w = tensor_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
+            let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
+            let (wc, wh) = commit_w::<F, B, { D_COMMIT }>(
                 &committed_w,
-                ntt_shared,
+                expanded.as_ref(),
+                backend,
+                &prepared_commit,
                 &commit_layout,
-                a_setup_width,
-                b_setup_width,
-                #[cfg(feature = "zk")]
-                &expanded.seed.zk_blinding_seed,
+            )?;
+            Ok(NextWitnessCommitment {
+                witness: Some(committed_w),
+                commitment: FlatRingVec::from_commitment(&wc),
+                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+            })
+        }
+    })
+}
+
+/// Commit the next recursive witness using caller-supplied layout policy.
+///
+/// The same-D fast path reuses the caller's prepared backend context. Cross-D
+/// commitments prepare a typed backend context for the target ring dimension.
+///
+/// # Errors
+///
+/// Returns an error if layout selection, commitment, backend preparation, or
+/// D-erased hint conversion fails.
+#[allow(clippy::type_complexity)]
+#[inline(never)]
+pub fn commit_next_w_with_policy<F, L, B, SameLayout, DispatchLayout, const D: usize>(
+    commit_params: &LevelParams,
+    expanded: &std::sync::Arc<AkitaExpandedSetup<F>>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    logical_w: &RecursiveWitnessFlat,
+    same_d_layout: SameLayout,
+    dispatch_layout: DispatchLayout,
+) -> Result<NextWitnessCommitment<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    L: ExtField<F>,
+    B: CommitmentComputeBackend<F>,
+    SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
+    DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
+{
+    if commit_params.ring_dimension == D {
+        if L::EXT_DEGREE == 1 {
+            let commit_layout = same_d_layout(commit_params, logical_w.len())?;
+            let (wc, wh) = commit_w::<F, B, D>(
+                logical_w,
+                expanded.as_ref(),
+                backend,
+                prepared,
+                &commit_layout,
+            )?;
+            Ok(NextWitnessCommitment {
+                witness: None,
+                commitment: FlatRingVec::from_commitment(&wc),
+                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+            })
+        } else {
+            let committed_w = tensor_pack_recursive_witness::<F, L, D>(logical_w)?;
+            let commit_layout = same_d_layout(commit_params, committed_w.len())?;
+            let (wc, wh) = commit_w::<F, B, D>(
+                &committed_w,
+                expanded.as_ref(),
+                backend,
+                prepared,
+                &commit_layout,
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
@@ -733,38 +793,14 @@ where
             })
         }
     } else {
-        dispatch_commit_w_with_layout_policy::<F, Cfg::ChallengeField, _>(
+        dispatch_commit_w_with_layout_policy::<F, L, B, DispatchLayout>(
+            backend,
             commit_params.clone(),
-            commit_ntt_cache,
             expanded,
             logical_w,
-            |commit_d, commit_params, current_w_len| {
-                recursive_w_commit_layout_for_d::<Cfg>(commit_d, commit_params, current_w_len)
-            },
+            dispatch_layout,
         )
     }
-}
-
-/// Recursive `w` commitment layout for a runtime-selected ring dimension.
-///
-/// Public so scheme-side integration tests that drive `commit_next_w` at a
-/// non-`D` recursive level can pick the matching layout without
-/// re-implementing the multi-`D` dispatch.
-pub fn recursive_w_commit_layout_for_d<Cfg>(
-    commit_d: usize,
-    commit_params: &LevelParams,
-    current_w_len: usize,
-) -> Result<LevelParams, AkitaError>
-where
-    Cfg: akita_config::CommitmentConfig,
-{
-    crate::dispatch_ring_dim!(commit_d, |D_COMMIT| {
-        akita_types::recursive_level_layout_from_params(
-            commit_params,
-            current_w_len,
-            akita_config::WCommitmentConfig::<{ D_COMMIT }, Cfg>::decomposition(),
-        )
-    })
 }
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
@@ -840,7 +876,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     m_row_layout: MRowLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
     if alpha_pows.len() != D {
@@ -1011,11 +1047,10 @@ where
         Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
     };
 
-    let role_dimensions =
-        SetupRoleDimensions::for_batched_shape(lp, num_polys_per_point, num_claims)?;
-    let d_view = setup.d_setup_view::<D>(role_dimensions)?;
-    let b_view = setup.b_setup_view::<D>(role_dimensions)?;
-    let a_view = setup.a_setup_view::<D>(role_dimensions)?;
+    let stride = setup.seed.max_stride;
+    let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride)?;
+    let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride)?;
+    let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride)?;
     let d_rows: Vec<_> = d_view.rows().collect();
     let b_rows: Vec<_> = b_view.rows().collect();
     let a_rows: Vec<_> = a_view.rows().collect();
@@ -1103,15 +1138,11 @@ where
         let d_weights = &eq_tau1[d_start..(d_start + n_d_active)];
         cfg_into_iter!(0..d_blinding_segment_len)
             .map(|local| {
+                let local_col = w_len + local;
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in d_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        let ring = akita_types::zk::derive_d_blinding_ring::<F, D>(
-                            &setup.seed.zk_blinding_seed,
-                            row_idx,
-                            local,
-                        );
-                        acc += *eq_i * eval_ring_at_pows(&ring, alpha_pows);
+                        acc += *eq_i * eval_ring_at_pows(&d_rows[row_idx][local_col], alpha_pows);
                     }
                 }
                 acc
@@ -1164,18 +1195,14 @@ where
                 let group_stride = b_blinding_digit_planes_per_point;
                 let point_idx = idx / group_stride;
                 let local = idx % group_stride;
+                let group_message_planes = num_polys_per_point[point_idx] * t_cols_per_vector;
+                let local_col = group_message_planes + local;
                 let commitment_weights =
                     &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        let ring = akita_types::zk::derive_b_blinding_ring::<F, D>(
-                            &setup.seed.zk_blinding_seed,
-                            point_idx,
-                            row_idx,
-                            local,
-                        );
-                        acc += *eq_i * eval_ring_at_pows(&ring, alpha_pows);
+                        acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
                     }
                 }
                 acc

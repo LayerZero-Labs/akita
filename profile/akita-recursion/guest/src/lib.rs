@@ -19,9 +19,10 @@
 //! - `2` — verifier rejected the proof.
 
 use akita_config::proof_optimized::fp128;
+use akita_config::CommitmentConfig;
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
-use akita_types::{BasisMode, CommittedOpenings, VerifierClaims};
+use akita_types::BasisMode;
 use akita_verifier::verify_batched;
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
@@ -31,17 +32,17 @@ const D: usize = 32;
 type Cfg = fp128::D32OneHot;
 
 const _: () = {
-    // Hard-fail at compile time if `D` drifts away from what the host
-    // artifact is encoded for. Keeping these in sync with the artifact
-    // generator (`../artifact/src/main.rs`) is the contract that lets
-    // us drop the full schedule descriptor from the blob.
-    assert!(D == 32);
+    // Hard-fail at compile time if the guest monomorphization drifts away from
+    // the config and host artifact generator (`../artifact/src/main.rs`).
+    assert!(D == <Cfg as CommitmentConfig>::D);
 };
 
 // Memory limits sized for the Akita verifier with `D=32 OneHot`. The
 // verifier-input blob is ≈ 4 MiB at nv=20 but grows to ≈ 576 MiB at
 // nv=32 (dominated by the expanded verifier setup matrix). We give:
 //   - `max_input_size` = 768 MiB so the nv=32 blob fits with headroom.
+//                        Keep this literal equal to
+//                        `akita_recursion_glue::MAX_JOLT_BLOB_BYTES`.
 //   - `heap_size`      = 1 GiB so the decoded verifier setup + transient
 //                        verifier-internal allocations fit alongside the
 //                        raw input.
@@ -68,7 +69,18 @@ fn akita_verify(input: &[u8]) -> u32 {
     // emits `postcard::take_from_bytes::<&[u8]>(input_slice)`, which
     // postcard implements as a borrowed `Bytes` slice.
     start_cycle_tracking("deserialize_input");
-    let decoded = match AkitaJoltInputs::<F, D>::read_from_bytes(input) {
+    #[cfg(any(
+        feature = "trusted-benchmark-artifact",
+        akita_trusted_benchmark_artifact
+    ))]
+    let decoded_result = AkitaJoltInputs::<F, D>::read_trusted_host_artifact_bytes(input);
+    #[cfg(not(any(
+        feature = "trusted-benchmark-artifact",
+        akita_trusted_benchmark_artifact
+    )))]
+    let decoded_result = AkitaJoltInputs::<F, D>::read_from_bytes(input);
+
+    let decoded = match decoded_result {
         Ok(decoded) => decoded,
         Err(_) => {
             end_cycle_tracking("deserialize_input");
@@ -78,20 +90,12 @@ fn akita_verify(input: &[u8]) -> u32 {
     end_cycle_tracking("deserialize_input");
 
     start_cycle_tracking("transcript_init");
-    let mut transcript = AkitaTranscript::<F>::new(&decoded.transcript_domain);
+    let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     end_cycle_tracking("transcript_init");
 
     let openings = [decoded.opening];
-    let opening_groups = [&openings[..]];
 
-    let claims: VerifierClaims<F, _> = vec![(
-        &decoded.opening_point[..],
-        CommittedOpenings {
-            openings: opening_groups[0],
-            commitment: &decoded.commitment,
-        },
-    )];
-
+    start_cycle_tracking("akita_verify");
     // We call `verify_batched` directly (rather than the public
     // `AkitaCommitmentScheme::<D, Cfg>::batched_verify` wrapper) to skip
     // its `Instant::now()` + final `tracing::info!` wall-clock log. The
@@ -105,7 +109,7 @@ fn akita_verify(input: &[u8]) -> u32 {
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
-        claims,
+        decoded.verifier_claims(&openings),
         BasisMode::Lagrange,
     );
     end_cycle_tracking("akita_verify");

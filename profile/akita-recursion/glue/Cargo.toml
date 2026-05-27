@@ -10,6 +10,10 @@ repository = "https://github.com/LayerZero-Labs/hachi"
 readme = "../../../README.md"
 publish = false
 
+[features]
+default = []
+trusted-benchmark-artifact = []
+
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../../../crates/akita-algebra" }
 akita-field = { version = "0.1.0", path = "../../../crates/akita-field" }

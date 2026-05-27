@@ -16,12 +16,24 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
-  AKITA_BENCH_MODE: onehot
-  AKITA_BENCH_RUNS: "5"
+  # The active benchmark path is pinned to explicit D32 modes. It deliberately
+  # does not use the old adaptive `full`/`onehot` selectors.
+  # Long hosted-runner configs are deferred from this PR's active matrix.
+  # In particular, onehot_fp16_d32:32:1 and dense_fp128_d32:26:1 are measured
+  # offenders and should come back only after tuning or a larger runner budget.
+  AKITA_BENCH_MODE: onehot_fp128_d32
+  AKITA_BENCH_RUNS: "3"
+  # One warm-up run per case is discarded before the measured runs to
+  # prime caches and lazily-initialized statics; cache misses on the
+  # first run otherwise distort the median across only 3 samples.
+  AKITA_BENCH_WARMUPS: "1"
   AKITA_BENCH_CASES: |
-    onehot:32:1
-    onehot:30:4
-    dense_fp32_d64:26:1
+    dense_fp16_d32:26:1
+    onehot_fp32_d32:32:1
+    dense_fp32_d32:26:1
+    onehot_fp64_d32:32:1
+    onehot_fp128_d32:32:1
+    onehot_fp128_d32:30:4
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -113,6 +125,7 @@ jobs:
             --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
             --mode "$AKITA_BENCH_MODE" \
             --runs "$AKITA_BENCH_RUNS" \
+            --warmups "$AKITA_BENCH_WARMUPS" \
             "${case_args[@]}"
 
       - name: Determine comparison baseline artifacts
@@ -137,12 +150,13 @@ jobs:
               core.setOutput(`${prefix}-label`, run ? label : '');
             }
 
-            async function firstRunWithArtifact(runs) {
+            async function firstRunWithArtifact(runs, allowedConclusions = ['success']) {
+              const allowedConclusionSet = new Set(allowedConclusions);
               for (const run of runs) {
                 if (run.id === currentRunId) {
                   continue;
                 }
-                if (run.name !== workflowName || run.conclusion !== 'success') {
+                if (run.name !== workflowName || !allowedConclusionSet.has(run.conclusion)) {
                   continue;
                 }
                 const artifactsResponse = await github.rest.actions.listWorkflowRunArtifacts({
@@ -161,58 +175,68 @@ jobs:
               return null;
             }
 
-            const prRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
-              owner,
-              repo,
-              event: 'pull_request',
-              branch: headRef,
-              status: 'completed',
-              per_page: 100,
-            });
-            const previousPrCandidates = prRunsResponse.data.workflow_runs.filter(run => {
-              if (run.head_sha === headSha) {
-                return false;
-              }
-              const prs = run.pull_requests || [];
-              return prs.length === 0 || prs.some(pr => pr.number === pullRequest.number);
-            });
-            const previousPrRun = await firstRunWithArtifact(previousPrCandidates);
-            if (!previousPrRun) {
-              core.info('No previous PR baseline artifact found.');
-            }
-            setBaselineOutput('previous', previousPrRun, 'the previous successful PR update');
+            setBaselineOutput('previous', null, '');
+            setBaselineOutput('main', null, '');
 
-            const baseRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
-              owner,
-              repo,
-              event: 'push',
-              branch: baseRef,
-              status: 'completed',
-              per_page: 100,
-            });
-            const baseCandidates = baseRunsResponse.data.workflow_runs.filter(run =>
-              run.name === workflowName && run.conclusion === 'success'
-            );
-            const exactMergeBaseCandidates = mergeBaseSha
-              ? baseCandidates.filter(run => run.head_sha === mergeBaseSha)
-              : [];
-            const exactMergeBaseRun =
-              exactMergeBaseCandidates.length > 0
-                ? await firstRunWithArtifact(exactMergeBaseCandidates)
-                : null;
-            const fallbackBaseCandidates = mergeBaseSha
-              ? baseCandidates.filter(run => run.head_sha !== mergeBaseSha)
-              : baseCandidates;
-            const mainRun =
-              exactMergeBaseRun ?? await firstRunWithArtifact(fallbackBaseCandidates);
-            if (!mainRun) {
-              core.info('No main baseline artifact found.');
+            try {
+              const prRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
+                owner,
+                repo,
+                event: 'pull_request',
+                branch: headRef,
+                status: 'completed',
+                per_page: 100,
+              });
+              const previousPrCandidates = prRunsResponse.data.workflow_runs.filter(run => {
+                if (run.head_sha === headSha) {
+                  return false;
+                }
+                const prs = run.pull_requests || [];
+                return prs.length === 0 || prs.some(pr => pr.number === pullRequest.number);
+              });
+              const previousPrRun = await firstRunWithArtifact(
+                previousPrCandidates,
+                ['success', 'failure']
+              );
+              if (!previousPrRun) {
+                core.info('No previous PR baseline artifact found.');
+              }
+              setBaselineOutput('previous', previousPrRun, 'the previous PR update with a benchmark artifact');
+
+              const baseRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
+                owner,
+                repo,
+                event: 'push',
+                branch: baseRef,
+                status: 'completed',
+                per_page: 100,
+              });
+              const baseCandidates = baseRunsResponse.data.workflow_runs.filter(run =>
+                run.name === workflowName && run.conclusion === 'success'
+              );
+              const exactMergeBaseCandidates = mergeBaseSha
+                ? baseCandidates.filter(run => run.head_sha === mergeBaseSha)
+                : [];
+              const exactMergeBaseRun =
+                exactMergeBaseCandidates.length > 0
+                  ? await firstRunWithArtifact(exactMergeBaseCandidates)
+                  : null;
+              const fallbackBaseCandidates = mergeBaseSha
+                ? baseCandidates.filter(run => run.head_sha !== mergeBaseSha)
+                : baseCandidates;
+              const mainRun =
+                exactMergeBaseRun ?? await firstRunWithArtifact(fallbackBaseCandidates);
+              if (!mainRun) {
+                core.info('No main baseline artifact found.');
+              }
+              const mainLabel =
+                mainRun && Boolean(mergeBaseSha) && mainRun.head_sha === mergeBaseSha
+                  ? `merge-base on \`${baseRef}\``
+                  : `the latest successful \`${baseRef}\` run`;
+              setBaselineOutput('main', mainRun, mainLabel);
+            } catch (error) {
+              core.warning(`Could not determine benchmark baselines: ${error.message}`);
             }
-            const mainLabel =
-              mainRun && Boolean(mergeBaseSha) && mainRun.head_sha === mergeBaseSha
-                ? `merge-base on \`${baseRef}\``
-                : `the latest successful \`${baseRef}\` run`;
-            setBaselineOutput('main', mainRun, mainLabel);
 
       - name: Download main baseline artifact
         if: always() && steps.bench-baselines.outputs.main-run-id != ''
@@ -233,7 +257,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Enforce proof-size regression threshold
-        if: github.event_name == 'pull_request' && steps.bench-baselines.outputs.main-run-id != ''
+        if: always() && github.event_name == 'pull_request' && steps.bench-baselines.outputs.main-run-id != ''
         env:
           AKITA_BENCH_MAX_PROOF_SIZE_REGRESSION: "1.05"
         run: |
@@ -262,6 +286,8 @@ jobs:
           failures = []
 
           for case_id, current_case in current.items():
+              if int(current_case.get("exit_code", 0)) != 0:
+                  continue
               baseline_case = baseline.get(case_id)
               if not baseline_case:
                   continue
@@ -292,21 +318,39 @@ jobs:
           AKITA_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
         run: |
           mkdir -p "$AKITA_BENCH_ARTIFACT_DIR"
-          if [ ! -f "$AKITA_BENCH_ARTIFACT_DIR/summary.json" ]; then
-            echo "Benchmark summary not found; benchmark step likely failed." > "$AKITA_BENCH_REPORT"
-          else
-            python3 scripts/profile_bench_report.py render \
-              "$AKITA_BENCH_ARTIFACT_DIR/summary.json" \
-              --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
-              --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" > "$AKITA_BENCH_REPORT"
+          summary_path="$AKITA_BENCH_ARTIFACT_DIR/summary.json"
+          if [ ! -f "$summary_path" ]; then
+            case_args=()
+            while IFS= read -r case_spec; do
+              if [ -n "$case_spec" ]; then
+                case_args+=(--case "$case_spec")
+              fi
+            done <<< "$AKITA_BENCH_CASES"
+
+            python3 scripts/profile_bench_report.py failure-summary \
+              --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
+              --mode "$AKITA_BENCH_MODE" \
+              --failure-phase "benchmark workflow" \
+              --error "Benchmark step failed before writing summary.json." \
+              "${case_args[@]}"
           fi
+          python3 scripts/profile_bench_report.py render \
+            "$summary_path" \
+            --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
+            --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" > "$AKITA_BENCH_REPORT"
+          python3 scripts/profile_bench_report.py render \
+            "$summary_path" \
+            --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
+            --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" \
+            --compact > "$AKITA_BENCH_COMMENT"
           cp "$AKITA_BENCH_REPORT" "$AKITA_BENCH_ARTIFACT_DIR/report.md"
           cat "$AKITA_BENCH_REPORT" >> "$GITHUB_STEP_SUMMARY"
           {
             echo '<!-- akita-profile-bench-report -->'
             echo
-            cat "$AKITA_BENCH_REPORT"
-          } > "$AKITA_BENCH_COMMENT"
+            cat "$AKITA_BENCH_COMMENT"
+          } > "$AKITA_BENCH_COMMENT.marked"
+          mv "$AKITA_BENCH_COMMENT.marked" "$AKITA_BENCH_COMMENT"
           cp "$AKITA_BENCH_COMMENT" "$AKITA_BENCH_ARTIFACT_DIR/comment.md"
 
       - name: Upsert benchmark PR comment
@@ -330,31 +374,35 @@ jobs:
             const body = fs.readFileSync(commentPath, 'utf8');
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              { owner, repo, issue_number, per_page: 100 }
-            );
-            const existing = comments.find(comment =>
-              comment.user?.login === 'github-actions[bot]' &&
-              markers.some(marker => comment.body?.includes(marker))
-            );
+            try {
+              const comments = await github.paginate(
+                github.rest.issues.listComments,
+                { owner, repo, issue_number, per_page: 100 }
+              );
+              const existing = comments.find(comment =>
+                comment.user?.login === 'github-actions[bot]' &&
+                markers.some(marker => comment.body?.includes(marker))
+              );
 
-            if (existing) {
-              const response = await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-              core.info(`Updated benchmark PR comment: ${response.data.html_url}`);
-            } else {
-              const response = await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body,
-              });
-              core.info(`Created benchmark PR comment: ${response.data.html_url}`);
+              if (existing) {
+                const response = await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body,
+                });
+                core.info(`Updated benchmark PR comment: ${response.data.html_url}`);
+              } else {
+                const response = await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number,
+                  body,
+                });
+                core.info(`Created benchmark PR comment: ${response.data.html_url}`);
+              }
+            } catch (error) {
+              core.warning(`Could not upsert benchmark PR comment: ${error.message}`);
             }
 
       - name: Upload benchmark artifact

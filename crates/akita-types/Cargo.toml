@@ -29,6 +29,7 @@ tracing = "0.1"
 
 [features]
 default = []
+parallel = ["akita-field/parallel"]
 zk = ["akita-sumcheck/zk"]
 
 [dev-dependencies]

@@ -1976,10 +1976,11 @@ fn fused_split_eq_quotients_with_params<
     const K: usize,
     const D: usize,
 >(
-    d_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    b_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    a_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    a_neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    n_d: usize,
+    n_b: usize,
+    n_a: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_pre: &[[i32; D]],
@@ -1990,18 +1991,10 @@ fn fused_split_eq_quotients_with_params<
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
 ) {
-    let n_d = d_cyc_rows.len();
-    let n_b = b_cyc_rows.len();
-    let n_a = a_cyc_rows.len();
-    let w_len = w_hat
-        .len()
-        .min(d_cyc_rows.first().map_or(0, |row| row.len()));
-    let t_len = t_hat
-        .len()
-        .min(b_cyc_rows.first().map_or(0, |row| row.len()));
-    let z_len = z_pre
-        .len()
-        .min(a_cyc_rows.first().map_or(0, |row| row.len()));
+    let mat_width = cyc_rows.first().map_or(0, |r| r.len());
+    let w_len = w_hat.len().min(mat_width);
+    let t_len = t_hat.len().min(mat_width);
+    let z_len = z_pre.len().min(mat_width);
     let max_col = w_len.max(t_len).max(z_len);
 
     if max_col == 0 {
@@ -2042,14 +2035,14 @@ fn fused_split_eq_quotients_with_params<
             for j in tile_start..tile_end {
                 if j < w_len && !is_zero_plane(&w_hat[j]) {
                     let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&w_hat[j], params, &lut);
-                    for (acc_d, cyc_row) in accs.0.iter_mut().zip(d_cyc_rows.iter()) {
+                    for (acc_d, cyc_row) in accs.0.iter_mut().zip(cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_d, &cyc_row[j], &ntt_w, params);
                     }
                 }
 
                 if j < t_len && !is_zero_plane(&t_hat[j]) {
                     let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, &lut);
-                    for (acc_b, cyc_row) in accs.1.iter_mut().zip(b_cyc_rows.iter()) {
+                    for (acc_b, cyc_row) in accs.1.iter_mut().zip(cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_b, &cyc_row[j], &ntt_t, params);
                     }
                 }
@@ -2064,7 +2057,7 @@ fn fused_split_eq_quotients_with_params<
                         .2
                         .iter_mut()
                         .zip(accs.3.iter_mut())
-                        .zip(a_neg_rows.iter().zip(a_cyc_rows.iter()))
+                        .zip(neg_rows.iter().zip(cyc_rows.iter()))
                     {
                         accumulate_pointwise_product_into(acc_neg, &neg_row[j], &ntt_z_neg, params);
                         accumulate_pointwise_product_into(acc_cyc, &cyc_row[j], &ntt_z_cyc, params);
@@ -2127,9 +2120,9 @@ fn fused_split_eq_quotients_with_params<
 /// - B-cyclic: `cyc[0..n_b] · t_hat` (cyclic domain)
 /// - A-quotient: `(cyc[0..n_a]·z_cyc − neg[0..n_a]·z_neg) / 2`
 ///
-/// Each role is addressed through its own packed row width, so logical
-/// position `(role_row, role_col)` maps to `role_row * role_width + role_col`
-/// in the shared flat setup cache.
+/// All roles share the same underlying coefficient matrix and must use the
+/// same row `stride` so that logical position `(i, j)` maps to the same
+/// physical flat-cache element regardless of role.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "fused_split_eq_quotients")]
 pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, const D: usize>(
@@ -2137,9 +2130,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
     n_d: usize,
     n_b: usize,
     n_a: usize,
-    d_width: usize,
-    b_width: usize,
-    a_width: usize,
+    stride: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_pre: &[[i32; D]],
@@ -2149,29 +2140,25 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
 ) {
+    let n_cyc = n_d.max(n_b).max(n_a);
     match slot {
         NttSlotCache::Q32 {
             neg,
             cyc,
             params: p,
         } => {
-            let d_cyc_rows: Vec<&[_]> = (0..n_d)
-                .map(|i| &cyc[i * d_width..(i + 1) * d_width])
+            let neg_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &neg[i * stride..(i + 1) * stride])
                 .collect();
-            let b_cyc_rows: Vec<&[_]> = (0..n_b)
-                .map(|i| &cyc[i * b_width..(i + 1) * b_width])
-                .collect();
-            let a_cyc_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &cyc[i * a_width..(i + 1) * a_width])
-                .collect();
-            let a_neg_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &neg[i * a_width..(i + 1) * a_width])
+            let cyc_rows: Vec<&[_]> = (0..n_cyc)
+                .map(|i| &cyc[i * stride..(i + 1) * stride])
                 .collect();
             fused_split_eq_quotients_with_params(
-                &d_cyc_rows,
-                &b_cyc_rows,
-                &a_cyc_rows,
-                &a_neg_rows,
+                &cyc_rows,
+                &neg_rows,
+                n_d,
+                n_b,
+                n_a,
                 w_hat,
                 t_hat,
                 z_pre,
@@ -2184,23 +2171,18 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
             cyc,
             params: p,
         } => {
-            let d_cyc_rows: Vec<&[_]> = (0..n_d)
-                .map(|i| &cyc[i * d_width..(i + 1) * d_width])
+            let neg_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &neg[i * stride..(i + 1) * stride])
                 .collect();
-            let b_cyc_rows: Vec<&[_]> = (0..n_b)
-                .map(|i| &cyc[i * b_width..(i + 1) * b_width])
-                .collect();
-            let a_cyc_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &cyc[i * a_width..(i + 1) * a_width])
-                .collect();
-            let a_neg_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &neg[i * a_width..(i + 1) * a_width])
+            let cyc_rows: Vec<&[_]> = (0..n_cyc)
+                .map(|i| &cyc[i * stride..(i + 1) * stride])
                 .collect();
             fused_split_eq_quotients_with_params(
-                &d_cyc_rows,
-                &b_cyc_rows,
-                &a_cyc_rows,
-                &a_neg_rows,
+                &cyc_rows,
+                &neg_rows,
+                n_d,
+                n_b,
+                n_a,
                 w_hat,
                 t_hat,
                 z_pre,
@@ -2213,23 +2195,18 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
             cyc,
             params: p,
         } => {
-            let d_cyc_rows: Vec<&[_]> = (0..n_d)
-                .map(|i| &cyc[i * d_width..(i + 1) * d_width])
+            let neg_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &neg[i * stride..(i + 1) * stride])
                 .collect();
-            let b_cyc_rows: Vec<&[_]> = (0..n_b)
-                .map(|i| &cyc[i * b_width..(i + 1) * b_width])
-                .collect();
-            let a_cyc_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &cyc[i * a_width..(i + 1) * a_width])
-                .collect();
-            let a_neg_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &neg[i * a_width..(i + 1) * a_width])
+            let cyc_rows: Vec<&[_]> = (0..n_cyc)
+                .map(|i| &cyc[i * stride..(i + 1) * stride])
                 .collect();
             fused_split_eq_quotients_with_params(
-                &d_cyc_rows,
-                &b_cyc_rows,
-                &a_cyc_rows,
-                &a_neg_rows,
+                &cyc_rows,
+                &neg_rows,
+                n_d,
+                n_b,
+                n_a,
                 w_hat,
                 t_hat,
                 z_pre,
@@ -2253,45 +2230,8 @@ mod tests {
     use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
     use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
     use akita_algebra::CyclotomicRing;
-    use akita_field::{FieldCore, Fp64, FromPrimitiveInt, HalvingField};
+    use akita_field::Fp64;
     use akita_types::layout::FlatMatrix;
-
-    fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
-        coeffs: &[i32; D],
-    ) -> CyclotomicRing<F, D> {
-        CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
-            F::from_i64(coeffs[idx] as i64)
-        }))
-    }
-
-    fn cyclic_product<F: FieldCore, const D: usize>(
-        lhs: &CyclotomicRing<F, D>,
-        rhs: &CyclotomicRing<F, D>,
-    ) -> CyclotomicRing<F, D> {
-        let lhs_coeffs = lhs.coefficients();
-        let rhs_coeffs = rhs.coefficients();
-        let mut out = [F::zero(); D];
-        for (i, &a) in lhs_coeffs.iter().enumerate() {
-            if a.is_zero() {
-                continue;
-            }
-            for (j, &b) in rhs_coeffs.iter().enumerate() {
-                if !b.is_zero() {
-                    out[(i + j) % D] += a * b;
-                }
-            }
-        }
-        CyclotomicRing::from_coefficients(out)
-    }
-
-    fn quotient_from_cyclic_and_negacyclic<F: FieldCore + HalvingField, const D: usize>(
-        cyclic: &CyclotomicRing<F, D>,
-        negacyclic: &CyclotomicRing<F, D>,
-    ) -> CyclotomicRing<F, D> {
-        let cyc = cyclic.coefficients();
-        let neg = negacyclic.coefficients();
-        CyclotomicRing::from_coefficients(std::array::from_fn(|idx| (cyc[idx] - neg[idx]).half()))
-    }
 
     #[test]
     fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {
@@ -2335,74 +2275,11 @@ mod tests {
 
         let expected_d = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &w_hat);
         let expected_b = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &t_hat);
-        let (d_rows, b_rows, _a_rows) = fused_split_eq_quotients::<F, D>(
-            &slot, rows, rows, 1, cols, cols, cols, &w_hat, &t_hat, &z_pre, 1,
-        );
+        let (d_rows, b_rows, _a_rows) =
+            fused_split_eq_quotients::<F, D>(&slot, rows, rows, 1, cols, &w_hat, &t_hat, &z_pre, 1);
 
         assert_eq!(d_rows, expected_d);
         assert_eq!(b_rows, expected_b);
-    }
-
-    #[test]
-    fn fused_split_eq_quotients_supports_packed_role_widths() {
-        type F = Fp64<4294967197>;
-        const D: usize = 64;
-        let n_d = 3usize;
-        let n_b = 2usize;
-        let n_a = 4usize;
-        let d_width = 5usize;
-        let b_width = 7usize;
-        let a_width = 3usize;
-        let total = (n_d * d_width).max(n_b * b_width).max(n_a * a_width);
-        let flat_rows: Vec<CyclotomicRing<F, D>> = (0..total)
-            .map(|idx| {
-                let coeffs = std::array::from_fn(|k| {
-                    let raw = (idx as i64 * 11 + k as i64 * 3) % 37;
-                    F::from_i64(raw - 18)
-                });
-                CyclotomicRing::from_coefficients(coeffs)
-            })
-            .collect();
-        let flat = FlatMatrix::from_ring_slice(&flat_rows);
-        let slot = build_ntt_slot(
-            flat.ring_view::<D>(1, total)
-                .expect("valid flat cache view"),
-        )
-        .expect("Q32 dispatch should support this field and ring dimension");
-
-        let w_hat: Vec<[i8; D]> = (0..d_width)
-            .map(|j| std::array::from_fn(|k| ((j + 2 * k) % 7) as i8 - 3))
-            .collect();
-        let t_hat: Vec<[i8; D]> = (0..b_width)
-            .map(|j| std::array::from_fn(|k| ((3 * j + k) % 5) as i8 - 2))
-            .collect();
-        let z_pre: Vec<[i32; D]> = (0..a_width)
-            .map(|j| std::array::from_fn(|k| ((2 * j + k) % 3) as i32 - 1))
-            .collect();
-
-        let expected_d = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_d, d_width, &w_hat);
-        let expected_b = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_b, b_width, &t_hat);
-        let expected_a: Vec<_> = (0..n_a)
-            .map(|row| {
-                let row_slice = &flat_rows[row * a_width..(row + 1) * a_width];
-                let mut cyclic = CyclotomicRing::<F, D>::zero();
-                let mut negacyclic = CyclotomicRing::<F, D>::zero();
-                for (entry, z) in row_slice.iter().zip(z_pre.iter()) {
-                    let z_ring = centered_i32_ring::<F, D>(z);
-                    cyclic += cyclic_product(entry, &z_ring);
-                    negacyclic += *entry * z_ring;
-                }
-                quotient_from_cyclic_and_negacyclic(&cyclic, &negacyclic)
-            })
-            .collect();
-
-        let (d_rows, b_rows, a_rows) = fused_split_eq_quotients::<F, D>(
-            &slot, n_d, n_b, n_a, d_width, b_width, a_width, &w_hat, &t_hat, &z_pre, 1,
-        );
-
-        assert_eq!(d_rows, expected_d);
-        assert_eq!(b_rows, expected_b);
-        assert_eq!(a_rows, expected_a);
     }
 
     #[test]

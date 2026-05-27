@@ -162,7 +162,7 @@ This refactor must not change:
 - **Verifier hot path latency.** Today's closure-based `verify_batched_with_policy` and tomorrow's `verify_batched::<Cfg>` are both monomorphized per `Cfg`, so inlining is preserved. Verifier wallclock on the standard fp128 profile example stays within ±5% noise. (Tighter targets are infeasible without dedicated hardware; ±5% is the project's current measurement floor.)
 - **Prover wallclock** for `AKITA_MODE=onehot AKITA_NUM_VARS=32 cargo run --release --example profile`. Same ±5% noise band.
 - **Schedule planner DP wallclock** for `find_optimal_schedule_from_scratch` on the standard fixture set. The DP itself is byte-for-byte identical; only its trait surface changes.
-- **Setup matrix sizing** (`AkitaSetupSeed::max_setup_len`, `max_num_batched_polys`, etc.) for all presets across the `(num_vars, num_polys, num_points)` tuples exercised by tests.
+- **Setup matrix sizing** (`AkitaSetupSeed::max_stride`, `max_num_batched_polys`, etc.) for all presets across the `(num_vars, num_polys, num_points)` tuples exercised by tests.
 - **Generated-table fast path** is preserved. With the `planner` feature enabled, `Cfg::get_params_for_prove(...)` first calls `Cfg::schedule_plan(key)`, which checks the generated table and returns the materialized plan immediately on hit. Planner DP runs only on table miss. Verifier replay therefore performs no DP search in any production build; it materializes from the table and proceeds.
 
 If `gen_schedule_tables` produces a non-cosmetic diff, or if `schedule.total_bytes` changes for any standard fixture, the refactor is incorrect and must be fixed before merge.
