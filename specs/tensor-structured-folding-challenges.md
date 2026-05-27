@@ -516,9 +516,7 @@ tensor preset. Remaining merge-readiness work should focus on verification:
    is not the tensor-aware scheduling source for this branch.
 4. Confirm ZK builds still compile with the generated ZK tensor table, even
    though the non-ZK e2e test is the primary behavior test in this branch.
-5. Separately justify the removal of `crates/akita-pcs/tests/commitment_contract.rs`
-   in the PR if that deletion remains; it is not tensor-challenge functionality.
-6. Keep claim-reduction sumcheck out of scope unless the PR explicitly expands
+5. Keep claim-reduction sumcheck out of scope unless the PR explicitly expands
    to that design.
 
 ## References

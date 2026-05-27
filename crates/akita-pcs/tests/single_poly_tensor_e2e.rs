@@ -7,7 +7,7 @@ mod common;
 use akita_config::tensor_verifier::fp128::D64OneHotTensor;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::CommitmentProver;
+use akita_prover::{CommitmentProver, ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::AkitaBatchedProof;
@@ -44,14 +44,18 @@ fn run_single_onehot_tensor(nv: usize) {
         let setup = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
             F,
             TENSOR_D,
-        >>::setup_prover(nv, 1, 1);
+        >>::setup_prover(nv, 1, 1)
+        .expect("setup_prover");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup =
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(
-                commit_input,
                 &setup,
+                &CpuBackend,
+                &prepared,
+                commit_input,
             )
             .expect("commit");
 
@@ -76,6 +80,8 @@ fn run_single_onehot_tensor(nv: usize) {
             TENSOR_D,
         >>::batched_prove(
             &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -92,6 +98,8 @@ fn run_single_onehot_tensor(nv: usize) {
                 TENSOR_D,
             >>::batched_prove(
                 &setup,
+                &CpuBackend,
+                &prepared,
                 prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
                 &mut second_prover_transcript,
                 BasisMode::Lagrange,
@@ -189,14 +197,18 @@ fn run_single_dense_tensor(nv: usize) {
         let setup = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
             F,
             TENSOR_D,
-        >>::setup_prover(nv, 1, 1);
+        >>::setup_prover(nv, 1, 1)
+        .expect("setup_prover");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
         let verifier_setup =
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
             <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<F, TENSOR_D>>::commit(
-                commit_input,
                 &setup,
+                &CpuBackend,
+                &prepared,
+                commit_input,
             )
             .expect("commit");
 
@@ -221,6 +233,8 @@ fn run_single_dense_tensor(nv: usize) {
             TENSOR_D,
         >>::batched_prove(
             &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -237,6 +251,8 @@ fn run_single_dense_tensor(nv: usize) {
                 TENSOR_D,
             >>::batched_prove(
                 &setup,
+                &CpuBackend,
+                &prepared,
                 prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
                 &mut second_prover_transcript,
                 BasisMode::Lagrange,

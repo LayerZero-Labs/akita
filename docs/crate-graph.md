@@ -104,8 +104,9 @@ graph TD
   depend on it; `scripts/check-crate-deps.sh` enforces this on both the
   default and `--all-features` `cargo tree` graphs.
 - `akita-prover` owns polynomial backends, prover setup artifacts, NTT/matrix
-  kernels, recursive witness construction, ring-switch witness construction,
-  proving orchestration, and its Akita-specific sumcheck stage provers.
+  kernels, explicit compute-backend operation traits, recursive witness
+  construction, ring-switch witness construction, proving orchestration, and
+  its Akita-specific sumcheck stage provers.
 - `akita-types` owns inert shared protocol data: proof/setup/claim shapes,
   opening-point and layout math, schedule contracts, generated table shapes,
   and transcript append traits. It should not grow planner search or prover

@@ -27,6 +27,7 @@ mod common;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::MultilinearPolynomial;
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
@@ -69,7 +70,9 @@ mod non_zk_aggregated_cases {
             let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
-            >>::setup_prover(nv, batch_size, 1);
+            >>::setup_prover(nv, batch_size, 1)
+            .unwrap();
+            let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
@@ -78,7 +81,7 @@ mod non_zk_aggregated_cases {
             let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
                 F,
                 ONEHOT_D,
-            >>::commit(&polys, &setup)
+            >>::commit(&setup, &CpuBackend, &prepared, &polys)
             .expect("grouped commit");
             let commitments = [commitment];
             let hints = vec![hint];
@@ -95,6 +98,8 @@ mod non_zk_aggregated_cases {
                 ONEHOT_D,
             >>::batched_prove(
                 &setup,
+                &CpuBackend,
+                &prepared,
                 prove_input(
                     &pt[..],
                     &polys[..],
@@ -164,7 +169,9 @@ mod non_zk_aggregated_cases {
             let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
-            >>::setup_prover(nv, batch_size, 1);
+            >>::setup_prover(nv, batch_size, 1)
+            .unwrap();
+            let prepared = CpuBackend.prepare_setup(&setup).unwrap();
             let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
@@ -172,7 +179,10 @@ mod non_zk_aggregated_cases {
 
             let (commitments, hints) =
                 <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::commit(
-                    &polys, &setup,
+                    &setup,
+                    &CpuBackend,
+                    &prepared,
+                    &polys,
                 )
                 .map(|(commitment, hint)| (vec![commitment], vec![hint]))
                 .expect("grouped commit");
@@ -189,6 +199,8 @@ mod non_zk_aggregated_cases {
                 DENSE_D,
             >>::batched_prove(
                 &setup,
+                &CpuBackend,
+                &prepared,
                 prove_input(
                     &pt[..],
                     &polys[..],
@@ -295,7 +307,8 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
                 NV,
                 BATCH_SIZE,
                 1,
-            );
+            ).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
@@ -304,21 +317,29 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
-        >>::commit(&polys, &setup)
+        >>::commit(&setup, &CpuBackend, &prepared, &polys)
         .expect("mixed aggregated commit");
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
-        let proof =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
-                &setup,
-                prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
-            .expect("mixed batched prove");
+        let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::batched_prove(
+            &setup, &CpuBackend,
+            &prepared,
+            prove_input(
+                &pt[..],
+                &polys[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("mixed batched prove");
         assert!(
             !proof.is_root_direct(),
             "aggregated mixed dense/onehot should exercise folded proof path"
