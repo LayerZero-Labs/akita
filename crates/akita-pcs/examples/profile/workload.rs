@@ -549,6 +549,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ChallengeField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ChallengeField, D>(label, &proof);
+    let incidence =
+        ClaimIncidenceSummary::same_point(nv, num_polys).expect("same-point incidence summary");
+    let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
     if let Some(plan) = plan {
         assert_eq!(
             proof.size(),
@@ -556,6 +559,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             "runtime proof bytes should match the planned proof size"
         );
         emit_planned_schedule_summary(label, plan);
+    } else {
+        assert_eq!(
+            proof.size(),
+            schedule.total_bytes,
+            "runtime proof bytes should match the runtime schedule proof size"
+        );
+        emit_runtime_schedule_summary(label, &schedule, Cfg::decomposition().field_bits());
     }
     tracing::info!(
         label,
@@ -577,9 +587,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             "[{label}] extension opening fallback: root-direct proof for this unsupported shape; folded planner byte estimates do not apply"
         );
     }
-    let incidence =
-        ClaimIncidenceSummary::same_point(nv, num_polys).expect("same-point incidence summary");
-    let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
         tracing::info!(
             label,
