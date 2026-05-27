@@ -1072,6 +1072,31 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
+    fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
+        let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
+        let plan = <fp128::D64OneHot as CommitmentConfig>::schedule_plan(key)
+            .expect("config schedule should succeed")
+            .expect("fp128 D64 onehot 4x30 schedule should be generated");
+
+        assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
+        assert!(
+            plan.num_fold_levels() > 2,
+            "4x30 onehot schedule should keep a recursive suffix after the root fold"
+        );
+
+        let akita_types::DirectWitnessShape::PackedDigits((num_elems, _bits)) =
+            plan.direct_step().witness_shape
+        else {
+            panic!("4x30 onehot schedule should end in packed digits");
+        };
+        assert!(
+            num_elems <= 245_888,
+            "expected byte-aware batched schedule to keep folding, got final_w with {num_elems} elems"
+        );
+    }
+
+    #[test]
     fn recursive_onehot_split_matches_open_digit_witness_count() {
         type Cfg = fp128::D64OneHot;
 

@@ -51,8 +51,12 @@ The key implementation surfaces are:
   recursive levels flat.
 - `akita-types::generated`: adds schedule tables for the tensor one-hot preset,
   including the ZK variant.
-- `akita-pcs`: adds the `onehot_d64_tensor` profile mode and end-to-end tensor
+- `akita-pcs`: adds the `onehot_fp128_d64_tensor` profile mode and end-to-end tensor
   tests for one-hot and dense polynomials.
+
+The tensor profile mode follows this branch's generated D64 tensor preset. It is
+a direct local comparison mode and is not part of PR #107's D32 profile
+benchmark matrix.
 
 ### Invariants
 
@@ -151,7 +155,7 @@ The key implementation surfaces are:
 - [x] A dedicated fp128 `D=64` one-hot tensor-verifier preset exists and sets the
       root fold to tensor while keeping recursive folds flat.
 - [x] Generated schedule tables exist for the tensor preset and ZK tensor preset.
-- [x] The profile example exposes `AKITA_MODE=onehot_d64_tensor`.
+- [x] The profile example exposes `AKITA_MODE=onehot_fp128_d64_tensor`.
 - [x] End-to-end tensor tests prove and verify dense and one-hot singleton
       openings through serialization/deserialization.
 - [x] Existing flat challenge tests continue to cover the legacy sparse sampler
@@ -180,7 +184,7 @@ Broader validation before merge should include:
 - `cargo test --release -p akita-challenges`
 - `cargo test --release -p akita-verifier`
 - `cargo test --release -p akita-pcs --test single_poly_tensor_e2e`
-- `AKITA_MODE=onehot_d64_tensor AKITA_NUM_VARS=22 cargo run --release -p akita-pcs --example profile`
+- `AKITA_MODE=onehot_fp128_d64_tensor AKITA_NUM_VARS=22 cargo run --release -p akita-pcs --example profile`
 
 The e2e tests intentionally cover both `OneHotPoly` and `DensePoly` under the
 tensor preset at `nv = 15, 20, 22`. They assert that the selected layout is
@@ -211,13 +215,13 @@ challenges.
 
 The current branch does not implement claim-reduction sumcheck, so
 setup-dependent verifier work still exists. The expected near-term profile
-comparison is therefore `onehot_d64` versus `onehot_d64_tensor`, with the
+comparison is therefore `onehot_fp128_d64` versus `onehot_fp128_d64_tensor`, with the
 largest improvement in the challenge-evaluation portion of ring-switch row
-replay rather than in total verification time. The `onehot_d64_tensor` mode is
-the canonical local profile lens:
+replay rather than in total verification time. The `onehot_fp128_d64_tensor` mode is
+the canonical local profile lens for the D64 tensor preset:
 
 ```text
-AKITA_MODE=onehot_d64_tensor AKITA_NUM_VARS=<nv> cargo run --release -p akita-pcs --example profile
+AKITA_MODE=onehot_fp128_d64_tensor AKITA_NUM_VARS=<nv> cargo run --release -p akita-pcs --example profile
 ```
 
 Tensor products increase the effective per-logical-block L1 envelope from
@@ -491,7 +495,7 @@ recursive level's schedule and security envelope.
 
 This spec is the PR-facing design record for the implemented branch delta versus
 `main`. It should be linked from the PR description. The existing profile
-documentation can mention `AKITA_MODE=onehot_d64_tensor` once the preset is ready
+documentation can mention `AKITA_MODE=onehot_fp128_d64_tensor` once the preset is ready
 to advertise as a standard profiling target.
 
 One implementation detail is especially important for reviewers: because Akita
@@ -505,7 +509,7 @@ The branch implementation is complete for the root-level fp128 D64 one-hot
 tensor preset. Remaining merge-readiness work should focus on verification:
 
 1. Run the release-mode focused tests listed above.
-2. Compare `onehot_d64` and `onehot_d64_tensor` profile output for the PR's
+2. Compare `onehot_fp128_d64` and `onehot_fp128_d64_tensor` profile output for the PR's
    target `AKITA_NUM_VARS` values.
 3. Confirm generated tensor schedule tables are accepted by normal config lookup
    and do not require planner fallback in production paths; runtime DP fallback
