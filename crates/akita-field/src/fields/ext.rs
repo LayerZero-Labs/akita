@@ -1,6 +1,8 @@
 //! Quadratic, quartic, and ring-subfield extension fields.
 
-use super::wide::{AccumPair, HasUnreducedOps};
+use super::wide::{
+    AccumPair, Fp2Fp64ProductAccum, HasUnreducedOps, RingSubfieldFp4Fp32ProductAccum,
+};
 use super::{fp128::Fp128, fp16::Fp16, fp32::Fp32, fp64::Fp64};
 use crate::{BalancedDigitLookup, CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{
@@ -384,12 +386,77 @@ impl<F: FieldCore + BalancedDigitLookup + Valid, C: Fp2Config<F>> BalancedDigitL
 {
 }
 
-impl<F: HasUnreducedOps + Valid, C: Fp2Config<F>> HasUnreducedOps for Fp2<F, C> {
-    type MulU64Accum = AccumPair<F::MulU64Accum>;
-    type ProductAccum = AccumPair<F::ProductAccum>;
+/// Identity-stub `HasUnreducedOps` for `Fp2` variants without a dedicated
+/// delayed-reduction accumulator. `ProductAccum = Self`, so every multiply
+/// reduces immediately. Same pattern as `RingSubfieldFp4<Fp64/Fp128>` and
+/// `RingSubfieldFp8<*>`.
+macro_rules! impl_fp2_unreduced_identity {
+    ($base:ident<$p:ident: $pty:ty>) => {
+        impl<const $p: $pty, C: Fp2Config<$base<$p>>> HasUnreducedOps for Fp2<$base<$p>, C> {
+            type MulU64Accum = Self;
+            type ProductAccum = Self;
+
+            #[inline]
+            fn mul_u64_unreduced(self, small: u64) -> Self {
+                self * Self::from_u64(small)
+            }
+            #[inline]
+            fn mul_to_product_accum(self, other: Self) -> Self {
+                self * other
+            }
+            #[inline]
+            fn reduce_mul_u64_accum(accum: Self) -> Self {
+                accum
+            }
+            #[inline]
+            fn reduce_product_accum(accum: Self) -> Self {
+                accum
+            }
+        }
+    };
+}
+
+impl_fp2_unreduced_identity!(Fp16<P: u32>);
+impl_fp2_unreduced_identity!(Fp32<P: u32>);
+impl_fp2_unreduced_identity!(Fp128<P: u128>);
+
+/// Widening `Fp2<Fp64<P>, C>` multiplication with delayed reduction.
+///
+/// Each base-field product is split into (lo64, hi64) halves and stored in
+/// `Fp64ProductAccum` slots. For `IS_NEG_ONE` configs the `P^2` bias keeps
+/// the constant coefficient non-negative.
+#[inline(always)]
+pub(crate) fn fp2_mul_to_accum_fp64<const P: u64, C: Fp2Config<Fp64<P>>>(
+    a: [Fp64<P>; 2],
+    b: [Fp64<P>; 2],
+) -> Fp2Fp64ProductAccum {
+    let p00: u128 = a[0].mul_wide(b[0]);
+    let p11 = a[1].mul_wide(b[1]);
+    let p01 = a[0].mul_wide(b[1]);
+    let p10 = a[1].mul_wide(b[0]);
+
+    let c0_wide = if C::IS_NEG_ONE {
+        let modulus_sq = (P as u128) * (P as u128);
+        p00.wrapping_add(modulus_sq).wrapping_sub(p11)
+    } else {
+        p00.wrapping_add(p11).wrapping_add(p11)
+    };
+    let c1_wide = p01.wrapping_add(p10);
+
+    Fp2Fp64ProductAccum([
+        c0_wide as u64 as u128,
+        (c0_wide >> 64) as u64 as u128,
+        c1_wide as u64 as u128,
+        (c1_wide >> 64) as u64 as u128,
+    ])
+}
+
+impl<const P: u64, C: Fp2Config<Fp64<P>>> HasUnreducedOps for Fp2<Fp64<P>, C> {
+    type MulU64Accum = AccumPair<<Fp64<P> as HasUnreducedOps>::MulU64Accum>;
+    type ProductAccum = Fp2Fp64ProductAccum;
 
     #[inline]
-    fn mul_u64_unreduced(self, small: u64) -> AccumPair<F::MulU64Accum> {
+    fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
         AccumPair(
             self.coeffs[0].mul_u64_unreduced(small),
             self.coeffs[1].mul_u64_unreduced(small),
@@ -397,30 +464,22 @@ impl<F: HasUnreducedOps + Valid, C: Fp2Config<F>> HasUnreducedOps for Fp2<F, C> 
     }
 
     #[inline]
-    fn mul_to_product_accum(self, other: Self) -> AccumPair<F::ProductAccum> {
-        let c00 = self.coeffs[0].mul_to_product_accum(other.coeffs[0]);
-        let c11 = self.coeffs[1].mul_to_product_accum(other.coeffs[1]);
-        let c01 = self.coeffs[0].mul_to_product_accum(other.coeffs[1]);
-        let c10 = self.coeffs[1].mul_to_product_accum(other.coeffs[0]);
-
-        let nr_c11 = if C::IS_NEG_ONE { -c11 } else { c11 + c11 };
-        AccumPair(c00 + nr_c11, c01 + c10)
+    fn mul_to_product_accum(self, other: Self) -> Fp2Fp64ProductAccum {
+        fp2_mul_to_accum_fp64::<P, C>(self.coeffs, other.coeffs)
     }
 
     #[inline]
-    fn reduce_mul_u64_accum(accum: AccumPair<F::MulU64Accum>) -> Self {
+    fn reduce_mul_u64_accum(accum: Self::MulU64Accum) -> Self {
         Self::new(
-            F::reduce_mul_u64_accum(accum.0),
-            F::reduce_mul_u64_accum(accum.1),
+            Fp64::<P>::reduce_mul_u64_accum(accum.0),
+            Fp64::<P>::reduce_mul_u64_accum(accum.1),
         )
     }
 
     #[inline]
-    fn reduce_product_accum(accum: AccumPair<F::ProductAccum>) -> Self {
-        Self::new(
-            F::reduce_product_accum(accum.0),
-            F::reduce_product_accum(accum.1),
-        )
+    fn reduce_product_accum(accum: Fp2Fp64ProductAccum) -> Self {
+        let [c0, c1] = accum.reduce::<P>();
+        Self::new(c0, c1)
     }
 }
 
@@ -639,6 +698,45 @@ impl<const P: u32> RingSubfieldFp4MulBackend for Fp32<P> {
             ),
         ]
     }
+}
+
+/// Widening `RingSubfieldFp4<Fp32<P>>` multiplication that skips per-coefficient
+/// Solinas reduction, returning `RingSubfieldFp4Fp32ProductAccum` instead.
+///
+/// The φ(X) ring reduction is already fused into the formulas — only the
+/// base-field modular reduction is deferred.
+#[inline(always)]
+pub(crate) fn ring_subfield_fp4_mul_to_accum_fp32<const P: u32>(
+    a: [Fp32<P>; 4],
+    b: [Fp32<P>; 4],
+) -> RingSubfieldFp4Fp32ProductAccum {
+    #[inline(always)]
+    fn product<const P: u32>(a: Fp32<P>, b: Fp32<P>) -> u128 {
+        (a.to_limbs() as u128) * (b.to_limbs() as u128)
+    }
+
+    let [a0, a1, a2, a3] = a;
+    let [b0, b1, b2, b3] = b;
+    let modulus_square = (P as u128) * (P as u128);
+    RingSubfieldFp4Fp32ProductAccum([
+        product(a0, b0) + 2 * (product(a1, b1) + product(a2, b2) + product(a3, b3)),
+        product(a0, b1)
+            + product(a1, b0)
+            + product(a1, b2)
+            + product(a2, b1)
+            + product(a2, b3)
+            + product(a3, b2),
+        product(a0, b2)
+            + product(a2, b0)
+            + product(a1, b1)
+            + product(a1, b3)
+            + product(a3, b1)
+            + modulus_square
+            - product(a3, b3),
+        product(a0, b3) + product(a3, b0) + product(a1, b2) + product(a2, b1) + 2 * modulus_square
+            - product(a2, b3)
+            - product(a3, b2),
+    ])
 }
 
 #[inline(always)]
@@ -1806,22 +1904,19 @@ impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for RingSubfieldF
 
 impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for RingSubfieldFp4<F> {}
 
-impl<F> HasUnreducedOps for RingSubfieldFp4<F>
-where
-    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp4MulBackend,
-{
+impl<const P: u32> HasUnreducedOps for RingSubfieldFp4<Fp32<P>> {
     type MulU64Accum = Self;
-    type ProductAccum = Self;
+    type ProductAccum = RingSubfieldFp4Fp32ProductAccum;
 
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
-        let small = F::from_u64(small);
+        let small = Fp32::<P>::from_u64(small);
         Self::new(self.coeffs.map(|coeff| coeff * small))
     }
 
     #[inline]
     fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum {
-        self * other
+        ring_subfield_fp4_mul_to_accum_fp32(self.coeffs, other.coeffs)
     }
 
     #[inline]
@@ -1831,9 +1926,39 @@ where
 
     #[inline]
     fn reduce_product_accum(accum: Self::ProductAccum) -> Self {
-        accum
+        Self::new(accum.reduce::<P>())
     }
 }
+
+macro_rules! impl_ring_subfield_fp4_unreduced_identity {
+    ($base:ident<$p:ident: $pty:ty>) => {
+        impl<const $p: $pty> HasUnreducedOps for RingSubfieldFp4<$base<$p>> {
+            type MulU64Accum = Self;
+            type ProductAccum = Self;
+
+            #[inline]
+            fn mul_u64_unreduced(self, small: u64) -> Self {
+                let small = $base::<$p>::from_u64(small);
+                Self::new(self.coeffs.map(|coeff| coeff * small))
+            }
+            #[inline]
+            fn mul_to_product_accum(self, other: Self) -> Self {
+                self * other
+            }
+            #[inline]
+            fn reduce_mul_u64_accum(accum: Self) -> Self {
+                accum
+            }
+            #[inline]
+            fn reduce_product_accum(accum: Self) -> Self {
+                accum
+            }
+        }
+    };
+}
+
+impl_ring_subfield_fp4_unreduced_identity!(Fp64<P: u64>);
+impl_ring_subfield_fp4_unreduced_identity!(Fp128<P: u128>);
 
 /// Degree-8 ring subfield element in canonical basis `[1, e1, ..., e7]`.
 #[repr(transparent)]
@@ -2664,5 +2789,61 @@ mod tests {
         let c = E2::new(F::from_u64(1), F::from_u64(3));
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn ring_subfield_fp4_fp32_product_accum_matches_direct_mul() {
+        use crate::fields::wide::RingSubfieldFp4Fp32ProductAccum;
+        use crate::Fp32;
+        use num_traits::Zero;
+
+        type Fp = Fp32<251>;
+        type R4Fp32 = RingSubfieldFp4<Fp>;
+
+        let mut rng = StdRng::seed_from_u64(0xACC_0);
+        for _ in 0..200 {
+            let a = R4Fp32::random(&mut rng);
+            let b = R4Fp32::random(&mut rng);
+            let direct = a * b;
+            let accum = ring_subfield_fp4_mul_to_accum_fp32(a.coeffs, b.coeffs);
+            let reduced = R4Fp32::new(accum.reduce::<251>());
+            assert_eq!(direct, reduced, "accum mismatch for a={a:?} b={b:?}");
+        }
+
+        let zero_accum = RingSubfieldFp4Fp32ProductAccum::ZERO;
+        assert!(zero_accum.is_zero());
+        let reduced_zero = R4Fp32::new(zero_accum.reduce::<251>());
+        assert_eq!(reduced_zero, R4Fp32::zero());
+    }
+
+    #[test]
+    fn ring_subfield_fp4_fp32_accum_summation() {
+        use crate::Fp32;
+        use num_traits::Zero;
+
+        type Fp = Fp32<251>;
+        type R4Fp32 = RingSubfieldFp4<Fp>;
+
+        let mut rng = StdRng::seed_from_u64(0xACC_1);
+        let n = 1024;
+        let pairs: Vec<(R4Fp32, R4Fp32)> = (0..n)
+            .map(|_| (R4Fp32::random(&mut rng), R4Fp32::random(&mut rng)))
+            .collect();
+
+        let direct_sum: R4Fp32 = pairs
+            .iter()
+            .map(|(a, b)| *a * *b)
+            .fold(R4Fp32::zero(), |s, p| s + p);
+
+        let accum_sum = pairs.iter().fold(
+            <R4Fp32 as HasUnreducedOps>::ProductAccum::zero(),
+            |s, (a, b)| s + a.mul_to_product_accum(*b),
+        );
+        let reduced = R4Fp32::reduce_product_accum(accum_sum);
+
+        assert_eq!(
+            direct_sum, reduced,
+            "accumulated sum of {n} products mismatched"
+        );
     }
 }

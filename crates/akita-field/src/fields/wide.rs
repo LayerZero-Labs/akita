@@ -628,6 +628,91 @@ impl Neg for Fp32ProductAccum {
     }
 }
 
+/// Accumulator for `RingSubfieldFp4<Fp32>` products with delayed reduction.
+///
+/// Each slot holds the unreduced u128 sum for one of the 4 ring-subfield
+/// coefficients. The fused polynomial-multiply + φ(X)-reduction is already
+/// applied in the formulas — only the per-coefficient Solinas reduction
+/// (`from_canonical_u128_reduced`) is deferred.
+///
+/// Headroom: each single product contributes at most 7 × P² ≈ 2^65 per
+/// slot (slot 0 is the worst case). The u128 capacity of 2^128 allows up
+/// to 2^63 accumulations before overflow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingSubfieldFp4Fp32ProductAccum(pub [u128; 4]);
+
+impl RingSubfieldFp4Fp32ProductAccum {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 4]);
+
+    /// Reduce accumulated unreduced coefficients to a canonical
+    /// `RingSubfieldFp4<Fp32<P>>`.
+    #[inline]
+    pub fn reduce<const P: u32>(self) -> [Fp32<P>; 4] {
+        [
+            Fp32::<P>::from_canonical_u128_reduced(self.0[0]),
+            Fp32::<P>::from_canonical_u128_reduced(self.0[1]),
+            Fp32::<P>::from_canonical_u128_reduced(self.0[2]),
+            Fp32::<P>::from_canonical_u128_reduced(self.0[3]),
+        ]
+    }
+}
+
+impl Add for RingSubfieldFp4Fp32ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([
+            self.0[0].wrapping_add(rhs.0[0]),
+            self.0[1].wrapping_add(rhs.0[1]),
+            self.0[2].wrapping_add(rhs.0[2]),
+            self.0[3].wrapping_add(rhs.0[3]),
+        ])
+    }
+}
+impl AddAssign for RingSubfieldFp4Fp32ProductAccum {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] = self.0[0].wrapping_add(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_add(rhs.0[1]);
+        self.0[2] = self.0[2].wrapping_add(rhs.0[2]);
+        self.0[3] = self.0[3].wrapping_add(rhs.0[3]);
+    }
+}
+impl Sub for RingSubfieldFp4Fp32ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0].wrapping_sub(rhs.0[0]),
+            self.0[1].wrapping_sub(rhs.0[1]),
+            self.0[2].wrapping_sub(rhs.0[2]),
+            self.0[3].wrapping_sub(rhs.0[3]),
+        ])
+    }
+}
+impl SubAssign for RingSubfieldFp4Fp32ProductAccum {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] = self.0[0].wrapping_sub(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_sub(rhs.0[1]);
+        self.0[2] = self.0[2].wrapping_sub(rhs.0[2]);
+        self.0[3] = self.0[3].wrapping_sub(rhs.0[3]);
+    }
+}
+impl Neg for RingSubfieldFp4Fp32ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self([
+            self.0[0].wrapping_neg(),
+            self.0[1].wrapping_neg(),
+            self.0[2].wrapping_neg(),
+            self.0[3].wrapping_neg(),
+        ])
+    }
+}
+
 /// Accumulator for `Fp64 × u64` products (also used for `Fp64 × Fp64`).
 ///
 /// Each product is ≤ 128 bits, split into two u64 halves stored as u128 slots.
@@ -698,6 +783,86 @@ impl Neg for Fp64ProductAccum {
     #[inline]
     fn neg(self) -> Self {
         Self([self.0[0].wrapping_neg(), self.0[1].wrapping_neg()])
+    }
+}
+
+/// Accumulator for `Fp2<Fp64>` products with delayed reduction.
+///
+/// Each coefficient is stored as an `Fp64ProductAccum` (lo64/hi64 limb-split).
+/// This avoids carry-chain arithmetic -- addition is `wrapping_add` per slot.
+/// Reduction delegates to `Fp64ProductAccum::reduce` per coefficient.
+///
+/// Headroom: each `Fp64ProductAccum` slot holds u64 halves in u128,
+/// so 2^64 accumulations before overflow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fp2Fp64ProductAccum(pub [u128; 4]);
+
+impl Fp2Fp64ProductAccum {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 4]);
+
+    /// Reduce accumulated products to a canonical `[Fp64<P>; 2]`.
+    #[inline]
+    pub fn reduce<const P: u64>(self) -> [Fp64<P>; 2] {
+        [
+            Fp64ProductAccum([self.0[0], self.0[1]]).reduce::<P>(),
+            Fp64ProductAccum([self.0[2], self.0[3]]).reduce::<P>(),
+        ]
+    }
+}
+
+impl Add for Fp2Fp64ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([
+            self.0[0].wrapping_add(rhs.0[0]),
+            self.0[1].wrapping_add(rhs.0[1]),
+            self.0[2].wrapping_add(rhs.0[2]),
+            self.0[3].wrapping_add(rhs.0[3]),
+        ])
+    }
+}
+impl AddAssign for Fp2Fp64ProductAccum {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] = self.0[0].wrapping_add(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_add(rhs.0[1]);
+        self.0[2] = self.0[2].wrapping_add(rhs.0[2]);
+        self.0[3] = self.0[3].wrapping_add(rhs.0[3]);
+    }
+}
+impl Sub for Fp2Fp64ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0].wrapping_sub(rhs.0[0]),
+            self.0[1].wrapping_sub(rhs.0[1]),
+            self.0[2].wrapping_sub(rhs.0[2]),
+            self.0[3].wrapping_sub(rhs.0[3]),
+        ])
+    }
+}
+impl SubAssign for Fp2Fp64ProductAccum {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] = self.0[0].wrapping_sub(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_sub(rhs.0[1]);
+        self.0[2] = self.0[2].wrapping_sub(rhs.0[2]);
+        self.0[3] = self.0[3].wrapping_sub(rhs.0[3]);
+    }
+}
+impl Neg for Fp2Fp64ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self([
+            self.0[0].wrapping_neg(),
+            self.0[1].wrapping_neg(),
+            self.0[2].wrapping_neg(),
+            self.0[3].wrapping_neg(),
+        ])
     }
 }
 

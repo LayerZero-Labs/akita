@@ -20,7 +20,8 @@ use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
 use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_algebra::uni_poly::UniPoly;
 use akita_algebra::EqPolynomial;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::fields::HasUnreducedOps;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, Zero};
 #[cfg(feature = "zk")]
 use akita_r1cs::{
     zk_masked_compressed_round_claim_mask, ZkR1csLinearCombination, ZkRelationAccumulator,
@@ -631,7 +632,7 @@ pub fn extension_opening_reduction_eval_at_point<E: FieldCore>(
 #[cfg(feature = "parallel")]
 const DENSE_PARALLEL_PAIR_THRESHOLD: usize = 1 << 14;
 
-fn accumulate_dense_round<E: FieldCore>(
+fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
     witness_evals: &[E],
     factor_evals: &[E],
     coeff: E,
@@ -650,40 +651,44 @@ fn accumulate_dense_round<E: FieldCore>(
     #[cfg(feature = "parallel")]
     {
         if half >= DENSE_PARALLEL_PAIR_THRESHOLD {
-            let (constant, quadratic) = (0..half)
+            let (const_accum, quad_accum) = (0..half)
                 .into_par_iter()
                 .fold(
-                    || (E::zero(), E::zero()),
+                    || (E::ProductAccum::zero(), E::ProductAccum::zero()),
                     |(mut constant, mut quadratic), i| {
                         let w0 = witness_evals[2 * i];
                         let w1 = witness_evals[2 * i + 1];
                         let a0 = factor_evals[2 * i];
                         let a1 = factor_evals[2 * i + 1];
 
-                        constant += w0 * a0;
-                        quadratic += (w1 - w0) * (a1 - a0);
+                        constant += w0.mul_to_product_accum(a0);
+                        quadratic += (w1 - w0).mul_to_product_accum(a1 - a0);
                         (constant, quadratic)
                     },
                 )
                 .reduce(
-                    || (E::zero(), E::zero()),
+                    || (E::ProductAccum::zero(), E::ProductAccum::zero()),
                     |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
                 );
+            let constant = E::reduce_product_accum(const_accum);
+            let quadratic = E::reduce_product_accum(quad_accum);
             return (coeff * constant, coeff * quadratic);
         }
     }
 
-    let mut constant = E::zero();
-    let mut quadratic = E::zero();
+    let mut const_accum = E::ProductAccum::zero();
+    let mut quad_accum = E::ProductAccum::zero();
     for i in 0..half {
         let w0 = witness_evals[2 * i];
         let w1 = witness_evals[2 * i + 1];
         let a0 = factor_evals[2 * i];
         let a1 = factor_evals[2 * i + 1];
 
-        constant += w0 * a0;
-        quadratic += (w1 - w0) * (a1 - a0);
+        const_accum += w0.mul_to_product_accum(a0);
+        quad_accum += (w1 - w0).mul_to_product_accum(a1 - a0);
     }
+    let constant = E::reduce_product_accum(const_accum);
+    let quadratic = E::reduce_product_accum(quad_accum);
     (coeff * constant, coeff * quadratic)
 }
 
@@ -752,6 +757,16 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
         })
     }
 
+    /// Number of sumcheck rounds for this prover instance.
+    pub fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    /// Initial claim for this prover instance.
+    pub fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
     /// Return the final folded witness and factor evaluations after all
     /// challenges have been ingested.
     pub fn final_witness_and_factor_evals(&self) -> Option<(E, E)> {
@@ -760,7 +775,9 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
     }
 }
 
-impl<E: FieldCore> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver<E> {
+impl<E: FieldCore + HasUnreducedOps> SumcheckInstanceProver<E>
+    for ExtensionOpeningReductionProver<E>
+{
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
@@ -1045,50 +1062,6 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         )
     }
 
-    fn accumulate_entries_with_factor<P>(
-        entries: &[(usize, E)],
-        coeff: E,
-        factor_pair: &P,
-    ) -> (E, E)
-    where
-        P: Fn(usize) -> (E, E) + Sync,
-    {
-        let mut constant = E::zero();
-        let mut quadratic = E::zero();
-        let mut i = 0;
-        while i < entries.len() {
-            let pair = entries[i].0 / 2;
-            let mut w0 = E::zero();
-            let mut w1 = E::zero();
-            while i < entries.len() && entries[i].0 / 2 == pair {
-                let (idx, value) = entries[i];
-                if idx & 1 == 0 {
-                    w0 += value;
-                } else {
-                    w1 += value;
-                }
-                i += 1;
-            }
-
-            let (a0, a1) = factor_pair(pair);
-            let da = a1 - a0;
-            if w0 == E::zero() {
-                quadratic += w1 * da;
-            } else {
-                constant += w0 * a0;
-                quadratic += (w1 - w0) * da;
-            }
-        }
-
-        (coeff * constant, coeff * quadratic)
-    }
-
-    fn accumulate_entries(entries: &[(usize, E)], factor_evals: &[E], coeff: E) -> (E, E) {
-        Self::accumulate_entries_with_factor(entries, coeff, &|pair| {
-            (factor_evals[2 * pair], factor_evals[2 * pair + 1])
-        })
-    }
-
     fn fold_entries(entries: &[(usize, E)], r_round: E) -> Vec<(usize, E)> {
         let one_minus = E::one() - r_round;
         let mut folded = Vec::with_capacity(entries.len());
@@ -1133,6 +1106,54 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
             start = end;
         }
         ranges
+    }
+}
+
+impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
+    fn accumulate_entries_with_factor<P>(
+        entries: &[(usize, E)],
+        coeff: E,
+        factor_pair: &P,
+    ) -> (E, E)
+    where
+        P: Fn(usize) -> (E, E) + Sync,
+    {
+        let mut const_accum = E::ProductAccum::zero();
+        let mut quad_accum = E::ProductAccum::zero();
+        let mut i = 0;
+        while i < entries.len() {
+            let pair = entries[i].0 / 2;
+            let mut w0 = E::zero();
+            let mut w1 = E::zero();
+            while i < entries.len() && entries[i].0 / 2 == pair {
+                let (idx, value) = entries[i];
+                if idx & 1 == 0 {
+                    w0 += value;
+                } else {
+                    w1 += value;
+                }
+                i += 1;
+            }
+
+            let (a0, a1) = factor_pair(pair);
+            let da = a1 - a0;
+            if w0 == E::zero() {
+                quad_accum += w1.mul_to_product_accum(da);
+            } else {
+                const_accum += w0.mul_to_product_accum(a0);
+                quad_accum += (w1 - w0).mul_to_product_accum(da);
+            }
+        }
+
+        let constant = E::reduce_product_accum(const_accum);
+        let quadratic = E::reduce_product_accum(quad_accum);
+        (coeff * constant, coeff * quadratic)
+    }
+
+    fn accumulate_entries(entries: &[(usize, E)], factor_evals: &[E], coeff: E) -> (E, E) {
+        Self::accumulate_entries_with_factor(entries, coeff, &|pair| {
+            (factor_evals[2 * pair], factor_evals[2 * pair + 1])
+        })
     }
 
     fn accumulate_round(&self, factor_evals: &[E], coeff: E, constant: &mut E, quadratic: &mut E) {
@@ -1204,7 +1225,9 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         *constant += round_constant;
         *quadratic += round_quadratic;
     }
+}
 
+impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
     fn fold_in_place(&mut self, r_round: E) {
         let _span = tracing::trace_span!(
             "SparseExtensionOpeningWitness::fold_in_place",
@@ -1578,7 +1601,9 @@ impl<E: FieldCore> BatchedExtensionOpeningWitness<E> {
             Self::Sparse(witness) => witness.final_eval(),
         }
     }
+}
 
+impl<E: FieldCore + HasUnreducedOps> BatchedExtensionOpeningWitness<E> {
     fn accumulate_round(
         &self,
         factor: &BatchedExtensionOpeningFactor<E>,
@@ -1606,7 +1631,9 @@ impl<E: FieldCore> BatchedExtensionOpeningWitness<E> {
             }
         }
     }
+}
 
+impl<E: FieldCore> BatchedExtensionOpeningWitness<E> {
     fn fold_with_factor_in_place(
         &mut self,
         factor: &mut BatchedExtensionOpeningFactor<E>,
@@ -1810,7 +1837,9 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionProver<E> {
     }
 }
 
-impl<E: FieldCore> SumcheckInstanceProver<E> for BatchedExtensionOpeningReductionProver<E> {
+impl<E: FieldCore + HasUnreducedOps> SumcheckInstanceProver<E>
+    for BatchedExtensionOpeningReductionProver<E>
+{
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
@@ -1946,36 +1975,6 @@ impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
         EXTENSION_OPENING_REDUCTION_DEGREE
     }
 
-    /// Prove an extension-opening reduction sumcheck.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the prover instance shape does not match this driver
-    /// or any produced round polynomial exceeds the fixed degree bound.
-    pub fn prove<F, T, S>(
-        &self,
-        prover: &mut ExtensionOpeningReductionProver<E>,
-        transcript: &mut T,
-        sample_challenge: S,
-    ) -> Result<(SumcheckProof<E>, ExtensionOpeningReductionRoundResult<E>), AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        T: Transcript<F>,
-        E: AkitaSerialize,
-        S: FnMut(&mut T) -> E,
-    {
-        self.check_prover_shape(prover)?;
-        let (proof, challenges, final_claim) =
-            SumcheckInstanceProverExt::prove::<F, T, S>(prover, transcript, sample_challenge)?;
-        Ok((
-            proof,
-            ExtensionOpeningReductionRoundResult {
-                final_claim,
-                challenges,
-            },
-        ))
-    }
-
     /// Replay extension-opening reduction sumcheck rounds without doing the
     /// final witness-opening check.
     ///
@@ -2038,8 +2037,40 @@ impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
     }
 }
 
+impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningReductionSumcheck<E> {
+    /// Prove an extension-opening reduction sumcheck.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the prover instance shape does not match this driver
+    /// or any produced round polynomial exceeds the fixed degree bound.
+    pub fn prove<F, T, S>(
+        &self,
+        prover: &mut ExtensionOpeningReductionProver<E>,
+        transcript: &mut T,
+        sample_challenge: S,
+    ) -> Result<(SumcheckProof<E>, ExtensionOpeningReductionRoundResult<E>), AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+        E: AkitaSerialize,
+        S: FnMut(&mut T) -> E,
+    {
+        self.check_prover_shape(prover)?;
+        let (proof, challenges, final_claim) =
+            SumcheckInstanceProverExt::prove::<F, T, S>(prover, transcript, sample_challenge)?;
+        Ok((
+            proof,
+            ExtensionOpeningReductionRoundResult {
+                final_claim,
+                challenges,
+            },
+        ))
+    }
+}
+
 #[cfg(feature = "zk")]
-impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
+impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningReductionSumcheck<E> {
     /// Prove an extension-opening reduction sumcheck with ZK round masks.
     ///
     /// # Errors

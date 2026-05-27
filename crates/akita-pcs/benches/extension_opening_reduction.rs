@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp32, fp64};
-use akita_field::{CanonicalBytes, CanonicalField, ExtField, TranscriptChallenge};
+use akita_field::{CanonicalBytes, CanonicalField, ExtField, HasUnreducedOps, TranscriptChallenge};
 use akita_sumcheck::{
     tensor_opening_split, BatchedExtensionOpeningReductionProver,
     BatchedExtensionOpeningReductionTerm, SparseExtensionOpeningWitness, SumcheckInstanceProverExt,
@@ -138,7 +138,7 @@ where
 fn bench_case<F, E>(c: &mut Criterion, label: &str)
 where
     F: CanonicalField + CanonicalBytes + TranscriptChallenge,
-    E: ExtField<F> + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + HasUnreducedOps + akita_serialization::AkitaSerialize,
 {
     let num_vars = env_usize("AKITA_EOR_NUM_VARS", DEFAULT_NUM_VARS);
     let num_polys = env_usize("AKITA_EOR_NUM_POLYS", DEFAULT_NUM_POLYS);

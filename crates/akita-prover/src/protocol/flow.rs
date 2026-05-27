@@ -17,11 +17,10 @@ use crate::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
-use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, Invertible, PseudoMersenneField, RandomSampling,
+    HalvingField, HasUnreducedOps, Invertible, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{
@@ -31,8 +30,7 @@ use akita_sumcheck::{
     tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
     tensor_row_partials_from_columns, BatchedExtensionOpeningReductionProver,
     BatchedExtensionOpeningReductionTerm, ExtensionOpeningReductionProver,
-    ExtensionOpeningReductionSumcheck, SumcheckInstanceProver,
-    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+    ExtensionOpeningReductionSumcheck, SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 #[cfg(feature = "zk")]
 use akita_sumcheck::{
@@ -1095,7 +1093,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -1411,7 +1408,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -1647,7 +1643,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -1803,7 +1798,7 @@ fn prove_recursive_extension_opening_reduction<F, L, T>(
 ) -> Result<RecursiveExtensionOpeningReduction<L>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: ExtField<F> + AkitaSerialize,
+    L: ExtField<F> + HasUnreducedOps + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_vars = opening_point.len();
@@ -1950,7 +1945,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -2154,7 +2148,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -2353,7 +2346,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -2434,7 +2426,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -2651,7 +2642,7 @@ fn prove_prepared_root_extension_opening_reduction<F, E, C, T, P, const D: usize
 where
     F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F> + ExtField<E> + ExtField<F> + AkitaSerialize,
+    C: RingSubfieldEncoding<F> + ExtField<E> + ExtField<F> + HasUnreducedOps + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
 {
@@ -2974,7 +2965,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
@@ -3091,7 +3082,7 @@ pub fn prove_root_fold_with_params<F, E, C, T, P, B, const D: usize, CommitW>(
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     E: RingSubfieldEncoding<F>,
     C: RingSubfieldEncoding<F>
         + ExtField<E>
@@ -3457,7 +3448,7 @@ pub fn prove_terminal_root_fold_with_params<F, E, C, T, P, B, const D: usize>(
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     E: RingSubfieldEncoding<F>,
     C: RingSubfieldEncoding<F> + ExtField<E> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
@@ -3801,7 +3792,7 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, B, const D: usiz
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
@@ -3914,7 +3905,7 @@ pub fn prove_root_fold_from_quadratic<F, C, T, B, const D: usize, CommitW>(
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
@@ -4140,7 +4131,7 @@ pub fn prove_terminal_root_fold_from_quadratic<F, C, T, B, const D: usize>(
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,

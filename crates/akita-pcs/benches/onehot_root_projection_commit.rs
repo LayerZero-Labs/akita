@@ -7,7 +7,7 @@ use akita_config::CommitmentConfig;
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, HasUnreducedOps, PseudoMersenneField, RandomSampling,
+    HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{commit_with_params, AkitaPolyOps, CommitmentProver, OneHotPoly};
@@ -90,7 +90,6 @@ where
         + FromPrimitiveInt
         + RandomSampling
         + HasWide
-        + HasUnreducedOps
         + HalvingField
         + PseudoMersenneField
         + AkitaSerialize
@@ -99,11 +98,8 @@ where
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ClaimField: FrobeniusExtField<F> + RingSubfieldEncoding<F> + AkitaSerialize,
-    Cfg::ChallengeField: FrobeniusExtField<F>
-        + RingSubfieldEncoding<F>
-        + ExtField<Cfg::ClaimField>
-        + HasUnreducedOps
-        + AkitaSerialize,
+    Cfg::ChallengeField:
+        FrobeniusExtField<F> + RingSubfieldEncoding<F> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
     assert_eq!(D, Cfg::D);
 

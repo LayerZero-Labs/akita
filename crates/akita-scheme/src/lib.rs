@@ -2,12 +2,11 @@
 
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig, WCommitmentConfig};
 use akita_field::fields::wide::HasWide;
-use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
+    HasUnreducedOps, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::dispatch_ring_dim_result;
 use akita_prover::{
@@ -116,13 +115,7 @@ fn dispatch_prove_level<F, T, B, const D: usize, Cfg>(
     next_params: LevelParams,
 ) -> Result<ProveLevelOutput<F, Cfg::ChallengeField>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasUnreducedOps
-        + HasWide
-        + HalvingField
-        + PseudoMersenneField,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F>,
@@ -236,7 +229,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + PseudoMersenneField
@@ -312,13 +304,7 @@ fn dispatch_prove_terminal_level<F, T, B, const D: usize, Cfg>(
     final_log_basis: u32,
 ) -> Result<akita_types::TerminalLevelProof<F, Cfg::ChallengeField>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasUnreducedOps
-        + HasWide
-        + HalvingField
-        + PseudoMersenneField,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F>,
@@ -384,7 +370,6 @@ where
         + CanonicalField
         + RandomSampling
         + HasWide
-        + HasUnreducedOps
         + HalvingField
         + FromPrimitiveInt
         + PseudoMersenneField
@@ -628,7 +613,6 @@ where
         + CanonicalField
         + RandomSampling
         + HasWide
-        + HasUnreducedOps
         + HalvingField
         + FromPrimitiveInt
         + PseudoMersenneField
@@ -636,8 +620,11 @@ where
         + AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ClaimField: RingSubfieldEncoding<F>,
-    Cfg::ChallengeField:
-        RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
