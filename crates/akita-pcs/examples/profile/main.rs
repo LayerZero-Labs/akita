@@ -47,6 +47,8 @@ fn main() {
         .unwrap_or(25);
     let num_polys = env_usize("AKITA_NUM_POLYS", 1);
 
+    // Keep the default explicit: old adaptive `full`/`onehot` selectors are
+    // intentionally not part of the profile surface.
     let mode = env::var("AKITA_MODE").unwrap_or_else(|_| "dense_fp128_d32".to_string());
     let enable_trace = env_flag("AKITA_PROFILE_TRACE", true);
     let enable_ansi = env_flag("AKITA_PROFILE_ANSI", true);

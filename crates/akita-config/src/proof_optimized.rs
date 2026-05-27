@@ -52,6 +52,7 @@ where
             stage1_challenge_config: Cfg::stage1_challenge_config,
             envelope,
             ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+            fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
         },
     )
 }
@@ -1019,6 +1020,7 @@ mod tests {
                 stage1_challenge_config: Cfg::stage1_challenge_config,
                 envelope: Cfg::envelope(key.num_vars),
                 ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+                fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
             },
         )
         .expect_err("mismatched SIS family must be rejected");

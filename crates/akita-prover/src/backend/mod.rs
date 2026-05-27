@@ -10,6 +10,7 @@ pub mod poly_helpers;
 mod recursive_hint;
 mod recursive_witness;
 mod sparse_ring;
+mod tensor_fold;
 
 pub use dense::DensePoly;
 pub use field_reduction::{tensor_pack_recursive_witness, RootTensorProjectionPoly};

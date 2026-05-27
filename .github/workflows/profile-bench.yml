@@ -16,6 +16,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
+  # The active benchmark path is pinned to explicit D32 modes. It deliberately
+  # does not use the old adaptive `full`/`onehot` selectors.
   AKITA_BENCH_MODE: onehot_fp128_d32
   AKITA_BENCH_RUNS: "3"
   AKITA_BENCH_CASES: |

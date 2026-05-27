@@ -7,12 +7,11 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::sample_sparse_challenges;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{sample_folding_challenges, stage1_fold_challenge_labels, Challenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
-use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
+use akita_transcript::labels::{self, ABSORB_PROVER_V};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     combine_polys, eval_poly, linear_combination, range_check_eval_from_s,
@@ -21,18 +20,21 @@ use akita_types::{
     MRowLayout, RingSliceSerializer,
 };
 
-/// Absorb the prover's `v` rows and sample the sparse stage-1 fold challenges.
+/// Absorb the prover's `v` rows and sample the stage-1 fold challenges. The
+/// returned [`Challenges`] is either `Flat` (per-block sparse) or
+/// `Tensor` (factored left/right) depending on `lp.fold_challenge_shape`.
 ///
 /// # Errors
 ///
-/// Returns an error if sparse challenge sampling fails.
+/// Returns an error if challenge sampling fails.
 pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     transcript: &mut T,
     v: &[CyclotomicRing<F, D>],
-    num_blocks: usize,
+    num_blocks_per_claim: usize,
+    num_claims: usize,
     lp: &LevelParams,
     m_row_layout: MRowLayout,
-) -> Result<Vec<SparseChallenge>, AkitaError>
+) -> Result<Challenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -44,11 +46,13 @@ where
     if matches!(m_row_layout, MRowLayout::Intermediate) {
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
     }
-    sample_sparse_challenges::<F, T, D>(
+    sample_folding_challenges::<F, T, D>(
         transcript,
-        CHALLENGE_STAGE1_FOLD,
-        num_blocks,
+        num_blocks_per_claim,
+        num_claims,
         &lp.stage1_config,
+        &lp.fold_challenge_shape,
+        stage1_fold_challenge_labels(),
     )
 }
 

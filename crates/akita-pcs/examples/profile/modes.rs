@@ -1,6 +1,7 @@
 use crate::report::print_layout;
 use crate::workload::{onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot};
 use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
+use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
 use akita_field::{
@@ -237,6 +238,13 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp128_d64",
         run: run_profile_onehot_fp128_d64,
     },
+    // Direct comparison mode from the tensor-verifier branch. The generated
+    // tensor preset is D64-only, so this is intentionally not part of the D32
+    // benchmark matrix or `AKITA_MODE=all` sweep.
+    ProfileMode {
+        name: "onehot_fp128_d64_tensor",
+        run: run_profile_onehot_fp128_d64_tensor,
+    },
     ProfileMode {
         name: "dense_fp16_d32",
         run: run_profile_dense_fp16_d32,
@@ -357,6 +365,22 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
     let title = fp128_onehot_title(64, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
+}
+
+fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
+    type Cfg = tensor_verifier::fp128::D64OneHotTensor;
+    let prime = fp128_prime_label();
+    let onehot_k = onehot_k_for_num_vars(nv);
+    let title = if num_polys == 1 {
+        format!(
+            "=== onehot_fp128_d64_tensor (fp128, {prime}, D=64, 1-of-{onehot_k}, tensor-shaped root fold) ==="
+        )
+    } else {
+        format!(
+            "=== onehot_fp128_d64_tensor batched (fp128, {prime}, D=64, 1-of-{onehot_k}, tensor-shaped root fold, same-point batch={num_polys}) ==="
+        )
+    };
+    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64_tensor", &title, nv, num_polys);
 }
 
 fn run_profile_dense_fp128_d32(nv: usize, num_polys: usize) {

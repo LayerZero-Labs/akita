@@ -14,6 +14,8 @@ into an 8-case active D32 matrix across fp16, fp32, fp64, and fp128, reduces
 samples from 5 to 3, and keeps the existing fp128 same-point batched one-hot
 coverage. The intended 9th cell, `dense_fp64_d32:26:1`, remains documented but
 temporarily disabled until PR #105's eq-table sizing fix lands.
+The workflow intentionally replaces the old adaptive fp128 profile selectors
+with explicit D32 cases; the benchmark path does not choose D at runtime.
 
 The PR also fully cuts over profile mode names and benchmark labels, adds
 matrix-first benchmark reports with machine-readable CSV output, preserves
@@ -37,6 +39,11 @@ The checked-in workflow currently runs:
 | `onehot_fp128_d32` | fp128 | 1-of-256 one-hot | 32 | 1 | D32 | Explicit fp128 one-hot mode. |
 | `dense_fp128_d32` | fp128 | dense | 26 | 1 | D32 | Explicit fp128 dense mode. |
 | `onehot_fp128_d32` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D32 | Preserves same-point batched one-hot coverage. |
+
+This is deliberately a D32 matrix. D64 profile modes still exist for direct
+local comparisons, and `main` adds a D64-only tensor-verifier profile mode, but
+neither the adaptive `full`/`onehot` selectors nor the tensor mode are part of
+the active benchmark matrix.
 
 Deferred target cell:
 
@@ -68,35 +75,38 @@ The test-coverage cleanup touches:
 1. Benchmark modes are fully cut over to explicit names. There are no
    compatibility aliases for old bare names such as `onehot`, `full`,
    `full_d32`, `onehot_d32`, or `full_fp16_d32`.
-2. Benchmark-facing labels expose field family, workload, and ring dimension.
+2. The benchmark path is pinned to explicit D32 mode names, not adaptive D
+   selection. `AKITA_BENCH_MODE`, `AKITA_BENCH_CASES`, and the default profile
+   mode all spell out the selected D value.
+3. Benchmark-facing labels expose field family, workload, and ring dimension.
    fp128 rows say `*_fp128_d32`; one-hot rows say `1-of-256 one-hot`.
-3. Case IDs are semantic and stable for new artifacts:
+4. Case IDs are semantic and stable for new artifacts:
    `{field}-{workload[-batched]}-nv{num_vars}-np{num_polys}-d{D}`.
    Loaded summaries are normalized from `(mode, nv, np)` using the new naming
    scheme. This intentionally does not preserve or compare legacy IDs.
-4. Each successful case must emit setup, commit, prove, verify, proof-size,
+5. Each successful case must emit setup, commit, prove, verify, proof-size,
    proof-accounting, proof-level, planned-level, field-role, tail-shape, and
    RSS metrics. Missing required metrics turn that case into a benchmark
    failure.
-5. The dense D32 runtime fallback path must still emit schedule summaries and
+6. The dense D32 runtime fallback path must still emit schedule summaries and
    proof-size accounting from the actual runtime `Schedule`, even when there is
    no generated `AkitaSchedulePlan`.
-6. The benchmark runner keeps later cases after an earlier case fails, writes
+7. The benchmark runner keeps later cases after an earlier case fails, writes
    one row per attempted case to `summary.json` and `summary.csv`, and returns
    a failing exit status if any case failed.
-7. If the benchmark step fails before writing `summary.json`, the render step
+8. If the benchmark step fails before writing `summary.json`, the render step
    writes a synthetic failed summary for the configured matrix and routes it
    through the same full and compact renderers.
-8. Proof-size regression enforcement compares only matching semantic case IDs,
+9. Proof-size regression enforcement compares only matching semantic case IDs,
    skips failed current cases, and skips cases missing from older baselines.
-9. GitHub API conveniences for baseline lookup and PR comment upsert must not
+10. GitHub API conveniences for baseline lookup and PR comment upsert must not
    erase benchmark artifacts. API failures are warnings; artifact upload and
    local rendering still proceed.
-10. Regular debug tests must not duplicate the full fp128 batched one-hot
+11. Regular debug tests must not duplicate the full fp128 batched one-hot
     `nv30 x np4` benchmark proof. That final-witness bound is covered by a
     schedule-level test, while recursive-suffix truncation rejection remains
     covered by a smaller E2E fixture.
-11. Slimmed setup and aggregated E2E tests must keep non-vacuous folded-proof
+12. Slimmed setup and aggregated E2E tests must keep non-vacuous folded-proof
     coverage through explicit `!proof.is_root_direct()` assertions.
 
 ### Non-Goals
@@ -219,7 +229,13 @@ mode surface is now explicit:
 - `onehot_fp{16,32,64,128}_d{32,64}`
 
 The old `full*` and bare `onehot*` names are removed. `AGENTS.md` now points the
-canonical profiling command at `AKITA_MODE=onehot_fp128_d32`.
+canonical profiling command at `AKITA_MODE=onehot_fp128_d32`. This is an
+explicit D32 cutover, not a renamed adaptive selector.
+
+After merging `main`, the profile example also exposes
+`onehot_fp128_d64_tensor` as a direct local comparison mode because the tensor
+verifier preset and generated tables are D64-only. That mode is intentionally
+excluded from the active CI benchmark matrix and from `AKITA_MODE=all`.
 
 ### Benchmark Runner And Artifacts
 
