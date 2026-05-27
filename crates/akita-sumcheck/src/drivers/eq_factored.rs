@@ -450,12 +450,12 @@ where
             // recurrence includes the omitted-linear-term contribution induced
             // by the previous masked claim, so final handoffs must use the
             // accumulated mask rather than only the final round's stored terms.
-            let next_claim_mask = relations.push_masked_eq_factored_mask_transition::<F>(
+            let next_claim_mask = ZkRelationAccumulator::<E>::masked_eq_factored_claim_mask::<F>(
                 &scaled_claim_mask,
                 previous_coeff,
                 &coeffs_except_linear,
                 hiding_cursor,
-            )?;
+            );
             scaled_claim_mask = next_claim_mask;
             challenges.push(r_i);
             round_state.ingest_challenge(round, r_i);

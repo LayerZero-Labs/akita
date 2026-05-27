@@ -504,7 +504,7 @@ where
                     residual,
                     ZkR1csLinearCombination::one(),
                     ZkR1csLinearCombination::zero(),
-                );
+                )?;
             }
             for partial in partials {
                 append_ext_field::<F, C, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
@@ -658,7 +658,7 @@ where
                 )?;
                 let mut residual = y_opening;
                 residual.constant -= batched_openings_per_row[row_idx];
-                zk_push_linear_zero(zk_relations, "root y-ring opening relation", residual);
+                zk_push_linear_zero(zk_relations, "root y-ring opening relation", residual)?;
             }
         }
         #[cfg(not(feature = "zk"))]
@@ -709,7 +709,7 @@ where
                 zk_relations,
                 "root extension-opening reduction output",
                 residual,
-            );
+            )?;
         }
         #[cfg(not(feature = "zk"))]
         {
@@ -1173,7 +1173,7 @@ where
                 zk_relations,
                 "recursive extension-opening partial claim",
                 residual,
-            );
+            )?;
         }
         for partial in &reduction.partials {
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
@@ -1271,7 +1271,7 @@ where
                     zk_relations,
                     "recursive extension-opening reduction output",
                     residual,
-                );
+                )?;
             }
             None => {
                 let true_opening = ZkRelationAccumulator::unmask_lc(
@@ -1280,7 +1280,7 @@ where
                 );
                 let mut residual = y_opening;
                 residual.add_scaled(-L::one(), &true_opening);
-                zk_push_linear_zero(zk_relations, "recursive y-ring opening relation", residual);
+                zk_push_linear_zero(zk_relations, "recursive y-ring opening relation", residual)?;
             }
         }
     }

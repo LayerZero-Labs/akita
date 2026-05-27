@@ -455,57 +455,24 @@ where
     /// stage-1 masked `s_claim` handoff.
     fn initial_claim_mask(
         &self,
-        relations: &mut ZkRelationAccumulator<E>,
+        _relations: &mut ZkRelationAccumulator<E>,
     ) -> Result<ZkR1csLinearCombination<E>, AkitaError> {
-        let true_s_claim_lc = ZkRelationAccumulator::unmask_lc(self.s_claim, &self.s_claim_mask);
-        let true_s_claim = relations.new_auxiliary(
-            "stage-1 true s_claim handoff",
-            true_s_claim_lc,
-            ZkR1csLinearCombination::one(),
-        )?;
-        let scaled_s_claim_mask = relations.new_auxiliary(
-            "stage-2 input mask scaling",
-            self.s_claim_mask.clone(),
-            ZkR1csLinearCombination::constant(self.batching_coeff),
-        )?;
-        let mut input_mask = scaled_s_claim_mask;
+        let mut input_mask = ZkR1csLinearCombination::zero();
+        input_mask.add_scaled(self.batching_coeff, &self.s_claim_mask);
         input_mask.add_scaled(E::one(), &self.relation_claim_mask);
-
-        let mut residual = ZkRelationAccumulator::unmask_lc(self.input_claim(), &input_mask);
-        residual.constant -= self.relation_claim;
-        residual.add_scaled(E::one(), &self.relation_claim_mask);
-        residual.add_scaled(-self.batching_coeff, &true_s_claim);
-        relations.push_r1cs(
-            "stage-1 to stage-2 input handoff",
-            residual,
-            ZkR1csLinearCombination::one(),
-            ZkR1csLinearCombination::zero(),
-        );
         Ok(input_mask)
     }
 
     fn record_input_relation(
         &self,
-        masked_input_claim: E,
-        masked_round_sum: E,
-        round_sum_mask: &ZkR1csLinearCombination<E>,
-        relations: &mut ZkRelationAccumulator<E>,
+        _masked_input_claim: E,
+        _masked_round_sum: E,
+        _round_sum_mask: &ZkR1csLinearCombination<E>,
+        _relations: &mut ZkRelationAccumulator<E>,
     ) -> Result<(), AkitaError> {
-        let mut input_mask = ZkR1csLinearCombination::zero();
-        input_mask.add_scaled(self.batching_coeff, &self.s_claim_mask);
-        input_mask.add_scaled(E::one(), &self.relation_claim_mask);
-
-        let mut residual = ZkRelationAccumulator::unmask_lc(masked_round_sum, round_sum_mask);
-        residual.add_scaled(
-            -E::one(),
-            &ZkRelationAccumulator::unmask_lc(masked_input_claim, &input_mask),
-        );
-        relations.push_r1cs(
-            "stage-2 masked input round sum",
-            residual,
-            ZkR1csLinearCombination::one(),
-            ZkR1csLinearCombination::zero(),
-        );
+        // Compressed sumcheck omits the linear term and reconstructs it from the
+        // incoming masked claim, so the first-round chain equation has no
+        // independent witness content to record here.
         Ok(())
     }
 
@@ -544,7 +511,7 @@ where
         let mut scaled_virtual = ZkR1csLinearCombination::zero();
         scaled_virtual.add_scaled(self.batching_coeff * eq_val, &w_lc);
         scaled_virtual.constant += self.batching_coeff * eq_val + alpha_val * row_val;
-        relations.push_r1cs("stage-2 final oracle", w_lc, scaled_virtual, final_claim);
+        relations.push_r1cs("stage-2 final oracle", w_lc, scaled_virtual, final_claim)?;
         Ok(())
     }
 }

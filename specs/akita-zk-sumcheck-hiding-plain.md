@@ -4,7 +4,7 @@
 | --------- | ---------------------- |
 | Author(s) | Amirhossein Khajehpour |
 | Created   | 2026-05-12             |
-| Updated   | 2026-05-21             |
+| Updated   | 2026-05-26             |
 | Status    | implemented in branch  |
 | PR        |                        |
 
@@ -12,18 +12,32 @@
 
 This branch implements a plain-opening version of Akita's sumcheck-hiding ZK
 path. The proof carries a separate hiding-factor commitment `u_blind`, reveals
-the `hiding_witness`, and verifies deferred R1CS rows from the
-`akita-r1cs` crate directly against that revealed witness.
+the `hiding_witness` and the B-side blinding digits for that commitment, checks
+`u_blind` directly against the revealed payload, and verifies deferred R1CS rows
+from the `akita-r1cs` crate directly against the revealed witness.
 
 This is not the final zero-knowledge protocol. It fixes the transcript shape and
 the relation inventory, but the hiding material remains public until a later
 Spartan / LNP22 / tail-sigma proof replaces the plain opening.
 
+Security boundary: this branch enforces
+`u_blind = Commit(hiding_witness; r_B_h)` by recomputing the commitment from the
+revealed `hiding_witness` and revealed `b_blinding_digits`. That is a plain
+opening check, not a zero-knowledge opening proof. Absorbing `u_blind` before the
+masked opening challenges fixes the intended commit-before-challenge transcript
+shape, but the branch is still not a final zero-knowledge protocol because the
+hiding material and commitment blinding digits remain public.
+
 In folded `feature = "zk"` builds, the implementation currently hides:
 
 - root gamma-combined `y_ring` messages, one ring mask per distinct root opening
   point;
+- root extension-opening reduction partials and compressed reduction-sumcheck
+  messages when tensor projection is active;
 - recursive-level `y_ring` messages, one ring mask per recursive fold level;
+- recursive extension-opening reduction partials and compressed
+  reduction-sumcheck messages when the challenge field is a nontrivial
+  extension;
 - stage-1 eq-factored sumcheck round messages;
 - stage-1 tree child claims between product layers;
 - `AkitaStage1Proof::s_claim`;
@@ -43,12 +57,12 @@ pads stored in `hiding_witness`.
 - Do not implement Spartan, LNP22, or the final joint tail sigma protocol.
 - Do not remove the plain opening of `hiding_witness`.
 - Do not change transparent proof shapes.
-- Do not enforce the hiding-factor commitment opening inside this plain R1CS
-  inventory; `u_blind = Commit(hiding_witness; r_B_h)` remains a future
-  commitment-opening proof.
-- Do not bind the terminal direct-witness `next_w_eval_masked` field inside the
-  R1CS inventory; terminal direct witnesses are checked directly from the
-  revealed terminal payload.
+- Do not prove the hiding-factor commitment opening in zero knowledge. The
+  current verifier enforces `u_blind = Commit(hiding_witness; r_B_h)` by direct
+  recomputation from revealed data.
+- Do not add a terminal direct-witness `next_w_eval_masked` field. Terminal
+  direct-witness levels carry the direct witness payload and no successor
+  next-witness evaluation handoff.
 
 ## Proof Objects
 
@@ -90,52 +104,73 @@ t_h_hat   = decompose(t_h)
 u_blind   = B_h_msg * t_h_hat + B_h_blind * r_B_h
 ```
 
-The verifier currently rejects empty `u_blind` / `hiding_witness` and absorbs
-`u_blind` before root challenges. It does not yet recompute or prove the
-`u_blind` commitment-opening equation; `b_blinding_digits` is serialized for the
-plain payload but is not part of the current folded verifier's R1CS check.
+The verifier rejects empty `u_blind` / `hiding_witness`, reconstructs the padded
+hiding-witness polynomial, recomputes the direct B-side commitment using the
+revealed `b_blinding_digits`, compares the result to `u_blind`, and then absorbs
+`u_blind` before root challenges. `b_blinding_digits` is not part of the
+deferred R1CS inventory; it is consumed by this direct plain-opening commitment
+check.
 
 ## Hiding Witness Layout
 
-The implementation relies on a single cursor through `hiding_witness`. The
-prover allocates and consumes slots in this order:
+The implementation relies on a single cursor through `hiding_witness`, which is
+stored as base-field coefficients. In this section an "extension scalar" means
+one `L` element encoded as `<L as ExtField<F>>::EXT_DEGREE` consecutive
+base-field slots. The prover allocates and consumes slots in this order:
 
 ```text
+if root tensor projection is enabled:
+  root_extension_opening_reduction:
+    partial masks:
+      num_claims * EXT_DEGREE extension scalars
+    compressed reduction-sumcheck pads:
+      (num_vars - log2(EXT_DEGREE)) * EXTENSION_OPENING_REDUCTION_DEGREE
+      extension scalars
+
 root_y_ring_masks:
-  num_root_points * D field elements
+  num_root_points * D base-field slots
 
 if the schedule has at least one fold:
   root_level_pads:
-    for each Stage-1 tree stage:
-      for each eq-factored sumcheck round:
-        EqFactoredUniPoly::coeffs_except_linear_term
-      stage child-claim masks
-    Stage-2 compressed round pads, 3 coefficients per round
+    if the root fold is non-terminal:
+      for each Stage-1 tree stage:
+        for each eq-factored sumcheck round:
+          EqFactoredUniPoly::coeffs_except_linear_term extension scalars
+        stage child-claim masks, extension scalars
+    Stage-2 compressed round pads, 3 extension scalars per round
   if the root fold is not terminal:
     root_next_w_eval_mask:
-      1 field element
+      1 extension scalar
 
   for each recursive fold level after the root:
+    if EXT_DEGREE > 1:
+      recursive_extension_opening_reduction:
+        partial masks:
+          EXT_DEGREE extension scalars
+        compressed reduction-sumcheck pads:
+          (current_opening_vars - log2(EXT_DEGREE))
+          * EXTENSION_OPENING_REDUCTION_DEGREE extension scalars
     recursive_y_ring_mask:
-      D field elements
+      D base-field slots
     recursive_level_pads:
-      same Stage-1 / child-claim / Stage-2 layout as above
+      same conditional Stage-1 / child-claim / Stage-2 layout as above
     if the recursive fold is not terminal:
       recursive_next_w_eval_mask:
-        1 field element
+        1 extension scalar
 ```
 
 The round count for a level is `sumcheck_rounds(ring_dimension, next_w_len)`.
 Stage 1 uses `stage1_tree_stage_shapes(rounds, b)`, where
 `b = 1 << params.log_basis`. Stage 2 has degree bound `3`, so each compressed
-round pad contains three stored coefficients.
+round pad contains three stored extension coefficients. Extension-opening
+reduction has degree bound `EXTENSION_OPENING_REDUCTION_DEGREE = 2`, so each
+compressed reduction round contains two stored extension coefficients.
 
 The prover allocates a scalar `next_w_eval` mask only for non-terminal fold
 levels, where the level's output evaluation is used as the opening claim for a
 successor recursive level. At a terminal direct-witness level, the stage-2 final
-oracle uses the direct witness payload instead, so the terminal
-`next_w_eval_masked` field is not referenced by the current R1CS inventory and
-no terminal mask slot is allocated.
+oracle uses the direct witness payload instead. Terminal proofs do not serialize
+a `next_w_eval_masked` field and no terminal mask slot is allocated.
 
 The verifier consumes the same cursor order for every slot it references, but it
 finishes folded verification by requiring:
@@ -159,6 +194,14 @@ The prover absorbs the public claim incidence, commitments, opening points, and
 opening values, samples gamma batching scalars, and forms one gamma-combined
 `y_ring` per distinct opening point.
 
+When root tensor projection is active, the root proof first carries masked
+extension-opening reduction partials. The verifier records rows binding the
+unmasked partials to the public opening values, absorbs the masked partials,
+verifies the masked compressed reduction sumcheck, and later records an output
+row tying the unmasked reduction final claim to the unmasked root `y_ring`
+openings. When no root extension-opening reduction is present, the verifier uses
+the direct root `y_ring` opening relation described below.
+
 In ZK builds, each root `y_ring` is masked before it is serialized and absorbed:
 
 ```text
@@ -174,6 +217,14 @@ trace((y_sent[j] - g_y_root[j]) * sigma_{-1}(v_j))
   = d * sum_{claims i at point j} gamma_i * opening_i
 ```
 
+In the extension-opening reduction case, the same recovered unmasked `y_ring`
+opening is instead accumulated into the reduction-output row:
+
+```text
+final_claim_true =
+  sum_rows factor(point(row)) * opening_from(y_sent[row] - g_y_root[row])
+```
+
 The serialized masked `y_ring` values are also used to build the masked
 stage-2 wire relation claim, matching the prover's transcript-visible wire
 data. The prover still constructs the root quadratic equation, ring-switch
@@ -182,6 +233,14 @@ witness, and true stage-2 round polynomials from the unmasked `y_ring` values;
 wire claim while retaining the true input claim for local round construction.
 
 ## Recursive Flow
+
+For recursive levels over a nontrivial extension field, the proof carries a
+masked extension-opening reduction before the level's `y_ring`. The verifier
+records a partial-claim row against the current recursive opening, verifies the
+masked compressed reduction sumcheck, and records an output row tying the
+unmasked reduction final claim to the unmasked recursive `y_ring` opening.
+Base-field recursive levels skip this reduction and record the direct `y_ring`
+opening row.
 
 Every non-terminal fold level serializes a masked next-witness evaluation in ZK
 builds:
@@ -240,27 +299,20 @@ q_tilde.stored = q.stored + rho.stored
 stored indices = [0, 2, 3, ..., degree]
 ```
 
-The linear coefficient is still omitted. The verifier advances the masked
-scaled-claim state with the same transition coefficients used by the transparent
-eq-factored driver, while separately synthesizing a verifier-local auxiliary
-wire for the next mask:
+The linear coefficient is still omitted. For every eq-factored round, the
+verifier advances the public masked scaled claim from the transcript-visible
+stored coefficients and updates the hidden claim mask as a running symbolic
+linear combination:
 
 ```text
 eta_i = previous_coeff * eta_{i-1}
       + sum_j transition_coeff_j * rho_i,j
 ```
 
-For every eq-factored round, the verifier also records a deferred R1CS row for
-the masked transition itself. The `eta_i` on the left is the distinct auxiliary
-wire above, not the same linear combination repeated syntactically:
-
-```text
-C_tilde_i - [previous_coeff * C_tilde_{i-1}
-             + sum_j transition_coeff_j * q_tilde_i,j]
-  =
-eta_i - [previous_coeff * eta_{i-1}
-         + sum_j transition_coeff_j * rho_i,j]
-```
+This is not an ordinary R1CS row and no verifier-local auxiliary is allocated
+for the transition. The public transition is replayed directly from `q_tilde`;
+the running mask LC is later used by final-oracle rows to unmask the final
+scaled claim.
 
 For staged range trees, product-stage child claims are also masked:
 
@@ -277,17 +329,18 @@ The final stage-1 handoff is serialized in the existing field:
 AkitaStage1Proof::s_claim = s_claim_true + handoff_mask
 ```
 
-`handoff_mask` is derived from the final eq-factored round pad by evaluating the
-stored terms at that round's challenge:
+`handoff_mask` is the accumulated mask returned by the final leaf eq-factored
+sumcheck. It includes any incoming masked child-claim contribution and every
+stored pad term in that leaf sumcheck's claim-mask recurrence:
 
 ```text
-handoff_mask = rho_leaf_final_round_stored(r_leaf_last)
+handoff_mask = eta_leaf_final
 ```
 
 There is no separate hiding-witness slot allocated directly for
 `AkitaStage1Proof::s_claim`; verifier code may name this value
-`stage1_s_claim_mask`, but it is the handoff mask derived from the final
-eq-factored pad.
+`stage1_s_claim_mask`, but it is the accumulated handoff mask returned by the
+final eq-factored verifier.
 
 The verifier records exact R1CS rows for the stage-1 final oracle. For product
 stages and polynomial/range evaluation, it allocates verifier-local auxiliary
@@ -320,23 +373,25 @@ round-polynomial construction. In ZK builds, `prove_zk(public_input_claim, ...)`
 absorbs the masked wire expression above as the transcript-visible input claim
 without mutating the prover's true input claim.
 
-The verifier records deferred handoff relations that synthesize the true
-Stage-1 handoff and the initial Stage-2 input mask:
+The verifier derives the initial Stage-2 input mask symbolically:
 
 ```text
-s_claim_true = AkitaStage1Proof::s_claim - handoff_mask
 eta_{-1} = batching_coeff * handoff_mask + relation_claim_mask
 ```
 
-It then checks that the unmasked stage-2 input equals:
+The unmasked Stage-2 input is therefore:
 
 ```text
 batching_coeff * s_claim_true + relation_claim_true
 ```
 
-The implementation records this semantic handoff as one combined R1CS row after
-synthesizing verifier-local auxiliaries, rather than as separate rows for each
-displayed equality.
+The implementation does not emit a separate handoff row for this expression:
+`AkitaStage2Verifier::input_claim()` is already the transcript-visible masked
+linear combination
+`batching_coeff * AkitaStage1Proof::s_claim + relation_claim`, and the mask above
+is threaded into the sumcheck as a running linear combination. Emitting a
+handoff row here would only restate this construction rather than check an
+independent witness relation.
 
 That synthesized input mask is then used for Stage 2's first standard-sumcheck
 round. Since compressed standard rounds omit the linear term, the masked chain
@@ -372,30 +427,29 @@ Row-count summary for compressed standard ZK sumchecks:
 
 - No per-round R1CS rows are recorded for the sumcheck chain.
 - Usually one final-oracle R1CS row is recorded per sumcheck.
-- Caller-specific handoff, input, or output rows may be recorded around the
-  sumcheck when another protocol object must be tied to the unmasked claim.
+- Caller-specific output rows may be recorded around the sumcheck when another
+  protocol object must be tied to the unmasked reduced claim.
 
 For Stage 2 this is roughly:
 
 ```text
-1 handoff/input relation
-+ 1 final oracle relation
+1 final oracle relation
 + 0 per-round chain relations
 ```
 
 Extension-opening reduction follows the same compressed-round pattern: it
 propagates masks linearly through the rounds, returns one final unmasked claim
 expression to the caller, and the caller records the later output check that
-consumes that expression. Stage 1 is the exception: its eq-factored ZK
-sumchecks still record one R1CS transition relation per round, plus their final
-relations.
+consumes that expression. Stage 1 is the exception only in message shape: its
+eq-factored ZK sumchecks use `EqFactoredUniPoly` pads and the eq-factored
+omitted-linear transition, then record their product/range final relations.
 
 It consumes the compressed-round pad slots to build the linear mask for the
 final masked claim:
 
 ```text
 final_claim_true =
-  final_claim_wire - rho_last(r_last)
+  final_claim_wire - eta_final
 ```
 
 This final-claim unmasking is represented as a symbolic linear combination and
@@ -418,11 +472,8 @@ final_claim_true - alpha_eval(r_y) * row_eval(r_x) * w_lc
 ```
 
 For terminal levels, `w_lc` is the direct witness evaluation computed by the
-verifier from the final packed witness payload. In that case, the serialized
-`next_w_eval_masked` field is not the source of the final oracle value and no
-R1CS row binds it to the direct witness. This is one of the two intentional
-missing relation classes in this branch; the other is the relation that opens
-`u_blind` as a commitment to `hiding_witness`.
+verifier from the final packed witness payload. Terminal proofs do not serialize
+`next_w_eval_masked`; there is no terminal next-witness handoff field to bind.
 
 ## Relation Accumulator
 
@@ -445,38 +496,48 @@ zk_relations.verify_all(&proof.zk_hiding.hiding_witness)
 
 The current plain verifier checks every accumulated row it records. It does not
 skip R1CS rows with auxiliary variables; those auxiliaries are synthesized during
-`verify_all`. The accumulator does not enforce a minimum private-variable
-support per row. Single-mask linear equations are therefore allowed by the
-container, although the terminal direct-witness binding is intentionally omitted
-from the current inventory. The sumcheck crates use the accumulator only behind
-`feature = "zk"`; transparent sumcheck drivers do not depend on the R1CS API.
+`verify_all`. `verify_all` also lifts the revealed base-field hiding witness into
+the verifier's challenge field before evaluating rows. The accumulator rejects
+ordinary and auxiliary-generation rows with fewer than two effective private
+variables, where private variables are hidden-witness slots or verifier-local
+auxiliary slots after zero coefficients and duplicate-variable cancellations are
+removed. The sumcheck crates use the accumulator only behind `feature = "zk"`;
+transparent sumcheck drivers do not depend on the R1CS API.
 
 For compressed standard sumchecks, `ZkRelationAccumulator` consumes the
 compressed round-mask slots and returns the next claim mask as a linear
 combination, but it intentionally records no per-round R1CS row. The compressed
 message format already forces the masked round sum to equal the incoming masked
 claim. The rows associated with such a sumcheck are instead the surrounding
-semantic rows: a caller-specific input/handoff row when needed, an output row
-when the reduced claim is tied to another object, and the final oracle row that
-checks the unmasked final claim against the protocol oracle. Eq-factored Stage-1
-sumchecks are different: their masked transition is not just the ordinary
-standard compressed round equation, so they still record one R1CS transition row
-per sumcheck round.
+semantic rows: an output row when the reduced claim is tied to another object,
+and the final oracle row that checks the unmasked final claim against the
+protocol oracle. Eq-factored Stage-1 sumchecks now follow the same running-mask
+style for their claim-mask transition:
+`masked_eq_factored_claim_mask` returns the next hidden claim mask as a linear
+combination and records no per-round auxiliary row. Stage-1 still records the
+semantic product/range final rows that tie the unmasked eq-factored final claims
+to the protocol oracle.
 Future work is to prove this same row inventory without revealing
 `hiding_witness`.
 
 ## Transcript Rules
 
-Transparent builds keep the existing proof shapes. Folded transparent and ZK
-builds both serialize the stage-2 next-witness evaluation handoff in the proof;
-the ZK build serializes the masked wire value.
+Transparent builds keep the existing proof shapes. Non-terminal folded
+transparent and ZK builds both serialize the stage-2 next-witness evaluation
+handoff in the proof; the ZK build serializes the masked wire value. Terminal
+direct-witness proofs do not serialize a next-witness evaluation handoff.
 
 In folded ZK builds:
 
 - `u_blind` is absorbed under `ABSORB_ZK_HIDING_COMMITMENT` before root
   challenges that depend on hidden wire data.
 - Root opening claims remain public and are absorbed as before.
+- Root extension-opening reduction partials and compressed reduction-sumcheck
+  messages are masked when that reduction is present.
 - Root and recursive `y_ring` transcript messages are masked wire values.
+- Recursive extension-opening reduction partials and compressed
+  reduction-sumcheck messages are masked when the extension reduction is
+  present.
 - Stage-1 absorbs masked eq-factored round payloads and masked interstage child
   claims.
 - `AkitaStage1Proof::s_claim` is absorbed under the existing label, but its wire
@@ -488,8 +549,8 @@ In folded ZK builds:
 For non-terminal fold levels, the verifier carries `next_w_eval()` and the
 corresponding hidden mask slot into the successor `RecursiveVerifierState`. The
 successor level's opening, y-ring, and stage-2 relations then bind that recursive
-handoff. Terminal direct-witness levels do not bind the serialized
-`next_w_eval_masked` field in R1CS.
+handoff. Terminal direct-witness levels have no serialized
+`next_w_eval_masked` field.
 
 The revealed `hiding_witness`, `b_blinding_digits`, and unmasked true values are
 not absorbed before the masked messages they support are fixed.
@@ -509,7 +570,9 @@ not absorbed before the masked messages they support are fixed.
   - non-ZK: `sumcheck_proof: SumcheckProof<F>` and `next_w_eval`;
   - ZK: `sumcheck_proof_masked: SumcheckProofMasked<F>` and
     `next_w_eval_masked`.
-- `AkitaStage2Proof::next_w_eval()` returns the wire value for the active build.
+- `AkitaStage2Proof::next_w_eval()` returns the wire value for non-terminal
+  handoffs in the active build. Terminal direct-witness proofs do not carry this
+  handoff field.
 - `AkitaLevelProof::y_ring` remains the proof field name; in ZK builds it
   carries the masked wire value.
 
@@ -518,7 +581,7 @@ not absorbed before the masked messages they support are fixed.
 - Owns the plain-opening R1CS building blocks:
   `ZkR1csVariable`, `ZkR1csTerm`, `ZkR1csLinearCombination`, and
   `ZkRelationAccumulator`.
-- Provides the masked standard-sumcheck and masked eq-factored round relation
+- Provides the masked standard-sumcheck and masked eq-factored running-mask
   helpers consumed by the ZK sumcheck verifier drivers.
 - Keeps verifier-local auxiliary wires inside the accumulator. `verify_all`
   synthesizes those auxiliaries while checking rows against the revealed
@@ -540,9 +603,10 @@ not absorbed before the masked messages they support are fixed.
 
 ### `akita-prover`
 
-- `build_zk_hiding_context` samples root y-ring masks, per-level stage-1 pads,
-  stage-1 child-claim masks, stage-2 pads, recursive y-ring masks, and
-  non-terminal `next_w_eval` masks in the cursor order described above.
+- `build_zk_hiding_context` samples root extension-reduction masks, root y-ring
+  masks, per-level stage-1 pads, stage-1 child-claim masks, stage-2 pads,
+  recursive extension-reduction masks, recursive y-ring masks, and non-terminal
+  `next_w_eval` masks in the cursor order described above.
 - `commit_zk_hiding_witness` commits the padded hiding witness as `u_blind`
   using the original root fold parameters (`root_step.params`) adjusted to the
   hiding-witness length, then adds independent B-side blinding digits.
@@ -558,12 +622,15 @@ not absorbed before the masked messages they support are fixed.
 
 ### `akita-verifier`
 
-- Folded verification rejects empty `u_blind` / `hiding_witness`, absorbs
-  `u_blind`, and creates an `akita_r1cs::ZkRelationAccumulator`.
-- The root verifier unpacks root y-ring masks and records root trace-pin R1CS
-  rows.
-- The recursive verifier unpacks both the current opening mask and current
-  y-ring mask before recording recursive trace-pin rows.
+- Folded verification rejects empty `u_blind` / `hiding_witness`, recomputes the
+  hiding-factor commitment from revealed `hiding_witness` and
+  `b_blinding_digits`, absorbs `u_blind`, and creates an
+  `akita_r1cs::ZkRelationAccumulator`.
+- The root verifier unpacks root extension-reduction and y-ring masks, then
+  records root reduction/output or direct trace-pin R1CS rows.
+- The recursive verifier unpacks the current opening mask, optional
+  extension-reduction masks, and current y-ring mask before recording recursive
+  reduction/output or direct trace-pin rows.
 - Stage-1 and stage-2 verification consume only masked proof types in ZK builds.
 - After each non-terminal fold-level Stage-2 verification, the verifier carries
   `stage2.next_w_eval()` and its mask into the next recursive opening state.
@@ -583,18 +650,20 @@ not absorbed before the masked messages they support are fixed.
   pads.
 - Stage-1 tree child claims are masked.
 - `AkitaStage1Proof::s_claim` is masked in ZK builds.
-- `AkitaStage2Proof` uses `next_w_eval_masked` in ZK builds; recursive handoffs
-  are interpreted as masked wire values.
+- Non-terminal `AkitaStage2Proof` values use `next_w_eval_masked` in ZK builds;
+  recursive handoffs are interpreted as masked wire values. Terminal
+  direct-witness proofs do not carry a next-witness handoff field.
 - Recursive Stage-2 next-witness evaluation handoffs are carried with their mask
   into the successor recursive verifier state.
 - The ZK proof path does not carry redundant transparent sumcheck proofs.
+- The plain verifier recomputes and checks the `u_blind` hiding-factor
+  commitment from revealed `hiding_witness` and `b_blinding_digits`.
 - The plain verifier checks the currently recorded R1CS inventory against the
   revealed `hiding_witness`.
 - The folded verifier rejects any extra trailing `hiding_witness` slots beyond
   the consumed cursor.
-- The only intentionally unproven relation classes in this branch are the
-  `u_blind` commitment-opening relation and the terminal direct-witness binding
-  for `next_w_eval_masked`.
+- Eq-factored Stage-1 mask propagation uses a running LC and does not allocate a
+  verifier-local auxiliary for every round.
 - The spec does not claim full zero-knowledge until the plain opening is
   replaced by a proof of the same relation inventory.
 

@@ -74,6 +74,23 @@ impl<E: FieldCore> ZkR1csLinearCombination<E> {
         }
         Some(value)
     }
+
+    fn add_private_coeffs(&self, private_coeffs: &mut Vec<(ZkR1csVariable, E)>) {
+        for term in &self.terms {
+            if term.coeff.is_zero() {
+                continue;
+            }
+            if let Some((_, coeff)) = private_coeffs
+                .iter_mut()
+                .find(|(variable, _)| *variable == term.variable)
+            {
+                *coeff += term.coeff;
+            } else {
+                private_coeffs.push((term.variable, term.coeff));
+            }
+        }
+        private_coeffs.retain(|(_, coeff)| !coeff.is_zero());
+    }
 }
 
 /// A deferred relation over linear combinations in the R1CS witness.
@@ -350,17 +367,22 @@ where
 }
 
 /// Push a linear zero relation `residual = 0`.
+///
+/// # Errors
+///
+/// Returns an error if the resulting row has fewer than two effective private
+/// values.
 pub fn zk_push_linear_zero<E: FieldCore>(
     relations: &mut ZkRelationAccumulator<E>,
     description: &'static str,
     residual: ZkR1csLinearCombination<E>,
-) {
+) -> Result<(), AkitaError> {
     relations.push_r1cs(
         description,
         residual,
         ZkR1csLinearCombination::one(),
         ZkR1csLinearCombination::zero(),
-    );
+    )
 }
 
 /// Return the next claim mask for one masked compressed standard sumcheck round.
@@ -436,20 +458,58 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         Self::default()
     }
 
+    fn private_value_count(
+        a: &ZkR1csLinearCombination<E>,
+        b: &ZkR1csLinearCombination<E>,
+        c: &ZkR1csLinearCombination<E>,
+    ) -> usize {
+        let mut private_coeffs = Vec::new();
+        a.add_private_coeffs(&mut private_coeffs);
+        b.add_private_coeffs(&mut private_coeffs);
+        c.add_private_coeffs(&mut private_coeffs);
+        private_coeffs.len()
+    }
+
+    fn validate_private_value_support(
+        description: &'static str,
+        a: &ZkR1csLinearCombination<E>,
+        b: &ZkR1csLinearCombination<E>,
+        c: &ZkR1csLinearCombination<E>,
+    ) -> Result<(), AkitaError> {
+        let private_values = Self::private_value_count(a, b, c);
+        if private_values < 2 {
+            tracing::error!(
+                description,
+                private_values,
+                "deferred ZK relation has too few private values"
+            );
+            return Err(AkitaError::InvalidInput(format!(
+                "deferred ZK relation has too few private values: {description}"
+            )));
+        }
+        Ok(())
+    }
+
     /// Push an R1CS row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the row has fewer than two effective private values.
     pub fn push_r1cs(
         &mut self,
         description: &'static str,
         a: ZkR1csLinearCombination<E>,
         b: ZkR1csLinearCombination<E>,
         c: ZkR1csLinearCombination<E>,
-    ) {
+    ) -> Result<(), AkitaError> {
+        Self::validate_private_value_support(description, &a, &b, &c)?;
         self.relations.push(ZkR1csRelation::R1cs {
             description,
             a,
             b,
             c,
         });
+        Ok(())
     }
 
     /// Push an auxiliary-generation row and return its synthesized output.
@@ -459,7 +519,8 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
     ///
     /// # Errors
     ///
-    /// Returns an error if auxiliary cursor allocation overflows.
+    /// Returns an error if auxiliary cursor allocation overflows, or if the
+    /// auxiliary-generation row has fewer than two effective private values.
     pub fn new_auxiliary(
         &mut self,
         description: &'static str,
@@ -473,6 +534,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
             .ok_or(AkitaError::InvalidProof)?;
         let auxiliary = ZkR1csVariable::AuxiliaryWitness(aux_index);
         let c = ZkR1csLinearCombination::variable(auxiliary, E::one());
+        Self::validate_private_value_support(description, &a, &b, &c)?;
         self.relations.push(ZkR1csRelation::GenerateAuxiliary {
             description,
             a,
@@ -504,6 +566,11 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
     }
 
     /// Record one masked standard sumcheck round relation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the recorded chain row has fewer than two effective
+    /// private values.
     #[doc(hidden)]
     #[allow(clippy::too_many_arguments)]
     pub fn push_masked_full_round_relation<F>(
@@ -514,7 +581,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
         public_coeffs: &[E],
         r_round: E,
         hiding_cursor: &mut usize,
-    ) -> (ZkR1csLinearCombination<E>, ZkR1csLinearCombination<E>)
+    ) -> Result<(ZkR1csLinearCombination<E>, ZkR1csLinearCombination<E>), AkitaError>
     where
         F: FieldCore,
         E: ExtField<F>,
@@ -567,7 +634,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
             chain_residual,
             ZkR1csLinearCombination::one(),
             ZkR1csLinearCombination::zero(),
-        );
+        )?;
 
         // The next public claim is C~_i = G~_i(r_i), so its mask is
         // eta_i = rho_i(r_i).
@@ -578,10 +645,10 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
             r_power *= r_round;
         }
 
-        (next_mask, round_sum_mask)
+        Ok((next_mask, round_sum_mask))
     }
 
-    /// Materialize one masked eq-factored sumcheck mask transition.
+    /// Return the next claim mask for one masked eq-factored sumcheck round.
     ///
     /// Eq-factored rounds do not send the full round polynomial. They send the
     /// inner polynomial coefficients except the linear term:
@@ -594,17 +661,17 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
     ///
     /// `C~_i = previous_coeff * C~_{i-1} + sum_j coeff_j * q~_j`.
     /// That public transition is replayed directly by the verifier from the
-    /// transcript-visible values. This method only advances the hidden mask:
+    /// transcript-visible values. This method only advances the hidden mask as
+    /// a symbolic running linear combination:
     ///
     /// `eta_i = previous_coeff * eta_{i-1} + sum_j coeff_j * rho_j`.
     #[doc(hidden)]
-    pub fn push_masked_eq_factored_mask_transition<F>(
-        &mut self,
+    pub fn masked_eq_factored_claim_mask<F>(
         previous_mask: &ZkR1csLinearCombination<E>,
         previous_coeff: E,
         transition_coeffs: &[E],
         hiding_cursor: &mut usize,
-    ) -> Result<ZkR1csLinearCombination<E>, AkitaError>
+    ) -> ZkR1csLinearCombination<E>
     where
         F: FieldCore,
         E: ExtField<F>,
@@ -622,11 +689,7 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
             let mask_coeff = zk_ext_mask_lc::<F, E>(hiding_cursor);
             next_mask_transition.add_scaled(transition_coeff, &mask_coeff);
         }
-        self.new_auxiliary(
-            "masked eq-factored sumcheck next mask",
-            next_mask_transition,
-            ZkR1csLinearCombination::one(),
-        )
+        next_mask_transition
     }
 
     /// Check every deferred relation against the revealed plain-opening payload.
@@ -697,26 +760,59 @@ impl<E: FieldCore> ZkRelationAccumulator<E> {
 mod tests {
     use super::{
         lift_hiding_witness, zk_ext_mask_lc, zk_masked_compressed_round_claim_mask,
-        zk_row_masks_from_column_masks, ZkR1csLinearCombination, ZkR1csRelation, ZkR1csVariable,
-        ZkR1csWitness, ZkRelationAccumulator,
+        zk_row_masks_from_column_masks, ZkR1csLinearCombination, ZkR1csVariable, ZkR1csWitness,
+        ZkRelationAccumulator,
     };
-    use akita_field::{ExtField, Prime128Offset275, Prime32Offset99, RingSubfieldFp4};
+    use akita_field::{AkitaError, ExtField, Prime128Offset275, Prime32Offset99, RingSubfieldFp4};
 
     type F = Prime128Offset275;
 
     #[test]
     fn r1cs_relation_checks_hiding_witness_terms() {
         let mut relations = ZkRelationAccumulator::<F>::new();
-        relations.push_r1cs(
-            "test product",
-            ZkR1csLinearCombination::variable(ZkR1csVariable::HiddenWitness(0), F::one()),
-            ZkR1csLinearCombination::variable(ZkR1csVariable::HiddenWitness(1), F::one()),
-            ZkR1csLinearCombination::constant(F::from_u64(12)),
-        );
+        relations
+            .push_r1cs(
+                "test product",
+                ZkR1csLinearCombination::variable(ZkR1csVariable::HiddenWitness(0), F::one()),
+                ZkR1csLinearCombination::variable(ZkR1csVariable::HiddenWitness(1), F::one()),
+                ZkR1csLinearCombination::constant(F::from_u64(12)),
+            )
+            .expect("valid private support");
 
         relations
             .verify_all(&[F::from_u64(3), F::from_u64(4)])
             .expect("valid hiding-backed R1CS row");
+    }
+
+    #[test]
+    fn r1cs_relation_rejects_less_than_two_private_values() {
+        let mut relations = ZkRelationAccumulator::<F>::new();
+        let err = relations
+            .push_r1cs(
+                "single private variable",
+                ZkR1csLinearCombination::variable(ZkR1csVariable::HiddenWitness(0), F::one()),
+                ZkR1csLinearCombination::one(),
+                ZkR1csLinearCombination::zero(),
+            )
+            .expect_err("single-private relation should be rejected");
+
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+        assert!(relations.relations.is_empty());
+    }
+
+    #[test]
+    fn auxiliary_relation_rejects_constant_assignment() {
+        let mut relations = ZkRelationAccumulator::<F>::new();
+        let err = relations
+            .new_auxiliary(
+                "constant auxiliary",
+                ZkR1csLinearCombination::constant(F::from_u64(3)),
+                ZkR1csLinearCombination::one(),
+            )
+            .expect_err("constant auxiliary should be rejected");
+
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+        assert!(relations.relations.is_empty());
     }
 
     #[test]
@@ -743,45 +839,35 @@ mod tests {
     }
 
     #[test]
-    fn eq_factored_mask_transition_materializes_next_mask_only() {
-        let mut relations = ZkRelationAccumulator::<F>::new();
+    fn eq_factored_claim_mask_is_side_effect_free() {
+        let relations = ZkRelationAccumulator::<F>::new();
         let mut cursor = 0usize;
         let previous_mask = zk_ext_mask_lc::<F, F>(&mut cursor);
         let transition_coeffs = [F::from_u64(5), F::from_u64(7)];
 
-        let next_mask = relations
-            .push_masked_eq_factored_mask_transition::<F>(
-                &previous_mask,
-                F::from_u64(3),
-                &transition_coeffs,
-                &mut cursor,
-            )
-            .expect("mask transition auxiliary");
+        let next_mask = ZkRelationAccumulator::<F>::masked_eq_factored_claim_mask::<F>(
+            &previous_mask,
+            F::from_u64(3),
+            &transition_coeffs,
+            &mut cursor,
+        );
 
         assert_eq!(cursor, 3);
         assert_eq!(
-            next_mask,
-            ZkR1csLinearCombination::variable(ZkR1csVariable::AuxiliaryWitness(0), F::one())
+            relations.relations.len(),
+            0,
+            "eq-factored mask transition should stay as a running LC"
         );
-        assert_eq!(relations.relations.len(), 1);
-        let ZkR1csRelation::GenerateAuxiliary {
-            a, b, auxiliary, ..
-        } = &relations.relations[0]
-        else {
-            panic!("eq-factored mask transition should not add a tautological R1CS row");
-        };
-        assert_eq!(*auxiliary, ZkR1csVariable::AuxiliaryWitness(0));
-        assert_eq!(b, &ZkR1csLinearCombination::one());
 
         let hiding_witness = [F::from_u64(2), F::from_u64(11), F::from_u64(13)];
         let witness = ZkR1csWitness::new(&hiding_witness, 0);
         let expected = F::from_u64(3) * hiding_witness[0]
             + transition_coeffs[0] * hiding_witness[1]
             + transition_coeffs[1] * hiding_witness[2];
-        assert_eq!(a.evaluate(&witness), Some(expected));
+        assert_eq!(next_mask.evaluate(&witness), Some(expected));
         relations
             .verify_all(&hiding_witness)
-            .expect("auxiliary mask transition verifies");
+            .expect("empty relation set verifies");
     }
 
     #[test]

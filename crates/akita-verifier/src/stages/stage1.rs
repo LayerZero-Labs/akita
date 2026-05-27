@@ -188,7 +188,7 @@ impl<F: FieldCore + FromPrimitiveInt> ZkEqFactoredFinalRelation<F> for SingleSta
             range_eval,
             ZkR1csLinearCombination::constant(claim_scale * round_state.current_scalar()),
             scaled_claim,
-        );
+        )?;
         Ok(())
     }
 }
@@ -349,7 +349,7 @@ impl<E: FieldCore> ZkEqFactoredFinalRelation<E> for ProductStageVerifier<E> {
             output,
             ZkR1csLinearCombination::constant(claim_scale * round_state.current_scalar()),
             scaled_claim,
-        );
+        )?;
         Ok(())
     }
 }
@@ -456,7 +456,7 @@ impl<E: FieldCore> ZkEqFactoredFinalRelation<E> for PolynomialStageVerifier<E> {
             poly_eval,
             ZkR1csLinearCombination::constant(claim_scale * round_state.current_scalar()),
             scaled_claim,
-        );
+        )?;
         Ok(())
     }
 }
