@@ -1,6 +1,6 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
-use crate::{FlatMatrix, SetupArtifactDigests};
+use crate::{FlatMatrix, LevelParams, SetupArtifactDigests};
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -32,12 +32,185 @@ pub struct SetupMatrixEnvelope {
     pub max_stride: usize,
 }
 
+/// Base A/B/D setup role dimensions for one proof shape.
+///
+/// These dimensions intentionally exclude feature-gated ZK blinding tails.
+/// They describe how the shared base setup matrix is viewed once the global
+/// setup stride is removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetupRoleDimensions {
+    /// A-role row count.
+    pub n_a: usize,
+    /// B-role row count.
+    pub n_b: usize,
+    /// D-role row count.
+    pub n_d: usize,
+    /// A-role packed setup width.
+    pub a_setup_width: usize,
+    /// B-role packed setup width.
+    pub b_setup_width: usize,
+    /// D-role packed setup width.
+    pub d_setup_width: usize,
+}
+
+impl SetupRoleDimensions {
+    /// Dimensions implied by a concrete `LevelParams` value.
+    ///
+    /// This is the schedule-table/key shape and is useful for existing setup
+    /// capacity scans. Batched runtime shapes should use
+    /// [`Self::for_batched_shape`] so grouped B/D widths are computed from the
+    /// actual claim/point incidence.
+    #[inline]
+    #[must_use]
+    pub fn from_level_params(lp: &LevelParams) -> Self {
+        Self {
+            n_a: lp.a_key.row_len(),
+            n_b: lp.b_key.row_len(),
+            n_d: lp.d_key.row_len(),
+            a_setup_width: lp.inner_width(),
+            b_setup_width: lp.outer_width(),
+            d_setup_width: lp.d_matrix_width(),
+        }
+    }
+
+    /// Dimensions for the batched ring-switch shape used by verifier replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` if shape arithmetic overflows, if the runtime
+    /// incidence is empty, or if the `LevelParams` key widths cannot cover the
+    /// packed runtime widths.
+    pub fn for_batched_shape(
+        lp: &LevelParams,
+        num_polys_per_point: &[usize],
+        num_claims: usize,
+    ) -> Result<Self, AkitaError> {
+        if num_polys_per_point.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "setup role dimensions require at least one point".to_string(),
+            ));
+        }
+        if num_claims == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup role dimensions require at least one claim".to_string(),
+            ));
+        }
+        let a_setup_width = lp.inner_width();
+        let d_setup_width = lp
+            .num_digits_open
+            .checked_mul(lp.num_blocks)
+            .and_then(|width| width.checked_mul(num_claims))
+            .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
+        let max_point_poly_count = num_polys_per_point.iter().copied().max().unwrap_or(0);
+        let b_setup_width = max_point_poly_count
+            .checked_mul(lp.a_key.row_len())
+            .and_then(|width| width.checked_mul(lp.num_digits_open))
+            .and_then(|width| width.checked_mul(lp.num_blocks))
+            .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
+        let out = Self {
+            n_a: lp.a_key.row_len(),
+            n_b: lp.b_key.row_len(),
+            n_d: lp.d_key.row_len(),
+            a_setup_width,
+            b_setup_width,
+            d_setup_width,
+        };
+        out.validate_key_widths(lp)?;
+        Ok(out)
+    }
+
+    /// Validate that verifier-reachable key widths cover these setup views.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` if any key column count is too small.
+    pub fn validate_key_widths(&self, lp: &LevelParams) -> Result<(), AkitaError> {
+        if lp.a_key.col_len() < self.a_setup_width {
+            return Err(AkitaError::InvalidSetup(
+                "A-key column width is too small for setup role dimensions".to_string(),
+            ));
+        }
+        if lp.b_key.col_len() < self.b_setup_width {
+            return Err(AkitaError::InvalidSetup(
+                "B-key column width is too small for setup role dimensions".to_string(),
+            ));
+        }
+        if lp.d_key.col_len() < self.d_setup_width {
+            return Err(AkitaError::InvalidSetup(
+                "D-key column width is too small for setup role dimensions".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// A-role packed footprint.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` on arithmetic overflow.
+    pub fn a_footprint(&self) -> Result<usize, AkitaError> {
+        self.n_a
+            .checked_mul(self.a_setup_width)
+            .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))
+    }
+
+    /// B-role packed footprint.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` on arithmetic overflow.
+    pub fn b_footprint(&self) -> Result<usize, AkitaError> {
+        self.n_b
+            .checked_mul(self.b_setup_width)
+            .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))
+    }
+
+    /// D-role packed footprint.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` on arithmetic overflow.
+    pub fn d_footprint(&self) -> Result<usize, AkitaError> {
+        self.n_d
+            .checked_mul(self.d_setup_width)
+            .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))
+    }
+
+    /// Maximum packed base setup footprint across A/B/D.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` on arithmetic overflow.
+    pub fn max_footprint(&self) -> Result<usize, AkitaError> {
+        Ok(self
+            .a_footprint()?
+            .max(self.b_footprint()?)
+            .max(self.d_footprint()?))
+    }
+
+    /// Maximum row count across A/B/D.
+    #[inline]
+    #[must_use]
+    pub fn max_rows(&self) -> usize {
+        self.n_a.max(self.n_b).max(self.n_d)
+    }
+
+    /// Maximum packed width across A/B/D.
+    #[inline]
+    #[must_use]
+    pub fn max_width(&self) -> usize {
+        self.a_setup_width
+            .max(self.b_setup_width)
+            .max(self.d_setup_width)
+    }
+}
+
 impl SetupMatrixEnvelope {
     /// Build an envelope from the current row/stride layout.
     ///
     /// # Errors
     ///
-    /// Returns `InvalidData` if either dimension is zero or if the physical
+    /// Returns `InvalidSetup` if either dimension is zero or if the physical
     /// setup length overflows.
     pub fn from_rows_stride(max_rows: usize, max_stride: usize) -> Result<Self, AkitaError> {
         if max_rows == 0 {
@@ -57,6 +230,19 @@ impl SetupMatrixEnvelope {
             max_setup_len,
             max_rows,
             max_stride,
+        })
+    }
+
+    /// Build a packed envelope from base role dimensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` on arithmetic overflow.
+    pub fn from_role_dimensions(dimensions: SetupRoleDimensions) -> Result<Self, AkitaError> {
+        Ok(Self {
+            max_setup_len: dimensions.max_footprint()?,
+            max_rows: dimensions.max_rows(),
+            max_stride: dimensions.max_width(),
         })
     }
 }
@@ -323,5 +509,88 @@ where
                 &(),
             )?),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::{AjtaiKeyParams, SisModulusFamily};
+    use akita_challenges::SparseChallengeConfig;
+
+    const D: usize = 32;
+
+    fn stage1_config() -> SparseChallengeConfig {
+        SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![-1, 1],
+        }
+    }
+
+    fn sample_level() -> LevelParams {
+        LevelParams::params_only(SisModulusFamily::Q32, D, 3, 3, 5, 7, stage1_config())
+            .with_decomp(4, 3, 2, 6, 1, 0)
+            .expect("sample level should be valid")
+    }
+
+    #[test]
+    fn level_role_dimensions_match_key_widths() {
+        let lp = sample_level();
+        let dims = SetupRoleDimensions::from_level_params(&lp);
+
+        assert_eq!(dims.n_a, 3);
+        assert_eq!(dims.n_b, 5);
+        assert_eq!(dims.n_d, 7);
+        assert_eq!(dims.a_setup_width, lp.inner_width());
+        assert_eq!(dims.b_setup_width, lp.outer_width());
+        assert_eq!(dims.d_setup_width, lp.d_matrix_width());
+        assert_eq!(dims.max_rows(), 7);
+        assert_eq!(dims.max_width(), lp.outer_width());
+    }
+
+    #[test]
+    fn batched_role_dimensions_use_grouped_b_width_and_claim_d_width() {
+        let mut lp = sample_level();
+        let t_cols_per_claim = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
+        lp.b_key = AjtaiKeyParams::new_unchecked(
+            SisModulusFamily::Q32,
+            lp.b_key.row_len(),
+            4 * t_cols_per_claim,
+            0,
+            D,
+        );
+        lp.d_key = AjtaiKeyParams::new_unchecked(
+            SisModulusFamily::Q32,
+            lp.d_key.row_len(),
+            lp.num_digits_open * lp.num_blocks * 3,
+            0,
+            D,
+        );
+        let dims = SetupRoleDimensions::for_batched_shape(&lp, &[2, 1, 4], 3)
+            .expect("shape should fit key widths");
+
+        assert_eq!(dims.a_setup_width, lp.inner_width());
+        assert_eq!(dims.b_setup_width, 4 * t_cols_per_claim);
+        assert_eq!(dims.d_setup_width, lp.num_digits_open * lp.num_blocks * 3);
+        assert_eq!(dims.a_footprint().unwrap(), dims.n_a * dims.a_setup_width);
+        assert_eq!(dims.b_footprint().unwrap(), dims.n_b * dims.b_setup_width);
+        assert_eq!(dims.d_footprint().unwrap(), dims.n_d * dims.d_setup_width);
+
+        let envelope = SetupMatrixEnvelope::from_role_dimensions(dims).unwrap();
+        assert_eq!(envelope.max_setup_len, dims.max_footprint().unwrap());
+        assert_eq!(envelope.max_rows, dims.max_rows());
+        assert_eq!(envelope.max_stride, dims.max_width());
+    }
+
+    #[test]
+    fn batched_role_dimensions_reject_key_width_mismatch() {
+        let mut lp = sample_level();
+        lp.b_key =
+            AjtaiKeyParams::new_unchecked(SisModulusFamily::Q32, lp.b_key.row_len(), 1, 0, D);
+
+        let err = SetupRoleDimensions::for_batched_shape(&lp, &[2, 1], 2)
+            .expect_err("B key cannot cover grouped B setup width");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }

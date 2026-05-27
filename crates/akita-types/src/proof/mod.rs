@@ -30,7 +30,7 @@ pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension}
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{
     AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
-    ZkBlindingSeed,
+    SetupRoleDimensions, ZkBlindingSeed,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
