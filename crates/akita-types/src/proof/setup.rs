@@ -14,7 +14,7 @@ pub type PublicMatrixSeed = [u8; 32];
 /// Public seed used to derive feature-gated ZK blinding setup terms.
 pub type ZkBlindingSeed = [u8; 32];
 
-const SETUP_LAYOUT_TAG: [u8; 16] = *b"AKITA_SETUP_V002";
+const SETUP_LAYOUT_TAG: [u8; 16] = *b"AKITA_SETUP_PACK";
 
 /// Config-derived setup matrix capacity.
 ///
