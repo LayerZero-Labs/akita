@@ -840,16 +840,40 @@ def fmt_optional_bytes(summary: dict[str, object], key: str) -> str:
     return fmt_bytes(float(value))
 
 
-def proof_size_delta(current: dict[str, object], baseline: dict[str, object] | None) -> str:
+def numeric_delta(
+    current: dict[str, object],
+    baseline: dict[str, object] | None,
+    key: str,
+) -> str:
+    """Format a percentage delta of `current[key]` against `baseline[key]`.
+
+    Returns `"n/a"` when either side is missing or the baseline value is
+    zero. Otherwise renders as e.g. `"+5.20%"` or `"-1.23%"`. Used for
+    every per-baseline delta column in the matrix summary so proof size,
+    prover wall-time, and other numeric metrics share one formatter.
+    """
     if baseline is None:
         return "n/a"
-    current_size = current.get("proof_size_bytes")
-    baseline_size = baseline.get("proof_size_bytes")
-    if current_size is None or baseline_size in (None, 0):
+    current_value = current.get(key)
+    baseline_value = baseline.get(key)
+    if current_value is None or baseline_value in (None, 0):
         return "n/a"
-    delta = (float(current_size) / float(baseline_size) - 1.0) * 100.0
+    delta = (float(current_value) / float(baseline_value) - 1.0) * 100.0
     sign = "+" if delta >= 0.0 else ""
     return f"{sign}{delta:.2f}%"
+
+
+# Per-baseline delta columns added to the matrix summary, in the order
+# they appear after the absolute-value columns. `(short_name, summary_key)`
+# pairs: the short name is used in the column header (`"{label} {short_name} Δ"`)
+# and the summary key is read from each case's `summary.json` entry.
+MATRIX_BASELINE_DELTA_COLUMNS: list[tuple[str, str]] = [
+    ("setup", "setup_s"),
+    ("commit", "commit_s"),
+    ("prove", "prove_total_s"),
+    ("verify", "verify_total_s"),
+    ("proof", "proof_size_bytes"),
+]
 
 
 def render_matrix_summary(
@@ -868,7 +892,9 @@ def render_matrix_summary(
         "RSS MiB",
         "Proof B",
     ]
-    headers.extend(f"{label} proof Δ" for label in baseline_columns)
+    for label in baseline_columns:
+        for short_name, _ in MATRIX_BASELINE_DELTA_COLUMNS:
+            headers.append(f"{label} {short_name} Δ")
     print("| " + " | ".join(headers) + " |")
     print("| " + " | ".join(["---"] * len(headers)) + " |")
 
@@ -891,7 +917,9 @@ def render_matrix_summary(
         for _label, summaries in visible_baselines:
             if summaries is None:
                 continue
-            row.append(proof_size_delta(current, summaries.get(str(current["case_id"]))))
+            baseline_case = summaries.get(str(current["case_id"]))
+            for _short_name, summary_key in MATRIX_BASELINE_DELTA_COLUMNS:
+                row.append(numeric_delta(current, baseline_case, summary_key))
         print("| " + " | ".join(row) + " |")
 
     failing_cases = [case for case in current_cases if case_status(case) != "ok"]
