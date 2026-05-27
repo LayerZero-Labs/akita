@@ -914,7 +914,17 @@ def render_matrix_summary(
     current_cases: list[dict[str, object]],
     visible_baselines: list[tuple[str, dict[str, dict[str, object]] | None]],
 ) -> None:
-    baseline_columns = [label for label, summaries in visible_baselines if summaries is not None]
+    # Only the *first* visible baseline (the "Main baseline" by
+    # construction in `render_report`) drives the per-baseline delta
+    # columns in this matrix. The Previous-run baseline is still loaded
+    # and announced in the report header for context, but adding a
+    # second 5-column delta block per case made the matrix table too
+    # wide to scan in the PR comment and largely duplicated information
+    # already visible from the main-baseline column.
+    matrix_baseline: tuple[str, dict[str, dict[str, object]] | None] | None = next(
+        ((label, summaries) for label, summaries in visible_baselines if summaries is not None),
+        None,
+    )
     headers = [
         "Status",
         "Case",
@@ -926,7 +936,8 @@ def render_matrix_summary(
         "RSS MiB",
         "Proof B",
     ]
-    for label in baseline_columns:
+    if matrix_baseline is not None:
+        label = matrix_baseline[0]
         for short_name, _ in MATRIX_BASELINE_DELTA_COLUMNS:
             headers.append(f"{label} {short_name} Δ")
     print("| " + " | ".join(headers) + " |")
@@ -948,10 +959,8 @@ def render_matrix_summary(
             fmt_optional_mib(current, "max_rss_kib"),
             fmt_optional_bytes(current, "proof_size_bytes"),
         ]
-        for _label, summaries in visible_baselines:
-            if summaries is None:
-                continue
-            baseline_case = summaries.get(str(current["case_id"]))
+        if matrix_baseline is not None:
+            baseline_case = matrix_baseline[1].get(str(current["case_id"]))
             for _short_name, summary_key in MATRIX_BASELINE_DELTA_COLUMNS:
                 row.append(numeric_delta(current, baseline_case, summary_key))
         print("| " + " | ".join(row) + " |")
