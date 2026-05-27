@@ -12,7 +12,6 @@
 //! `false` to regenerate from scratch.
 
 use std::collections::HashMap;
-use std::marker::PhantomData;
 
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
@@ -35,59 +34,29 @@ use akita_derive::{schedule_plan_from_table, PlanPolicy};
 
 const MAX_RECURSION_DEPTH: usize = 12;
 
-/// Per-search inputs that aren't derivable from `Cfg`.
+/// Build the [`CommitmentEnvelope`] the planner uses at `num_vars` under
+/// `Cfg`.
 ///
-/// Everything else (ring dimension, decomposition, SIS family, stage-1
-/// challenge config, basis range, fold-challenge shape, etc.) is read
-/// directly off `Cfg`.
-pub(crate) struct SearchOptions<Cfg: CommitmentConfig> {
-    pub key: AkitaScheduleLookupKey,
-    /// Offline schedule table consulted before DP when `use_lookup` is set.
-    pub table: Option<GeneratedScheduleTable>,
-    /// Pre-computed singleton schedule plan for `key.num_vars`.
-    pub schedule_plan: Option<AkitaSchedulePlan>,
-    /// Pre-computed commitment envelope for `key.num_vars`.
-    pub envelope: CommitmentEnvelope,
-    _cfg: PhantomData<Cfg>,
-}
-
-fn search_options<Cfg: CommitmentConfig>(
-    key: AkitaScheduleLookupKey,
+/// When `use_lookup` is true, the envelope is the one `Cfg` ships for
+/// production. When `use_lookup` is false (the `gen_schedule_tables`
+/// idempotency path), the envelope is reconstructed from the audited
+/// SIS-floor rank accessors alone so the planner cannot read back any
+/// value that came from a stored schedule entry — otherwise table
+/// regeneration would not be a fixed point.
+fn planner_envelope<Cfg: CommitmentConfig>(
+    num_vars: usize,
     use_lookup: bool,
-) -> SearchOptions<Cfg> {
-    // When regenerating tables (`use_lookup = false`), drop the singleton
-    // plan and offline table so the DP cannot read back any value that
-    // came from a stored schedule entry — otherwise `gen_schedule_tables`
-    // would not be idempotent. Reconstruct the envelope from the audited
-    // ranks alone, matching what a from-scratch search would compute on
-    // an empty table.
-    let (schedule_plan, table, envelope) = if use_lookup {
-        (
-            Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(key.num_vars))
-                .ok()
-                .flatten(),
-            Cfg::schedule_table(),
-            Cfg::envelope(key.num_vars),
-        )
+) -> CommitmentEnvelope {
+    if use_lookup {
+        Cfg::envelope(num_vars)
     } else {
-        let inner = Cfg::audited_root_rank(AjtaiRole::Inner, key.num_vars);
-        let outer = Cfg::audited_root_rank(AjtaiRole::Outer, key.num_vars);
-        (
-            None,
-            None,
-            CommitmentEnvelope {
-                max_n_a: inner,
-                max_n_b: outer,
-                max_n_d: outer,
-            },
-        )
-    };
-    SearchOptions {
-        key,
-        table,
-        schedule_plan,
-        envelope,
-        _cfg: PhantomData,
+        let inner = Cfg::audited_root_rank(AjtaiRole::Inner, num_vars);
+        let outer = Cfg::audited_root_rank(AjtaiRole::Outer, num_vars);
+        CommitmentEnvelope {
+            max_n_a: inner,
+            max_n_b: outer,
+            max_n_d: outer,
+        }
     }
 }
 
@@ -109,7 +78,8 @@ struct CandidateLevelParams {
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
 /// Returns `None` if the layout is infeasible or doesn't shrink the witness.
 fn derive_candidate_level_params<Cfg: CommitmentConfig>(
-    opts: &SearchOptions<Cfg>,
+    envelope: &CommitmentEnvelope,
+    schedule_plan: Option<&AkitaSchedulePlan>,
     num_vars: usize,
     level: usize,
     current_w_len: usize,
@@ -126,8 +96,8 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
         Cfg::D,
         Cfg::decomposition(),
         Cfg::ring_subfield_embedding_norm_bound(),
-        opts.schedule_plan.as_ref(),
-        &opts.envelope,
+        schedule_plan,
+        envelope,
         Cfg::stage1_challenge_config,
         inputs,
         log_basis,
@@ -281,7 +251,7 @@ fn to_direct_step<Cfg: CommitmentConfig>(current_w_len: usize, log_basis: u32) -
 
 #[allow(clippy::too_many_arguments)]
 fn finalize_terminal_direct_witness_shape<Cfg: CommitmentConfig>(
-    opts: &SearchOptions<Cfg>,
+    envelope: &CommitmentEnvelope,
     num_vars: usize,
     suffix_steps: &mut [Step],
     candidate: &CandidateLevelParams,
@@ -334,7 +304,7 @@ fn finalize_terminal_direct_witness_shape<Cfg: CommitmentConfig>(
         Cfg::decomposition(),
         Cfg::stage1_challenge_config(Cfg::D)?,
         Cfg::ring_subfield_embedding_norm_bound(),
-        &opts.envelope,
+        envelope,
         AkitaScheduleInputs {
             num_vars,
             level: fold_level + 1,
@@ -357,7 +327,7 @@ fn level_params_from_fold_step<Cfg: CommitmentConfig>(step: &FoldStep) -> LevelP
 }
 
 fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
-    opts: &SearchOptions<Cfg>,
+    envelope: &CommitmentEnvelope,
     num_vars: usize,
     level: usize,
     current_w_len: usize,
@@ -374,7 +344,7 @@ fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
             Cfg::decomposition(),
             Cfg::stage1_challenge_config(Cfg::D)?,
             Cfg::ring_subfield_embedding_norm_bound(),
-            &opts.envelope,
+            envelope,
             AkitaScheduleInputs {
                 num_vars,
                 level,
@@ -391,8 +361,10 @@ fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
 
 type ScheduleMemo = HashMap<(usize, usize, u32), (usize, Vec<Step>)>;
 
+#[allow(clippy::too_many_arguments)]
 fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
-    opts: &SearchOptions<Cfg>,
+    envelope: &CommitmentEnvelope,
+    schedule_plan: Option<&AkitaSchedulePlan>,
     memo: &mut ScheduleMemo,
     num_vars: usize,
     level: usize,
@@ -417,7 +389,7 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
                 Err(_) => return Ok((usize::MAX, Vec::new())),
             },
             Cfg::ring_subfield_embedding_norm_bound(),
-            &opts.envelope,
+            envelope,
             AkitaScheduleInputs {
                 num_vars,
                 level,
@@ -443,14 +415,21 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
             if lb < current_lb {
                 continue;
             }
-            let Some(candidate) =
-                derive_candidate_level_params(opts, num_vars, level, current_w_len, lb)?
+            let Some(candidate) = derive_candidate_level_params::<Cfg>(
+                envelope,
+                schedule_plan,
+                num_vars,
+                level,
+                current_w_len,
+                lb,
+            )?
             else {
                 continue;
             };
 
-            let (mut suffix_cost, mut suffix_steps) = derive_optimal_suffix_schedule(
-                opts,
+            let (mut suffix_cost, mut suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
+                envelope,
+                schedule_plan,
                 memo,
                 num_vars,
                 level + 1,
@@ -467,8 +446,8 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
                     Step::Direct(direct) => direct.direct_bytes,
                     Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
                 };
-                finalize_terminal_direct_witness_shape(
-                    opts,
+                finalize_terminal_direct_witness_shape::<Cfg>(
+                    envelope,
                     num_vars,
                     &mut suffix_steps,
                     &candidate,
@@ -501,8 +480,8 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
                 compute_terminal_level_proof_size::<Cfg>(&candidate, terminal_next_w_len, 1)
                     + eor_bytes
             } else {
-                let Ok(next_level_params) = successor_level_params_from_schedule(
-                    opts,
+                let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                    envelope,
                     num_vars,
                     level + 1,
                     candidate.next_w_len,
@@ -736,17 +715,16 @@ fn build_root_candidate_context<Cfg: CommitmentConfig>(
 
 /// Consult the offline schedule tables for a pre-computed answer.
 fn offline_schedule_for_key<Cfg: CommitmentConfig>(
-    opts: &SearchOptions<Cfg>,
+    key: AkitaScheduleLookupKey,
+    table: GeneratedScheduleTable,
+    envelope: CommitmentEnvelope,
 ) -> Result<Option<Schedule>, AkitaError> {
-    let Some(table) = opts.table else {
-        return Ok(None);
-    };
     // Materialization arithmetic is bit-width driven and uses
     // `root_decomp.field_bits()` everywhere, so the field marker is just
     // a phantom — pick a small canonical field that satisfies the bound.
     use akita_field::Prime128OffsetA7F7 as PhantomField;
     let plan = schedule_plan_from_table::<PhantomField, _>(
-        opts.key,
+        key,
         table,
         PlanPolicy {
             sis_family: Cfg::sis_modulus_family(),
@@ -756,7 +734,7 @@ fn offline_schedule_for_key<Cfg: CommitmentConfig>(
             recursive_public_rows: 1,
             extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
             stage1_challenge_config: Cfg::stage1_challenge_config,
-            envelope: opts.envelope,
+            envelope,
             ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
             fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
         },
@@ -795,16 +773,30 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
         ));
     }
 
-    let opts = search_options::<Cfg>(key, use_lookup);
+    // `(envelope, schedule_plan)` are the only per-search inputs not
+    // derivable from `Cfg` alone — they depend on `key.num_vars` and on
+    // `use_lookup`. Compute them once and thread them through the
+    // helpers as plain references; nothing else in the planner needs a
+    // bag-of-options wrapper.
+    let envelope = planner_envelope::<Cfg>(key.num_vars, use_lookup);
+    let schedule_plan: Option<AkitaSchedulePlan> = if use_lookup {
+        Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(key.num_vars))
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
 
     if use_lookup {
-        if let Some(schedule) = offline_schedule_for_key(&opts)? {
-            tracing::debug!(
-                ?key,
-                total_bytes = schedule.total_bytes,
-                "schedule planner: served from offline tables"
-            );
-            return Ok(schedule);
+        if let Some(table) = Cfg::schedule_table() {
+            if let Some(schedule) = offline_schedule_for_key::<Cfg>(key, table, envelope)? {
+                tracing::debug!(
+                    ?key,
+                    total_bytes = schedule.total_bytes,
+                    "schedule planner: served from offline tables"
+                );
+                return Ok(schedule);
+            }
         }
     }
 
@@ -1017,8 +1009,9 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
             // candidate set: a previously-rejected `(m, r)` with a
             // worse `next_w_len` but a smaller total proof can no
             // longer be silently dropped.
-            let (mut suffix_cost, mut suffix_steps) = derive_optimal_suffix_schedule(
-                &opts,
+            let (mut suffix_cost, mut suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
+                &envelope,
+                schedule_plan.as_ref(),
                 &mut memo,
                 key.num_vars,
                 1,
@@ -1039,8 +1032,8 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                     Step::Direct(direct) => direct.direct_bytes,
                     Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
                 };
-                finalize_terminal_direct_witness_shape(
-                    &opts,
+                finalize_terminal_direct_witness_shape::<Cfg>(
+                    &envelope,
                     key.num_vars,
                     &mut suffix_steps,
                     &candidate,
@@ -1066,8 +1059,8 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                 compute_terminal_level_proof_size::<Cfg>(&candidate, terminal_next_w_len, z_vectors)
                     + eor_bytes
             } else {
-                let Ok(next_level_params) = successor_level_params_from_schedule(
-                    &opts,
+                let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                    &envelope,
                     key.num_vars,
                     1,
                     candidate.next_w_len,
