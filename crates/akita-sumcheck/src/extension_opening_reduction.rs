@@ -1074,9 +1074,6 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
             let da = a1 - a0;
             if w0 == E::zero() {
                 quadratic += w1 * da;
-            } else if w1 == E::zero() {
-                constant += w0 * a0;
-                quadratic -= w0 * da;
             } else {
                 constant += w0 * a0;
                 quadratic += (w1 - w0) * da;
