@@ -9,10 +9,11 @@ use akita_field::{
     LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex, OneHotPoly,
+    AkitaPolyOps, AkitaProverSetup, CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex,
+    OneHotPoly,
 };
+use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -161,14 +162,10 @@ where
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
-fn run_prove<
-    FF,
-    const D: usize,
-    Cfg: CommitmentConfig<Field = FF>,
-    P: AkitaPolyOps<FF, D, CommitCache = NttSlotCache<D>>,
->(
+fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPolyOps<FF, D>>(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
+    prepared: &<CpuBackend as ComputeBackendSetup<FF>>::PreparedSetup<D>,
     poly: &P,
     pt: &[Cfg::ClaimField],
     opening: Cfg::ClaimField,
@@ -177,6 +174,7 @@ fn run_prove<
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
+            ProverSetup = AkitaProverSetup<FF, D>,
             ClaimField = Cfg::ClaimField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -204,9 +202,13 @@ fn run_prove<
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
     let t0 = Instant::now();
-    let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(std::slice::from_ref(poly), setup)
-            .unwrap();
+    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
+        setup,
+        &CpuBackend,
+        prepared,
+        std::slice::from_ref(poly),
+    )
+    .unwrap();
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
     let poly_refs: [&P; 1] = [poly];
@@ -218,6 +220,8 @@ fn run_prove<
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         setup,
+        &CpuBackend,
+        prepared,
         vec![(
             pt,
             CommittedPolynomials {
@@ -315,6 +319,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
+            ProverSetup = AkitaProverSetup<FF, D>,
             ClaimField = Cfg::ClaimField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -363,10 +368,16 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         poly.num_vars(),
         1,
         1,
-    );
+    )
+    .unwrap();
+    let setup_expand_secs = t0.elapsed().as_secs_f64();
+    let t_prepare = Instant::now();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    report_timing(label, "setup_expand", setup_expand_secs);
+    report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
 
-    run_prove::<FF, D, Cfg, _>(label, &setup, &poly, &original_pt, opening, plan);
+    run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &poly, &original_pt, opening, plan);
 }
 
 pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -387,6 +398,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
+            ProverSetup = AkitaProverSetup<FF, D>,
             ClaimField = Cfg::ClaimField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -432,10 +444,16 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         onehot_lagrange_opening::<FF, Cfg::ClaimField, u8, D>(&onehot_poly, &pt)
     };
     let t0 = Instant::now();
-    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1);
+    let setup =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1).unwrap();
+    let setup_expand_secs = t0.elapsed().as_secs_f64();
+    let t_prepare = Instant::now();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    report_timing(label, "setup_expand", setup_expand_secs);
+    report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
 
-    run_prove::<FF, D, Cfg, _>(label, &setup, &onehot_poly, &pt, opening, plan);
+    run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &onehot_poly, &pt, opening, plan);
 }
 
 pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -457,6 +475,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
             D,
+            ProverSetup = AkitaProverSetup<FF, D>,
             ClaimField = Cfg::ClaimField,
             VerifierSetup = AkitaVerifierSetup<FF>,
             Commitment = RingCommitment<FF, D>,
@@ -520,12 +539,23 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
-    let setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys, 1);
+    let setup =
+        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys, 1).unwrap();
+    let setup_expand_secs = t0.elapsed().as_secs_f64();
+    let t_prepare = Instant::now();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    report_timing(label, "setup_expand", setup_expand_secs);
+    report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
 
     let t0 = Instant::now();
-    let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(&poly_refs, &setup).unwrap();
+    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
+        &setup,
+        &CpuBackend,
+        &prepared,
+        &poly_refs,
+    )
+    .unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -534,6 +564,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         &setup,
+        &CpuBackend,
+        &prepared,
         vec![(
             &pt[..],
             CommittedPolynomials {

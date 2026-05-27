@@ -6,42 +6,48 @@
 
 pub mod api;
 pub mod backend;
+pub mod compute;
 pub mod kernels;
 pub mod protocol;
-
-pub use akita_config::bind_transcript_instance_descriptor;
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
-    embed_ring_subfield_vector, DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints,
+    embed_ring_subfield_vector, DirectWitnessProof, FlatDigitBlocks, OpeningPoints,
     RingSubfieldEncoding,
 };
 
 pub use api::{
-    batched_commit, batched_commit_with_params, commit, commit_with_params,
+    batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
     prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
 };
 pub use backend::{
-    tensor_pack_recursive_witness, DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
-    RootTensorProjectionPoly, SparseRingPoly,
+    tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
+    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    RootTensorProjectionPoly, SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly,
 };
-pub use kernels::MultiDNttCaches;
+pub use compute::{
+    CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
+    CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
+    FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan, ProverComputeBackend,
+    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
+};
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::QuadraticEquation;
 pub use protocol::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix,
-    build_terminal_root_batched_proof, commit_next_w, prepare_batched_prove_inputs, prove_batched,
-    prove_fold_level_from_quadratic, prove_recursive_fold_with_params, prove_recursive_level,
-    prove_root_direct, prove_root_fold_from_quadratic, prove_root_fold_with_params,
-    prove_terminal_fold_level_from_quadratic, prove_terminal_recursive_fold_with_params,
-    prove_terminal_recursive_level, prove_terminal_root_fold_from_quadratic,
-    prove_terminal_root_fold_with_params, recursive_w_commit_layout_for_d,
+    build_terminal_root_batched_proof, commit_next_w_with_policy, prepare_batched_prove_inputs,
+    prove_batched_with_policy, prove_fold_level_from_quadratic, prove_folded_batched_with_policy,
+    prove_recursive_fold_with_params, prove_recursive_level_with_policy,
+    prove_recursive_suffix_with_policy, prove_root_direct, prove_root_fold_from_quadratic,
+    prove_root_fold_with_params, prove_terminal_fold_level_from_quadratic,
+    prove_terminal_recursive_fold_with_params, prove_terminal_recursive_level_with_policy,
+    prove_terminal_root_fold_from_quadratic, prove_terminal_root_fold_with_params,
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
-    RingSwitchOutput, RootLevelRawOutput,
+    RingSwitchOutput, RootLevelRawOutput, SuffixLevelOutput, SuffixLevelRequest,
 };
 /// One commitment plus the polynomials it bundles, opened at one point.
 ///
@@ -124,9 +130,6 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
 /// backend-specific strategies.
 #[allow(clippy::too_many_arguments)]
 pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
-    /// Per-polynomial cache type for the A-matrix commit path.
-    type CommitCache: Send + Sync;
-
     /// Total number of ring elements in the polynomial.
     fn num_ring_elems(&self) -> usize;
 
@@ -479,17 +482,19 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// # Errors
     ///
     /// Returns an error if the cached matrix-vector multiply fails.
-    fn commit_inner(
+    fn commit_inner<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        ntt_a: &Self::CommitCache,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError>;
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>
+    where
+        F: CanonicalField,
+        B: CommitmentComputeBackend<F>;
 
     /// Inner Ajtai commit step that also preserves recomposed inner rows.
     ///
@@ -497,29 +502,28 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     ///
     /// Returns an error if [`Self::commit_inner`] fails or if the resulting
     /// decomposed blocks cannot be recomposed into full inner rows.
-    fn commit_inner_witness(
+    fn commit_inner_witness<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        ntt_a: &Self::CommitCache,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
+        B: CommitmentComputeBackend<F>,
     {
         let t_hat = self.commit_inner(
-            a_matrix,
-            ntt_a,
+            backend,
+            prepared,
             n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
-            matrix_stride,
         )?;
         let recomposed_inner_rows =
             recompose_commit_inner_blocks::<F, D>(&t_hat, num_digits_open, log_basis)?;
@@ -547,8 +551,6 @@ where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
 {
-    type CommitCache = P::CommitCache;
-
     fn num_ring_elems(&self) -> usize {
         <P as AkitaPolyOps<F, D>>::num_ring_elems(*self)
     }
@@ -697,54 +699,55 @@ where
         P::decompose_fold_tensor_batched(&inner_refs, tensor, block_len, num_digits, log_basis)
     }
 
-    fn commit_inner(
+    fn commit_inner<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        ntt_a: &Self::CommitCache,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>
+    where
+        F: CanonicalField,
+        B: CommitmentComputeBackend<F>,
+    {
         <P as AkitaPolyOps<F, D>>::commit_inner(
             *self,
-            a_matrix,
-            ntt_a,
+            backend,
+            prepared,
             n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
-            matrix_stride,
         )
     }
 
-    fn commit_inner_witness(
+    fn commit_inner_witness<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        ntt_a: &Self::CommitCache,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
+        B: CommitmentComputeBackend<F>,
     {
         <P as AkitaPolyOps<F, D>>::commit_inner_witness(
             *self,
-            a_matrix,
-            ntt_a,
+            backend,
+            prepared,
             n_a,
             block_len,
             num_digits_commit,
             num_digits_open,
             log_basis,
-            matrix_stride,
         )
     }
 
