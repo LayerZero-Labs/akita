@@ -23,7 +23,12 @@ parallel = [
   "akita-prover/parallel",
 ]
 disk-persistence = []
-zk = ["akita-config/zk", "akita-prover/zk", "akita-types/zk"]
+zk = [
+  "akita-config/zk",
+  "akita-planner/zk",
+  "akita-prover/zk",
+  "akita-types/zk",
+]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }

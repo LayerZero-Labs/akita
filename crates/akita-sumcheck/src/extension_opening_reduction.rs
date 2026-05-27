@@ -8,13 +8,23 @@
 //! in at this boundary instead of treating the protocol as an arbitrary product
 //! gadget.
 
-use crate::drivers::prove_sumcheck;
+use crate::drivers::SumcheckInstanceProverExt;
+#[cfg(feature = "zk")]
+use crate::drivers::ZkSumcheckInstanceProverExt;
 use crate::traits::{SumcheckInstanceProver, SumcheckInstanceVerifier};
 use crate::types::SumcheckProof;
+#[cfg(feature = "zk")]
+use crate::types::SumcheckProofMasked;
 use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
+#[cfg(feature = "zk")]
+use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_algebra::uni_poly::UniPoly;
 use akita_algebra::EqPolynomial;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+#[cfg(feature = "zk")]
+use akita_r1cs::{
+    zk_masked_compressed_round_claim_mask, ZkR1csLinearCombination, ZkRelationAccumulator,
+};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::{labels, Transcript};
 #[cfg(feature = "parallel")]
@@ -1936,70 +1946,250 @@ impl<E: FieldCore> SumcheckInstanceVerifier<E> for ExtensionOpeningReductionVeri
     }
 }
 
-/// Prove an extension-opening reduction sumcheck.
+/// Transcript driver for an extension-opening reduction sumcheck.
 ///
-/// # Errors
-///
-/// Returns an error if any produced round polynomial exceeds the fixed
-/// extension-opening reduction degree bound.
-pub fn prove_extension_opening_reduction<F, T, E, S>(
-    prover: &mut ExtensionOpeningReductionProver<E>,
-    transcript: &mut T,
-    sample_challenge: S,
-) -> Result<(SumcheckProof<E>, ExtensionOpeningReductionRoundResult<E>), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-    E: FieldCore + AkitaSerialize,
-    S: FnMut(&mut T) -> E,
-{
-    let (proof, challenges, final_claim) =
-        prove_sumcheck::<F, T, E, S, _>(prover, transcript, sample_challenge)?;
-    Ok((
-        proof,
-        ExtensionOpeningReductionRoundResult {
-            final_claim,
-            challenges,
-        },
-    ))
-}
-
-/// Replay extension-opening reduction sumcheck rounds without doing the final
-/// witness-opening check.
-///
-/// The caller must check
-/// `result.final_claim == opened_witness_at_rho * factor.evaluate(rho)` after
-/// the ordinary single-point opening supplies `opened_witness_at_rho`.
-///
-/// # Errors
-///
-/// Returns an error if the proof shape is inconsistent or a round polynomial
-/// exceeds the fixed extension-opening reduction degree bound.
-pub fn verify_extension_opening_reduction_rounds<F, T, E, S>(
-    proof: &SumcheckProof<E>,
+/// Unlike [`ExtensionOpeningReductionVerifier`], this object only verifies the
+/// round chain and returns the detached final claim. The caller must still check
+/// that final claim against the separately opened transformed witness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExtensionOpeningReductionSumcheck<E: FieldCore> {
     input_claim: E,
     num_rounds: usize,
-    transcript: &mut T,
-    sample_challenge: S,
-) -> Result<ExtensionOpeningReductionRoundResult<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-    E: FieldCore + AkitaSerialize,
-    S: FnMut(&mut T) -> E,
-{
-    transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &input_claim);
-    let (final_claim, challenges) = proof.verify::<F, T, S>(
-        input_claim,
-        num_rounds,
-        EXTENSION_OPENING_REDUCTION_DEGREE,
-        transcript,
-        sample_challenge,
-    )?;
-    Ok(ExtensionOpeningReductionRoundResult {
-        final_claim,
-        challenges,
-    })
+}
+
+impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
+    /// Construct a detached extension-opening reduction sumcheck driver.
+    #[must_use]
+    pub fn new(input_claim: E, num_rounds: usize) -> Self {
+        Self {
+            input_claim,
+            num_rounds,
+        }
+    }
+
+    /// Initial transcript-visible claim.
+    #[must_use]
+    pub fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    /// Number of sumcheck rounds.
+    #[must_use]
+    pub fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    /// Degree bound for each round polynomial.
+    #[must_use]
+    pub fn degree_bound(&self) -> usize {
+        EXTENSION_OPENING_REDUCTION_DEGREE
+    }
+
+    /// Prove an extension-opening reduction sumcheck.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the prover instance shape does not match this driver
+    /// or any produced round polynomial exceeds the fixed degree bound.
+    pub fn prove<F, T, S>(
+        &self,
+        prover: &mut ExtensionOpeningReductionProver<E>,
+        transcript: &mut T,
+        sample_challenge: S,
+    ) -> Result<(SumcheckProof<E>, ExtensionOpeningReductionRoundResult<E>), AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+        E: AkitaSerialize,
+        S: FnMut(&mut T) -> E,
+    {
+        self.check_prover_shape(prover)?;
+        let (proof, challenges, final_claim) =
+            SumcheckInstanceProverExt::prove::<F, T, S>(prover, transcript, sample_challenge)?;
+        Ok((
+            proof,
+            ExtensionOpeningReductionRoundResult {
+                final_claim,
+                challenges,
+            },
+        ))
+    }
+
+    /// Replay extension-opening reduction sumcheck rounds without doing the
+    /// final witness-opening check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the proof shape is inconsistent or a round polynomial
+    /// exceeds the fixed degree bound.
+    pub fn verify<F, T, S>(
+        &self,
+        proof: &SumcheckProof<E>,
+        transcript: &mut T,
+        mut sample_challenge: S,
+    ) -> Result<ExtensionOpeningReductionRoundResult<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+        E: AkitaSerialize,
+        S: FnMut(&mut T) -> E,
+    {
+        if proof.round_polys.len() != self.num_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: self.num_rounds,
+                actual: proof.round_polys.len(),
+            });
+        }
+
+        transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &self.input_claim);
+        let mut claim = self.input_claim;
+        let mut challenges = Vec::with_capacity(self.num_rounds);
+        for poly in &proof.round_polys {
+            if poly.degree() > self.degree_bound() {
+                return Err(AkitaError::InvalidInput(format!(
+                    "extension-opening reduction round poly exceeds degree bound {}",
+                    self.degree_bound()
+                )));
+            }
+            transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
+            let r_i = sample_challenge(transcript);
+            challenges.push(r_i);
+            claim = poly.eval_from_hint(&claim, &r_i);
+        }
+
+        Ok(ExtensionOpeningReductionRoundResult {
+            final_claim: claim,
+            challenges,
+        })
+    }
+
+    fn check_prover_shape(
+        &self,
+        prover: &ExtensionOpeningReductionProver<E>,
+    ) -> Result<(), AkitaError> {
+        if prover.num_rounds() != self.num_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: self.num_rounds,
+                actual: prover.num_rounds(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "zk")]
+impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
+    /// Prove an extension-opening reduction sumcheck with ZK round masks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the prover/pad shape is invalid or any produced round
+    /// polynomial exceeds the fixed degree bound.
+    pub fn prove_zk<F, T, S>(
+        &self,
+        prover: &mut ExtensionOpeningReductionProver<E>,
+        transcript: &mut T,
+        sample_challenge: S,
+        pre_sampled_pads: Vec<CompressedUniPoly<E>>,
+    ) -> Result<
+        (
+            SumcheckProofMasked<E>,
+            ExtensionOpeningReductionRoundResult<E>,
+        ),
+        AkitaError,
+    >
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+        E: AkitaSerialize,
+        S: FnMut(&mut T) -> E,
+    {
+        self.check_prover_shape(prover)?;
+        let (proof, challenges) = ZkSumcheckInstanceProverExt::prove_zk::<F, T, S>(
+            prover,
+            self.input_claim,
+            transcript,
+            sample_challenge,
+            pre_sampled_pads,
+        )?;
+        let (final_witness, final_factor) =
+            prover.final_witness_and_factor_evals().ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "extension-opening reduction has not reached a final point".to_string(),
+                )
+            })?;
+        Ok((
+            proof,
+            ExtensionOpeningReductionRoundResult {
+                final_claim: final_witness * final_factor,
+                challenges,
+            },
+        ))
+    }
+
+    /// Replay masked extension-opening reduction sumcheck rounds and return the
+    /// unmasked final claim as a deferred R1CS linear combination.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the proof shape is inconsistent or any round
+    /// polynomial exceeds the fixed degree bound.
+    #[allow(clippy::too_many_arguments)]
+    pub fn verify_zk<F, T, S>(
+        &self,
+        proof: &SumcheckProofMasked<E>,
+        input_claim_mask: ZkR1csLinearCombination<E>,
+        transcript: &mut T,
+        mut sample_challenge: S,
+        relations: &mut ZkRelationAccumulator<E>,
+        hiding_cursor: &mut usize,
+    ) -> Result<(ZkR1csLinearCombination<E>, Vec<E>), AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+        E: AkitaSerialize + ExtField<F>,
+        S: FnMut(&mut T) -> E,
+    {
+        if proof.masked_round_polys.len() != self.num_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: self.num_rounds,
+                actual: proof.masked_round_polys.len(),
+            });
+        }
+
+        transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &self.input_claim);
+        let mut masked_claim = self.input_claim;
+        let mut claim_mask = input_claim_mask;
+        let mut challenges = Vec::with_capacity(self.num_rounds);
+        for masked_poly in &proof.masked_round_polys {
+            if masked_poly.degree() > self.degree_bound() {
+                return Err(AkitaError::InvalidInput(format!(
+                    "extension-opening reduction round poly exceeds degree bound {}",
+                    self.degree_bound()
+                )));
+            }
+            transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, masked_poly);
+            let r_i = sample_challenge(transcript);
+            challenges.push(r_i);
+            let next_claim_mask = zk_masked_compressed_round_claim_mask::<F, E>(
+                &claim_mask,
+                &masked_poly.coeffs_except_linear_term,
+                r_i,
+                hiding_cursor,
+            );
+            masked_claim = masked_poly.eval_from_hint(&masked_claim, &r_i);
+            claim_mask = next_claim_mask;
+        }
+
+        Ok((
+            relations.push_masked_claim_relation(
+                "extension-opening reduction final claim",
+                masked_claim,
+                &claim_mask,
+            ),
+            challenges,
+        ))
+    }
 }
 
 /// Check the final extension-opening reduction equality.
