@@ -1,6 +1,6 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
-use crate::{FlatMatrix, LevelParams, SetupArtifactDigests};
+use crate::{FlatMatrix, LevelParams, RingMatrixView, SetupArtifactDigests};
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -290,6 +290,53 @@ pub struct AkitaVerifierSetup<F: FieldCore> {
     pub expanded: Arc<AkitaExpandedSetup<F>>,
 }
 
+impl<F: FieldCore> AkitaExpandedSetup<F> {
+    /// Borrow the packed A-role setup prefix at ring dimension `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` if the packed A footprint is not available at
+    /// the requested ring dimension.
+    #[inline]
+    pub fn a_setup_view<const D: usize>(
+        &self,
+        dimensions: SetupRoleDimensions,
+    ) -> Result<RingMatrixView<'_, F, D>, AkitaError> {
+        self.shared_matrix
+            .ring_view::<D>(dimensions.n_a, dimensions.a_setup_width)
+    }
+
+    /// Borrow the packed B-role setup prefix at ring dimension `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` if the packed B footprint is not available at
+    /// the requested ring dimension.
+    #[inline]
+    pub fn b_setup_view<const D: usize>(
+        &self,
+        dimensions: SetupRoleDimensions,
+    ) -> Result<RingMatrixView<'_, F, D>, AkitaError> {
+        self.shared_matrix
+            .ring_view::<D>(dimensions.n_b, dimensions.b_setup_width)
+    }
+
+    /// Borrow the packed D-role setup prefix at ring dimension `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSetup` if the packed D footprint is not available at
+    /// the requested ring dimension.
+    #[inline]
+    pub fn d_setup_view<const D: usize>(
+        &self,
+        dimensions: SetupRoleDimensions,
+    ) -> Result<RingMatrixView<'_, F, D>, AkitaError> {
+        self.shared_matrix
+            .ring_view::<D>(dimensions.n_d, dimensions.d_setup_width)
+    }
+}
+
 impl<F> AkitaExpandedSetup<F>
 where
     F: FieldCore + AkitaSerialize,
@@ -517,9 +564,12 @@ mod tests {
     use super::*;
 
     use crate::{AjtaiKeyParams, SisModulusFamily};
+    use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
+    use akita_field::fields::Prime128Offset275;
 
     const D: usize = 32;
+    type F = Prime128Offset275;
 
     fn stage1_config() -> SparseChallengeConfig {
         SparseChallengeConfig::Uniform {
@@ -532,6 +582,46 @@ mod tests {
         LevelParams::params_only(SisModulusFamily::Q32, D, 3, 3, 5, 7, stage1_config())
             .with_decomp(4, 3, 2, 6, 1, 0)
             .expect("sample level should be valid")
+    }
+
+    fn batched_sample_level() -> (LevelParams, SetupRoleDimensions) {
+        let mut lp = sample_level();
+        let t_cols_per_claim = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
+        lp.b_key = AjtaiKeyParams::new_unchecked(
+            SisModulusFamily::Q32,
+            lp.b_key.row_len(),
+            4 * t_cols_per_claim,
+            0,
+            D,
+        );
+        lp.d_key = AjtaiKeyParams::new_unchecked(
+            SisModulusFamily::Q32,
+            lp.d_key.row_len(),
+            lp.num_digits_open * lp.num_blocks * 3,
+            0,
+            D,
+        );
+        let dims = SetupRoleDimensions::for_batched_shape(&lp, &[2, 1, 4], 3)
+            .expect("shape should fit key widths");
+        (lp, dims)
+    }
+
+    fn setup_from_dimensions(dimensions: SetupRoleDimensions) -> AkitaExpandedSetup<F> {
+        let total = dimensions
+            .max_footprint()
+            .expect("sample dimensions fit usize");
+        let rings = vec![CyclotomicRing::<F, D>::zero(); total];
+        let shared_matrix = FlatMatrix::from_ring_slice(&rings);
+        let seed = AkitaSetupSeed {
+            max_num_vars: 8,
+            max_num_batched_polys: 4,
+            max_num_points: 3,
+            max_stride: dimensions.max_width(),
+            max_setup_len: total,
+            public_matrix_seed: [1u8; 32],
+            zk_blinding_seed: [2u8; 32],
+        };
+        AkitaExpandedSetup::from_parts(seed, shared_matrix).expect("setup descriptor digest")
     }
 
     #[test]
@@ -551,24 +641,8 @@ mod tests {
 
     #[test]
     fn batched_role_dimensions_use_grouped_b_width_and_claim_d_width() {
-        let mut lp = sample_level();
+        let (lp, dims) = batched_sample_level();
         let t_cols_per_claim = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
-        lp.b_key = AjtaiKeyParams::new_unchecked(
-            SisModulusFamily::Q32,
-            lp.b_key.row_len(),
-            4 * t_cols_per_claim,
-            0,
-            D,
-        );
-        lp.d_key = AjtaiKeyParams::new_unchecked(
-            SisModulusFamily::Q32,
-            lp.d_key.row_len(),
-            lp.num_digits_open * lp.num_blocks * 3,
-            0,
-            D,
-        );
-        let dims = SetupRoleDimensions::for_batched_shape(&lp, &[2, 1, 4], 3)
-            .expect("shape should fit key widths");
 
         assert_eq!(dims.a_setup_width, lp.inner_width());
         assert_eq!(dims.b_setup_width, 4 * t_cols_per_claim);
@@ -591,6 +665,51 @@ mod tests {
 
         let err = SetupRoleDimensions::for_batched_shape(&lp, &[2, 1], 2)
             .expect_err("B key cannot cover grouped B setup width");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn expanded_setup_role_views_use_packed_widths() {
+        let (_lp, dims) = batched_sample_level();
+        let setup = setup_from_dimensions(dims);
+
+        let a_view = setup.a_setup_view::<D>(dims).unwrap();
+        let b_view = setup.b_setup_view::<D>(dims).unwrap();
+        let d_view = setup.d_setup_view::<D>(dims).unwrap();
+
+        assert_eq!(a_view.num_rows(), dims.n_a);
+        assert_eq!(a_view.num_cols(), dims.a_setup_width);
+        assert_eq!(b_view.num_rows(), dims.n_b);
+        assert_eq!(b_view.num_cols(), dims.b_setup_width);
+        assert_eq!(d_view.num_rows(), dims.n_d);
+        assert_eq!(d_view.num_cols(), dims.d_setup_width);
+    }
+
+    #[test]
+    fn expanded_setup_role_views_reject_insufficient_prefix() {
+        let (_lp, dims) = batched_sample_level();
+        let total = dims
+            .b_footprint()
+            .expect("sample B footprint fits usize")
+            .checked_sub(1)
+            .expect("sample B footprint is non-zero");
+        let rings = vec![CyclotomicRing::<F, D>::zero(); total];
+        let shared_matrix = FlatMatrix::from_ring_slice(&rings);
+        let seed = AkitaSetupSeed {
+            max_num_vars: 8,
+            max_num_batched_polys: 4,
+            max_num_points: 3,
+            max_stride: dims.max_width(),
+            max_setup_len: total,
+            public_matrix_seed: [1u8; 32],
+            zk_blinding_seed: [2u8; 32],
+        };
+        let setup =
+            AkitaExpandedSetup::from_parts(seed, shared_matrix).expect("setup descriptor digest");
+
+        let err = setup
+            .b_setup_view::<D>(dims)
+            .expect_err("undersized B setup prefix must be rejected");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }
