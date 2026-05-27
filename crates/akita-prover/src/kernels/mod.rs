@@ -7,10 +7,8 @@ pub(crate) mod decompose_fold_avx;
 pub(crate) mod decompose_fold_neon;
 pub mod linear;
 pub mod matrix;
-pub mod ntt_cache;
 
 pub use crt_ntt::{build_ntt_slot, select_crt_ntt_params, NttSlotCache, ProtocolCrtNttParams};
-pub use ntt_cache::MultiDNttCaches;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 pub(crate) use decompose_fold_avx as avx_decompose_fold;

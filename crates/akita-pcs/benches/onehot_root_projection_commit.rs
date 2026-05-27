@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
 
+use akita_prover::{ComputeBackendSetup, CpuBackend};
+
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::{HasWide, ReduceTo};
@@ -116,7 +118,9 @@ where
         .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
         .collect::<Result<Vec<_>, _>>()
         .expect("benchmark root projection");
-    let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys, 1);
+    let setup =
+        <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(num_vars, num_polys, 1).unwrap();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
     let incidence =
         ClaimIncidenceSummary::same_point(num_vars, num_polys).expect("benchmark incidence");
     let params =
@@ -150,8 +154,14 @@ where
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let start = Instant::now();
-                let committed = commit_with_params::<F, D, _>(&transformed_polys, &setup, &params)
-                    .expect("benchmark transformed commitment");
+                let committed = commit_with_params::<F, D, _, CpuBackend>(
+                    &transformed_polys,
+                    setup.expanded.as_ref(),
+                    &CpuBackend,
+                    &prepared,
+                    &params,
+                )
+                .expect("benchmark transformed commitment");
                 total += start.elapsed();
                 black_box(committed);
             }
@@ -165,8 +175,13 @@ where
             for _ in 0..iters {
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
-                let committed = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
-                    .expect("benchmark scheme commitment");
+                let committed = <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &setup,
+                    &CpuBackend,
+                    &prepared,
+                    &polys,
+                )
+                .expect("benchmark scheme commitment");
                 total += start.elapsed();
                 black_box(committed);
             }

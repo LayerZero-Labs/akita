@@ -4,6 +4,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::kernels::crt_ntt::build_ntt_slot;
 use akita_prover::kernels::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row,
@@ -42,7 +43,21 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
         &akita_types::ClaimIncidenceSummary::same_point(NV, 1).expect("singleton incidence"),
     )
     .expect("layout");
-    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+    let setup =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1).unwrap();
+    let total = setup
+        .expanded
+        .shared_matrix
+        .total_ring_elements_at::<D>()
+        .unwrap();
+    let ntt_shared = build_ntt_slot(
+        setup
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(1, total)
+            .unwrap(),
+    )
+    .unwrap();
     let num_blocks = poly.coeffs.len().div_ceil(layout.block_len);
     let block_slices: Vec<&[akita_algebra::CyclotomicRing<F, D>]> = (0..num_blocks)
         .map(|i| {
@@ -63,7 +78,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     group.bench_function("dense_root_matvec_full_nv25_d32", |b| {
         b.iter(|| {
             black_box(mat_vec_mul_ntt_i8_dense(
-                &setup.ntt_shared,
+                &ntt_shared,
                 n_a,
                 inner_width,
                 black_box(&block_slices),
@@ -77,7 +92,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
         |b| {
             b.iter(|| {
                 black_box(mat_vec_mul_ntt_i8_dense_single_row(
-                    &setup.ntt_shared,
+                    &ntt_shared,
                     inner_width,
                     black_box(&block_slices),
                     layout.num_digits_commit,
@@ -103,7 +118,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
             let digit_block_slices: Vec<&[[i8; D]]> =
                 digit_blocks.iter().map(Vec::as_slice).collect();
             black_box(mat_vec_mul_ntt_digits_i8::<F, D>(
-                &setup.ntt_shared,
+                &ntt_shared,
                 n_a,
                 inner_width,
                 black_box(&digit_block_slices),

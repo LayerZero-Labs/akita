@@ -42,8 +42,9 @@ This matches the recursive witness layout where the logical sequential index is
 
 ## Main Code Paths
 
-- Opening split: `src/protocol/opening_point.rs`
-- Root prove/verify wiring: `src/protocol/commitment_scheme.rs`
-- Root block semantics: `crates/akita-prover/src/dense.rs`,
-  `crates/akita-prover/src/onehot.rs`
-- Recursive witness semantics: `crates/akita-prover/src/recursive_witness.rs`
+- Opening split: `crates/akita-types/src/layout/opening_point.rs`
+- Root prove wiring: `crates/akita-prover/src/protocol/flow.rs`
+- Root verify wiring: `crates/akita-verifier/src/protocol/batched.rs`
+- Root block semantics: `crates/akita-prover/src/backend/dense.rs`,
+  `crates/akita-prover/src/backend/onehot.rs`
+- Recursive witness semantics: `crates/akita-prover/src/backend/recursive_witness.rs`
