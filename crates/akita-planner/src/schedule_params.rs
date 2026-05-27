@@ -18,13 +18,13 @@ use akita_field::AkitaError;
 use akita_types::generated::sis_floor::{ceil_supported_collision, sis_max_widths};
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::layout::digit_math::{
-    compute_num_digits_fold_with_claims, compute_num_digits_full_field,
+    compute_num_digits_fold_with_claims, compute_num_digits_full_field, num_digits_for_bound,
 };
 use akita_types::AkitaSchedulePlan;
 use akita_types::{
-    decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
-    level_proof_bytes, root_extension_opening_partials, scale_batched_root_layout,
-    schedule_from_plan, terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+    root_extension_opening_partials, scale_batched_root_layout, schedule_from_plan,
+    terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AjtaiRole,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentEnvelope, DirectStep,
     DirectWitnessShape, FoldStep, LevelParams, MRowLayout, Schedule, Step,
@@ -518,7 +518,7 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
 // Key-derived root sizing
 // -----------------------------------------------------------------------
 
-fn root_w_ring_element_count<Cfg: CommitmentConfig>(
+fn root_next_witness_len<Cfg: CommitmentConfig>(
     lp: &LevelParams,
     key: AkitaScheduleLookupKey,
 ) -> Result<usize, AkitaError> {
@@ -537,26 +537,32 @@ fn root_w_ring_element_count<Cfg: CommitmentConfig>(
     let r = r_rows * r_decomp;
 
     #[cfg(feature = "zk")]
-    {
-        let d_blinding = akita_types::zk::blinding_column_count_from_bits(
-            lp.d_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-            fb as usize,
-        );
-        let b_blinding = num_points
-            * akita_types::zk::blinding_column_count_from_bits(
-                lp.b_key.row_len(),
+    let raw_w_ring = w_hat
+        + t_hat
+        + {
+            let d_blinding = akita_types::zk::blinding_column_count_from_bits(
+                lp.d_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
                 fb as usize,
             );
-        Ok(w_hat + t_hat + b_blinding + d_blinding + z_pre + r)
-    }
+            let b_blinding = num_points
+                * akita_types::zk::blinding_column_count_from_bits(
+                    lp.b_key.row_len(),
+                    lp.ring_dimension,
+                    lp.log_basis,
+                    fb as usize,
+                );
+            b_blinding + d_blinding
+        }
+        + z_pre
+        + r;
     #[cfg(not(feature = "zk"))]
-    {
-        Ok(w_hat + t_hat + z_pre + r)
-    }
+    let raw_w_ring = w_hat + t_hat + z_pre + r;
+
+    raw_w_ring
+        .checked_mul(lp.ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("root recursive witness length overflow".into()))
 }
 
 // -----------------------------------------------------------------------
@@ -578,22 +584,228 @@ fn rank_floor_from_table(table: &[u64], width: usize) -> Option<usize> {
     None
 }
 
-/// Compose A-role collision norm before SIS-floor bucket rounding.
+/// Compute the A-role weak-binding collision norm for the SIS-floor lookup.
 ///
-/// Mirrors the formula in `akita_derive::derivation` so the planner and
-/// the verifier-reachable derivation agree on the bucket. The honest
-/// commit-coefficient bound when `log_commit_bound == 1` is the tight
-/// constant `2`; otherwise it equals the digit / B-D bound.
-fn a_role_collision_raw(
+/// Implements the A-column-block argument of `2·ω̄·β̄` from
+/// Lemma 7 ("Weak Binding") of the Hachi paper.
+///
+/// - `β̄` is the per-coefficient half-width of an honest commit
+///   coefficient, so `2·β̄` is the diff bound across two honest openings;
+/// - `ω̄` is the stage-1 sparse-challenge infinity norm.
+///
+/// An extra `ring_subfield_norm` factor accounts for embedding the
+/// subfield challenge into the cyclotomic ring of integers via `ψ`; it is
+/// not present in the paper's abstract lemma but is required by the
+/// concrete Akita instantiation.
+fn compute_weak_binding_norm_for_a(
+    log_basis: u32,
     log_commit_bound: u32,
-    bd_raw: u32,
     stage1_inf_norm: u32,
     ring_subfield_norm: u32,
 ) -> Option<u32> {
-    let a_raw = if log_commit_bound == 1 { 2 } else { bd_raw };
-    a_raw
-        .checked_mul(stage1_inf_norm)?
-        .checked_mul(ring_subfield_norm)
+    let beta = log_basis
+        .checked_sub(1)
+        .and_then(|s| 1u32.checked_shl(s))
+        .and_then(|b| b.checked_sub(1))?;
+    let beta: u32 = if log_commit_bound == 1 { 1 } else { beta };
+    let omega: u32 = stage1_inf_norm;
+    beta.checked_mul(2)
+        .and_then(|v| v.checked_mul(omega))
+        .and_then(|v| v.checked_mul(ring_subfield_norm))
+}
+
+/// Resolve the per-candidate digit count for the honest commit
+/// coefficients from `Cfg` and the candidate `log_basis`.
+fn num_digits_commit_for<Cfg: CommitmentConfig>(log_basis: u32) -> usize {
+    let decomp = Cfg::decomposition();
+    num_digits_for_bound(decomp.log_commit_bound, decomp.field_bits(), log_basis)
+}
+
+/// Resolve the per-candidate digit count for the opened coefficients
+/// from `Cfg` and the candidate `log_basis`. Mirrors the call-site fall
+/// back from `log_open_bound` to `log_commit_bound`.
+fn num_digits_open_for<Cfg: CommitmentConfig>(log_basis: u32) -> usize {
+    let decomp = Cfg::decomposition();
+    let log_open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+    num_digits_for_bound(log_open_bound, decomp.field_bits(), log_basis)
+}
+
+/// Resolve the raw B/D-role weak-binding collision norm
+/// `2^log_basis − 1` — the digit-diff bound shared by the B and D
+/// SIS-floor lookups. Returns `None` on `log_basis` shift overflow.
+fn bd_collision_raw(log_basis: u32) -> Option<u32> {
+    1u32.checked_shl(log_basis).and_then(|b| b.checked_sub(1))
+}
+
+/// Build the A-role `AjtaiKeyParams` for a candidate root tile.
+///
+/// Everything besides the block geometry is derived from `Cfg` and the
+/// candidate `log_basis`:
+///
+/// - `num_digits_commit` via [`num_digits_commit_for`].
+/// - `a_collision_raw` (the `2·ω̄·β̄` weak-binding norm from Hachi
+///   Lemma 7) via [`compute_weak_binding_norm_for_a`].
+///
+/// Then the full A-role sizing pipeline runs end-to-end:
+///
+/// 1. `inner_width = block_len * num_digits_commit` (col_len of A).
+/// 2. Round `a_collision_raw` up to the next audited bucket.
+/// 3. Resolve the generated SIS-floor `max_widths` row for that bucket.
+/// 4. Look up the smallest A-row count `matrix_a_rank` (row_len of A)
+///    whose secure width covers `inner_width`.
+/// 5. Hand `(matrix_a_rank, inner_width, a_bucket)` to
+///    `AjtaiKeyParams::try_new` for the boundary audit.
+///
+/// Returns `Ok(None)` when steps 1-4 fall off the generated tables
+/// (skip this candidate), `Err(...)` only on a hard audit / Cfg error,
+/// and `Ok(Some(key))` on success.
+fn compute_ajtai_key_params_a<Cfg: CommitmentConfig>(
+    block_len: usize,
+    log_basis: u32,
+) -> Result<Option<AjtaiKeyParams>, AkitaError> {
+    let decomp = Cfg::decomposition();
+    let stage1 = Cfg::stage1_challenge_config(Cfg::D)?;
+    let Some(a_collision_raw) = compute_weak_binding_norm_for_a(
+        log_basis,
+        decomp.log_commit_bound,
+        stage1.infinity_norm(),
+        Cfg::ring_subfield_embedding_norm_bound(),
+    ) else {
+        return Ok(None);
+    };
+    let num_digits_commit = num_digits_commit_for::<Cfg>(log_basis);
+    let Some(inner_width) = block_len.checked_mul(num_digits_commit) else {
+        return Ok(None);
+    };
+    let Some(a_bucket) =
+        ceil_supported_collision(Cfg::sis_modulus_family(), Cfg::D as u32, a_collision_raw)
+    else {
+        return Ok(None);
+    };
+    let Some(a_table) = sis_max_widths(Cfg::sis_modulus_family(), Cfg::D as u32, a_bucket) else {
+        return Ok(None);
+    };
+    let Some(matrix_a_rank) = rank_floor_from_table(a_table, inner_width) else {
+        return Ok(None);
+    };
+    AjtaiKeyParams::try_new(
+        Cfg::sis_modulus_family(),
+        matrix_a_rank,
+        inner_width,
+        a_bucket,
+        Cfg::D,
+    )
+    .map(Some)
+}
+
+/// Build the B-role `AjtaiKeyParams` for a candidate root tile.
+///
+/// Inputs are the truly call-site-dependent values (the rank flowing in
+/// from the A role plus the block-fanout shape); everything else is
+/// derived from `Cfg` and `log_basis`:
+///
+/// - `num_digits_open` via [`num_digits_open_for`].
+/// - `bd_collision_raw = 2^log_basis − 1` via [`bd_collision_raw`].
+///
+/// Pipeline:
+///
+/// 1. `vector_t_len = matrix_a_rank * num_digits_open * num_blocks * t_vectors`
+///    (col_len of B — the batched column count across all `t` vectors).
+/// 2. Round `bd_collision_raw` up to the next audited bucket.
+/// 3. Resolve the generated SIS-floor `max_widths` row for that bucket.
+/// 4. Look up the smallest B-row count `matrix_b_rank` whose secure
+///    width covers `vector_t_len`.
+/// 5. Hand `(matrix_b_rank, vector_t_len, bd_bucket)` to
+///    `AjtaiKeyParams::try_new`.
+///
+/// See [`compute_ajtai_key_params_a`] for the return contract.
+fn compute_ajtai_key_params_b<Cfg: CommitmentConfig>(
+    matrix_a_rank: usize,
+    num_blocks: usize,
+    t_vectors: usize,
+    log_basis: u32,
+) -> Result<Option<AjtaiKeyParams>, AkitaError> {
+    let num_digits_open = num_digits_open_for::<Cfg>(log_basis);
+    let Some(bd_raw) = bd_collision_raw(log_basis) else {
+        return Ok(None);
+    };
+    let Some(vector_t_len) = matrix_a_rank
+        .checked_mul(num_digits_open)
+        .and_then(|w| w.checked_mul(num_blocks))
+        .and_then(|w| w.checked_mul(t_vectors))
+    else {
+        return Ok(None);
+    };
+    let Some(bd_bucket) =
+        ceil_supported_collision(Cfg::sis_modulus_family(), Cfg::D as u32, bd_raw)
+    else {
+        return Ok(None);
+    };
+    let Some(bd_table) = sis_max_widths(Cfg::sis_modulus_family(), Cfg::D as u32, bd_bucket) else {
+        return Ok(None);
+    };
+    let Some(matrix_b_rank) = rank_floor_from_table(bd_table, vector_t_len) else {
+        return Ok(None);
+    };
+    AjtaiKeyParams::try_new(
+        Cfg::sis_modulus_family(),
+        matrix_b_rank,
+        vector_t_len,
+        bd_bucket,
+        Cfg::D,
+    )
+    .map(Some)
+}
+
+/// Build the D-role `AjtaiKeyParams` for a candidate root tile.
+///
+/// Pipeline:
+///
+/// 1. `d_width = num_digits_open * num_blocks * t_vectors` (col_len of
+///    D — independent of `matrix_a_rank`).
+/// 2. Round `bd_collision_raw = 2^log_basis − 1` up to the next audited
+///    bucket — D shares the B/D-digit collision norm.
+/// 3. Resolve the generated SIS-floor `max_widths` row for that bucket.
+/// 4. Look up the smallest D-row count `matrix_d_rank` whose secure
+///    width covers `d_width`.
+/// 5. Hand `(matrix_d_rank, d_width, bd_bucket)` to
+///    `AjtaiKeyParams::try_new`.
+///
+/// See [`compute_ajtai_key_params_a`] for the return contract.
+fn compute_ajtai_key_params_d<Cfg: CommitmentConfig>(
+    num_blocks: usize,
+    t_vectors: usize,
+    log_basis: u32,
+) -> Result<Option<AjtaiKeyParams>, AkitaError> {
+    let num_digits_open = num_digits_open_for::<Cfg>(log_basis);
+    let Some(bd_raw) = bd_collision_raw(log_basis) else {
+        return Ok(None);
+    };
+    let Some(d_width) = num_digits_open
+        .checked_mul(num_blocks)
+        .and_then(|w| w.checked_mul(t_vectors))
+    else {
+        return Ok(None);
+    };
+    let Some(bd_bucket) =
+        ceil_supported_collision(Cfg::sis_modulus_family(), Cfg::D as u32, bd_raw)
+    else {
+        return Ok(None);
+    };
+    let Some(bd_table) = sis_max_widths(Cfg::sis_modulus_family(), Cfg::D as u32, bd_bucket) else {
+        return Ok(None);
+    };
+    let Some(matrix_d_rank) = rank_floor_from_table(bd_table, d_width) else {
+        return Ok(None);
+    };
+    AjtaiKeyParams::try_new(
+        Cfg::sis_modulus_family(),
+        matrix_d_rank,
+        d_width,
+        bd_bucket,
+        Cfg::D,
+    )
+    .map(Some)
 }
 
 /// Consult the offline schedule tables for a pre-computed answer.
@@ -721,13 +933,7 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                 // hint; the schedule still falls back to `None` and
                 // the direct-witness bytes remain a valid DP upper
                 // bound.
-                scale_batched_root_layout(
-                    &lp,
-                    t_vectors,
-                    Cfg::stage1_challenge_config(Cfg::D)?.l1_norm(),
-                    Cfg::decomposition().field_bits(),
-                )
-                .ok()
+                scale_batched_root_layout(&lp, t_vectors, Cfg::decomposition().field_bits()).ok()
             }
             other => other,
         }
@@ -742,19 +948,7 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
     })];
     let mut memo = ScheduleMemo::new();
 
-    // ------------------------------------------------------------------
-    // Direct two-level enumeration over `(root_lb, r_vars)` — for each
-    // pair we synthesize one SIS-secure `LevelParams`, drive the
-    // suffix DP, and score `root_proof_size + suffix_cost` against the
-    // running minimum.
-    //
-    // Loop-invariant `Cfg`/key-derived values are hoisted above the
-    // outer loop; per-`log_basis` values (digit depths at the
-    // candidate basis, SIS-floor buckets, cached rank tables) live
-    // inside it. There is no intermediate context struct: every loop
-    // body reads its inputs from local bindings only.
-    // ------------------------------------------------------------------
-    let fb = Cfg::decomposition().field_bits();
+    // Finding best candidate
     let stage1 = Cfg::stage1_challenge_config(Cfg::D)?;
     let fold_shape = Cfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
         num_vars: key.num_vars,
@@ -762,148 +956,105 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
         current_w_len: witness_len,
     });
     let alpha = (Cfg::D as u32).trailing_zeros() as usize;
-    // `reduced_vars == 0` (which includes `key.num_vars < alpha`) means
-    // every fold candidate has zero outer + inner variables, so the
-    // outer loop has nothing to enumerate; fall through to the trace +
-    // direct-baseline return.
     let reduced_vars = key.num_vars.saturating_sub(alpha);
-    let num_claims = t_vectors;
 
-    if reduced_vars > 0 {
-        let root_bits = witness_len
-            .checked_mul(fb as usize)
-            .ok_or_else(|| AkitaError::InvalidSetup("root witness bit length overflow".into()))?;
-        let r_lo: usize = if reduced_vars >= 3 { 1 } else { 0 };
-        let r_hi: usize = reduced_vars.saturating_sub(1).max(r_lo);
+    if reduced_vars == 0 {
+        return Ok(Schedule {
+            steps: best_steps,
+            total_bytes: best_cost,
+        });
+    }
 
-        let (min_log_basis, max_log_basis) = Cfg::basis_range();
-        for root_lb in min_log_basis..=max_log_basis {
-            // Per-basis: digit depths use `decomp` with `log_basis = root_lb`
-            // (matching `akita_derive::derived_root_commitment_layout_from_params`),
-            // and the SIS-floor buckets / cached rank tables are looked up
-            // for this basis.
-            let candidate_decomp = akita_types::DecompositionParams {
-                log_basis: root_lb,
-                ..Cfg::decomposition()
-            };
-            let (num_digits_commit, num_digits_open) = decomp_depths(candidate_decomp);
+    let min_num_blocks: usize = if reduced_vars >= 3 { 2 } else { 1 };
+    let max_num_blocks: usize = 1usize
+        .checked_shl((reduced_vars - 1) as u32)
+        .unwrap_or(usize::MAX)
+        .max(min_num_blocks);
 
-            let Some(bd_raw) = 1u32.checked_shl(root_lb).and_then(|b| b.checked_sub(1)) else {
-                continue;
-            };
-            let Some(a_collision_raw) = a_role_collision_raw(
-                Cfg::decomposition().log_commit_bound,
-                bd_raw,
-                stage1.infinity_norm(),
-                Cfg::ring_subfield_embedding_norm_bound(),
-            ) else {
-                continue;
-            };
-            // The canonical derivation (`sis_derived_root_params_for_layout`)
-            // passes the raw `bd = 2^root_lb − 1` into
-            // `sis_secure_level_params` for both B and D, without
-            // multiplying by the stage-1 / embedding norms (only the A role
-            // amplifies). Pre-rounding through `ceil_supported_collision`
-            // here is a defensive no-op for `root_lb >= 2` (since
-            // `2^lb − 1` already equals a generated bucket) but lets
-            // `root_lb == 1` round up to the smallest audited bucket
-            // instead of falling off the table.
-            let Some(a_bucket) = ceil_supported_collision(Cfg::sis_modulus_family(), Cfg::D as u32, a_collision_raw)
-            else {
-                continue;
-            };
-            let Some(bd_bucket) = ceil_supported_collision(Cfg::sis_modulus_family(), Cfg::D as u32, bd_raw) else {
-                continue;
-            };
-            let Some(a_table) = sis_max_widths(Cfg::sis_modulus_family(), Cfg::D as u32, a_bucket) else {
-                continue;
-            };
-            let Some(bd_table) = sis_max_widths(Cfg::sis_modulus_family(), Cfg::D as u32, bd_bucket) else {
-                continue;
-            };
+    let (min_log_basis, max_log_basis) = Cfg::basis_range();
+    for candidate_log_basis in min_log_basis..=max_log_basis {
+        let decomp = Cfg::decomposition();
+        let field_bits = decomp.field_bits();
+        let log_open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+        let num_digits_commit =
+            num_digits_for_bound(decomp.log_commit_bound, field_bits, candidate_log_basis);
+        let num_digits_open = num_digits_for_bound(log_open_bound, field_bits, candidate_log_basis);
 
-            for r_vars in r_lo..=r_hi {
-                let m_vars = reduced_vars - r_vars;
+        // The canonical derivation (`sis_derived_root_params_for_layout`)
+        // passes the raw `bd = 2^candidate_log_basis − 1` into
+        // `sis_secure_level_params` for both B and D, without
+        // multiplying by the stage-1 / embedding norms (only the A role
+        // amplifies). All per-role collision raws and SIS-floor
+        // bucket/table lookups now live inside
+        // [`compute_ajtai_key_params_a`] /
+        // [`compute_ajtai_key_params_b`] /
+        // [`compute_ajtai_key_params_d`].
 
-                // (1) `(m, r)` → block geometry.
-                let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
-                    continue;
-                };
+        let mut num_blocks = min_num_blocks;
+        loop {
+            let r_vars = num_blocks.trailing_zeros() as usize;
+            let m_vars = reduced_vars - r_vars;
+
+            // Each candidate evaluates inside a labeled block so a
+            // `continue`-equivalent rejection (`break 'candidate;`)
+            // still falls through to the `num_blocks <<= 1` advance
+            // below. Without the label the bare `loop` would infinite-
+            // loop on any rejected candidate.
+            'candidate: {
+                // (1) `(m, r)` → block geometry. `num_blocks` is the
+                // loop variable; only `block_len` needs derivation.
                 let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
-                    continue;
+                    break 'candidate;
                 };
 
-                // (2) `inner_width` → `n_a` via the A-role SIS-floor table.
-                let Some(inner_width) = block_len.checked_mul(num_digits_commit) else {
-                    continue;
-                };
-                let Some(n_a) = rank_floor_from_table(a_table, inner_width) else {
-                    continue;
-                };
-
-                // (3) `n_a` and the block count → batched `outer_width` →
-                // `n_b` via the B/D-role table.
-                let Some(outer_width) = n_a
-                    .checked_mul(num_digits_open)
-                    .and_then(|w| w.checked_mul(num_blocks))
-                    .and_then(|w| w.checked_mul(num_claims))
+                // (2) Build the A-role key. `Ok(None)` = candidate falls
+                // off the SIS-floor tables (skip), `Err(...)` = audit
+                // invariant violation (propagate hard).
+                let Some(a_key) =
+                    compute_ajtai_key_params_a::<Cfg>(block_len, candidate_log_basis)?
                 else {
-                    continue;
-                };
-                let Some(n_b) = rank_floor_from_table(bd_table, outer_width) else {
-                    continue;
+                    break 'candidate;
                 };
 
-                // (4) `d_width` is independent of `n_a` and shares the B/D
-                // bucket with B; look up `n_d` from the same table.
-                let Some(d_width) = num_digits_open
-                    .checked_mul(num_blocks)
-                    .and_then(|w| w.checked_mul(num_claims))
+                // (3) Build the B-role key. `matrix_a_rank` flows in via
+                // `a_key.row_len()` since B's `vector_t_len` depends on
+                // the A rank.
+                let Some(b_key) = compute_ajtai_key_params_b::<Cfg>(
+                    a_key.row_len(),
+                    num_blocks,
+                    t_vectors,
+                    candidate_log_basis,
+                )?
                 else {
-                    continue;
+                    break 'candidate;
                 };
-                let Some(n_d) = rank_floor_from_table(bd_table, d_width) else {
-                    continue;
+
+                // (4) Build the D-role key. `d_width` is independent of
+                // `matrix_a_rank` and shares the B/D bucket with B.
+                let Some(d_key) =
+                    compute_ajtai_key_params_d::<Cfg>(num_blocks, t_vectors, candidate_log_basis)?
+                else {
+                    break 'candidate;
                 };
 
                 // (5) Per-level fold-digit count for the batched layout.
-                // Matches `akita_types::scale_batched_root_layout`: take the
-                // max of the per-poly fold-digit count (using the
-                // fold-shape effective L1 mass, which squares `l1_norm`
-                // for `TensorChallengeShape`) and the batched fold-digit
-                // count (using the raw stage-1 `l1_norm`). For `Flat`
-                // shapes the batched branch dominates; for `Tensor` shapes
-                // the per-poly branch can be larger.
-                let per_poly_fold = compute_num_digits_fold_with_claims(
+                // Matches `akita_types::scale_batched_root_layout`: per-claim
+                // the fold weight has L1 ≤ `effective_l1_mass(stage1)`
+                // (which squares `l1_norm` for `TensorChallengeShape` since
+                // the per-block challenge is the ring product `left · right`);
+                // batching across `t_vectors` claims sums linearly. The tight
+                // worst case is therefore `effective_l1_mass · t_vectors`.
+                let num_digits_fold = compute_num_digits_fold_with_claims(
                     r_vars,
                     fold_shape.effective_l1_mass(&stage1),
-                    root_lb,
-                    1,
-                    fb,
+                    candidate_log_basis,
+                    t_vectors,
+                    field_bits,
                 );
-                let batched_fold = compute_num_digits_fold_with_claims(
-                    r_vars,
-                    stage1.l1_norm(),
-                    root_lb,
-                    num_claims,
-                    fb,
-                );
-                let num_digits_fold = per_poly_fold.max(batched_fold);
-
-                // (6) Assemble the SIS-secure root `LevelParams`. The
-                // `try_new` audits below should never fail because each
-                // rank was selected as the floor for its width, but keep
-                // the propagation so any future drift between
-                // `rank_floor_from_table` and `AjtaiKeyParams::try_new`
-                // surfaces as a planner error instead of silently shipping
-                // an insecure schedule.
-                let a_key = AjtaiKeyParams::try_new(Cfg::sis_modulus_family(), n_a, inner_width, a_bucket, Cfg::D)?;
-                let b_key = AjtaiKeyParams::try_new(Cfg::sis_modulus_family(), n_b, outer_width, bd_bucket, Cfg::D)?;
-                let d_key = AjtaiKeyParams::try_new(Cfg::sis_modulus_family(), n_d, d_width, bd_bucket, Cfg::D)?;
 
                 let level_lp = LevelParams {
                     ring_dimension: Cfg::D,
-                    log_basis: root_lb,
+                    log_basis: candidate_log_basis,
                     a_key,
                     b_key,
                     d_key,
@@ -922,20 +1073,23 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                 // check. A `(log_basis, r_vars)` that doesn't strictly
                 // shrink the witness in bits cannot be on the optimal
                 // path — the direct-witness baseline always beats it.
-                let raw_w_ring = root_w_ring_element_count::<Cfg>(&level_lp, key)?;
-                let next_w_len =
-                    raw_w_ring
-                        .checked_mul(level_lp.ring_dimension)
+                // `initial_witness_len` is the candidate's pre-fold
+                // witness budget (in bits); defined here next to its
+                // only use.
+                let next_w_len = root_next_witness_len::<Cfg>(&level_lp, key)?;
+                let next_witness_len = next_w_len
+                    .checked_mul(candidate_log_basis as usize)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("root next witness bit length overflow".into())
+                    })?;
+                let initial_witness_len =
+                    witness_len
+                        .checked_mul(field_bits as usize)
                         .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "root recursive witness length overflow".into(),
-                            )
+                            AkitaError::InvalidSetup("root witness bit length overflow".into())
                         })?;
-                let next_bits = next_w_len.checked_mul(root_lb as usize).ok_or_else(|| {
-                    AkitaError::InvalidSetup("root next witness bit length overflow".into())
-                })?;
-                if next_bits >= root_bits {
-                    continue;
+                if next_witness_len >= initial_witness_len {
+                    break 'candidate;
                 }
 
                 let candidate = CandidateLevelParams {
@@ -956,17 +1110,17 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                     key.num_vars,
                     1,
                     candidate.next_w_len,
-                    root_lb,
+                    candidate_log_basis,
                     0,
                 )?;
                 if suffix_steps.is_empty() {
-                    continue;
+                    break 'candidate;
                 }
                 let suffix_is_terminal = matches!(suffix_steps.first(), Some(Step::Direct(_)));
                 let Ok(eor_bytes) =
                     extension_opening_reduction_level_bytes::<Cfg>(key, 0, witness_len)
                 else {
-                    continue;
+                    break 'candidate;
                 };
                 let next_w_len_override = if suffix_is_terminal {
                     let old_direct_bytes = match suffix_steps.first().expect("suffix non-empty") {
@@ -1010,7 +1164,7 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                         candidate.next_w_len,
                         &suffix_steps,
                     ) else {
-                        continue;
+                        break 'candidate;
                     };
                     compute_level_proof_size::<Cfg>(&candidate, &next_level_params, z_vectors)
                         + eor_bytes
@@ -1024,13 +1178,20 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                         &candidate,
                         witness_len,
                         root_proof_size,
-                        Cfg::decomposition().field_bits(),
+                        field_bits,
                         next_w_len_override,
                     ));
                     steps.extend(suffix_steps);
                     best_steps = steps;
                 }
             }
+
+            // Advance to the next power-of-two `num_blocks`. When we've
+            // already evaluated `max_num_blocks`, stop iterating.
+            if num_blocks >= max_num_blocks {
+                break;
+            }
+            num_blocks <<= 1;
         }
     }
 

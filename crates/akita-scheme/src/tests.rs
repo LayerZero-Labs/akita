@@ -1544,9 +1544,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         let lp = akita_types::scale_batched_root_layout_unchecked(
             &Self::root_lp(),
             incidence.num_claims(),
-            Self::stage1_challenge_config(Self::D)
-                .expect("stage1 challenge config")
-                .l1_norm(),
             Self::decomposition().field_bits(),
         )?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
@@ -1666,9 +1663,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         let lp = akita_types::scale_batched_root_layout_unchecked(
             &Self::root_lp(),
             incidence.num_claims(),
-            Self::stage1_challenge_config(Self::D)
-                .expect("stage1 challenge config")
-                .l1_norm(),
             Self::decomposition().field_bits(),
         )?;
         // Single-fold schedule: the root IS the terminal fold, so its

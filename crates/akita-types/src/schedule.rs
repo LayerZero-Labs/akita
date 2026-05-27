@@ -771,6 +771,13 @@ pub fn root_direct_schedule(
 
 /// Scale a per-polynomial root layout to a batched root layout.
 ///
+/// The fold-digit count is sized for the tight tensor-aware bound
+/// `challenge_l1_mass · num_claims` — per claim the fold weight has
+/// `L1 ≤ root_lp.challenge_l1_mass()` (which squares `l1_norm` for
+/// [`TensorChallengeShape::Tensor`] since the per-block challenge is
+/// the ring product `left · right`), and `num_claims` claims are
+/// summed linearly during batching.
+///
 /// # Errors
 ///
 /// Returns an error when `num_claims` is zero or scaling overflows a layout
@@ -778,16 +785,9 @@ pub fn root_direct_schedule(
 pub fn scale_batched_root_layout(
     root_lp: &LevelParams,
     num_claims: usize,
-    root_stage1_l1_mass: usize,
     field_bits: u32,
 ) -> Result<LevelParams, AkitaError> {
-    scale_batched_root_layout_inner(
-        root_lp,
-        num_claims,
-        root_stage1_l1_mass,
-        field_bits,
-        BatchedScalingAudit::Strict,
-    )
+    scale_batched_root_layout_inner(root_lp, num_claims, field_bits, BatchedScalingAudit::Strict)
 }
 
 /// `scale_batched_root_layout` without the SIS-floor audit on the
@@ -808,13 +808,11 @@ pub fn scale_batched_root_layout(
 pub fn scale_batched_root_layout_unchecked(
     root_lp: &LevelParams,
     num_claims: usize,
-    root_stage1_l1_mass: usize,
     field_bits: u32,
 ) -> Result<LevelParams, AkitaError> {
     scale_batched_root_layout_inner(
         root_lp,
         num_claims,
-        root_stage1_l1_mass,
         field_bits,
         BatchedScalingAudit::Unchecked,
     )
@@ -829,7 +827,6 @@ enum BatchedScalingAudit {
 fn scale_batched_root_layout_inner(
     root_lp: &LevelParams,
     num_claims: usize,
-    root_stage1_l1_mass: usize,
     field_bits: u32,
     audit: BatchedScalingAudit,
 ) -> Result<LevelParams, AkitaError> {
@@ -888,7 +885,7 @@ fn scale_batched_root_layout_inner(
     scaled.num_digits_fold = root_lp.num_digits_fold.max(
         crate::layout::digit_math::compute_num_digits_fold_with_claims(
             root_lp.r_vars,
-            root_stage1_l1_mass,
+            root_lp.challenge_l1_mass(),
             root_lp.log_basis,
             num_claims,
             field_bits,

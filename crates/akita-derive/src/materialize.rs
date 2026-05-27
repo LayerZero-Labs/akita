@@ -318,14 +318,14 @@ where
                         || key.num_z_vectors != 1);
                 let mut lp = params.with_layout(&layout);
                 if root_is_batched {
-                    // Inlined `scale_batched_root_layout_with_config` — the
-                    // policy already exposes the two Cfg knobs we need
-                    // (`stage1_challenge_config(ring_dimension)` and
-                    // `root_decomp.field_bits()`), so no fn-pointer hop.
+                    // `scale_batched_root_layout` reads the per-claim
+                    // effective L1 mass from `lp.challenge_l1_mass()`
+                    // (tensor-aware), so we only need to forward the
+                    // batched claim count and the root decomposition
+                    // field width here.
                     lp = akita_types::scale_batched_root_layout(
                         &lp,
                         key.num_t_vectors,
-                        stage1_challenge_config(ring_dimension)?.l1_norm(),
                         root_decomp.field_bits(),
                     )?;
                 }
@@ -540,7 +540,6 @@ where
                             akita_types::scale_batched_root_layout(
                                 &lp,
                                 key.num_t_vectors,
-                                stage1_challenge_config(ring_dimension)?.l1_norm(),
                                 root_decomp.field_bits(),
                             )
                             .ok()
