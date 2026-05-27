@@ -18,16 +18,17 @@ env:
   AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
   # The active benchmark path is pinned to explicit D32 modes. It deliberately
   # does not use the old adaptive `full`/`onehot` selectors.
+  # Long hosted-runner configs are deferred from this PR's active matrix.
+  # In particular, onehot_fp16_d32:32:1 and dense_fp128_d32:26:1 are measured
+  # offenders and should come back only after tuning or a larger runner budget.
   AKITA_BENCH_MODE: onehot_fp128_d32
   AKITA_BENCH_RUNS: "3"
   AKITA_BENCH_CASES: |
-    onehot_fp16_d32:32:1
     dense_fp16_d32:26:1
     onehot_fp32_d32:32:1
     dense_fp32_d32:26:1
     onehot_fp64_d32:32:1
     onehot_fp128_d32:32:1
-    dense_fp128_d32:26:1
     onehot_fp128_d32:30:4
 
 concurrency:
