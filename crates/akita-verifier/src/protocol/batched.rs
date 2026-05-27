@@ -74,7 +74,7 @@ where
     CyclotomicRing::from_coefficients(from_fn(|idx| F::from_i64(plane[idx] as i64)))
 }
 
-fn field_evals_to_rings<F, const D: usize>(
+pub(crate) fn field_evals_to_rings<F, const D: usize>(
     evals: &[F],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
@@ -190,7 +190,7 @@ where
     Ok(())
 }
 
-fn mat_vec_mul_i8_plain<F, const D: usize>(
+pub(crate) fn mat_vec_mul_i8_plain<F, const D: usize>(
     matrix_rows: &[&[CyclotomicRing<F, D>]],
     digits: &[[i8; D]],
 ) -> Vec<CyclotomicRing<F, D>>
@@ -224,7 +224,7 @@ where
     out
 }
 
-fn direct_decomposed_inner_rows<F, const D: usize>(
+pub(crate) fn direct_decomposed_inner_rows<F, const D: usize>(
     witness_rings: &[CyclotomicRing<F, D>],
     setup: &AkitaVerifierSetup<F>,
     params: &LevelParams,
@@ -271,7 +271,7 @@ where
 }
 
 #[cfg(feature = "zk")]
-fn append_direct_blinding<F, const D: usize>(
+pub(crate) fn append_direct_blinding<F, const D: usize>(
     input: &mut Vec<[i8; D]>,
     revealed_b_blinding_digits: &[i8],
     params: &LevelParams,
@@ -279,6 +279,9 @@ fn append_direct_blinding<F, const D: usize>(
 where
     F: CanonicalField,
 {
+    if D == 0 {
+        return Err(AkitaError::InvalidProof);
+    }
     let expected_planes =
         akita_types::zk::blinding_column_count::<F>(params.b_key.row_len(), D, params.log_basis);
     let expected_digits = expected_planes
@@ -497,6 +500,10 @@ where
 
     match &proof.root {
         AkitaBatchedRootProof::Direct { witnesses, .. } => {
+            #[cfg(feature = "zk")]
+            if !proof.zk_hiding.is_empty() {
+                return Err(AkitaError::InvalidProof);
+            }
             if !proof.steps.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
