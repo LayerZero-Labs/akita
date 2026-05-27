@@ -25,16 +25,15 @@ whose diff should compile and make sense against its parent.
 
 | # | Branch | Base | Scope |
 |---|---|---|---|
-| 01 | `quang/setup-layout-repack` | `main` | Remove the global setup stride contract and move base A/B/D setup sizing toward packed natural-width prefix views. |
-| 02 | `quang/setup-zk-blinding-seed` | `quang/setup-layout-repack` | Split feature-gated ZK B/D blinding tails onto a small separate setup seed/domain instead of packing them into the base setup matrix. |
-| 03 | `quang/setup-claim-packed-inner-product` | `quang/setup-zk-blinding-seed` | Express the base setup contribution as an inner product over raw packed setup indices; add explicit weight-builder equivalence tests. |
-| 04 | `quang/setup-weight-evaluator` | `quang/setup-claim-packed-inner-product` | Add the succinct random-point evaluator for the base setup weight polynomial. |
-| 05 | `quang/setup-claim-offloading` | `quang/setup-weight-evaluator` | Wire the matrix-claim sumcheck that delegates the raw base setup matrix claim. |
-| 06 | `quang/setup-offload-tables-tests` | `quang/setup-claim-offloading` | Regenerated tables, broader tests, benchmarks, and cleanup if these are too noisy for earlier PRs. |
+| 01 | `quang/setup-layout-repack` | `main` | Complete setup-layout cutover: remove the global setup stride, pack base A/B/D setup views, split ZK B/D blinding tails onto a small separate setup seed/domain, and update fused setup paths. |
+| 02 | `quang/setup-claim-packed-inner-product` | `quang/setup-layout-repack` | Express the base setup contribution as an inner product over raw packed setup indices; add explicit weight-builder equivalence tests. |
+| 03 | `quang/setup-weight-evaluator` | `quang/setup-claim-packed-inner-product` | Add the succinct random-point evaluator for the base setup weight polynomial. |
+| 04 | `quang/setup-claim-offloading` | `quang/setup-weight-evaluator` | Wire the matrix-claim sumcheck that delegates the raw base setup matrix claim. |
+| 05 | `quang/setup-offload-tables-tests` | `quang/setup-claim-offloading` | Regenerated tables, broader tests, benchmarks, and cleanup if these are too noisy for earlier PRs. |
 
 The later branches may be split further if the implementation reveals a cleaner
-review boundary. The first branch should stay focused on setup layout and sizing
-only; it should not introduce the offloading proof.
+review boundary. The first branch should contain all setup-layout changes, not
+a layout sub-stack. It should not introduce the offloading proof.
 
 ## Why Not a Jolt-Style Splitter
 

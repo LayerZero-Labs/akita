@@ -440,10 +440,10 @@ role-separated labels. They should be used by both prover witness construction
 and verifier replay. They should not build a large `FlatMatrix` view and should
 not extend `b_setup_width` or `d_setup_width`.
 
-This can land as a separate stack branch if the base layout implementation is
-otherwise clean without `feature = "zk"`. If a branch touches ZK code, it must
-route the blinding tails through this separate domain rather than preserving
-the old shared-stride columns as a temporary shim.
+This is part of the same setup-layout branch. Do not create a separate layout
+sub-stack for ZK blinding. PR 01 should route the blinding tails through this
+separate domain rather than preserving the old shared-stride columns as a
+temporary shim.
 
 ### 4. Generate Packed Setup Capacity
 
@@ -573,9 +573,8 @@ Minimum tests for PR 01:
 - `compute_setup_contribution` matches the existing test fixture after changing
   the fixture from `r_max * max_stride` to packed role widths.
 - Direct witness recomputation still verifies root direct commitments.
-- If the ZK split lands in this branch, B/D blinding tests derive their entries
-  from `zk_blinding_seed` and no longer allocate tail columns in the base setup
-  matrix.
+- B/D blinding tests derive their entries from `zk_blinding_seed` and no longer
+  allocate tail columns in the base setup matrix.
 
 Required commands before making the implementation PR ready:
 
@@ -612,8 +611,8 @@ cargo test
 - Setup capacity is expressed as packed `max_setup_len`.
 - Setup generation no longer allocates `max_rows * max_stride`.
 - Prover and verifier role matrix views use natural widths.
-- ZK B/D blinding tails are not counted in `max_setup_len` and, when touched,
-  are derived from a separate ZK setup seed/domain.
+- ZK B/D blinding tails are not counted in `max_setup_len` and are derived from
+  a separate ZK setup seed/domain.
 - The fused NTT quotient path no longer has a same-stride row slicing
   invariant.
 - `compute_setup_contribution` no longer depends on a global setup stride.
