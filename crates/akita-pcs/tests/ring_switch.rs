@@ -96,7 +96,9 @@ mod tests {
     use akita_prover::protocol::ring_switch::{
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
-    use akita_prover::{AkitaPolyOps, DensePoly, QuadraticEquation};
+    use akita_prover::{
+        AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, QuadraticEquation,
+    };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
     use akita_types::relation_claim_from_rows;
@@ -278,12 +280,17 @@ mod tests {
         let point = vec![F::zero(); NV];
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
-        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            F,
-            D,
-        >>::commit(std::slice::from_ref(&poly), &setup)
-        .expect("commitment");
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
+                .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let (commitment, batched_hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                &setup,
+                &CpuBackend,
+                &prepared,
+                std::slice::from_ref(&poly),
+            )
+            .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -316,7 +323,8 @@ mod tests {
         let incidence_summary = single_point_group_incidence(NV, 1);
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
-            &setup.ntt_shared,
+            &CpuBackend,
+            &prepared,
             vec![ring_opening_point],
             vec![ring_multiplier_point.clone()],
             vec![0usize],
@@ -329,12 +337,11 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
-            setup.expanded.seed.max_stride,
             MRowLayout::Intermediate,
         )
         .expect("quadratic equation");
 
-        let w = ring_switch_build_w::<F, D>(&mut quad_eq, &setup.expanded, &setup.ntt_shared, &lp)
+        let w = ring_switch_build_w::<F, CpuBackend, D>(&mut quad_eq, &CpuBackend, &prepared, &lp)
             .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
@@ -408,12 +415,17 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
-        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            F,
-            D,
-        >>::commit(std::slice::from_ref(&poly), &setup)
-        .expect("commitment");
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
+                .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let (commitment, batched_hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                &setup,
+                &CpuBackend,
+                &prepared,
+                std::slice::from_ref(&poly),
+            )
+            .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -438,7 +450,8 @@ mod tests {
         let incidence_summary = single_point_group_incidence(NV, 1);
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
-            &setup.ntt_shared,
+            &CpuBackend,
+            &prepared,
             vec![ring_opening_point],
             vec![ring_multiplier_point.clone()],
             vec![0usize],
@@ -451,12 +464,11 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
-            setup.expanded.seed.max_stride,
             MRowLayout::Intermediate,
         )
         .expect("quadratic equation");
 
-        let w = ring_switch_build_w::<F, D>(&mut quad_eq, &setup.expanded, &setup.ntt_shared, &lp)
+        let w = ring_switch_build_w::<F, CpuBackend, D>(&mut quad_eq, &CpuBackend, &prepared, &lp)
             .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
@@ -511,11 +523,12 @@ mod tests {
     #[test]
     fn asymmetric_centering_decompose_roundtrip() {
         use akita_types::layout::digit_math::compute_num_digits_full_field;
+        use rand::SeedableRng;
 
         type F = fp128::Field;
         const D: usize = 64;
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xA11A_D15C_A11A_D15C);
 
         for log_basis in [2u32, 3, 4, 5, 6] {
             let field_bits = 128u32;
@@ -565,12 +578,17 @@ mod tests {
             .collect();
 
         let setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
-        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
-            F,
-            D,
-        >>::commit(std::slice::from_ref(&poly), &setup)
-        .expect("commitment");
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1)
+                .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let (commitment, batched_hint) =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                &setup,
+                &CpuBackend,
+                &prepared,
+                std::slice::from_ref(&poly),
+            )
+            .expect("commitment");
 
         let alpha_bits = D.trailing_zeros() as usize;
         let outer_point = &point[alpha_bits..];
@@ -598,7 +616,8 @@ mod tests {
         let incidence_summary = single_point_group_incidence(NV, 1);
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
-            &setup.ntt_shared,
+            &CpuBackend,
+            &prepared,
             vec![ring_opening_point.clone()],
             vec![ring_multiplier_point.clone()],
             vec![0usize],
@@ -611,15 +630,14 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
-            setup.expanded.seed.max_stride,
             MRowLayout::Intermediate,
         )
         .expect("quadratic equation");
 
-        ring_switch_build_w::<F, D>(
+        ring_switch_build_w::<F, CpuBackend, D>(
             &mut quad_eq,
-            &setup.expanded,
-            &setup.ntt_shared,
+            &CpuBackend,
+            &prepared,
             &level_params,
         )
         .expect("ring-switch witness");

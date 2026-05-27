@@ -1,11 +1,10 @@
 //! Top-level batched verifier orchestration once a schedule is selected.
 
-use super::{prepare_verifier_claims, validate_level_dispatch, validate_log_basis};
-use crate::proof::claims::PreparedVerifierClaims;
+use super::{validate_level_dispatch, validate_log_basis};
+use crate::proof::claims::{prepare_verifier_claims, PreparedVerifierClaims};
 use crate::proof::direct::verify_root_direct_openings_with_incidence;
 use crate::protocol::levels::verify_fold_batched_proof;
 use akita_algebra::CyclotomicRing;
-use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     PseudoMersenneField, RandomSampling,
@@ -14,10 +13,10 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
-    schedule_is_root_direct, schedule_root_fold_step, scheduled_next_level_params,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaProofStep, AkitaSetupSeed, AkitaVerifierSetup,
-    BasisMode, ClaimIncidenceSummary, DirectWitnessProof, LevelParams, RingCommitment,
-    RingSubfieldEncoding, Schedule, VerifierClaims,
+    schedule_is_root_direct, schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaProofStep, AkitaScheduleInputs, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
+    ClaimIncidenceSummary, DirectWitnessProof, LevelParams, RingCommitment, RingSubfieldEncoding,
+    Schedule, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -33,9 +32,7 @@ pub type RootDirectBlindingPayload<'a> = &'a NoRootDirectBlindingPayload;
 
 /// Structural slice of `<AkitaBatchedProof as Valid>::check`, inlined to avoid
 /// requiring `F: Valid + L: Valid` at the verifier entrypoint.
-pub(crate) fn check_batched_proof_step_shape<F, L>(
-    proof: &AkitaBatchedProof<F, L>,
-) -> Result<(), AkitaError>
+fn check_batched_proof_step_shape<F, L>(proof: &AkitaBatchedProof<F, L>) -> Result<(), AkitaError>
 where
     F: FieldCore,
     L: FieldCore,
@@ -426,13 +423,23 @@ pub(crate) enum BatchedVerifierScheduleContext {
 ///
 /// Returns an error if the schedule is empty or the supplied recursive layout
 /// callback rejects the selected folded-root schedule.
-pub(crate) fn prepare_batched_verifier_schedule_context(
+pub(crate) fn prepare_batched_verifier_schedule_context<NextParams>(
+    num_vars: usize,
     schedule: &Schedule,
-) -> Result<BatchedVerifierScheduleContext, AkitaError> {
+    mut next_params: NextParams,
+) -> Result<BatchedVerifierScheduleContext, AkitaError>
+where
+    NextParams: FnMut(AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
+{
     if schedule_is_root_direct(schedule) {
         Ok(BatchedVerifierScheduleContext::RootDirect)
     } else if let Some(root_step) = schedule_root_fold_step(schedule) {
-        let next_level_params = scheduled_next_level_params(schedule, 1)?;
+        let next_inputs = AkitaScheduleInputs {
+            num_vars,
+            level: 1,
+            current_w_len: root_step.next_w_len,
+        };
+        let next_level_params = next_params(next_inputs)?;
         Ok(BatchedVerifierScheduleContext::Fold(Box::new(
             FoldVerifierLayouts {
                 root_lp: root_step.params.clone(),
@@ -556,34 +563,73 @@ where
     Ok(())
 }
 
-/// Verify a batched Akita proof against `claims` and `setup`.
+/// Verify a batched proof using caller-supplied config/policy callbacks.
 ///
-/// Closure-free `<Cfg>`-generic verifier entry point: every policy hook is
-/// sourced from `Cfg` (schedule selection, recursive successor params,
-/// descriptor binding, and root-direct commitment recheck).
+/// This is the verifier crate's top-level orchestration entrypoint for the
+/// current crate split. It owns public claim normalization, schedule-context
+/// construction, root-direct and folded-root dispatch, and recursive verifier
+/// replay. The root aggregate crate supplies only config-backed schedule/layout
+/// selection and the root-direct commitment recomputation callback.
+///
+/// The `direct_params` callback is invoked on the root-direct branch and
+/// must return the same root commitment layout the prover used at commit
+/// time (i.e. the layout returned by the config's
+/// `get_params_for_batched_commitment` for the same incidence). Returning a
+/// different layout would cause [`verify_root_direct_commitments_with_params`]
+/// to reject a correctly produced proof.
 ///
 /// # Errors
 ///
-/// Returns an error when public claims are malformed, when the configured
-/// schedule rejects the proof shape, when the descriptor binding fails, or
-/// when proof replay rejects the proof.
-pub fn verify_batched<F, Cfg, T, const D: usize>(
-    proof: &AkitaBatchedProof<F, Cfg::ChallengeField>,
+/// Returns an error if public claims are malformed, schedule/layout policy
+/// rejects the proof shape, root-direct commitment recomputation rejects, or
+/// proof replay fails.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_batched_with_policy<
+    'a,
+    F,
+    E,
+    C,
+    T,
+    const D: usize,
+    SelectSchedule,
+    NextParams,
+    DirectParams,
+    BindTranscript,
+    DirectCommitmentCheck,
+>(
+    proof: &AkitaBatchedProof<F, C>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: VerifierClaims<'_, Cfg::ClaimField, RingCommitment<F, D>>,
+    claims: VerifierClaims<'a, E, RingCommitment<F, D>>,
     basis: BasisMode,
+    select_schedule: SelectSchedule,
+    next_params: NextParams,
+    mut direct_params: DirectParams,
+    bind_transcript: BindTranscript,
+    verify_direct_commitments: DirectCommitmentCheck,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + AkitaSerialize,
-    Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: RingSubfieldEncoding<F>,
-    Cfg::ChallengeField: RingSubfieldEncoding<F>
-        + ExtField<Cfg::ClaimField>
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    E: RingSubfieldEncoding<F>,
+    C: RingSubfieldEncoding<F>
+        + ExtField<E>
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
+    SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
+    NextParams: FnMut(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
+    DirectParams: FnMut(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
+    BindTranscript:
+        FnOnce(&mut T, &ClaimIncidenceSummary, &Schedule, BasisMode) -> Result<(), AkitaError>,
+    DirectCommitmentCheck: FnOnce(
+        &[DirectWitnessProof<F>],
+        &AkitaVerifierSetup<F>,
+        &[RingCommitment<F, D>],
+        &ClaimIncidenceSummary,
+        &LevelParams,
+        RootDirectBlindingPayload<'_>,
+    ) -> Result<(), AkitaError>,
 {
     // Reject malformed step shapes that the downstream `fold_levels()` filter
     // would silently skip past.
@@ -591,37 +637,40 @@ where
 
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
     let num_vars = prepared_claims.incidence_summary.num_vars();
-    let mut schedule = Cfg::get_params_for_prove(&prepared_claims.incidence_summary)
+    let mut schedule = select_schedule(&prepared_claims.incidence_summary)
         .map_err(|_| AkitaError::InvalidProof)?;
+    let mut root_direct_params = None;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        if !folded_root_supports_opening_shape::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(
+        if !folded_root_supports_opening_shape::<F, E, C, D>(
             &prepared_claims.opening_points,
             &root_step.params,
             alpha_bits,
-        ) && !root_tensor_projection_enabled::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(
-            num_vars,
-        ) {
-            let commit_params =
-                Cfg::get_params_for_batched_commitment(&prepared_claims.incidence_summary)
-                    .map_err(|_| AkitaError::InvalidProof)?;
-            schedule = root_direct_schedule(num_vars, commit_params)
+        ) && !root_tensor_projection_enabled::<F, E, C, D>(num_vars)
+        {
+            let params = direct_params(&prepared_claims.incidence_summary)
                 .map_err(|_| AkitaError::InvalidProof)?;
+            schedule = root_direct_schedule(num_vars, params.clone())
+                .map_err(|_| AkitaError::InvalidProof)?;
+            root_direct_params = Some(params);
         }
     }
 
-    bind_transcript_instance_descriptor::<F, T, D, Cfg>(
-        &setup.expanded,
+    bind_transcript(
+        transcript,
         &prepared_claims.incidence_summary,
         &schedule,
         basis,
-        transcript,
     )?;
 
-    let schedule_context = prepare_batched_verifier_schedule_context(&schedule)
+    let mut next_params = next_params;
+    let schedule_context =
+        prepare_batched_verifier_schedule_context(num_vars, &schedule, |next_inputs| {
+            next_params(&schedule, next_inputs)
+        })
         .map_err(|_| AkitaError::InvalidProof)?;
 
-    verify_batched_proof_with_schedule::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _>(
+    verify_batched_proof_with_schedule::<F, E, C, T, D, _>(
         proof,
         setup,
         transcript,
@@ -630,9 +679,11 @@ where
         &schedule,
         schedule_context,
         |witnesses, commitments, incidence_summary, direct_commitment_payload| {
-            let params = Cfg::get_params_for_batched_commitment(incidence_summary)
-                .map_err(|_| AkitaError::InvalidProof)?;
-            verify_root_direct_commitments_with_params::<F, D>(
+            let params = match root_direct_params {
+                Some(params) => params,
+                None => direct_params(incidence_summary).map_err(|_| AkitaError::InvalidProof)?,
+            };
+            verify_direct_commitments(
                 witnesses,
                 setup,
                 commitments,
