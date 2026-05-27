@@ -1007,8 +1007,8 @@ mod tests {
         let pb = PE2::from_fn(|i| b_elems[i]);
         let pc = pa + pb;
 
-        for i in 0..width {
-            assert_eq!(pc.extract(i), a_elems[i] + b_elems[i]);
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
+            assert_eq!(pc.extract(i), *a + *b);
         }
     }
 
@@ -1023,10 +1023,10 @@ mod tests {
         let pb = PE2::from_fn(|i| b_elems[i]);
         let pc = pa * pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] * b_elems[i],
+                *a * *b,
                 "packed Fp2 mul mismatch at lane {i}"
             );
         }
@@ -1043,10 +1043,10 @@ mod tests {
         let pb = PE2Full::from_fn(|i| b_elems[i]);
         let pc = pa * pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] * b_elems[i],
+                *a * *b,
                 "full-word packed Fp2 mul mismatch at lane {i}"
             );
         }
@@ -1073,10 +1073,10 @@ mod tests {
         let pb = PE4::from_fn(|i| b_elems[i]);
         let pc = pa * pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] * b_elems[i],
+                *a * *b,
                 "packed TowerBasisFp4 mul mismatch at lane {i}"
             );
         }
@@ -1093,10 +1093,10 @@ mod tests {
         let pb = PP4::from_fn(|i| b_elems[i]);
         let pc = pa * pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] * b_elems[i],
+                *a * *b,
                 "packed PowerBasisFp4 mul mismatch at lane {i}"
             );
         }
@@ -1195,10 +1195,10 @@ mod tests {
         let pb = PR4::from_fn(|i| b_elems[i]);
         let pc = pa + pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] + b_elems[i],
+                *a + *b,
                 "packed RingSubfieldFp4 add mismatch at lane {i}"
             );
         }
@@ -1215,10 +1215,10 @@ mod tests {
         let pb = PR4::from_fn(|i| b_elems[i]);
         let pc = pa - pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] - b_elems[i],
+                *a - *b,
                 "packed RingSubfieldFp4 sub mismatch at lane {i}"
             );
         }
@@ -1235,10 +1235,10 @@ mod tests {
         let pb = PR4::from_fn(|i| b_elems[i]);
         let pc = pa * pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] * b_elems[i],
+                *a * *b,
                 "packed RingSubfieldFp4 mul mismatch at lane {i}"
             );
         }
@@ -1255,10 +1255,10 @@ mod tests {
         let pb = PR4Prime32::from_fn(|i| b_elems[i]);
         let pc = pa * pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] * b_elems[i],
+                *a * *b,
                 "Prime32 packed RingSubfieldFp4 mul mismatch at lane {i}"
             );
         }
@@ -1423,10 +1423,10 @@ mod tests {
         let pb = PR8Fp64::from_fn(|i| b_elems[i]);
         let pc = pa * pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] * b_elems[i],
+                *a * *b,
                 "packed RingSubfieldFp8<Fp64> mul mismatch at lane {i}"
             );
         }
@@ -1443,10 +1443,10 @@ mod tests {
         let pb = PR8Prime31::from_fn(|i| b_elems[i]);
         let pc = pa * pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] * b_elems[i],
+                *a * *b,
                 "packed RingSubfieldFp8<Prime31> mul mismatch at lane {i}"
             );
         }
@@ -1463,10 +1463,10 @@ mod tests {
         let pb = PR8Prime32::from_fn(|i| b_elems[i]);
         let pc = pa * pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] * b_elems[i],
+                *a * *b,
                 "packed RingSubfieldFp8<Prime32> mul mismatch at lane {i}"
             );
         }
@@ -1489,22 +1489,10 @@ mod tests {
         let diff = pa - pb;
         let prod = pa * pb;
 
-        for i in 0..width {
-            assert_eq!(
-                sum.extract(i),
-                a_elems[i] + b_elems[i],
-                "add mismatch lane {i}"
-            );
-            assert_eq!(
-                diff.extract(i),
-                a_elems[i] - b_elems[i],
-                "sub mismatch lane {i}"
-            );
-            assert_eq!(
-                prod.extract(i),
-                a_elems[i] * b_elems[i],
-                "mul mismatch lane {i}"
-            );
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
+            assert_eq!(sum.extract(i), *a + *b, "add mismatch lane {i}");
+            assert_eq!(diff.extract(i), *a - *b, "sub mismatch lane {i}");
+            assert_eq!(prod.extract(i), *a * *b, "mul mismatch lane {i}");
         }
     }
 
@@ -1519,10 +1507,10 @@ mod tests {
         let pb = PR8Fp16::from_fn(|i| b_elems[i]);
         let pc = pa * pb;
 
-        for i in 0..width {
+        for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
             assert_eq!(
                 pc.extract(i),
-                a_elems[i] * b_elems[i],
+                *a * *b,
                 "packed RingSubfieldFp8<Fp16> mul mismatch at lane {i}"
             );
         }
@@ -1537,10 +1525,10 @@ mod tests {
         let pa = PR8Prime31::from_fn(|i| a_elems[i]);
         let sq = pa.square();
 
-        for i in 0..width {
+        for (i, a) in a_elems.iter().enumerate() {
             assert_eq!(
                 sq.extract(i),
-                a_elems[i].square(),
+                a.square(),
                 "packed RingSubfieldFp8 square mismatch at lane {i}"
             );
         }

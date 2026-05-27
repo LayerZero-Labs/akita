@@ -51,25 +51,6 @@ unsafe fn mul64_64_512(x: __m512i, y: __m512i) -> (__m512i, __m512i) {
     (res_hi, res_lo)
 }
 
-/// Chebyshev φ fold-back for AVX-512 `__m512i` accumulators (K=8).
-#[inline(always)]
-unsafe fn avx512_ring_subfield_fp8_add_phi<const P: u32>(
-    out: &mut [__m512i; 8],
-    idx: usize,
-    value: __m512i,
-) {
-    match idx {
-        0 => {
-            out[0] =
-                PackedFp32Avx512::<P>::add_vec(out[0], PackedFp32Avx512::<P>::add_vec(value, value))
-        }
-        1..=7 => out[idx] = PackedFp32Avx512::<P>::add_vec(out[idx], value),
-        8 => {}
-        9..=15 => out[16 - idx] = PackedFp32Avx512::<P>::sub_vec(out[16 - idx], value),
-        _ => unreachable!(),
-    }
-}
-
 /// Number of `Fp32` lanes in an AVX-512 packed vector.
 pub const FP32_WIDTH: usize = 16;
 
@@ -943,84 +924,6 @@ impl<const P: u32> PackedField for PackedFp32Avx512<P> {
             ]
         }
     }
-
-    #[inline(always)]
-    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
-        unsafe {
-            let a = a.map(Self::to_vec);
-            let b = b.map(Self::to_vec);
-            let zero = _mm512_setzero_si512();
-            let mut out = [zero; 8];
-
-            let diag: [__m512i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], b[i]));
-            out[0] = diag[0];
-
-            for k in 1..8 {
-                let mixed = Self::sub_vec(
-                    Self::sub_vec(
-                        Self::mul_vec(Self::add_vec(a[0], a[k]), Self::add_vec(b[0], b[k])),
-                        diag[0],
-                    ),
-                    diag[k],
-                );
-                out[k] = Self::add_vec(out[k], mixed);
-            }
-
-            for (i, &diag_i) in diag.iter().enumerate().skip(1) {
-                out[0] = Self::add_vec(out[0], Self::add_vec(diag_i, diag_i));
-                avx512_ring_subfield_fp8_add_phi::<P>(&mut out, i + i, diag_i);
-            }
-
-            for i in 1..8usize {
-                for j in (i + 1)..8usize {
-                    let mixed = Self::sub_vec(
-                        Self::sub_vec(
-                            Self::mul_vec(Self::add_vec(a[i], a[j]), Self::add_vec(b[i], b[j])),
-                            diag[i],
-                        ),
-                        diag[j],
-                    );
-                    avx512_ring_subfield_fp8_add_phi::<P>(&mut out, i + j, mixed);
-                    avx512_ring_subfield_fp8_add_phi::<P>(&mut out, j - i, mixed);
-                }
-            }
-
-            out.map(|v| Self::from_vec(v))
-        }
-    }
-
-    #[inline(always)]
-    fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
-        unsafe {
-            let a = a.map(Self::to_vec);
-            let zero = _mm512_setzero_si512();
-            let mut out = [zero; 8];
-
-            let sq: [__m512i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], a[i]));
-            out[0] = sq[0];
-
-            for k in 1..8 {
-                let cross = Self::mul_vec(a[0], a[k]);
-                out[k] = Self::add_vec(out[k], Self::add_vec(cross, cross));
-            }
-
-            for (i, &sq_i) in sq.iter().enumerate().skip(1) {
-                out[0] = Self::add_vec(out[0], Self::add_vec(sq_i, sq_i));
-                avx512_ring_subfield_fp8_add_phi::<P>(&mut out, i + i, sq_i);
-            }
-
-            for i in 1..8usize {
-                for j in (i + 1)..8usize {
-                    let cross = Self::mul_vec(a[i], a[j]);
-                    let doubled = Self::add_vec(cross, cross);
-                    avx512_ring_subfield_fp8_add_phi::<P>(&mut out, i + j, doubled);
-                    avx512_ring_subfield_fp8_add_phi::<P>(&mut out, j - i, doubled);
-                }
-            }
-
-            out.map(|v| Self::from_vec(v))
-        }
-    }
 }
 
 /// Number of `Fp64` lanes in an AVX-512 packed vector.
@@ -1532,6 +1435,11 @@ impl<const P: u32> PackedFp16Avx512<P> {
     }
 
     /// Three-fold Solinas reduction of 16 u32 products in `__m512i`.
+    ///
+    /// Three folds suffice for all valid `Fp16<P>` parameters
+    /// (`BITS ≤ 16`, `C(C+1) < P`). Worst-case bound after fold 3:
+    ///   fold1 ≤ (C+1)·2^BITS → fold2 ≤ 2^BITS + C² − 2C
+    ///   fold3 ≤ C² − C − 1 < 2^BITS (since C < √P ≤ 2⁸).
     #[inline(always)]
     unsafe fn solinas_reduce(prod: __m512i) -> __m512i {
         let mask = _mm512_set1_epi32((1u32 << Self::BITS) as i32 - 1);
@@ -1691,6 +1599,10 @@ impl<const P: u32> PackedField for PackedFp16Avx512<P> {
         self * self
     }
 
+    /// Chebyshev-basis Karatsuba multiplication for `RingSubfieldFp8` lanes.
+    ///
+    /// Widens all 8 coefficients to u32 once at entry, runs the full fp8
+    /// algorithm in `__m512i` u32 arithmetic, and narrows back at exit.
     #[inline(always)]
     fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
         unsafe {

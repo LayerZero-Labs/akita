@@ -52,25 +52,6 @@ unsafe fn mul64_64_256(x: __m256i, y: __m256i) -> (__m256i, __m256i) {
     (res_hi, res_lo)
 }
 
-/// Chebyshev φ fold-back for AVX2 `__m256i` accumulators (K=8).
-#[inline(always)]
-unsafe fn avx2_ring_subfield_fp8_add_phi<const P: u32>(
-    out: &mut [__m256i; 8],
-    idx: usize,
-    value: __m256i,
-) {
-    match idx {
-        0 => {
-            out[0] =
-                PackedFp32Avx2::<P>::add_vec(out[0], PackedFp32Avx2::<P>::add_vec(value, value))
-        }
-        1..=7 => out[idx] = PackedFp32Avx2::<P>::add_vec(out[idx], value),
-        8 => {}
-        9..=15 => out[16 - idx] = PackedFp32Avx2::<P>::sub_vec(out[16 - idx], value),
-        _ => unreachable!(),
-    }
-}
-
 /// Number of `Fp32` lanes in an AVX2 packed vector.
 pub const FP32_WIDTH: usize = 8;
 
@@ -959,84 +940,6 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
             ]
         }
     }
-
-    #[inline(always)]
-    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
-        unsafe {
-            let a = a.map(Self::to_vec);
-            let b = b.map(Self::to_vec);
-            let zero = _mm256_setzero_si256();
-            let mut out = [zero; 8];
-
-            let diag: [__m256i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], b[i]));
-            out[0] = diag[0];
-
-            for k in 1..8 {
-                let mixed = Self::sub_vec(
-                    Self::sub_vec(
-                        Self::mul_vec(Self::add_vec(a[0], a[k]), Self::add_vec(b[0], b[k])),
-                        diag[0],
-                    ),
-                    diag[k],
-                );
-                out[k] = Self::add_vec(out[k], mixed);
-            }
-
-            for (i, &diag_i) in diag.iter().enumerate().skip(1) {
-                out[0] = Self::add_vec(out[0], Self::add_vec(diag_i, diag_i));
-                avx2_ring_subfield_fp8_add_phi::<P>(&mut out, i + i, diag_i);
-            }
-
-            for i in 1..8usize {
-                for j in (i + 1)..8usize {
-                    let mixed = Self::sub_vec(
-                        Self::sub_vec(
-                            Self::mul_vec(Self::add_vec(a[i], a[j]), Self::add_vec(b[i], b[j])),
-                            diag[i],
-                        ),
-                        diag[j],
-                    );
-                    avx2_ring_subfield_fp8_add_phi::<P>(&mut out, i + j, mixed);
-                    avx2_ring_subfield_fp8_add_phi::<P>(&mut out, j - i, mixed);
-                }
-            }
-
-            out.map(|v| Self::from_vec(v))
-        }
-    }
-
-    #[inline(always)]
-    fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
-        unsafe {
-            let a = a.map(Self::to_vec);
-            let zero = _mm256_setzero_si256();
-            let mut out = [zero; 8];
-
-            let sq: [__m256i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], a[i]));
-            out[0] = sq[0];
-
-            for k in 1..8 {
-                let cross = Self::mul_vec(a[0], a[k]);
-                out[k] = Self::add_vec(out[k], Self::add_vec(cross, cross));
-            }
-
-            for (i, &sq_i) in sq.iter().enumerate().skip(1) {
-                out[0] = Self::add_vec(out[0], Self::add_vec(sq_i, sq_i));
-                avx2_ring_subfield_fp8_add_phi::<P>(&mut out, i + i, sq_i);
-            }
-
-            for i in 1..8usize {
-                for j in (i + 1)..8usize {
-                    let cross = Self::mul_vec(a[i], a[j]);
-                    let doubled = Self::add_vec(cross, cross);
-                    avx2_ring_subfield_fp8_add_phi::<P>(&mut out, i + j, doubled);
-                    avx2_ring_subfield_fp8_add_phi::<P>(&mut out, j - i, doubled);
-                }
-            }
-
-            out.map(|v| Self::from_vec(v))
-        }
-    }
 }
 
 /// Number of `Fp64` lanes in an AVX2 packed vector.
@@ -1578,8 +1481,13 @@ impl<const P: u32> PackedFp16Avx2<P> {
         _mm256_cvtepu16_epi32(_mm256_extracti128_si256::<1>(x))
     }
 
-    /// Pack two `__m256i` of 8 u32 lanes (values in [0, P)) back to one
+    /// Pack two `__m256i` of 8 u32 lanes (values in `[0, P)`) back to one
     /// `__m256i` of 16 u16 lanes in the correct order.
+    ///
+    /// `_mm256_packus_epi32` saturates signed i32 to `[0, 65535]`; since
+    /// callers have already canonicalized to `[0, P)` where `P < 2^16`,
+    /// every lane is positive and fits in u16 so saturation is a no-op.
+    /// The cross-lane permute fixes the AVX2 in-lane pack ordering.
     #[inline(always)]
     unsafe fn narrow(lo_u32: __m256i, hi_u32: __m256i) -> __m256i {
         let packed = _mm256_packus_epi32(lo_u32, hi_u32);
@@ -1620,7 +1528,12 @@ impl<const P: u32> PackedFp16Avx2<P> {
     }
 
     /// Three-fold Solinas reduction of two `__m256i` of u32 products back
-    /// to one `__m256i` of 16 u16 values. Mirrors `PackedFp16Neon::solinas_reduce_16`.
+    /// to one `__m256i` of 16 u16 values.
+    ///
+    /// Three folds suffice for all valid `Fp16<P>` parameters
+    /// (`BITS ≤ 16`, `C(C+1) < P`). Worst-case bound after fold 3:
+    ///   fold1 ≤ (C+1)·2^BITS → fold2 ≤ 2^BITS + C² − 2C
+    ///   fold3 ≤ C² − C − 1 < 2^BITS (since C < √P ≤ 2⁸).
     #[inline(always)]
     unsafe fn solinas_reduce_16(prod_lo: __m256i, prod_hi: __m256i) -> __m256i {
         let mask = _mm256_set1_epi32((1u32 << Self::BITS) as i32 - 1);
@@ -1767,6 +1680,12 @@ impl<const P: u32> PackedField for PackedFp16Avx2<P> {
         self * self
     }
 
+    /// Chebyshev-basis Karatsuba multiplication for `RingSubfieldFp8` lanes.
+    ///
+    /// Each `add_vec`/`sub_vec`/`mul_vec` widens to two `__m256i` of u32,
+    /// operates, and narrows back.  A split-half approach that stays in u32
+    /// throughout (like the AVX-512 variant) would halve the widen/narrow
+    /// traffic at the cost of doubled accumulator count; left as a follow-up.
     #[inline(always)]
     fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
         unsafe {
@@ -1808,7 +1727,7 @@ impl<const P: u32> PackedField for PackedFp16Avx2<P> {
                 }
             }
 
-            out.map(|v| Self::from_vec(v))
+            out.map(Self::from_vec)
         }
     }
 
@@ -1841,7 +1760,7 @@ impl<const P: u32> PackedField for PackedFp16Avx2<P> {
                 }
             }
 
-            out.map(|v| Self::from_vec(v))
+            out.map(Self::from_vec)
         }
     }
 }
