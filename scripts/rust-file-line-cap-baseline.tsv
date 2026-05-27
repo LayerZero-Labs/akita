@@ -2,7 +2,6 @@
 # Format: <line-count><TAB><repo-relative path>
 # Entries may not grow. Remove an entry once its file has at most 1500 lines.
 4387	crates/akita-prover/src/protocol/flow.rs
-4179	crates/akita-types/src/proof/mod.rs
 3367	crates/akita-prover/src/protocol/sumcheck/akita_stage2.rs
 3193	crates/akita-prover/src/backend/onehot.rs
 3090	crates/akita-prover/src/kernels/linear.rs
