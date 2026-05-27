@@ -125,6 +125,7 @@ fn tiered_level_params() -> LevelParams {
             balanced_digit_delta_bound(OUTER_LOG_BASIS),
             D,
         ),
+        fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
     }
 }
 

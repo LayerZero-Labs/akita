@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
 use akita_field::parallel::*;
@@ -443,9 +445,11 @@ mod tests {
             })
             .collect();
         let prepared = RingSwitchDeferredRowEval {
-            c_alphas: (0..total_blocks)
-                .map(|idx| f(3_000 + idx as u128))
-                .collect(),
+            c_alphas: PreparedChallengeEvals::Flat(
+                (0..total_blocks)
+                    .map(|idx| f(3_000 + idx as u128))
+                    .collect(),
+            ),
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(4_000 + idx as u128))
                 .collect(),
@@ -546,11 +550,12 @@ mod tests {
                 summarize_pow2_block_carries(
                     &eq_low,
                     block_offset_low,
-                    &p.c_alphas[start..(start + p.num_blocks)],
+                    &p.c_alphas.as_flat().unwrap()[start..(start + p.num_blocks)],
                 )
             })
             .collect::<Result<_, _>>()
             .unwrap();
+        let c_alphas = p.c_alphas.as_flat().unwrap();
         let got = WStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
             offset_high: fx.offset_w >> offset_low_bits,
@@ -572,7 +577,7 @@ mod tests {
             let entry = (p.eq_tau1[1 + point_idx]
                 * p.gamma[claim_idx]
                 * fx.opening_points[point_idx].b[block_idx]
-                + p.eq_tau1[0] * p.c_alphas[blk])
+                + p.eq_tau1[0] * c_alphas[blk])
                 * fx.g1_open[dig];
             expected += entry * eq[fx.offset_w + x];
         }
@@ -595,11 +600,12 @@ mod tests {
                 summarize_pow2_block_carries(
                     &eq_low,
                     block_offset_low,
-                    &p.c_alphas[start..(start + p.num_blocks)],
+                    &p.c_alphas.as_flat().unwrap()[start..(start + p.num_blocks)],
                 )
             })
             .collect::<Result<_, _>>()
             .unwrap();
+        let c_alphas = p.c_alphas.as_flat().unwrap();
         let a_start = 1 + p.num_public_rows + p.n_d_active() + p.n_b * p.num_points;
         let got = TStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
@@ -616,7 +622,7 @@ mod tests {
             let blk = x % p.total_blocks;
             let a_idx = compound_dig / p.depth_open;
             let digit_idx = compound_dig % p.depth_open;
-            let entry = p.eq_tau1[a_start + a_idx] * p.c_alphas[blk] * fx.g1_open[digit_idx];
+            let entry = p.eq_tau1[a_start + a_idx] * c_alphas[blk] * fx.g1_open[digit_idx];
             expected += entry * eq[fx.offset_t + x];
         }
         assert_eq!(got, expected);

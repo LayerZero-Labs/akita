@@ -6,7 +6,7 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
@@ -17,6 +17,8 @@ use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_ch
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+
+mod tensor_fold;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SparseRingCoeff {
@@ -362,6 +364,19 @@ where
             sparse_accumulate::<D>(blocks, challenges, num_blocks, inner_width, num_digits);
         let modulus = (-F::one()).to_canonical_u128() + 1;
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+    }
+
+    #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold_tensor_batched")]
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        tensor: &TensorChallengeSet,
+        block_len: usize,
+        num_digits: usize,
+        _log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        Ok(Some(tensor_fold::decompose_fold_batched_tensor_sparse(
+            polys, tensor, block_len, num_digits,
+        )?))
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]

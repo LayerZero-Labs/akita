@@ -980,10 +980,12 @@ mod tests {
     use akita_field::FieldCore;
     use akita_field::Prime128OffsetA7F7;
     use akita_serialization::{AkitaSerialize, Compress};
-    use akita_sumcheck::{
-        CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
-        EXTENSION_OPENING_REDUCTION_DEGREE,
-    };
+    use akita_sumcheck::EqFactoredUniPoly;
+    use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
+    #[cfg(not(feature = "zk"))]
+    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
+    #[cfg(feature = "zk")]
+    use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 
     use crate::ExtensionOpeningReductionProof;
 
@@ -1017,6 +1019,7 @@ mod tests {
         assert!(step.level_params.is_none());
     }
 
+    #[cfg(not(feature = "zk"))]
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
             round_polys: (0..rounds)
@@ -1027,6 +1030,24 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "zk")]
+    fn dummy_sumcheck_proof_masked<F: FieldCore>(
+        rounds: usize,
+        degree: usize,
+    ) -> SumcheckProofMasked<F> {
+        let compressed_rounds = || {
+            (0..rounds)
+                .map(|_| CompressedUniPoly {
+                    coeffs_except_linear_term: vec![F::zero(); degree],
+                })
+                .collect()
+        };
+        SumcheckProofMasked {
+            masked_round_polys: compressed_rounds(),
+        }
+    }
+
+    #[cfg(not(feature = "zk"))]
     fn dummy_eq_factored_sumcheck<F: FieldCore>(
         rounds: usize,
         degree: usize,
@@ -1043,12 +1064,38 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "zk")]
+    fn dummy_eq_factored_sumcheck_proof_masked<F: FieldCore>(
+        rounds: usize,
+        degree: usize,
+    ) -> EqFactoredSumcheckProofMasked<F> {
+        let rounds_for = || {
+            (0..rounds)
+                .map(|_| EqFactoredUniPoly {
+                    coeffs_except_linear_term: vec![
+                        F::zero();
+                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
+                    ],
+                })
+                .collect()
+        };
+        EqFactoredSumcheckProofMasked {
+            masked_round_polys: rounds_for(),
+        }
+    }
+
     fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
         AkitaStage1Proof {
             stages: stage1_tree_stage_shapes(rounds, b)
                 .into_iter()
                 .map(|shape| AkitaStage1StageProof {
-                    sumcheck: dummy_eq_factored_sumcheck(rounds, shape.sumcheck.1),
+                    #[cfg(not(feature = "zk"))]
+                    sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
+                    #[cfg(feature = "zk")]
+                    sumcheck_proof_masked: dummy_eq_factored_sumcheck_proof_masked(
+                        rounds,
+                        shape.sumcheck_proof.1,
+                    ),
                     child_claims: vec![F::zero(); shape.child_claims],
                 })
                 .collect(),
@@ -1084,9 +1131,15 @@ mod tests {
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
-                sumcheck: dummy_sumcheck(rounds, 3),
+                #[cfg(not(feature = "zk"))]
+                sumcheck_proof: dummy_sumcheck(rounds, 3),
+                #[cfg(feature = "zk")]
+                sumcheck_proof_masked: dummy_sumcheck_proof_masked(rounds, 3),
                 next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
+                #[cfg(not(feature = "zk"))]
                 next_w_eval: F::zero(),
+                #[cfg(feature = "zk")]
+                next_w_eval_masked: F::zero(),
             },
         };
         Ok(proof.serialized_size(Compress::No))
@@ -1169,7 +1222,10 @@ mod tests {
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 vec![CyclotomicRing::<F, D>::zero(); num_claims],
                 None,
+                #[cfg(not(feature = "zk"))]
                 dummy_sumcheck(rounds, 3),
+                #[cfg(feature = "zk")]
+                dummy_sumcheck_proof_masked(rounds, 3),
                 final_witness,
             );
 
@@ -1225,6 +1281,7 @@ mod tests {
                 m_vars: 0,
                 r_vars: 0,
                 stage1_config: stage1_config.clone(),
+                fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                 num_digits_commit: 1,
                 num_digits_open: 1,
                 num_digits_fold: 1,
@@ -1245,7 +1302,10 @@ mod tests {
                 vec![CyclotomicRing::<F, D>::zero(); num_points],
                 vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
                 dummy_stage1_proof(rounds, b),
+                #[cfg(not(feature = "zk"))]
                 dummy_sumcheck(rounds, 3),
+                #[cfg(feature = "zk")]
+                dummy_sumcheck_proof_masked(rounds, 3),
                 next_commitment,
                 F::zero(),
             );
@@ -1266,11 +1326,23 @@ mod tests {
         let partials = root_extension_opening_partials(extension_width, num_claims);
         let reduction = ExtensionOpeningReductionProof {
             partials: vec![F::zero(); partials],
+            #[cfg(not(feature = "zk"))]
             sumcheck: dummy_sumcheck(
                 opening_vars - extension_width.trailing_zeros() as usize,
                 EXTENSION_OPENING_REDUCTION_DEGREE,
             ),
+            #[cfg(feature = "zk")]
+            sumcheck_proof_masked: dummy_sumcheck_proof_masked(
+                opening_vars - extension_width.trailing_zeros() as usize,
+                EXTENSION_OPENING_REDUCTION_DEGREE,
+            ),
         };
+        #[cfg(not(feature = "zk"))]
+        let sumcheck_bytes = reduction.sumcheck.serialized_size(Compress::No);
+        #[cfg(feature = "zk")]
+        let sumcheck_bytes = reduction
+            .sumcheck_proof_masked
+            .serialized_size(Compress::No);
 
         assert_eq!(
             extension_opening_reduction_proof_bytes(128, partials, opening_vars, extension_width)
@@ -1280,7 +1352,7 @@ mod tests {
                 .iter()
                 .map(|partial| partial.serialized_size(Compress::No))
                 .sum::<usize>()
-                + reduction.sumcheck.serialized_size(Compress::No),
+                + sumcheck_bytes,
             "planned root EOR bytes should match the headerless serialized payload"
         );
     }

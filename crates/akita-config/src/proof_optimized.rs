@@ -52,6 +52,7 @@ where
             stage1_challenge_config: Cfg::stage1_challenge_config,
             envelope,
             ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+            fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
         },
     )
 }
@@ -1019,6 +1020,7 @@ mod tests {
                 stage1_challenge_config: Cfg::stage1_challenge_config,
                 envelope: Cfg::envelope(key.num_vars),
                 ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+                fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
             },
         )
         .expect_err("mismatched SIS family must be rejected");
@@ -1067,6 +1069,31 @@ mod tests {
         );
 
         assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
+        let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
+        let plan = <fp128::D64OneHot as CommitmentConfig>::schedule_plan(key)
+            .expect("config schedule should succeed")
+            .expect("fp128 D64 onehot 4x30 schedule should be generated");
+
+        assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
+        assert!(
+            plan.num_fold_levels() > 2,
+            "4x30 onehot schedule should keep a recursive suffix after the root fold"
+        );
+
+        let akita_types::DirectWitnessShape::PackedDigits((num_elems, _bits)) =
+            plan.direct_step().witness_shape
+        else {
+            panic!("4x30 onehot schedule should end in packed digits");
+        };
+        assert!(
+            num_elems <= 245_888,
+            "expected byte-aware batched schedule to keep folding, got final_w with {num_elems} elems"
+        );
     }
 
     #[test]

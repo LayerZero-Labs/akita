@@ -4,7 +4,7 @@
 //! block geometry, and digit depths into a single struct that fully
 //! describes one recursion level.
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 pub use crate::generated::sis_floor::SisModulusFamily;
@@ -232,6 +232,11 @@ pub struct LevelParams {
     pub r_vars: usize,
     /// Stage-1 sparse challenge family sampled at this level.
     pub stage1_config: SparseChallengeConfig,
+    /// Shape of the stage-1 fold-round challenge vector at this level.
+    ///
+    /// Defaults to [`TensorChallengeShape::Flat`]. Tensor presets set selected
+    /// levels to [`TensorChallengeShape::Tensor`] during schedule construction.
+    pub fold_challenge_shape: TensorChallengeShape,
     /// Gadget decomposition depth for commitment coefficients (δ_commit).
     pub num_digits_commit: usize,
     /// Gadget decomposition depth for opening evaluations (δ_open).
@@ -294,6 +299,7 @@ impl LevelParams {
             m_vars: 0,
             r_vars: 0,
             stage1_config,
+            fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
             num_digits_fold: 0,
@@ -307,10 +313,19 @@ impl LevelParams {
         }
     }
 
-    /// Worst-case L1 mass of the sparse challenge, derived from `stage1_config`.
+    /// Worst-case L1 mass of the fold-round challenge.
     #[inline]
     pub fn challenge_l1_mass(&self) -> usize {
-        self.stage1_config.l1_norm()
+        self.fold_challenge_shape
+            .effective_l1_mass(&self.stage1_config)
+    }
+
+    /// Replace the fold-round challenge shape, returning the updated params.
+    #[inline]
+    #[must_use]
+    pub fn with_fold_challenge_shape(mut self, shape: TensorChallengeShape) -> Self {
+        self.fold_challenge_shape = shape;
+        self
     }
 
     /// Block-select variable count (the `r_vars` of the legacy layout).
@@ -555,6 +570,7 @@ impl LevelParams {
             m_vars,
             r_vars,
             stage1_config: self.stage1_config.clone(),
+            fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
             num_digits_open,
             num_digits_fold,
@@ -603,6 +619,7 @@ impl LevelParams {
             m_vars: other.m_vars,
             r_vars: other.r_vars,
             stage1_config: self.stage1_config.clone(),
+            fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
             num_digits_fold: other.num_digits_fold,

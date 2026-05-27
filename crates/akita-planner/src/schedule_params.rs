@@ -59,6 +59,7 @@ fn search_options_for_cfg<Cfg: CommitmentConfig>(
         envelope: Cfg::envelope(key.num_vars),
         ring_subfield_embedding_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
         log_basis_search_range: Cfg::log_basis_search_range,
+        fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
     })
 }
 
@@ -123,6 +124,11 @@ pub(crate) struct SearchOptions {
     pub ring_subfield_embedding_norm_bound: u32,
     /// Inclusive `(min, max)` log-basis search range at a state.
     pub log_basis_search_range: fn(AkitaScheduleInputs) -> (u32, u32),
+    /// Per-level fold-round challenge shape; mirrors
+    /// `CommitmentConfig::fold_challenge_shape_at_level`. The table fast path
+    /// uses this through schedule materialization; the from-scratch root DP
+    /// search still derives candidates from flat default params.
+    pub fold_challenge_shape: fn(AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
 }
 
 impl SearchOptions {
@@ -853,6 +859,7 @@ fn derive_root_candidate(
             m_vars,
             r_vars,
             stage1_config: root_lp.stage1_config.clone(),
+            fold_challenge_shape: root_lp.fold_challenge_shape,
             num_digits_commit: root_lp.num_digits_commit,
             num_digits_open: root_lp.num_digits_open,
             num_digits_fold: per_poly_fold,
@@ -939,6 +946,7 @@ fn offline_schedule_for_key(opts: &SearchOptions) -> Result<Option<Schedule>, Ak
             stage1_challenge_config: opts.stage1_challenge_config,
             envelope: opts.envelope,
             ring_subfield_norm_bound: opts.ring_subfield_embedding_norm_bound,
+            fold_challenge_shape: opts.fold_challenge_shape,
         },
     )?;
     Ok(plan.map(|plan| schedule_from_plan(&plan, opts.field_bits())))

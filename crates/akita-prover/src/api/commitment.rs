@@ -145,23 +145,12 @@ where
         setup.expanded.seed.max_stride,
         &b_input_digits,
     );
-    let hint = {
+    let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
+        decomposed_inner_rows,
+        recomposed_inner_rows,
         #[cfg(feature = "zk")]
-        {
-            AkitaCommitmentHint::with_recomposed_inner_rows(
-                decomposed_inner_rows,
-                recomposed_inner_rows,
-                vec![b_blinding_digits],
-            )
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            AkitaCommitmentHint::with_recomposed_inner_rows(
-                decomposed_inner_rows,
-                recomposed_inner_rows,
-            )
-        }
-    };
+        vec![b_blinding_digits],
+    );
     Ok((RingCommitment { u }, hint))
 }
 
@@ -574,6 +563,7 @@ mod tests {
                 balanced_digit_delta_bound(outer_log_basis),
                 D,
             ),
+            fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
         }
     }
 
