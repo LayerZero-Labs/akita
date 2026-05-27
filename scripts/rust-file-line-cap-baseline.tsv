@@ -13,7 +13,7 @@
 2051	crates/akita-scheme/src/tests.rs
 2023	crates/akita-verifier/src/protocol/levels.rs
 1921	crates/akita-field/src/fields/fp128.rs
-1832	crates/akita-config/src/proof_optimized.rs
+1857	crates/akita-config/src/proof_optimized.rs
 1814	crates/akita-pcs/tests/algebra.rs
 1679	crates/akita-prover/src/protocol/quadratic_equation.rs
 1506	crates/akita-types/src/field_reduction.rs
