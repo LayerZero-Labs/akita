@@ -140,6 +140,18 @@ def parse_args() -> argparse.Namespace:
         default=int(os.environ.get("AKITA_BENCH_RUNS", "1")),
         help="Number of samples to run for each benchmark case; reported timings use the median.",
     )
+    run_parser.add_argument(
+        "--warmups",
+        type=int,
+        default=int(os.environ.get("AKITA_BENCH_WARMUPS", "0")),
+        help=(
+            "Number of warm-up runs executed per case before the measured "
+            "runs. Warm-ups prime CPU caches, the allocator, and any "
+            "lazily-initialized statics (NTT roots, schedule tables) so the "
+            "first measured run is not penalized. Their output is discarded "
+            "and they do not contribute to the reported median."
+        ),
+    )
 
     render_parser = subparsers.add_parser(
         "render", help="Render a markdown report from summary.json files."
@@ -602,27 +614,49 @@ def run_benchmark(args: argparse.Namespace) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     if args.runs <= 0:
         raise ValueError("--runs must be positive")
+    if args.warmups < 0:
+        raise ValueError("--warmups must be non-negative")
 
     cases = configured_cases(args)
     aggregate_summary: dict[str, object] = {
         "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "warmups": args.warmups,
         "cases": [],
     }
     overall_return_code = 0
 
     for case in cases:
         case_dir = output_dir / case.case_id
+        # Warm-up runs: prime caches, allocator, and lazily-initialized
+        # statics (NTT roots, schedule tables) so the first measured run
+        # is not penalized. Output is discarded on success; on failure we
+        # surface the warm-up's failure summary instead of running the
+        # measured loop (rerunning a known-broken case would just repeat
+        # the same error).
         run_summaries = []
-        for run_index in range(1, args.runs + 1):
-            run_dir = case_dir if args.runs == 1 else case_dir / f"run-{run_index}"
-            summary, return_code = run_benchmark_case(args.binary, run_dir, case)
-            summary["run_index"] = run_index
-            run_summaries.append(summary)
+        warmup_failure_summary: dict[str, object] | None = None
+        for warmup_index in range(1, args.warmups + 1):
+            warmup_dir = case_dir / f"warmup-{warmup_index}"
+            summary, return_code = run_benchmark_case(args.binary, warmup_dir, case)
             if return_code != 0:
+                summary["run_index"] = 0
+                warmup_failure_summary = summary
                 if overall_return_code == 0:
                     overall_return_code = return_code
                 break
+        if warmup_failure_summary is not None:
+            run_summaries.append(warmup_failure_summary)
+        else:
+            for run_index in range(1, args.runs + 1):
+                run_dir = case_dir if args.runs == 1 else case_dir / f"run-{run_index}"
+                summary, return_code = run_benchmark_case(args.binary, run_dir, case)
+                summary["run_index"] = run_index
+                run_summaries.append(summary)
+                if return_code != 0:
+                    if overall_return_code == 0:
+                        overall_return_code = return_code
+                    break
         aggregate_summary["cases"].append(combine_case_run_summaries(run_summaries))
 
     write_text(
@@ -840,23 +874,57 @@ def fmt_optional_bytes(summary: dict[str, object], key: str) -> str:
     return fmt_bytes(float(value))
 
 
-def proof_size_delta(current: dict[str, object], baseline: dict[str, object] | None) -> str:
+def numeric_delta(
+    current: dict[str, object],
+    baseline: dict[str, object] | None,
+    key: str,
+) -> str:
+    """Format a percentage delta of `current[key]` against `baseline[key]`.
+
+    Returns `"n/a"` when either side is missing or the baseline value is
+    zero. Otherwise renders as e.g. `"+5.20%"` or `"-1.23%"`. Used for
+    every per-baseline delta column in the matrix summary so proof size,
+    prover wall-time, and other numeric metrics share one formatter.
+    """
     if baseline is None:
         return "n/a"
-    current_size = current.get("proof_size_bytes")
-    baseline_size = baseline.get("proof_size_bytes")
-    if current_size is None or baseline_size in (None, 0):
+    current_value = current.get(key)
+    baseline_value = baseline.get(key)
+    if current_value is None or baseline_value in (None, 0):
         return "n/a"
-    delta = (float(current_size) / float(baseline_size) - 1.0) * 100.0
+    delta = (float(current_value) / float(baseline_value) - 1.0) * 100.0
     sign = "+" if delta >= 0.0 else ""
     return f"{sign}{delta:.2f}%"
+
+
+# Per-baseline delta columns added to the matrix summary, in the order
+# they appear after the absolute-value columns. `(short_name, summary_key)`
+# pairs: the short name is used in the column header (`"{label} {short_name} Δ"`)
+# and the summary key is read from each case's `summary.json` entry.
+MATRIX_BASELINE_DELTA_COLUMNS: list[tuple[str, str]] = [
+    ("setup", "setup_s"),
+    ("commit", "commit_s"),
+    ("prove", "prove_total_s"),
+    ("verify", "verify_total_s"),
+    ("proof", "proof_size_bytes"),
+]
 
 
 def render_matrix_summary(
     current_cases: list[dict[str, object]],
     visible_baselines: list[tuple[str, dict[str, dict[str, object]] | None]],
 ) -> None:
-    baseline_columns = [label for label, summaries in visible_baselines if summaries is not None]
+    # Only the *first* visible baseline (the "Main baseline" by
+    # construction in `render_report`) drives the per-baseline delta
+    # columns in this matrix. The Previous-run baseline is still loaded
+    # and announced in the report header for context, but adding a
+    # second 5-column delta block per case made the matrix table too
+    # wide to scan in the PR comment and largely duplicated information
+    # already visible from the main-baseline column.
+    matrix_baseline: tuple[str, dict[str, dict[str, object]] | None] | None = next(
+        ((label, summaries) for label, summaries in visible_baselines if summaries is not None),
+        None,
+    )
     headers = [
         "Status",
         "Case",
@@ -868,7 +936,10 @@ def render_matrix_summary(
         "RSS MiB",
         "Proof B",
     ]
-    headers.extend(f"{label} proof Δ" for label in baseline_columns)
+    if matrix_baseline is not None:
+        label = matrix_baseline[0]
+        for short_name, _ in MATRIX_BASELINE_DELTA_COLUMNS:
+            headers.append(f"{label} {short_name} Δ")
     print("| " + " | ".join(headers) + " |")
     print("| " + " | ".join(["---"] * len(headers)) + " |")
 
@@ -888,10 +959,10 @@ def render_matrix_summary(
             fmt_optional_mib(current, "max_rss_kib"),
             fmt_optional_bytes(current, "proof_size_bytes"),
         ]
-        for _label, summaries in visible_baselines:
-            if summaries is None:
-                continue
-            row.append(proof_size_delta(current, summaries.get(str(current["case_id"]))))
+        if matrix_baseline is not None:
+            baseline_case = matrix_baseline[1].get(str(current["case_id"]))
+            for _short_name, summary_key in MATRIX_BASELINE_DELTA_COLUMNS:
+                row.append(numeric_delta(current, baseline_case, summary_key))
         print("| " + " | ".join(row) + " |")
 
     failing_cases = [case for case in current_cases if case_status(case) != "ok"]
@@ -1008,6 +1079,8 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
 def render_report(args: argparse.Namespace) -> int:
     summary_path = pathlib.Path(args.summary)
     current_cases = load_case_summaries(summary_path)
+    raw_summary = load_summary(summary_path)
+    warmups = int(raw_summary.get("warmups", 0) or 0)
 
     baselines: list[tuple[str, dict[str, dict[str, object]] | None]] = [
         ("Main baseline", load_optional_case_summaries(args.main_baseline_dir)),
@@ -1122,8 +1195,14 @@ def render_report(args: argparse.Namespace) -> int:
             "`AKITA_PROFILE_LOG=info` `AKITA_PROFILE_ANSI=0`."
         )
         runs = int(current.get("runs", 1))
-        if runs > 1:
-            print(f"- Samples: metrics are the median of `{runs}` runs; Max RSS is the maximum sample.")
+        if runs > 1 or warmups > 0:
+            warmup_clause = (
+                f" after `{warmups}` discarded warm-up run(s)" if warmups > 0 else ""
+            )
+            print(
+                f"- Samples: metrics are the median of `{runs}` runs{warmup_clause}; "
+                "Max RSS is the maximum sample."
+            )
         print()
 
         case_baselines = [
