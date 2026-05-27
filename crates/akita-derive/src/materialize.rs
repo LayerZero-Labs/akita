@@ -8,6 +8,7 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField};
+use akita_types::generated::sis_floor::ceil_supported_collision;
 use akita_types::generated::{
     table_entry, GeneratedFoldStep, GeneratedScheduleTable, GeneratedScheduleTableEntry,
     GeneratedStep,
@@ -16,10 +17,10 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, generated_schedule_lookup_key,
     level_layout_from_params, level_proof_bytes, root_extension_opening_partials,
     terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaPlannedDirectStep, AkitaPlannedLevel,
-    AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaSchedulePlan, CommitmentEnvelope, DecompositionParams, DirectWitnessShape, LevelParams,
-    MRowLayout, SisModulusFamily,
+    w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaPlannedDirectStep,
+    AkitaPlannedLevel, AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, CommitmentEnvelope, DecompositionParams,
+    DirectWitnessShape, LevelParams, MRowLayout, SisModulusFamily,
 };
 
 /// Policy hooks needed to materialize generated schedule-table entries into
@@ -65,24 +66,106 @@ pub struct PlanPolicy<Stage1Config> {
     pub fold_challenge_shape: fn(AkitaScheduleInputs) -> TensorChallengeShape,
 }
 
+/// Reconstruct the SIS-secure A and B/D collision buckets for a
+/// generated fold level.
+///
+/// Mirrors the bucket math in `sis_derived_root_params_for_layout`
+/// (verifier-reachable derivation) and the planner's outer loop:
+/// `bd_raw = 2^log_basis − 1` rounded up to the nearest audited
+/// bucket; `a_raw = 2` when `log_commit_bound == 1` else `bd_raw`,
+/// times the stage-1 infinity norm and the ring-subfield embedding
+/// norm, then rounded up.
+fn generated_level_buckets(
+    sis_family: SisModulusFamily,
+    ring_dimension: usize,
+    log_basis: u32,
+    log_commit_bound: u32,
+    stage1_inf_norm: u32,
+    ring_subfield_norm_bound: u32,
+) -> Result<(u32, u32), AkitaError> {
+    let bd_raw = 1u32
+        .checked_shl(log_basis)
+        .and_then(|b| b.checked_sub(1))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "generated schedule log_basis {log_basis} overflows bd_raw"
+            ))
+        })?;
+    let a_raw = if log_commit_bound == 1 { 2 } else { bd_raw };
+    let a_collision_raw = a_raw
+        .checked_mul(stage1_inf_norm)
+        .and_then(|v| v.checked_mul(ring_subfield_norm_bound))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "generated schedule A-role collision overflow at log_basis={log_basis}"
+            ))
+        })?;
+    let a_bucket = ceil_supported_collision(sis_family, ring_dimension as u32, a_collision_raw)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "no audited A-role bucket for generated schedule \
+                 (family={sis_family:?}, d={ring_dimension}, collision_inf={a_collision_raw})"
+            ))
+        })?;
+    let bd_bucket = ceil_supported_collision(sis_family, ring_dimension as u32, bd_raw)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "no audited B/D-role bucket for generated schedule \
+                 (family={sis_family:?}, d={ring_dimension}, collision_inf={bd_raw})"
+            ))
+        })?;
+    Ok((a_bucket, bd_bucket))
+}
+
+/// Build a placeholder `LevelParams` for one shipped fold step.
+///
+/// The keys carry the shipped ranks (`n_a`, `n_b`, `n_d`) and the
+/// SIS-secure A / B-D collision buckets (computed via
+/// [`generated_level_buckets`]); `col_len` stays at the
+/// [`LevelParams::params_only`] placeholder value of `0`. The layout
+/// is filled in by a subsequent `with_layout` / `with_decomp`, which
+/// preserves `self.a_key.collision_inf`, so the strict
+/// [`AjtaiKeyParams::try_new`] audit downstream sees the correct
+/// bucket. `log_commit_bound` is the level-local bound — at the root
+/// it is `Cfg::decomposition().log_commit_bound`; at recursive levels
+/// it collapses to the level's `log_basis` (balanced-digit `w`
+/// entries).
 fn generated_level_params<Stage1Config>(
     sis_family: SisModulusFamily,
     step: GeneratedFoldStep,
+    log_commit_bound: u32,
+    ring_subfield_norm_bound: u32,
     stage1_challenge_config: &Stage1Config,
 ) -> Result<LevelParams, AkitaError>
 where
     Stage1Config: Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 {
-    let stage1_config = stage1_challenge_config(step.ring_d as usize)?;
-    Ok(LevelParams::params_only(
+    let ring_d = step.ring_d as usize;
+    let stage1_config = stage1_challenge_config(ring_d)?;
+    let (a_bucket, bd_bucket) = generated_level_buckets(
         sis_family,
-        step.ring_d as usize,
+        ring_d,
+        step.log_basis,
+        log_commit_bound,
+        stage1_config.infinity_norm(),
+        ring_subfield_norm_bound,
+    )?;
+    let mut params = LevelParams::params_only(
+        sis_family,
+        ring_d,
         step.log_basis,
         step.n_a as usize,
         step.n_b as usize,
         step.n_d as usize,
         stage1_config,
-    ))
+    );
+    params.a_key =
+        AjtaiKeyParams::new_unchecked(sis_family, step.n_a as usize, 0, a_bucket, ring_d);
+    params.b_key =
+        AjtaiKeyParams::new_unchecked(sis_family, step.n_b as usize, 0, bd_bucket, ring_d);
+    params.d_key =
+        AjtaiKeyParams::new_unchecked(sis_family, step.n_d as usize, 0, bd_bucket, ring_d);
+    Ok(params)
 }
 
 fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
@@ -190,13 +273,6 @@ where
                     level: fold_level,
                     current_w_len,
                 };
-                // Stamp the per-level fold shape onto `params` *before*
-                // `level_layout_from_params` derives `num_digits_fold` and the
-                // (m_vars, r_vars) split. `LevelParams::challenge_l1_mass()`
-                // resolves against this field, so a tensor preset gets
-                // sized for `omega^2` here rather than `omega`.
-                let params = generated_level_params(sis_family, *level, &stage1_challenge_config)?
-                    .with_fold_challenge_shape(fold_challenge_shape(inputs));
                 let level_decomp = if fold_level == 0 {
                     DecompositionParams {
                         log_basis: level.log_basis,
@@ -215,6 +291,19 @@ where
                         ),
                     }
                 };
+                // Stamp the per-level fold shape onto `params` *before*
+                // `level_layout_from_params` derives `num_digits_fold` and the
+                // (m_vars, r_vars) split. `LevelParams::challenge_l1_mass()`
+                // resolves against this field, so a tensor preset gets
+                // sized for `omega^2` here rather than `omega`.
+                let params = generated_level_params(
+                    sis_family,
+                    *level,
+                    level_decomp.log_commit_bound,
+                    ring_subfield_norm_bound,
+                    &stage1_challenge_config,
+                )?
+                .with_fold_challenge_shape(fold_challenge_shape(inputs));
                 let layout = level_layout_from_params(
                     level.m_vars as usize,
                     level.r_vars as usize,
@@ -275,9 +364,16 @@ where
                         // next-level params too, so downstream consumers of
                         // `AkitaPlannedLevel::next_level_params` see a
                         // consistent shape field.
+                        //
+                        // `next_level` lives at `fold_level + 1`, which is
+                        // always a recursive level, so `log_commit_bound`
+                        // collapses to the level's own `log_basis`
+                        // (matches `level_decomp` for recursive levels).
                         let next_level_params = generated_level_params(
                             sis_family,
                             *next_level,
+                            next_level.log_basis,
+                            ring_subfield_norm_bound,
                             &stage1_challenge_config,
                         )?
                         .with_fold_challenge_shape(fold_challenge_shape(next_inputs));
@@ -431,12 +527,23 @@ where
                         || key.num_z_vectors != 1;
                     match singleton {
                         Some(lp) if root_is_batched => {
-                            Some(akita_types::scale_batched_root_layout(
+                            // Scaling the singleton root layout multiplies
+                            // the B/D widths by `num_t_vectors` and re-runs
+                            // `try_new` against the original singleton
+                            // ranks. The strict audit may reject when those
+                            // ranks no longer cover the batched widths.
+                            // That's not an error — the schedule still
+                            // ships with `commit_params: None` (matching
+                            // `find_schedule`'s root-direct baseline) and
+                            // downstream consumers re-derive the commit
+                            // layout from the runtime schedule shape.
+                            akita_types::scale_batched_root_layout(
                                 &lp,
                                 key.num_t_vectors,
                                 stage1_challenge_config(ring_dimension)?.l1_norm(),
                                 root_decomp.field_bits(),
-                            )?)
+                            )
+                            .ok()
                         }
                         other => other,
                     }

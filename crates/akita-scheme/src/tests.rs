@@ -1401,22 +1401,41 @@ struct Fp32RingSubfieldRootFoldCfg;
 #[derive(Clone)]
 struct Fp32RingSubfieldOuterFallbackCfg;
 
+/// Synthetic root `LevelParams` for the two fp32 ring-subfield test
+/// fixtures.
+///
+/// Both fixtures share the same `(family, D, log_basis, log_commit_bound,
+/// stage1, ring_subfield)` setup and only differ in their
+/// `with_decomp` arguments. Constructs the placeholder via
+/// `params_only` and stamps the SIS-secure A and B/D collision buckets
+/// via `new_unchecked` so downstream consumers (notably
+/// `scale_batched_root_layout`'s strict
+/// [`akita_types::AjtaiKeyParams::try_new`] audit) see a real bucket
+/// instead of the `0` `params_only` default.
+fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
+    use akita_types::AjtaiKeyParams;
+    let sis_family = akita_types::SisModulusFamily::Q32;
+    let d: usize = 16;
+    let stage1 = akita_challenges::SparseChallengeConfig::Uniform {
+        weight: 1,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    // Match the verifier-reachable derivation for this fixture's
+    // `(log_basis=3, log_commit_bound=32, stage1.inf_norm=1, ring_subfield=2)`:
+    // `bd_raw = 7`, `a_collision_raw = 7 * 1 * 2 = 14` → bucket `15`,
+    // `bd_collision_raw = 7` → bucket `7`.
+    let a_bucket: u32 = 15;
+    let bd_bucket: u32 = 7;
+    let mut params = LevelParams::params_only(sis_family, d, 3, 1, 1, 1, stage1);
+    params.a_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, a_bucket, d);
+    params.b_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, bd_bucket, d);
+    params.d_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, bd_bucket, d);
+    params.with_decomp(m_vars, 0, 12, 12, 12, 0).unwrap()
+}
+
 impl Fp32RingSubfieldRootFoldCfg {
     fn root_lp() -> LevelParams {
-        LevelParams::params_only(
-            akita_types::SisModulusFamily::Q32,
-            Self::D,
-            3,
-            1,
-            1,
-            1,
-            akita_challenges::SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
-        )
-        .with_decomp(0, 0, 12, 12, 12, 0)
-        .unwrap()
+        fp32_ring_subfield_root_lp(0)
     }
 }
 
@@ -1522,7 +1541,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = akita_types::scale_batched_root_layout(
+        let lp = akita_types::scale_batched_root_layout_unchecked(
             &Self::root_lp(),
             incidence.num_claims(),
             Self::stage1_challenge_config(Self::D)
@@ -1571,20 +1590,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
 
 impl Fp32RingSubfieldOuterFallbackCfg {
     fn root_lp() -> LevelParams {
-        LevelParams::params_only(
-            akita_types::SisModulusFamily::Q32,
-            Self::D,
-            3,
-            1,
-            1,
-            1,
-            akita_challenges::SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
-        )
-        .with_decomp(1, 0, 12, 12, 12, 0)
-        .unwrap()
+        fp32_ring_subfield_root_lp(1)
     }
 }
 
@@ -1657,7 +1663,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = akita_types::scale_batched_root_layout(
+        let lp = akita_types::scale_batched_root_layout_unchecked(
             &Self::root_lp(),
             incidence.num_claims(),
             Self::stage1_challenge_config(Self::D)

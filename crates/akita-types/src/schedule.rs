@@ -781,6 +781,58 @@ pub fn scale_batched_root_layout(
     root_stage1_l1_mass: usize,
     field_bits: u32,
 ) -> Result<LevelParams, AkitaError> {
+    scale_batched_root_layout_inner(
+        root_lp,
+        num_claims,
+        root_stage1_l1_mass,
+        field_bits,
+        BatchedScalingAudit::Strict,
+    )
+}
+
+/// `scale_batched_root_layout` without the SIS-floor audit on the
+/// scaled B/D keys.
+///
+/// Use this only for synthetic test fixtures (or other intermediate
+/// constructions) whose `(family, ring_dimension)` is intentionally
+/// outside the audited SIS-floor tables. Production-facing call sites
+/// must go through [`scale_batched_root_layout`] so the strict
+/// [`AjtaiKeyParams::try_new`] audit fires when the scaled widths
+/// outgrow the original ranks.
+///
+/// # Errors
+///
+/// Returns an error only on `num_claims == 0` or arithmetic overflow
+/// in the scaled widths; rank/width SIS-floor mismatches do **not**
+/// surface here.
+pub fn scale_batched_root_layout_unchecked(
+    root_lp: &LevelParams,
+    num_claims: usize,
+    root_stage1_l1_mass: usize,
+    field_bits: u32,
+) -> Result<LevelParams, AkitaError> {
+    scale_batched_root_layout_inner(
+        root_lp,
+        num_claims,
+        root_stage1_l1_mass,
+        field_bits,
+        BatchedScalingAudit::Unchecked,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum BatchedScalingAudit {
+    Strict,
+    Unchecked,
+}
+
+fn scale_batched_root_layout_inner(
+    root_lp: &LevelParams,
+    num_claims: usize,
+    root_stage1_l1_mass: usize,
+    field_bits: u32,
+    audit: BatchedScalingAudit,
+) -> Result<LevelParams, AkitaError> {
     if num_claims == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
@@ -789,28 +841,50 @@ pub fn scale_batched_root_layout(
 
     let mut scaled = root_lp.clone();
     let d = scaled.ring_dimension;
-    scaled.b_key = crate::AjtaiKeyParams::try_new(
-        scaled.b_key.sis_family(),
-        scaled.b_key.row_len(),
-        root_lp
-            .b_key
-            .col_len()
-            .checked_mul(num_claims)
-            .ok_or_else(|| AkitaError::InvalidSetup("batched outer width overflow".to_string()))?,
-        scaled.b_key.collision_inf(),
-        d,
-    )?;
-    scaled.d_key = crate::AjtaiKeyParams::try_new(
-        scaled.d_key.sis_family(),
-        scaled.d_key.row_len(),
-        root_lp
-            .d_key
-            .col_len()
-            .checked_mul(num_claims)
-            .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?,
-        scaled.d_key.collision_inf(),
-        d,
-    )?;
+    let b_col_len = root_lp
+        .b_key
+        .col_len()
+        .checked_mul(num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("batched outer width overflow".to_string()))?;
+    let d_col_len = root_lp
+        .d_key
+        .col_len()
+        .checked_mul(num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?;
+    match audit {
+        BatchedScalingAudit::Strict => {
+            scaled.b_key = crate::AjtaiKeyParams::try_new(
+                scaled.b_key.sis_family(),
+                scaled.b_key.row_len(),
+                b_col_len,
+                scaled.b_key.collision_inf(),
+                d,
+            )?;
+            scaled.d_key = crate::AjtaiKeyParams::try_new(
+                scaled.d_key.sis_family(),
+                scaled.d_key.row_len(),
+                d_col_len,
+                scaled.d_key.collision_inf(),
+                d,
+            )?;
+        }
+        BatchedScalingAudit::Unchecked => {
+            scaled.b_key = crate::AjtaiKeyParams::new_unchecked(
+                scaled.b_key.sis_family(),
+                scaled.b_key.row_len(),
+                b_col_len,
+                scaled.b_key.collision_inf(),
+                d,
+            );
+            scaled.d_key = crate::AjtaiKeyParams::new_unchecked(
+                scaled.d_key.sis_family(),
+                scaled.d_key.row_len(),
+                d_col_len,
+                scaled.d_key.collision_inf(),
+                d,
+            );
+        }
+    }
     scaled.num_digits_fold = root_lp.num_digits_fold.max(
         crate::layout::digit_math::compute_num_digits_fold_with_claims(
             root_lp.r_vars,

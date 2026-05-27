@@ -302,9 +302,30 @@ pub fn direct_level_params_with_log_basis(
 
 /// Derive SIS-secure recursive (level > 0) params from the active envelope.
 ///
-/// Builds the recursive layout for the envelope's `(n_a, n_b=1, n_d=1)`
-/// row floors and then runs the layout-flavoured SIS derivation. Returns
-/// `None` when either step rejects the candidate.
+/// Iterates a fixed point over the A-row rank `n_a`: the seed `n_a` is
+/// the envelope floor, the layout `recursive_level_layout_from_params`
+/// builds for it picks `(m, r)` via `optimal_m_r_split(n_a, ...)`, and
+/// `sis_derived_recursive_params_for_layout` returns the SIS-secure
+/// rank for that layout's `inner_width`. A larger derived rank changes
+/// the next `optimal_m_r_split` choice, which changes `block_len` and
+/// therefore `inner_width`, which may bump the required rank again —
+/// so iterate until the derived rank matches the seed.
+///
+/// Without this loop the seed `n_a = envelope.max_n_a` builds one
+/// layout, the derived rank is computed for *that* layout, and then
+/// downstream callers
+/// (`level_params_with_log_basis` → `recursive_level_layout_from_params`)
+/// rebuild the layout with the bumped rank — producing a different
+/// `inner_width` that the bumped rank may not actually cover at the
+/// audited SIS bucket. The shipped tables encoded SIS-insecure
+/// recursive ranks for some `(num_vars, log_basis)` combinations as a
+/// result (see `specs/planner-sis-audit-bypass.md`).
+///
+/// Returns `None` when either the layout step or the SIS derivation
+/// rejects the candidate, or when the fixed point does not converge
+/// within [`RECURSIVE_RANK_ITERATION_CAP`] iterations (the audited
+/// rank tables have at most ~32 rows per bucket, so monotone growth
+/// converges well within that bound).
 ///
 /// Sibling of [`sis_derived_recursive_params_for_layout`]: this is the
 /// "I have an envelope, give me both a layout and SIS-secure params"
@@ -321,33 +342,57 @@ pub fn sis_derived_recursive_params(
     ring_subfield_norm_bound: u32,
     envelope: &CommitmentEnvelope,
 ) -> Option<LevelParams> {
-    // The envelope-shaped params-only `LevelParams` is just plumbing for
-    // `recursive_level_layout_from_params`, so it stays an inline expression
-    // with no named binding.
-    let layout = recursive_level_layout_from_params(
-        &LevelParams::params_only(
+    let mut candidate_n_a = envelope.max_n_a.max(1);
+    for _ in 0..RECURSIVE_RANK_ITERATION_CAP {
+        let layout = recursive_level_layout_from_params(
+            &LevelParams::params_only(
+                sis_family,
+                d,
+                log_basis,
+                candidate_n_a,
+                1,
+                1,
+                stage1_config.clone(),
+            ),
+            current_w_len,
+            root_decomp,
+        )
+        .ok()?;
+        let derived = sis_derived_recursive_params_for_layout(
             sis_family,
             d,
             log_basis,
-            envelope.max_n_a,
-            1,
-            1,
-            stage1_config.clone(),
-        ),
-        current_w_len,
-        root_decomp,
-    )
-    .ok()?;
-    sis_derived_recursive_params_for_layout(
-        sis_family,
-        d,
-        log_basis,
-        stage1_config,
-        ring_subfield_norm_bound,
-        envelope,
-        &layout,
-    )
+            stage1_config,
+            ring_subfield_norm_bound,
+            envelope,
+            &layout,
+        )?;
+        let derived_n_a = derived.a_key.row_len();
+        if derived_n_a == candidate_n_a {
+            return Some(derived);
+        }
+        // `min_rank_for_secure_width` is monotone non-decreasing in
+        // `col_len` and `optimal_m_r_split`'s `block_len` is monotone
+        // non-decreasing in `n_a`, so the derived rank should only grow
+        // across iterations. If the optimizer ever returns a smaller
+        // rank for the bumped layout, accept it (still SIS-secure for
+        // that layout) instead of looping forever.
+        if derived_n_a < candidate_n_a {
+            return Some(derived);
+        }
+        candidate_n_a = derived_n_a;
+    }
+    None
 }
+
+/// Iteration cap for the [`sis_derived_recursive_params`] fixed point.
+///
+/// Each iteration can only grow `candidate_n_a` monotonically, and the
+/// audited SIS-floor rank tables have at most ~32 rows per bucket, so
+/// the fixed point converges well within this bound. Treat
+/// non-convergence as "no SIS-secure layout exists" and surface it as
+/// `None`.
+const RECURSIVE_RANK_ITERATION_CAP: usize = 64;
 
 /// Derive SIS-secure recursive params for a concrete recursive layout.
 pub fn sis_derived_recursive_params_for_layout(

@@ -560,34 +560,8 @@ fn root_w_ring_element_count<Cfg: CommitmentConfig>(
 }
 
 // -----------------------------------------------------------------------
-// Key-driven root candidate + entry point
+// Root-level candidate helpers
 // -----------------------------------------------------------------------
-
-/// Cached, loop-invariant inputs for [`derive_root_candidate`].
-///
-/// All of these are pure functions of `Cfg` + `log_basis` and can be
-/// computed once before iterating over `(m_vars, r_vars)` splits.
-struct RootCandidateContext<'a> {
-    sis_family: akita_types::SisModulusFamily,
-    d: usize,
-    log_basis: u32,
-    fb: u32,
-    stage1: akita_challenges::SparseChallengeConfig,
-    fold_shape: akita_challenges::TensorChallengeShape,
-    num_claims: usize,
-    reduced_vars: usize,
-    num_digits_commit: usize,
-    num_digits_open: usize,
-    /// Pre-rounded SIS-floor collision bucket for the root A role.
-    a_bucket: u32,
-    /// Pre-rounded SIS-floor collision bucket for the root B/D roles.
-    bd_bucket: u32,
-    /// Cached A-role rank table at `a_bucket`. Index `i` ↔ rank `i + 1`,
-    /// value is the maximum SIS-secure width at that rank.
-    a_table: &'a [u64],
-    /// Cached B/D-role rank table at `bd_bucket`.
-    bd_table: &'a [u64],
-}
 
 /// Smallest SIS-secure rank for `width` under a pre-cached rank table.
 ///
@@ -620,97 +594,6 @@ fn a_role_collision_raw(
     a_raw
         .checked_mul(stage1_inf_norm)?
         .checked_mul(ring_subfield_norm)
-}
-
-/// Build [`RootCandidateContext`] for one `log_basis`, or return `None`
-/// when the audited SIS-floor tables don't cover this configuration.
-fn build_root_candidate_context<Cfg: CommitmentConfig>(
-    num_vars: usize,
-    log_basis: u32,
-) -> Result<Option<RootCandidateContext<'static>>, AkitaError> {
-    let sis_family = Cfg::sis_modulus_family();
-    let d = Cfg::D;
-    let decomp = Cfg::decomposition();
-    let fb = decomp.field_bits();
-    let stage1 = Cfg::stage1_challenge_config(d)?;
-    let ring_subfield = Cfg::ring_subfield_embedding_norm_bound();
-    let fold_shape = Cfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars,
-        level: 0,
-        current_w_len: 1usize.checked_shl(num_vars as u32).unwrap_or(0),
-    });
-
-    let alpha = (d as u32).trailing_zeros() as usize;
-    let Some(reduced_vars) = num_vars.checked_sub(alpha) else {
-        return Ok(None);
-    };
-    if reduced_vars < 1 {
-        return Ok(None);
-    }
-
-    // `decomp_depths` is sensitive to `decomp.log_basis`, but the planner
-    // iterates `log_basis` independently of the Cfg default. Override the
-    // basis on a local copy of `decomp` so the digit depths reflect the
-    // candidate basis — this matches what
-    // `akita_derive::derived_root_commitment_layout_from_params` does
-    // before deriving widths.
-    let candidate_decomp = akita_types::DecompositionParams {
-        log_basis,
-        ..decomp
-    };
-    let (num_digits_commit, num_digits_open) = decomp_depths(candidate_decomp);
-
-    let Some(bd_raw) = 1u32.checked_shl(log_basis).and_then(|b| b.checked_sub(1)) else {
-        return Ok(None);
-    };
-
-    let Some(a_collision_raw) = a_role_collision_raw(
-        decomp.log_commit_bound,
-        bd_raw,
-        stage1.infinity_norm(),
-        ring_subfield,
-    ) else {
-        return Ok(None);
-    };
-
-    // The canonical derivation (`sis_derived_root_params_for_layout`)
-    // passes the raw `bd = 2^log_basis − 1` into `sis_secure_level_params`
-    // for both B and D, without multiplying by the stage-1 / embedding
-    // norms (only the A role amplifies). Pre-rounding through
-    // `ceil_supported_collision` here is a defensive no-op for
-    // `log_basis >= 2` (since `2^lb − 1` already equals a generated
-    // bucket) but lets `log_basis == 1` round up to the smallest
-    // audited bucket instead of falling off the table.
-    let Some(a_bucket) = ceil_supported_collision(sis_family, d as u32, a_collision_raw) else {
-        return Ok(None);
-    };
-    let Some(bd_bucket) = ceil_supported_collision(sis_family, d as u32, bd_raw) else {
-        return Ok(None);
-    };
-
-    let Some(a_table) = sis_max_widths(sis_family, d as u32, a_bucket) else {
-        return Ok(None);
-    };
-    let Some(bd_table) = sis_max_widths(sis_family, d as u32, bd_bucket) else {
-        return Ok(None);
-    };
-
-    Ok(Some(RootCandidateContext {
-        sis_family,
-        d,
-        log_basis,
-        fb,
-        stage1,
-        fold_shape,
-        num_claims: 1,
-        reduced_vars,
-        num_digits_commit,
-        num_digits_open,
-        a_bucket,
-        bd_bucket,
-        a_table,
-        bd_table,
-    }))
 }
 
 /// Consult the offline schedule tables for a pre-computed answer.
@@ -859,232 +742,294 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
     })];
     let mut memo = ScheduleMemo::new();
 
-    // Direct two-level enumeration over `(log_basis, r_vars)` —
-    // see `RootCandidateContext` for the per-`log_basis` invariants
-    // and `rank_floor_from_table` for the SIS-floor lookup. For each
+    // ------------------------------------------------------------------
+    // Direct two-level enumeration over `(root_lb, r_vars)` — for each
     // pair we synthesize one SIS-secure `LevelParams`, drive the
     // suffix DP, and score `root_proof_size + suffix_cost` against the
-    // running minimum. Iterating `(log_basis, r_vars)` explicitly (no
-    // intermediate `Vec<CandidateLevelParams>`) keeps the planner's
-    // control flow flat and avoids per-`log_basis` allocations.
-    let (min_log_basis, max_log_basis) = Cfg::basis_range();
-    for root_lb in min_log_basis..=max_log_basis {
-        let Some(mut ctx) = build_root_candidate_context::<Cfg>(key.num_vars, root_lb)? else {
-            continue;
-        };
-        ctx.num_claims = t_vectors;
+    // running minimum.
+    //
+    // Loop-invariant `Cfg`/key-derived values are hoisted above the
+    // outer loop; per-`log_basis` values (digit depths at the
+    // candidate basis, SIS-floor buckets, cached rank tables) live
+    // inside it. There is no intermediate context struct: every loop
+    // body reads its inputs from local bindings only.
+    // ------------------------------------------------------------------
+    let fb = Cfg::decomposition().field_bits();
+    let stage1 = Cfg::stage1_challenge_config(Cfg::D)?;
+    let fold_shape = Cfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
+        num_vars: key.num_vars,
+        level: 0,
+        current_w_len: witness_len,
+    });
+    let alpha = (Cfg::D as u32).trailing_zeros() as usize;
+    // `reduced_vars == 0` (which includes `key.num_vars < alpha`) means
+    // every fold candidate has zero outer + inner variables, so the
+    // outer loop has nothing to enumerate; fall through to the trace +
+    // direct-baseline return.
+    let reduced_vars = key.num_vars.saturating_sub(alpha);
+    let num_claims = t_vectors;
 
+    if reduced_vars > 0 {
         let root_bits = witness_len
-            .checked_mul(ctx.fb as usize)
+            .checked_mul(fb as usize)
             .ok_or_else(|| AkitaError::InvalidSetup("root witness bit length overflow".into()))?;
+        let r_lo: usize = if reduced_vars >= 3 { 1 } else { 0 };
+        let r_hi: usize = reduced_vars.saturating_sub(1).max(r_lo);
 
-        let r_lo: usize = if ctx.reduced_vars >= 3 { 1 } else { 0 };
-        let r_hi: usize = ctx.reduced_vars.saturating_sub(1).max(r_lo);
+        let (min_log_basis, max_log_basis) = Cfg::basis_range();
+        for root_lb in min_log_basis..=max_log_basis {
+            // Per-basis: digit depths use `decomp` with `log_basis = root_lb`
+            // (matching `akita_derive::derived_root_commitment_layout_from_params`),
+            // and the SIS-floor buckets / cached rank tables are looked up
+            // for this basis.
+            let candidate_decomp = akita_types::DecompositionParams {
+                log_basis: root_lb,
+                ..Cfg::decomposition()
+            };
+            let (num_digits_commit, num_digits_open) = decomp_depths(candidate_decomp);
 
-        for r_vars in r_lo..=r_hi {
-            let m_vars = ctx.reduced_vars - r_vars;
-
-            // (1) `(m, r)` → block geometry.
-            let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
+            let Some(bd_raw) = 1u32.checked_shl(root_lb).and_then(|b| b.checked_sub(1)) else {
                 continue;
             };
-            let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
+            let Some(a_collision_raw) = a_role_collision_raw(
+                Cfg::decomposition().log_commit_bound,
+                bd_raw,
+                stage1.infinity_norm(),
+                Cfg::ring_subfield_embedding_norm_bound(),
+            ) else {
                 continue;
             };
-
-            // (2) `inner_width` → `n_a` via the A-role SIS-floor table.
-            let Some(inner_width) = block_len.checked_mul(ctx.num_digits_commit) else {
-                continue;
-            };
-            let Some(n_a) = rank_floor_from_table(ctx.a_table, inner_width) else {
-                continue;
-            };
-
-            // (3) `n_a` and the block count → batched `outer_width` →
-            // `n_b` via the B/D-role table.
-            let Some(outer_width) = n_a
-                .checked_mul(ctx.num_digits_open)
-                .and_then(|w| w.checked_mul(num_blocks))
-                .and_then(|w| w.checked_mul(ctx.num_claims))
+            // The canonical derivation (`sis_derived_root_params_for_layout`)
+            // passes the raw `bd = 2^root_lb − 1` into
+            // `sis_secure_level_params` for both B and D, without
+            // multiplying by the stage-1 / embedding norms (only the A role
+            // amplifies). Pre-rounding through `ceil_supported_collision`
+            // here is a defensive no-op for `root_lb >= 2` (since
+            // `2^lb − 1` already equals a generated bucket) but lets
+            // `root_lb == 1` round up to the smallest audited bucket
+            // instead of falling off the table.
+            let Some(a_bucket) = ceil_supported_collision(Cfg::sis_modulus_family(), Cfg::D as u32, a_collision_raw)
             else {
                 continue;
             };
-            let Some(n_b) = rank_floor_from_table(ctx.bd_table, outer_width) else {
+            let Some(bd_bucket) = ceil_supported_collision(Cfg::sis_modulus_family(), Cfg::D as u32, bd_raw) else {
+                continue;
+            };
+            let Some(a_table) = sis_max_widths(Cfg::sis_modulus_family(), Cfg::D as u32, a_bucket) else {
+                continue;
+            };
+            let Some(bd_table) = sis_max_widths(Cfg::sis_modulus_family(), Cfg::D as u32, bd_bucket) else {
                 continue;
             };
 
-            // (4) `d_width` is independent of `n_a` and shares the B/D
-            // bucket with B; look up `n_d` from the same table.
-            let Some(d_width) = ctx
-                .num_digits_open
-                .checked_mul(num_blocks)
-                .and_then(|w| w.checked_mul(ctx.num_claims))
-            else {
-                continue;
-            };
-            let Some(n_d) = rank_floor_from_table(ctx.bd_table, d_width) else {
-                continue;
-            };
+            for r_vars in r_lo..=r_hi {
+                let m_vars = reduced_vars - r_vars;
 
-            // (5) Per-level fold-digit count for the batched layout.
-            // Matches `akita_types::scale_batched_root_layout`: take the
-            // max of the per-poly fold-digit count (using the
-            // fold-shape effective L1 mass, which squares `l1_norm`
-            // for `TensorChallengeShape`) and the batched fold-digit
-            // count (using the raw stage-1 `l1_norm`). For `Flat`
-            // shapes the batched branch dominates; for `Tensor` shapes
-            // the per-poly branch can be larger.
-            let per_poly_fold = compute_num_digits_fold_with_claims(
-                r_vars,
-                ctx.fold_shape.effective_l1_mass(&ctx.stage1),
-                ctx.log_basis,
-                1,
-                ctx.fb,
-            );
-            let batched_fold = compute_num_digits_fold_with_claims(
-                r_vars,
-                ctx.stage1.l1_norm(),
-                ctx.log_basis,
-                ctx.num_claims,
-                ctx.fb,
-            );
-            let num_digits_fold = per_poly_fold.max(batched_fold);
-
-            // (6) Assemble the SIS-secure root `LevelParams`. The
-            // `try_new` audits below should never fail because each
-            // rank was selected as the floor for its width, but keep
-            // the propagation so any future drift between
-            // `rank_floor_from_table` and `AjtaiKeyParams::try_new`
-            // surfaces as a planner error instead of silently shipping
-            // an insecure schedule.
-            let a_key =
-                AjtaiKeyParams::try_new(ctx.sis_family, n_a, inner_width, ctx.a_bucket, ctx.d)?;
-            let b_key =
-                AjtaiKeyParams::try_new(ctx.sis_family, n_b, outer_width, ctx.bd_bucket, ctx.d)?;
-            let d_key =
-                AjtaiKeyParams::try_new(ctx.sis_family, n_d, d_width, ctx.bd_bucket, ctx.d)?;
-
-            let level_lp = LevelParams {
-                ring_dimension: ctx.d,
-                log_basis: ctx.log_basis,
-                a_key,
-                b_key,
-                d_key,
-                num_blocks,
-                block_len,
-                m_vars,
-                r_vars,
-                stage1_config: ctx.stage1.clone(),
-                fold_challenge_shape: ctx.fold_shape,
-                num_digits_commit: ctx.num_digits_commit,
-                num_digits_open: ctx.num_digits_open,
-                num_digits_fold,
-            };
-
-            // (7) Derived witness length for the next level + shrink
-            // check. A `(log_basis, r_vars)` that doesn't strictly
-            // shrink the witness in bits cannot be on the optimal
-            // path — the direct-witness baseline always beats it.
-            let raw_w_ring = root_w_ring_element_count::<Cfg>(&level_lp, key)?;
-            let next_w_len = raw_w_ring
-                .checked_mul(level_lp.ring_dimension)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("root recursive witness length overflow".into())
-                })?;
-            let next_bits = next_w_len.checked_mul(root_lb as usize).ok_or_else(|| {
-                AkitaError::InvalidSetup("root next witness bit length overflow".into())
-            })?;
-            if next_bits >= root_bits {
-                continue;
-            }
-
-            let candidate = CandidateLevelParams {
-                lp: level_lp,
-                next_w_len,
-            };
-
-            // (8) Suffix DP + scoring. Every surviving candidate is
-            // scored on `root_proof_size + suffix_cost` (no greedy
-            // pre-selection), so the planner output is monotone in the
-            // candidate set: a previously-rejected `(m, r)` with a
-            // worse `next_w_len` but a smaller total proof can no
-            // longer be silently dropped.
-            let (mut suffix_cost, mut suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
-                &envelope,
-                schedule_plan.as_ref(),
-                &mut memo,
-                key.num_vars,
-                1,
-                candidate.next_w_len,
-                root_lb,
-                0,
-            )?;
-            if suffix_steps.is_empty() {
-                continue;
-            }
-            let suffix_is_terminal = matches!(suffix_steps.first(), Some(Step::Direct(_)));
-            let Ok(eor_bytes) = extension_opening_reduction_level_bytes::<Cfg>(key, 0, witness_len)
-            else {
-                continue;
-            };
-            let next_w_len_override = if suffix_is_terminal {
-                let old_direct_bytes = match suffix_steps.first().expect("suffix non-empty") {
-                    Step::Direct(direct) => direct.direct_bytes,
-                    Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
+                // (1) `(m, r)` → block geometry.
+                let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
+                    continue;
                 };
-                finalize_terminal_direct_witness_shape::<Cfg>(
+                let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
+                    continue;
+                };
+
+                // (2) `inner_width` → `n_a` via the A-role SIS-floor table.
+                let Some(inner_width) = block_len.checked_mul(num_digits_commit) else {
+                    continue;
+                };
+                let Some(n_a) = rank_floor_from_table(a_table, inner_width) else {
+                    continue;
+                };
+
+                // (3) `n_a` and the block count → batched `outer_width` →
+                // `n_b` via the B/D-role table.
+                let Some(outer_width) = n_a
+                    .checked_mul(num_digits_open)
+                    .and_then(|w| w.checked_mul(num_blocks))
+                    .and_then(|w| w.checked_mul(num_claims))
+                else {
+                    continue;
+                };
+                let Some(n_b) = rank_floor_from_table(bd_table, outer_width) else {
+                    continue;
+                };
+
+                // (4) `d_width` is independent of `n_a` and shares the B/D
+                // bucket with B; look up `n_d` from the same table.
+                let Some(d_width) = num_digits_open
+                    .checked_mul(num_blocks)
+                    .and_then(|w| w.checked_mul(num_claims))
+                else {
+                    continue;
+                };
+                let Some(n_d) = rank_floor_from_table(bd_table, d_width) else {
+                    continue;
+                };
+
+                // (5) Per-level fold-digit count for the batched layout.
+                // Matches `akita_types::scale_batched_root_layout`: take the
+                // max of the per-poly fold-digit count (using the
+                // fold-shape effective L1 mass, which squares `l1_norm`
+                // for `TensorChallengeShape`) and the batched fold-digit
+                // count (using the raw stage-1 `l1_norm`). For `Flat`
+                // shapes the batched branch dominates; for `Tensor` shapes
+                // the per-poly branch can be larger.
+                let per_poly_fold = compute_num_digits_fold_with_claims(
+                    r_vars,
+                    fold_shape.effective_l1_mass(&stage1),
+                    root_lb,
+                    1,
+                    fb,
+                );
+                let batched_fold = compute_num_digits_fold_with_claims(
+                    r_vars,
+                    stage1.l1_norm(),
+                    root_lb,
+                    num_claims,
+                    fb,
+                );
+                let num_digits_fold = per_poly_fold.max(batched_fold);
+
+                // (6) Assemble the SIS-secure root `LevelParams`. The
+                // `try_new` audits below should never fail because each
+                // rank was selected as the floor for its width, but keep
+                // the propagation so any future drift between
+                // `rank_floor_from_table` and `AjtaiKeyParams::try_new`
+                // surfaces as a planner error instead of silently shipping
+                // an insecure schedule.
+                let a_key = AjtaiKeyParams::try_new(Cfg::sis_modulus_family(), n_a, inner_width, a_bucket, Cfg::D)?;
+                let b_key = AjtaiKeyParams::try_new(Cfg::sis_modulus_family(), n_b, outer_width, bd_bucket, Cfg::D)?;
+                let d_key = AjtaiKeyParams::try_new(Cfg::sis_modulus_family(), n_d, d_width, bd_bucket, Cfg::D)?;
+
+                let level_lp = LevelParams {
+                    ring_dimension: Cfg::D,
+                    log_basis: root_lb,
+                    a_key,
+                    b_key,
+                    d_key,
+                    num_blocks,
+                    block_len,
+                    m_vars,
+                    r_vars,
+                    stage1_config: stage1.clone(),
+                    fold_challenge_shape: fold_shape,
+                    num_digits_commit,
+                    num_digits_open,
+                    num_digits_fold,
+                };
+
+                // (7) Derived witness length for the next level + shrink
+                // check. A `(log_basis, r_vars)` that doesn't strictly
+                // shrink the witness in bits cannot be on the optimal
+                // path — the direct-witness baseline always beats it.
+                let raw_w_ring = root_w_ring_element_count::<Cfg>(&level_lp, key)?;
+                let next_w_len =
+                    raw_w_ring
+                        .checked_mul(level_lp.ring_dimension)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "root recursive witness length overflow".into(),
+                            )
+                        })?;
+                let next_bits = next_w_len.checked_mul(root_lb as usize).ok_or_else(|| {
+                    AkitaError::InvalidSetup("root next witness bit length overflow".into())
+                })?;
+                if next_bits >= root_bits {
+                    continue;
+                }
+
+                let candidate = CandidateLevelParams {
+                    lp: level_lp,
+                    next_w_len,
+                };
+
+                // (8) Suffix DP + scoring. Every surviving candidate is
+                // scored on `root_proof_size + suffix_cost` (no greedy
+                // pre-selection), so the planner output is monotone in the
+                // candidate set: a previously-rejected `(m, r)` with a
+                // worse `next_w_len` but a smaller total proof can no
+                // longer be silently dropped.
+                let (mut suffix_cost, mut suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
                     &envelope,
-                    key.num_vars,
-                    &mut suffix_steps,
-                    &candidate,
-                    num_points,
-                    t_vectors,
-                    w_vectors,
-                    z_vectors,
-                    0,
-                )?;
-                let (new_direct_bytes, terminal_field_len) =
-                    match suffix_steps.first().expect("suffix non-empty") {
-                        Step::Direct(direct) => (direct.direct_bytes, direct.current_w_len),
-                        Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
-                    };
-                suffix_cost = suffix_cost + new_direct_bytes - old_direct_bytes;
-                Some(terminal_field_len)
-            } else {
-                None
-            };
-            let root_proof_size = if suffix_is_terminal {
-                let terminal_next_w_len = next_w_len_override
-                    .expect("suffix_is_terminal branch populates next_w_len_override above");
-                compute_terminal_level_proof_size::<Cfg>(&candidate, terminal_next_w_len, z_vectors)
-                    + eor_bytes
-            } else {
-                let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-                    &envelope,
+                    schedule_plan.as_ref(),
+                    &mut memo,
                     key.num_vars,
                     1,
                     candidate.next_w_len,
-                    &suffix_steps,
-                ) else {
+                    root_lb,
+                    0,
+                )?;
+                if suffix_steps.is_empty() {
+                    continue;
+                }
+                let suffix_is_terminal = matches!(suffix_steps.first(), Some(Step::Direct(_)));
+                let Ok(eor_bytes) =
+                    extension_opening_reduction_level_bytes::<Cfg>(key, 0, witness_len)
+                else {
                     continue;
                 };
-                compute_level_proof_size::<Cfg>(&candidate, &next_level_params, z_vectors)
-                    + eor_bytes
-            };
+                let next_w_len_override = if suffix_is_terminal {
+                    let old_direct_bytes = match suffix_steps.first().expect("suffix non-empty") {
+                        Step::Direct(direct) => direct.direct_bytes,
+                        Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
+                    };
+                    finalize_terminal_direct_witness_shape::<Cfg>(
+                        &envelope,
+                        key.num_vars,
+                        &mut suffix_steps,
+                        &candidate,
+                        num_points,
+                        t_vectors,
+                        w_vectors,
+                        z_vectors,
+                        0,
+                    )?;
+                    let (new_direct_bytes, terminal_field_len) =
+                        match suffix_steps.first().expect("suffix non-empty") {
+                            Step::Direct(direct) => (direct.direct_bytes, direct.current_w_len),
+                            Step::Fold(_) => unreachable!("suffix_is_terminal guard"),
+                        };
+                    suffix_cost = suffix_cost + new_direct_bytes - old_direct_bytes;
+                    Some(terminal_field_len)
+                } else {
+                    None
+                };
+                let root_proof_size = if suffix_is_terminal {
+                    let terminal_next_w_len = next_w_len_override
+                        .expect("suffix_is_terminal branch populates next_w_len_override above");
+                    compute_terminal_level_proof_size::<Cfg>(
+                        &candidate,
+                        terminal_next_w_len,
+                        z_vectors,
+                    ) + eor_bytes
+                } else {
+                    let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                        &envelope,
+                        key.num_vars,
+                        1,
+                        candidate.next_w_len,
+                        &suffix_steps,
+                    ) else {
+                        continue;
+                    };
+                    compute_level_proof_size::<Cfg>(&candidate, &next_level_params, z_vectors)
+                        + eor_bytes
+                };
 
-            let total = root_proof_size + suffix_cost;
-            if total < best_cost {
-                best_cost = total;
-                let mut steps = Vec::with_capacity(1 + suffix_steps.len());
-                steps.push(to_fold_step(
-                    &candidate,
-                    witness_len,
-                    root_proof_size,
-                    Cfg::decomposition().field_bits(),
-                    next_w_len_override,
-                ));
-                steps.extend(suffix_steps);
-                best_steps = steps;
+                let total = root_proof_size + suffix_cost;
+                if total < best_cost {
+                    best_cost = total;
+                    let mut steps = Vec::with_capacity(1 + suffix_steps.len());
+                    steps.push(to_fold_step(
+                        &candidate,
+                        witness_len,
+                        root_proof_size,
+                        Cfg::decomposition().field_bits(),
+                        next_w_len_override,
+                    ));
+                    steps.extend(suffix_steps);
+                    best_steps = steps;
+                }
             }
         }
     }
