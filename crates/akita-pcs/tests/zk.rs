@@ -18,7 +18,7 @@ use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup,
     AppendToTranscript, ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams,
     FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint, SetupMatrixEnvelope,
-    SisModulusFamily,
+    SetupRoleDimensions, SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -138,7 +138,7 @@ fn plain_root_d_image<const D: usize>(
         std::slice::from_ref(commitment),
         std::slice::from_ref(&y_ring),
         vec![CyclotomicRing::<F, D>::one()],
-        setup.expanded.seed.max_stride,
+        &setup.expanded.seed.zk_blinding_seed,
         MRowLayout::Intermediate,
     )
     .expect("debug quadratic equation");
@@ -150,7 +150,7 @@ fn plain_root_d_image<const D: usize>(
     let plain_v = mat_vec_mul_ntt_single_i8(
         &setup.ntt_shared,
         layout.d_key.row_len(),
-        setup.expanded.seed.max_stride,
+        SetupRoleDimensions::from_level_params(&layout).d_setup_width,
         quad_eq.w_hat_flat().expect("debug w_hat"),
     );
     assert_ne!(

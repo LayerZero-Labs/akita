@@ -150,8 +150,6 @@ where
         quad_eq.num_public_rows(),
         lp.num_blocks,
         lp.inner_width(),
-        #[cfg(feature = "zk")]
-        setup.seed.max_stride,
         ntt_shared,
         quad_eq.m_row_layout(),
     )?;
@@ -496,9 +494,10 @@ pub fn commit_w<F, const D: usize>(
     commit_layout: &LevelParams,
     a_setup_width: usize,
     b_setup_width: usize,
+    #[cfg(feature = "zk")] zk_blinding_seed: &akita_types::ZkBlindingSeed,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
 {
     if commit_layout.ring_dimension != D {
         return Err(AkitaError::InvalidInput(format!(
@@ -542,18 +541,26 @@ where
     #[cfg(feature = "zk")]
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(commit_layout.b_key.row_len(), commit_layout.log_basis)?;
-    #[cfg(feature = "zk")]
-    let mut outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
-    #[cfg(not(feature = "zk"))]
     let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
-    #[cfg(feature = "zk")]
-    outer_input.extend_from_slice(b_blinding_digits.flat_digits());
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+    #[cfg_attr(not(feature = "zk"), allow(unused_mut))]
+    let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         ntt_shared,
         commit_layout.b_key.row_len(),
         b_setup_width,
         &outer_input,
     );
+    #[cfg(feature = "zk")]
+    {
+        let blinding_rows = akita_types::zk::b_blinding_negacyclic_rows::<F, D>(
+            zk_blinding_seed,
+            0,
+            commit_layout.b_key.row_len(),
+            b_blinding_digits.flat_digits(),
+        );
+        for (row, blinding_row) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding_row;
+        }
+    }
     #[cfg(feature = "zk")]
     let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
         inner.decomposed_inner_rows,
@@ -572,13 +579,9 @@ where
 
 fn recursive_commit_setup_widths(
     commit_layout: &LevelParams,
-    #[cfg(feature = "zk")] setup_stride: usize,
 ) -> Result<(usize, usize), AkitaError> {
     let role_dimensions = SetupRoleDimensions::for_batched_shape(commit_layout, &[1], 1)?;
-    #[cfg(not(feature = "zk"))]
     let b_setup_width = role_dimensions.b_setup_width;
-    #[cfg(feature = "zk")]
-    let b_setup_width = setup_stride;
     Ok((role_dimensions.a_setup_width, b_setup_width))
 }
 
@@ -602,7 +605,7 @@ fn dispatch_commit_w_with_layout_policy<F, L, Layout>(
     layout_for_d: Layout,
 ) -> Result<NextWitnessCommitment<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
     L: ExtField<F>,
     Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
@@ -614,17 +617,15 @@ where
         |D_COMMIT, ntt_shared| {
             if L::EXT_DEGREE == 1 {
                 let commit_layout = layout_for_d(D_COMMIT, &commit_params, logical_w.len())?;
-                let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(
-                    &commit_layout,
-                    #[cfg(feature = "zk")]
-                    expanded.seed.max_stride,
-                )?;
+                let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(&commit_layout)?;
                 let (wc, wh) = commit_w::<F, { D_COMMIT }>(
                     logical_w,
                     ntt_shared,
                     &commit_layout,
                     a_setup_width,
                     b_setup_width,
+                    #[cfg(feature = "zk")]
+                    &expanded.seed.zk_blinding_seed,
                 )?;
                 Ok(NextWitnessCommitment {
                     witness: None,
@@ -634,17 +635,15 @@ where
             } else {
                 let committed_w = tensor_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
                 let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
-                let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(
-                    &commit_layout,
-                    #[cfg(feature = "zk")]
-                    expanded.seed.max_stride,
-                )?;
+                let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(&commit_layout)?;
                 let (wc, wh) = commit_w::<F, { D_COMMIT }>(
                     &committed_w,
                     ntt_shared,
                     &commit_layout,
                     a_setup_width,
                     b_setup_width,
+                    #[cfg(feature = "zk")]
+                    &expanded.seed.zk_blinding_seed,
                 )?;
                 Ok(NextWitnessCommitment {
                     witness: Some(committed_w),
@@ -684,7 +683,7 @@ pub fn commit_next_w<F, Cfg, const D: usize>(
     same_d_decomposition: akita_types::DecompositionParams,
 ) -> Result<NextWitnessCommitment<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
     Cfg: akita_config::CommitmentConfig<Field = F>,
 {
     if commit_params.ring_dimension == D {
@@ -694,17 +693,15 @@ where
                 logical_w.len(),
                 same_d_decomposition,
             )?;
-            let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(
-                &commit_layout,
-                #[cfg(feature = "zk")]
-                expanded.seed.max_stride,
-            )?;
+            let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(&commit_layout)?;
             let (wc, wh) = commit_w::<F, D>(
                 logical_w,
                 ntt_shared,
                 &commit_layout,
                 a_setup_width,
                 b_setup_width,
+                #[cfg(feature = "zk")]
+                &expanded.seed.zk_blinding_seed,
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
@@ -719,17 +716,15 @@ where
                 committed_w.len(),
                 same_d_decomposition,
             )?;
-            let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(
-                &commit_layout,
-                #[cfg(feature = "zk")]
-                expanded.seed.max_stride,
-            )?;
+            let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(&commit_layout)?;
             let (wc, wh) = commit_w::<F, D>(
                 &committed_w,
                 ntt_shared,
                 &commit_layout,
                 a_setup_width,
                 b_setup_width,
+                #[cfg(feature = "zk")]
+                &expanded.seed.zk_blinding_seed,
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
@@ -845,7 +840,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     m_row_layout: MRowLayout,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
     if alpha_pows.len() != D {
@@ -1016,23 +1011,11 @@ where
         Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
     };
 
-    #[cfg(not(feature = "zk"))]
     let role_dimensions =
         SetupRoleDimensions::for_batched_shape(lp, num_polys_per_point, num_claims)?;
-    #[cfg(feature = "zk")]
-    let stride = setup.seed.max_stride;
-    #[cfg(not(feature = "zk"))]
     let d_view = setup.d_setup_view::<D>(role_dimensions)?;
-    #[cfg(feature = "zk")]
-    let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride)?;
-    #[cfg(not(feature = "zk"))]
     let b_view = setup.b_setup_view::<D>(role_dimensions)?;
-    #[cfg(feature = "zk")]
-    let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride)?;
-    #[cfg(not(feature = "zk"))]
     let a_view = setup.a_setup_view::<D>(role_dimensions)?;
-    #[cfg(feature = "zk")]
-    let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride)?;
     let d_rows: Vec<_> = d_view.rows().collect();
     let b_rows: Vec<_> = b_view.rows().collect();
     let a_rows: Vec<_> = a_view.rows().collect();
@@ -1120,11 +1103,15 @@ where
         let d_weights = &eq_tau1[d_start..(d_start + n_d_active)];
         cfg_into_iter!(0..d_blinding_segment_len)
             .map(|local| {
-                let local_col = w_len + local;
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in d_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        acc += *eq_i * eval_ring_at_pows(&d_rows[row_idx][local_col], alpha_pows);
+                        let ring = akita_types::zk::derive_d_blinding_ring::<F, D>(
+                            &setup.seed.zk_blinding_seed,
+                            row_idx,
+                            local,
+                        );
+                        acc += *eq_i * eval_ring_at_pows(&ring, alpha_pows);
                     }
                 }
                 acc
@@ -1177,14 +1164,18 @@ where
                 let group_stride = b_blinding_digit_planes_per_point;
                 let point_idx = idx / group_stride;
                 let local = idx % group_stride;
-                let group_message_planes = num_polys_per_point[point_idx] * t_cols_per_vector;
-                let local_col = group_message_planes + local;
                 let commitment_weights =
                     &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
+                        let ring = akita_types::zk::derive_b_blinding_ring::<F, D>(
+                            &setup.seed.zk_blinding_seed,
+                            point_idx,
+                            row_idx,
+                            local,
+                        );
+                        acc += *eq_i * eval_ring_at_pows(&ring, alpha_pows);
                     }
                 }
                 acc

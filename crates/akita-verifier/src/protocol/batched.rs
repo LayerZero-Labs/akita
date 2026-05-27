@@ -269,11 +269,10 @@ where
 }
 
 #[cfg(feature = "zk")]
-pub(crate) fn append_direct_blinding<F, const D: usize>(
-    input: &mut Vec<[i8; D]>,
+pub(crate) fn direct_blinding_digit_planes<F, const D: usize>(
     revealed_b_blinding_digits: &[i8],
     params: &LevelParams,
-) -> Result<(), AkitaError>
+) -> Result<Vec<[i8; D]>, AkitaError>
 where
     F: CanonicalField,
 {
@@ -288,15 +287,18 @@ where
     if revealed_b_blinding_digits.len() != expected_digits {
         return Err(AkitaError::InvalidProof);
     }
-    input.extend(revealed_b_blinding_digits.chunks_exact(D).map(|chunk| {
-        let mut plane = [0i8; D];
-        plane.copy_from_slice(chunk);
-        plane
-    }));
-    Ok(())
+    Ok(revealed_b_blinding_digits
+        .chunks_exact(D)
+        .map(|chunk| {
+            let mut plane = [0i8; D];
+            plane.copy_from_slice(chunk);
+            plane
+        })
+        .collect())
 }
 
 fn recommit_direct_witness_group<F, const D: usize>(
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))] point_idx: usize,
     group_witnesses: &[DirectWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
     params: &LevelParams,
@@ -304,7 +306,7 @@ fn recommit_direct_witness_group<F, const D: usize>(
     #[cfg(feature = "zk")] blinding_digits: &[i8],
 ) -> Result<RingCommitment<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
 {
     let mut outer_input = Vec::new();
     for witness in group_witnesses {
@@ -322,19 +324,25 @@ where
     }
 
     #[cfg(feature = "zk")]
-    append_direct_blinding::<F, D>(&mut outer_input, blinding_digits, params)?;
+    let blinding_planes = direct_blinding_digit_planes::<F, D>(blinding_digits, params)?;
 
-    #[cfg(not(feature = "zk"))]
     let b_matrix = setup.expanded.b_setup_view::<D>(role_dimensions)?;
-    #[cfg(feature = "zk")]
-    let b_matrix = setup
-        .expanded
-        .shared_matrix
-        .ring_view::<D>(params.b_key.row_len(), setup.expanded.seed.max_stride)?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
-    Ok(RingCommitment {
-        u: mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input),
-    })
+    #[cfg_attr(not(feature = "zk"), allow(unused_mut))]
+    let mut u = mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input);
+    #[cfg(feature = "zk")]
+    {
+        let blinding_rows = akita_types::zk::b_blinding_negacyclic_rows::<F, D>(
+            &setup.expanded.seed.zk_blinding_seed,
+            point_idx,
+            params.b_key.row_len(),
+            &blinding_planes,
+        );
+        for (row, blinding_row) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding_row;
+        }
+    }
+    Ok(RingCommitment { u })
 }
 
 /// Recompute root-direct commitments from direct witnesses and compare them to
@@ -354,7 +362,7 @@ pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
     b_blinding_digits: RootDirectBlindingPayload<'_>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling + PseudoMersenneField,
 {
     if flat_commitments.len() != incidence_summary.num_points() {
         return Err(AkitaError::InvalidProof);
@@ -397,6 +405,7 @@ where
         let _ = group_idx;
         let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
         let commitment = recommit_direct_witness_group::<F, D>(
+            group_idx,
             group_witnesses,
             setup,
             params,

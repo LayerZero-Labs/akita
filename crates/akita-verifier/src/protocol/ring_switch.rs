@@ -93,8 +93,6 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
 }
 
 pub(crate) struct RingSwitchSegmentLayout {
-    #[cfg(feature = "zk")]
-    pub(crate) w_len: usize,
     pub(crate) offset_w: usize,
     pub(crate) offset_t: usize,
     pub(crate) offset_z: usize,
@@ -591,8 +589,6 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         };
 
         Ok(RingSwitchSegmentLayout {
-            #[cfg(feature = "zk")]
-            w_len,
             offset_w,
             offset_t,
             offset_z,
@@ -620,7 +616,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         alpha: E,
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: FieldCore + CanonicalField + RandomSampling,
         E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     {
         let _ring_bits = validate_ring_dispatch::<D>()?;

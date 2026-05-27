@@ -63,15 +63,15 @@ where
         match load_expanded_setup::<F, Cfg>(max_num_vars, max_num_batched_polys, max_num_points) {
             Ok(expanded) => {
                 // A cached setup is acceptable only if its current-format
-                // physical backing and remaining stride metadata match the
-                // requested envelope.
+                // physical backing and remaining layout metadata exactly match
+                // the requested envelope.
                 let cached_total = expanded.shared_matrix.total_ring_elements();
                 let cached_stride = expanded.seed.max_stride;
                 let cached_points = expanded.seed.max_num_points;
                 if cached_total == setup_envelope.max_setup_len
                     && expanded.seed.max_setup_len == setup_envelope.max_setup_len
-                    && cached_stride >= setup_envelope.max_stride
-                    && cached_points >= max_num_points
+                    && cached_stride == setup_envelope.max_stride
+                    && cached_points == max_num_points
                 {
                     tracing::info!("Loaded setup from disk, rebuilding NTT caches");
                     return AkitaProverSetup::from_expanded(expanded);
@@ -81,14 +81,14 @@ where
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
-                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total={}, stride>={}, points>={max_num_points}); regenerating",
+                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total={}, stride={}, points={max_num_points}); regenerating",
                             storage_path.display(),
                             setup_envelope.max_setup_len,
                             setup_envelope.max_stride
                         );
                 } else {
                     tracing::warn!(
-                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total={}, stride>={}, points>={max_num_points}); regenerating",
+                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total={}, stride={}, points={max_num_points}); regenerating",
                             setup_envelope.max_setup_len,
                             setup_envelope.max_stride
                         );

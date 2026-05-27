@@ -71,7 +71,7 @@ use akita_types::{
     TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
-use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
+use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, SetupRoleDimensions, ZkHidingProof};
 #[cfg(feature = "zk")]
 use rand_core::OsRng;
 #[cfg(feature = "zk")]
@@ -518,18 +518,27 @@ where
         hiding_params.num_digits_commit,
         hiding_params.num_digits_open,
         hiding_params.log_basis,
-        expanded.seed.max_stride,
+        hiding_params.inner_width(),
     )?;
-    let mut b_input_digits = inner.decomposed_inner_rows.flat_digits().to_vec();
+    let b_input_digits = inner.decomposed_inner_rows.flat_digits().to_vec();
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(hiding_params.b_key.row_len(), hiding_params.log_basis)?;
-    b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
-    let u_blind_rings: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+    let hiding_role_dimensions = SetupRoleDimensions::for_batched_shape(&hiding_params, &[1], 1)?;
+    let mut u_blind_rings: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         ntt_shared,
         hiding_params.b_key.row_len(),
-        expanded.seed.max_stride,
+        hiding_role_dimensions.b_setup_width,
         &b_input_digits,
     );
+    let blinding_rows = akita_types::zk::b_blinding_negacyclic_rows::<F, D>(
+        &expanded.seed.zk_blinding_seed,
+        0,
+        hiding_params.b_key.row_len(),
+        b_blinding_digits.flat_digits(),
+    );
+    for (row, blinding_row) in u_blind_rings.iter_mut().zip(blinding_rows) {
+        *row += blinding_row;
+    }
     let u_blind = u_blind_rings
         .iter()
         .flat_map(|ring| ring.coeffs.iter().copied())
@@ -1655,7 +1664,7 @@ where
             commitment_u,
             &y_rings,
             #[cfg(feature = "zk")]
-            expanded.seed.max_stride,
+            &expanded.seed.zk_blinding_seed,
             MRowLayout::Intermediate,
         )?,
     );
@@ -1857,7 +1866,7 @@ where
             commitment_u,
             &y_rings,
             #[cfg(feature = "zk")]
-            expanded.seed.max_stride,
+            &expanded.seed.zk_blinding_seed,
             MRowLayout::Terminal,
         )?,
     );
@@ -2584,7 +2593,7 @@ where
         &y_rings,
         row_coefficient_rings,
         #[cfg(feature = "zk")]
-        expanded.seed.max_stride,
+        &expanded.seed.zk_blinding_seed,
         MRowLayout::Intermediate,
     )?);
 
@@ -2949,7 +2958,7 @@ where
         &y_rings,
         row_coefficient_rings,
         #[cfg(feature = "zk")]
-        expanded.seed.max_stride,
+        &expanded.seed.zk_blinding_seed,
         MRowLayout::Intermediate,
     )?);
 
@@ -3302,7 +3311,7 @@ where
         &y_rings,
         row_coefficient_rings,
         #[cfg(feature = "zk")]
-        expanded.seed.max_stride,
+        &expanded.seed.zk_blinding_seed,
         MRowLayout::Terminal,
     )?);
 
@@ -3400,7 +3409,7 @@ where
         &y_rings,
         row_coefficient_rings,
         #[cfg(feature = "zk")]
-        expanded.seed.max_stride,
+        &expanded.seed.zk_blinding_seed,
         MRowLayout::Terminal,
     )?);
 

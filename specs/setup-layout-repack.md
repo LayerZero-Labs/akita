@@ -317,7 +317,7 @@ property is that callers stop spelling `setup.seed.max_stride`.
 
 This is a protocol-visible setup layout change.
 
-- The base setup seed serialization or setup layout domain changes.
+- The base setup seed serialization or setup layout domain tag changes.
 - Under `feature = "zk"`, the ZK blinding seed/domain is distinct from the base
   setup seed/domain.
 - Setup descriptor digests and disk cache keys change.
@@ -392,12 +392,12 @@ AkitaSetupSeed {
 Update serialization, validation, descriptor digests, and tests.
 
 This is a full cutover. Do not add legacy decoding, migration, or compatibility
-shims. Do add a new layout boundary so the packed format is unambiguous. The
-preferred option is a serialized setup-layout version or domain tag in
-`AkitaSetupSeed`. An acceptable alternative is a fixed `packed-setup-v1` domain
-tag in every setup artifact digest, instance descriptor, and disk cache file
-name. Under `feature = "zk"`, the ZK blinding seed/domain must also be bound in
-the descriptor.
+shims. Do add a semantic layout boundary so the packed format is unambiguous.
+The preferred option is a serialized setup-layout domain tag in
+`AkitaSetupSeed`. An acceptable alternative is a fixed packed-setup domain tag
+in every setup artifact digest, instance descriptor, and disk cache file name.
+Do not introduce numbered setup/cache names. Under `feature = "zk"`, the
+ZK blinding seed/domain must also be bound in the descriptor.
 
 The setup load/validation path must also check the physical matrix length at
 the setup generation dimension against the packed envelope. For the first
@@ -411,8 +411,8 @@ Role views at smaller ring dimensions can still use
 `total_ring_elements_at::<D>()`; that is a view-capacity check, not the seed's
 physical-length identity check.
 
-If a future change intentionally supports larger cached supersets, that policy
-must be explicit and the cache key must include the physical `max_setup_len`.
+Do not support larger cached supersets in this PR. Cache reuse is exact for the
+requested setup metadata; incompatible artifacts are rejected or regenerated.
 
 Affected areas:
 
@@ -606,7 +606,7 @@ cargo test
 ## Acceptance Criteria
 
 - `max_stride` is removed from `AkitaSetupSeed`.
-- Setup layout versioning or domain separation makes the packed format explicit
+- Setup layout domain separation makes the packed format explicit
   without legacy decoding or migration.
 - Setup capacity is expressed as packed `max_setup_len`.
 - Setup generation no longer allocates `max_rows * max_stride`.

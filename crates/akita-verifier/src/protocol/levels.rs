@@ -7,7 +7,7 @@
 use super::validate_level_dispatch;
 #[cfg(feature = "zk")]
 use crate::protocol::batched::{
-    append_direct_blinding, direct_decomposed_inner_rows, field_evals_to_rings,
+    direct_blinding_digit_planes, direct_decomposed_inner_rows, field_evals_to_rings,
     mat_vec_mul_i8_plain,
 };
 use crate::protocol::ring_switch::{ring_switch_verifier, ring_switch_verifier_after_absorb};
@@ -117,7 +117,7 @@ fn verify_zk_hiding_commitment<F, const D: usize>(
     proof: &ZkHidingProof<F>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
 {
     if D == 0 || proof.u_blind.is_empty() || proof.hiding_witness.is_empty() {
         return Err(AkitaError::InvalidProof);
@@ -149,29 +149,27 @@ where
     )?;
     let hiding_role_dimensions = SetupRoleDimensions::for_batched_shape(&hiding_params, &[1], 1)?;
     let witness_rings = field_evals_to_rings::<F, D>(&evals)?;
-    let mut b_input_digits = direct_decomposed_inner_rows(
+    let b_input_digits = direct_decomposed_inner_rows(
         &witness_rings,
         setup,
         &hiding_params,
         hiding_role_dimensions,
     )?;
-    append_direct_blinding::<F, D>(
-        &mut b_input_digits,
-        &proof.b_blinding_digits,
-        &hiding_params,
-    )?;
-    if b_input_digits.len() > setup.expanded.seed.max_stride {
-        return Err(AkitaError::InvalidSetup(
-            "ZK hiding commitment exceeds shared matrix stride".to_string(),
-        ));
-    }
+    let blinding_planes =
+        direct_blinding_digit_planes::<F, D>(&proof.b_blinding_digits, &hiding_params)?;
 
-    let b_matrix = setup.expanded.shared_matrix.ring_view::<D>(
-        hiding_params.b_key.row_len(),
-        setup.expanded.seed.max_stride,
-    )?;
+    let b_matrix = setup.expanded.b_setup_view::<D>(hiding_role_dimensions)?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
-    let expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
+    let mut expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
+    let blinding_rows = akita_types::zk::b_blinding_negacyclic_rows::<F, D>(
+        &setup.expanded.seed.zk_blinding_seed,
+        0,
+        hiding_params.b_key.row_len(),
+        &blinding_planes,
+    );
+    for (row, blinding_row) in expected_u_blind_rings.iter_mut().zip(blinding_rows) {
+        *row += blinding_row;
+    }
     let expected_len = expected_u_blind_rings
         .len()
         .checked_mul(D)

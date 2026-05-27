@@ -330,7 +330,7 @@ mod tests {
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             #[cfg(feature = "zk")]
-            setup.expanded.seed.max_stride,
+            &setup.expanded.seed.zk_blinding_seed,
             MRowLayout::Intermediate,
         )
         .expect("quadratic equation");
@@ -453,7 +453,7 @@ mod tests {
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             #[cfg(feature = "zk")]
-            setup.expanded.seed.max_stride,
+            &setup.expanded.seed.zk_blinding_seed,
             MRowLayout::Intermediate,
         )
         .expect("quadratic equation");
@@ -614,7 +614,7 @@ mod tests {
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
             #[cfg(feature = "zk")]
-            setup.expanded.seed.max_stride,
+            &setup.expanded.seed.zk_blinding_seed,
             MRowLayout::Intermediate,
         )
         .expect("quadratic equation");

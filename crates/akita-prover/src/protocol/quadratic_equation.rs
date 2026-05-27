@@ -18,9 +18,11 @@ use akita_challenges::{
 };
 use akita_field::parallel::*;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling};
 use akita_transcript::labels::ABSORB_PROVER_V;
 use akita_transcript::Transcript;
+#[cfg(feature = "zk")]
+use akita_types::ZkBlindingSeed;
 use akita_types::{
     gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
     RingSliceSerializer, SetupRoleDimensions,
@@ -277,18 +279,29 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     m_row_layout: MRowLayout,
 }
 
-fn compute_v_rows<F: FieldCore + CanonicalField, const D: usize>(
+fn compute_v_rows<
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
+    const D: usize,
+>(
     ntt_d: &NttSlotCache<D>,
     row_len: usize,
     stride: usize,
     w_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] zk_blinding_seed: &ZkBlindingSeed,
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     #[cfg(feature = "zk")]
     {
-        let mut d_input_digits = w_hat.flat_digits().to_vec();
-        d_input_digits.extend_from_slice(d_blinding_digits.flat_digits());
-        mat_vec_mul_ntt_single_i8(ntt_d, row_len, stride, &d_input_digits)
+        let mut out = mat_vec_mul_ntt_single_i8(ntt_d, row_len, stride, w_hat.flat_digits());
+        let blinding_rows = akita_types::zk::d_blinding_negacyclic_rows::<F, D>(
+            zk_blinding_seed,
+            row_len,
+            d_blinding_digits.flat_digits(),
+        );
+        for (row, blinding_row) in out.iter_mut().zip(blinding_rows) {
+            *row += blinding_row;
+        }
+        out
     }
     #[cfg(not(feature = "zk"))]
     {
@@ -298,7 +311,7 @@ fn compute_v_rows<F: FieldCore + CanonicalField, const D: usize>(
 
 impl<F, const D: usize> QuadraticEquation<F, D>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
 {
     /// Unified prover constructor covering all root-level scenarios
     /// (single-claim, same-point batching, multi-point batching, or any mix).
@@ -342,7 +355,7 @@ where
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
-        #[cfg(feature = "zk")] stride: usize,
+        #[cfg(feature = "zk")] zk_blinding_seed: &ZkBlindingSeed,
         m_row_layout: MRowLayout,
     ) -> Result<Self, AkitaError> {
         {
@@ -428,12 +441,7 @@ where
         }
         let setup_dimensions =
             SetupRoleDimensions::for_batched_shape(&lp, num_polys_per_point, num_claims)?;
-        #[cfg(not(feature = "zk"))]
         let d_setup_width = setup_dimensions.d_setup_width;
-        #[cfg(feature = "zk")]
-        let _ = setup_dimensions;
-        #[cfg(feature = "zk")]
-        let d_setup_width = stride;
         if row_coefficient_rings.len() != num_claims {
             return Err(AkitaError::InvalidInput(
                 "batched prover row coefficient length does not match claim count".to_string(),
@@ -543,6 +551,8 @@ where
                     lp.d_key.row_len(),
                     d_setup_width,
                     &w_hat,
+                    #[cfg(feature = "zk")]
+                    zk_blinding_seed,
                     #[cfg(feature = "zk")]
                     &d_blinding_digits,
                 );
@@ -672,7 +682,7 @@ where
         transcript: &mut T,
         commitment: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
-        #[cfg(feature = "zk")] stride: usize,
+        #[cfg(feature = "zk")] zk_blinding_seed: &ZkBlindingSeed,
         m_row_layout: MRowLayout,
     ) -> Result<Self, AkitaError> {
         let num_claims = ring_opening_points.len();
@@ -701,12 +711,7 @@ where
             ));
         }
         let setup_dimensions = SetupRoleDimensions::for_batched_shape(&lp, &[1], num_claims)?;
-        #[cfg(not(feature = "zk"))]
         let d_setup_width = setup_dimensions.d_setup_width;
-        #[cfg(feature = "zk")]
-        let _ = setup_dimensions;
-        #[cfg(feature = "zk")]
-        let d_setup_width = stride;
 
         let w_hat = {
             let _span = tracing::info_span!("decompose_recursive_multipoint_w_hat").entered();
@@ -752,6 +757,8 @@ where
                     lp.d_key.row_len(),
                     d_setup_width,
                     &w_hat,
+                    #[cfg(feature = "zk")]
+                    zk_blinding_seed,
                     #[cfg(feature = "zk")]
                     &d_blinding_digits,
                 );
@@ -1240,11 +1247,10 @@ where
 }
 
 #[cfg(feature = "zk")]
-fn add_blinding_cyclic_rows<F: FieldCore + CanonicalField, const D: usize>(
-    ntt_shared: &NttSlotCache<D>,
+fn add_b_blinding_cyclic_rows<F: FieldCore + FromPrimitiveInt + RandomSampling, const D: usize>(
+    zk_blinding_seed: &ZkBlindingSeed,
+    point_idx: usize,
     n_b: usize,
-    stride: usize,
-    message_planes: usize,
     blinding: &FlatDigitBlocks<D>,
     rows: &mut [CyclotomicRing<F, D>],
 ) -> Result<(), AkitaError> {
@@ -1254,26 +1260,51 @@ fn add_blinding_cyclic_rows<F: FieldCore + CanonicalField, const D: usize>(
     if rows.len() != n_b {
         return Err(AkitaError::InvalidProof);
     }
-    let total_planes = message_planes
-        .checked_add(blinding.flat_digits().len())
-        .ok_or(AkitaError::InvalidProof)?;
-    if total_planes > stride {
-        return Err(AkitaError::InvalidProof);
-    }
-    let mut padded = vec![[0i8; D]; message_planes];
-    padded.extend_from_slice(blinding.flat_digits());
-    let b_blinding_rows = mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, n_b, stride, &padded);
+    let b_blinding_rows = akita_types::zk::b_blinding_cyclic_rows::<F, D>(
+        zk_blinding_seed,
+        point_idx,
+        n_b,
+        blinding.flat_digits(),
+    );
     for (row, b_blinding_row) in rows.iter_mut().zip(b_blinding_rows) {
         *row += b_blinding_row;
     }
     Ok(())
 }
 
-fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
+#[cfg(feature = "zk")]
+fn add_d_blinding_cyclic_rows<F: FieldCore + FromPrimitiveInt + RandomSampling, const D: usize>(
+    zk_blinding_seed: &ZkBlindingSeed,
+    n_d: usize,
+    blinding: &FlatDigitBlocks<D>,
+    rows: &mut [CyclotomicRing<F, D>],
+) -> Result<(), AkitaError> {
+    if blinding.is_empty() {
+        return Ok(());
+    }
+    if rows.len() != n_d {
+        return Err(AkitaError::InvalidProof);
+    }
+    let d_blinding_rows = akita_types::zk::d_blinding_cyclic_rows::<F, D>(
+        zk_blinding_seed,
+        n_d,
+        blinding.flat_digits(),
+    );
+    for (row, d_blinding_row) in rows.iter_mut().zip(d_blinding_rows) {
+        *row += d_blinding_row;
+    }
+    Ok(())
+}
+
+fn repeated_b_commitment_rows<
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
+    const D: usize,
+>(
     ntt_shared: &NttSlotCache<D>,
     n_b: usize,
     stride: usize,
     t_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] zk_blinding_seed: &ZkBlindingSeed,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     num_polys_per_point: &[usize],
     blocks_per_claim: usize,
@@ -1302,7 +1333,13 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     let mut rows = Vec::with_capacity(num_polys_per_point.len() * n_b);
     let mut block_offset = 0usize;
     let mut plane_offset = 0usize;
-    for (&group_poly_count, blinding) in num_polys_per_point.iter().zip(b_blinding_digits.iter()) {
+    for (point_idx, (&group_poly_count, blinding)) in num_polys_per_point
+        .iter()
+        .zip(b_blinding_digits.iter())
+        .enumerate()
+    {
+        #[cfg(not(feature = "zk"))]
+        let _ = point_idx;
         #[cfg(not(feature = "zk"))]
         let _ = blinding;
         let group_block_count = group_poly_count
@@ -1333,11 +1370,10 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
         ));
         #[cfg(feature = "zk")]
         {
-            add_blinding_cyclic_rows(
-                ntt_shared,
+            add_b_blinding_cyclic_rows(
+                zk_blinding_seed,
+                point_idx,
                 n_b,
-                stride,
-                group_planes,
                 blinding,
                 &mut rows[row_start..row_start + n_b],
             )?;
@@ -1364,7 +1400,7 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
 pub fn compute_r_split_eq<F, const D: usize>(
     lp: &LevelParams,
-    _setup: &AkitaExpandedSetup<F>,
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))] setup: &AkitaExpandedSetup<F>,
     challenges: &Challenges,
     w_hat_flat: &[[i8; D]],
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
@@ -1384,12 +1420,11 @@ pub fn compute_r_split_eq<F, const D: usize>(
     num_public_outputs: usize,
     blocks_per_claim: usize,
     inner_width: usize,
-    #[cfg(feature = "zk")] stride: usize,
     ntt_shared: &NttSlotCache<D>,
     m_row_layout: MRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField + RandomSampling,
 {
     if num_polys_per_point.is_empty() || num_polys_per_point.contains(&0) {
         return Err(AkitaError::InvalidProof);
@@ -1450,14 +1485,8 @@ where
     let n_a = lp.a_key.row_len();
     let setup_dimensions =
         SetupRoleDimensions::for_batched_shape(lp, num_polys_per_point, num_claims)?;
-    #[cfg(not(feature = "zk"))]
     let d_setup_width = setup_dimensions.d_setup_width;
-    #[cfg(feature = "zk")]
-    let d_setup_width = stride;
-    #[cfg(not(feature = "zk"))]
     let b_setup_width = setup_dimensions.b_setup_width;
-    #[cfg(feature = "zk")]
-    let b_setup_width = stride;
     let a_setup_width = setup_dimensions.a_setup_width;
     // Terminal layout drops the D-rows from M (and from `y`). All structural
     // offsets must use `n_d_active`, not `n_d`, to match the verifier.
@@ -1501,11 +1530,9 @@ where
     #[cfg(feature = "zk")]
     let mut d_cyclic = d_cyclic;
     #[cfg(feature = "zk")]
-    add_blinding_cyclic_rows(
-        ntt_shared,
+    add_d_blinding_cyclic_rows(
+        &setup.seed.zk_blinding_seed,
         n_d_active,
-        stride,
-        w_hat_flat.len(),
         d_blinding_digits,
         &mut d_cyclic,
     )?;
@@ -1535,14 +1562,7 @@ where
         #[cfg(feature = "zk")]
         {
             let blinding = b_blinding_digits.first().ok_or(AkitaError::InvalidProof)?;
-            add_blinding_cyclic_rows(
-                ntt_shared,
-                n_b,
-                b_setup_width,
-                t_hat.flat_digits().len(),
-                blinding,
-                &mut rows,
-            )?;
+            add_b_blinding_cyclic_rows(&setup.seed.zk_blinding_seed, 0, n_b, blinding, &mut rows)?;
         }
         rows
     } else {
@@ -1551,6 +1571,8 @@ where
             n_b,
             b_setup_width,
             t_hat,
+            #[cfg(feature = "zk")]
+            &setup.seed.zk_blinding_seed,
             #[cfg(feature = "zk")]
             b_blinding_digits,
             num_polys_per_point,

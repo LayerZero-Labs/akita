@@ -8,7 +8,7 @@ use crate::{AkitaPolyOps, AkitaProverSetup};
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     AkitaCommitmentHint, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams, RingCommitment,
     SetupRoleDimensions,
@@ -65,6 +65,7 @@ where
 ///
 /// Returns an error if an inner witness commitment or hint allocation fails.
 fn commit_group_with_setup_widths<F, const D: usize, P>(
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))] point_idx: usize,
     polys: &[P],
     setup: &AkitaProverSetup<F, D>,
     params: &LevelParams,
@@ -72,7 +73,7 @@ fn commit_group_with_setup_widths<F, const D: usize, P>(
     b_setup_width: usize,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
     let b_input_len_per_poly = params.num_blocks * params.a_key.row_len() * params.num_digits_open;
@@ -108,15 +109,27 @@ where
     let b_blinding_digits = {
         let b_blinding_digits =
             sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
-        b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
         b_blinding_digits
     };
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+    #[cfg_attr(not(feature = "zk"), allow(unused_mut))]
+    let mut u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         &setup.ntt_shared,
         params.b_key.row_len(),
         b_setup_width,
         &b_input_digits,
     );
+    #[cfg(feature = "zk")]
+    {
+        let blinding_rows = akita_types::zk::b_blinding_negacyclic_rows::<F, D>(
+            &setup.expanded.seed.zk_blinding_seed,
+            point_idx,
+            params.b_key.row_len(),
+            b_blinding_digits.flat_digits(),
+        );
+        for (row, blinding_row) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding_row;
+        }
+    }
     let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
         decomposed_inner_rows,
         recomposed_inner_rows,
@@ -140,7 +153,7 @@ pub fn commit_with_params<F, const D: usize, P>(
     params: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
     if polys.is_empty() {
@@ -150,11 +163,9 @@ where
     }
     let role_dimensions =
         SetupRoleDimensions::for_batched_shape(params, &[polys.len()], polys.len())?;
-    #[cfg(not(feature = "zk"))]
     let b_setup_width = role_dimensions.b_setup_width;
-    #[cfg(feature = "zk")]
-    let b_setup_width = setup.expanded.seed.max_stride;
     commit_group_with_setup_widths(
+        0,
         polys,
         setup,
         params,
@@ -255,7 +266,7 @@ pub fn batched_commit_with_params<F, const D: usize, P>(
     params: &LevelParams,
 ) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
     if polys_per_point.is_empty() || polys_per_point.iter().any(|polys| polys.is_empty()) {
@@ -271,13 +282,11 @@ where
     })?;
     let role_dimensions =
         SetupRoleDimensions::for_batched_shape(params, &num_polys_per_point, num_claims)?;
-    #[cfg(not(feature = "zk"))]
     let b_setup_width = role_dimensions.b_setup_width;
-    #[cfg(feature = "zk")]
-    let b_setup_width = setup.expanded.seed.max_stride;
     let mut out = Vec::with_capacity(polys_per_point.len());
-    for polys in polys_per_point {
+    for (point_idx, polys) in polys_per_point.iter().enumerate() {
         out.push(commit_group_with_setup_widths::<F, D, P>(
+            point_idx,
             polys,
             setup,
             params,
@@ -302,7 +311,7 @@ pub fn commit<F, Cfg, P, const D: usize>(
     setup: &AkitaProverSetup<F, D>,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
     Cfg: CommitmentConfig<Field = F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
@@ -323,7 +332,7 @@ pub fn batched_commit<F, Cfg, P, const D: usize>(
     setup: &AkitaProverSetup<F, D>,
 ) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + RandomSampling,
     Cfg: CommitmentConfig<Field = F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
