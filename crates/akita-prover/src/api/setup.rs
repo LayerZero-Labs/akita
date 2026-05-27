@@ -159,7 +159,6 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize, const D: usize> Val
 mod tests {
     use super::*;
     use akita_field::Prime128Offset275;
-    use akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS;
 
     #[test]
     fn validated_expanded_setup_rejects_mismatched_ring_dimension() {
@@ -172,23 +171,6 @@ mod tests {
             .expect_err("D=64 setup must not be reinterpreted as D=32");
 
         assert!(err.to_string().contains("ring dimension 64"));
-    }
-
-    #[test]
-    fn generate_with_capacity_rejects_setup_larger_than_decode_cap() {
-        const D: usize = 32;
-        let oversized_rows = MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1;
-
-        let err = AkitaProverSetup::<Prime128Offset275, D>::generate_with_capacity(
-            8,
-            1,
-            1,
-            oversized_rows,
-            1,
-        )
-        .expect_err("generation must not create setup bytes that decode rejects");
-
-        assert!(err.to_string().contains("length"));
     }
 
     #[test]

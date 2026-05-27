@@ -325,13 +325,7 @@ impl Valid for AkitaSetupSeed {
                 "setup seed total_ring_elements must be a multiple of max_stride".to_string(),
             ));
         }
-        let matrix_field_elements = self.matrix_field_elements()?;
-        if matrix_field_elements > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
-            return Err(SerializationError::LengthLimitExceeded {
-                len: u64::try_from(matrix_field_elements).unwrap_or(u64::MAX),
-                max: MAX_SETUP_MATRIX_FIELD_ELEMENTS,
-            });
-        }
+        self.matrix_field_elements()?;
         Ok(())
     }
 }
@@ -579,6 +573,45 @@ mod tests {
         assert!(err
             .to_string()
             .contains("flat matrix total_ring_elements does not match expected setup shape"));
+    }
+
+    #[test]
+    fn setup_seed_validity_is_not_the_generic_decode_allocation_cap() {
+        let setup_seed = AkitaSetupSeed {
+            max_num_vars: 32,
+            max_num_batched_polys: 1,
+            max_num_points: 1,
+            max_stride: 1,
+            gen_ring_dim: D,
+            total_ring_elements: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
+            public_matrix_seed: [7u8; 32],
+        };
+
+        setup_seed.check().unwrap();
+        assert!(setup_seed.matrix_field_elements().unwrap() > MAX_SETUP_MATRIX_FIELD_ELEMENTS);
+    }
+
+    #[test]
+    fn generic_setup_decode_still_rejects_shapes_above_allocation_cap() {
+        let setup_seed = AkitaSetupSeed {
+            max_num_vars: 32,
+            max_num_batched_polys: 1,
+            max_num_points: 1,
+            max_stride: 1,
+            gen_ring_dim: D,
+            total_ring_elements: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
+            public_matrix_seed: [7u8; 32],
+        };
+        let mut bytes = Vec::new();
+        setup_seed.serialize_compressed(&mut bytes).unwrap();
+
+        let err = AkitaExpandedSetup::<F>::deserialize_compressed(&bytes[..], &()).unwrap_err();
+
+        assert!(matches!(
+            err,
+            SerializationError::LengthLimitExceeded { max, .. }
+                if max == MAX_SETUP_MATRIX_FIELD_ELEMENTS
+        ));
     }
 
     #[test]
