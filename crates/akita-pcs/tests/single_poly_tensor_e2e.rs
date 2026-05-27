@@ -1,7 +1,6 @@
 //! End-to-end tests for the tensor-shaped root fold path.
 
 #![allow(missing_docs)]
-#![cfg(not(feature = "zk"))]
 
 mod common;
 
@@ -60,35 +59,51 @@ fn run_single_onehot_tensor(nv: usize) {
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
-        let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
+        let prove_hint = {
+            #[cfg(feature = "zk")]
+            {
+                hint.clone()
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                hint
+            }
+        };
         let proof = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
             F,
             TENSOR_D,
         >>::batched_prove(
             &setup,
-            prove_input(
-                &pt[..],
-                &poly_refs[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+            prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
         .expect("prove");
+        assert_zk_tensor_root_proof_shape(&proof);
 
-        let mut serialized = Vec::new();
-        let proof_shape = proof.shape();
-        proof
-            .serialize_compressed(&mut serialized)
-            .expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(serialized),
-            &proof_shape,
-        )
-        .expect("deserialize");
+        #[cfg(feature = "zk")]
+        let second_proof = {
+            let mut second_prover_transcript =
+                AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
+            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
+                F,
+                TENSOR_D,
+            >>::batched_prove(
+                &setup,
+                prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
+                &mut second_prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("second prove")
+        };
+        #[cfg(feature = "zk")]
+        assert_zk_tensor_root_hiding(&proof, &second_proof);
+
+        let decoded = round_trip_proof(&proof);
+        #[cfg(feature = "zk")]
+        let second_decoded = round_trip_proof(&second_proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
         let result = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
@@ -106,6 +121,44 @@ fn run_single_onehot_tensor(nv: usize) {
             "onehot_tensor nv={nv} verification failed: {:?}",
             result.err()
         );
+        #[cfg(feature = "zk")]
+        {
+            let mut bad_openings = openings;
+            bad_openings[0] += F::one();
+            let mut bad_verifier_transcript =
+                AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
+            let bad_result =
+                <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
+                    F,
+                    TENSOR_D,
+                >>::batched_verify(
+                    &decoded,
+                    &verifier_setup,
+                    &mut bad_verifier_transcript,
+                    verify_input(&pt[..], &bad_openings[..], &commitments[0]),
+                    BasisMode::Lagrange,
+                );
+            assert!(
+                bad_result.is_err(),
+                "ZK tensor proof should reject a wrong onehot opening"
+            );
+        }
+        #[cfg(feature = "zk")]
+        {
+            let mut second_verifier_transcript =
+                AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/onehot");
+            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
+                F,
+                TENSOR_D,
+            >>::batched_verify(
+                &second_decoded,
+                &verifier_setup,
+                &mut second_verifier_transcript,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                BasisMode::Lagrange,
+            )
+            .expect("second onehot tensor verify");
+        }
     });
 }
 
@@ -151,35 +204,51 @@ fn run_single_dense_tensor(nv: usize) {
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
-        let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
+        let prove_hint = {
+            #[cfg(feature = "zk")]
+            {
+                hint.clone()
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                hint
+            }
+        };
         let proof = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
             F,
             TENSOR_D,
         >>::batched_prove(
             &setup,
-            prove_input(
-                &pt[..],
-                &poly_refs[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+            prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
         .expect("prove");
+        assert_zk_tensor_root_proof_shape(&proof);
 
-        let mut serialized = Vec::new();
-        let proof_shape = proof.shape();
-        proof
-            .serialize_compressed(&mut serialized)
-            .expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(serialized),
-            &proof_shape,
-        )
-        .expect("deserialize");
+        #[cfg(feature = "zk")]
+        let second_proof = {
+            let mut second_prover_transcript =
+                AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
+            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentProver<
+                F,
+                TENSOR_D,
+            >>::batched_prove(
+                &setup,
+                prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
+                &mut second_prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("second prove")
+        };
+        #[cfg(feature = "zk")]
+        assert_zk_tensor_root_hiding(&proof, &second_proof);
+
+        let decoded = round_trip_proof(&proof);
+        #[cfg(feature = "zk")]
+        let second_decoded = round_trip_proof(&second_proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
         let result = <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
@@ -197,35 +266,163 @@ fn run_single_dense_tensor(nv: usize) {
             "dense_tensor nv={nv} verification failed: {:?}",
             result.err()
         );
+        #[cfg(feature = "zk")]
+        {
+            let mut bad_openings = openings;
+            bad_openings[0] += F::one();
+            let mut bad_verifier_transcript =
+                AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
+            let bad_result =
+                <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
+                    F,
+                    TENSOR_D,
+                >>::batched_verify(
+                    &decoded,
+                    &verifier_setup,
+                    &mut bad_verifier_transcript,
+                    verify_input(&pt[..], &bad_openings[..], &commitments[0]),
+                    BasisMode::Lagrange,
+                );
+            assert!(
+                bad_result.is_err(),
+                "ZK tensor proof should reject a wrong dense opening"
+            );
+        }
+        #[cfg(feature = "zk")]
+        {
+            let mut second_verifier_transcript =
+                AkitaTranscript::<F>::new(b"single_poly_tensor_e2e/dense");
+            <AkitaCommitmentScheme<TENSOR_D, D64OneHotTensor> as CommitmentVerifier<
+                F,
+                TENSOR_D,
+            >>::batched_verify(
+                &second_decoded,
+                &verifier_setup,
+                &mut second_verifier_transcript,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                BasisMode::Lagrange,
+            )
+            .expect("second dense tensor verify");
+        }
     });
 }
 
+fn round_trip_proof(proof: &AkitaBatchedProof<F, F>) -> AkitaBatchedProof<F, F> {
+    let mut serialized = Vec::new();
+    let proof_shape = proof.shape();
+    proof
+        .serialize_compressed(&mut serialized)
+        .expect("serialize");
+    AkitaBatchedProof::<F, F>::deserialize_compressed(
+        &mut std::io::Cursor::new(serialized),
+        &proof_shape,
+    )
+    .expect("deserialize")
+}
+
+#[cfg(feature = "zk")]
+fn assert_zk_tensor_root_proof_shape(proof: &AkitaBatchedProof<F, F>) {
+    let root = proof
+        .root
+        .as_fold()
+        .expect("tensor fixture should use a folded root");
+    assert!(
+        root.stage1
+            .stages
+            .iter()
+            .all(|stage| !stage.sumcheck_proof_masked.masked_round_polys.is_empty()),
+        "ZK tensor root must carry masked stage-1 sumcheck rounds"
+    );
+    assert!(
+        !root
+            .stage2
+            .sumcheck_proof_masked
+            .masked_round_polys
+            .is_empty(),
+        "ZK tensor root must carry masked stage-2 sumcheck rounds"
+    );
+}
+
+#[cfg(feature = "zk")]
+fn assert_zk_tensor_root_hiding(
+    proof: &AkitaBatchedProof<F, F>,
+    second_proof: &AkitaBatchedProof<F, F>,
+) {
+    let root = proof
+        .root
+        .as_fold()
+        .expect("tensor fixture should use a folded root");
+    let second_root = second_proof
+        .root
+        .as_fold()
+        .expect("tensor fixture should use a folded root");
+    assert_ne!(
+        root.v, second_root.v,
+        "ZK tensor root should re-randomize v for the same witness"
+    );
+    assert_ne!(
+        root.stage1.stages[0]
+            .sumcheck_proof_masked
+            .masked_round_polys,
+        second_root.stage1.stages[0]
+            .sumcheck_proof_masked
+            .masked_round_polys,
+        "ZK tensor root should re-randomize masked stage-1 rounds"
+    );
+    assert_ne!(
+        root.stage2.sumcheck_proof_masked.masked_round_polys,
+        second_root.stage2.sumcheck_proof_masked.masked_round_polys,
+        "ZK tensor root should re-randomize masked stage-2 rounds"
+    );
+}
+
+#[cfg(not(feature = "zk"))]
+fn assert_zk_tensor_root_proof_shape(_proof: &AkitaBatchedProof<F, F>) {}
+
+#[cfg(not(feature = "zk"))]
 #[test]
 fn single_onehot_tensor_nv15() {
     run_single_onehot_tensor(15);
 }
 
+#[cfg(not(feature = "zk"))]
 #[test]
 fn single_onehot_tensor_nv20() {
     run_single_onehot_tensor(20);
 }
 
+#[cfg(not(feature = "zk"))]
 #[test]
 fn single_onehot_tensor_nv22() {
     run_single_onehot_tensor(22);
 }
 
+#[cfg(not(feature = "zk"))]
 #[test]
 fn single_dense_tensor_nv15() {
     run_single_dense_tensor(15);
 }
 
+#[cfg(not(feature = "zk"))]
 #[test]
 fn single_dense_tensor_nv20() {
     run_single_dense_tensor(20);
 }
 
+#[cfg(not(feature = "zk"))]
 #[test]
 fn single_dense_tensor_nv22() {
     run_single_dense_tensor(22);
+}
+
+#[cfg(feature = "zk")]
+#[test]
+fn zk_single_onehot_tensor_nv20() {
+    run_single_onehot_tensor(20);
+}
+
+#[cfg(feature = "zk")]
+#[test]
+fn zk_single_dense_tensor_nv20() {
+    run_single_dense_tensor(20);
 }
