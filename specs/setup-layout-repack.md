@@ -6,7 +6,7 @@
 | Created   | 2026-05-27 |
 | Status    | proposed |
 | Branch    | `quang/setup-layout-repack` |
-| PR         | TBD |
+| PR         | #112 |
 
 ## Summary
 
