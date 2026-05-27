@@ -318,23 +318,12 @@ where
             params.b_key.row_len()
         )));
     }
-    let hint = {
+    let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
+        decomposed_inner_rows,
+        recomposed_inner_rows,
         #[cfg(feature = "zk")]
-        {
-            AkitaCommitmentHint::with_recomposed_inner_rows(
-                decomposed_inner_rows,
-                recomposed_inner_rows,
-                vec![b_blinding_digits],
-            )
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            AkitaCommitmentHint::with_recomposed_inner_rows(
-                decomposed_inner_rows,
-                recomposed_inner_rows,
-            )
-        }
-    };
+        vec![b_blinding_digits],
+    );
     Ok((RingCommitment { u }, hint))
 }
 

@@ -161,7 +161,7 @@ fn expected_same_point_batched_shape(
         extension_opening_reduction: None,
         v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
-        stage2_sumcheck: vec![3; root_rounds],
+        stage2_sumcheck_proof: vec![3; root_rounds],
         next_commit_coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
     };
     let first_level_params = next_level_params.clone();
@@ -197,7 +197,7 @@ fn expected_same_point_batched_shape(
             extension_opening_reduction: None,
             v_coeffs: current_lp.d_key.row_len() * current_lp.ring_dimension,
             stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << current_lp.log_basis),
-            stage2_sumcheck: vec![3; rounds],
+            stage2_sumcheck_proof: vec![3; rounds],
             next_commit_coeffs: next_level_params.b_key.row_len()
                 * next_level_params.ring_dimension,
         }));
@@ -772,7 +772,10 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
             assert_eq!(expected_root.y_ring_coeffs, actual_root.y_ring_coeffs);
             assert_eq!(expected_root.v_coeffs, actual_root.v_coeffs);
             assert_eq!(expected_root.stage1_stages, actual_root.stage1_stages);
-            assert_eq!(expected_root.stage2_sumcheck, actual_root.stage2_sumcheck);
+            assert_eq!(
+                expected_root.stage2_sumcheck_proof,
+                actual_root.stage2_sumcheck_proof
+            );
             assert_eq!(
                 expected_root.next_commit_coeffs,
                 actual_root.next_commit_coeffs
@@ -1205,7 +1208,7 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
         .as_fold()
         .expect("fixture should use folded root proof")
         .stage2
-        .sumcheck
+        .sumcheck_proof
         .clone();
     proof
         .root
