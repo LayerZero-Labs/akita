@@ -5,7 +5,6 @@ set -euo pipefail
 script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 checker="$script_dir/check-rust-file-lines.sh"
 tmp_root="$(mktemp -d)"
-repo_seq=0
 
 trap 'rm -rf "$tmp_root"' EXIT
 
@@ -15,9 +14,8 @@ fail() {
 }
 
 new_repo() {
-    repo_seq=$((repo_seq + 1))
-    local repo="$tmp_root/repo-$repo_seq"
-    mkdir -p "$repo"
+    local repo
+    repo="$(mktemp -d "$tmp_root/repo-XXXXXX")"
     git -C "$repo" init -q
     printf '%s\n' "$repo"
 }
