@@ -24,23 +24,28 @@ pub use batched_sumcheck::{
 };
 pub use compact_fold::CompactPairFoldLut;
 pub use drivers::{
-    advance_eq_factored_claim, check_sumcheck_output_claim, prove_eq_factored_sumcheck,
-    prove_sumcheck, prove_sumcheck_with_omitted_prefix_rounds, verify_eq_factored_sumcheck,
-    verify_sumcheck, verify_sumcheck_with_prefix_rounds,
+    advance_eq_factored_claim, check_sumcheck_output_claim, EqFactoredSumcheckInstanceProverExt,
+    EqFactoredSumcheckInstanceVerifierExt, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
+};
+#[cfg(feature = "zk")]
+pub use drivers::{
+    EqFactoredMaskedProveOutput, MaskedProveOutput, ZkEqFactoredFinalRelation,
+    ZkEqFactoredSumcheckInstanceProverExt, ZkEqFactoredSumcheckInstanceVerifierExt,
+    ZkSumcheckFinalRelation, ZkSumcheckInstanceProverExt, ZkSumcheckInstanceVerifierExt,
 };
 pub use extension_opening_reduction::{
     check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
     extension_opening_reduction_claim, extension_opening_reduction_eval_at_point,
-    prove_extension_opening_reduction, tensor_column_partials_from_base_evals,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
-    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
-    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, verify_extension_opening_reduction_rounds,
-    BatchedExtensionOpeningReductionProver, BatchedExtensionOpeningReductionTerm,
-    ExtensionOpeningFactorTerm, ExtensionOpeningReductionFactor, ExtensionOpeningReductionProver,
-    ExtensionOpeningReductionRoundResult, ExtensionOpeningReductionVerifier,
-    ExtensionOpeningTensorPartials, SparseExtensionOpeningWitness,
-    EXTENSION_OPENING_REDUCTION_DEGREE, SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+    tensor_column_partials_from_base_evals, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_logical_claim_from_partials, tensor_opening_split,
+    tensor_packed_witness_evals, tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, BatchedExtensionOpeningReductionProver,
+    BatchedExtensionOpeningReductionTerm, ExtensionOpeningFactorTerm,
+    ExtensionOpeningReductionFactor, ExtensionOpeningReductionProver,
+    ExtensionOpeningReductionRoundResult, ExtensionOpeningReductionSumcheck,
+    ExtensionOpeningReductionVerifier, ExtensionOpeningTensorPartials,
+    SparseExtensionOpeningWitness, EXTENSION_OPENING_REDUCTION_DEGREE,
+    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
@@ -50,3 +55,5 @@ pub use types::{
     uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape,
     EqFactoredUniPoly, SumcheckProof, SumcheckProofShape,
 };
+#[cfg(feature = "zk")]
+pub use types::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};

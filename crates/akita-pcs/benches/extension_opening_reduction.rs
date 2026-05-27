@@ -3,8 +3,8 @@
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, TranscriptChallenge};
 use akita_sumcheck::{
-    prove_sumcheck, tensor_opening_split, BatchedExtensionOpeningReductionProver,
-    BatchedExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
+    tensor_opening_split, BatchedExtensionOpeningReductionProver,
+    BatchedExtensionOpeningReductionTerm, SparseExtensionOpeningWitness, SumcheckInstanceProverExt,
 };
 use akita_transcript::{labels, sample_ext_challenge, AkitaTranscript, Transcript};
 use criterion::measurement::WallTime;
@@ -160,8 +160,8 @@ where
                         .unwrap();
                 let mut transcript = <AkitaTranscript<F> as Transcript<F>>::new(b"bench/eor");
                 let start = Instant::now();
-                let proof =
-                    prove_sumcheck::<F, _, E, _, _>(&mut prover, &mut transcript, |transcript| {
+                let proof = prover
+                    .prove::<F, _, _>(&mut transcript, |transcript| {
                         sample_ext_challenge::<F, E, _>(
                             transcript,
                             labels::CHALLENGE_SUMCHECK_ROUND,

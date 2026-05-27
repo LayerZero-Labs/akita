@@ -25,6 +25,7 @@ parallel = [
 ]
 zk = [
   "akita-config/zk",
+  "akita-planner/zk",
   "akita-prover/zk",
   "akita-setup/zk",
   "akita-types/zk",
