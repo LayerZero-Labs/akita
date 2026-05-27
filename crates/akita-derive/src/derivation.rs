@@ -107,9 +107,19 @@ pub fn sis_secure_level_params(
 
     let mut result =
         LevelParams::params_only(sis_family, d, log_basis, n_a, n_b, n_d, stage1_config);
-    result.a_key = AjtaiKeyParams::new(sis_family, n_a, 0, collisions.a, d);
-    result.b_key = AjtaiKeyParams::new(sis_family, n_b, 0, collisions.bd, d);
-    result.d_key = AjtaiKeyParams::new(sis_family, n_d, 0, collisions.bd, d);
+    // Carry the audited SIS-floor bucket on each role. `col_len` stays
+    // at the `params_only` placeholder value of `0` — the layout is
+    // filled in by a subsequent `with_layout`/`with_decomp`, which now
+    // preserves `collision_inf` from `self`, so the audit at the next
+    // `AjtaiKeyParams::try_new` boundary sees the right bucket.
+    //
+    // `new_unchecked` is required here because `col_len = 0` is an
+    // intentional placeholder; the strict audit on `AjtaiKeyParams::new`
+    // rejects it (and would otherwise re-introduce the silent-permissive
+    // bypass that this entire path exists to close).
+    result.a_key = AjtaiKeyParams::new_unchecked(sis_family, n_a, 0, collisions.a, d);
+    result.b_key = AjtaiKeyParams::new_unchecked(sis_family, n_b, 0, collisions.bd, d);
+    result.d_key = AjtaiKeyParams::new_unchecked(sis_family, n_d, 0, collisions.bd, d);
     Ok(result)
 }
 

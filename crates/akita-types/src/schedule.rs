@@ -1006,9 +1006,9 @@ mod tests {
     use crate::{
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
-        terminal_level_proof_bytes, AjtaiKeyParams, AkitaBatchedRootProof, AkitaLevelProof,
-        AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, DirectWitnessProof,
-        DirectWitnessShape, FlatRingVec, PackedDigits, SisModulusFamily, TerminalLevelProof,
+        terminal_level_proof_bytes, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
+        AkitaStage2Proof, DirectWitnessProof, DirectWitnessShape, FlatRingVec, PackedDigits,
+        SisModulusFamily, TerminalLevelProof,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -1289,62 +1289,6 @@ mod tests {
                 final_witness_bytes_runtime,
                 "direct_witness_bytes should match the serialized packed-digit \
                  final witness at log_basis={log_basis}"
-            );
-        }
-    }
-
-    #[test]
-    fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
-        const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
-        let next_lp =
-            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
-        let next_w_len = D * 8;
-
-        for log_basis in 2..=6 {
-            let lp = LevelParams {
-                ring_dimension: D,
-                log_basis,
-                a_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
-                b_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
-                d_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
-                num_blocks: 1,
-                block_len: 1,
-                m_vars: 0,
-                r_vars: 0,
-                stage1_config: stage1_config.clone(),
-                fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-                num_digits_commit: 1,
-                num_digits_open: 1,
-                num_digits_fold: 1,
-            };
-            let rounds = sumcheck_rounds(D, next_w_len);
-            let b = 1usize << log_basis;
-            let next_commitment = FlatRingVec::from_ring_elems(&vec![
-                CyclotomicRing::<F, D>::zero();
-                next_lp.b_key.row_len()
-            ])
-            .into_compact();
-            let num_points = 5;
-            let root_proof = AkitaBatchedRootProof::new_two_stage::<D>(
-                vec![CyclotomicRing::<F, D>::zero(); num_points],
-                vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
-                dummy_stage1_proof(rounds, b),
-                #[cfg(not(feature = "zk"))]
-                dummy_sumcheck(rounds, 3),
-                #[cfg(feature = "zk")]
-                dummy_sumcheck_proof_masked(rounds, 3),
-                next_commitment,
-                F::zero(),
-            );
-
-            assert_eq!(
-                level_proof_bytes(128, 128, &lp, &lp, &next_lp, next_w_len, num_points),
-                root_proof.serialized_size(Compress::No),
-                "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
         }
     }

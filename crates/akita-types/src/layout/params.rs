@@ -46,39 +46,20 @@ pub struct AjtaiKeyParams {
 }
 
 impl AjtaiKeyParams {
-    fn sis_security_violation(
-        sis_family: SisModulusFamily,
-        row_len: usize,
-        col_len: usize,
-        collision_inf: u32,
-        ring_dimension: usize,
-    ) -> Option<String> {
-        if col_len > 0 && collision_inf > 0 && row_len > 0 {
-            use crate::generated::sis_floor::min_rank_for_secure_width;
-            if let Some(floor) = min_rank_for_secure_width(
-                sis_family,
-                ring_dimension as u32,
-                collision_inf,
-                col_len as u64,
-            ) {
-                if row_len < floor {
-                    return Some(format!(
-                        "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
-                         (family={sis_family:?}, d={ring_dimension}, \
-                         collision_inf={collision_inf}, col_len={col_len})"
-                    ));
-                }
-            }
-        }
-        None
-    }
-
-    /// Create a new `AjtaiKeyParams` with SIS security enforcement.
+    /// Create a new SIS-secure `AjtaiKeyParams`.
+    ///
+    /// Audits the `(row_len, col_len, collision_inf)` triple against the
+    /// generated 128-bit SIS-floor tables for `(sis_family,
+    /// ring_dimension)`. The check is strict and has no
+    /// silent-permissive fallback: any zero field, an unsupported
+    /// collision bucket, a `col_len` outside the audited range, or a
+    /// `row_len` below the audited floor is a panic.
     ///
     /// # Panics
     ///
-    /// Panics if `row_len` is below the 128-bit SIS security floor for the
-    /// given `(sis_family, ring_dimension, collision_inf, col_len)` tuple.
+    /// Panics if any of `row_len`, `col_len`, or `collision_inf` is zero,
+    /// if the SIS-floor tables do not cover the configuration, or if
+    /// `row_len` is below the audited SIS-secure floor.
     pub fn new(
         sis_family: SisModulusFamily,
         row_len: usize,
@@ -86,15 +67,28 @@ impl AjtaiKeyParams {
         collision_inf: u32,
         ring_dimension: usize,
     ) -> Self {
-        if let Some(message) = Self::sis_security_violation(
+        assert!(row_len > 0, "AjtaiKeyParams: row_len = 0");
+        assert!(col_len > 0, "AjtaiKeyParams: col_len = 0");
+        assert!(collision_inf > 0, "AjtaiKeyParams: collision_inf = 0");
+        let floor = crate::generated::sis_floor::min_rank_for_secure_width(
             sis_family,
-            row_len,
-            col_len,
+            ring_dimension as u32,
             collision_inf,
-            ring_dimension,
-        ) {
-            panic!("{message}");
-        }
+            col_len as u64,
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "AjtaiKeyParams: no audited SIS rank for \
+                 family={sis_family:?} d={ring_dimension} \
+                 collision_inf={collision_inf} col_len={col_len}"
+            )
+        });
+        assert!(
+            row_len >= floor,
+            "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
+             (family={sis_family:?}, d={ring_dimension}, \
+             collision_inf={collision_inf}, col_len={col_len})"
+        );
         Self {
             row_len,
             col_len,
@@ -103,12 +97,18 @@ impl AjtaiKeyParams {
         }
     }
 
-    /// Create a new `AjtaiKeyParams`, returning an error on SIS violations.
+    /// Fallible sibling of [`new`](Self::new).
+    ///
+    /// Same audit, but reports failures as
+    /// `AkitaError::InvalidSetup(message)` instead of panicking. Used by
+    /// callers that need to gracefully reject SIS-insecure candidates
+    /// (e.g. the planner's outer loop).
     ///
     /// # Errors
     ///
-    /// Returns an error if `row_len` is below the 128-bit SIS security floor
-    /// for the given `(sis_family, ring_dimension, collision_inf, col_len)` tuple.
+    /// Returns an error under the same conditions [`new`](Self::new)
+    /// panics: a zero field, an unsupported configuration, or
+    /// `row_len` below the audited floor.
     pub fn try_new(
         sis_family: SisModulusFamily,
         row_len: usize,
@@ -116,14 +116,35 @@ impl AjtaiKeyParams {
         collision_inf: u32,
         ring_dimension: usize,
     ) -> Result<Self, AkitaError> {
-        if let Some(message) = Self::sis_security_violation(
+        let invalid = |msg: String| AkitaError::InvalidSetup(msg);
+        if row_len == 0 {
+            return Err(invalid("AjtaiKeyParams: row_len = 0".to_string()));
+        }
+        if col_len == 0 {
+            return Err(invalid("AjtaiKeyParams: col_len = 0".to_string()));
+        }
+        if collision_inf == 0 {
+            return Err(invalid("AjtaiKeyParams: collision_inf = 0".to_string()));
+        }
+        let floor = crate::generated::sis_floor::min_rank_for_secure_width(
             sis_family,
-            row_len,
-            col_len,
+            ring_dimension as u32,
             collision_inf,
-            ring_dimension,
-        ) {
-            return Err(AkitaError::InvalidSetup(message));
+            col_len as u64,
+        )
+        .ok_or_else(|| {
+            invalid(format!(
+                "AjtaiKeyParams: no audited SIS rank for \
+                 family={sis_family:?} d={ring_dimension} \
+                 collision_inf={collision_inf} col_len={col_len}"
+            ))
+        })?;
+        if row_len < floor {
+            return Err(invalid(format!(
+                "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
+                 (family={sis_family:?}, d={ring_dimension}, \
+                 collision_inf={collision_inf}, col_len={col_len})"
+            )));
         }
         Ok(Self {
             row_len,
@@ -135,10 +156,12 @@ impl AjtaiKeyParams {
 
     /// Create a new `AjtaiKeyParams` without enforcing SIS security.
     ///
-    /// Logs a debug-build warning if `row_len` is below the SIS floor but does
-    /// not panic. Use this for intermediate construction steps where ranks
-    /// have not yet converged (e.g., batched scaling, iterative SIS fixed-point
-    /// loops).
+    /// Use this only for intermediate construction steps that carry
+    /// incomplete data (`params_only` placeholders with `col_len = 0` or
+    /// `collision_inf = 0`, iterative SIS fixed-point loops, etc.).
+    /// Production-facing layouts must reach
+    /// [`new`](Self::new)/[`try_new`](Self::try_new) before they're
+    /// emitted into a schedule or setup.
     pub fn new_unchecked(
         sis_family: SisModulusFamily,
         row_len: usize,
@@ -146,30 +169,7 @@ impl AjtaiKeyParams {
         collision_inf: u32,
         ring_dimension: usize,
     ) -> Self {
-        #[cfg(not(debug_assertions))]
         let _ = ring_dimension;
-        #[cfg(debug_assertions)]
-        if col_len > 0 && collision_inf > 0 && row_len > 0 {
-            use crate::generated::sis_floor::min_rank_for_secure_width;
-            if let Some(floor) = min_rank_for_secure_width(
-                sis_family,
-                ring_dimension as u32,
-                collision_inf,
-                col_len as u64,
-            ) {
-                if row_len < floor {
-                    tracing::warn!(
-                        ?sis_family,
-                        row_len,
-                        floor,
-                        ring_dimension,
-                        collision_inf,
-                        col_len,
-                        "AjtaiKeyParams::new_unchecked: row_len below SIS floor"
-                    );
-                }
-            }
-        }
         Self {
             row_len,
             col_len,
@@ -497,8 +497,20 @@ impl LevelParams {
         })
     }
 
-    /// Build a new `LevelParams` that keeps rank/ring info from `self` but
-    /// replaces all layout-derived fields with those from `other`.
+    /// Build a new `LevelParams` that keeps rank/ring/SIS-bucket info
+    /// from `self` but replaces all layout-derived fields with those
+    /// from `other`.
+    ///
+    /// "Layout-derived fields" are `col_len`, `num_blocks`, `block_len`,
+    /// `m_vars`, `r_vars`, and the three digit counts. **`collision_inf`
+    /// is not a layout field** — it is the SIS-floor bucket the rank
+    /// (`row_len`) was sized against — so it is preserved from `self`,
+    /// matching the placement of `row_len` and `sis_family`. Pulling
+    /// `collision_inf` from `other` would lose the audited bucket when
+    /// the layout argument was constructed via
+    /// [`LevelParams::params_only`] (which leaves `collision_inf = 0`)
+    /// or threaded through [`with_decomp`], and would let the SIS audit
+    /// at [`AjtaiKeyParams::try_new`] short-circuit silently.
     pub fn with_layout(&self, other: &LevelParams) -> Self {
         let d = self.ring_dimension;
         Self {
@@ -508,21 +520,21 @@ impl LevelParams {
                 self.a_key.sis_family,
                 self.a_key.row_len,
                 other.a_key.col_len,
-                other.a_key.collision_inf,
+                self.a_key.collision_inf,
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
                 self.b_key.sis_family,
                 self.b_key.row_len,
                 other.b_key.col_len,
-                other.b_key.collision_inf,
+                self.b_key.collision_inf,
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
                 self.d_key.sis_family,
                 self.d_key.row_len,
                 other.d_key.col_len,
-                other.d_key.collision_inf,
+                self.d_key.collision_inf,
                 d,
             ),
             num_blocks: other.num_blocks,
