@@ -304,7 +304,6 @@ pub trait PackedField:
 
         out
     }
-
 }
 
 /// Scalar fallback packed type with one lane.
