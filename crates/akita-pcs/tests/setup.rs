@@ -29,7 +29,7 @@ use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_transcript::AkitaTranscript;
-use akita_types::BasisMode;
+use akita_types::{AkitaBatchedProof, BasisMode};
 use akita_verifier::CommitmentVerifier;
 use common::{
     init_rayon_pool, opening_from_poly, prove_input, random_point, run_on_large_stack,
@@ -44,9 +44,16 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 // ---------------------------------------------------------------------------
 
 /// Number of variables for the polynomial we actually commit/prove/verify.
-const POLY_NV: usize = 20;
+const POLY_NV: usize = 18;
 /// How many polynomials we actually commit in the "same size" tests.
 const USE_BATCH: usize = 1;
+
+fn assert_folded_proof(label: &str, proof: &AkitaBatchedProof<F, F>) {
+    assert!(
+        !proof.is_root_direct(),
+        "{label} should exercise a folded proof path, not the root-direct fast path"
+    );
+}
 
 /// Run `f` on a large-stack worker thread and re-raise its panic payload
 /// unchanged, so that `#[should_panic(expected = "...")]` can match the
@@ -150,6 +157,7 @@ where
         BasisMode::Lagrange,
     )
     .expect("prove");
+    assert_folded_proof("single dense setup-capacity round trip", &proof);
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
@@ -223,6 +231,7 @@ where
         BasisMode::Lagrange,
     )
     .expect("prove");
+    assert_folded_proof("single onehot setup-capacity round trip", &proof);
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
@@ -299,6 +308,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         BasisMode::Lagrange,
     )
     .expect("batched prove");
+    assert_folded_proof("batched dense setup-capacity round trip", &proof);
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
@@ -383,6 +393,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         BasisMode::Lagrange,
     )
     .expect("batched onehot prove");
+    assert_folded_proof("batched onehot setup-capacity round trip", &proof);
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
@@ -438,7 +449,7 @@ macro_rules! preset_module {
             /// into a panic.
             #[test]
             #[should_panic(
-                expected = "commit received a polynomial with 20 variables but setup supports at most 19"
+                expected = "commit received a polynomial with 18 variables but setup supports at most 17"
             )]
             fn small_setup_nv_panics() {
                 init_rayon_pool();

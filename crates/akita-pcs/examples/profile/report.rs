@@ -2,7 +2,7 @@ use akita_field::FieldCore;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, AkitaSchedulePlan,
-    DirectWitnessProof, LevelParams, TerminalLevelProof,
+    DirectWitnessProof, LevelParams, Schedule, Step, TerminalLevelProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -52,6 +52,63 @@ pub(crate) fn emit_planned_schedule_summary(label: &str, plan: &AkitaSchedulePla
         final_log_basis = terminal.log_basis,
         "planned terminal state"
     );
+}
+
+pub(crate) fn emit_runtime_schedule_summary(label: &str, schedule: &Schedule, field_bits: u32) {
+    let levels = schedule
+        .steps
+        .iter()
+        .filter(|step| matches!(step, Step::Fold(_)))
+        .count();
+    tracing::info!(
+        label,
+        levels,
+        total_proof_bytes = schedule.total_bytes,
+        "runtime schedule"
+    );
+
+    for (level_idx, level) in schedule
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            Step::Fold(level) => Some(level),
+            Step::Direct(_) => None,
+        })
+        .enumerate()
+    {
+        let lp = &level.params;
+        tracing::info!(
+            label,
+            level = level_idx,
+            d = lp.ring_dimension,
+            n_a = lp.a_key.row_len(),
+            n_b = lp.b_key.row_len(),
+            n_d = lp.d_key.row_len(),
+            challenge_l1_mass = lp.challenge_l1_mass(),
+            log_basis = lp.log_basis,
+            m_vars = lp.m_vars,
+            r_vars = lp.r_vars,
+            num_blocks = lp.num_blocks,
+            block_len = lp.block_len,
+            delta_commit = lp.num_digits_commit,
+            delta_open = lp.num_digits_open,
+            delta_fold = level.delta_fold_per_poly,
+            current_w_len = level.current_w_len,
+            next_w_ring = level.w_ring,
+            next_w_len = level.next_w_len,
+            level_bytes = level.level_bytes,
+            "planned fold level"
+        );
+    }
+
+    if let Some(Step::Direct(terminal)) = schedule.steps.last() {
+        tracing::info!(
+            label,
+            final_w_len = terminal.current_w_len,
+            final_log_basis = terminal.log_basis(field_bits),
+            "planned terminal state"
+        );
+    }
 }
 
 fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
