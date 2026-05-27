@@ -31,7 +31,7 @@ include = ["src/**", "examples/**", "benches/**", "Cargo.toml"]
 all-features = true
 
 [package.metadata.cargo-machete]
-ignored = ["akita-setup", "blake2", "thiserror"]
+ignored = ["akita-setup"]
 
 [features]
 default = ["parallel"]
@@ -49,6 +49,7 @@ disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 zk = [
   "akita-config/zk",
+  "akita-planner/zk",
   "akita-prover/zk",
   "akita-scheme/zk",
   "akita-setup/zk",
@@ -57,8 +58,6 @@ zk = [
 ]
 
 [dependencies]
-thiserror = "2.0"
-rand_core = { version = "0.6", features = ["getrandom"] }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
@@ -73,13 +72,13 @@ akita-scheme = { version = "0.1.0", path = "../akita-scheme", default-features =
 akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = false }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
-blake2 = "0.10.6"
 
 [dev-dependencies]
 akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
   "test-utils",
 ] }
 rand = "0.8"
+rand_core = { version = "0.6", features = ["getrandom"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 num-bigint = "0.4.6"
 proptest = "1.6"

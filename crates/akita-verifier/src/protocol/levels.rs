@@ -5,43 +5,64 @@
 //! until the verifier-facing config boundary is extracted.
 
 use super::validate_level_dispatch;
-use crate::protocol::ring_switch::{
-    ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchVerifyOutput,
-    TerminalRingSwitchVerifyOutput,
+#[cfg(feature = "zk")]
+use crate::protocol::batched::{
+    append_direct_blinding, direct_decomposed_inner_rows, field_evals_to_rings,
+    mat_vec_mul_i8_plain,
 };
+use crate::protocol::ring_switch::{ring_switch_verifier, ring_switch_verifier_terminal};
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
 use akita_algebra::CyclotomicRing;
+#[cfg(feature = "zk")]
+use akita_algebra::EqPolynomial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     PseudoMersenneField, RandomSampling,
 };
+#[cfg(feature = "zk")]
+use akita_r1cs::{
+    lift_hiding_witness, zk_base_mask_lcs, zk_ext_mask_lc, zk_ext_mask_lc_at,
+    zk_masked_linear_value_lc, zk_push_linear_zero, zk_relation_claim_mask_from_y_masks,
+    zk_row_masks_from_column_masks, ZkR1csLinearCombination, ZkRelationAccumulator,
+};
 use akita_serialization::AkitaSerialize;
+#[cfg(feature = "zk")]
+use akita_sumcheck::ZkSumcheckInstanceVerifierExt;
+#[cfg(not(feature = "zk"))]
 use akita_sumcheck::{
     check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
-    tensor_equality_factor_eval_at_point, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, verify_extension_opening_reduction_rounds, verify_sumcheck,
-    SumcheckInstanceVerifier,
+    SumcheckInstanceVerifierExt,
 };
+use akita_sumcheck::{
+    tensor_equality_factor_eval_at_point, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, ExtensionOpeningReductionSumcheck, SumcheckInstanceVerifier,
+};
+#[cfg(feature = "zk")]
+use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_HAT,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
+    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_HAT, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+#[cfg(not(feature = "zk"))]
+use akita_types::dispatch_trace_inner_product_check;
+#[cfg(feature = "zk")]
+use akita_types::ZkHidingProof;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript,
-    dispatch_trace_inner_product_check, flatten_batched_commitment_rows,
-    prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
-    recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
+    flatten_batched_commitment_rows, prepare_recursive_opening_point_ext,
+    prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
+    relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
     sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_segment_layout,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
     ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, RelationOnlyStage2Inputs, RingCommitment, RingOpeningPoint,
-    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts,
+    LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule,
+    Step, TerminalLevelProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -50,6 +71,9 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub opening_point: Vec<L>,
     /// Claimed opening value for the current commitment.
     pub opening: L,
+    /// Hidden mask added to `opening` in the public proof.
+    #[cfg(feature = "zk")]
+    pub opening_mask: ZkR1csLinearCombination<L>,
     /// Current recursive witness commitment.
     pub commitment: &'a FlatRingVec<F>,
     /// Basis used to interpret the current opening point.
@@ -62,57 +86,6 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
 
 struct TerminalWitnessReplay {
     parts: TerminalWitnessTranscriptParts,
-}
-
-enum RingSwitchReplay<E: FieldCore> {
-    Intermediate(RingSwitchVerifyOutput<E>),
-    Terminal(TerminalRingSwitchVerifyOutput<E>),
-}
-
-impl<E: FieldCore> RingSwitchReplay<E> {
-    fn tau1(&self) -> &[E] {
-        match self {
-            Self::Intermediate(rs) => &rs.tau1,
-            Self::Terminal(rs) => &rs.tau1,
-        }
-    }
-
-    fn alpha(&self) -> E {
-        match self {
-            Self::Intermediate(rs) => rs.alpha,
-            Self::Terminal(rs) => rs.alpha,
-        }
-    }
-
-    fn into_stage2_parts(
-        self,
-    ) -> (
-        crate::protocol::ring_switch::RingSwitchDeferredRowEval<E>,
-        Vec<E>,
-        Vec<E>,
-        E,
-        usize,
-        usize,
-    ) {
-        match self {
-            Self::Intermediate(rs) => (
-                rs.prepared_row_eval,
-                rs.alpha_evals_y,
-                rs.tau1,
-                rs.alpha,
-                rs.col_bits,
-                rs.ring_bits,
-            ),
-            Self::Terminal(rs) => (
-                rs.prepared_row_eval,
-                rs.alpha_evals_y,
-                rs.tau1,
-                rs.alpha,
-                rs.col_bits,
-                rs.ring_bits,
-            ),
-        }
-    }
 }
 
 fn prepare_terminal_witness_replay<F, T>(
@@ -128,13 +101,110 @@ where
     if final_witness.num_elems() != final_w_len {
         return Err(AkitaError::InvalidProof);
     }
-    if final_witness.packed_i8_digits()?.len() != final_w_len {
-        return Err(AkitaError::InvalidProof);
-    }
     let parts = final_witness.terminal_transcript_parts(layout)?;
     transcript.record_wire_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
     transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
     Ok(TerminalWitnessReplay { parts })
+}
+
+#[cfg(feature = "zk")]
+fn zk_recovered_y_ring_lc<F, E, const D: usize>(
+    y_ring: &CyclotomicRing<F, D>,
+    y_masks: &[ZkR1csLinearCombination<E>],
+    inner_reduction: &CyclotomicRing<F, D>,
+) -> Result<ZkR1csLinearCombination<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: RingSubfieldEncoding<F>,
+{
+    if y_masks.len() != D {
+        return Err(AkitaError::InvalidProof);
+    }
+    let masked_opening = recover_ring_subfield_inner_product::<F, E, D>(y_ring, inner_reduction)?;
+    let mut mask_coeffs = Vec::with_capacity(D);
+    for coeff_idx in 0..D {
+        let mut basis_y = CyclotomicRing::<F, D>::zero();
+        basis_y.coeffs[coeff_idx] = F::one();
+        mask_coeffs.push(recover_ring_subfield_inner_product::<F, E, D>(
+            &basis_y,
+            inner_reduction,
+        )?);
+    }
+    zk_masked_linear_value_lc(masked_opening, y_masks, &mask_coeffs)
+}
+
+#[cfg(feature = "zk")]
+fn verify_zk_hiding_commitment<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    root_params: &LevelParams,
+    proof: &ZkHidingProof<F>,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    if D == 0 || proof.u_blind.is_empty() || proof.hiding_witness.is_empty() {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    let num_ring = proof
+        .hiding_witness
+        .len()
+        .div_ceil(D)
+        .max(1)
+        .checked_next_power_of_two()
+        .ok_or(AkitaError::InvalidProof)?;
+    let eval_len = num_ring
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK hiding witness length overflow".to_string()))?;
+    let mut evals = vec![F::zero(); eval_len];
+    let live_evals = evals
+        .get_mut(..proof.hiding_witness.len())
+        .ok_or(AkitaError::InvalidProof)?;
+    live_evals.copy_from_slice(&proof.hiding_witness);
+
+    let hiding_params = root_params.with_decomp(
+        num_ring.trailing_zeros() as usize,
+        0,
+        root_params.num_digits_commit,
+        root_params.num_digits_open,
+        root_params.num_digits_fold,
+        num_ring,
+    )?;
+    let witness_rings = field_evals_to_rings::<F, D>(&evals)?;
+    let mut b_input_digits = direct_decomposed_inner_rows(&witness_rings, setup, &hiding_params)?;
+    append_direct_blinding::<F, D>(
+        &mut b_input_digits,
+        &proof.b_blinding_digits,
+        &hiding_params,
+    )?;
+    if b_input_digits.len() > setup.expanded.seed.max_stride {
+        return Err(AkitaError::InvalidSetup(
+            "ZK hiding commitment exceeds shared matrix stride".to_string(),
+        ));
+    }
+
+    let b_matrix = setup.expanded.shared_matrix.ring_view::<D>(
+        hiding_params.b_key.row_len(),
+        setup.expanded.seed.max_stride,
+    )?;
+    let b_rows: Vec<_> = b_matrix.rows().collect();
+    let expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
+    let expected_len = expected_u_blind_rings
+        .len()
+        .checked_mul(D)
+        .ok_or(AkitaError::InvalidProof)?;
+    if proof.u_blind.len() != expected_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    let expected_u_blind = expected_u_blind_rings
+        .iter()
+        .flat_map(|ring| ring.coeffs.iter().copied())
+        .collect::<Vec<_>>();
+    if proof.u_blind.as_slice() != expected_u_blind.as_slice() {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    Ok(())
 }
 
 /// Verify the intermediate-root proof payload for batched proofs whose root
@@ -144,7 +214,7 @@ where
 /// commitments, padded opening points, per-claim field openings, one gamma
 /// challenge per claim, and gamma-combined per-point y-rings, then runs the
 /// stage-1 norm-check sumcheck and the stage-2 fused sumcheck, threading
-/// `next_w_commitment` through the standard ring-switch witness absorb.
+/// `next_w_commitment` through `ABSORB_SUMCHECK_W`.
 ///
 /// # Errors
 ///
@@ -165,13 +235,20 @@ pub(crate) fn verify_intermediate_root_level<F, E, C, T, const D: usize>(
     commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
 ) -> Result<Vec<C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
+    C: RingSubfieldEncoding<F>
+        + ExtField<E>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
 {
     verify_root_level_inner::<F, E, C, T, D>(
@@ -179,7 +256,10 @@ where
         extension_opening_reduction,
         Some(v_flat),
         Some(stage1),
-        &stage2.sumcheck,
+        #[cfg(not(feature = "zk"))]
+        &stage2.sumcheck_proof,
+        #[cfg(feature = "zk")]
+        &stage2.sumcheck_proof_masked,
         setup,
         transcript,
         claim_points,
@@ -191,8 +271,12 @@ where
         batched_lp,
         RootStageInput::Intermediate {
             next_w_commitment: &stage2.next_w_commitment,
-            next_w_eval: stage2.next_w_eval,
+            next_w_eval: stage2.next_w_eval(),
         },
+        #[cfg(feature = "zk")]
+        zk_hiding_cursor,
+        #[cfg(feature = "zk")]
+        zk_relations,
     )
 }
 
@@ -201,8 +285,8 @@ where
 /// `final_witness` in cleartext).
 ///
 /// Mirrors [`verify_intermediate_root_level`] up through the ring-switch
-/// preamble; at the terminal, logical `w_hat` and the final-witness remainder
-/// are absorbed in separate terminal events, stage-1 is skipped entirely, and
+/// preamble; at the terminal, [`ABSORB_SUMCHECK_W`] absorbs `final_witness`
+/// instead of a next-witness commitment, stage-1 is skipped entirely, and
 /// stage-2 runs in relation-only mode (`batching_coeff = 0`, `s_claim = 0`).
 ///
 /// # Errors
@@ -214,7 +298,8 @@ where
 pub(crate) fn verify_terminal_root_level<F, E, C, T, const D: usize>(
     y_rings_flat: &FlatRingVec<F>,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
-    stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
+    #[cfg(not(feature = "zk"))] stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
+    #[cfg(feature = "zk")] stage2_sumcheck_masked: &akita_sumcheck::SumcheckProofMasked<C>,
     final_witness: &DirectWitnessProof<F>,
     final_w_len: usize,
     setup: &AkitaVerifierSetup<F>,
@@ -224,13 +309,20 @@ pub(crate) fn verify_terminal_root_level<F, E, C, T, const D: usize>(
     commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
 ) -> Result<Vec<C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
+    C: RingSubfieldEncoding<F>
+        + ExtField<E>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
 {
     verify_root_level_inner::<F, E, C, T, D>(
@@ -238,7 +330,10 @@ where
         extension_opening_reduction,
         None,
         None,
+        #[cfg(not(feature = "zk"))]
         stage2_sumcheck,
+        #[cfg(feature = "zk")]
+        stage2_sumcheck_masked,
         setup,
         transcript,
         claim_points,
@@ -252,6 +347,10 @@ where
             final_witness,
             final_w_len,
         },
+        #[cfg(feature = "zk")]
+        zk_hiding_cursor,
+        #[cfg(feature = "zk")]
+        zk_relations,
     )
 }
 
@@ -272,7 +371,8 @@ fn verify_root_level_inner<F, E, C, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     v_flat: Option<&FlatRingVec<F>>,
     stage1: Option<&AkitaStage1Proof<C>>,
-    stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
+    #[cfg(not(feature = "zk"))] stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
+    #[cfg(feature = "zk")] stage2_sumcheck_masked: &akita_sumcheck::SumcheckProofMasked<C>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claim_points: &[&[E]],
@@ -283,11 +383,18 @@ fn verify_root_level_inner<F, E, C, T, const D: usize>(
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
     stage_input: RootStageInput<'_, F, C>,
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
 ) -> Result<Vec<C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
+    C: RingSubfieldEncoding<F>
+        + ExtField<E>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
 {
     validate_level_dispatch::<D>(root_lp)?;
@@ -384,6 +491,8 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut input_claim = C::zero();
+        #[cfg(feature = "zk")]
+        let mut input_claim_mask = ZkR1csLinearCombination::zero();
         for (claim_idx, opening) in openings
             .iter()
             .copied()
@@ -394,11 +503,34 @@ where
             let partial_start = claim_idx * width;
             let partial_end = partial_start + width;
             let partials = &reduction.partials[partial_start..partial_end];
+            #[cfg(feature = "zk")]
+            let partial_masks = (0..width)
+                .map(|_| zk_ext_mask_lc::<F, C>(zk_hiding_cursor))
+                .collect::<Vec<_>>();
+            #[cfg(not(feature = "zk"))]
             check_tensor_extension_opening_claim::<F, C>(
                 &padded_points[point_idx],
                 C::lift_base(opening),
                 partials,
             )?;
+            #[cfg(feature = "zk")]
+            {
+                let head_weights =
+                    EqPolynomial::<C>::evals(&padded_points[point_idx][..split_bits])?;
+                let mut residual = ZkR1csLinearCombination::constant(-C::lift_base(opening));
+                for ((&partial, mask), weight) in
+                    partials.iter().zip(partial_masks.iter()).zip(head_weights)
+                {
+                    let true_partial = ZkRelationAccumulator::unmask_lc(partial, mask);
+                    residual.add_scaled(weight, &true_partial);
+                }
+                zk_relations.push_r1cs(
+                    "root extension-opening partial claim",
+                    residual,
+                    ZkR1csLinearCombination::one(),
+                    ZkR1csLinearCombination::zero(),
+                )?;
+            }
             for partial in partials {
                 append_ext_field::<F, C, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
             }
@@ -418,25 +550,68 @@ where
             )?;
             let claim = tensor_reduction_claim_from_rows::<F, C>(&row_partials, &eta)?;
             input_claim += row_coefficient * claim;
+            #[cfg(feature = "zk")]
+            {
+                let mut partial_masks = Vec::with_capacity(width);
+                for offset in 0..width {
+                    let mask_start = partial_start + offset;
+                    let mask = zk_ext_mask_lc_at::<F, C>(
+                        *zk_hiding_cursor
+                            - reduction.partials.len() * <C as ExtField<F>>::EXT_DEGREE
+                            + mask_start * <C as ExtField<F>>::EXT_DEGREE,
+                    );
+                    partial_masks.push(mask);
+                }
+                let row_masks = zk_row_masks_from_column_masks::<F, C>(&partial_masks)?;
+                for (weight, row_mask) in EqPolynomial::<C>::evals(&eta)?.into_iter().zip(row_masks)
+                {
+                    input_claim_mask.add_scaled(row_coefficient * weight, &row_mask);
+                }
+            }
         }
-        let result = verify_extension_opening_reduction_rounds::<F, _, C, _>(
-            &reduction.sumcheck,
+        #[cfg(not(feature = "zk"))]
+        let result = ExtensionOpeningReductionSumcheck::new(
             input_claim,
             incidence_summary.num_vars() - split_bits,
+        )
+        .verify::<F, _, _>(&reduction.sumcheck, transcript, |tr| {
+            sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+        })?;
+        #[cfg(feature = "zk")]
+        let (final_claim_lc, challenges) = ExtensionOpeningReductionSumcheck::new(
+            input_claim,
+            incidence_summary.num_vars() - split_bits,
+        )
+        .verify_zk::<F, _, _>(
+            &reduction.sumcheck_proof_masked,
+            input_claim_mask,
             transcript,
             |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+            zk_relations,
+            zk_hiding_cursor,
         )?;
+        #[cfg(feature = "zk")]
+        let result_challenges = challenges;
+        #[cfg(not(feature = "zk"))]
+        let result_challenges = result.challenges;
         let factors_by_point = padded_points
             .iter()
             .map(|point| {
                 tensor_equality_factor_eval_at_point::<F, C>(
                     &point[split_bits..],
                     &eta,
-                    &result.challenges,
+                    &result_challenges,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Some((result.final_claim, result.challenges, factors_by_point))
+        #[cfg(feature = "zk")]
+        {
+            Some((final_claim_lc, result_challenges, factors_by_point))
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            Some((result.final_claim, result_challenges, factors_by_point))
+        }
     } else {
         None
     };
@@ -467,6 +642,8 @@ where
     for y_ring in y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
+    #[cfg(feature = "zk")]
+    let y_masks = zk_base_mask_lcs::<C>(y_rings.len() * D, zk_hiding_cursor);
 
     // Per-row trace check: for each public row `r`, verify the ring-subfield
     // trace inner-product identity
@@ -490,48 +667,99 @@ where
                     row_coefficients[claim_idx] * C::lift_base(openings[claim_idx]);
             }
         }
-        for (row, (y_ring, batched_opening)) in incidence_summary
-            .public_rows()
-            .iter()
-            .zip(y_rings.iter().zip(batched_openings_per_row.iter()))
+        #[cfg(feature = "zk")]
         {
-            let v = &prepared_points[row.point_idx()].inner_reduction;
-            let trace_input = *y_ring * v.sigma_m1();
-            let coords = batched_opening.to_ring_subfield_coords();
-            if !dispatch_trace_inner_product_check::<F, { D }>(
-                &trace_input,
-                &coords,
-                AkitaError::InvalidProof,
-            )? {
-                return Err(AkitaError::InvalidProof);
+            for (row_idx, row) in incidence_summary.public_rows().iter().enumerate() {
+                let y_mask_start = row_idx.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
+                let y_mask_end = y_mask_start
+                    .checked_add(D)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let y_opening = zk_recovered_y_ring_lc::<F, C, D>(
+                    &y_rings[row_idx],
+                    y_masks
+                        .get(y_mask_start..y_mask_end)
+                        .ok_or(AkitaError::InvalidProof)?,
+                    &prepared_points[row.point_idx()].inner_reduction,
+                )?;
+                let mut residual = y_opening;
+                residual.constant -= batched_openings_per_row[row_idx];
+                zk_push_linear_zero(zk_relations, "root y-ring opening relation", residual)?;
+            }
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            for (row, (y_ring, batched_opening)) in incidence_summary
+                .public_rows()
+                .iter()
+                .zip(y_rings.iter().zip(batched_openings_per_row.iter()))
+            {
+                let v = &prepared_points[row.point_idx()].inner_reduction;
+                let trace_input = *y_ring * v.sigma_m1();
+                let coords = batched_opening.to_ring_subfield_coords();
+                if !dispatch_trace_inner_product_check::<F, { D }>(
+                    &trace_input,
+                    &coords,
+                    AkitaError::InvalidProof,
+                )? {
+                    return Err(AkitaError::InvalidProof);
+                }
             }
         }
     } else if let Some((final_claim, _rho, factors_by_point)) = &reduction_check {
-        let internal_claims = y_rings
-            .iter()
-            .zip(incidence_summary.public_rows().iter())
-            .map(|(y_ring, row)| {
-                recover_ring_subfield_inner_product::<F, C, D>(
-                    y_ring,
+        #[cfg(feature = "zk")]
+        {
+            let mut final_opening = ZkR1csLinearCombination::zero();
+            for (row_idx, row) in incidence_summary.public_rows().iter().enumerate() {
+                if row.point_idx() >= factors_by_point.len()
+                    || row.point_idx() >= prepared_points.len()
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let y_mask_start = row_idx.checked_mul(D).ok_or(AkitaError::InvalidProof)?;
+                let y_mask_end = y_mask_start
+                    .checked_add(D)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let y_opening = zk_recovered_y_ring_lc::<F, C, D>(
+                    &y_rings[row_idx],
+                    y_masks
+                        .get(y_mask_start..y_mask_end)
+                        .ok_or(AkitaError::InvalidProof)?,
                     &prepared_points[row.point_idx()].inner_reduction,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let final_opening = internal_claims
-            .iter()
-            .zip(incidence_summary.public_rows().iter())
-            .fold(C::zero(), |acc, (&opening, row)| {
-                acc + opening * factors_by_point[row.point_idx()]
-            });
-        check_extension_opening_reduction_output(*final_claim, final_opening, C::one())?;
+                )?;
+                final_opening.add_scaled(factors_by_point[row.point_idx()], &y_opening);
+            }
+            let mut residual = final_claim.clone();
+            residual.add_scaled(-C::one(), &final_opening);
+            zk_push_linear_zero(
+                zk_relations,
+                "root extension-opening reduction output",
+                residual,
+            )?;
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            let internal_claims = y_rings
+                .iter()
+                .zip(incidence_summary.public_rows().iter())
+                .map(|(y_ring, row)| {
+                    recover_ring_subfield_inner_product::<F, C, D>(
+                        y_ring,
+                        &prepared_points[row.point_idx()].inner_reduction,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let final_opening = internal_claims
+                .iter()
+                .zip(incidence_summary.public_rows().iter())
+                .fold(C::zero(), |acc, (&opening, row)| {
+                    acc + opening * factors_by_point[row.point_idx()]
+                });
+            check_extension_opening_reduction_output(*final_claim, final_opening, C::one())?;
+        }
     } else {
         return Err(AkitaError::InvalidProof);
     }
 
-    let total_blocks = root_lp
-        .num_blocks
-        .checked_mul(num_claims)
-        .ok_or_else(|| AkitaError::InvalidSetup("batched root block count overflow".to_string()))?;
     let w_len = if is_terminal {
         final_w_len_opt.ok_or(AkitaError::InvalidProof)?
     } else {
@@ -560,10 +788,12 @@ where
     } else {
         None
     };
+
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         v_typed,
-        total_blocks,
+        root_lp.num_blocks,
+        num_claims,
         batched_lp,
         if is_terminal {
             MRowLayout::Terminal
@@ -589,7 +819,7 @@ where
     let rs = match &stage_input {
         RootStageInput::Intermediate {
             next_w_commitment, ..
-        } => RingSwitchReplay::Intermediate(ring_switch_verifier::<F, C, T, { D }>(
+        } => ring_switch_verifier::<F, C, T, { D }>(
             &ring_opening_points,
             &ring_multiplier_points,
             incidence_summary.claim_to_point(),
@@ -603,10 +833,10 @@ where
             incidence_summary.claim_poly_indices(),
             &row_coefficients,
             incidence_summary.num_public_rows(),
-        )?),
+        )?,
         RootStageInput::Terminal { .. } => {
             let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
-            RingSwitchReplay::Terminal(ring_switch_verifier_terminal::<F, C, T, { D }>(
+            ring_switch_verifier_terminal::<F, C, T, { D }>(
                 &ring_opening_points,
                 &ring_multiplier_points,
                 incidence_summary.claim_to_point(),
@@ -620,90 +850,112 @@ where
                 incidence_summary.claim_poly_indices(),
                 &row_coefficients,
                 incidence_summary.num_public_rows(),
-            )?)
+            )?
         }
     };
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
-        rs.tau1(),
-        rs.alpha(),
+        &rs.tau1,
+        rs.alpha,
         v_typed,
         commitment_rows,
         y_rings,
     )?;
-    let stage2_inputs = match (&stage_input, stage1, &rs) {
-        (
-            RootStageInput::Intermediate { .. },
-            Some(stage1_proof),
-            RingSwitchReplay::Intermediate(rs),
-        ) => {
+    #[cfg(feature = "zk")]
+    let relation_claim_mask =
+        zk_relation_claim_mask_from_y_masks::<C, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
+    #[cfg(feature = "zk")]
+    let mut s_claim_mask = ZkR1csLinearCombination::<C>::zero();
+    let (batching_coeff, s_claim, r_stage1) = match (&stage_input, stage1) {
+        (RootStageInput::Intermediate { .. }, Some(stage1_proof)) => {
             let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
             let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
+            #[cfg(not(feature = "zk"))]
             let r_stage1 = {
                 let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
                 stage1_verifier.verify::<F, T>(stage1_proof, transcript)?
             };
+            #[cfg(feature = "zk")]
+            let r_stage1 = {
+                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+                let (r, mask) = stage1_verifier.verify::<F, T>(
+                    stage1_proof,
+                    transcript,
+                    zk_relations,
+                    zk_hiding_cursor,
+                )?;
+                s_claim_mask = mask;
+                r
+            };
             transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
             let batching_coeff: C =
                 sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            RelationOnlyStage2Inputs {
-                batching_coeff,
-                s_claim: stage1_proof.s_claim,
-                r_stage1,
-            }
+            (batching_coeff, stage1_proof.s_claim, r_stage1)
         }
-        (RootStageInput::Terminal { .. }, None, RingSwitchReplay::Terminal(rs)) => {
+        (RootStageInput::Terminal { .. }, None) => {
             // Relation-only stage-2: skip stage-1 entirely. Dummy zeros for
             // r_stage1 + batching_coeff zero out the virtual half.
-            rs.relation_only_stage2_inputs()
+            let r_stage1 = vec![C::zero(); rs.col_bits + rs.ring_bits];
+            (C::zero(), C::zero(), r_stage1)
         }
         _ => return Err(AkitaError::InvalidProof),
     };
-    let stage2_input_claim = stage2_inputs.batching_coeff * stage2_inputs.s_claim + relation_claim;
-    let (prepared_row_eval, alpha_evals_y, tau1, alpha, col_bits, ring_bits) =
-        rs.into_stage2_parts();
-    let row_eval_source = Stage2RowEvalSource::new(prepared_row_eval);
+    let stage2_input_claim = batching_coeff * s_claim + relation_claim;
+    let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
+    #[cfg(feature = "zk")]
+    let stage2_next_w_eval_mask_cursor =
+        *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <C as ExtField<F>>::EXT_DEGREE;
     let stage2_verifier = match &stage_input {
         RootStageInput::Terminal { final_witness, .. } => {
             AkitaStage2Verifier::new_with_direct_witness(
-                stage2_inputs.batching_coeff,
-                stage2_inputs.s_claim,
+                batching_coeff,
+                s_claim,
+                #[cfg(feature = "zk")]
+                s_claim_mask,
+                #[cfg(feature = "zk")]
+                relation_claim_mask,
                 final_witness,
                 w_len,
-                stage2_inputs.r_stage1,
-                alpha_evals_y,
+                r_stage1,
+                rs.alpha_evals_y,
                 row_eval_source,
                 &setup.expanded,
                 &ring_opening_points,
                 &ring_multiplier_points,
-                &tau1,
+                &rs.tau1,
                 v_typed,
                 commitment_rows,
                 y_rings,
                 Some(relation_claim),
-                alpha,
-                col_bits,
-                ring_bits,
+                rs.alpha,
+                rs.col_bits,
+                rs.ring_bits,
             )?
         }
         RootStageInput::Intermediate { next_w_eval, .. } => {
             AkitaStage2Verifier::new_with_claimed_w_eval(
-                stage2_inputs.batching_coeff,
-                stage2_inputs.s_claim,
+                batching_coeff,
+                s_claim,
+                #[cfg(feature = "zk")]
+                s_claim_mask,
+                #[cfg(feature = "zk")]
+                relation_claim_mask,
                 *next_w_eval,
-                stage2_inputs.r_stage1,
-                alpha_evals_y,
+                #[cfg(feature = "zk")]
+                zk_ext_mask_lc_at::<F, C>(stage2_next_w_eval_mask_cursor),
+                r_stage1,
+                rs.alpha_evals_y,
                 row_eval_source,
                 &setup.expanded,
                 &ring_opening_points,
                 &ring_multiplier_points,
-                &tau1,
+                &rs.tau1,
                 v_typed,
                 commitment_rows,
                 y_rings,
                 Some(relation_claim),
-                alpha,
-                col_bits,
-                ring_bits,
+                rs.alpha,
+                rs.col_bits,
+                rs.ring_bits,
             )?
         }
     };
@@ -712,11 +964,31 @@ where
     }
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        verify_sumcheck::<F, _, C, _, _>(stage2_sumcheck, &stage2_verifier, transcript, |tr| {
-            sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-        })?
+        #[cfg(not(feature = "zk"))]
+        {
+            stage2_verifier.verify::<F, T, _>(stage2_sumcheck, transcript, |tr| {
+                sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            })?
+        }
+        #[cfg(feature = "zk")]
+        {
+            let challenges = stage2_verifier.verify_zk::<F, T, _>(
+                stage2_sumcheck_masked,
+                transcript,
+                zk_relations,
+                zk_hiding_cursor,
+                |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+            )?;
+            if matches!(stage_input, RootStageInput::Intermediate { .. }) {
+                *zk_hiding_cursor += <C as ExtField<F>>::EXT_DEGREE;
+            }
+            challenges
+        }
     };
-
+    if let RootStageInput::Intermediate { next_w_eval, .. } = &stage_input {
+        transcript.record_wire_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
+        transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
+    }
     Ok(sumcheck_challenges)
 }
 
@@ -739,10 +1011,16 @@ pub(crate) fn verify_intermediate_level<F, L, T, const D: usize>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
     block_order: BlockOrder,
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<Vec<L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    L: RingSubfieldEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
 {
     verify_one_level_inner::<F, L, T, D>(
@@ -753,15 +1031,19 @@ where
         None,
         lp,
         block_order,
+        #[cfg(feature = "zk")]
+        zk_hiding_cursor,
+        #[cfg(feature = "zk")]
+        zk_relations,
     )
 }
 
 /// Verify one terminal recursive fold level.
 ///
-/// At the terminal level the cleartext `final_witness` is transcript-bound in
-/// two logical slices (`w_hat` before sparse challenges, remainder before
-/// ring-switch challenges), stage-1 is skipped, and stage-2 runs in
-/// relation-only mode.
+/// At the terminal level the cleartext `final_witness` is absorbed via
+/// [`ABSORB_SUMCHECK_W`] in place of a next-witness commitment, stage-1 is
+/// skipped (packed-digit range is structurally enforced), and stage-2 runs
+/// in relation-only mode.
 ///
 /// # Errors
 ///
@@ -779,10 +1061,16 @@ pub(crate) fn verify_terminal_level<F, L, T, const D: usize>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
     block_order: BlockOrder,
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<Vec<L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    L: RingSubfieldEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
 {
     verify_one_level_inner::<F, L, T, D>(
@@ -793,6 +1081,10 @@ where
         Some(final_w_len),
         lp,
         block_order,
+        #[cfg(feature = "zk")]
+        zk_hiding_cursor,
+        #[cfg(feature = "zk")]
+        zk_relations,
     )
 }
 
@@ -825,10 +1117,16 @@ fn verify_one_level_inner<F, L, T, const D: usize>(
     final_w_len: Option<usize>,
     lp: &LevelParams,
     block_order: BlockOrder,
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<Vec<L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    L: RingSubfieldEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
 {
     let alpha_bits = validate_level_dispatch::<D>(lp)?;
@@ -863,14 +1161,6 @@ where
         let reduction = proof
             .extension_opening_reduction()
             .ok_or(AkitaError::InvalidProof)?;
-        check_tensor_extension_opening_claim::<F, L>(
-            &current_state.opening_point,
-            current_state.opening,
-            &reduction.partials,
-        )?;
-        for partial in &reduction.partials {
-            append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
-        }
         let (split_bits, width) = {
             let width = <L as ExtField<F>>::EXT_DEGREE;
             if width == 0 || !width.is_power_of_two() {
@@ -881,22 +1171,89 @@ where
         if split_bits > current_state.opening_point.len() || reduction.partials.len() != width {
             return Err(AkitaError::InvalidProof);
         }
+        #[cfg(not(feature = "zk"))]
+        check_tensor_extension_opening_claim::<F, L>(
+            &current_state.opening_point,
+            current_state.opening,
+            &reduction.partials,
+        )?;
+        #[cfg(feature = "zk")]
+        let partial_masks = (0..width)
+            .map(|_| zk_ext_mask_lc::<F, L>(zk_hiding_cursor))
+            .collect::<Vec<_>>();
+        #[cfg(feature = "zk")]
+        {
+            let head_weights =
+                EqPolynomial::<L>::evals(&current_state.opening_point[..split_bits])?;
+            let true_opening = ZkRelationAccumulator::unmask_lc(
+                current_state.opening,
+                &current_state.opening_mask,
+            );
+            let mut residual = ZkR1csLinearCombination::zero();
+            residual.add_scaled(-L::one(), &true_opening);
+            for ((&partial, mask), weight) in reduction
+                .partials
+                .iter()
+                .zip(partial_masks.iter())
+                .zip(head_weights)
+            {
+                let true_partial = ZkRelationAccumulator::unmask_lc(partial, mask);
+                residual.add_scaled(weight, &true_partial);
+            }
+            zk_push_linear_zero(
+                zk_relations,
+                "recursive extension-opening partial claim",
+                residual,
+            )?;
+        }
+        for partial in &reduction.partials {
+            append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
+        }
         let row_partials = tensor_row_partials_from_columns::<F, L>(&reduction.partials)?;
         let eta = (0..split_bits)
             .map(|_| sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
             .collect::<Vec<_>>();
         let input_claim = tensor_reduction_claim_from_rows::<F, L>(&row_partials, &eta)?;
+        #[cfg(feature = "zk")]
+        let input_claim_mask = {
+            let mut input_claim_mask = ZkR1csLinearCombination::zero();
+            let row_masks = zk_row_masks_from_column_masks::<F, L>(&partial_masks)?;
+            for (weight, row_mask) in EqPolynomial::<L>::evals(&eta)?.into_iter().zip(row_masks) {
+                input_claim_mask.add_scaled(weight, &row_mask);
+            }
+            input_claim_mask
+        };
         let tail_point = &current_state.opening_point[split_bits..];
-        let result = verify_extension_opening_reduction_rounds::<F, _, L, _>(
-            &reduction.sumcheck,
-            input_claim,
-            tail_point.len(),
-            transcript,
-            |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-        )?;
+        #[cfg(not(feature = "zk"))]
+        let result = ExtensionOpeningReductionSumcheck::new(input_claim, tail_point.len())
+            .verify::<F, _, _>(&reduction.sumcheck, transcript, |tr| {
+                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            })?;
+        #[cfg(feature = "zk")]
+        let (final_claim_lc, challenges) =
+            ExtensionOpeningReductionSumcheck::new(input_claim, tail_point.len())
+                .verify_zk::<F, _, _>(
+                    &reduction.sumcheck_proof_masked,
+                    input_claim_mask,
+                    transcript,
+                    |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                    zk_relations,
+                    zk_hiding_cursor,
+                )?;
+        #[cfg(feature = "zk")]
+        let result_challenges = challenges;
+        #[cfg(not(feature = "zk"))]
+        let result_challenges = result.challenges;
         let factor =
-            tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &result.challenges)?;
-        Some((result.final_claim, factor, result.challenges))
+            tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &result_challenges)?;
+        #[cfg(feature = "zk")]
+        {
+            Some((final_claim_lc, factor, result_challenges))
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            Some((result.final_claim, factor, result_challenges))
+        }
     };
     let protocol_point = match &reduction_check {
         Some((_final_claim, _factor, rho)) => {
@@ -919,7 +1276,10 @@ where
     for y_ring in &y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
+    #[cfg(feature = "zk")]
+    let y_masks = zk_base_mask_lcs::<L>(y_rings.len() * D, zk_hiding_cursor);
 
+    #[cfg(not(feature = "zk"))]
     let internal_claims = y_rings
         .iter()
         .zip(prepared_points.iter())
@@ -927,6 +1287,35 @@ where
             recover_ring_subfield_inner_product::<F, L, D>(y_ring, &prepared_point.inner_reduction)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    #[cfg(feature = "zk")]
+    {
+        let y_opening = zk_recovered_y_ring_lc::<F, L, D>(
+            &y_rings[0],
+            y_masks.get(..D).ok_or(AkitaError::InvalidProof)?,
+            &prepared_points[0].inner_reduction,
+        )?;
+        match &reduction_check {
+            Some((final_claim, factor, _rho)) => {
+                let mut residual = final_claim.clone();
+                residual.add_scaled(-*factor, &y_opening);
+                zk_push_linear_zero(
+                    zk_relations,
+                    "recursive extension-opening reduction output",
+                    residual,
+                )?;
+            }
+            None => {
+                let true_opening = ZkRelationAccumulator::unmask_lc(
+                    current_state.opening,
+                    &current_state.opening_mask,
+                );
+                let mut residual = y_opening;
+                residual.add_scaled(-L::one(), &true_opening);
+                zk_push_linear_zero(zk_relations, "recursive y-ring opening relation", residual)?;
+            }
+        }
+    }
+    #[cfg(not(feature = "zk"))]
     match reduction_check {
         Some((final_claim, factor, _rho)) => {
             check_extension_opening_reduction_output(final_claim, internal_claims[0], factor)?;
@@ -968,7 +1357,8 @@ where
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         v_typed,
-        lp.num_blocks * num_claims,
+        lp.num_blocks,
+        num_claims,
         lp,
         if is_last {
             MRowLayout::Terminal
@@ -983,26 +1373,24 @@ where
     let gamma = vec![L::one(); num_claims];
 
     let rs = match &proof {
-        FoldProofView::Intermediate(level_proof) => {
-            RingSwitchReplay::Intermediate(ring_switch_verifier::<F, L, T, { D }>(
-                &ring_opening_points,
-                &ring_multiplier_points,
-                &claim_to_point,
-                &stage1_challenges,
-                w_len,
-                level_proof.next_w_commitment(),
-                transcript,
-                lp,
-                &[1usize],
-                &claim_to_point_poly,
-                &claim_poly_indices,
-                &gamma,
-                num_claims,
-            )?)
-        }
+        FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, { D }>(
+            &ring_opening_points,
+            &ring_multiplier_points,
+            &claim_to_point,
+            &stage1_challenges,
+            w_len,
+            level_proof.next_w_commitment(),
+            transcript,
+            lp,
+            &[1usize],
+            &claim_to_point_poly,
+            &claim_poly_indices,
+            &gamma,
+            num_claims,
+        )?,
         FoldProofView::Terminal(_) => {
             let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
-            RingSwitchReplay::Terminal(ring_switch_verifier_terminal::<F, L, T, { D }>(
+            ring_switch_verifier_terminal::<F, L, T, { D }>(
                 &ring_opening_points,
                 &ring_multiplier_points,
                 &claim_to_point,
@@ -1016,99 +1404,151 @@ where
                 &claim_poly_indices,
                 &gamma,
                 num_claims,
-            )?)
+            )?
         }
     };
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
-        rs.tau1(),
-        rs.alpha(),
+        &rs.tau1,
+        rs.alpha,
         v_typed,
         commitment_u,
         &y_rings,
     )?;
-    let stage2_inputs = match (&proof, &rs) {
-        (FoldProofView::Intermediate(level_proof), RingSwitchReplay::Intermediate(rs)) => {
+    #[cfg(feature = "zk")]
+    let relation_claim_mask =
+        zk_relation_claim_mask_from_y_masks::<L, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
+    #[cfg(feature = "zk")]
+    let mut s_claim_mask = ZkR1csLinearCombination::<L>::zero();
+    let (batching_coeff, s_claim, r_stage1) = match &proof {
+        FoldProofView::Intermediate(level_proof) => {
             let stage1 = &level_proof.stage1;
             let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
             let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
+            #[cfg(not(feature = "zk"))]
             let r_stage1 = {
                 let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
                 stage1_verifier.verify::<F, T>(stage1, transcript)?
             };
+            #[cfg(feature = "zk")]
+            let r_stage1 = {
+                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+                let (r, mask) = stage1_verifier.verify::<F, T>(
+                    stage1,
+                    transcript,
+                    zk_relations,
+                    zk_hiding_cursor,
+                )?;
+                s_claim_mask = mask;
+                r
+            };
             transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
             let batching_coeff: L =
                 sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            RelationOnlyStage2Inputs {
-                batching_coeff,
-                s_claim: stage1.s_claim,
-                r_stage1,
-            }
+            (batching_coeff, stage1.s_claim, r_stage1)
         }
-        (FoldProofView::Terminal(_), RingSwitchReplay::Terminal(rs)) => {
-            rs.relation_only_stage2_inputs()
+        FoldProofView::Terminal(_) => {
+            let r_stage1 = vec![L::zero(); rs.col_bits + rs.ring_bits];
+            (L::zero(), L::zero(), r_stage1)
         }
-        _ => return Err(AkitaError::InvalidProof),
     };
-    let stage2_input_claim = stage2_inputs.batching_coeff * stage2_inputs.s_claim + relation_claim;
-    let (prepared_row_eval, alpha_evals_y, tau1, alpha, col_bits, ring_bits) =
-        rs.into_stage2_parts();
-    let row_eval_source = Stage2RowEvalSource::new(prepared_row_eval);
+    let stage2_input_claim = batching_coeff * s_claim + relation_claim;
+    let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
+    #[cfg(feature = "zk")]
+    let stage2_next_w_eval_mask_cursor =
+        *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <L as ExtField<F>>::EXT_DEGREE;
     let stage2_verifier = match &proof {
         FoldProofView::Terminal(terminal_proof) => AkitaStage2Verifier::new_with_direct_witness(
-            stage2_inputs.batching_coeff,
-            stage2_inputs.s_claim,
+            batching_coeff,
+            s_claim,
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+            #[cfg(feature = "zk")]
+            relation_claim_mask,
             &terminal_proof.final_witness,
             w_len,
-            stage2_inputs.r_stage1,
-            alpha_evals_y,
+            r_stage1,
+            rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
             &ring_opening_points,
             &ring_multiplier_points,
-            &tau1,
+            &rs.tau1,
             v_typed,
             commitment_u,
             &y_rings,
             Some(relation_claim),
-            alpha,
-            col_bits,
-            ring_bits,
+            rs.alpha,
+            rs.col_bits,
+            rs.ring_bits,
         )?,
         FoldProofView::Intermediate(level_proof) => AkitaStage2Verifier::new_with_claimed_w_eval(
-            stage2_inputs.batching_coeff,
-            stage2_inputs.s_claim,
-            level_proof.stage2.next_w_eval,
-            stage2_inputs.r_stage1,
-            alpha_evals_y,
+            batching_coeff,
+            s_claim,
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+            #[cfg(feature = "zk")]
+            relation_claim_mask,
+            level_proof.stage2.next_w_eval(),
+            #[cfg(feature = "zk")]
+            zk_ext_mask_lc_at::<F, L>(stage2_next_w_eval_mask_cursor),
+            r_stage1,
+            rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
             &ring_opening_points,
             &ring_multiplier_points,
-            &tau1,
+            &rs.tau1,
             v_typed,
             commitment_u,
             &y_rings,
             Some(relation_claim),
-            alpha,
-            col_bits,
-            ring_bits,
+            rs.alpha,
+            rs.col_bits,
+            rs.ring_bits,
         )?,
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
     }
 
+    #[cfg(not(feature = "zk"))]
     let stage2_sumcheck_ref = match &proof {
-        FoldProofView::Intermediate(level_proof) => &level_proof.stage2.sumcheck,
+        FoldProofView::Intermediate(level_proof) => &level_proof.stage2.sumcheck_proof,
         FoldProofView::Terminal(terminal_proof) => &terminal_proof.stage2_sumcheck,
+    };
+    #[cfg(feature = "zk")]
+    let stage2_sumcheck_masked_ref = match &proof {
+        FoldProofView::Intermediate(level_proof) => &level_proof.stage2.sumcheck_proof_masked,
+        FoldProofView::Terminal(terminal_proof) => &terminal_proof.stage2_sumcheck_proof_masked,
     };
     let challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        verify_sumcheck::<F, _, L, _, _>(stage2_sumcheck_ref, &stage2_verifier, transcript, |tr| {
-            sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-        })?
+        #[cfg(not(feature = "zk"))]
+        {
+            stage2_verifier.verify::<F, T, _>(stage2_sumcheck_ref, transcript, |tr| {
+                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            })?
+        }
+        #[cfg(feature = "zk")]
+        {
+            let challenges = stage2_verifier.verify_zk::<F, T, _>(
+                stage2_sumcheck_masked_ref,
+                transcript,
+                zk_relations,
+                zk_hiding_cursor,
+                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+            )?;
+            if matches!(proof, FoldProofView::Intermediate(_)) {
+                *zk_hiding_cursor += <L as ExtField<F>>::EXT_DEGREE;
+            }
+            challenges
+        }
     };
-
+    if let FoldProofView::Intermediate(level_proof) = &proof {
+        let next_w_eval = level_proof.stage2.next_w_eval();
+        transcript.record_wire_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
+        transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
+    }
     Ok(challenges)
 }
 
@@ -1150,10 +1590,16 @@ fn dispatch_verify_intermediate_level<F, L, T>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
     block_order: BlockOrder,
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<Vec<L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    L: RingSubfieldEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
 {
     macro_rules! dispatch {
@@ -1165,6 +1611,10 @@ where
                 current_state,
                 lp,
                 block_order,
+                #[cfg(feature = "zk")]
+                zk_hiding_cursor,
+                #[cfg(feature = "zk")]
+                zk_relations,
             )
         };
     }
@@ -1190,10 +1640,16 @@ fn dispatch_verify_terminal_level<F, L, T>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
     block_order: BlockOrder,
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<Vec<L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    L: RingSubfieldEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
 {
     macro_rules! dispatch {
@@ -1206,6 +1662,10 @@ where
                 current_state,
                 lp,
                 block_order,
+                #[cfg(feature = "zk")]
+                zk_hiding_cursor,
+                #[cfg(feature = "zk")]
+                zk_relations,
             )
         };
     }
@@ -1232,16 +1692,23 @@ where
 /// Returns an error if the schedule is malformed for the supplied proof,
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the recursive witness handoff has the wrong shape.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_batched_recursive_suffix<'a, F, L, T, const D: usize>(
     proof: &'a AkitaBatchedProof<F, L>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &Schedule,
     mut current_state: RecursiveVerifierState<'a, F, L>,
+    #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
+    #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
-    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    L: RingSubfieldEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_steps = proof.steps.len();
@@ -1277,6 +1744,10 @@ where
                         &current_state,
                         &current_lp,
                         BlockOrder::ColumnMajor,
+                        #[cfg(feature = "zk")]
+                        zk_hiding_cursor,
+                        #[cfg(feature = "zk")]
+                        zk_relations,
                     )?
                 } else {
                     dispatch_verify_intermediate_level::<F, L, T>(
@@ -1287,6 +1758,10 @@ where
                         &current_state,
                         &current_lp,
                         BlockOrder::ColumnMajor,
+                        #[cfg(feature = "zk")]
+                        zk_hiding_cursor,
+                        #[cfg(feature = "zk")]
+                        zk_relations,
                     )?
                 };
 
@@ -1316,6 +1791,10 @@ where
                 current_state = RecursiveVerifierState {
                     opening_point: challenges,
                     opening: level_proof.next_w_eval(),
+                    #[cfg(feature = "zk")]
+                    opening_mask: zk_ext_mask_lc_at::<F, L>(
+                        *zk_hiding_cursor - <L as ExtField<F>>::EXT_DEGREE,
+                    ),
                     commitment: level_proof.next_w_commitment(),
                     basis: BasisMode::Lagrange,
                     w_len: next_w_len,
@@ -1340,6 +1819,10 @@ where
                         &current_state,
                         &current_lp,
                         BlockOrder::ColumnMajor,
+                        #[cfg(feature = "zk")]
+                        zk_hiding_cursor,
+                        #[cfg(feature = "zk")]
+                        zk_relations,
                     )?
                 } else {
                     dispatch_verify_terminal_level::<F, L, T>(
@@ -1351,6 +1834,10 @@ where
                         &current_state,
                         &current_lp,
                         BlockOrder::ColumnMajor,
+                        #[cfg(feature = "zk")]
+                        zk_hiding_cursor,
+                        #[cfg(feature = "zk")]
+                        zk_relations,
                     )?
                 };
                 // Invariant: a terminal step implies the scheduled successor
@@ -1399,6 +1886,7 @@ where
     E: RingSubfieldEncoding<F>,
     C: RingSubfieldEncoding<F>
         + ExtField<E>
+        + ExtField<F>
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + AkitaSerialize,
@@ -1416,6 +1904,19 @@ where
             Step::Fold(_) => None,
         })
         .ok_or(AkitaError::InvalidProof)?;
+
+    #[cfg(feature = "zk")]
+    let mut zk_relations = ZkRelationAccumulator::new();
+    #[cfg(feature = "zk")]
+    {
+        if proof.zk_hiding.u_blind.is_empty() || proof.zk_hiding.hiding_witness.is_empty() {
+            return Err(AkitaError::InvalidProof);
+        }
+        verify_zk_hiding_commitment::<F, D>(setup, root_lp, &proof.zk_hiding)?;
+        transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &proof.zk_hiding.u_blind);
+    }
+    #[cfg(feature = "zk")]
+    let mut zk_hiding_cursor = 0usize;
 
     match &proof.root {
         akita_types::AkitaBatchedRootProof::Direct { .. } => Err(AkitaError::InvalidProof),
@@ -1435,7 +1936,10 @@ where
             verify_terminal_root_level::<F, E, C, T, D>(
                 &terminal.y_rings,
                 terminal.extension_opening_reduction.as_ref(),
+                #[cfg(not(feature = "zk"))]
                 &terminal.stage2_sumcheck,
+                #[cfg(feature = "zk")]
+                &terminal.stage2_sumcheck_proof_masked,
                 &terminal.final_witness,
                 root_step.next_w_len,
                 setup,
@@ -1445,9 +1949,21 @@ where
                 commitments,
                 incidence_summary,
                 basis,
+                #[cfg(feature = "zk")]
+                &mut zk_hiding_cursor,
+                #[cfg(feature = "zk")]
+                &mut zk_relations,
                 root_lp,
                 &root_step.params,
             )?;
+            #[cfg(feature = "zk")]
+            {
+                if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let lifted = lift_hiding_witness::<F, C>(&proof.zk_hiding.hiding_witness);
+                zk_relations.verify_all(&lifted)?;
+            }
             Ok(())
         }
         akita_types::AkitaBatchedRootProof::Fold(fold_root) => {
@@ -1462,8 +1978,6 @@ where
                 return Err(AkitaError::InvalidProof);
             }
 
-            // Validate the terminal proof step's witness shape against the
-            // scheduled direct step before running heavy checks.
             let terminal_step = proof
                 .steps
                 .last()
@@ -1489,6 +2003,10 @@ where
                 commitments,
                 incidence_summary,
                 basis,
+                #[cfg(feature = "zk")]
+                &mut zk_hiding_cursor,
+                #[cfg(feature = "zk")]
+                &mut zk_relations,
                 root_lp,
                 &root_step.params,
             )?;
@@ -1504,7 +2022,11 @@ where
 
             let current_state = RecursiveVerifierState {
                 opening_point: root_challenges,
-                opening: fold_root.stage2.next_w_eval,
+                opening: fold_root.stage2.next_w_eval(),
+                #[cfg(feature = "zk")]
+                opening_mask: zk_ext_mask_lc_at::<F, C>(
+                    zk_hiding_cursor - <C as ExtField<F>>::EXT_DEGREE,
+                ),
                 commitment: &fold_root.stage2.next_w_commitment,
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
@@ -1516,7 +2038,19 @@ where
                 transcript,
                 schedule,
                 current_state,
+                #[cfg(feature = "zk")]
+                &mut zk_hiding_cursor,
+                #[cfg(feature = "zk")]
+                &mut zk_relations,
             )?;
+            #[cfg(feature = "zk")]
+            {
+                if zk_hiding_cursor != proof.zk_hiding.hiding_witness.len() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let lifted = lift_hiding_witness::<F, C>(&proof.zk_hiding.hiding_witness);
+                zk_relations.verify_all(&lifted)?;
+            }
             Ok(())
         }
     }

@@ -10,13 +10,12 @@
 //! aggregation path.
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
-use akita_types::FlatMatrix;
 
-use crate::kernels::crt_ntt::NttSlotCache;
+use crate::compute::CommitmentComputeBackend;
 use crate::{
     AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly,
 };
@@ -67,8 +66,6 @@ where
     F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
 {
-    type CommitCache = NttSlotCache<D>;
-
     fn num_ring_elems(&self) -> usize {
         match self {
             Self::Dense(poly) => poly.num_ring_elems(),
@@ -153,7 +150,8 @@ where
         num_digits: usize,
         log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F, D>> {
-        match *polys.first()? {
+        let first = polys.first()?;
+        match **first {
             Self::Dense(_) => {
                 let mut dense_polys = Vec::with_capacity(polys.len());
                 for poly in polys {
@@ -189,75 +187,119 @@ where
         }
     }
 
-    fn commit_inner(
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        tensor: &TensorChallenges,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        let Some(first) = polys.first() else {
+            return Ok(None);
+        };
+        match **first {
+            Self::Dense(_) => {
+                let mut dense_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match **poly {
+                        Self::Dense(inner) => dense_polys.push(inner),
+                        Self::OneHot(_) => return Ok(None),
+                    }
+                }
+                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+                    &dense_polys,
+                    tensor,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
+            }
+            Self::OneHot(_) => {
+                let mut onehot_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match **poly {
+                        Self::OneHot(inner) => onehot_polys.push(inner),
+                        Self::Dense(_) => return Ok(None),
+                    }
+                }
+                <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+                    &onehot_polys,
+                    tensor,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
+            }
+        }
+    }
+
+    fn commit_inner<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
         match self {
             Self::Dense(poly) => poly.commit_inner(
-                a_matrix,
-                ntt_a,
+                backend,
+                prepared,
                 n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
-                matrix_stride,
             ),
             Self::OneHot(poly) => poly.commit_inner(
-                a_matrix,
-                ntt_a,
+                backend,
+                prepared,
                 n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
-                matrix_stride,
             ),
         }
     }
 
-    fn commit_inner_witness(
+    fn commit_inner_witness<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
+        B: CommitmentComputeBackend<F>,
     {
         match self {
             Self::Dense(poly) => poly.commit_inner_witness(
-                a_matrix,
-                ntt_a,
+                backend,
+                prepared,
                 n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
-                matrix_stride,
             ),
             Self::OneHot(poly) => poly.commit_inner_witness(
-                a_matrix,
-                ntt_a,
+                backend,
+                prepared,
                 n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
-                matrix_stride,
             ),
         }
     }

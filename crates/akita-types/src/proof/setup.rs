@@ -73,9 +73,9 @@ impl AkitaSetupSeed {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaExpandedSetup<F: FieldCore> {
     /// Setup seed and runtime layout metadata.
-    seed: AkitaSetupSeed,
+    pub seed: AkitaSetupSeed,
     /// Shared 1D flat backing vector.
-    shared_matrix: FlatMatrix<F>,
+    pub shared_matrix: FlatMatrix<F>,
 }
 
 /// Verifier setup artifact derived from prover setup.
@@ -454,7 +454,7 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize> Valid for AkitaVerifierSetup<F> {
+impl<F: FieldCore + RandomSampling + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()
     }

@@ -194,6 +194,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     b: usize,
     batching_coeff: E,
     s_claim: E,
+    input_claim: E,
     split_eq: GruenSplitEq<E>,
 
     alpha_compact: Vec<E>,
@@ -287,6 +288,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             b,
             batching_coeff,
             s_claim,
+            input_claim: batching_coeff * s_claim + relation_claim,
             split_eq: GruenSplitEq::with_initial_scalar(r_stage1, batching_coeff)?,
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
@@ -2325,7 +2327,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> SumcheckInstanceProver<E
     }
 
     fn input_claim(&self) -> E {
-        self.batching_coeff * self.s_claim + self.relation_claim
+        self.input_claim
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {

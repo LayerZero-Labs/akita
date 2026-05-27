@@ -31,21 +31,25 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
 use akita_sumcheck::SparseExtensionOpeningWitness;
-use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
-use akita_types::{FlatMatrix, RingMatrixView, RingSubfieldEncoding};
+use akita_types::{
+    DirectWitnessProof, FlatDigitBlocks, FlatRingVec, RingMatrixView, RingSubfieldEncoding,
+};
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
 
 use super::sparse_ring::SparseRingCoeff;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::kernels::crt_ntt::NttSlotCache;
+use crate::backend::tensor_fold::{fill_rotated_tensor_challenge, narrow_tensor_accum_to_i32};
+use crate::compute::{
+    CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
+};
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{
     AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
@@ -127,10 +131,10 @@ impl OneHotIndex for usize {
 /// Fields are private and accessed via `pos_in_block()` / `coeff_idx()`.
 /// The caller-owned invariants `pos_in_block < block_len <= u32::MAX`
 /// and `coeff_idx < D <= 65536` are pre-validated in
-/// [`FlatBlocks::<SingleChunkEntry>::from_indices`]; the
+/// `FlatBlocks::<SingleChunkEntry>::from_indices`; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SingleChunkEntry {
+pub struct SingleChunkEntry {
     pos_in_block: u32,
     coeff_idx: u16,
 }
@@ -147,13 +151,13 @@ impl SingleChunkEntry {
 
     /// Position within the block (0..block_len).
     #[inline]
-    pub(crate) fn pos_in_block(self) -> usize {
+    pub fn pos_in_block(self) -> usize {
         self.pos_in_block as usize
     }
 
     /// Index of the single hot coefficient inside the ring element (0..D).
     #[inline]
-    pub(crate) fn coeff_idx(self) -> usize {
+    pub fn coeff_idx(self) -> usize {
         self.coeff_idx as usize
     }
 }
@@ -207,10 +211,10 @@ impl SingleChunkEntry {
 /// `nonzero_coeffs()`. The caller-owned invariants
 /// `pos_in_block < block_len <= u32::MAX` and every
 /// `coeff < D <= 65536` are pre-validated in
-/// [`FlatBlocks::<MultiChunkEntry>::from_indices`]; the
+/// `FlatBlocks::<MultiChunkEntry>::from_indices`; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct MultiChunkEntry {
+pub struct MultiChunkEntry {
     pos_in_block: u32,
     nonzero_coeffs: Vec<u16>,
 }
@@ -228,13 +232,13 @@ impl MultiChunkEntry {
 
     /// Position within the block (0..block_len).
     #[inline]
-    pub(crate) fn pos_in_block(&self) -> usize {
+    pub fn pos_in_block(&self) -> usize {
         self.pos_in_block as usize
     }
 
     /// Hot coefficient indices inside the ring element, each `< D`.
     #[inline]
-    pub(crate) fn nonzero_coeffs(&self) -> &[u16] {
+    pub fn nonzero_coeffs(&self) -> &[u16] {
         &self.nonzero_coeffs
     }
 }
@@ -326,6 +330,11 @@ impl<E> FlatBlocks<E> {
         debug_assert_eq!(self.offsets.len(), num_blocks + 1);
         debug_assert_eq!(self.offsets[num_blocks] as usize, self.entries.len());
         self
+    }
+
+    #[inline]
+    fn table(&self) -> FlatBlockTable<'_, E> {
+        FlatBlockTable::new(&self.entries, &self.offsets)
     }
 }
 
@@ -568,10 +577,17 @@ pub(crate) enum OneHotBlocks {
 
 impl OneHotBlocks {
     #[inline]
-    fn num_blocks(&self) -> usize {
+    pub(crate) fn num_blocks(&self) -> usize {
         match self {
             OneHotBlocks::SingleChunk(blocks) => blocks.num_blocks(),
             OneHotBlocks::MultiChunk(blocks) => blocks.num_blocks(),
+        }
+    }
+
+    fn commit_plan_blocks(&self) -> OneHotCommitBlocks<'_> {
+        match self {
+            OneHotBlocks::SingleChunk(blocks) => OneHotCommitBlocks::SingleChunk(blocks.table()),
+            OneHotBlocks::MultiChunk(blocks) => OneHotCommitBlocks::MultiChunk(blocks.table()),
         }
     }
 }
@@ -1102,14 +1118,121 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         let _span = tracing::info_span!("onehot_multi_chunk_convert_batched").entered();
         Some(build_decompose_fold_witness::<F, D>(coeff_accum, modulus))
     }
+
+    /// Tensor-shaped batched decompose-fold for one-hot polynomials.
+    fn decompose_fold_batched_tensor_onehot(
+        polys: &[&Self],
+        tensor: &TensorChallengeSet,
+        block_len: usize,
+        num_digits: usize,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError>
+    where
+        F: CanonicalField,
+    {
+        for poly in polys {
+            poly.blocks_for(block_len).expect(
+                "OneHotPoly::decompose_fold_batched_tensor_onehot: invalid block_len for one polynomial",
+            );
+        }
+        let Some(first) = polys.first() else {
+            return Ok(None);
+        };
+        let (_, first_blocks) = first
+            .block_cache
+            .get()
+            .expect("block cache was just built above");
+        let expected_blocks = tensor
+            .left_len
+            .checked_mul(tensor.right_len)
+            .and_then(|blocks| blocks.checked_mul(tensor.num_claims))
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor challenge count overflow".into()))?;
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+
+        let witness = match first_blocks {
+            OneHotBlocks::SingleChunk(_) => {
+                let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(expected_blocks);
+                for poly in polys {
+                    let (_, cached) = poly.block_cache.get().expect("block cache exists");
+                    let OneHotBlocks::SingleChunk(blocks) = cached else {
+                        return Ok(None);
+                    };
+                    for i in 0..blocks.num_blocks() {
+                        flat_blocks.push(blocks.block(i));
+                    }
+                }
+                if flat_blocks.len() != expected_blocks {
+                    return Err(AkitaError::InvalidSize {
+                        expected: expected_blocks,
+                        actual: flat_blocks.len(),
+                    });
+                }
+                let coeff_accum_i64 = {
+                    let _span =
+                        tracing::info_span!("onehot_single_chunk_accumulate_tensor").entered();
+                    single_chunk_onehot_accumulate_tensor::<D>(
+                        &flat_blocks,
+                        tensor,
+                        expected_blocks,
+                        block_len,
+                    )?
+                };
+                let coeff_accum_digit0 = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
+                let coeff_accum = if num_digits == 1 {
+                    coeff_accum_digit0
+                } else {
+                    let _span = tracing::info_span!("onehot_single_chunk_expand_tensor").entered();
+                    let mut expanded = Vec::with_capacity(block_len * num_digits);
+                    for coeffs in coeff_accum_digit0 {
+                        expanded.push(coeffs);
+                        for _ in 1..num_digits {
+                            expanded.push([0i32; D]);
+                        }
+                    }
+                    expanded
+                };
+                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+            }
+            OneHotBlocks::MultiChunk(_) => {
+                let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(expected_blocks);
+                for poly in polys {
+                    let (_, cached) = poly.block_cache.get().expect("block cache exists");
+                    let OneHotBlocks::MultiChunk(blocks) = cached else {
+                        return Ok(None);
+                    };
+                    for i in 0..blocks.num_blocks() {
+                        flat_blocks.push(blocks.block(i));
+                    }
+                }
+                if flat_blocks.len() != expected_blocks {
+                    return Err(AkitaError::InvalidSize {
+                        expected: expected_blocks,
+                        actual: flat_blocks.len(),
+                    });
+                }
+                let inner_width = block_len * num_digits;
+                let coeff_accum_i64 = {
+                    let _span =
+                        tracing::info_span!("onehot_multi_chunk_accumulate_tensor").entered();
+                    multi_chunk_onehot_accumulate_tensor::<D>(
+                        &flat_blocks,
+                        tensor,
+                        expected_blocks,
+                        inner_width,
+                        num_digits,
+                    )?
+                };
+                let coeff_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
+                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+            }
+        };
+        Ok(Some(witness))
+    }
 }
 
 impl<F, const D: usize, I: OneHotIndex> AkitaPolyOps<F, D> for OneHotPoly<F, D, I>
 where
     F: FieldCore + CanonicalField + HasWide,
 {
-    type CommitCache = NttSlotCache<D>;
-
     fn num_ring_elems(&self) -> usize {
         self.total_ring_elems
     }
@@ -1528,54 +1651,47 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_tensor_batched")]
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        tensor: &TensorChallengeSet,
+        block_len: usize,
+        num_digits: usize,
+        _log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        Self::decompose_fold_batched_tensor_onehot(polys, tensor, block_len, num_digits)
+    }
+
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
-    fn commit_inner(
+    fn commit_inner<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        _ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
         let blocks = self.blocks_for(block_len)?;
-        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride)?;
         let num_blocks = blocks.num_blocks();
-        let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
-        if active_a_cols > a_view.num_cols() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "active A width {active_a_cols} exceeds setup envelope {}",
-                a_view.num_cols()
-            )));
-        }
-        let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
-
-        let t_all = match blocks {
-            OneHotBlocks::SingleChunk(blocks) => {
-                let views: Vec<&[SingleChunkEntry]> =
-                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                column_sweep_ajtai_single_chunk::<F, D>(
-                    &a_view,
-                    &views,
-                    n_a,
-                    active_a_cols,
-                    num_digits_commit,
-                )
-            }
-            OneHotBlocks::MultiChunk(blocks) => {
-                let views: Vec<&[MultiChunkEntry]> =
-                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                column_sweep_ajtai_multi_chunk::<F, D>(
-                    &a_view,
-                    &views,
-                    n_a,
-                    active_a_cols,
-                    num_digits_commit,
-                )
-            }
-        };
+        let zero_block_len = n_a.checked_mul(num_digits_open).ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "one-hot inner commitment digit block count overflow".to_string(),
+            )
+        })?;
+        let t_all = backend.onehot_commit_rows::<D>(
+            prepared,
+            OneHotCommitRowsPlan {
+                n_a,
+                block_len,
+                num_digits_commit,
+                blocks: blocks.commit_plan_blocks(),
+            },
+        )?;
 
         let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; num_blocks])?;
         let dst_blocks = t_hat.split_blocks_mut();
@@ -1601,52 +1717,34 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner_witness")]
-    fn commit_inner_witness(
+    fn commit_inner_witness<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        _ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
         let blocks = self.blocks_for(block_len)?;
-        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride)?;
-        let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
-        if active_a_cols > a_view.num_cols() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "active A width {active_a_cols} exceeds setup envelope {}",
-                a_view.num_cols()
-            )));
-        }
-        let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
-
-        let t = match blocks {
-            OneHotBlocks::SingleChunk(blocks) => {
-                let views: Vec<&[SingleChunkEntry]> =
-                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                column_sweep_ajtai_single_chunk::<F, D>(
-                    &a_view,
-                    &views,
-                    n_a,
-                    active_a_cols,
-                    num_digits_commit,
-                )
-            }
-            OneHotBlocks::MultiChunk(blocks) => {
-                let views: Vec<&[MultiChunkEntry]> =
-                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
-                column_sweep_ajtai_multi_chunk::<F, D>(
-                    &a_view,
-                    &views,
-                    n_a,
-                    active_a_cols,
-                    num_digits_commit,
-                )
-            }
-        };
+        let zero_block_len = n_a.checked_mul(num_digits_open).ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "one-hot inner commitment digit block count overflow".to_string(),
+            )
+        })?;
+        let t = backend.onehot_commit_rows::<D>(
+            prepared,
+            OneHotCommitRowsPlan {
+                n_a,
+                block_len,
+                num_digits_commit,
+                blocks: blocks.commit_plan_blocks(),
+            },
+        )?;
 
         let mut t_hat = FlatDigitBlocks::zeroed(vec![zero_block_len; t.len()])?;
         let dst_blocks = t_hat.split_blocks_mut();
@@ -1698,12 +1796,6 @@ where
             evals,
         )))
     }
-}
-
-fn num_cols_a(block_len: usize, num_digits_commit: usize) -> Result<usize, AkitaError> {
-    block_len
-        .checked_mul(num_digits_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))
 }
 
 fn fold_single_chunk_onehot_block<F: FieldCore, const D: usize>(
@@ -1948,7 +2040,7 @@ where
 /// any block has more than `MAX_WIDE_SHIFT_ACCUMULATIONS` hot entries (the
 /// wide accumulator would overflow) and a small-block fast path when
 /// `blocks_per_thread` is already L2-friendly.
-fn column_sweep_ajtai_single_chunk<F, const D: usize>(
+pub(crate) fn column_sweep_ajtai_single_chunk<F, const D: usize>(
     a_view: &akita_types::RingMatrixView<'_, F, D>,
     single_chunk_blocks: &[&[SingleChunkEntry]],
     n_a: usize,
@@ -2019,7 +2111,7 @@ where
 /// contributes `nonzero_coeffs.len()` shift-accumulates (not `1` like the
 /// single-chunk case), so the overflow threshold is reached at smaller block
 /// sizes when `K << D`.
-fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
+pub(crate) fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
     a_view: &akita_types::RingMatrixView<'_, F, D>,
     multi_chunk_blocks: &[&[MultiChunkEntry]],
     n_a: usize,
@@ -2186,6 +2278,116 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
         .collect();
 
     chunks.into_iter().flatten().collect()
+}
+
+// Tensor accumulators use `[i64; D]` because each per-block challenge is a
+// product of two sparse samples. The witness boundary narrows back to
+// `[i32; D]` after checking the selected schedule's coefficient envelope.
+
+pub(super) fn multi_chunk_onehot_accumulate_tensor<const D: usize>(
+    multi_chunk_blocks: &[&[MultiChunkEntry]],
+    tensor: &TensorChallengeSet,
+    num_blocks: usize,
+    inner_width: usize,
+    num_digits: usize,
+) -> Result<Vec<[i64; D]>, AkitaError> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(inner_width.max(1));
+    let pos_chunk = inner_width.div_ceil(actual_threads);
+
+    let chunks: Vec<Vec<[i64; D]>> = cfg_into_iter!(0..actual_threads)
+        .map(|tid| {
+            let pos_start = tid * pos_chunk;
+            if pos_start >= inner_width {
+                return Ok(Vec::new());
+            }
+            let pos_end = (pos_start + pos_chunk).min(inner_width);
+            let len = pos_end - pos_start;
+            let mut acc = vec![[0i64; D]; len];
+            let mut rotated = vec![[0i64; D]; D];
+
+            for (block_idx, entries) in multi_chunk_blocks.iter().enumerate().take(num_blocks) {
+                let lo = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_start);
+                let hi = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_end);
+                if lo >= hi {
+                    continue;
+                }
+
+                let (_, _, left, right) = tensor.factors_for_logical_block(block_idx)?;
+                fill_rotated_tensor_challenge::<D>(&mut rotated, left, right)?;
+
+                for entry in &entries[lo..hi] {
+                    let local_pos = entry.pos_in_block() * num_digits - pos_start;
+                    for &ci in entry.nonzero_coeffs() {
+                        let rot = &rotated[ci as usize];
+                        let dst = &mut acc[local_pos];
+                        for k in 0..D {
+                            dst[k] += rot[k];
+                        }
+                    }
+                }
+            }
+
+            Ok(acc)
+        })
+        .collect::<Result<_, AkitaError>>()?;
+
+    Ok(chunks.into_iter().flatten().collect())
+}
+
+pub(super) fn single_chunk_onehot_accumulate_tensor<const D: usize>(
+    single_chunk_blocks: &[&[SingleChunkEntry]],
+    tensor: &TensorChallengeSet,
+    num_blocks: usize,
+    block_len: usize,
+) -> Result<Vec<[i64; D]>, AkitaError> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(block_len).max(1);
+    let pos_chunk = block_len.div_ceil(actual_threads);
+
+    let chunks: Vec<Vec<[i64; D]>> = cfg_into_iter!(0..actual_threads)
+        .map(|tid| {
+            let pos_start = tid * pos_chunk;
+            if pos_start >= block_len {
+                return Ok(Vec::new());
+            }
+            let pos_end = (pos_start + pos_chunk).min(block_len);
+            let len = pos_end - pos_start;
+            let mut acc = vec![[0i64; D]; len];
+            let mut rotated = vec![[0i64; D]; D];
+
+            for (block_idx, entries) in single_chunk_blocks.iter().enumerate().take(num_blocks) {
+                let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
+                let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
+                if lo >= hi {
+                    continue;
+                }
+
+                let (_, _, left, right) = tensor.factors_for_logical_block(block_idx)?;
+                fill_rotated_tensor_challenge::<D>(&mut rotated, left, right)?;
+
+                for entry in &entries[lo..hi] {
+                    let dst = &mut acc[entry.pos_in_block() - pos_start];
+                    let rot = &rotated[entry.coeff_idx()];
+                    for k in 0..D {
+                        dst[k] += rot[k];
+                    }
+                }
+            }
+
+            Ok(acc)
+        })
+        .collect::<Result<_, AkitaError>>()?;
+
+    Ok(chunks.into_iter().flatten().collect())
 }
 
 /// Test-only helpers for this module that need access to private invariants

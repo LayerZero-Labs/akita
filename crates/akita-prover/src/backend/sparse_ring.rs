@@ -6,17 +6,19 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, FlatRingVec};
+use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::kernels::crt_ntt::NttSlotCache;
+use crate::compute::{CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+
+mod tensor_fold;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SparseRingCoeff {
@@ -50,7 +52,7 @@ impl SparseRingCoeff {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SparseRingBlockEntry {
+pub struct SparseRingBlockEntry {
     pos_in_block: u32,
     coeff_idx: u16,
     value: i8,
@@ -58,18 +60,23 @@ struct SparseRingBlockEntry {
 
 impl SparseRingBlockEntry {
     #[inline]
-    fn pos_in_block(self) -> usize {
+    pub fn pos_in_block(self) -> usize {
         self.pos_in_block as usize
     }
 
     #[inline]
-    fn coeff_idx(self) -> usize {
+    pub fn coeff_idx(self) -> usize {
         self.coeff_idx as usize
+    }
+
+    #[inline]
+    pub fn value(self) -> i8 {
+        self.value
     }
 }
 
 #[derive(Debug, Clone)]
-struct SparseRingBlocks {
+pub(crate) struct SparseRingBlocks {
     entries: Vec<SparseRingBlockEntry>,
     offsets: Vec<u32>,
 }
@@ -127,15 +134,20 @@ impl SparseRingBlocks {
     }
 
     #[inline]
-    fn num_blocks(&self) -> usize {
+    pub(crate) fn num_blocks(&self) -> usize {
         self.offsets.len() - 1
     }
 
     #[inline]
-    fn block(&self, idx: usize) -> &[SparseRingBlockEntry] {
+    pub(crate) fn block(&self, idx: usize) -> &[SparseRingBlockEntry] {
         let lo = self.offsets[idx] as usize;
         let hi = self.offsets[idx + 1] as usize;
         &self.entries[lo..hi]
+    }
+
+    #[inline]
+    fn table(&self) -> FlatBlockTable<'_, SparseRingBlockEntry> {
+        FlatBlockTable::new(&self.entries, &self.offsets)
     }
 }
 
@@ -299,8 +311,6 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    type CommitCache = NttSlotCache<D>;
-
     fn num_ring_elems(&self) -> usize {
         self.total_ring_elems
     }
@@ -364,37 +374,52 @@ where
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
 
+    #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold_tensor_batched")]
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        tensor: &TensorChallengeSet,
+        block_len: usize,
+        num_digits: usize,
+        _log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        Ok(Some(tensor_fold::decompose_fold_batched_tensor_sparse(
+            polys, tensor, block_len, num_digits,
+        )?))
+    }
+
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
-    fn commit_inner(
+    fn commit_inner<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        _ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        let t =
-            self.commit_inner_rows(a_matrix, n_a, block_len, num_digits_commit, matrix_stride)?;
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
+        let t = self.commit_inner_rows(backend, prepared, n_a, block_len, num_digits_commit)?;
         decompose_commit_rows::<F, D>(&t, n_a, num_digits_open, log_basis)
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner_witness")]
-    fn commit_inner_witness(
+    fn commit_inner_witness<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
-        _ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        let t =
-            self.commit_inner_rows(a_matrix, n_a, block_len, num_digits_commit, matrix_stride)?;
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
+        let t = self.commit_inner_rows(backend, prepared, n_a, block_len, num_digits_commit)?;
         let decomposed_inner_rows =
             decompose_commit_rows::<F, D>(&t, n_a, num_digits_open, log_basis)?;
         Ok(CommitInnerWitness {
@@ -428,38 +453,27 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    fn commit_inner_rows(
+    fn commit_inner_rows<B>(
         &self,
-        a_matrix: &FlatMatrix<F>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
-        matrix_stride: usize,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
         let blocks = self.blocks_for(block_len)?;
-        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride)?;
-        let active_a_cols = block_len
-            .checked_mul(num_digits_commit)
-            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        if active_a_cols > a_view.num_cols() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "active A width {active_a_cols} exceeds setup envelope {}",
-                a_view.num_cols()
-            )));
-        }
-        let block_views = (0..blocks.num_blocks())
-            .map(|idx| blocks.block(idx))
-            .collect::<Vec<_>>();
-        let a_rows = (0..n_a)
-            .map(|idx| a_view.row(idx))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(column_sweep_sparse(
-            &a_rows,
-            &block_views,
-            n_a,
-            block_len,
-            num_digits_commit,
-        ))
+        backend.sparse_ring_commit_rows(
+            prepared,
+            SparseRingCommitRowsPlan {
+                n_a,
+                block_len,
+                num_digits_commit,
+                blocks: blocks.table(),
+            },
+        )
     }
 }
 
@@ -575,7 +589,7 @@ fn shift_signed_unit_into<W, const D: usize>(
     }
 }
 
-fn column_sweep_sparse<F, const D: usize>(
+pub(crate) fn column_sweep_sparse<F, const D: usize>(
     a_rows: &[&[CyclotomicRing<F, D>]],
     blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,

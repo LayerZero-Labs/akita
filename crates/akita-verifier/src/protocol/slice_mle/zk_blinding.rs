@@ -4,6 +4,8 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_types::AkitaExpandedSetup;
 
+#[cfg(test)]
+use crate::protocol::ring_switch::PreparedChallengeEvals;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 
 /// ZK B-blinding contribution. See `specs/optimized_verifier.md`.
@@ -230,9 +232,11 @@ mod tests {
             FlatMatrix::from_ring_slice::<D>(&matrix_entries),
         );
         let prepared = RingSwitchDeferredRowEval {
-            c_alphas: (0..total_blocks)
-                .map(|idx| f(2_000 + idx as u128))
-                .collect(),
+            c_alphas: PreparedChallengeEvals::Flat(
+                (0..total_blocks)
+                    .map(|idx| f(2_000 + idx as u128))
+                    .collect(),
+            ),
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(3_000 + idx as u128))
                 .collect(),

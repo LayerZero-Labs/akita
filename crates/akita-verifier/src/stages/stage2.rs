@@ -4,6 +4,10 @@ use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+#[cfg(feature = "zk")]
+use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
+#[cfg(feature = "zk")]
+use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     relation_claim_from_rows_extension, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
@@ -145,7 +149,11 @@ enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
         witness: &'a DirectWitnessProof<F>,
         physical_w_len: usize,
     },
-    ClaimedEval(E),
+    ClaimedEval {
+        eval: E,
+        #[cfg(feature = "zk")]
+        mask: ZkR1csLinearCombination<E>,
+    },
 }
 
 /// Source of deferred ring-switch row evaluations used by the stage-2 verifier.
@@ -164,6 +172,11 @@ impl<F: FieldCore> Stage2RowEvalSource<F> {
 pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
     batching_coeff: E,
     s_claim: E,
+    #[cfg(feature = "zk")]
+    s_claim_mask: ZkR1csLinearCombination<E>,
+    #[cfg(feature = "zk")]
+    #[allow(dead_code)]
+    relation_claim_mask: ZkR1csLinearCombination<E>,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     r_stage1: Vec<E>,
     alpha_evals_y: Vec<E>,
@@ -187,6 +200,8 @@ where
     fn new(
         batching_coeff: E,
         s_claim: E,
+        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         r_stage1: Vec<E>,
         alpha_evals_y: Vec<E>,
@@ -233,6 +248,10 @@ where
         Ok(Self {
             batching_coeff,
             s_claim,
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+            #[cfg(feature = "zk")]
+            relation_claim_mask,
             witness_oracle,
             r_stage1,
             alpha_evals_y,
@@ -254,6 +273,8 @@ where
     pub(crate) fn new_with_direct_witness(
         batching_coeff: E,
         s_claim: E,
+        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
         direct_witness: &'a DirectWitnessProof<F>,
         physical_w_len: usize,
         r_stage1: Vec<E>,
@@ -274,6 +295,10 @@ where
         Self::new(
             batching_coeff,
             s_claim,
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+            #[cfg(feature = "zk")]
+            relation_claim_mask,
             Stage2WitnessOracle::Direct {
                 witness: direct_witness,
                 physical_w_len,
@@ -301,7 +326,10 @@ where
     pub(crate) fn new_with_claimed_w_eval(
         batching_coeff: E,
         s_claim: E,
+        #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
+        #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
         w_eval: E,
+        #[cfg(feature = "zk")] w_eval_mask: ZkR1csLinearCombination<E>,
         r_stage1: Vec<E>,
         alpha_evals_y: Vec<E>,
         row_eval_source: Stage2RowEvalSource<E>,
@@ -320,7 +348,15 @@ where
         Self::new(
             batching_coeff,
             s_claim,
-            Stage2WitnessOracle::ClaimedEval(w_eval),
+            #[cfg(feature = "zk")]
+            s_claim_mask,
+            #[cfg(feature = "zk")]
+            relation_claim_mask,
+            Stage2WitnessOracle::ClaimedEval {
+                eval: w_eval,
+                #[cfg(feature = "zk")]
+                mask: w_eval_mask,
+            },
             r_stage1,
             alpha_evals_y,
             row_eval_source,
@@ -350,7 +386,7 @@ where
                 self.col_bits,
                 self.ring_bits,
             ),
-            Stage2WitnessOracle::ClaimedEval(w_eval) => Ok(*w_eval),
+            Stage2WitnessOracle::ClaimedEval { eval, .. } => Ok(*eval),
         }
     }
 
@@ -406,6 +442,77 @@ where
         let eq_val = EqPolynomial::mle(&self.r_stage1, challenges)?;
         let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
         Ok(self.batching_coeff * virtual_oracle + relation_oracle)
+    }
+}
+
+#[cfg(feature = "zk")]
+impl<'a, F, E, const D: usize> ZkSumcheckFinalRelation<E> for AkitaStage2Verifier<'a, F, E, D>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
+{
+    /// Record the deferred relation tying the stage-2 masked input to the
+    /// stage-1 masked `s_claim` handoff.
+    fn initial_claim_mask(
+        &self,
+        _relations: &mut ZkRelationAccumulator<E>,
+    ) -> Result<ZkR1csLinearCombination<E>, AkitaError> {
+        let mut input_mask = ZkR1csLinearCombination::zero();
+        input_mask.add_scaled(self.batching_coeff, &self.s_claim_mask);
+        input_mask.add_scaled(E::one(), &self.relation_claim_mask);
+        Ok(input_mask)
+    }
+
+    fn record_input_relation(
+        &self,
+        _masked_input_claim: E,
+        _masked_round_sum: E,
+        _round_sum_mask: &ZkR1csLinearCombination<E>,
+        _relations: &mut ZkRelationAccumulator<E>,
+    ) -> Result<(), AkitaError> {
+        // Compressed sumcheck omits the linear term and reconstructs it from the
+        // incoming masked claim, so the first-round chain equation has no
+        // independent witness content to record here.
+        Ok(())
+    }
+
+    fn record_final_relation(
+        &self,
+        challenges: &[E],
+        final_claim: ZkR1csLinearCombination<E>,
+        relations: &mut ZkRelationAccumulator<E>,
+    ) -> Result<(), AkitaError> {
+        let eq_val = EqPolynomial::mle(&self.r_stage1, challenges)?;
+        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
+        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
+        let row_val = self.row_eval(x_challenges)?;
+
+        // At the sampled point r = (r_y, r_x), the fused Stage-2 oracle is
+        //
+        //   gamma * eq(r_stage1, r) * w(r) * (w(r) + 1)
+        //     + w(r) * alpha(r_y) * row(r_x).
+        //
+        // `final_claim` is already the unmasked final sumcheck claim as an LC.
+        // If the next witness evaluation was public-masked, `w_lc` is
+        // eval_masked - eval_mask; otherwise it is a constant direct witness
+        // evaluation. The R1CS row below records the oracle equality as
+        //
+        //   w(r) * [gamma * eq(r_stage1, r) * w(r)
+        //     + gamma * eq(r_stage1, r) + alpha(r_y) * row(r_x)]
+        //     = final_claim.
+        let w_lc = match &self.witness_oracle {
+            Stage2WitnessOracle::Direct { .. } => {
+                ZkR1csLinearCombination::constant(self.witness_eval(challenges)?)
+            }
+            Stage2WitnessOracle::ClaimedEval { eval, mask } => {
+                ZkRelationAccumulator::unmask_lc(*eval, mask)
+            }
+        };
+        let mut scaled_virtual = ZkR1csLinearCombination::zero();
+        scaled_virtual.add_scaled(self.batching_coeff * eq_val, &w_lc);
+        scaled_virtual.constant += self.batching_coeff * eq_val + alpha_val * row_val;
+        relations.push_r1cs("stage-2 final oracle", w_lc, scaled_virtual, final_claim)?;
+        Ok(())
     }
 }
 

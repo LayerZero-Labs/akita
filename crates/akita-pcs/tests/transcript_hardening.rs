@@ -1,6 +1,8 @@
 #![allow(missing_docs)]
 #![cfg(all(feature = "logging-transcript", not(feature = "zk")))]
 
+use akita_prover::{ComputeBackendSetup, CpuBackend};
+
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
@@ -44,11 +46,17 @@ fn event_stream_equality_small() {
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1);
+        let setup =
+            <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) =
-            <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(std::slice::from_ref(&poly), &setup)
-                .expect("commit");
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            std::slice::from_ref(&poly),
+        )
+        .expect("commit");
 
         let poly_refs = [&poly];
         let commitments = [commitment];
@@ -59,6 +67,8 @@ fn event_stream_equality_small() {
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(
                 &point,
                 &poly_refs,
@@ -257,11 +267,17 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1);
+        let setup =
+            <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_verifier(&setup);
-        let (commitment, hint) =
-            <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(std::slice::from_ref(&poly), &setup)
-                .expect("commit");
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            std::slice::from_ref(&poly),
+        )
+        .expect("commit");
 
         let poly_refs = [&poly];
         let commitments = [commitment];
@@ -271,6 +287,8 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
         let mut proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(
                 &point,
                 &poly_refs,
@@ -361,15 +379,23 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let poly = make_onehot_poly(&layout, 0x5151);
         let point = random_point(num_vars, 0x6161);
 
-        let setup = <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1);
-        let (commitment, hint) =
-            <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(std::slice::from_ref(&poly), &setup)
-                .expect("commit");
+        let setup =
+            <Scheme as CommitmentProver<F, ONEHOT_D>>::setup_prover(num_vars, 1, 1).unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let (commitment, hint) = <Scheme as CommitmentProver<F, ONEHOT_D>>::commit(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            std::slice::from_ref(&poly),
+        )
+        .expect("commit");
 
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
         let proof = <Scheme as CommitmentProver<F, ONEHOT_D>>::batched_prove(
             &setup,
+            &CpuBackend,
+            &prepared,
             prove_input(&point, &poly_refs, &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,

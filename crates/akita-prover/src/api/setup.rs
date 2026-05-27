@@ -1,6 +1,5 @@
 //! Prover setup artifact and config-free setup expansion helpers.
 
-use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
@@ -9,30 +8,27 @@ use akita_types::{
 };
 use std::sync::Arc;
 
-/// Prover setup artifact (expanded setup + single shared NTT cache).
+/// Prover setup artifact.
 ///
-/// The NTT cache is tied to a specific ring dimension D and covers the full
-/// shared backing matrix. Role-specific mat-vec operations use row slicing and
-/// input-vector-length column clamping.
+/// Backend-prepared compute state is intentionally not stored here. Host code
+/// prepares a compute backend from the expanded setup when it wants to prove.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
-    /// Shared NTT cache for the backing matrix at ring dimension D.
-    pub ntt_shared: NttSlotCache<D>,
 }
 
 impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
     /// The caller supplies config-derived capacity bounds. This constructor
-    /// owns only the concrete prover artifact: matrix expansion plus the shared NTT
-    /// cache for the chosen ring dimension.
+    /// owns only the concrete prover artifact: matrix expansion for the chosen
+    /// capacity envelope.
     ///
     /// # Errors
     ///
-    /// Returns an error if the capacity calculation overflows or if the NTT
-    /// cache cannot be built for the current field/ring-dimension pair.
+    /// Returns an error if the capacity calculation overflows or the setup
+    /// descriptor cannot be built.
     #[tracing::instrument(skip_all, name = "AkitaProverSetup::generate_with_capacity")]
     pub fn generate_with_capacity(
         max_num_vars: usize,
@@ -62,15 +58,11 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         })?;
 
         let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
-        let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total)?)?;
         let expanded = Arc::new(
             AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
         );
 
-        Ok(Self {
-            expanded,
-            ntt_shared,
-        })
+        Ok(Self { expanded })
     }
 
     /// Derive a verifier setup from this prover setup.
@@ -84,14 +76,12 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.
     ///
     /// Use this when the caller has already run strict setup validation, for
-    /// example through checked setup deserialization. This avoids re-deriving
-    /// the seed-bound public matrix a second time while rebuilding prover NTT
-    /// caches.
+    /// example through checked setup deserialization. This still re-checks
+    /// seed-to-matrix derivation at the trust boundary.
     ///
     /// # Errors
     ///
-    /// Returns an error if the NTT cache cannot be built for the current
-    /// field/ring-dimension pair.
+    /// Returns an error if the expanded setup does not match its seed.
     pub fn from_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
         F: CanonicalField + RandomSampling + Valid,
@@ -112,7 +102,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     /// # Errors
     ///
     /// Returns an error if the setup's generation dimension does not match
-    /// `D`, or if the NTT cache cannot be built.
+    /// `D` or its internal shape metadata is malformed.
     pub fn from_seed_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
         F: CanonicalField + Valid,
@@ -140,12 +130,20 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             ));
         }
         let expanded = Arc::new(expanded);
-        let total = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-        let ntt_shared = build_ntt_slot(expanded.shared_matrix().ring_view::<D>(1, total)?)?;
-        Ok(Self {
-            expanded,
-            ntt_shared,
-        })
+        expanded.shared_matrix().total_ring_elements_at::<D>()?;
+        Ok(Self { expanded })
+    }
+
+    /// Wrap a pre-built [`AkitaExpandedSetup`] in a prover setup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the expanded setup is not valid for this field.
+    pub fn from_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
+    where
+        F: CanonicalField + RandomSampling + Valid,
+    {
+        Self::from_validated_expanded(expanded)
     }
 }
 

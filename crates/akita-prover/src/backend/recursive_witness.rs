@@ -16,12 +16,9 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use crate::backend::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
-use crate::kernels::crt_ntt::NttSlotCache;
-use crate::kernels::linear::{
-    decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8_strided, mat_vec_mul_ntt_i8_strided,
-};
+use crate::compute::{CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
+use crate::kernels::linear::decompose_rows_i8_into;
 use akita_types::FlatDigitBlocks;
-use std::array::from_fn;
 use std::marker::PhantomData;
 
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -241,46 +238,31 @@ where
 
     #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
-    pub fn commit_inner(
+    pub fn commit_inner<B>(
         &self,
-        ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_rows: usize,
         block_len: usize,
         num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
-        let t_all = if num_digits_commit == 1 {
-            mat_vec_mul_ntt_digits_i8_strided(
-                ntt_a,
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
+        let t_all = backend.recursive_witness_commit_rows(
+            prepared,
+            RecursiveWitnessCommitRowsPlan {
+                coeffs: self.coeffs,
                 n_rows,
-                matrix_stride,
-                self.coeffs,
-                num_blocks,
                 block_len,
-            )
-        } else {
-            let ring_elems: Vec<CyclotomicRing<F, D>> = self
-                .coeffs
-                .iter()
-                .map(|digit| {
-                    let coeffs = from_fn(|k| F::from_i8(digit[k]));
-                    CyclotomicRing::from_coefficients(coeffs)
-                })
-                .collect();
-            mat_vec_mul_ntt_i8_strided(
-                ntt_a,
-                n_rows,
-                matrix_stride,
-                &ring_elems,
                 num_blocks,
-                block_len,
                 num_digits_commit,
                 log_basis,
-            )
-        };
+            },
+        )?;
 
         let block_sizes: Vec<usize> = t_all
             .iter()
@@ -302,46 +284,31 @@ where
 
     #[cfg_attr(not(test), allow(dead_code))]
     #[allow(clippy::too_many_arguments)]
-    pub fn commit_inner_witness(
+    pub fn commit_inner_witness<B>(
         &self,
-        ntt_a: &NttSlotCache<D>,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_rows: usize,
         block_len: usize,
         num_blocks: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
-        let t = if num_digits_commit == 1 {
-            mat_vec_mul_ntt_digits_i8_strided(
-                ntt_a,
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
+        let t = backend.recursive_witness_commit_rows(
+            prepared,
+            RecursiveWitnessCommitRowsPlan {
+                coeffs: self.coeffs,
                 n_rows,
-                matrix_stride,
-                self.coeffs,
-                num_blocks,
                 block_len,
-            )
-        } else {
-            let ring_elems: Vec<CyclotomicRing<F, D>> = self
-                .coeffs
-                .iter()
-                .map(|digit| {
-                    let coeffs = from_fn(|k| F::from_i8(digit[k]));
-                    CyclotomicRing::from_coefficients(coeffs)
-                })
-                .collect();
-            mat_vec_mul_ntt_i8_strided(
-                ntt_a,
-                n_rows,
-                matrix_stride,
-                &ring_elems,
                 num_blocks,
-                block_len,
                 num_digits_commit,
                 log_basis,
-            )
-        };
+            },
+        )?;
 
         let block_sizes: Vec<usize> = t.iter().map(|t_i| t_i.len() * num_digits_open).collect();
         let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;

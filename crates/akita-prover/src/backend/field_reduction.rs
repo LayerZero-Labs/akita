@@ -6,7 +6,7 @@ use akita_field::{AkitaError, ExtField, FieldCore};
 use akita_types::pack_tensor_base_lift_i8_digits;
 use std::sync::Arc;
 
-use crate::kernels::crt_ntt::NttSlotCache;
+use crate::compute::CommitmentComputeBackend;
 use crate::{AkitaPolyOps, DensePoly, RecursiveWitnessFlat, SparseRingPoly};
 
 /// Root polynomial obtained by tensor-projecting base-field evaluations into
@@ -56,8 +56,6 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    type CommitCache = NttSlotCache<D>;
-
     fn num_ring_elems(&self) -> usize {
         dispatch_root_projection!(self, poly => poly.num_ring_elems())
     }
@@ -108,55 +106,103 @@ where
         })
     }
 
-    fn commit_inner(
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        tensor: &akita_challenges::TensorChallenges,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<crate::DecomposeFoldWitness<F, D>>, AkitaError> {
+        let Some(first) = polys.first() else {
+            return Ok(None);
+        };
+        match *first {
+            RootTensorProjectionPoly::Dense(_) => {
+                let mut dense_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match *poly {
+                        RootTensorProjectionPoly::Dense(inner) => dense_polys.push(inner),
+                        RootTensorProjectionPoly::Sparse(_) => return Ok(None),
+                    }
+                }
+                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+                    &dense_polys,
+                    tensor,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
+            }
+            RootTensorProjectionPoly::Sparse(_) => {
+                let mut sparse_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match *poly {
+                        RootTensorProjectionPoly::Sparse(inner) => {
+                            sparse_polys.push(inner.as_ref())
+                        }
+                        RootTensorProjectionPoly::Dense(_) => return Ok(None),
+                    }
+                }
+                <SparseRingPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_tensor_batched(
+                    &sparse_polys,
+                    tensor,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
+            }
+        }
+    }
+
+    fn commit_inner<B>(
         &self,
-        a_matrix: &akita_types::FlatMatrix<F>,
-        ntt_a: &Self::CommitCache,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
-    ) -> Result<akita_types::FlatDigitBlocks<D>, AkitaError> {
+    ) -> Result<akita_types::FlatDigitBlocks<D>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
         dispatch_root_projection!(self, poly => {
             poly.commit_inner(
-                a_matrix,
-                ntt_a,
+                backend,
+                prepared,
                 n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
-                matrix_stride,
             )
         })
     }
 
-    fn commit_inner_witness(
+    fn commit_inner_witness<B>(
         &self,
-        a_matrix: &akita_types::FlatMatrix<F>,
-        ntt_a: &Self::CommitCache,
+        backend: &B,
+        prepared: &B::PreparedSetup<D>,
         n_a: usize,
         block_len: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
         log_basis: u32,
-        matrix_stride: usize,
     ) -> Result<crate::CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
+        B: CommitmentComputeBackend<F>,
     {
         dispatch_root_projection!(self, poly => {
             poly.commit_inner_witness(
-                a_matrix,
-                ntt_a,
+                backend,
+                prepared,
                 n_a,
                 block_len,
                 num_digits_commit,
                 num_digits_open,
                 log_basis,
-                matrix_stride,
             )
         })
     }

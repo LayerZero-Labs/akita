@@ -65,11 +65,43 @@ where
 
     #[cfg(feature = "disk-persistence")]
     {
+        let max_total = max_rows
+            .checked_mul(max_stride)
+            .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
         match load_expanded_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
         {
             Ok(expanded) => {
-                tracing::info!("Loaded exact setup from disk, rebuilding NTT caches");
-                return AkitaProverSetup::from_seed_validated_expanded(expanded);
+                // A cached setup is acceptable only if its physical
+                // backing is large enough *and* its recorded
+                // `max_stride` matches (or exceeds) what the current
+                // request needs. For configs where `max_rows` can vary
+                // inversely with `max_stride`, a smaller cached stride
+                // would cause `ring_view` to interpret rows/columns with
+                // the wrong stride — the total-elements check alone is
+                // insufficient.
+                let cached_total = expanded.shared_matrix().total_ring_elements_at::<D>()?;
+                let cached_stride = expanded.seed().max_stride;
+                let cached_points = expanded.seed().max_num_points;
+                if cached_total >= max_total
+                    && cached_stride >= max_stride
+                    && cached_points >= max_num_points
+                {
+                    tracing::info!("Loaded setup from disk; backend preparation is explicit");
+                    return AkitaProverSetup::from_seed_validated_expanded(expanded);
+                }
+                if let Some(storage_path) =
+                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+                {
+                    let _ = fs::remove_file(&storage_path);
+                    tracing::warn!(
+                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating",
+                            storage_path.display()
+                        );
+                } else {
+                    tracing::warn!(
+                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating"
+                        );
+                }
             }
             Err(e) => {
                 if let Some(storage_path) =
@@ -571,9 +603,9 @@ mod tests {
             with_test_cache_dir("ntt-rebuild", || {
                 use akita_algebra::CyclotomicRing;
                 use akita_config::CommitmentConfig;
-                use akita_prover::kernels::linear::mat_vec_mul_ntt_single_i8;
                 use akita_prover::AkitaPolyOps;
                 use akita_prover::DensePoly;
+                use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
 
                 const MAX_VARS: usize = 14;
 
@@ -597,24 +629,25 @@ mod tests {
                 let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
 
                 let commit_u = |setup: &AkitaProverSetup<TestF, TEST_D>| {
+                    let prepared = CpuBackend.prepare_setup(setup).unwrap();
                     let inner = poly
                         .commit_inner_witness(
-                            setup.expanded.shared_matrix(),
-                            &setup.ntt_shared,
+                            &CpuBackend,
+                            &prepared,
                             lp.a_key.row_len(),
                             lp.block_len,
                             lp.num_digits_commit,
                             lp.num_digits_open,
                             lp.log_basis,
-                            setup.expanded.seed().max_stride,
                         )
                         .unwrap();
-                    mat_vec_mul_ntt_single_i8::<TestF, TEST_D>(
-                        &setup.ntt_shared,
-                        lp.b_key.row_len(),
-                        setup.expanded.seed().max_stride,
-                        inner.decomposed_inner_rows.flat_digits(),
-                    )
+                    CpuBackend
+                        .digit_rows::<TEST_D>(
+                            &prepared,
+                            lp.b_key.row_len(),
+                            inner.decomposed_inner_rows.flat_digits(),
+                        )
+                        .unwrap()
                 };
 
                 let fresh_u = commit_u(&fresh_setup);

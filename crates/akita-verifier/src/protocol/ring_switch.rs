@@ -1,9 +1,8 @@
 //! Verifier-side ring-switch replay.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_algebra::ring::scalar_powers;
-use akita_challenges::SparseChallenge;
+use akita_challenges::Challenges;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
 };
@@ -17,7 +16,7 @@ use akita_types::zk;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams, MRowLayout,
-    RelationOnlyStage2Inputs, RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
     TerminalWitnessTranscriptParts,
 };
 
@@ -29,6 +28,11 @@ use super::slice_mle::{
     ZStructuredPow2SlicesEvaluator,
 };
 use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
+pub(crate) use tensor_challenges::PreparedChallengeEvals;
+
+mod tensor_challenges;
+#[cfg(test)]
+mod tests;
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
@@ -49,30 +53,6 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub b: usize,
     /// Ring-switch challenge alpha.
     pub alpha: E,
-}
-
-/// Verifier-side terminal ring-switch output. Terminal steps have no stage-1
-/// `tau0`.
-pub(crate) struct TerminalRingSwitchVerifyOutput<E: FieldCore> {
-    /// Prepared data for deferred ring-switch row MLE evaluation.
-    pub prepared_row_eval: RingSwitchDeferredRowEval<E>,
-    /// Evaluation table of alpha powers over the ring-coordinate dimension.
-    pub alpha_evals_y: Vec<E>,
-    /// Number of upper variable bits.
-    pub col_bits: usize,
-    /// Number of lower variable bits.
-    pub ring_bits: usize,
-    /// Challenge tau1 for the stage-2 M-row combination.
-    pub tau1: Vec<E>,
-    /// Ring-switch challenge alpha.
-    pub alpha: E,
-}
-
-impl<E: FieldCore> TerminalRingSwitchVerifyOutput<E> {
-    /// Relation-only stage-2 inputs for a terminal ring switch.
-    pub(crate) fn relation_only_stage2_inputs(&self) -> RelationOnlyStage2Inputs<E> {
-        RelationOnlyStage2Inputs::new(self.col_bits + self.ring_bits)
-    }
 }
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
@@ -101,16 +81,18 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         })
     }
 
-    fn into_terminal(self) -> Result<TerminalRingSwitchVerifyOutput<E>, AkitaError> {
+    fn into_terminal_as_output(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
         if self.tau0.is_some() {
             return Err(AkitaError::InvalidProof);
         }
-        Ok(TerminalRingSwitchVerifyOutput {
+        Ok(RingSwitchVerifyOutput {
             prepared_row_eval: self.prepared_row_eval,
             alpha_evals_y: self.alpha_evals_y,
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
+            tau0: Vec::new(),
             tau1: self.tau1,
+            b: self.b,
             alpha: self.alpha,
         })
     }
@@ -123,7 +105,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 /// Everything else is passed by reference at evaluation time to avoid
 /// duplicating setup matrix views, opening points, and gadget vectors.
 pub struct RingSwitchDeferredRowEval<F: FieldCore> {
-    pub(crate) c_alphas: Vec<F>,
+    pub(crate) c_alphas: PreparedChallengeEvals<F>,
     pub(crate) eq_tau1: Vec<F>,
     pub(crate) total_blocks: usize,
     pub(crate) num_t_vectors: usize,
@@ -187,7 +169,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &[SparseChallenge],
+    challenges: &Challenges,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -242,7 +224,7 @@ pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &[SparseChallenge],
+    challenges: &Challenges,
     w_len: usize,
     transcript: &mut T,
     terminal_parts: &TerminalWitnessTranscriptParts,
@@ -252,7 +234,7 @@ pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
     claim_poly_indices: &[usize],
     gamma: &[E],
     num_public_rows: usize,
-) -> Result<TerminalRingSwitchVerifyOutput<E>, AkitaError>
+) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
@@ -275,7 +257,7 @@ where
         num_public_rows,
         MRowLayout::Terminal,
     )?
-    .into_terminal()
+    .into_terminal_as_output()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -285,7 +267,7 @@ fn ring_switch_verifier_core<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
-    challenges: &[SparseChallenge],
+    challenges: &Challenges,
     w_len: usize,
     transcript: &mut T,
     lp: &LevelParams,
@@ -396,7 +378,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "prepare_ring_switch_row_eval")]
 pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
-    challenges: &[SparseChallenge],
+    challenges: &Challenges,
     alpha: E,
     lp: &LevelParams,
     tau1: &[E],
@@ -478,10 +460,10 @@ where
     let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
-    if challenges.len() != total_blocks {
+    if challenges.logical_len() != total_blocks {
         return Err(AkitaError::InvalidSize {
             expected: total_blocks,
-            actual: challenges.len(),
+            actual: challenges.logical_len(),
         });
     }
     let block_len = lp.block_len;
@@ -535,10 +517,41 @@ where
         });
     }
 
-    let c_alphas: Vec<E> = challenges
-        .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, E, D>(&alpha_pows))
-        .collect::<Result<_, _>>()?;
+    let c_alphas: PreparedChallengeEvals<E> = match challenges {
+        Challenges::Sparse {
+            challenges: sparse, ..
+        } => PreparedChallengeEvals::Flat(
+            sparse
+                .iter()
+                .map(|challenge| challenge.eval_at_pows::<F, E, D>(&alpha_pows))
+                .collect::<Result<_, _>>()?,
+        ),
+        Challenges::Tensor { factored } => {
+            if D < 2 {
+                return Err(AkitaError::InvalidInput(
+                    "tensor challenge factored evaluation requires D >= 2".to_string(),
+                ));
+            }
+            factored.validate::<D>()?;
+            if factored.num_claims != num_claims {
+                return Err(AkitaError::InvalidSize {
+                    expected: num_claims,
+                    actual: factored.num_claims,
+                });
+            }
+            let blocks_per_claim = factored.blocks_per_claim()?;
+            if blocks_per_claim != lp.num_blocks {
+                return Err(AkitaError::InvalidSize {
+                    expected: lp.num_blocks,
+                    actual: blocks_per_claim,
+                });
+            }
+            PreparedChallengeEvals::Tensor {
+                challenges: factored.clone(),
+                alpha_pows: alpha_pows.clone(),
+            }
+        }
+    };
 
     let z_first = lp.m_vars >= lp.r_vars;
 
@@ -757,17 +770,15 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 
         let high_challenges = &x_challenges[offset_low_bits..];
 
-        // Per-claim `c_alpha` carry summary — shared by W and T.
-        let challenge_block_summaries: Vec<[E; 2]> = (0..self.num_claims)
-            .map(|claim_idx| {
-                let start = claim_idx * self.num_blocks;
-                summarize_pow2_block_carries(
-                    &eq_low,
-                    block_offset_low,
-                    &self.c_alphas[start..(start + self.num_blocks)],
-                )
-            })
-            .collect::<Result<_, _>>()?;
+        let x_low_challenges = &x_challenges[..offset_low_bits];
+        let challenge_block_summaries: Vec<[E; 2]> =
+            self.c_alphas.summarize_all_block_carries::<F, D>(
+                self.num_claims,
+                x_low_challenges,
+                &eq_low,
+                block_offset_low,
+                self.num_blocks,
+            )?;
         let mut challenge_block_summaries_by_t_vector =
             vec![[E::zero(), E::zero()]; self.num_t_vectors];
         // Per-point t-vector starting indices: `t_vector_offsets[p]` is the
@@ -1055,87 +1066,4 @@ where
     }
 
     Ok(out)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use akita_challenges::SparseChallengeConfig;
-    use akita_field::Fp32;
-    use akita_types::SisModulusFamily;
-
-    type F = Fp32<251>;
-    const D: usize = 32;
-
-    fn stage1_config() -> SparseChallengeConfig {
-        SparseChallengeConfig::Uniform {
-            weight: 1,
-            nonzero_coeffs: vec![1],
-        }
-    }
-
-    #[test]
-    fn ring_switch_prepare_rejects_invalid_log_basis() {
-        let lp = LevelParams::params_only(SisModulusFamily::Q32, D, 0, 1, 1, 1, stage1_config());
-        let err = match prepare_ring_switch_row_eval::<F, F, D>(
-            &[],
-            F::one(),
-            &lp,
-            &[],
-            &[],
-            &[],
-            &[],
-            &[],
-            1,
-            MRowLayout::Intermediate,
-            0,
-            &[],
-            &[],
-        ) {
-            Ok(_) => panic!("invalid log_basis should be rejected"),
-            Err(err) => err,
-        };
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn ring_switch_prepare_rejects_zero_num_blocks() {
-        let lp = LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config());
-        let err = match prepare_ring_switch_row_eval::<F, F, D>(
-            &[],
-            F::one(),
-            &lp,
-            &[],
-            &[],
-            &[],
-            &[],
-            &[],
-            1,
-            MRowLayout::Intermediate,
-            0,
-            &[],
-            &[],
-        ) {
-            Ok(_) => panic!("zero num_blocks should be rejected"),
-            Err(err) => err,
-        };
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn multiplier_block_summary_rejects_malformed_shapes() {
-        let eq_low = vec![F::one(); 2];
-
-        let err =
-            summarize_pow2_multiplier_block_carries(&eq_low, 0, 3, |_| Ok(F::one())).unwrap_err();
-        assert!(matches!(err, AkitaError::InvalidInput(_)));
-
-        let err =
-            summarize_pow2_multiplier_block_carries(&eq_low, 2, 2, |_| Ok(F::one())).unwrap_err();
-        assert!(matches!(err, AkitaError::InvalidInput(_)));
-
-        let err = summarize_pow2_multiplier_block_carries(&eq_low[..1], 0, 2, |_| Ok(F::one()))
-            .unwrap_err();
-        assert!(matches!(err, AkitaError::InvalidSize { .. }));
-    }
 }
