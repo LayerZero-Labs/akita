@@ -9,6 +9,7 @@ pub mod relation;
 pub mod scheme;
 pub mod setup;
 pub mod stage1;
+pub mod terminal_witness;
 
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_points_to_transcript,
@@ -28,12 +29,21 @@ pub use incidence::{
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
-pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
+pub use setup::{
+    derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
+    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+};
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
     stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
+};
+pub use terminal_witness::{
+    i8_digits_to_bytes, terminal_w_hat_bytes_from_blocks, terminal_witness_segment_layout,
+    terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
+    RelationOnlyStage2Inputs, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 
 use akita_algebra::CyclotomicRing;
@@ -131,6 +141,36 @@ impl<F: FieldCore> DirectWitnessProof<F> {
             Self::PackedDigits(packed) => packed.num_elems,
             Self::FieldElements(field_elems) => field_elems.coeff_len(),
         }
+    }
+
+    /// Decode packed terminal-witness digits into their logical signed stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when the witness is not the
+    /// canonical packed-digit representation or when the bit-packed payload is
+    /// malformed.
+    pub fn packed_i8_digits(&self) -> Result<Vec<i8>, AkitaError> {
+        let Self::PackedDigits(packed) = self else {
+            return Err(AkitaError::InvalidProof);
+        };
+        packed.check().map_err(|_| AkitaError::InvalidProof)?;
+        (0..packed.num_elems)
+            .map(|idx| packed.digit_at(idx).ok_or(AkitaError::InvalidProof))
+            .collect()
+    }
+
+    /// Split this terminal direct witness into transcript-bound byte slices.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] when the witness is not canonical
+    /// packed-digits form or the descriptor-bound terminal segment is invalid.
+    pub fn terminal_transcript_parts(
+        &self,
+        layout: TerminalWitnessSegmentLayout,
+    ) -> Result<TerminalWitnessTranscriptParts, AkitaError> {
+        terminal_witness_transcript_parts(&self.packed_i8_digits()?, layout)
     }
 }
 
