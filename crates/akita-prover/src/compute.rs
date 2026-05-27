@@ -213,7 +213,10 @@ where
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<(), AkitaError> {
         let prepared_expanded = self.prepared_expanded_setup::<D>(prepared);
-        if !std::ptr::eq(prepared_expanded, expanded) {
+        // Valid setup matrices are deterministic from the seed; compare the
+        // compact setup identity so independently materialized equivalent
+        // setups validate without re-hashing the matrix on every prover call.
+        if prepared_expanded.seed() != expanded.seed() {
             return Err(AkitaError::InvalidSetup(
                 "prepared compute context was built for a different setup".to_string(),
             ));
@@ -728,6 +731,19 @@ mod tests {
                 .is_err(),
             "prepared context must stay bound to the setup used to create it"
         );
+    }
+
+    #[test]
+    fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
+        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
+        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
+        assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
+
+        let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
+
+        CpuBackend
+            .validate_prepared_setup::<D>(&prepared, setup_b.expanded.as_ref())
+            .expect("equivalent deterministic setup should validate");
     }
 
     #[test]
