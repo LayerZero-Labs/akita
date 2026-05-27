@@ -22,7 +22,6 @@ sha3 = "0.10.8"
 tracing = "0.1"
 
 [dev-dependencies]
-akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
@@ -31,6 +30,7 @@ harness = false
 
 [features]
 default = []
+parallel = ["akita-field/parallel"]
 zk = ["akita-field/zk", "akita-transcript/zk"]
 
 [lints]
