@@ -169,7 +169,6 @@ mod tests {
                 max_num_vars: 32,
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
-                max_stride: inner_width,
                 max_setup_len: 1,
                 public_matrix_seed: [9u8; 32],
                 zk_blinding_seed: [10u8; 32],

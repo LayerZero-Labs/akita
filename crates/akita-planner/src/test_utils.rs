@@ -99,8 +99,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
                  ({max_num_batched_polys})"
             )));
         }
-        let mut max_rows: usize = 1;
-        let mut max_stride: usize = 1;
+        let mut max_setup_len: usize = 1;
         for num_vars in 1..=max_num_vars {
             for num_polys in 1..=max_num_batched_polys {
                 let upper_pts = num_polys.min(max_num_points);
@@ -110,12 +109,11 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
                     let schedule = <Self as CommitmentConfig>::get_params_for_prove(&incidence)?;
                     let setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
                     let envelope = matrix_envelope_for_levels::<Self>(&setup_levels)?;
-                    max_rows = max_rows.max(envelope.max_rows);
-                    max_stride = max_stride.max(envelope.max_stride);
+                    max_setup_len = max_setup_len.max(envelope.max_setup_len);
                 }
             }
         }
-        SetupMatrixEnvelope::from_rows_stride(max_rows, max_stride)
+        SetupMatrixEnvelope::from_max_setup_len(max_setup_len)
     }
 
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {

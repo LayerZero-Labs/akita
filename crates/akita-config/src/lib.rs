@@ -362,7 +362,7 @@ mod tests {
             _max_num_batched_polys: usize,
             _max_num_points: usize,
         ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            SetupMatrixEnvelope::from_rows_stride(1, 1)
+            SetupMatrixEnvelope::from_max_setup_len(1)
         }
 
         fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {

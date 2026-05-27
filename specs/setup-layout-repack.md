@@ -352,10 +352,8 @@ SetupMatrixEnvelope {
 
 If a named type creates too much churn in the first patch, a direct
 `max_setup_len: usize` return is acceptable, but the spec recommends a type.
-The type should also expose non-protocol diagnostics for the maximum A, B, and
-D role footprints, or an equivalent "forcing role" field, so cache/setup
-rejections can report which role shaped the packed length. Those diagnostics
-must not become additional proof metadata.
+Role-footprint diagnostics can be derived locally from `SetupRoleDimensions`
+when needed; they must not be serialized setup metadata or cache identity.
 
 Affected areas:
 

@@ -13,7 +13,7 @@ use akita_types::generated::table_entry_envelope_up_to_num_vars;
 use akita_types::{
     AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
 };
-use akita_types::{ClaimIncidenceSummary, SetupMatrixEnvelope};
+use akita_types::{ClaimIncidenceSummary, SetupMatrixEnvelope, SetupRoleDimensions};
 
 /// Minimum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 2;
@@ -111,7 +111,7 @@ pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
 /// Size the shared setup matrix from the planned schedule.
 ///
 /// Planned ranks are not monotone across shapes, so scan all supported
-/// sub-shapes and keep the maximum row count and stride.
+/// sub-shapes and keep the maximum packed setup length.
 pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -133,8 +133,7 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
         )));
     }
 
-    let mut max_rows: usize = 1;
-    let mut max_stride: usize = 1;
+    let mut max_setup_len: usize = 1;
     let mut saw_supported_shape = false;
     for num_vars in 1..=max_num_vars {
         // Envelope only depends on `num_vars`, so compute it once per
@@ -152,8 +151,7 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
                     continue;
                 };
                 saw_supported_shape = true;
-                max_rows = max_rows.max(shape_envelope.max_rows);
-                max_stride = max_stride.max(shape_envelope.max_stride);
+                max_setup_len = max_setup_len.max(shape_envelope.max_setup_len);
             }
         }
     }
@@ -164,7 +162,7 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
         )));
     }
 
-    SetupMatrixEnvelope::from_rows_stride(max_rows, max_stride)
+    SetupMatrixEnvelope::from_max_setup_len(max_setup_len)
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
@@ -225,49 +223,23 @@ pub fn matrix_envelope_for_levels<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let mut max_rows: usize = 1;
-    let mut max_stride: usize = 1;
+    let mut max_setup_len: usize = 1;
     for lp in setup_levels {
-        accumulate_matrix_envelope_for_level::<Cfg>(lp, &mut max_rows, &mut max_stride)?;
+        accumulate_matrix_envelope_for_level::<Cfg>(lp, &mut max_setup_len)?;
     }
-    SetupMatrixEnvelope::from_rows_stride(max_rows, max_stride)
+    SetupMatrixEnvelope::from_max_setup_len(max_setup_len)
 }
 
 fn accumulate_matrix_envelope_for_level<Cfg>(
     lp: &LevelParams,
-    max_rows: &mut usize,
-    max_stride: &mut usize,
+    max_setup_len: &mut usize,
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
 {
     let _cfg_marker = core::marker::PhantomData::<Cfg>;
-    let outer_width = lp.outer_width();
-    #[cfg(feature = "zk")]
-    let outer_width = outer_width
-        .checked_add(akita_types::zk::blinding_column_count::<Cfg::Field>(
-            lp.b_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("ZK outer width overflow".to_string()))?;
-    let d_matrix_width = lp.d_matrix_width();
-    #[cfg(feature = "zk")]
-    let d_matrix_width = d_matrix_width
-        .checked_add(akita_types::zk::blinding_column_count::<Cfg::Field>(
-            lp.d_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("ZK D width overflow".to_string()))?;
-    *max_rows = (*max_rows)
-        .max(lp.a_key.row_len())
-        .max(lp.b_key.row_len())
-        .max(lp.d_key.row_len());
-    *max_stride = (*max_stride)
-        .max(lp.inner_width())
-        .max(outer_width)
-        .max(d_matrix_width);
+    let dimensions = SetupRoleDimensions::from_level_params(lp);
+    *max_setup_len = (*max_setup_len).max(dimensions.max_footprint()?);
     Ok(())
 }
 
@@ -602,7 +574,7 @@ mod tests {
                 _max_num_batched_polys: usize,
                 _max_num_points: usize,
             ) -> Result<SetupMatrixEnvelope, AkitaError> {
-                SetupMatrixEnvelope::from_rows_stride(1, 1)
+                SetupMatrixEnvelope::from_max_setup_len(1)
             }
             fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
                 (3, 3)
@@ -692,8 +664,7 @@ mod tests {
 
         let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
             .expect("setup envelope should cover generated grouped batch schedules");
-        assert!(setup_envelope.max_rows >= grouped_same_point.max_rows);
-        assert!(setup_envelope.max_stride >= grouped_same_point.max_stride);
+        assert!(setup_envelope.max_setup_len >= grouped_same_point.max_setup_len);
     }
 
     #[test]

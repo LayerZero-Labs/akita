@@ -243,7 +243,7 @@ pub struct SetupSection {
 
     /// Blake2b of canonical bytes of the verifier setup seed
     /// (`max_num_vars`, `max_num_batched_polys`, `max_num_points`,
-    /// `max_stride`, `public_matrix_seed`).
+    /// `max_setup_len`, `public_matrix_seed`, `zk_blinding_seed`).
     pub setup_seed_digest: [u8; 32],
 
     /// Blake2b of canonical bytes of the expanded verifier matrix artifact.

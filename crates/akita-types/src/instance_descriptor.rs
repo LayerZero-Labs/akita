@@ -1080,7 +1080,6 @@ mod tests {
             max_num_vars: 5,
             max_num_batched_polys: 2,
             max_num_points: 1,
-            max_stride: 2,
             max_setup_len: 1,
             public_matrix_seed: [7; 32],
             zk_blinding_seed: [8; 32],

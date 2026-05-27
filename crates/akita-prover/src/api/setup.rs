@@ -51,7 +51,6 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             max_num_vars,
             max_num_batched_polys,
             max_num_points,
-            max_stride: envelope.max_stride,
             max_setup_len: envelope.max_setup_len,
             public_matrix_seed,
             zk_blinding_seed,

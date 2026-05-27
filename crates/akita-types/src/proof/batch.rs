@@ -884,7 +884,6 @@ mod tests {
                 max_num_vars: 3,
                 max_num_batched_polys: 8,
                 max_num_points: 2,
-                max_stride: 1,
                 max_setup_len: 1,
                 public_matrix_seed: [0u8; 32],
                 zk_blinding_seed: [1u8; 32],

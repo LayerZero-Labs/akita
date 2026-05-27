@@ -704,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn root_direct_recommitment_rejects_undersized_setup_stride() {
+    fn root_direct_recommitment_rejects_undersized_setup_prefix() {
         let params =
             LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
                 .with_decomp(1, 0, 2, 1, 1, 0)
@@ -713,7 +713,6 @@ mod tests {
             max_num_vars: 6,
             max_num_batched_polys: 1,
             max_num_points: 1,
-            max_stride: 3,
             max_setup_len: 3,
             public_matrix_seed: [0u8; 32],
             zk_blinding_seed: [1u8; 32],
@@ -727,7 +726,7 @@ mod tests {
             &incidence_summary(6),
             &params,
         )
-        .expect_err("A layout needs four columns but setup stride has three");
+        .expect_err("A layout needs four columns but setup prefix has three entries");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
@@ -742,7 +741,6 @@ mod tests {
             max_num_vars: 6,
             max_num_batched_polys: 1,
             max_num_points: 1,
-            max_stride: 128,
             max_setup_len: 128,
             public_matrix_seed: [0u8; 32],
             zk_blinding_seed: [1u8; 32],

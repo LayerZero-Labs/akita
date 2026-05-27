@@ -14,29 +14,24 @@ pub type PublicMatrixSeed = [u8; 32];
 /// Public seed used to derive feature-gated ZK blinding setup terms.
 pub type ZkBlindingSeed = [u8; 32];
 
-const SETUP_LAYOUT_TAG: [u8; 16] = *b"AKITA_SETUP_PACK";
+const SETUP_LAYOUT_TAG: [u8; 16] = *b"AKITA_SETUP_FLAT";
 
 /// Config-derived setup matrix capacity.
 ///
 /// `max_setup_len` is the physical number of ring elements generated at the
-/// setup generation dimension. `max_rows` and `max_stride` are retained while
-/// the current implementation still has stride-based role views; later packed
-/// role-view slices remove the stride dependency.
+/// setup generation dimension. It is the maximum packed A/B/D role footprint
+/// over the shapes the setup supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetupMatrixEnvelope {
     /// Physical shared setup length at the generation ring dimension.
     pub max_setup_len: usize,
-    /// Diagnostic/current-layout maximum row count.
-    pub max_rows: usize,
-    /// Diagnostic/current-layout maximum row stride.
-    pub max_stride: usize,
 }
 
 /// Base A/B/D setup role dimensions for one proof shape.
 ///
 /// These dimensions intentionally exclude feature-gated ZK blinding tails.
 /// They describe how the shared base setup matrix is viewed once the global
-/// setup stride is removed.
+/// setup matrix is packed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetupRoleDimensions {
     /// A-role row count.
@@ -187,50 +182,21 @@ impl SetupRoleDimensions {
             .max(self.b_footprint()?)
             .max(self.d_footprint()?))
     }
-
-    /// Maximum row count across A/B/D.
-    #[inline]
-    #[must_use]
-    pub fn max_rows(&self) -> usize {
-        self.n_a.max(self.n_b).max(self.n_d)
-    }
-
-    /// Maximum packed width across A/B/D.
-    #[inline]
-    #[must_use]
-    pub fn max_width(&self) -> usize {
-        self.a_setup_width
-            .max(self.b_setup_width)
-            .max(self.d_setup_width)
-    }
 }
 
 impl SetupMatrixEnvelope {
-    /// Build an envelope from the current row/stride layout.
+    /// Build an envelope from a packed physical setup length.
     ///
     /// # Errors
     ///
-    /// Returns `InvalidSetup` if either dimension is zero or if the physical
-    /// setup length overflows.
-    pub fn from_rows_stride(max_rows: usize, max_stride: usize) -> Result<Self, AkitaError> {
-        if max_rows == 0 {
+    /// Returns `InvalidSetup` if the physical setup length is zero.
+    pub fn from_max_setup_len(max_setup_len: usize) -> Result<Self, AkitaError> {
+        if max_setup_len == 0 {
             return Err(AkitaError::InvalidSetup(
-                "setup envelope max_rows must be non-zero".to_string(),
+                "setup envelope max_setup_len must be non-zero".to_string(),
             ));
         }
-        if max_stride == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "setup envelope max_stride must be non-zero".to_string(),
-            ));
-        }
-        let max_setup_len = max_rows.checked_mul(max_stride).ok_or_else(|| {
-            AkitaError::InvalidSetup("setup envelope length overflow".to_string())
-        })?;
-        Ok(Self {
-            max_setup_len,
-            max_rows,
-            max_stride,
-        })
+        Ok(Self { max_setup_len })
     }
 
     /// Build a packed envelope from base role dimensions.
@@ -239,11 +205,7 @@ impl SetupMatrixEnvelope {
     ///
     /// Returns `InvalidSetup` on arithmetic overflow.
     pub fn from_role_dimensions(dimensions: SetupRoleDimensions) -> Result<Self, AkitaError> {
-        Ok(Self {
-            max_setup_len: dimensions.max_footprint()?,
-            max_rows: dimensions.max_rows(),
-            max_stride: dimensions.max_width(),
-        })
+        Self::from_max_setup_len(dimensions.max_footprint()?)
     }
 }
 
@@ -260,8 +222,6 @@ pub struct AkitaSetupSeed {
     /// widths the setup can serve; a multi-point batched opening that exceeds
     /// this bound would otherwise silently read past the shared matrix prefix.
     pub max_num_points: usize,
-    /// Global row stride for the flat NTT cache.
-    pub max_stride: usize,
     /// Physical shared setup length at the generation ring dimension.
     pub max_setup_len: usize,
     /// Public seed used to derive commitment matrices.
@@ -367,11 +327,6 @@ impl Valid for AkitaSetupSeed {
                 "setup seed max_setup_len must be non-zero".to_string(),
             ));
         }
-        if self.max_stride == 0 {
-            return Err(SerializationError::InvalidData(
-                "setup seed max_stride must be non-zero".to_string(),
-            ));
-        }
         if self.max_num_batched_polys == 0 {
             return Err(SerializationError::InvalidData(
                 "setup seed max_num_batched_polys must be at least 1".to_string(),
@@ -401,7 +356,6 @@ impl AkitaSerialize for AkitaSetupSeed {
         writer.write_all(&SETUP_LAYOUT_TAG)?;
         self.max_setup_len
             .serialize_with_mode(&mut writer, compress)?;
-        self.max_stride.serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
         writer.write_all(&self.zk_blinding_seed)?;
         Ok(())
@@ -413,7 +367,6 @@ impl AkitaSerialize for AkitaSetupSeed {
             + self.max_num_points.serialized_size(compress)
             + SETUP_LAYOUT_TAG.len()
             + self.max_setup_len.serialized_size(compress)
-            + self.max_stride.serialized_size(compress)
             + 64
     }
 }
@@ -438,7 +391,6 @@ impl AkitaDeserialize for AkitaSetupSeed {
             ));
         }
         let max_setup_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let max_stride = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
         let mut zk_blinding_seed = [0u8; 32];
@@ -447,7 +399,6 @@ impl AkitaDeserialize for AkitaSetupSeed {
             max_num_vars,
             max_num_batched_polys,
             max_num_points,
-            max_stride,
             max_setup_len,
             public_matrix_seed,
             zk_blinding_seed,
@@ -616,7 +567,6 @@ mod tests {
             max_num_vars: 8,
             max_num_batched_polys: 4,
             max_num_points: 3,
-            max_stride: dimensions.max_width(),
             max_setup_len: total,
             public_matrix_seed: [1u8; 32],
             zk_blinding_seed: [2u8; 32],
@@ -635,8 +585,6 @@ mod tests {
         assert_eq!(dims.a_setup_width, lp.inner_width());
         assert_eq!(dims.b_setup_width, lp.outer_width());
         assert_eq!(dims.d_setup_width, lp.d_matrix_width());
-        assert_eq!(dims.max_rows(), 7);
-        assert_eq!(dims.max_width(), lp.outer_width());
     }
 
     #[test]
@@ -653,8 +601,6 @@ mod tests {
 
         let envelope = SetupMatrixEnvelope::from_role_dimensions(dims).unwrap();
         assert_eq!(envelope.max_setup_len, dims.max_footprint().unwrap());
-        assert_eq!(envelope.max_rows, dims.max_rows());
-        assert_eq!(envelope.max_stride, dims.max_width());
     }
 
     #[test]
@@ -699,7 +645,6 @@ mod tests {
             max_num_vars: 8,
             max_num_batched_polys: 4,
             max_num_points: 3,
-            max_stride: dims.max_width(),
             max_setup_len: total,
             public_matrix_seed: [1u8; 32],
             zk_blinding_seed: [2u8; 32],

@@ -530,7 +530,9 @@ mod tests {
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_field::Prime128OffsetA7F7;
-    use akita_types::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix, MRowLayout};
+    use akita_types::{
+        gadget_row_scalars, AkitaSetupSeed, FlatMatrix, MRowLayout, SetupRoleDimensions,
+    };
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
@@ -576,10 +578,17 @@ mod tests {
         let cols_per_poly_t = stride_t * num_blocks;
         let n_cols_w = num_claims * num_blocks * depth_open;
         let n_cols_t = num_polys_per_point.iter().copied().max().unwrap() * cols_per_poly_t;
-        let max_stride = n_cols_w.max(n_cols_t).max(inner_width);
-        let r_max = n_d.max(n_b).max(n_a);
+        let dimensions = SetupRoleDimensions {
+            n_a,
+            n_b,
+            n_d,
+            a_setup_width: inner_width,
+            b_setup_width: n_cols_t,
+            d_setup_width: n_cols_w,
+        };
+        let max_setup_len = dimensions.max_footprint().unwrap();
 
-        let matrix_entries: Vec<CyclotomicRing<F, D>> = (0..(r_max * max_stride))
+        let matrix_entries: Vec<CyclotomicRing<F, D>> = (0..max_setup_len)
             .map(|idx| {
                 CyclotomicRing::from_coefficients(std::array::from_fn(|coeff| {
                     f(1_000 + (idx * D + coeff) as u128)
@@ -591,7 +600,6 @@ mod tests {
                 max_num_vars: 32,
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
-                max_stride,
                 max_setup_len: matrix_entries.len(),
                 public_matrix_seed: [7u8; 32],
                 zk_blinding_seed: [8u8; 32],

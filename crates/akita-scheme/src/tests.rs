@@ -22,7 +22,9 @@ use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
     TerminalLevelProofShape,
 };
-use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, SetupMatrixEnvelope, Step};
+use akita_types::{
+    AkitaScheduleInputs, AkitaScheduleLookupKey, SetupMatrixEnvelope, SetupRoleDimensions, Step,
+};
 use akita_verifier::direct_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -1366,29 +1368,18 @@ where
     F: akita_field::CanonicalField,
 {
     let _field_marker = core::marker::PhantomData::<F>;
-    let outer_width = lp.outer_width();
-    #[cfg(feature = "zk")]
-    let outer_width = {
-        outer_width
-            .checked_add(akita_types::zk::blinding_column_count::<F>(
-                lp.b_key.row_len(),
-                lp.ring_dimension,
-                lp.log_basis,
-            ))
-            .ok_or_else(|| AkitaError::InvalidSetup("ZK outer width overflow".to_string()))?
-    };
-
-    let rows = lp
-        .a_key
-        .row_len()
-        .max(lp.b_key.row_len())
-        .max(lp.d_key.row_len());
-    let stride = lp.inner_width().max(outer_width).max(
-        lp.d_matrix_width()
-            .checked_mul(max_num_claims.max(1))
-            .ok_or_else(|| AkitaError::InvalidSetup("D matrix width overflow".to_string()))?,
-    );
-    SetupMatrixEnvelope::from_rows_stride(rows, stride)
+    let d_setup_width = lp
+        .d_matrix_width()
+        .checked_mul(max_num_claims.max(1))
+        .ok_or_else(|| AkitaError::InvalidSetup("D matrix width overflow".to_string()))?;
+    SetupMatrixEnvelope::from_role_dimensions(SetupRoleDimensions {
+        n_a: lp.a_key.row_len(),
+        n_b: lp.b_key.row_len(),
+        n_d: lp.d_key.row_len(),
+        a_setup_width: lp.inner_width(),
+        b_setup_width: lp.outer_width(),
+        d_setup_width,
+    })
 }
 
 impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {

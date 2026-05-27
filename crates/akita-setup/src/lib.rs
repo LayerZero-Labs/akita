@@ -62,16 +62,14 @@ where
     {
         match load_expanded_setup::<F, Cfg>(max_num_vars, max_num_batched_polys, max_num_points) {
             Ok(expanded) => {
-                // A cached setup is acceptable only if its current-format
-                // physical backing and remaining layout metadata exactly match
-                // the requested envelope.
+                // A cached setup is acceptable only if its physical backing
+                // and setup-capacity metadata exactly match this request.
                 let cached_total = expanded.shared_matrix.total_ring_elements();
-                let cached_stride = expanded.seed.max_stride;
-                let cached_points = expanded.seed.max_num_points;
                 if cached_total == setup_envelope.max_setup_len
                     && expanded.seed.max_setup_len == setup_envelope.max_setup_len
-                    && cached_stride == setup_envelope.max_stride
-                    && cached_points == max_num_points
+                    && expanded.seed.max_num_vars == max_num_vars
+                    && expanded.seed.max_num_batched_polys == max_num_batched_polys
+                    && expanded.seed.max_num_points == max_num_points
                 {
                     tracing::info!("Loaded setup from disk, rebuilding NTT caches");
                     return AkitaProverSetup::from_expanded(expanded);
@@ -81,16 +79,14 @@ where
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
-                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total={}, stride={}, points={max_num_points}); regenerating",
+                            "Rejected cached setup from {}: have total={cached_total}, need total={}; regenerating",
                             storage_path.display(),
-                            setup_envelope.max_setup_len,
-                            setup_envelope.max_stride
+                            setup_envelope.max_setup_len
                         );
                 } else {
                     tracing::warn!(
-                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total={}, stride={}, points={max_num_points}); regenerating",
-                            setup_envelope.max_setup_len,
-                            setup_envelope.max_stride
+                            "Rejected cached setup: have total={cached_total}, need total={}; regenerating",
+                            setup_envelope.max_setup_len
                         );
                 }
             }
@@ -433,6 +429,7 @@ mod tests {
                         .expect("singleton incidence"),
                 )
                 .unwrap();
+                let role_dimensions = akita_types::SetupRoleDimensions::from_level_params(&lp);
                 let num_coeffs = lp.num_blocks * lp.block_len;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
@@ -447,13 +444,13 @@ mod tests {
                             lp.num_digits_commit,
                             lp.num_digits_open,
                             lp.log_basis,
-                            setup.expanded.seed.max_stride,
+                            role_dimensions.a_setup_width,
                         )
                         .unwrap();
                     mat_vec_mul_ntt_single_i8::<TestF, TEST_D>(
                         &setup.ntt_shared,
                         lp.b_key.row_len(),
-                        setup.expanded.seed.max_stride,
+                        role_dimensions.b_setup_width,
                         inner.decomposed_inner_rows.flat_digits(),
                     )
                 };

@@ -79,7 +79,11 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
             .max(envelope.max_n_b)
             .max(envelope.max_n_d)
             .max(4);
-        SetupMatrixEnvelope::from_rows_stride(rows, 16_384)
+        SetupMatrixEnvelope::from_max_setup_len(
+            rows.checked_mul(16_384).ok_or_else(|| {
+                akita_field::AkitaError::InvalidSetup("setup length overflow".into())
+            })?,
+        )
     }
 
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
