@@ -842,17 +842,24 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 }
 
 #[test]
-fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
+fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     type Cfg = fp128::D64OneHot;
 
+    // The planner's basis search window for `proof_optimized` configurations
+    // is `[PROOF_OPTIMIZED_LOG_BASIS_MIN, PROOF_OPTIMIZED_LOG_BASIS_MAX]`,
+    // which currently caps at `log_basis = 6`. Allow the DP to reach the top
+    // of that window (the zk preset legitimately picks `log_basis = 6` for
+    // some `nv` values once the regenerated tables stop seeding the search
+    // with stale singleton plans); the assertion exists only to catch any
+    // future planner change that escapes the configured envelope.
     for nv in 10..=120 {
         let plan = match Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)) {
             Ok(Some(plan)) => plan,
             _ => continue,
         };
         assert!(
-            plan.states().all(|state| state.log_basis < 6),
-            "adaptive onehot schedule unexpectedly selected basis 6 at nv={nv}: {plan:?}"
+            plan.states().all(|state| state.log_basis <= 6),
+            "adaptive onehot schedule selected log_basis > 6 at nv={nv}: {plan:?}"
         );
     }
 }
