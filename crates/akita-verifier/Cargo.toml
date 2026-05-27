@@ -33,12 +33,7 @@ parallel = [
   "akita-field/parallel",
   "akita-sumcheck/parallel",
 ]
-zk = [
-  "dep:akita-r1cs",
-  "akita-r1cs/zk",
-  "akita-sumcheck/zk",
-  "akita-types/zk",
-]
+zk = ["dep:akita-r1cs", "akita-r1cs/zk", "akita-sumcheck/zk", "akita-types/zk"]
 
 [lints]
 workspace = true

@@ -41,11 +41,7 @@ parallel = [
   "akita-field/parallel",
   "akita-sumcheck/parallel",
 ]
-zk = [
-  "akita-sumcheck/zk",
-  "akita-types/zk",
-  "rand_core/getrandom",
-]
+zk = ["akita-sumcheck/zk", "akita-types/zk", "rand_core/getrandom"]
 
 [lints]
 workspace = true
