@@ -1,5 +1,6 @@
 use super::*;
 
+#[inline]
 pub(super) fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usize>(
     acc: &mut CyclotomicCrtNtt<W, K, D>,
     lhs: &CyclotomicCrtNtt<W, K, D>,
@@ -9,6 +10,7 @@ pub(super) fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, c
     acc.add_assign_pointwise_mul_with_params(lhs, rhs, params);
 }
 
+#[inline]
 pub(super) fn is_zero_plane<const D: usize>(plane: &[i8; D]) -> bool {
     plane.iter().all(|&d| d == 0)
 }

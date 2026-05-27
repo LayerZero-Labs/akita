@@ -1,5 +1,7 @@
 use super::*;
 
+/// Convert a field element to a centered signed byte when it fits.
+#[inline(always)]
 pub fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option<i8> {
     let canonical = coeff.to_canonical_u128();
     let centered = if canonical > half_q {
