@@ -16,25 +16,6 @@ use core::fmt;
 use core::mem::transmute;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
-/// Chebyshev φ fold-back for NEON `uint32x4_t` accumulators (K=8).
-#[inline(always)]
-fn neon_ring_subfield_fp8_add_phi<const P: u32>(
-    out: &mut [uint32x4_t; 8],
-    idx: usize,
-    value: uint32x4_t,
-) {
-    match idx {
-        0 => {
-            out[0] =
-                PackedFp32Neon::<P>::add_vec(out[0], PackedFp32Neon::<P>::add_vec(value, value))
-        }
-        1..=7 => out[idx] = PackedFp32Neon::<P>::add_vec(out[idx], value),
-        8 => {}
-        9..=15 => out[16 - idx] = PackedFp32Neon::<P>::sub_vec(out[16 - idx], value),
-        _ => unreachable!(),
-    }
-}
-
 /// Number of packed `Fp128` lanes in this backend.
 pub const WIDTH: usize = 2;
 
@@ -1021,81 +1002,6 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
                 Self::mul_vec(a3, b0),
             )),
         ]
-    }
-
-    #[inline(always)]
-    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
-        let a = a.map(Self::to_vec);
-        let b = b.map(Self::to_vec);
-
-        let zero = unsafe { vdupq_n_u32(0) };
-        let mut out = [zero; 8];
-
-        let diag: [uint32x4_t; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], b[i]));
-        out[0] = diag[0];
-
-        for k in 1..8 {
-            let mixed_k = Self::sub_vec(
-                Self::sub_vec(
-                    Self::mul_vec(Self::add_vec(a[0], a[k]), Self::add_vec(b[0], b[k])),
-                    diag[0],
-                ),
-                diag[k],
-            );
-            out[k] = Self::add_vec(out[k], mixed_k);
-        }
-
-        for (i, &diag_i) in diag.iter().enumerate().skip(1) {
-            out[0] = Self::add_vec(out[0], Self::add_vec(diag_i, diag_i));
-            neon_ring_subfield_fp8_add_phi::<P>(&mut out, i + i, diag_i);
-        }
-
-        for i in 1..8usize {
-            for j in (i + 1)..8usize {
-                let mixed = Self::sub_vec(
-                    Self::sub_vec(
-                        Self::mul_vec(Self::add_vec(a[i], a[j]), Self::add_vec(b[i], b[j])),
-                        diag[i],
-                    ),
-                    diag[j],
-                );
-                neon_ring_subfield_fp8_add_phi::<P>(&mut out, i + j, mixed);
-                neon_ring_subfield_fp8_add_phi::<P>(&mut out, j - i, mixed);
-            }
-        }
-
-        out.map(Self::from_vec)
-    }
-
-    #[inline(always)]
-    fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
-        let a = a.map(Self::to_vec);
-        let zero = unsafe { vdupq_n_u32(0) };
-        let mut out = [zero; 8];
-
-        let sq: [uint32x4_t; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], a[i]));
-        out[0] = sq[0];
-
-        for k in 1..8 {
-            let cross = Self::mul_vec(a[0], a[k]);
-            out[k] = Self::add_vec(out[k], Self::add_vec(cross, cross));
-        }
-
-        for (i, &sq_i) in sq.iter().enumerate().skip(1) {
-            out[0] = Self::add_vec(out[0], Self::add_vec(sq_i, sq_i));
-            neon_ring_subfield_fp8_add_phi::<P>(&mut out, i + i, sq_i);
-        }
-
-        for i in 1..8usize {
-            for j in (i + 1)..8usize {
-                let cross = Self::mul_vec(a[i], a[j]);
-                let doubled = Self::add_vec(cross, cross);
-                neon_ring_subfield_fp8_add_phi::<P>(&mut out, i + j, doubled);
-                neon_ring_subfield_fp8_add_phi::<P>(&mut out, j - i, doubled);
-            }
-        }
-
-        out.map(Self::from_vec)
     }
 
     #[inline(always)]
