@@ -140,6 +140,18 @@ def parse_args() -> argparse.Namespace:
         default=int(os.environ.get("AKITA_BENCH_RUNS", "1")),
         help="Number of samples to run for each benchmark case; reported timings use the median.",
     )
+    run_parser.add_argument(
+        "--warmups",
+        type=int,
+        default=int(os.environ.get("AKITA_BENCH_WARMUPS", "0")),
+        help=(
+            "Number of warm-up runs executed per case before the measured "
+            "runs. Warm-ups prime CPU caches, the allocator, and any "
+            "lazily-initialized statics (NTT roots, schedule tables) so the "
+            "first measured run is not penalized. Their output is discarded "
+            "and they do not contribute to the reported median."
+        ),
+    )
 
     render_parser = subparsers.add_parser(
         "render", help="Render a markdown report from summary.json files."
@@ -602,27 +614,49 @@ def run_benchmark(args: argparse.Namespace) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     if args.runs <= 0:
         raise ValueError("--runs must be positive")
+    if args.warmups < 0:
+        raise ValueError("--warmups must be non-negative")
 
     cases = configured_cases(args)
     aggregate_summary: dict[str, object] = {
         "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "warmups": args.warmups,
         "cases": [],
     }
     overall_return_code = 0
 
     for case in cases:
         case_dir = output_dir / case.case_id
+        # Warm-up runs: prime caches, allocator, and lazily-initialized
+        # statics (NTT roots, schedule tables) so the first measured run
+        # is not penalized. Output is discarded on success; on failure we
+        # surface the warm-up's failure summary instead of running the
+        # measured loop (rerunning a known-broken case would just repeat
+        # the same error).
         run_summaries = []
-        for run_index in range(1, args.runs + 1):
-            run_dir = case_dir if args.runs == 1 else case_dir / f"run-{run_index}"
-            summary, return_code = run_benchmark_case(args.binary, run_dir, case)
-            summary["run_index"] = run_index
-            run_summaries.append(summary)
+        warmup_failure_summary: dict[str, object] | None = None
+        for warmup_index in range(1, args.warmups + 1):
+            warmup_dir = case_dir / f"warmup-{warmup_index}"
+            summary, return_code = run_benchmark_case(args.binary, warmup_dir, case)
             if return_code != 0:
+                summary["run_index"] = 0
+                warmup_failure_summary = summary
                 if overall_return_code == 0:
                     overall_return_code = return_code
                 break
+        if warmup_failure_summary is not None:
+            run_summaries.append(warmup_failure_summary)
+        else:
+            for run_index in range(1, args.runs + 1):
+                run_dir = case_dir if args.runs == 1 else case_dir / f"run-{run_index}"
+                summary, return_code = run_benchmark_case(args.binary, run_dir, case)
+                summary["run_index"] = run_index
+                run_summaries.append(summary)
+                if return_code != 0:
+                    if overall_return_code == 0:
+                        overall_return_code = return_code
+                    break
         aggregate_summary["cases"].append(combine_case_run_summaries(run_summaries))
 
     write_text(
@@ -1036,6 +1070,8 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
 def render_report(args: argparse.Namespace) -> int:
     summary_path = pathlib.Path(args.summary)
     current_cases = load_case_summaries(summary_path)
+    raw_summary = load_summary(summary_path)
+    warmups = int(raw_summary.get("warmups", 0) or 0)
 
     baselines: list[tuple[str, dict[str, dict[str, object]] | None]] = [
         ("Main baseline", load_optional_case_summaries(args.main_baseline_dir)),
@@ -1150,8 +1186,14 @@ def render_report(args: argparse.Namespace) -> int:
             "`AKITA_PROFILE_LOG=info` `AKITA_PROFILE_ANSI=0`."
         )
         runs = int(current.get("runs", 1))
-        if runs > 1:
-            print(f"- Samples: metrics are the median of `{runs}` runs; Max RSS is the maximum sample.")
+        if runs > 1 or warmups > 0:
+            warmup_clause = (
+                f" after `{warmups}` discarded warm-up run(s)" if warmups > 0 else ""
+            )
+            print(
+                f"- Samples: metrics are the median of `{runs}` runs{warmup_clause}; "
+                "Max RSS is the maximum sample."
+            )
         print()
 
         case_baselines = [
