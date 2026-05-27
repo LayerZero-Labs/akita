@@ -77,6 +77,8 @@ cd "$repo_root" || exit 2
 
 baseline_paths=()
 baseline_counts=()
+baseline_consumed=()
+tracked_rust_paths=()
 errors=0
 
 record_error() {
@@ -86,6 +88,26 @@ record_error() {
 
 physical_line_count() {
     awk 'END { print NR }' "$1"
+}
+
+load_tracked_rust_paths() {
+    local file
+    while IFS= read -r -d '' file; do
+        tracked_rust_paths+=("$file")
+    done < <(git ls-files -z -- '*.rs')
+}
+
+tracked_rust_index() {
+    local target="$1"
+    local i=0
+    while [ "$i" -lt "${#tracked_rust_paths[@]}" ]; do
+        if [ "${tracked_rust_paths[$i]}" = "$target" ]; then
+            echo "$i"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+    return 1
 }
 
 baseline_index() {
@@ -157,15 +179,18 @@ load_baseline() {
             continue
         fi
 
-        if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
-            record_error "$file:$line_number: baseline path is not a tracked file: $path"
+        if ! tracked_rust_index "$path" >/dev/null; then
+            record_error "$file:$line_number: baseline path is not an exact tracked Rust file: $path"
             continue
         fi
 
         baseline_paths+=("$path")
         baseline_counts+=("$count")
+        baseline_consumed+=(false)
     done < "$file"
 }
+
+load_tracked_rust_paths
 
 if [ "$use_baseline" = true ]; then
     load_baseline "$baseline_path"
@@ -173,13 +198,14 @@ fi
 
 scanned=0
 
-while IFS= read -r -d '' file; do
+for file in "${tracked_rust_paths[@]}"; do
     scanned=$((scanned + 1))
     lines="$(physical_line_count "$file")"
     idx=""
 
     if idx="$(baseline_index "$file")"; then
         recorded="${baseline_counts[$idx]}"
+        baseline_consumed[$idx]=true
     else
         recorded=""
     fi
@@ -195,7 +221,15 @@ while IFS= read -r -d '' file; do
     elif [ -n "$recorded" ]; then
         record_error "$file has $lines lines, at or below the cap of $max_lines; remove its baseline entry"
     fi
-done < <(git ls-files -z -- '*.rs')
+done
+
+i=0
+while [ "$i" -lt "${#baseline_paths[@]}" ]; do
+    if [ "${baseline_consumed[$i]}" != true ]; then
+        record_error "baseline path was not scanned as a tracked Rust file: ${baseline_paths[$i]}"
+    fi
+    i=$((i + 1))
+done
 
 if [ "$errors" -ne 0 ]; then
     cat >&2 <<EOF

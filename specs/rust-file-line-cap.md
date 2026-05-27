@@ -31,14 +31,17 @@ modularized.
 
 - Every tracked `.rs` file not listed in the line-cap baseline must have at
   most 1500 physical lines.
-- Every baseline entry must name a tracked Rust file that currently exceeds
-  1500 lines.
+- Every baseline entry must name the exact canonical repo-relative path of a
+  tracked Rust file that currently exceeds 1500 lines, as emitted by
+  `git ls-files -z -- '*.rs'`. Git pathspecs or noncanonical spellings such as
+  `./src/foo.rs` are invalid baseline rows.
 - A baseline file may not grow beyond its recorded line count.
 - A baseline entry becomes stale once the file reaches 1500 lines or fewer;
   stale entries must make CI fail so the baseline shrinks over time.
 - Malformed baseline rows must fail clearly, including invalid counts,
-  duplicate paths, non-Rust paths, absolute or parent-directory paths, and
-  paths that are not tracked by Git.
+  duplicate paths, non-Rust paths, absolute or parent-directory paths,
+  noncanonical or pathspec-shaped paths, and paths that are not exact tracked
+  Rust paths.
 - The check must include Rust files under `src`, `tests`, `benches`,
   `examples`, and generated source directories. Generated files are not
   special-cased unless a future generated file is explicitly baselined.
@@ -71,7 +74,8 @@ modularized.
   must not rely on or inherit files from earlier cases.
 - [ ] The self-test script exercises malformed baseline validation for
   duplicate paths, untracked paths, invalid line counts, non-Rust paths,
-  absolute paths, and parent-directory paths.
+  absolute paths, parent-directory paths, noncanonical paths, and
+  pathspec-shaped paths.
 - [ ] The script passes on the current branch when the baseline matches the
   audited current offenders.
 - [ ] GitHub CI runs both the self-test script and the repository line-cap
@@ -97,7 +101,8 @@ fixtures from earlier scenarios cannot make later success or failure checks pass
 by coincidence. The self-tests must cover at least: a new unbaselined offender,
 baseline growth, stale baseline removal, a tracked Rust path containing a
 space, duplicate baseline rows, untracked baseline paths, invalid line counts,
-non-Rust paths, absolute paths, and parent-directory paths.
+non-Rust paths, absolute paths, parent-directory paths, noncanonical paths such
+as `./src/foo.rs`, and pathspec-shaped paths such as `*.rs`.
 Existing format, Clippy, doc, and test jobs are unchanged.
 
 ### Performance
@@ -180,12 +185,13 @@ Use a verification ladder matched to risk:
 - Backend and kernel splits additionally run representative profile or bench
   commands before their baseline rows are removed.
 
-## Four-PR Modularization Plan
+## Five-PR Modularization Plan
 
-The baseline cleanup should land as four follow-up PRs. Fewer PRs would make the
-displayed diff too large to review confidently; more PRs would overpay the repo's
-merge latency. Each PR must be internally commit-sliced, but each PR should
-remove all of its listed baseline rows before merge.
+The baseline cleanup should land as five follow-up PRs. Four PRs forced the
+correctness-sensitive protocol and sumcheck work into one very large review;
+more than five PRs would overpay the repo's merge latency. Each PR must be
+internally commit-sliced, but each PR should remove all of its listed baseline
+rows before merge.
 
 Every PR in this sequence must:
 
@@ -264,8 +270,9 @@ Implementation order:
    `tower_fp4`, `power_fp4`, `ring_subfield_fp4`, `ring_subfield_fp8`, and
    tests. Keep multiplication backend traits near the family that consumes them.
 3. Split `crates/akita-field/src/fields/fp128.rs` after `ext.rs`, separating
-   core arithmetic, trait impls, named prime configs, FFT config impls, and
-   tests while preserving the existing exports from `fields::mod`.
+   `core`, `add_sub`, `reduce`, `mul`, `wide`, trait impls, named prime/FFT
+   config impls, and tests while preserving the existing exports from
+   `fields::mod`.
 4. Remove the three corresponding baseline rows.
 
 Minimum verification:
@@ -276,11 +283,44 @@ Minimum verification:
 - `cargo test -p akita-field`
 - `cargo clippy --all --message-format=short -q -- -D warnings`
 
-### PR C: Sumcheck And Protocol Flow
+### PR C: Hot Backend And Kernel Files
 
-Goal: split the correctness-sensitive protocol and verifier replay files after
-the shared type modules are smaller. This is the largest PR by displayed diff,
-so it must be commit-sliced and move-only whenever possible.
+Goal: remove the two performance-sensitive baseline rows before the
+correctness-sensitive protocol split. This work is not technically dependent on
+sumcheck or protocol-flow modularization, and moving it earlier keeps the later
+protocol reviews smaller.
+
+Targets:
+
+- `crates/akita-prover/src/backend/onehot.rs`
+- `crates/akita-prover/src/kernels/linear.rs`
+
+Implementation order:
+
+1. Split `onehot.rs` by storage representation and operation family:
+   `blocks`, `poly`, `ops`, `fold`, `inner_ajtai`, `column_sweep`, and tests.
+   Keep public backend exports stable.
+2. Split `linear.rs` by kernel family: `decompose`, `ntt_matvec`,
+   `digit_matvec`, `block_parallel`, `single_cyclic`, `fused_quotients`, and
+   tests.
+3. Remove the two corresponding baseline rows.
+
+Minimum verification:
+
+- `cargo fmt -q`
+- `scripts/check-rust-file-lines.sh`
+- `cargo test -p akita-prover`
+- `cargo test`
+- `cargo clippy --all --message-format=short -q -- -D warnings`
+- Representative profile or benchmark runs for one-hot and dense paths before
+  removing the backend/kernel baseline rows.
+
+### PR D: Sumcheck Engine
+
+Goal: split the prover sumcheck stage implementations and the shared
+extension-opening reduction before touching the higher-level protocol flow.
+This keeps the arithmetic/state-machine review coherent without also carrying
+transcript assembly and verifier replay changes.
 
 Targets:
 
@@ -288,10 +328,6 @@ Targets:
 - `crates/akita-prover/src/protocol/sumcheck/akita_stage1.rs`
 - `crates/akita-prover/src/protocol/sumcheck/akita_stage2.rs`
 - `crates/akita-sumcheck/src/extension_opening_reduction.rs`
-- `crates/akita-prover/src/protocol/ring_switch.rs`
-- `crates/akita-prover/src/protocol/quadratic_equation.rs`
-- `crates/akita-verifier/src/protocol/levels.rs`
-- `crates/akita-prover/src/protocol/flow.rs`
 
 Implementation order:
 
@@ -305,20 +341,47 @@ Implementation order:
 4. Split `extension_opening_reduction.rs` into tensor helpers, dense prover,
    sparse witness/factors, batched prover, verifier/sumcheck wrapper,
    validation helpers, and tests.
-5. Split `ring_switch.rs` into finalization, commitment construction, eval
+5. Remove the four corresponding baseline rows.
+
+Minimum verification:
+
+- `cargo fmt -q`
+- `scripts/check-rust-file-lines.sh`
+- `cargo test -p akita-prover`
+- `cargo test -p akita-sumcheck`
+- `cargo test`
+- `cargo clippy --all --message-format=short -q -- -D warnings`
+
+### PR E: Protocol Flow And Replay
+
+Goal: split the remaining correctness-sensitive protocol flow and verifier
+replay files after the shared types, backend/kernel code, and sumcheck engine
+are already smaller. This isolates transcript/proof-ordering risk in the final
+line-cap cleanup PR.
+
+Targets:
+
+- `crates/akita-prover/src/protocol/ring_switch.rs`
+- `crates/akita-prover/src/protocol/quadratic_equation.rs`
+- `crates/akita-verifier/src/protocol/levels.rs`
+- `crates/akita-prover/src/protocol/flow.rs`
+
+Implementation order:
+
+1. Split `ring_switch.rs` into finalization, commitment construction, eval
    builders, coefficient construction, and tests.
-6. Split `quadratic_equation.rs` into decompose-fold validation, witness
+2. Split `quadratic_equation.rs` into decompose-fold validation, witness
    aggregation/V-row construction, high-half and cyclic products,
    `compute_r_split_eq`, `generate_y`, and tests.
-7. Split verifier `levels.rs` by replay phase: ZK hiding, root level,
+3. Split verifier `levels.rs` by replay phase: ZK hiding, root level,
    recursive level, terminal level, dispatch, and shared validation helpers.
    Preserve the verifier no-panic boundary by keeping validation near API
    boundaries.
-8. Split prover `flow.rs` last into `inputs`, `zk_hiding`, `proof_steps`,
+4. Split prover `flow.rs` last into `inputs`, `zk_hiding`, `proof_steps`,
    `recursive_suffix`, `recursive_level`, `terminal_level`, `root_extension`,
    and `root_fold`. Avoid changing transcript ordering or compute-backend
    plumbing during this split.
-9. Remove the eight corresponding baseline rows.
+5. Remove the four corresponding baseline rows.
 
 Minimum verification:
 
@@ -326,39 +389,8 @@ Minimum verification:
 - `scripts/check-rust-file-lines.sh`
 - `cargo test -p akita-prover`
 - `cargo test -p akita-verifier`
-- `cargo test -p akita-sumcheck`
 - `cargo test`
 - `cargo clippy --all --message-format=short -q -- -D warnings`
-
-### PR D: Hot Backend And Kernel Files
-
-Goal: remove the final two baseline rows from performance-sensitive code after
-the protocol splits are already merged. Keep this separate so benchmark fallout
-does not block the structural protocol cleanup.
-
-Targets:
-
-- `crates/akita-prover/src/backend/onehot.rs`
-- `crates/akita-prover/src/kernels/linear.rs`
-
-Implementation order:
-
-1. Split `onehot.rs` by storage representation and operation family:
-   `blocks`, `poly`, `ops`, `fold`, `inner_ajtai`, `column_sweep`, and tests.
-2. Split `linear.rs` by kernel family: `decompose`, `ntt_matvec`,
-   `digit_matvec`, `block_parallel`, `single_cyclic`, `fused_quotients`, and
-   tests.
-3. Remove the final two baseline rows.
-
-Minimum verification:
-
-- `cargo fmt -q`
-- `scripts/check-rust-file-lines.sh`
-- `cargo test -p akita-prover`
-- `cargo test`
-- `cargo clippy --all --message-format=short -q -- -D warnings`
-- Representative profile or benchmark runs for one-hot and dense paths before
-  removing the backend/kernel baseline rows.
 
 ## Design
 
@@ -379,6 +411,9 @@ scans only tracked Rust files.
 
 The baseline file is a TSV with recorded line count and path. The recorded
 count is an upper bound for the current offender, not a permanent exemption.
+Baseline paths are matched against the exact canonical tracked Rust path set
+from `git ls-files -z -- '*.rs'`; Git pathspec validation is not sufficient
+because pathspec-shaped rows can validate but fail to match the scanned path.
 Once a file is modularized below the cap, the script rejects the stale baseline
 entry and the implementation PR must remove it.
 

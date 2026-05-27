@@ -114,6 +114,18 @@ track_all "$repo"
 expect_failure "stale baseline" "$repo" "remove its baseline entry"
 
 repo="$(new_repo)"
+write_lines "$repo/src/small.rs" 5
+write_baseline "$repo" $'6\t./src/small.rs'
+track_all "$repo"
+expect_failure "noncanonical baseline path" "$repo" "baseline path is not an exact tracked Rust file"
+
+repo="$(new_repo)"
+write_lines "$repo/src/small.rs" 5
+write_baseline "$repo" $'6\t*.rs'
+track_all "$repo"
+expect_failure "pathspec-shaped baseline path" "$repo" "baseline path is not an exact tracked Rust file"
+
+repo="$(new_repo)"
 write_lines "$repo/src/legacy.rs" 6
 write_baseline "$repo" $'6\tsrc/legacy.rs' $'6\tsrc/legacy.rs'
 track_all "$repo"
@@ -122,7 +134,7 @@ expect_failure "duplicate baseline path" "$repo" "duplicate baseline path"
 repo="$(new_repo)"
 write_baseline "$repo" $'6\tsrc/missing.rs'
 track_all "$repo"
-expect_failure "untracked baseline path" "$repo" "baseline path is not a tracked file"
+expect_failure "untracked baseline path" "$repo" "baseline path is not an exact tracked Rust file"
 
 repo="$(new_repo)"
 write_lines "$repo/src/legacy.rs" 6
