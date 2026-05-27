@@ -9,6 +9,5 @@
 2725	crates/akita-prover/src/protocol/sumcheck/akita_stage1.rs
 2243	crates/akita-sumcheck/src/extension_opening_reduction.rs
 2057	crates/akita-verifier/src/protocol/levels.rs
-1921	crates/akita-field/src/fields/fp128.rs
 1771	crates/akita-prover/src/protocol/quadratic_equation.rs
 1576	crates/akita-prover/src/protocol/ring_switch.rs
