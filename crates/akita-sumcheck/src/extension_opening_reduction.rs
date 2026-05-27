@@ -635,7 +635,7 @@ fn accumulate_dense_round<E: FieldCore>(
     witness_evals: &[E],
     factor_evals: &[E],
     coeff: E,
-) -> (E, E, E) {
+) -> (E, E) {
     let _span = tracing::trace_span!(
         "dense_extension_reduction_accumulate_round",
         table_len = witness_evals.len()
@@ -644,54 +644,47 @@ fn accumulate_dense_round<E: FieldCore>(
     debug_assert_eq!(witness_evals.len(), factor_evals.len());
     let half = witness_evals.len() / 2;
     if coeff == E::zero() {
-        return (E::zero(), E::zero(), E::zero());
+        return (E::zero(), E::zero());
     }
 
     #[cfg(feature = "parallel")]
     {
         if half >= DENSE_PARALLEL_PAIR_THRESHOLD {
-            let (constant, linear, quadratic) = (0..half)
+            let (constant, quadratic) = (0..half)
                 .into_par_iter()
                 .fold(
-                    || (E::zero(), E::zero(), E::zero()),
-                    |(mut constant, mut linear, mut quadratic), i| {
+                    || (E::zero(), E::zero()),
+                    |(mut constant, mut quadratic), i| {
                         let w0 = witness_evals[2 * i];
                         let w1 = witness_evals[2 * i + 1];
                         let a0 = factor_evals[2 * i];
                         let a1 = factor_evals[2 * i + 1];
-                        let dw = w1 - w0;
-                        let da = a1 - a0;
 
                         constant += w0 * a0;
-                        linear += dw * a0 + w0 * da;
-                        quadratic += dw * da;
-                        (constant, linear, quadratic)
+                        quadratic += (w1 - w0) * (a1 - a0);
+                        (constant, quadratic)
                     },
                 )
                 .reduce(
-                    || (E::zero(), E::zero(), E::zero()),
-                    |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2),
+                    || (E::zero(), E::zero()),
+                    |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
                 );
-            return (coeff * constant, coeff * linear, coeff * quadratic);
+            return (coeff * constant, coeff * quadratic);
         }
     }
 
     let mut constant = E::zero();
-    let mut linear = E::zero();
     let mut quadratic = E::zero();
     for i in 0..half {
         let w0 = witness_evals[2 * i];
         let w1 = witness_evals[2 * i + 1];
         let a0 = factor_evals[2 * i];
         let a1 = factor_evals[2 * i + 1];
-        let dw = w1 - w0;
-        let da = a1 - a0;
 
         constant += w0 * a0;
-        linear += dw * a0 + w0 * da;
-        quadratic += dw * da;
+        quadratic += (w1 - w0) * (a1 - a0);
     }
-    (coeff * constant, coeff * linear, coeff * quadratic)
+    (coeff * constant, coeff * quadratic)
 }
 
 fn fold_dense_reduction_tables_in_place<E: FieldCore>(
@@ -790,18 +783,14 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver
             self.current_witness_evals.len()
         );
 
-        let (constant, linear, quadratic) = accumulate_dense_round(
+        let (constant, quadratic) = accumulate_dense_round(
             &self.current_witness_evals,
             &self.current_factor_evals,
             E::one(),
         );
+        let linear = previous_claim - constant - constant - quadratic;
 
-        let poly = UniPoly::from_coeffs(vec![constant, linear, quadratic]);
-        debug_assert_eq!(
-            poly.evaluate(&E::zero()) + poly.evaluate(&E::one()),
-            previous_claim
-        );
-        poly
+        UniPoly::from_coeffs(vec![constant, linear, quadratic])
     }
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
@@ -1060,12 +1049,11 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         entries: &[(usize, E)],
         coeff: E,
         factor_pair: &P,
-    ) -> (E, E, E)
+    ) -> (E, E)
     where
         P: Fn(usize) -> (E, E) + Sync,
     {
         let mut constant = E::zero();
-        let mut linear = E::zero();
         let mut quadratic = E::zero();
         let mut i = 0;
         while i < entries.len() {
@@ -1085,26 +1073,20 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
             let (a0, a1) = factor_pair(pair);
             let da = a1 - a0;
             if w0 == E::zero() {
-                linear += w1 * a0;
                 quadratic += w1 * da;
             } else if w1 == E::zero() {
-                let w0_a0 = w0 * a0;
-                let w0_da = w0 * da;
-                constant += w0_a0;
-                linear += w0_da - w0_a0;
-                quadratic -= w0_da;
-            } else {
-                let dw = w1 - w0;
                 constant += w0 * a0;
-                linear += dw * a0 + w0 * da;
-                quadratic += dw * da;
+                quadratic -= w0 * da;
+            } else {
+                constant += w0 * a0;
+                quadratic += (w1 - w0) * da;
             }
         }
 
-        (coeff * constant, coeff * linear, coeff * quadratic)
+        (coeff * constant, coeff * quadratic)
     }
 
-    fn accumulate_entries(entries: &[(usize, E)], factor_evals: &[E], coeff: E) -> (E, E, E) {
+    fn accumulate_entries(entries: &[(usize, E)], factor_evals: &[E], coeff: E) -> (E, E) {
         Self::accumulate_entries_with_factor(entries, coeff, &|pair| {
             (factor_evals[2 * pair], factor_evals[2 * pair + 1])
         })
@@ -1156,14 +1138,7 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         ranges
     }
 
-    fn accumulate_round(
-        &self,
-        factor_evals: &[E],
-        coeff: E,
-        constant: &mut E,
-        linear: &mut E,
-        quadratic: &mut E,
-    ) {
+    fn accumulate_round(&self, factor_evals: &[E], coeff: E, constant: &mut E, quadratic: &mut E) {
         let _span = tracing::trace_span!(
             "SparseExtensionOpeningWitness::accumulate_round",
             table_len = self.table_len,
@@ -1171,7 +1146,7 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         )
         .entered();
         #[cfg(feature = "parallel")]
-        let (round_constant, round_linear, round_quadratic) =
+        let (round_constant, round_quadratic) =
             if self.entries.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
                 self.pair_aligned_ranges()
                     .into_par_iter()
@@ -1179,17 +1154,16 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
                         Self::accumulate_entries(&self.entries[start..end], factor_evals, coeff)
                     })
                     .reduce(
-                        || (E::zero(), E::zero(), E::zero()),
-                        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2),
+                        || (E::zero(), E::zero()),
+                        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
                     )
             } else {
                 Self::accumulate_entries(&self.entries, factor_evals, coeff)
             };
         #[cfg(not(feature = "parallel"))]
-        let (round_constant, round_linear, round_quadratic) =
+        let (round_constant, round_quadratic) =
             Self::accumulate_entries(&self.entries, factor_evals, coeff);
         *constant += round_constant;
-        *linear += round_linear;
         *quadratic += round_quadratic;
     }
 
@@ -1197,7 +1171,6 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         &self,
         coeff: E,
         constant: &mut E,
-        linear: &mut E,
         quadratic: &mut E,
         factor_pair: P,
     ) where
@@ -1210,7 +1183,7 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         )
         .entered();
         #[cfg(feature = "parallel")]
-        let (round_constant, round_linear, round_quadratic) =
+        let (round_constant, round_quadratic) =
             if self.entries.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
                 self.pair_aligned_ranges()
                     .into_par_iter()
@@ -1222,17 +1195,16 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
                         )
                     })
                     .reduce(
-                        || (E::zero(), E::zero(), E::zero()),
-                        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2),
+                        || (E::zero(), E::zero()),
+                        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
                     )
             } else {
                 Self::accumulate_entries_with_factor(&self.entries, coeff, &factor_pair)
             };
         #[cfg(not(feature = "parallel"))]
-        let (round_constant, round_linear, round_quadratic) =
+        let (round_constant, round_quadratic) =
             Self::accumulate_entries_with_factor(&self.entries, coeff, &factor_pair);
         *constant += round_constant;
-        *linear += round_linear;
         *quadratic += round_quadratic;
     }
 
@@ -1615,22 +1587,20 @@ impl<E: FieldCore> BatchedExtensionOpeningWitness<E> {
         factor: &BatchedExtensionOpeningFactor<E>,
         coeff: E,
         constant: &mut E,
-        linear: &mut E,
         quadratic: &mut E,
     ) {
         match (self, factor) {
             (Self::Dense(witness_evals), BatchedExtensionOpeningFactor::Dense(factor_evals)) => {
-                let (round_constant, round_linear, round_quadratic) =
+                let (round_constant, round_quadratic) =
                     accumulate_dense_round(witness_evals, factor_evals, coeff);
                 *constant += round_constant;
-                *linear += round_linear;
                 *quadratic += round_quadratic;
             }
             (Self::Sparse(witness), BatchedExtensionOpeningFactor::Dense(factor_evals)) => {
-                witness.accumulate_round(factor_evals, coeff, constant, linear, quadratic);
+                witness.accumulate_round(factor_evals, coeff, constant, quadratic);
             }
             (Self::Sparse(witness), BatchedExtensionOpeningFactor::Tensor(factor)) => {
-                witness.accumulate_round_with_factor(coeff, constant, linear, quadratic, |pair| {
+                witness.accumulate_round_with_factor(coeff, constant, quadratic, |pair| {
                     factor.factor_pair(pair)
                 });
             }
@@ -1858,7 +1828,6 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for BatchedExtensionOpeningReductio
 
     fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E> {
         let mut constant = E::zero();
-        let mut linear = E::zero();
         let mut quadratic = E::zero();
 
         for term in &self.terms {
@@ -1872,17 +1841,12 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for BatchedExtensionOpeningReductio
                 &term.current_factor,
                 term.coeff,
                 &mut constant,
-                &mut linear,
                 &mut quadratic,
             );
         }
 
-        let poly = UniPoly::from_coeffs(vec![constant, linear, quadratic]);
-        debug_assert_eq!(
-            poly.evaluate(&E::zero()) + poly.evaluate(&E::one()),
-            previous_claim
-        );
-        poly
+        let linear = previous_claim - constant - constant - quadratic;
+        UniPoly::from_coeffs(vec![constant, linear, quadratic])
     }
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
