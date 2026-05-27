@@ -24,14 +24,16 @@ use akita_field::{
     MulBase, RandomSampling,
 };
 use akita_transcript::labels::{
-    ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
+    ABSORB_SUMCHECK_W, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0,
+    CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
-    FlatRingVec, LevelParams, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingSubfieldEncoding,
+    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup,
+    DirectWitnessProof, FlatDigitBlocks, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
+    TerminalWitnessSegmentLayout,
 };
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -303,6 +305,50 @@ where
     )
 }
 
+/// Terminal variant of [`ring_switch_finalize`].
+///
+/// The terminal fold binds logical `w_hat` before fold challenge sampling.
+/// This function binds the remaining final-witness bytes before ring-switch
+/// challenge sampling.
+///
+/// # Errors
+///
+/// Returns an error if terminal witness slicing fails, the final witness does
+/// not match the ring-switch witness, or ring-switch finalization fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_terminal<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: &RecursiveWitnessFlat,
+    final_witness: &DirectWitnessProof<F>,
+    terminal_layout: TerminalWitnessSegmentLayout,
+    lp: &LevelParams,
+) -> Result<RingSwitchOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
+    let gamma = quad_eq
+        .gamma()
+        .iter()
+        .copied()
+        .map(E::lift_base)
+        .collect::<Vec<_>>();
+    ring_switch_finalize_terminal_with_gamma::<F, E, T, D>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        final_witness,
+        terminal_layout,
+        lp,
+        &gamma,
+    )
+}
+
 /// Complete ring switching with caller-supplied proof-scalar batching
 /// coefficients.
 ///
@@ -341,6 +387,50 @@ where
         lp,
         gamma,
         m_row_layout,
+    )
+}
+
+/// Terminal variant of [`ring_switch_finalize_with_gamma`].
+///
+/// This owns the terminal final-witness remainder absorb before sampling
+/// ring-switch challenges.
+///
+/// # Errors
+///
+/// Returns an error if terminal witness slicing fails, the supplied gamma
+/// vector has the wrong shape, or ring-switch finalization fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_terminal_with_gamma<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: &RecursiveWitnessFlat,
+    final_witness: &DirectWitnessProof<F>,
+    terminal_layout: TerminalWitnessSegmentLayout,
+    lp: &LevelParams,
+    gamma: &[E],
+) -> Result<RingSwitchOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
+    let parts = final_witness.terminal_transcript_parts(terminal_layout)?;
+    if final_witness.packed_i8_digits()?.as_slice() != w.as_i8_digits() {
+        return Err(AkitaError::InvalidInput(
+            "terminal final witness does not match ring-switch witness".to_string(),
+        ));
+    }
+    transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
+    ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        lp,
+        gamma,
+        MRowLayout::Terminal,
     )
 }
 
@@ -392,9 +482,12 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("ring-switch row count overflow".to_string()))?
         .trailing_zeros() as usize;
 
-    let tau0: Vec<E> = (0..num_sc_vars)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-        .collect();
+    let tau0: Vec<E> = match m_row_layout {
+        MRowLayout::Intermediate => (0..num_sc_vars)
+            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+            .collect(),
+        MRowLayout::Terminal => Vec::new(),
+    };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();

@@ -20,7 +20,7 @@ use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::{AkitaExpandedSetup, SetupArtifactDigests};
+use akita_types::AkitaExpandedSetup;
 use std::array::from_fn;
 use std::sync::Arc;
 
@@ -200,14 +200,11 @@ where
         expanded: Arc<AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup<D>, AkitaError>;
 
-    /// Cached setup-artifact identity for this prepared context.
-    ///
-    /// The digest pair is an identity check only: canonical setup metadata
-    /// remains owned by the public prover setup passed into prover APIs.
-    fn prepared_setup_digests<const D: usize>(
+    /// Expanded setup used to prepare this backend context.
+    fn prepared_expanded_setup<'a, const D: usize>(
         &self,
-        prepared: &Self::PreparedSetup<D>,
-    ) -> SetupArtifactDigests;
+        prepared: &'a Self::PreparedSetup<D>,
+    ) -> &'a AkitaExpandedSetup<F>;
 
     /// Ensure explicit setup metadata and backend-prepared state match.
     fn validate_prepared_setup<const D: usize>(
@@ -215,7 +212,11 @@ where
         prepared: &Self::PreparedSetup<D>,
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<(), AkitaError> {
-        if self.prepared_setup_digests::<D>(prepared) != expanded.descriptor_digests {
+        let prepared_expanded = self.prepared_expanded_setup::<D>(prepared);
+        // Valid setup matrices are deterministic from the seed; compare the
+        // compact setup identity so independently materialized equivalent
+        // setups validate without re-hashing the matrix on every prover call.
+        if prepared_expanded.seed() != expanded.seed() {
             return Err(AkitaError::InvalidSetup(
                 "prepared compute context was built for a different setup".to_string(),
             ));
@@ -422,11 +423,11 @@ where
         })
     }
 
-    fn prepared_setup_digests<const D: usize>(
+    fn prepared_expanded_setup<'a, const D: usize>(
         &self,
-        prepared: &Self::PreparedSetup<D>,
-    ) -> SetupArtifactDigests {
-        prepared.expanded.descriptor_digests
+        prepared: &'a Self::PreparedSetup<D>,
+    ) -> &'a AkitaExpandedSetup<F> {
+        prepared.expanded.as_ref()
     }
 }
 
@@ -730,6 +731,19 @@ mod tests {
                 .is_err(),
             "prepared context must stay bound to the setup used to create it"
         );
+    }
+
+    #[test]
+    fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
+        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
+        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
+        assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
+
+        let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
+
+        CpuBackend
+            .validate_prepared_setup::<D>(&prepared, setup_b.expanded.as_ref())
+            .expect("equivalent deterministic setup should validate");
     }
 
     #[test]

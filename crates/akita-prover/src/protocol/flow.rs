@@ -3,8 +3,8 @@
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_after_absorb,
-    ring_switch_finalize_with_gamma, ring_switch_finalize_with_gamma_after_absorb,
+    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
+    ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
     NextWitnessCommitment, RingSwitchOutput,
 };
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
@@ -44,7 +44,7 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, ABSORB_SUMCHECK_W, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -57,13 +57,13 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs,
-    AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits,
-    ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof,
-    FlatRingVec, IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
-    TerminalLevelProof,
+    schedule_root_fold_step, terminal_witness_segment_layout, validate_batched_inputs,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
+    AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
+    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof,
+    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
+    MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
+    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -1614,9 +1614,9 @@ where
 /// * builds `logical_w` via ring switching,
 /// * packs it into the terminal [`DirectWitnessProof`] using
 ///   `final_log_basis` as the planner-mandated minimum bits per element,
-/// * absorbs the cleartext witness via [`ABSORB_SUMCHECK_W`] before sampling
-///   any ring-switch challenges (so the challenges bind to the actual
-///   witness, fixing the prior soundness gap),
+/// * absorbs logical `w_hat` before fold challenge sampling when the
+///   quadratic equation is built, then absorbs the remaining final-witness
+///   bytes before sampling any ring-switch challenges,
 /// * skips the stage-1 sumcheck entirely (packed-digit range is structurally
 ///   enforced by the packing), and
 /// * runs stage-2 in relation-only mode with `batching_coeff = 0`,
@@ -1656,21 +1656,23 @@ where
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
 {
+    let terminal_layout = terminal_witness_segment_layout(
+        lp,
+        quad_eq.claim_to_point().len(),
+        quad_eq.num_public_rows(),
+    )?;
     let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
     let final_witness = DirectWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
-    // Bind the ring-switch challenges to the actual cleartext witness rather
-    // than to a separate commitment, so the verifier-recomputed challenges
-    // depend on the same witness it sees in the proof.
-    transcript.append_serde(ABSORB_SUMCHECK_W, &final_witness);
-    let rs = ring_switch_finalize_after_absorb::<F, L, T, { D }>(
+    let rs = ring_switch_finalize_terminal::<F, L, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
         &logical_w,
+        &final_witness,
+        terminal_layout,
         lp,
-        MRowLayout::Terminal,
     )?;
 
     // Terminal layout drops the D-block: the relation claim no longer sums
@@ -4143,6 +4145,11 @@ where
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
 {
+    let terminal_layout = terminal_witness_segment_layout(
+        lp,
+        quad_eq.claim_to_point().len(),
+        quad_eq.num_public_rows(),
+    )?;
     let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
     if logical_w.len() != expected_w_len {
         return Err(AkitaError::InvalidSetup(format!(
@@ -4153,16 +4160,16 @@ where
     let final_witness = DirectWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
-    transcript.append_serde(ABSORB_SUMCHECK_W, &final_witness);
 
-    let rs = ring_switch_finalize_with_gamma_after_absorb::<F, C, T, { D }>(
+    let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
         &logical_w,
+        &final_witness,
+        terminal_layout,
         lp,
         &row_coefficients,
-        MRowLayout::Terminal,
     )?;
 
     // Terminal layout: the D-block is omitted, so the relation claim sums no
@@ -4277,17 +4284,18 @@ mod tests {
     type E = Fp2<F, NegOneNr>;
 
     fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup::from_parts(
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 4,
                 max_num_points: 2,
                 max_stride: 1,
+                gen_ring_dim: 1,
+                total_ring_elements: 1,
                 public_matrix_seed: [0u8; 32],
             },
             FlatMatrix::from_flat_data(vec![F::zero()], 1),
         )
-        .unwrap()
     }
 
     #[test]

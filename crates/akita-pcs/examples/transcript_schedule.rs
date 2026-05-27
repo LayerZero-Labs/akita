@@ -21,10 +21,11 @@ fn main() {
         &F::from_canonical_u128_reduced(42),
     );
     let _ = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
-    transcript.append_bytes(labels::ABSORB_RING_SWITCH_MESSAGE, b"ring-switch");
+    transcript.append_bytes(labels::ABSORB_TERMINAL_W_HAT, b"terminal-w-hat");
+    let _ = transcript.challenge_scalar(labels::CHALLENGE_SPARSE_CHALLENGE);
+    transcript.append_bytes(labels::ABSORB_TERMINAL_W_REMAINDER, b"terminal-w-remainder");
     let _ = transcript.challenge_scalar(labels::CHALLENGE_RING_SWITCH);
-    transcript.append_bytes(labels::ABSORB_SUMCHECK_W, b"final-w");
-    let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
+    let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU1);
 
     transcript.assert_smell_checks();
     println!(

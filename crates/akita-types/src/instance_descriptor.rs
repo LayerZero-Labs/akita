@@ -5,12 +5,12 @@
 //! Akita encodings. The top-level descriptor remains self-describing and
 //! round-trippable so both prover and verifier can compare preamble bytes.
 
+use crate::descriptor_bytes::{push_usize, push_usize_vec, sis_family_tag};
 use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, ClaimIncidenceSummary, DecompositionParams,
-    DirectWitnessShape, FlatMatrix, FoldStep, LevelParams, Schedule, SisModulusFamily, Step,
+    LevelParams, Schedule, SisModulusFamily,
 };
-use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -18,68 +18,25 @@ use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use std::io::{Read, Write};
 
-/// Descriptor schema version for transcript-hardening v1.
+/// Descriptor schema version for the in-development transcript preamble.
 pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
 
-/// Cached digest identities for setup artifacts.
+/// Compute the descriptor digest for a deterministic setup seed.
 ///
-/// These digests are setup-derived metadata, not proof-time work. Computing
-/// `shared_matrix_digest` serializes the full expanded matrix, so callers on
-/// prove/verify hot paths should reuse this cached value rather than calling
-/// [`SetupSection::from_parts`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SetupArtifactDigests {
-    /// Digest of the canonical `AkitaSetupSeed` bytes.
-    pub setup_seed_digest: DescriptorDigest,
-    /// Digest of the canonical expanded shared-matrix artifact bytes.
-    pub shared_matrix_digest: DescriptorDigest,
-}
-
-impl SetupArtifactDigests {
-    /// Compute setup artifact digests from the concrete setup data.
-    ///
-    /// # Errors
-    ///
-    /// Returns a serialization error if either artifact cannot be canonically
-    /// serialized.
-    pub fn from_parts<F>(
-        setup_seed: &AkitaSetupSeed,
-        shared_matrix: &FlatMatrix<F>,
-    ) -> Result<Self, SerializationError>
-    where
-        F: FieldCore + AkitaSerialize,
-    {
-        Ok(Self {
-            setup_seed_digest: digest_serializable(setup_seed)?,
-            shared_matrix_digest: digest_serializable(shared_matrix)?,
-        })
-    }
-
-    /// Recompute and compare against the provided concrete setup data.
-    ///
-    /// # Errors
-    ///
-    /// Returns a serialization error if canonical serialization fails or if the
-    /// cached digest pair is stale.
-    pub fn check_parts<F>(
-        &self,
-        setup_seed: &AkitaSetupSeed,
-        shared_matrix: &FlatMatrix<F>,
-    ) -> Result<(), SerializationError>
-    where
-        F: FieldCore + AkitaSerialize,
-    {
-        let expected = Self::from_parts(setup_seed, shared_matrix)?;
-        if *self != expected {
-            return Err(SerializationError::InvalidData(
-                "cached setup descriptor digests do not match setup artifacts".to_string(),
-            ));
-        }
-        Ok(())
-    }
+/// The expanded shared matrix and NTT views are deterministic caches derived
+/// from the setup seed, so the transcript descriptor binds the seed and the
+/// schedule/layout metadata that determine how those caches are used.
+///
+/// # Errors
+///
+/// Returns a serialization error if the seed cannot be canonically serialized.
+pub fn setup_seed_digest(
+    setup_seed: &AkitaSetupSeed,
+) -> Result<DescriptorDigest, SerializationError> {
+    digest_serializable(setup_seed)
 }
 
 /// Canonical transcript preamble for one Akita proof instance.
@@ -89,7 +46,7 @@ pub struct AkitaInstanceDescriptor {
     pub version: u32,
     /// Algebraic substrate for this binary/proof family.
     pub algebra: AlgebraSection,
-    /// Setup-bound parameters and setup artifact identities.
+    /// Setup-bound parameters and deterministic setup identity.
     pub setup: SetupSection,
     /// Final effective verifier schedule for this proof.
     pub plan: PlanSection,
@@ -98,7 +55,7 @@ pub struct AkitaInstanceDescriptor {
 }
 
 impl AkitaInstanceDescriptor {
-    /// Construct a version-1 descriptor from its four sections.
+    /// Construct a descriptor from its four sections.
     pub fn new(
         algebra: AlgebraSection,
         setup: SetupSection,
@@ -192,8 +149,6 @@ pub struct SetupSection {
     pub sis_modulus_family: SisModulusFamily,
     /// Digest of the canonical `AkitaSetupSeed` bytes.
     pub setup_seed_digest: DescriptorDigest,
-    /// Digest of the canonical expanded shared-matrix artifact bytes.
-    pub shared_matrix_digest: DescriptorDigest,
     /// Protocol-affecting feature mode.
     pub protocol_features: ProtocolFeatureSet,
     /// Digest of the full `Vec<LevelParams>` envelope.
@@ -207,45 +162,19 @@ impl SetupSection {
     ///
     /// Returns a serialization error if any canonical digest input fails to
     /// serialize.
-    pub fn from_parts<F>(
+    pub fn from_parts(
         decomposition: DecompositionParams,
         sis_modulus_family: SisModulusFamily,
         setup_seed: &AkitaSetupSeed,
-        shared_matrix: &FlatMatrix<F>,
         level_params: &[LevelParams],
-    ) -> Result<Self, SerializationError>
-    where
-        F: FieldCore + AkitaSerialize,
-    {
-        let artifact_digests = SetupArtifactDigests::from_parts(setup_seed, shared_matrix)?;
-        Ok(Self::from_artifact_digests(
+    ) -> Result<Self, SerializationError> {
+        Ok(Self {
             decomposition,
             sis_modulus_family,
-            artifact_digests,
-            level_params,
-        ))
-    }
-
-    /// Build setup fields from precomputed setup artifact digests.
-    ///
-    /// Use this on prove/verify hot paths. The expensive shared-matrix digest
-    /// should already have been computed and checked when the setup artifact
-    /// was generated or loaded.
-    #[must_use]
-    pub fn from_artifact_digests(
-        decomposition: DecompositionParams,
-        sis_modulus_family: SisModulusFamily,
-        artifact_digests: SetupArtifactDigests,
-        level_params: &[LevelParams],
-    ) -> Self {
-        Self {
-            decomposition,
-            sis_modulus_family,
-            setup_seed_digest: artifact_digests.setup_seed_digest,
-            shared_matrix_digest: artifact_digests.shared_matrix_digest,
+            setup_seed_digest: setup_seed_digest(setup_seed)?,
             protocol_features: ProtocolFeatureSet::current(),
             level_params_digest: digest_level_params(level_params),
-        }
+        })
     }
 }
 
@@ -337,7 +266,7 @@ pub fn digest_level_params(levels: &[LevelParams]) -> DescriptorDigest {
     let mut bytes = Vec::new();
     push_usize(&mut bytes, levels.len());
     for lp in levels {
-        encode_level_params(&mut bytes, lp);
+        lp.append_descriptor_bytes(&mut bytes);
     }
     blake2b_256(&bytes)
 }
@@ -345,27 +274,18 @@ pub fn digest_level_params(levels: &[LevelParams]) -> DescriptorDigest {
 /// Digest the final effective runtime verifier schedule.
 pub fn digest_effective_schedule(schedule: &Schedule) -> DescriptorDigest {
     let mut bytes = Vec::new();
-    push_usize(&mut bytes, schedule.steps.len());
-    for step in &schedule.steps {
-        match step {
-            Step::Fold(fold) => {
-                bytes.push(0);
-                encode_fold_step(&mut bytes, fold);
-            }
-            Step::Direct(direct) => {
-                bytes.push(1);
-                push_usize(&mut bytes, direct.current_w_len);
-                encode_direct_witness_shape(&mut bytes, &direct.witness_shape);
-                push_usize(&mut bytes, direct.direct_bytes);
-            }
-        }
-    }
-    push_usize(&mut bytes, schedule.total_bytes);
+    schedule.append_descriptor_bytes(&mut bytes);
     blake2b_256(&bytes)
 }
 
 impl Valid for AkitaInstanceDescriptor {
     fn check(&self) -> Result<(), SerializationError> {
+        if self.version != AKITA_INSTANCE_DESCRIPTOR_VERSION {
+            return Err(SerializationError::InvalidData(format!(
+                "unsupported Akita instance descriptor version {}",
+                self.version
+            )));
+        }
         self.algebra.check()?;
         self.setup.check()?;
         self.plan.check()?;
@@ -564,7 +484,6 @@ impl AkitaSerialize for SetupSection {
         encode_decomposition(&self.decomposition, &mut writer, compress)?;
         encode_sis_family(self.sis_modulus_family, &mut writer, compress)?;
         writer.write_all(&self.setup_seed_digest)?;
-        writer.write_all(&self.shared_matrix_digest)?;
         self.protocol_features
             .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.level_params_digest)?;
@@ -574,7 +493,6 @@ impl AkitaSerialize for SetupSection {
     fn serialized_size(&self, compress: Compress) -> usize {
         decomposition_size(&self.decomposition, compress)
             + sis_family_size(compress)
-            + 32
             + 32
             + self.protocol_features.serialized_size(compress)
             + 32
@@ -593,7 +511,6 @@ impl AkitaDeserialize for SetupSection {
         let decomposition = decode_decomposition(&mut reader, compress, validate)?;
         let sis_modulus_family = decode_sis_family(&mut reader, compress, validate)?;
         let setup_seed_digest = read_digest(&mut reader)?;
-        let shared_matrix_digest = read_digest(&mut reader)?;
         let protocol_features =
             ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let level_params_digest = read_digest(&mut reader)?;
@@ -601,7 +518,6 @@ impl AkitaDeserialize for SetupSection {
             decomposition,
             sis_modulus_family,
             setup_seed_digest,
-            shared_matrix_digest,
             protocol_features,
             level_params_digest,
         };
@@ -742,25 +658,6 @@ fn read_digest<R: Read>(mut reader: R) -> Result<DescriptorDigest, Serialization
     Ok(digest)
 }
 
-fn push_usize(bytes: &mut Vec<u8>, value: usize) {
-    bytes.extend_from_slice(&(value as u64).to_le_bytes());
-}
-
-fn push_u32(bytes: &mut Vec<u8>, value: u32) {
-    bytes.extend_from_slice(&value.to_le_bytes());
-}
-
-fn push_i8(bytes: &mut Vec<u8>, value: i8) {
-    bytes.extend_from_slice(&value.to_le_bytes());
-}
-
-fn push_usize_vec(bytes: &mut Vec<u8>, values: &[usize]) {
-    push_usize(bytes, values.len());
-    for &value in values {
-        push_usize(bytes, value);
-    }
-}
-
 fn encode_decomposition<W: Write>(
     decomp: &DecompositionParams,
     mut writer: W,
@@ -841,15 +738,6 @@ fn decode_sis_family<R: Read>(
     }
 }
 
-fn sis_family_tag(family: SisModulusFamily) -> u8 {
-    match family {
-        SisModulusFamily::Q32 => 0,
-        SisModulusFamily::Q64 => 1,
-        SisModulusFamily::Q128 => 2,
-        SisModulusFamily::Q16 => 3,
-    }
-}
-
 fn sis_family_size(compress: Compress) -> usize {
     0u8.serialized_size(compress)
 }
@@ -887,82 +775,10 @@ fn basis_mode_size(compress: Compress) -> usize {
     0u8.serialized_size(compress)
 }
 
-fn encode_level_params(bytes: &mut Vec<u8>, lp: &LevelParams) {
-    push_usize(bytes, lp.ring_dimension);
-    push_u32(bytes, lp.log_basis);
-    encode_ajtai_key(bytes, &lp.a_key);
-    encode_ajtai_key(bytes, &lp.b_key);
-    encode_ajtai_key(bytes, &lp.d_key);
-    push_usize(bytes, lp.num_blocks);
-    push_usize(bytes, lp.block_len);
-    push_usize(bytes, lp.m_vars);
-    push_usize(bytes, lp.r_vars);
-    encode_sparse_challenge_config(bytes, &lp.stage1_config);
-    push_usize(bytes, lp.num_digits_commit);
-    push_usize(bytes, lp.num_digits_open);
-    push_usize(bytes, lp.num_digits_fold);
-}
-
-fn encode_ajtai_key(bytes: &mut Vec<u8>, key: &crate::AjtaiKeyParams) {
-    bytes.push(sis_family_tag(key.sis_family()));
-    push_usize(bytes, key.row_len());
-    push_usize(bytes, key.col_len());
-    push_u32(bytes, key.collision_inf());
-}
-
-fn encode_sparse_challenge_config(bytes: &mut Vec<u8>, config: &SparseChallengeConfig) {
-    match config {
-        SparseChallengeConfig::Uniform {
-            weight,
-            nonzero_coeffs,
-        } => {
-            bytes.push(0);
-            push_usize(bytes, *weight);
-            push_usize(bytes, nonzero_coeffs.len());
-            for &coeff in nonzero_coeffs {
-                push_i8(bytes, coeff);
-            }
-        }
-        SparseChallengeConfig::ExactShell {
-            count_mag1,
-            count_mag2,
-        } => {
-            bytes.push(1);
-            push_usize(bytes, *count_mag1);
-            push_usize(bytes, *count_mag2);
-        }
-        SparseChallengeConfig::BoundedL1Norm => {
-            bytes.push(2);
-        }
-    }
-}
-
-fn encode_fold_step(bytes: &mut Vec<u8>, fold: &FoldStep) {
-    encode_level_params(bytes, &fold.params);
-    push_usize(bytes, fold.current_w_len);
-    push_usize(bytes, fold.delta_fold_per_poly);
-    push_usize(bytes, fold.w_ring);
-    push_usize(bytes, fold.next_w_len);
-    push_usize(bytes, fold.level_bytes);
-}
-
-fn encode_direct_witness_shape(bytes: &mut Vec<u8>, shape: &DirectWitnessShape) {
-    match shape {
-        DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
-            bytes.push(0);
-            push_usize(bytes, *num_elems);
-            push_u32(bytes, *bits_per_elem);
-        }
-        DirectWitnessShape::FieldElements(coeff_len) => {
-            bytes.push(1);
-            push_usize(bytes, *coeff_len);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DirectWitnessShape, FoldStep, Step};
     use akita_challenges::SparseChallengeConfig;
     use akita_field::{Prime32Offset99, Prime64Offset59};
 
@@ -1018,7 +834,6 @@ mod tests {
                 },
                 sis_modulus_family: SisModulusFamily::Q32,
                 setup_seed_digest: [1; 32],
-                shared_matrix_digest: [2; 32],
                 protocol_features: ProtocolFeatureSet::current(),
                 level_params_digest: digest_level_params(&[sample_level_params()]),
             },
@@ -1036,6 +851,19 @@ mod tests {
         let decoded = AkitaInstanceDescriptor::deserialize_uncompressed(&bytes[..], &())
             .expect("deserialize descriptor");
         assert_eq!(decoded, descriptor);
+    }
+
+    #[test]
+    fn descriptor_rejects_stale_schema_version() {
+        let mut descriptor = sample_descriptor();
+        descriptor.version = AKITA_INSTANCE_DESCRIPTOR_VERSION - 1;
+
+        let err = descriptor
+            .check()
+            .expect_err("stale descriptor versions must be rejected");
+        assert!(err
+            .to_string()
+            .contains("unsupported Akita instance descriptor version"));
     }
 
     #[test]
@@ -1075,33 +903,18 @@ mod tests {
     }
 
     #[test]
-    fn cached_setup_artifact_digests_match_direct_setup_section() {
+    fn setup_seed_digest_matches_setup_section() {
         let seed = AkitaSetupSeed {
             max_num_vars: 5,
             max_num_batched_polys: 2,
             max_num_points: 1,
             max_stride: 2,
+            gen_ring_dim: 4,
+            total_ring_elements: 2,
             public_matrix_seed: [7; 32],
         };
-        let matrix = FlatMatrix::from_flat_data(
-            vec![Prime32Offset99::from_u64(3), Prime32Offset99::from_u64(9)],
-            2,
-        );
         let level_params = [sample_level_params()];
-        let artifact_digests =
-            SetupArtifactDigests::from_parts(&seed, &matrix).expect("artifact digests");
-
-        let cached = SetupSection::from_artifact_digests(
-            DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 32,
-                log_open_bound: Some(32),
-            },
-            SisModulusFamily::Q32,
-            artifact_digests,
-            &level_params,
-        );
-        let direct = SetupSection::from_parts(
+        let section = SetupSection::from_parts(
             DecompositionParams {
                 log_basis: 3,
                 log_commit_bound: 32,
@@ -1109,19 +922,14 @@ mod tests {
             },
             SisModulusFamily::Q32,
             &seed,
-            &matrix,
             &level_params,
         )
         .expect("direct setup section");
 
-        assert_eq!(cached, direct);
-        artifact_digests
-            .check_parts(&seed, &matrix)
-            .expect("fresh digest matches");
-
-        let mut stale = artifact_digests;
-        stale.shared_matrix_digest[0] ^= 1;
-        assert!(stale.check_parts(&seed, &matrix).is_err());
+        assert_eq!(
+            section.setup_seed_digest,
+            setup_seed_digest(&seed).expect("setup seed digest")
+        );
     }
 
     #[test]

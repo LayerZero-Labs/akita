@@ -23,6 +23,10 @@ env:
   # offenders and should come back only after tuning or a larger runner budget.
   AKITA_BENCH_MODE: onehot_fp128_d32
   AKITA_BENCH_RUNS: "3"
+  # One warm-up run per case is discarded before the measured runs to
+  # prime caches and lazily-initialized statics; cache misses on the
+  # first run otherwise distort the median across only 3 samples.
+  AKITA_BENCH_WARMUPS: "1"
   AKITA_BENCH_CASES: |
     dense_fp16_d32:26:1
     onehot_fp32_d32:32:1
@@ -121,6 +125,7 @@ jobs:
             --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
             --mode "$AKITA_BENCH_MODE" \
             --runs "$AKITA_BENCH_RUNS" \
+            --warmups "$AKITA_BENCH_WARMUPS" \
             "${case_args[@]}"
 
       - name: Determine comparison baseline artifacts

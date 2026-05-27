@@ -42,29 +42,34 @@ AKITA_NUM_VARS=32 \
     ./target/release/akita-recursion-artifact
 
 # 3. Compile the guest to RISC-V, emulate it, and report cycle markers.
-#    Trace-only (no Jolt prover) because at nv=32 the trace is ≈ 11.3 G
+#    Trace-only (no Jolt prover) because at nv=32 the trace is ≈ 10.4 G
 #    cycles, above the current `max_trace_length = 4 G` in the guest's
 #    `#[jolt::provable]` attribute (see "Open follow-ups" below).
-AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
-    --trace-only --input target/akita_recursion_inputs_nv32.bin
+#    `--trace-output /dev/null` keeps the raw trace bytes off disk while
+#    preserving the cycle-marker output.
+ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
+    AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
+    --trace-only \
+    --trace-output /dev/null \
+    --input target/akita_recursion_inputs_nv32.bin
 ```
 
-Expected output (Apple Silicon laptop, ≈ 20 min wall clock):
+Expected output (Apple Silicon laptop, ≈ 22 min wall clock):
 
 ```
-"deserialize_input": 3,020,272,417 RV64IMAC + 4,228,394,450 virtual = 7,248,666,867 total
-"transcript_init":   7,826         RV64IMAC + 4,445         virtual = 12,271        total
-"akita_verify":      4,045,898,566 RV64IMAC + 30,112,564    virtual = 4,076,011,130 total
-trace length: ~11.3 G cycles
+"deserialize_input": 3,246,868,723 RV64IMAC + 4,228,394,540 virtual = 7,475,263,263 total
+"transcript_init":   156           RV64IMAC + 176           virtual = 332           total
+"akita_verify":      2,874,382,109 RV64IMAC + 34,324,853    virtual = 2,908,706,962 total
+trace length: ~10.4 G cycles
 trace done
 ```
 
 | Marker             | Base RV64IMAC    | Virtual         | **Total cycles**    |
 | ------------------ | ---------------- | --------------- | ------------------- |
-| `deserialize_input`| 3,020,272,417    | 4,228,394,450   | **7,248,666,867**   |
-| `transcript_init`  | 7,826            | 4,445           | **12,271**          |
-| `akita_verify`     | 4,045,898,566    | 30,112,564      | **4,076,011,130**   |
-| **trace length**   |                  |                 | **11,324,873,934**  |
+| `deserialize_input`| 3,246,868,723    | 4,228,394,540   | **7,475,263,263**   |
+| `transcript_init`  | 156              | 176             | **332**             |
+| `akita_verify`     | 2,874,382,109    | 34,324,853      | **2,908,706,962**   |
+| **trace length**   |                  |                 | **10,384,142,367**  |
 
 Most of `deserialize_input` is decoding the ≈ 576 MiB expanded
 verifier-setup matrix that lives inside the blob; the proof itself is
@@ -80,7 +85,8 @@ and remove `--trace-only`:
 
 ```bash
 AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
-AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
+ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
+    AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
     --input target/akita_recursion_inputs.bin
 ```
 
@@ -96,7 +102,8 @@ The guest enables `jolt/stdout` so panic messages reach the host. The
 single diagnostic iteration if a panic comes back, then run with:
 
 ```bash
-JOLT_BACKTRACE=full AKITA_RECURSION_LOG=info \
+ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
+    JOLT_BACKTRACE=full AKITA_RECURSION_LOG=info \
     ./target/release/akita-recursion-host --trace-only \
     --input target/akita_recursion_inputs_nv32.bin
 ```
@@ -114,6 +121,7 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 | `AKITA_NUM_VARS`          | `20`                                     | Polynomial arity for the prover.        |
 | `AKITA_RECURSION_BLOB`    | `target/akita_recursion_inputs.bin`      | Output path for the blob (`artifact`).  |
 | `AKITA_RECURSION_LOG`     | `info`                                   | `tracing-subscriber` filter (`host`).   |
+| `ZEROOS_GUEST_RUSTFLAGS`  | unset                                    | Pass `-Zunstable-options` when Rust requires it for Jolt's custom `riscv64imac-zero-linux-musl` target. |
 | `JOLT_BACKTRACE`          | unset                                    | `full` ⇒ symbolic guest backtraces.     |
 | `AKITA_ALLOW_DEBUG_PROFILE` | unset                                  | `1` ⇒ bypass `--release` guard in `artifact`. |
 
@@ -123,6 +131,7 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 | --------------------- | ------------------------------------ | -------------------------------------------- |
 | `--input <path>`      | `target/akita_recursion_inputs.bin`  | Path to the blob produced by `artifact`.     |
 | `--target-dir <path>` | `/tmp/akita-recursion-targets`       | Jolt's per-program build cache.              |
+| `--trace-output <path>` | `<target-dir>/akita_verify.trace`  | Trace file path for `--trace-only`.          |
 | `--trace-only`        | off                                  | Skip preprocessing + Jolt prove/verify.      |
 
 ## How it works
@@ -144,6 +153,21 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
    `clock_gettime`, and the guest aborts there). Three
    `start_cycle_tracking` / `end_cycle_tracking` pairs wrap
    `deserialize_input`, `transcript_init`, and the verifier kernel.
+   The guest constructs an unbound verifier transcript and the verifier binds
+   the canonical instance descriptor; it must not use a prover-side placeholder
+   transcript, because Spongefish prover state may ask for entropy that the Jolt
+   guest runtime does not provide.
+   This profile is a trusted host-artifact benchmark: the guest decodes the
+   verifier setup through the explicitly trusted cached-matrix path. Seed/matrix
+   shape metadata and field elements are still validated, but the guest skips
+   checking that the expanded setup matrix coefficients equal the matrix derived
+   from the seed because the blob is produced and sanity-checked by the
+   host-side artifact generator. Plain `--features guest` builds use strict
+   setup decoding; the host binary sets
+   `AKITA_RECURSION_TRUSTED_BENCHMARK_ARTIFACT=1` before Jolt compiles the
+   benchmark RISC-V ELF, because this pinned Jolt SDK hard-codes the guest
+   feature list to `guest`. A production recursion circuit must use strict
+   setup validation or bind an externally checked setup commitment.
 
 ## Why D=32 has more zkVM cycles than D=64
 
@@ -194,7 +218,7 @@ cycles at nv=20 and 4 G+ at nv=32.
 ## Open follow-ups
 
 1. **Full prove at `nv=32`** on a beefier host. Requires:
-   - Bumping `max_trace_length` past 11.3 G in the `#[jolt::provable]`
+   - Bumping `max_trace_length` past 10.4 G in the `#[jolt::provable]`
      attribute (currently 4 G — fine for `nv ≤ 20`, insufficient at
      `nv=32`).
    - Server-class memory headroom (the guest heap is already at
@@ -202,8 +226,8 @@ cycles at nv=20 and 4 G+ at nv=32.
    - Expected wall clock at typical zkVM throughput (~500 kHz):
      **~6 h+** of proving.
 
-2. **Make `deserialize_input` cheaper.** At `nv=32` it costs **7.25 G
-   cycles** (~178 % of the verifier itself). Most of that is decoding
+2. **Make `deserialize_input` cheaper.** At `nv=32` it costs **7.48 G
+   cycles** (~257 % of the verifier itself). Most of that is decoding
    the expanded verifier-setup matrix. Options:
    - Ship just the `public_matrix_seed` (32 bytes) and re-derive the
      matrix inside the guest. Trades deserialization cycles for
@@ -220,10 +244,10 @@ cycles at nv=20 and 4 G+ at nv=32.
 
 4. **Upstreaming candidates** — small, mechanical changes that would
    benefit any future Jolt integration with Akita:
-   - Optional feature on `akita-scheme` that gates the `Instant::now()`
-     + `tracing::info!` epilogue out of `batched_verify` (so the guest
-     could call the scheme entry point directly instead of replicating
-     its body).
+   - If the public trait entry point ever becomes timer-free and verifier-only,
+     it should delegate to the same `akita_config::batched_verify_with_config`
+     adapter; the guest should remain free of `akita-scheme`, `akita-prover`,
+     and `akita-setup` dependencies.
    - `AkitaSerialize` / `AkitaDeserialize` impls for proof-shape types
      (already added under `akita-types::proof` and used by the `glue`
      crate).

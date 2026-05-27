@@ -19,11 +19,11 @@ use akita_challenges::{
 use akita_field::parallel::*;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
-use akita_transcript::labels::ABSORB_PROVER_V;
+use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_W_HAT};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
-    RingSliceSerializer,
+    gadget_row_scalars, terminal_w_hat_bytes_from_blocks, AkitaCommitmentHint, FlatDigitBlocks,
+    MRowLayout, RingCommitment, RingSliceSerializer,
 };
 use akita_types::{ClaimIncidenceSummary, LevelParams};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -82,6 +82,20 @@ fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
         )));
     }
     Ok(z)
+}
+
+fn absorb_terminal_w_hat<F, T, const D: usize>(
+    transcript: &mut T,
+    w_hat: &FlatDigitBlocks<D>,
+    planes_per_block: usize,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let bytes = terminal_w_hat_bytes_from_blocks(w_hat, planes_per_block)?;
+    transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &bytes);
+    Ok(())
 }
 
 fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
@@ -561,6 +575,9 @@ where
             MRowLayout::Terminal => Vec::new(),
         };
 
+        if matches!(m_row_layout, MRowLayout::Terminal) {
+            absorb_terminal_w_hat::<F, T, D>(transcript, &w_hat, lp.num_digits_open)?;
+        }
         let challenges = sample_folding_challenges::<F, T, D>(
             transcript,
             lp.num_blocks,
@@ -772,6 +789,9 @@ where
             return Err(AkitaError::InvalidSetup(
                 "tensor fold shape is not supported at recursive levels".to_string(),
             ));
+        }
+        if matches!(m_row_layout, MRowLayout::Terminal) {
+            absorb_terminal_w_hat::<F, T, D>(transcript, &w_hat, lp.num_digits_open)?;
         }
         let challenges = sample_folding_challenges::<F, T, D>(
             transcript,
