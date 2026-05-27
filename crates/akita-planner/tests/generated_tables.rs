@@ -100,7 +100,7 @@ fn table_steps_for_key(
     key: GeneratedScheduleKey,
 ) -> Option<Vec<GeneratedStep>> {
     let entry: &GeneratedScheduleTableEntry = table.entries.iter().find(|e| e.key == key)?;
-    Some(entry.steps.iter().copied().collect())
+    Some(entry.steps.to_vec())
 }
 
 /// Run the DP for `(singleton, batched_4)` keys across `[min, max]`, collect
