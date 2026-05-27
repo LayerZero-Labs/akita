@@ -1,5 +1,7 @@
-use crate::report::{emit_planned_schedule_summary, print_batched_proof_summary, report_timing};
-use akita_config::proof_optimized::fp128;
+use crate::report::{
+    emit_planned_schedule_summary, emit_runtime_schedule_summary, print_batched_proof_summary,
+    report_timing,
+};
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
 use akita_field::{
@@ -23,8 +25,6 @@ use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
-
-type F = fp128::Field;
 
 pub(crate) const ONEHOT_K: usize = 256;
 
@@ -264,6 +264,16 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             "runtime proof bytes should match the planned proof size"
         );
         emit_planned_schedule_summary(label, plan);
+    } else {
+        let incidence =
+            ClaimIncidenceSummary::same_point(pt.len(), 1).expect("same-point incidence summary");
+        let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
+        assert_eq!(
+            proof.size(),
+            schedule.total_bytes,
+            "runtime proof bytes should match the runtime schedule proof size"
+        );
+        emit_runtime_schedule_summary(label, &schedule, Cfg::decomposition().field_bits());
     }
 
     let t0 = Instant::now();
@@ -370,35 +380,6 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &poly, &original_pt, opening, plan);
 }
 
-pub(crate) fn run_dense<
-    const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
->(
-    nv: usize,
-    layout: &LevelParams,
-    plan: Option<&AkitaSchedulePlan>,
-) where
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-            F,
-            D,
-            ProverSetup = AkitaProverSetup<F, D>,
-            ClaimField = F,
-            VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F, F>,
-            CommitHint = AkitaCommitmentHint<F, D>,
-        > + CommitmentVerifier<
-            F,
-            D,
-            ClaimField = F,
-            VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F, F>,
-        >,
-{
-    run_dense_for::<F, D, Cfg>("dense", nv, layout, plan);
-}
-
 pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     nv: usize,
@@ -480,6 +461,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     nv: usize,
     num_polys: usize,
     layout: &LevelParams,
+    plan: Option<&AkitaSchedulePlan>,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -599,6 +581,24 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
     assert_observed_proof_size::<FF, Cfg::ChallengeField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ChallengeField, D>(label, &proof);
+    let incidence =
+        ClaimIncidenceSummary::same_point(nv, num_polys).expect("same-point incidence summary");
+    let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
+    if let Some(plan) = plan {
+        assert_eq!(
+            proof.size(),
+            plan.exact_proof_bytes,
+            "runtime proof bytes should match the planned proof size"
+        );
+        emit_planned_schedule_summary(label, plan);
+    } else {
+        assert_eq!(
+            proof.size(),
+            schedule.total_bytes,
+            "runtime proof bytes should match the runtime schedule proof size"
+        );
+        emit_runtime_schedule_summary(label, &schedule, Cfg::decomposition().field_bits());
+    }
     tracing::info!(
         label,
         claim_ext_degree = Cfg::CLAIM_EXT_DEGREE,
@@ -619,9 +619,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             "[{label}] extension opening fallback: root-direct proof for this unsupported shape; folded planner byte estimates do not apply"
         );
     }
-    let incidence =
-        ClaimIncidenceSummary::same_point(nv, num_polys).expect("same-point incidence summary");
-    let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
         tracing::info!(
             label,

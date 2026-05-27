@@ -886,43 +886,45 @@ fn batched_onehot_same_point_round_trip() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64OneHot;
+        // NV=20 is large enough to include a recursive suffix, while the
+        // two-claim incidence still misses singleton/4-batch generated tables
+        // and routes through the planner DP fallback via `PlannerCfg`.
+        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>;
         const D: usize = Cfg::D;
+        const NV: usize = 20;
 
-        let nv = ONEHOT_TEST_NV;
-        let layout =
-            akita_batched_root_layout::<Cfg>(nv, SAME_POINT_ONEHOT_BATCH_SIZE).expect("layout");
+        let nv = NV;
+        let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, 2).expect("incidence");
+        let layout = Cfg::get_params_for_batched_commitment(&incidence).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
         assert_eq!(total_chunks * ONEHOT_K, total_field);
 
-        let polys: Vec<OneHotPoly<F, D>> = (0..SAME_POINT_ONEHOT_BATCH_SIZE)
-            .map(|poly_idx| {
-                let mut rng = StdRng::seed_from_u64(0x1234_5678 + poly_idx as u64);
-                let indices: Vec<Option<usize>> = (0..total_chunks)
-                    .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
-                    .collect();
-                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
-            })
+        let mut rng_a = StdRng::seed_from_u64(0x1234_5678);
+        let mut rng_b = StdRng::seed_from_u64(0x8765_4321);
+        let indices_a: Vec<Option<usize>> = (0..total_chunks)
+            .map(|_| Some(rng_a.gen_range(0..ONEHOT_K)))
             .collect();
-        let poly_group: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
+        let indices_b: Vec<Option<usize>> = (0..total_chunks)
+            .map(|_| Some(rng_b.gen_range(0..ONEHOT_K)))
+            .collect();
+        let poly_a = OneHotPoly::<F, D>::new(ONEHOT_K, indices_a).unwrap();
+        let poly_b = OneHotPoly::<F, D>::new(ONEHOT_K, indices_b).unwrap();
+        let poly_group = [&poly_a, &poly_b];
         let pt = random_point(nv);
-        let openings: Vec<F> = polys
-            .iter()
-            .map(|poly| opening_from_poly(poly, &pt, &layout))
-            .collect();
+        let openings = [
+            opening_from_poly(&poly_a, &pt, &layout),
+            opening_from_poly(&poly_b, &pt, &layout),
+        ];
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
-            nv,
-            SAME_POINT_ONEHOT_BATCH_SIZE,
-            1,
-        )
-        .unwrap();
+        let setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1)
+                .unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -974,6 +976,26 @@ fn batched_onehot_same_point_round_trip() {
             result.is_ok(),
             "batched onehot verification must pass: {:?}",
             result.err()
+        );
+
+        assert!(
+            decoded.num_fold_levels() > 0,
+            "test fixture must include a recursive suffix to cover truncation"
+        );
+        let mut truncated = decoded.clone();
+        truncated.steps.remove(0);
+        let mut truncated_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot");
+        let truncated_result =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                &truncated,
+                &verifier_setup,
+                &mut truncated_transcript,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                BasisMode::Lagrange,
+            );
+        assert!(
+            truncated_result.is_err(),
+            "proof with a truncated scheduled recursive suffix must be rejected"
         );
     });
 }
@@ -1091,7 +1113,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         );
     });
 }
-
 #[test]
 fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
     init_rayon_pool();
