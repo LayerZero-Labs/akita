@@ -1,3 +1,5 @@
+//! fp16 presets used for production small-field integration and profiling.
+
 use super::*;
 
 /// Base field for the fp16 presets.

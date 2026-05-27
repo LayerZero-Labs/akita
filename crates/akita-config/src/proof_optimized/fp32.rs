@@ -1,3 +1,5 @@
+//! fp32 presets used for small-field integration and profiling.
+
 use super::*;
 
 /// Base field for the fp32 scaffold presets.

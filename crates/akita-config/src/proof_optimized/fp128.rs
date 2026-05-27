@@ -1,3 +1,6 @@
+//! Default fp128 protocol presets on `p = 2^128 - 2^32 + 22537`
+//! (`Prime128OffsetA7F7`).
+
 use super::*;
 
 /// Base field for the default fp128 presets.

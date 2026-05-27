@@ -1,3 +1,5 @@
+//! fp64 presets used for small-field integration and profiling.
+
 use super::*;
 
 /// Base field for the fp64 scaffold presets.
