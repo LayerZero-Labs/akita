@@ -18,8 +18,7 @@
 //!    behind a length match (a duplicate plus a missing key would still
 //!    pass a multiset check), and serialization regressions.
 //! 4. **Step content equality.** Every shipped entry's step sequence
-//!    matches what `find_optimal_schedule::<Cfg>(_,
-//!    RegenerateFromScratch)` produces.
+//!    matches what `find_schedule::<Cfg>(_, false)` produces.
 //!
 //! When this test fails the panic message lists per-family mismatch
 //! counts, the first three offending diffs, and the regenerate command
@@ -228,7 +227,7 @@ fn regen_hint() -> &'static str {
 /// rolled into one test so the panic message can summarize per-family
 /// mismatch counts.
 #[test]
-fn generated_schedule_tables_match_find_optimal_schedule() {
+fn generated_schedule_tables_match_find_schedule() {
     let mut mismatches = Vec::new();
     for family in ALL_GENERATED_FAMILIES {
         check_family(family, &mut mismatches);
@@ -253,7 +252,7 @@ fn generated_schedule_tables_match_find_optimal_schedule() {
         .map(Mismatch::render)
         .collect::<String>();
     panic!(
-        "{count} schedule-table issue(s) disagree with `find_optimal_schedule` output.\n\
+        "{count} schedule-table issue(s) disagree with `find_schedule` output.\n\
          Per-family counts:\n  {summary}\n\n\
          First issues:\n{preview}\n\
          Regenerate the shipped tables with:\n  {hint}",

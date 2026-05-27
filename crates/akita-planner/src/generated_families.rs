@@ -12,8 +12,7 @@
 //! - the inclusive `num_vars` range to enumerate,
 //! - the keys cross-product to emit (singleton and 4-batched at every
 //!   `num_vars`),
-//! - a `find_optimal_schedule::<Cfg>(_, RegenerateFromScratch)` regen
-//!   hook,
+//! - a `find_schedule::<Cfg>(_, false)` regen hook,
 //! - a `Cfg::schedule_table()` accessor so consumers can validate the
 //!   shipped artifact against the regen hook without ever needing to
 //!   know about `Cfg` directly.
@@ -25,7 +24,7 @@ use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, Schedule};
 
-use crate::{find_optimal_schedule, ScheduleSearchMode};
+use crate::find_schedule;
 
 /// One generated schedule-table family.
 ///
@@ -47,8 +46,8 @@ pub struct GeneratedFamily {
     /// Inclusive upper bound of the `num_vars` range enumerated for
     /// this family.
     pub max_num_vars: usize,
-    /// `find_optimal_schedule::<Cfg>(key, RegenerateFromScratch)` — DP
-    /// regeneration that ignores any prior shipped table for this Cfg.
+    /// `find_schedule::<Cfg>(key, false)` — DP regeneration that ignores
+    /// any prior shipped table for this Cfg.
     pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
     /// `Cfg::schedule_table()` for the family. Returns the table the
     /// linked binary currently ships for the active feature set
@@ -81,7 +80,7 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKe
 }
 
 fn regen<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-    find_optimal_schedule::<Cfg>(key, ScheduleSearchMode::RegenerateFromScratch)
+    find_schedule::<Cfg>(key, false)
 }
 
 /// Every `Cfg` that ships with a generated schedule table.

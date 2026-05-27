@@ -1515,7 +1515,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
-    fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+    fn basis_range() -> (u32, u32) {
         (3, 3)
     }
 
@@ -1650,7 +1650,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
-    fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+    fn basis_range() -> (u32, u32) {
         (3, 3)
     }
 

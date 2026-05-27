@@ -33,7 +33,7 @@ pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookup
     AkitaError::InvalidSetup(format!(
         "{context} requires a generated schedule entry for key {key:?}; \
          override the relevant `CommitmentConfig` default and call \
-         `akita_planner::find_optimal_schedule` to enable an offline DP fallback"
+         `akita_planner::find_schedule` to enable an offline DP fallback"
     ))
 }
 
@@ -170,9 +170,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError>;
 
-    /// Inclusive `(min, max)` log-basis search range at one state.
+    /// Inclusive `(min, max)` log-basis search range.
     #[doc(hidden)]
-    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32);
+    fn basis_range() -> (u32, u32);
 
     /// Schedule consumed by the prove/verify root path.
     /// Default: materialize the table entry; error on miss.
@@ -283,8 +283,8 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
-    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-        Cfg::log_basis_search_range(inputs)
+    fn basis_range() -> (u32, u32) {
+        Cfg::basis_range()
     }
 }
 
@@ -365,7 +365,7 @@ mod tests {
             Ok((1, 1))
         }
 
-        fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+        fn basis_range() -> (u32, u32) {
             (3, 3)
         }
     }

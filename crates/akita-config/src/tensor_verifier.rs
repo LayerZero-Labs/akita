@@ -102,7 +102,7 @@ pub mod fp128 {
             )
         }
 
-        fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+        fn basis_range() -> (u32, u32) {
             (
                 crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
                 crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,

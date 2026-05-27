@@ -82,8 +82,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Ok((rows, 16_384))
     }
 
-    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-        Cfg::log_basis_search_range(inputs)
+    fn basis_range() -> (u32, u32) {
+        Cfg::basis_range()
     }
 }
 

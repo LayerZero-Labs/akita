@@ -6,8 +6,7 @@
 //! the inner config; the three parameter accessors (`commitment_layout`,
 //! `get_params_for_commitment`, `get_params_for_prove`) consult the inner
 //! config's generated table first, and on miss fall through to
-//! [`crate::find_optimal_schedule`] — the offline DP search restricted to
-//! `<Cfg>`.
+//! [`crate::find_schedule`] — the offline DP search restricted to `<Cfg>`.
 //!
 //! Use this from cross-crate test fixtures that exercise table-miss
 //! incidences (multipoint, non-singleton `num_t_vectors`, presets with
@@ -24,12 +23,12 @@ use akita_config::{
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
-    schedule_from_plan, AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
+    schedule_from_plan, AjtaiRole, AkitaScheduleLookupKey, AkitaSchedulePlan,
     ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, LevelParams, Schedule,
     SisModulusFamily,
 };
 
-use crate::find_optimal_schedule;
+use crate::find_schedule;
 
 /// `Cfg` wrapper that routes schedule-table misses through the planner DP.
 #[derive(Clone, Copy, Debug, Default)]
@@ -118,8 +117,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
         Ok((max_rows, max_stride))
     }
 
-    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-        Cfg::log_basis_search_range(inputs)
+    fn basis_range() -> (u32, u32) {
+        Cfg::basis_range()
     }
 
     fn ring_subfield_embedding_norm_bound() -> u32 {
@@ -133,7 +132,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
         if let Some(plan) = Cfg::schedule_plan(key)? {
             return Ok(schedule_from_plan(&plan, Cfg::decomposition().field_bits()));
         }
-        find_optimal_schedule::<Self>(key, crate::ScheduleSearchMode::RuntimeTableSeeded)
+        find_schedule::<Self>(key, true)
     }
 }
 

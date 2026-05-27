@@ -371,7 +371,7 @@ macro_rules! impl_fp128_preset {
                 )
             }
 
-            fn log_basis_search_range(_inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
+            fn basis_range() -> (u32, u32) {
                 (
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
@@ -453,7 +453,7 @@ macro_rules! impl_small_field_preset {
                 )
             }
 
-            fn log_basis_search_range(_inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
+            fn basis_range() -> (u32, u32) {
                 (
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
@@ -604,7 +604,7 @@ mod tests {
             ) -> Result<(usize, usize), AkitaError> {
                 Ok((1, 1))
             }
-            fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+            fn basis_range() -> (u32, u32) {
                 (3, 3)
             }
             fn get_params_for_prove(
