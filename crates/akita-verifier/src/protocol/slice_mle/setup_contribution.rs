@@ -684,7 +684,9 @@ mod tests {
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
                 max_stride,
+                max_setup_len: matrix_entries.len(),
                 public_matrix_seed: [7u8; 32],
+                zk_blinding_seed: [8u8; 32],
             },
             FlatMatrix::from_ring_slice::<D>(&matrix_entries),
         )

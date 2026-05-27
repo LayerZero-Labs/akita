@@ -1081,7 +1081,9 @@ mod tests {
             max_num_batched_polys: 2,
             max_num_points: 1,
             max_stride: 2,
+            max_setup_len: 1,
             public_matrix_seed: [7; 32],
+            zk_blinding_seed: [8; 32],
         };
         let matrix = FlatMatrix::from_flat_data(
             vec![Prime32Offset99::from_u64(3), Prime32Offset99::from_u64(9)],

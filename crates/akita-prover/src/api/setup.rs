@@ -4,7 +4,7 @@ use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::kernels::matrix::{derive_public_matrix_flat, sample_public_matrix_seed};
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
-use akita_types::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup};
+use akita_types::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, SetupMatrixEnvelope};
 use std::sync::Arc;
 
 /// Prover setup artifact (expanded setup + single shared NTT cache).
@@ -36,25 +36,25 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-        max_rows: usize,
-        max_stride: usize,
+        envelope: SetupMatrixEnvelope,
     ) -> Result<Self, AkitaError>
     where
         F: CanonicalField + RandomSampling + AkitaSerialize,
     {
-        let max_total = max_rows
-            .checked_mul(max_stride)
-            .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
         let public_matrix_seed = sample_public_matrix_seed();
-        let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
-        let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total)?)?;
+        let zk_blinding_seed = sample_public_matrix_seed();
+        let shared_flat =
+            derive_public_matrix_flat::<F, D>(envelope.max_setup_len, &public_matrix_seed);
+        let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, envelope.max_setup_len)?)?;
 
         let seed = AkitaSetupSeed {
             max_num_vars,
             max_num_batched_polys,
             max_num_points,
-            max_stride,
+            max_stride: envelope.max_stride,
+            max_setup_len: envelope.max_setup_len,
             public_matrix_seed,
+            zk_blinding_seed,
         };
         let expanded = Arc::new(
             AkitaExpandedSetup::from_parts(seed, shared_flat).map_err(|err| {

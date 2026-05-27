@@ -676,7 +676,9 @@ mod tests {
             max_num_batched_polys: 1,
             max_num_points: 1,
             max_stride: 3,
+            max_setup_len: 3,
             public_matrix_seed: [0u8; 32],
+            zk_blinding_seed: [1u8; 32],
         };
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
             vec![F::zero(); 64],
@@ -703,7 +705,9 @@ mod tests {
             max_num_batched_polys: 1,
             max_num_points: 1,
             max_stride: 128,
+            max_setup_len: 128,
             public_matrix_seed: [0u8; 32],
+            zk_blinding_seed: [1u8; 32],
         };
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
             vec![F::zero(); 32],

@@ -16,7 +16,7 @@ use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
     AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
     ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, LevelParams, Schedule,
-    SisModulusFamily,
+    SetupMatrixEnvelope, SisModulusFamily,
 };
 use std::marker::PhantomData;
 
@@ -158,7 +158,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
 
-    /// `(max_rows, max_stride)` bounds for the shared setup matrix.
+    /// Bounds for the shared setup matrix.
     ///
     /// # Errors
     ///
@@ -168,7 +168,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), AkitaError>;
+    ) -> Result<SetupMatrixEnvelope, AkitaError>;
 
     /// Inclusive `(min, max)` log-basis search range at one state.
     #[doc(hidden)]
@@ -279,7 +279,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), AkitaError> {
+    ) -> Result<SetupMatrixEnvelope, AkitaError> {
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
@@ -361,8 +361,8 @@ mod tests {
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
             _max_num_points: usize,
-        ) -> Result<(usize, usize), AkitaError> {
-            Ok((1, 1))
+        ) -> Result<SetupMatrixEnvelope, AkitaError> {
+            SetupMatrixEnvelope::from_rows_stride(1, 1)
         }
 
         fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {

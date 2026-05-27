@@ -17,7 +17,8 @@ use akita_types::{
     lagrange_weights, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
     AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup,
     AppendToTranscript, ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams,
-    FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
+    FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint, SetupMatrixEnvelope,
+    SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -71,14 +72,14 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         max_num_vars: usize,
         _max_num_batched_polys: usize,
         _max_num_points: usize,
-    ) -> Result<(usize, usize), akita_field::AkitaError> {
+    ) -> Result<SetupMatrixEnvelope, akita_field::AkitaError> {
         let envelope = Cfg::envelope(max_num_vars);
         let rows = envelope
             .max_n_a
             .max(envelope.max_n_b)
             .max(envelope.max_n_d)
             .max(4);
-        Ok((rows, 16_384))
+        SetupMatrixEnvelope::from_rows_stride(rows, 16_384)
     }
 
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {

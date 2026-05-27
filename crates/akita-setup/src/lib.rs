@@ -55,29 +55,22 @@ where
             "max_num_points must be at least 1".to_string(),
         ));
     }
-    let (max_rows, max_stride) =
+    let setup_envelope =
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
 
     #[cfg(feature = "disk-persistence")]
     {
-        let max_total = max_rows
-            .checked_mul(max_stride)
-            .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
         match load_expanded_setup::<F, Cfg>(max_num_vars, max_num_batched_polys, max_num_points) {
             Ok(expanded) => {
-                // A cached setup is acceptable only if its physical
-                // backing is large enough *and* its recorded
-                // `max_stride` matches (or exceeds) what the current
-                // request needs. For configs where `max_rows` can vary
-                // inversely with `max_stride`, a smaller cached stride
-                // would cause `ring_view` to interpret rows/columns with
-                // the wrong stride — the total-elements check alone is
-                // insufficient.
-                let cached_total = expanded.shared_matrix.total_ring_elements_at::<D>()?;
+                // A cached setup is acceptable only if its current-format
+                // physical backing and remaining stride metadata match the
+                // requested envelope.
+                let cached_total = expanded.shared_matrix.total_ring_elements();
                 let cached_stride = expanded.seed.max_stride;
                 let cached_points = expanded.seed.max_num_points;
-                if cached_total >= max_total
-                    && cached_stride >= max_stride
+                if cached_total == setup_envelope.max_setup_len
+                    && expanded.seed.max_setup_len == setup_envelope.max_setup_len
+                    && cached_stride >= setup_envelope.max_stride
                     && cached_points >= max_num_points
                 {
                     tracing::info!("Loaded setup from disk, rebuilding NTT caches");
@@ -88,12 +81,16 @@ where
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
-                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating",
-                            storage_path.display()
+                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total={}, stride>={}, points>={max_num_points}); regenerating",
+                            storage_path.display(),
+                            setup_envelope.max_setup_len,
+                            setup_envelope.max_stride
                         );
                 } else {
                     tracing::warn!(
-                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating"
+                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total={}, stride>={}, points>={max_num_points}); regenerating",
+                            setup_envelope.max_setup_len,
+                            setup_envelope.max_stride
                         );
                 }
             }
@@ -117,8 +114,7 @@ where
         max_num_vars,
         max_num_batched_polys,
         max_num_points,
-        max_rows,
-        max_stride,
+        setup_envelope,
     )?;
 
     #[cfg(feature = "disk-persistence")]
@@ -173,7 +169,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .collect::<String>();
     let modulus = detect_field_modulus::<Cfg::Field>();
     format!(
-        "akita_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
+        "akita_setupv2_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
         Cfg::D,
         envelope.max_n_a,
         envelope.max_n_b,

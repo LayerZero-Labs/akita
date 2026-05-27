@@ -1,7 +1,7 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
 use crate::{FlatMatrix, SetupArtifactDigests};
-use akita_field::FieldCore;
+use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -10,6 +10,56 @@ use std::sync::Arc;
 
 /// Public seed used to derive commitment matrices.
 pub type PublicMatrixSeed = [u8; 32];
+
+/// Public seed used to derive feature-gated ZK blinding setup terms.
+pub type ZkBlindingSeed = [u8; 32];
+
+const SETUP_LAYOUT_TAG: [u8; 16] = *b"AKITA_SETUP_V002";
+
+/// Config-derived setup matrix capacity.
+///
+/// `max_setup_len` is the physical number of ring elements generated at the
+/// setup generation dimension. `max_rows` and `max_stride` are retained while
+/// the current implementation still has stride-based role views; later packed
+/// role-view slices remove the stride dependency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetupMatrixEnvelope {
+    /// Physical shared setup length at the generation ring dimension.
+    pub max_setup_len: usize,
+    /// Diagnostic/current-layout maximum row count.
+    pub max_rows: usize,
+    /// Diagnostic/current-layout maximum row stride.
+    pub max_stride: usize,
+}
+
+impl SetupMatrixEnvelope {
+    /// Build an envelope from the current row/stride layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidData` if either dimension is zero or if the physical
+    /// setup length overflows.
+    pub fn from_rows_stride(max_rows: usize, max_stride: usize) -> Result<Self, AkitaError> {
+        if max_rows == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup envelope max_rows must be non-zero".to_string(),
+            ));
+        }
+        if max_stride == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup envelope max_stride must be non-zero".to_string(),
+            ));
+        }
+        let max_setup_len = max_rows.checked_mul(max_stride).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup envelope length overflow".to_string())
+        })?;
+        Ok(Self {
+            max_setup_len,
+            max_rows,
+            max_stride,
+        })
+    }
+}
 
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,8 +76,12 @@ pub struct AkitaSetupSeed {
     pub max_num_points: usize,
     /// Global row stride for the flat NTT cache.
     pub max_stride: usize,
+    /// Physical shared setup length at the generation ring dimension.
+    pub max_setup_len: usize,
     /// Public seed used to derive commitment matrices.
     pub public_matrix_seed: PublicMatrixSeed,
+    /// Public seed/domain for ZK blinding setup terms.
+    pub zk_blinding_seed: ZkBlindingSeed,
 }
 
 /// Expanded setup stage containing a single shared coefficient-form matrix.
@@ -75,6 +129,11 @@ where
 
 impl Valid for AkitaSetupSeed {
     fn check(&self) -> Result<(), SerializationError> {
+        if self.max_setup_len == 0 {
+            return Err(SerializationError::InvalidData(
+                "setup seed max_setup_len must be non-zero".to_string(),
+            ));
+        }
         if self.max_stride == 0 {
             return Err(SerializationError::InvalidData(
                 "setup seed max_stride must be non-zero".to_string(),
@@ -106,8 +165,12 @@ impl AkitaSerialize for AkitaSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.max_num_points
             .serialize_with_mode(&mut writer, compress)?;
+        writer.write_all(&SETUP_LAYOUT_TAG)?;
+        self.max_setup_len
+            .serialize_with_mode(&mut writer, compress)?;
         self.max_stride.serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
+        writer.write_all(&self.zk_blinding_seed)?;
         Ok(())
     }
 
@@ -115,8 +178,10 @@ impl AkitaSerialize for AkitaSetupSeed {
         self.max_num_vars.serialized_size(compress)
             + self.max_num_batched_polys.serialized_size(compress)
             + self.max_num_points.serialized_size(compress)
+            + SETUP_LAYOUT_TAG.len()
+            + self.max_setup_len.serialized_size(compress)
             + self.max_stride.serialized_size(compress)
-            + 32
+            + 64
     }
 }
 
@@ -132,15 +197,27 @@ impl AkitaDeserialize for AkitaSetupSeed {
         let max_num_batched_polys =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_num_points = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let mut setup_layout_tag = [0u8; SETUP_LAYOUT_TAG.len()];
+        reader.read_exact(&mut setup_layout_tag)?;
+        if setup_layout_tag != SETUP_LAYOUT_TAG {
+            return Err(SerializationError::InvalidData(
+                "unsupported setup layout tag".to_string(),
+            ));
+        }
+        let max_setup_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_stride = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
+        let mut zk_blinding_seed = [0u8; 32];
+        reader.read_exact(&mut zk_blinding_seed)?;
         let out = Self {
             max_num_vars,
             max_num_batched_polys,
             max_num_points,
             max_stride,
+            max_setup_len,
             public_matrix_seed,
+            zk_blinding_seed,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -153,6 +230,13 @@ impl<F: FieldCore + Valid + AkitaSerialize> Valid for AkitaExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
         self.shared_matrix.check()?;
+        if self.shared_matrix.total_ring_elements() != self.seed.max_setup_len {
+            return Err(SerializationError::InvalidData(format!(
+                "shared setup length {} does not match seed max_setup_len {}",
+                self.shared_matrix.total_ring_elements(),
+                self.seed.max_setup_len
+            )));
+        }
         self.descriptor_digests
             .check_parts(&self.seed, &self.shared_matrix)?;
         Ok(())
