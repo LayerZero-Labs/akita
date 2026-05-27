@@ -213,9 +213,7 @@ where
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<(), AkitaError> {
         let prepared_expanded = self.prepared_expanded_setup::<D>(prepared);
-        if prepared_expanded.seed() != expanded.seed()
-            || prepared_expanded.shared_matrix() != expanded.shared_matrix()
-        {
+        if !std::ptr::eq(prepared_expanded, expanded) {
             return Err(AkitaError::InvalidSetup(
                 "prepared compute context was built for a different setup".to_string(),
             ));

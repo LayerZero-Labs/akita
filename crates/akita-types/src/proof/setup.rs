@@ -1,6 +1,7 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
 use crate::FlatMatrix;
+use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{FieldCore, RandomSampling};
@@ -161,11 +162,17 @@ pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {
+    let ring_elements: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..total_ring_elements)
+        .map(|idx| {
+            let mut entry_rng = ShakeXofRng::new(seed, idx);
+            CyclotomicRing::random(&mut entry_rng)
+        })
+        .collect();
+
     let mut data = Vec::with_capacity(total_ring_elements * D);
-    data.resize(total_ring_elements * D, F::zero());
-    cfg_chunks_mut!(&mut data, D)
-        .enumerate()
-        .for_each(|(idx, coeffs)| fill_public_matrix_coefficients(seed, idx, coeffs));
+    for ring in ring_elements {
+        data.extend(ring.coeffs);
+    }
 
     FlatMatrix::from_flat_data(data, D)
 }
@@ -226,14 +233,12 @@ pub fn validate_public_matrix_matches_seed<F: FieldCore + RandomSampling + Valid
         .chunks_exact(gen_ring_dim)
         .enumerate()
     {
-        let mut entry_rng = ShakeXofRng::new(&seed.public_matrix_seed, idx);
-        for actual in coeffs {
-            let expected = F::random(&mut entry_rng);
-            if *actual != expected {
-                return Err(SerializationError::InvalidData(
-                    "setup shared_matrix does not match public matrix seed".to_string(),
-                ));
-            }
+        let mut expected = vec![F::zero(); gen_ring_dim];
+        fill_public_matrix_coefficients(&seed.public_matrix_seed, idx, &mut expected);
+        if coeffs != expected.as_slice() {
+            return Err(SerializationError::InvalidData(
+                "setup shared_matrix does not match public matrix seed".to_string(),
+            ));
         }
     }
     Ok(())
@@ -594,6 +599,20 @@ mod tests {
         for c in 0..6 {
             assert_eq!(small_view.row(0).unwrap()[c], large_view.row(0).unwrap()[c]);
         }
+    }
+
+    #[test]
+    fn flat_derivation_matches_ring_random_stream() {
+        let seed = [5u8; 32];
+        let got = derive_public_matrix_flat::<SmallF, SMALL_D>(6, &seed);
+        let expected = (0..6)
+            .flat_map(|idx| {
+                let mut rng = ShakeXofRng::new(&seed, idx);
+                CyclotomicRing::<SmallF, SMALL_D>::random(&mut rng).coeffs
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(got.as_field_slice(), expected.as_slice());
     }
 
     #[test]

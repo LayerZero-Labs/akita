@@ -177,16 +177,16 @@ where
         &proof.b_blinding_digits,
         &hiding_params,
     )?;
-    if b_input_digits.len() > setup.expanded.seed.max_stride {
+    let expanded = setup.expanded.as_ref();
+    let seed = expanded.seed();
+    let shared_matrix = expanded.shared_matrix();
+    if b_input_digits.len() > seed.max_stride {
         return Err(AkitaError::InvalidSetup(
             "ZK hiding commitment exceeds shared matrix stride".to_string(),
         ));
     }
 
-    let b_matrix = setup.expanded.shared_matrix.ring_view::<D>(
-        hiding_params.b_key.row_len(),
-        setup.expanded.seed.max_stride,
-    )?;
+    let b_matrix = shared_matrix.ring_view::<D>(hiding_params.b_key.row_len(), seed.max_stride)?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
     let expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
     let expected_len = expected_u_blind_rings
