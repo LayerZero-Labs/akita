@@ -102,6 +102,10 @@ def workload_slug(metadata: CaseMetadata, num_polys: int) -> str:
     return metadata.workload
 
 
+def slugify_config(config: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", config.lower()).strip("-") or "custom"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run and render the Akita profile benchmark report."
@@ -261,7 +265,7 @@ SAMPLE_METRICS = TIMING_SAMPLE_METRICS + ("max_rss_kib",)
 
 def case_id(mode: str, num_vars: int, num_polys: int) -> str:
     metadata = case_metadata(mode)
-    config = metadata.config.lower()
+    config = slugify_config(metadata.config)
     return (
         f"{metadata.field_family}-{workload_slug(metadata, num_polys)}"
         f"-nv{num_vars}-np{num_polys}-{config}"
