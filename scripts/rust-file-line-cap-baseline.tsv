@@ -3,8 +3,6 @@
 # Entries may not grow. Remove an entry once its file has at most 1500 lines.
 4387	crates/akita-prover/src/protocol/flow.rs
 3367	crates/akita-prover/src/protocol/sumcheck/akita_stage2.rs
-3193	crates/akita-prover/src/backend/onehot.rs
-3090	crates/akita-prover/src/kernels/linear.rs
 2894	crates/akita-prover/src/protocol/sumcheck/two_round_prefix.rs
 2725	crates/akita-prover/src/protocol/sumcheck/akita_stage1.rs
 2243	crates/akita-sumcheck/src/extension_opening_reduction.rs
