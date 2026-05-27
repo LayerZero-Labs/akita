@@ -1,72 +1,125 @@
 //! Guard test: the generated schedule tables shipped in `akita-types::generated`
-//! must agree, byte-for-byte at the step level, with the schedules that
-//! `find_optimal_schedule` would emit today.
+//! must agree exactly with what `gen_schedule_tables` would emit today.
 //!
-//! When this test fails it almost always means the planner heuristics, layout
-//! derivation, or proof-size accounting have moved without re-running
-//! `gen_schedule_tables`. The fix is to regenerate the tables with the same
-//! command the test prints in its failure message:
+//! Coverage is metadata-driven: every entry in
+//! [`akita_planner::generated_families::ALL_GENERATED_FAMILIES`] is checked
+//! against `Cfg::schedule_table()`, so adding a new family to the
+//! generator picks it up here automatically (no per-family handwritten
+//! row mirror).
 //!
-//! ```bash
-//! cargo run --release -p akita-planner --bin gen_schedule_tables -- \
-//!     crates/akita-types/src/generated
+//! For each family the test asserts, in this order:
 //!
-//! cargo run --release -p akita-planner --features zk \
-//!     --bin gen_schedule_tables -- crates/akita-types/src/generated
-//! ```
+//! 1. **Table is shipped.** `Cfg::schedule_table()` returns `Some(_)`.
+//! 2. **Length match.** The shipped table has exactly the same number of
+//!    rows as the regenerated key cross-product (no extras, no missing
+//!    entries, no duplicates).
+//! 3. **Ordered key sequence.** The `i`-th shipped row carries the
+//!    `i`-th regenerated key. Catches reordering, duplicates surviving
+//!    behind a length match (a duplicate plus a missing key would still
+//!    pass a multiset check), and serialization regressions.
+//! 4. **Step content equality.** Every shipped entry's step sequence
+//!    matches what `find_optimal_schedule::<Cfg>(_,
+//!    RegenerateFromScratch)` produces.
 //!
-//! This test mirrors the family/key enumeration in
-//! `akita-planner/src/bin/gen_schedule_tables.rs` so that adding a new family
-//! there forces the same family to be covered here.
+//! When this test fails the panic message lists per-family mismatch
+//! counts, the first three offending diffs, and the regenerate command
+//! for the active feature set.
 
 #![allow(missing_docs)]
 
-use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
-use akita_config::CommitmentConfig;
-use akita_planner::find_optimal_schedule;
+use akita_planner::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
 use akita_types::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTable,
-    GeneratedScheduleTableEntry, GeneratedStep,
+    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTableEntry,
+    GeneratedStep,
 };
-use akita_types::{
-    generated_schedule_lookup_key, AkitaScheduleLookupKey, ClaimIncidenceSummary, Schedule, Step,
-};
+use akita_types::{generated_schedule_lookup_key, AkitaScheduleLookupKey, Schedule, Step};
 
-/// Mirrors `FamilySpec` from `gen_schedule_tables.rs` but keyed at the type
-/// level so the test can pull `Cfg::schedule_table()` directly.
-struct FamilyCase {
-    name: &'static str,
-    min_num_vars: usize,
-    max_num_vars: usize,
-    check: fn(&'static str, usize, usize) -> Vec<Mismatch>,
-}
-
-/// A single (family, key) regeneration discrepancy.
-struct Mismatch {
-    family: &'static str,
-    key: GeneratedScheduleKey,
-    expected: Vec<GeneratedStep>,
-    actual_in_table: Option<Vec<GeneratedStep>>,
+/// One observed mismatch between the shipped table and the regen output.
+enum Mismatch {
+    MissingTable {
+        family: &'static str,
+    },
+    Length {
+        family: &'static str,
+        expected_len: usize,
+        actual_len: usize,
+    },
+    Key {
+        family: &'static str,
+        position: usize,
+        expected_key: GeneratedScheduleKey,
+        actual_key: GeneratedScheduleKey,
+    },
+    Steps {
+        family: &'static str,
+        position: usize,
+        key: GeneratedScheduleKey,
+        expected_steps: Vec<GeneratedStep>,
+        actual_steps: Vec<GeneratedStep>,
+    },
 }
 
 impl Mismatch {
+    fn family(&self) -> &'static str {
+        match self {
+            Mismatch::MissingTable { family }
+            | Mismatch::Length { family, .. }
+            | Mismatch::Key { family, .. }
+            | Mismatch::Steps { family, .. } => family,
+        }
+    }
+
     fn render(&self) -> String {
         use std::fmt::Write as _;
         let mut s = String::new();
-        let _ = writeln!(s, "  family={} key={:?}", self.family, self.key);
-        let _ = writeln!(s, "    DP regenerated steps ({}):", self.expected.len());
-        for step in &self.expected {
-            let _ = writeln!(s, "      {step:?}");
-        }
-        match &self.actual_in_table {
-            Some(steps) => {
-                let _ = writeln!(s, "    table entry steps     ({}):", steps.len());
-                for step in steps {
+        match self {
+            Mismatch::MissingTable { family } => {
+                let _ = writeln!(
+                    s,
+                    "  family={family}: Cfg::schedule_table() returned None; \
+                     cannot diff against a shipped table"
+                );
+            }
+            Mismatch::Length {
+                family,
+                expected_len,
+                actual_len,
+            } => {
+                let _ = writeln!(
+                    s,
+                    "  family={family}: row count mismatch \
+                     (regen expects {expected_len}, table has {actual_len})"
+                );
+            }
+            Mismatch::Key {
+                family,
+                position,
+                expected_key,
+                actual_key,
+            } => {
+                let _ = writeln!(s, "  family={family} row {position}: key mismatch");
+                let _ = writeln!(s, "    expected key: {expected_key:?}");
+                let _ = writeln!(s, "    table key:    {actual_key:?}");
+            }
+            Mismatch::Steps {
+                family,
+                position,
+                key,
+                expected_steps,
+                actual_steps,
+            } => {
+                let _ = writeln!(
+                    s,
+                    "  family={family} row {position}: step mismatch for key={key:?}"
+                );
+                let _ = writeln!(s, "    DP regenerated steps ({}):", expected_steps.len());
+                for step in expected_steps {
                     let _ = writeln!(s, "      {step:?}");
                 }
-            }
-            None => {
-                let _ = writeln!(s, "    table entry: <missing>");
+                let _ = writeln!(s, "    table entry steps     ({}):", actual_steps.len());
+                for step in actual_steps {
+                    let _ = writeln!(s, "      {step:?}");
+                }
             }
         }
         s
@@ -95,167 +148,71 @@ fn schedule_to_generated_steps(schedule: &Schedule) -> Vec<GeneratedStep> {
         .collect()
 }
 
-fn table_steps_for_key(
-    table: GeneratedScheduleTable,
-    key: GeneratedScheduleKey,
-) -> Option<Vec<GeneratedStep>> {
-    let entry: &GeneratedScheduleTableEntry = table.entries.iter().find(|e| e.key == key)?;
-    Some(entry.steps.to_vec())
+fn entry_steps(entry: &GeneratedScheduleTableEntry) -> Vec<GeneratedStep> {
+    entry.steps.to_vec()
 }
 
-/// Run the DP for `(singleton, batched_4)` keys across `[min, max]`, collect
-/// every mismatch against the table shipped by `Cfg::schedule_table()`.
-fn check_family<Cfg: CommitmentConfig>(
-    name: &'static str,
-    min_num_vars: usize,
-    max_num_vars: usize,
-) -> Vec<Mismatch> {
-    let mut mismatches = Vec::new();
-    let table = Cfg::schedule_table().unwrap_or_else(|| {
-        panic!(
-            "family {name} has no shipped generated schedule table; \
-             cannot compare against `find_optimal_schedule`"
-        )
-    });
+fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
+    let Some(table) = (family.schedule_table)() else {
+        into.push(Mismatch::MissingTable {
+            family: family.module_name,
+        });
+        return;
+    };
 
-    let singleton =
-        |nv| ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence should be valid");
-    let batched_4 =
-        |nv| ClaimIncidenceSummary::same_point(nv, 4).expect("batched-4 incidence should be valid");
+    let expected_keys: Vec<AkitaScheduleLookupKey> = family_keys(family)
+        .unwrap_or_else(|e| panic!("family {} key enumeration failed: {e}", family.module_name));
 
-    for nv in min_num_vars..=max_num_vars {
-        for incidence in [singleton(nv), batched_4(nv)] {
-            let key = AkitaScheduleLookupKey::new_from_incidence(&incidence)
-                .expect("schedule lookup key should be constructible");
-            let schedule = find_optimal_schedule::<Cfg>(key, false).unwrap_or_else(|e| {
-                panic!(
-                    "DP regen failed for family {name} key={:?}: {e}",
-                    generated_schedule_lookup_key(key)
-                )
-            });
-            let expected = schedule_to_generated_steps(&schedule);
-            let generated_key = generated_schedule_lookup_key(key);
-            let actual_in_table = table_steps_for_key(table, generated_key);
-            let mismatched = match &actual_in_table {
-                Some(table_steps) => table_steps != &expected,
-                None => true,
-            };
-            if mismatched {
-                mismatches.push(Mismatch {
-                    family: name,
-                    key: generated_key,
-                    expected,
-                    actual_in_table,
-                });
-            }
-        }
+    if table.entries.len() != expected_keys.len() {
+        into.push(Mismatch::Length {
+            family: family.module_name,
+            expected_len: expected_keys.len(),
+            actual_len: table.entries.len(),
+        });
+        // Continue with the prefix that does line up so we still surface
+        // any per-row content mismatches.
     }
 
-    mismatches
-}
+    let pair_count = table.entries.len().min(expected_keys.len());
+    for (position, (entry, &expected_key)) in table
+        .entries
+        .iter()
+        .zip(expected_keys.iter())
+        .take(pair_count)
+        .enumerate()
+    {
+        let expected_generated_key = generated_schedule_lookup_key(expected_key);
+        if entry.key != expected_generated_key {
+            into.push(Mismatch::Key {
+                family: family.module_name,
+                position,
+                expected_key: expected_generated_key,
+                actual_key: entry.key,
+            });
+            // Don't compare steps when the key is wrong — the regen
+            // would solve for a different key.
+            continue;
+        }
 
-// The list below mirrors `ALL_FAMILIES` in `gen_schedule_tables.rs`. Add a row
-// here whenever a row is added there (the test will fail loudly if the shipped
-// table lacks an expected entry, so a missing row here is detected by the
-// neighbouring generated-table-shape tests in `akita-config`).
-const ALL_FAMILIES: &[FamilyCase] = &[
-    FamilyCase {
-        name: "fp128_d32_full",
-        min_num_vars: 1,
-        max_num_vars: 50,
-        check: check_family::<fp128::D32Full>,
-    },
-    FamilyCase {
-        name: "fp128_d32_onehot",
-        min_num_vars: 1,
-        max_num_vars: 50,
-        check: check_family::<fp128::D32OneHot>,
-    },
-    FamilyCase {
-        name: "fp128_d64_full",
-        min_num_vars: 1,
-        max_num_vars: 50,
-        check: check_family::<fp128::D64Full>,
-    },
-    FamilyCase {
-        name: "fp128_d64_onehot",
-        min_num_vars: 1,
-        max_num_vars: 50,
-        check: check_family::<fp128::D64OneHot>,
-    },
-    FamilyCase {
-        name: "fp32_d32",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp32::D32Full>,
-    },
-    FamilyCase {
-        name: "fp32_d32_onehot",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp32::D32OneHot>,
-    },
-    FamilyCase {
-        name: "fp32_d64",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp32::D64Full>,
-    },
-    FamilyCase {
-        name: "fp32_d64_onehot",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp32::D64OneHot>,
-    },
-    FamilyCase {
-        name: "fp16_d32_full",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp16::D32Full>,
-    },
-    FamilyCase {
-        name: "fp16_d32_onehot",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp16::D32OneHot>,
-    },
-    FamilyCase {
-        name: "fp16_d64_full",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp16::D64Full>,
-    },
-    FamilyCase {
-        name: "fp16_d64_onehot",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp16::D64OneHot>,
-    },
-    FamilyCase {
-        name: "fp64_d32",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp64::D32Full>,
-    },
-    FamilyCase {
-        name: "fp64_d32_onehot",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp64::D32OneHot>,
-    },
-    FamilyCase {
-        name: "fp64_d64",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp64::D64Full>,
-    },
-    FamilyCase {
-        name: "fp64_d64_onehot",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        check: check_family::<fp64::D64OneHot>,
-    },
-];
+        let schedule = (family.regen)(expected_key).unwrap_or_else(|e| {
+            panic!(
+                "DP regen failed for family {} key={expected_generated_key:?}: {e}",
+                family.module_name
+            )
+        });
+        let expected_steps = schedule_to_generated_steps(&schedule);
+        let actual_steps = entry_steps(entry);
+        if expected_steps != actual_steps {
+            into.push(Mismatch::Steps {
+                family: family.module_name,
+                position,
+                key: expected_generated_key,
+                expected_steps,
+                actual_steps,
+            });
+        }
+    }
+}
 
 fn regen_hint() -> &'static str {
     if cfg!(feature = "zk") {
@@ -267,27 +224,27 @@ fn regen_hint() -> &'static str {
     }
 }
 
+/// All four exactness checks (presence, length, ordered keys, steps)
+/// rolled into one test so the panic message can summarize per-family
+/// mismatch counts.
 #[test]
 fn generated_schedule_tables_match_find_optimal_schedule() {
     let mut mismatches = Vec::new();
-    for family in ALL_FAMILIES {
-        mismatches.extend((family.check)(
-            family.name,
-            family.min_num_vars,
-            family.max_num_vars,
-        ));
+    for family in ALL_GENERATED_FAMILIES {
+        check_family(family, &mut mismatches);
     }
+
     if mismatches.is_empty() {
         return;
     }
-    let mut buckets: std::collections::BTreeMap<&str, Vec<&Mismatch>> =
-        std::collections::BTreeMap::new();
+
+    let mut buckets: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for m in &mismatches {
-        buckets.entry(m.family).or_default().push(m);
+        *buckets.entry(m.family()).or_default() += 1;
     }
     let summary = buckets
         .iter()
-        .map(|(family, ms)| format!("{family}: {} mismatched entries", ms.len()))
+        .map(|(family, count)| format!("{family}: {count} issue(s)"))
         .collect::<Vec<_>>()
         .join("\n  ");
     let preview = mismatches
@@ -296,9 +253,9 @@ fn generated_schedule_tables_match_find_optimal_schedule() {
         .map(Mismatch::render)
         .collect::<String>();
     panic!(
-        "{count} schedule-table entries disagree with `find_optimal_schedule` output.\n\
+        "{count} schedule-table issue(s) disagree with `find_optimal_schedule` output.\n\
          Per-family counts:\n  {summary}\n\n\
-         First mismatches:\n{preview}\n\
+         First issues:\n{preview}\n\
          Regenerate the shipped tables with:\n  {hint}",
         count = mismatches.len(),
         hint = regen_hint(),

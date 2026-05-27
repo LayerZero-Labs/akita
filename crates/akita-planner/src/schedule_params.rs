@@ -5,10 +5,13 @@
 //! smallest `next_commit` across all next-level bases; the suffix is
 //! recursed into unconstrained.
 //!
-//! Public entry: [`find_optimal_schedule`], `<Cfg>`-generic, takes
-//! `allow_table_fast_path: bool` to control whether the search consults
-//! `Cfg::schedule_table()` before running DP. Production callers pass
-//! `true`; the table-emitter binary regenerates from scratch with `false`.
+//! Public entry: [`find_optimal_schedule`], `<Cfg>`-generic, takes a
+//! [`ScheduleSearchMode`] argument that controls whether the search
+//! consults `Cfg::schedule_table()` (and seeds the DP with the
+//! corresponding singleton plan / envelope floor) before running DP.
+//! Production callers pass [`ScheduleSearchMode::RuntimeTableSeeded`];
+//! the table-emitter binary regenerates from scratch with
+//! [`ScheduleSearchMode::RegenerateFromScratch`].
 
 use std::collections::HashMap;
 
@@ -32,6 +35,35 @@ use akita_types::{
 
 use akita_derive::{schedule_plan_from_table, PlanPolicy};
 
+/// Mode selector for [`find_optimal_schedule`].
+///
+/// Replaces the previous `allow_table_fast_path: bool` parameter. The
+/// boolean had grown to control three intertwined behaviours (offline
+/// fast-path consultation, singleton plan seeding, and table-derived
+/// envelope flooring), and the name no longer described the contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleSearchMode {
+    /// Production runtime mode. The search first consults
+    /// `Cfg::schedule_table()` as a fast path; on a miss the DP runs
+    /// with the singleton `Cfg::schedule_plan` and the
+    /// `Cfg::schedule_table()`-floored envelope as seed inputs.
+    RuntimeTableSeeded,
+    /// Offline regeneration mode used by `gen_schedule_tables`. The DP
+    /// ignores `Cfg::schedule_table()` and any singleton plan derived
+    /// from it, and reconstructs the envelope from
+    /// `Cfg::audited_root_rank` alone. This guarantees the output is a
+    /// pure function of the `Cfg` itself, so the generator is
+    /// idempotent against the table it just emitted.
+    RegenerateFromScratch,
+}
+
+impl ScheduleSearchMode {
+    #[inline]
+    fn consults_offline_tables(self) -> bool {
+        matches!(self, Self::RuntimeTableSeeded)
+    }
+}
+
 /// Build a `SearchOptions` value from a `CommitmentConfig`.
 ///
 /// This is the bridge between the runtime config trait and the internal
@@ -40,20 +72,21 @@ use akita_derive::{schedule_plan_from_table, PlanPolicy};
 /// itself is crate-private.
 fn search_options_for_cfg<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
-    consult_offline_tables: bool,
+    mode: ScheduleSearchMode,
 ) -> Result<SearchOptions, AkitaError> {
     // The singleton schedule plan is fixed for the whole search (it only
     // depends on `key.num_vars`); precompute it once instead of having
     // every DP candidate evaluation reach back into `Cfg::schedule_plan`.
     //
-    // When the caller is regenerating tables (`consult_offline_tables ==
-    // false`), the singleton plan and offline table are both dropped so
-    // the DP cannot read back any value that itself came from a stored
-    // schedule entry — otherwise `gen_schedule_tables` would not be
-    // idempotent: re-running it against the table it just emitted would
-    // be free to oscillate between equally-priced candidates whose tie
-    // ordering depends on which prior table seeded `opts.schedule_plan`.
-    let (schedule_plan, table, envelope) = if consult_offline_tables {
+    // When the caller is regenerating tables
+    // (`ScheduleSearchMode::RegenerateFromScratch`), the singleton plan
+    // and offline table are both dropped so the DP cannot read back any
+    // value that itself came from a stored schedule entry — otherwise
+    // `gen_schedule_tables` would not be idempotent: re-running it
+    // against the table it just emitted would be free to oscillate
+    // between equally-priced candidates whose tie ordering depends on
+    // which prior table seeded `opts.schedule_plan`.
+    let (schedule_plan, table, envelope) = if mode.consults_offline_tables() {
         (
             Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(key.num_vars))?,
             Cfg::schedule_table(),
@@ -136,7 +169,7 @@ pub(crate) struct SearchOptions {
     /// Number of public opening rows used by each recursive fold.
     pub recursive_public_rows: usize,
     /// Optional generated schedule table to consult before DP search,
-    /// gated by the `allow_table_fast_path` argument on
+    /// gated by the [`ScheduleSearchMode`] argument on
     /// [`find_optimal_schedule`].
     pub table: Option<GeneratedScheduleTable>,
     /// Stage-1 sparse challenge selector for a given ring dimension. The
@@ -925,11 +958,8 @@ fn offline_schedule_for_key(opts: &SearchOptions) -> Result<Option<Schedule>, Ak
 
 /// Find the optimal schedule for a root schedule lookup key under `Cfg`.
 ///
-/// When `allow_table_fast_path` is `true` and `Cfg::schedule_table()` is
-/// `Some(...)`, the search consults the offline table and returns the
-/// matching entry without running DP. When `false`, DP runs from scratch;
-/// this is what the `gen_schedule_tables` binary uses to regenerate
-/// generated tables.
+/// Behaviour is driven by the [`ScheduleSearchMode`] argument; see its
+/// docs for the runtime-vs-regeneration contract.
 ///
 /// # Errors
 ///
@@ -937,9 +967,9 @@ fn offline_schedule_for_key(opts: &SearchOptions) -> Result<Option<Schedule>, Ak
 /// overflows, or if generated-table materialization fails.
 pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
-    allow_table_fast_path: bool,
+    mode: ScheduleSearchMode,
 ) -> Result<Schedule, AkitaError> {
-    let opts = search_options_for_cfg::<Cfg>(key, allow_table_fast_path)?;
+    let opts = search_options_for_cfg::<Cfg>(key, mode)?;
     let opts = &opts;
     let t_vectors = key.num_t_vectors;
     let w_vectors = key.num_w_vectors;
@@ -957,7 +987,7 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
     }
     let num_vars = key.num_vars;
 
-    if allow_table_fast_path {
+    if mode.consults_offline_tables() {
         if let Some(schedule) = offline_schedule_for_key(opts)? {
             tracing::debug!(
                 num_vars,
@@ -1149,7 +1179,8 @@ mod tests {
         use akita_config::proof_optimized::fp128;
         let key = AkitaScheduleLookupKey::singleton(8);
         let schedule =
-            find_optimal_schedule::<fp128::D64Full>(key, true).expect("offline schedule lookup");
+            find_optimal_schedule::<fp128::D64Full>(key, ScheduleSearchMode::RuntimeTableSeeded)
+                .expect("offline schedule lookup");
         assert!(!schedule.steps.is_empty());
     }
 }
