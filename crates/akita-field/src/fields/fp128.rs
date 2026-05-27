@@ -19,14 +19,18 @@
 //! (`p = 2^128 − 159`, `p ≡ 33 mod 64`) is kept for the algebra benchmark/test
 //! path that only needs 32-way roots of unity.
 
-mod core_arithmetic;
+mod add_sub;
+mod core;
+mod mul;
 mod primes;
+mod reduce;
 #[cfg(all(test, not(feature = "zk")))]
 mod tests;
 mod traits;
+mod wide;
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-use core::arch::asm;
+use ::core::arch::asm;
 use std::io::{Read, Write};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -42,7 +46,7 @@ use akita_serialization::{
 
 use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide};
 
-pub use core_arithmetic::Fp128;
+pub use self::core::Fp128;
 pub use primes::{Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7};
 
 /// Pack two u64 limbs into `[lo, hi]`.
