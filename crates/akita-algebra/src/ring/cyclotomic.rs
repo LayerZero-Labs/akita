@@ -274,17 +274,36 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// Since `X^D = -1`, coefficients that wrap past index `D` get negated.
     #[inline]
     pub fn negacyclic_shift(&self, k: usize) -> Self {
-        let k = k % D;
+        let k = k % (D << 1);
         if k == 0 {
             return *self;
         }
+
+        let global_neg = k >= D;
+        let shift = k % D;
+
+        if shift == 0 {
+            assert!(
+                global_neg,
+                "shift 0 with global_neg == false is not allowed"
+            );
+            return self.neg();
+        }
+
         let mut out = [F::zero(); D];
         for i in 0..D {
-            let target = i + k;
-            if target < D {
-                out[target] = self.coeffs[i];
+            let target = i + shift;
+            let wrap_neg = target >= D;
+            let coeff = if global_neg ^ wrap_neg {
+                -self.coeffs[i]
             } else {
-                out[target - D] = -self.coeffs[i];
+                self.coeffs[i]
+            };
+
+            if target < D {
+                out[target] = coeff;
+            } else {
+                out[target - D] = coeff;
             }
         }
         Self { coeffs: out }
@@ -308,19 +327,24 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// allocating a temporary ring element.
     #[inline]
     pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] += self.coeffs[i];
-            }
-            return;
-        }
+        let k = k % (D << 1);
+
+        let global_neg = k >= D;
+        let shift = k % D;
+
         for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] += self.coeffs[i];
+            let target = i + shift;
+            let wrap_neg = target >= D;
+            let coeff = if global_neg ^ wrap_neg {
+                -self.coeffs[i]
             } else {
-                dst.coeffs[target - D] -= self.coeffs[i];
+                self.coeffs[i]
+            };
+
+            if target < D {
+                dst.coeffs[target] += coeff;
+            } else {
+                dst.coeffs[target - D] += coeff;
             }
         }
     }
@@ -331,19 +355,24 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// allocating a temporary ring element.
     #[inline]
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] -= self.coeffs[i];
-            }
-            return;
-        }
+        let k = k % (D << 1);
+
+        let global_neg = k >= D;
+        let shift = k % D;
+
         for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] -= self.coeffs[i];
+            let target = i + shift;
+            let wrap_neg = target >= D;
+            let coeff = if global_neg ^ wrap_neg {
+                -self.coeffs[i]
             } else {
-                dst.coeffs[target - D] += self.coeffs[i];
+                self.coeffs[i]
+            };
+
+            if target < D {
+                dst.coeffs[target] -= coeff;
+            } else {
+                dst.coeffs[target - D] -= coeff;
             }
         }
     }
@@ -354,20 +383,24 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         if scale.is_zero() {
             return;
         }
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] += self.coeffs[i] * scale;
-            }
-            return;
-        }
+        let k = k % (D << 1);
+
+        let global_neg = k >= D;
+        let shift = k % D;
+
         for i in 0..D {
-            let target = i + k;
+            let target = i + shift;
+            let wrap_neg = target >= D;
             let product = self.coeffs[i] * scale;
+            let product = if global_neg ^ wrap_neg {
+                -product
+            } else {
+                product
+            };
             if target < D {
                 dst.coeffs[target] += product;
             } else {
-                dst.coeffs[target - D] -= product;
+                dst.coeffs[target - D] += product;
             }
         }
     }
@@ -1235,19 +1268,23 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
     #[inline]
     pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] += self.coeffs[i];
-            }
-            return;
-        }
+        let k = k % (D << 1);
+
+        let global_neg = k >= D;
+        let shift = k % D;
+
         for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] += self.coeffs[i];
+            let target = i + shift;
+            let wrap_neg = target >= D;
+            let coeff = if global_neg ^ wrap_neg {
+                -self.coeffs[i]
             } else {
-                dst.coeffs[target - D] -= self.coeffs[i];
+                self.coeffs[i]
+            };
+            if target < D {
+                dst.coeffs[target] += coeff;
+            } else {
+                dst.coeffs[target - D] += coeff;
             }
         }
     }
@@ -1255,19 +1292,23 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
     #[inline]
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] -= self.coeffs[i];
-            }
-            return;
-        }
+        let k = k % (D << 1);
+
+        let global_neg = k >= D;
+        let shift = k % D;
+
         for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] -= self.coeffs[i];
+            let target = i + shift;
+            let wrap_neg = target >= D;
+            let coeff = if global_neg ^ wrap_neg {
+                -self.coeffs[i]
             } else {
-                dst.coeffs[target - D] += self.coeffs[i];
+                self.coeffs[i]
+            };
+            if target < D {
+                dst.coeffs[target] -= coeff;
+            } else {
+                dst.coeffs[target - D] -= coeff;
             }
         }
     }
@@ -1359,12 +1400,67 @@ mod tests {
     }
 
     #[test]
+    fn shift_accumulate_into_matches_negacyclic_shift() {
+        let mut rng = StdRng::seed_from_u64(0x1234);
+        let a = CyclotomicRing::<F64, D>::random(&mut rng);
+        let dst = CyclotomicRing::<F64, D>::random(&mut rng);
+
+        for k in 0..32 {
+            let expected = dst + a.negacyclic_shift(k);
+            let mut actual = dst;
+            a.shift_accumulate_into(&mut actual, k);
+            assert_eq!(actual, expected, "shift_accumulate_into k={k}");
+        }
+    }
+
+    #[test]
+    fn shift_sub_into_matches_negacyclic_shift() {
+        let mut rng = StdRng::seed_from_u64(0x1234);
+        let a = CyclotomicRing::<F64, D>::random(&mut rng);
+        let dst = CyclotomicRing::<F64, D>::random(&mut rng);
+
+        for k in 0..32 {
+            let expected = dst - a.negacyclic_shift(k);
+            let mut actual = dst;
+            a.shift_sub_into(&mut actual, k);
+            assert_eq!(actual, expected, "shift_sub_into k={k}");
+        }
+    }
+
+    #[test]
+    fn shift_scale_accumulate_into_matches_scaled_negacyclic_shift() {
+        let mut rng = StdRng::seed_from_u64(0x2468);
+        let a = CyclotomicRing::<F64, D>::random(&mut rng);
+        let dst = CyclotomicRing::<F64, D>::random(&mut rng);
+        let scales = [
+            F64::zero(),
+            F64::one(),
+            -F64::one(),
+            F64::from_u64(7),
+            F64::from_u64(4294967196),
+        ];
+
+        for k in 0..32 {
+            for &scale in &scales {
+                let mut actual = dst;
+                a.shift_scale_accumulate_into(&mut actual, k, scale);
+
+                let expected = dst + a.scale(&scale).negacyclic_shift(k);
+                assert_eq!(
+                    actual, expected,
+                    "shift_scale_accumulate_into k={k} scale={scale:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn wide_shift_accumulate_matches_narrow_fp64() {
         let mut rng = StdRng::seed_from_u64(0x1234);
         let src = CyclotomicRing::<F64, D>::random(&mut rng);
         let initial = CyclotomicRing::<F64, D>::random(&mut rng);
 
-        for k in [0, 1, 7, 31, 63] {
+        for k in [0, 1, 7, 31, 63, 64, 67] {
             let mut narrow = initial;
             src.shift_accumulate_into(&mut narrow, k);
 
@@ -1383,7 +1479,7 @@ mod tests {
         let src = CyclotomicRing::<F64, D>::random(&mut rng);
         let initial = CyclotomicRing::<F64, D>::random(&mut rng);
 
-        for k in [0, 1, 15, 32, 63] {
+        for k in [0, 1, 15, 32, 63, 64, 67] {
             let mut narrow = initial;
             src.shift_sub_into(&mut narrow, k);
 
