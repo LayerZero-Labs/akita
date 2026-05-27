@@ -10,13 +10,20 @@
 
 ## Scope
 
-This PR is a spec-only cleanup PR. It records the target layout and the
-downstream setup-claim-offloading constraints, but it does not change Rust
-code, proof bytes, setup serialization, generated tables, or benchmarks.
+This PR is a spec-only cleanup PR. It records the target packed setup layout
+and names the downstream setup-claim-offloading constraints that the layout
+must not obstruct. It does not change Rust code, proof bytes, setup
+serialization, generated tables, or benchmarks.
 
 The next implementation branch should re-implement from current `main` using
 this spec, not continue the older prototype commits that used to live on this
 branch.
+
+The next implementation branch is a pure layout branch. It must not introduce
+setup-prefix commitments, setup-claim delegation, a setup product sumcheck, or
+new proof objects. It may touch existing prover/verifier paths only where those
+paths already consume A/B/D setup rows and therefore must be taught the packed
+role views.
 
 ## Summary
 
@@ -57,8 +64,8 @@ smaller, point-local semantics and should use a dedicated ZK setup seed/domain.
 
 ## Notation
 
-`S` is the base shared setup object. For layout discussion, `S[lambda]` is a
-ring element. For setup-claim offloading, expose its coefficient axis:
+`S` is the base shared setup object. For the layout branch, `S[lambda]` is a
+ring element. Later setup-claim offloading will expose its coefficient axis:
 
 ```text
 S(lambda, y) = coefficient y of S[lambda]
@@ -70,8 +77,10 @@ The flattened coefficient vector is:
 S^flat[lambda * D_setup + y]
 ```
 
-If code or prose uses `M_setup`, it should mean the selected committed prefix
-of this same object, not `S_full` and not an alpha-evaluated matrix.
+If later setup-offloading code or prose uses `M_setup`, it should mean the
+selected committed prefix of this same object, not `S_full` and not an
+alpha-evaluated matrix. The layout branch itself should not introduce that
+commitment.
 
 The alpha-evaluated matrices are:
 
@@ -107,8 +116,8 @@ AkitaProverSetup::generate_with_capacity(...)
 ```
 
 Then prover and verifier paths pass `setup.seed.max_stride` to role views.
-Representative uses include inner witness commitment, outer B multiplication,
-root-direct recomputation, ring-switch quotient kernels, and
+Representative uses include inner witness setup multiplication, outer B setup
+multiplication, root-direct recomputation, ring-switch quotient kernels, and
 `compute_setup_contribution`.
 
 ## Target Base Setup Layout
@@ -383,14 +392,16 @@ ZK blinding parts are not included in this base setup contribution.
 This direct computation is still local verification. It is the correctness
 baseline for the later setup-claim-offloading work.
 
-## Downstream Setup-Claim Offloading Constraints
+## Deferred Setup-Claim Offloading Context
 
-This PR does not implement setup-claim offloading, but the layout must be
-chosen so the offloading path is clean.
+This section is context for later branches. It is intentionally not part of the
+layout implementation branch. The layout branch should only make the current
+direct verifier/prover use packed A/B/D setup views.
 
 ### Committed Object
 
-Commit to the flat coefficient vector of the setup prefix:
+Later setup-claim offloading should commit to the flat coefficient vector of the
+setup prefix:
 
 ```text
 S^flat[lambda * D_setup + y]
@@ -411,8 +422,8 @@ This is important: preprocessing can commit to `S`, but it cannot commit to
 
 Do not force the verifier to pay for `S_full` if the active shape is smaller.
 
-Preprocessing should commit to one setup commitment for each power-of-two flat
-coefficient prefix in a ladder:
+Later preprocessing should commit to one setup commitment for each power-of-two
+flat coefficient prefix in a ladder:
 
 ```text
 N_min <= N <= N_max
@@ -443,9 +454,9 @@ N_min = 2^23 field coefficients
 If a proof level has `D != D_setup`, setup delegation is rejected at that level
 and direct setup verification is used.
 
-The first implementation should make only the root and, at most, the first
-recursive level eligible; the prefix gate decides whether delegation actually
-fires.
+The first offloading implementation should make only the root and, at most, the
+first recursive level eligible; the prefix gate decides whether delegation
+actually fires.
 
 ### Inner Product Shape
 
@@ -539,7 +550,7 @@ product instead of entering the carry transducer.
 
 ### Transcript Binding
 
-The setup-offload implementation must bind:
+The later setup-offload implementation must bind:
 
 - the setup seed/digest and packed layout tag;
 - `D_setup`;
@@ -558,7 +569,9 @@ Suggested commit boundaries:
 1. Add packed setup envelope/types and remove `max_stride` from setup metadata.
 2. Update setup generation/cache identity to use exact `max_setup_len`.
 3. Add role-view helpers and cut over direct A/B/D reads.
-4. Cut over prover commitment paths to pass natural role widths.
+4. Cut over existing setup-matrix consumers to pass natural role widths. This
+   includes current prover commitment/recommitment routines only because they
+   already multiply by A/B setup rows; it does not add new commitments.
 5. Cut over fused NTT quotient kernels to role-width row slices.
 6. Rewrite direct `compute_setup_contribution` as explicit packed D/B/A sums.
 7. Split ZK B/D blinding into the separate ZK setup seed/domain.
@@ -597,6 +610,7 @@ For the later offloading branches:
 ## Non-Goals
 
 - No Rust implementation in this spec-only PR.
+- No setup-prefix commitments in the layout repack implementation branch.
 - No setup-claim offloading proof in the layout repack implementation branch.
 - No new matrix-claim sumcheck in the layout repack implementation branch.
 - No ZK blinding offload in the base setup claim.
@@ -628,7 +642,8 @@ For the later offloading branches:
 ## Acceptance Criteria for This Spec PR
 
 - The PR diff contains only durable planning/spec documents.
-- The spec states that committed setup offloading uses `S`, not `S_alpha`.
+- The spec states that later committed setup offloading uses `S`, not
+  `S_alpha`.
 - The spec records the prefix-ladder plan and the initial `D_setup = 32`,
   `N_min = 2^23` decisions.
 - The spec records root digit-fast and recursive block-fast role-view policy,

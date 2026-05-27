@@ -25,8 +25,8 @@ whose diff should compile and make sense against its parent.
 
 | # | Branch | Base | Scope |
 |---|---|---|---|
-| 00 | `quang/setup-layout-repack` | `main` | Spec-only PR. Preserve the packed setup-layout and setup-offloading design, including the prefix ladder, alpha-in-weight convention, role-view policy, and implementation plan. |
-| 01 | `quang/setup-layout-repack-impl` | `main` | Complete setup-layout cutover: remove the global setup stride, pack base A/B/D setup views, split ZK B/D blinding tails onto a small separate setup seed/domain, and update fused setup paths. |
+| 00 | `quang/setup-layout-repack` | `main` | Spec-only PR. Preserve the packed setup-layout design and mark setup-prefix commitments/offloading as later work. |
+| 01 | `quang/setup-layout-repack-impl` | `main` | Pure setup-layout cutover: remove the global setup stride, pack base A/B/D setup views, split ZK B/D blinding tails onto a small separate setup seed/domain, and update existing setup-matrix consumers to read the new views. No setup-prefix commitments or setup-claim offloading. |
 | 02 | `quang/setup-claim-packed-inner-product` | `quang/setup-layout-repack-impl` | Express the base setup contribution as an inner product over raw packed setup indices; add explicit weight-builder equivalence tests. |
 | 03 | `quang/setup-weight-evaluator` | `quang/setup-claim-packed-inner-product` | Add the succinct random-point evaluator for the base setup weight polynomial. |
 | 04 | `quang/setup-claim-offloading` | `quang/setup-weight-evaluator` | Wire the matrix-claim sumcheck that delegates the raw base setup matrix claim. |
@@ -34,8 +34,9 @@ whose diff should compile and make sense against its parent.
 
 The later branches may be split further if the implementation reveals a cleaner
 review boundary. Branch 00 is intentionally docs-only. Branch 01 should contain
-all setup-layout implementation changes, not a layout sub-stack. It should not
-introduce the offloading proof.
+only setup-layout implementation changes, not a layout sub-stack. It must not
+introduce setup-prefix commitments, setup-claim delegation, or the offloading
+proof.
 
 ## Why Not a Jolt-Style Splitter
 
@@ -48,8 +49,8 @@ Akita setup offloading cuts through shared protocol invariants:
 - setup seed serialization and descriptor identity,
 - setup sizing policy,
 - `FlatMatrix` role views,
-- prover commitment paths,
-- verifier direct-recommit paths,
+- existing prover paths that consume A/B/D setup rows,
+- verifier direct-recommit paths that consume A/B setup rows,
 - fused setup contribution replay,
 - optional ZK blinding paths, which deliberately use a separate small setup
   seed/domain instead of the base setup matrix,
