@@ -18,7 +18,6 @@ readme = "../../README.md"
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
-akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
@@ -43,7 +42,6 @@ parallel = [
   "akita-sumcheck/parallel",
 ]
 zk = [
-  "akita-config/zk",
   "akita-sumcheck/zk",
   "akita-types/zk",
   "rand_core/getrandom",
