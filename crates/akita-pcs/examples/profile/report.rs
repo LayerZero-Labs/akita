@@ -124,7 +124,12 @@ fn extension_opening_reduction_sizes<L: FieldCore + AkitaSerialize>(
             .iter()
             .map(|value| value.serialized_size(Compress::No))
             .sum();
+        #[cfg(not(feature = "zk"))]
         let sumcheck = reduction.sumcheck.serialized_size(Compress::No);
+        #[cfg(feature = "zk")]
+        let sumcheck = reduction
+            .sumcheck_proof_masked
+            .serialized_size(Compress::No);
         (partials, sumcheck)
     })
 }
@@ -162,7 +167,16 @@ where
     let stage1_sumcheck_size = stage1
         .stages
         .iter()
-        .map(|stage| stage.sumcheck.serialized_size(Compress::No))
+        .map(|stage| {
+            #[cfg(not(feature = "zk"))]
+            {
+                stage.sumcheck_proof.serialized_size(Compress::No)
+            }
+            #[cfg(feature = "zk")]
+            {
+                stage.sumcheck_proof_masked.serialized_size(Compress::No)
+            }
+        })
         .sum::<usize>();
     let stage1_interstage_claims_size = stage1
         .stages
@@ -171,9 +185,12 @@ where
         .map(|claim| claim.serialized_size(Compress::No))
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
-    let stage2_sumcheck_size = stage2.sumcheck.serialized_size(Compress::No);
+    #[cfg(not(feature = "zk"))]
+    let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
+    #[cfg(feature = "zk")]
+    let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
-    let next_w_eval_size = stage2.next_w_eval.serialized_size(Compress::No);
+    let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
     tracing::info!(
         label,
         level = level_idx,
@@ -231,7 +248,18 @@ where
     let y_rings_size = level.y_rings.serialized_size(Compress::No);
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
-    let stage2_sumcheck_size = level.stage2_sumcheck.serialized_size(Compress::No);
+    let stage2_sumcheck_size = {
+        #[cfg(not(feature = "zk"))]
+        {
+            level.stage2_sumcheck.serialized_size(Compress::No)
+        }
+        #[cfg(feature = "zk")]
+        {
+            level
+                .stage2_sumcheck_proof_masked
+                .serialized_size(Compress::No)
+        }
+    };
     let final_witness_size = level.final_witness.serialized_size(Compress::No);
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
@@ -326,7 +354,16 @@ where
     let stage1_sumcheck_size = stage1
         .stages
         .iter()
-        .map(|stage| stage.sumcheck.serialized_size(Compress::No))
+        .map(|stage| {
+            #[cfg(not(feature = "zk"))]
+            {
+                stage.sumcheck_proof.serialized_size(Compress::No)
+            }
+            #[cfg(feature = "zk")]
+            {
+                stage.sumcheck_proof_masked.serialized_size(Compress::No)
+            }
+        })
         .sum::<usize>();
     let stage1_interstage_claims_size = stage1
         .stages
@@ -335,9 +372,12 @@ where
         .map(|claim| claim.serialized_size(Compress::No))
         .sum::<usize>();
     let stage1_s_claim_size = stage1.s_claim.serialized_size(Compress::No);
-    let stage2_sumcheck_size = stage2.sumcheck.serialized_size(Compress::No);
+    #[cfg(not(feature = "zk"))]
+    let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
+    #[cfg(feature = "zk")]
+    let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
-    let next_w_eval_size = stage2.next_w_eval.serialized_size(Compress::No);
+    let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
 
     tracing::info!(
         label,

@@ -50,6 +50,11 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
+#[cfg(feature = "zk")]
+fn eq_factored_round_mask_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
+    sumcheck_bytes(rounds, degree, elem_bytes)
+}
+
 /// Header-stripped byte size of an extension-opening reduction proof.
 ///
 /// The reduction proof serializes `partials` challenge-field elements followed
@@ -82,20 +87,33 @@ pub fn extension_opening_reduction_proof_bytes(
         )));
     }
     let elem_bytes = field_bytes(challenge_field_bits);
-    Ok(partials
-        .saturating_mul(elem_bytes)
-        .saturating_add(sumcheck_bytes(
-            opening_vars - split_bits,
-            EXTENSION_OPENING_REDUCTION_DEGREE,
-            elem_bytes,
-        )))
+    let rounds = opening_vars - split_bits;
+    Ok(partials.saturating_mul(elem_bytes).saturating_add({
+        #[cfg(feature = "zk")]
+        {
+            sumcheck_bytes(rounds, EXTENSION_OPENING_REDUCTION_DEGREE, elem_bytes)
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            sumcheck_bytes(rounds, EXTENSION_OPENING_REDUCTION_DEGREE, elem_bytes)
+        }
+    }))
 }
 
 fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
     stage1_tree_stage_shapes(rounds, b)
         .into_iter()
         .map(|stage| {
-            sumcheck_bytes(rounds, stage.sumcheck.1, elem_bytes) + stage.child_claims * elem_bytes
+            ({
+                #[cfg(feature = "zk")]
+                {
+                    eq_factored_round_mask_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
+                }
+            }) + stage.child_claims * elem_bytes
         })
         .sum::<usize>()
         + elem_bytes
@@ -207,7 +225,16 @@ pub fn level_proof_bytes(
     y_bytes
         + v_bytes
         + stage1_bytes
-        + sumcheck_bytes(rounds, 3, challenge_elem_bytes)
+        + {
+            #[cfg(feature = "zk")]
+            {
+                sumcheck_bytes(rounds, 3, challenge_elem_bytes)
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                sumcheck_bytes(rounds, 3, challenge_elem_bytes)
+            }
+        }
         + next_commit_bytes
         + next_eval_bytes
 }
@@ -232,5 +259,14 @@ pub fn terminal_level_proof_bytes(
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, base_elem_bytes);
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-    y_bytes + sumcheck_bytes(rounds, 3, challenge_elem_bytes)
+    y_bytes + {
+        #[cfg(feature = "zk")]
+        {
+            sumcheck_bytes(rounds, 3, challenge_elem_bytes)
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            sumcheck_bytes(rounds, 3, challenge_elem_bytes)
+        }
+    }
 }

@@ -6,6 +6,7 @@ members = [
   "crates/akita-derive",
   "crates/akita-field",
   "crates/akita-pcs",
+  "crates/akita-r1cs",
   "crates/akita-scheme",
   "crates/akita-serialization",
   "crates/akita-setup",

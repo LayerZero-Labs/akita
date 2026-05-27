@@ -7,8 +7,8 @@ use akita_algebra::poly::multilinear_eval;
 use akita_field::Fp64;
 use akita_field::{AkitaError, FieldCore, RandomSampling};
 use akita_sumcheck::{
-    prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
-    SumcheckInstanceVerifier, SumcheckProof, UniPoly,
+    CompressedUniPoly, SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckInstanceVerifier,
+    SumcheckInstanceVerifierExt, SumcheckProof, UniPoly,
 };
 use akita_transcript::labels;
 use akita_transcript::{AkitaTranscript, Transcript};
@@ -167,8 +167,8 @@ fn prove_and_verify_single_sumcheck() {
 
     let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-    let (proof, prover_challenges, _final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut prover_transcript, |tr| {
+    let (proof, prover_challenges, _final_claim) = prover
+        .prove::<F, _, _>(&mut prover_transcript, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
         })
         .unwrap();
@@ -181,8 +181,8 @@ fn prove_and_verify_single_sumcheck() {
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-    let verifier_challenges =
-        verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut verifier_transcript, |tr| {
+    let verifier_challenges = verifier
+        .verify::<F, _, _>(&proof, &mut verifier_transcript, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
         })
         .unwrap();
@@ -206,10 +206,11 @@ fn verify_rejects_wrong_claim() {
     };
     let mut pt = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-    let (proof, _, _) = prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
-        tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
-    })
-    .unwrap();
+    let (proof, _, _) = prover
+        .prove::<F, _, _>(&mut pt, |tr| {
+            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        })
+        .unwrap();
 
     // Verify with *wrong* claim — should fail.
     let verifier = DenseSumcheckVerifier {
@@ -219,7 +220,7 @@ fn verify_rejects_wrong_claim() {
     };
     let mut vt = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-    let result = verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
+    let result = verifier.verify::<F, _, _>(&proof, &mut vt, |tr| {
         tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
     });
 
@@ -248,8 +249,8 @@ fn e2e_sumcheck_2_pow_20() {
     };
     let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-    let (proof, prover_challenges, final_claim) =
-        prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut prover_transcript, |tr| {
+    let (proof, prover_challenges, final_claim) = prover
+        .prove::<F, _, _>(&mut prover_transcript, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
         })
         .unwrap();
@@ -272,8 +273,8 @@ fn e2e_sumcheck_2_pow_20() {
     };
     let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
-    let verifier_challenges =
-        verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut verifier_transcript, |tr| {
+    let verifier_challenges = verifier
+        .verify::<F, _, _>(&proof, &mut verifier_transcript, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
         })
         .unwrap();
