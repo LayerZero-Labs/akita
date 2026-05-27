@@ -329,6 +329,7 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
+            #[cfg(feature = "zk")]
             setup.expanded.seed.max_stride,
             MRowLayout::Intermediate,
         )
@@ -451,6 +452,7 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
+            #[cfg(feature = "zk")]
             setup.expanded.seed.max_stride,
             MRowLayout::Intermediate,
         )
@@ -611,6 +613,7 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
+            #[cfg(feature = "zk")]
             setup.expanded.seed.max_stride,
             MRowLayout::Intermediate,
         )

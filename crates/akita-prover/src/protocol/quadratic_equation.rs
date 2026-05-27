@@ -342,7 +342,7 @@ where
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
-        stride: usize,
+        #[cfg(feature = "zk")] stride: usize,
         m_row_layout: MRowLayout,
     ) -> Result<Self, AkitaError> {
         {
@@ -430,8 +430,6 @@ where
             SetupRoleDimensions::for_batched_shape(&lp, num_polys_per_point, num_claims)?;
         #[cfg(not(feature = "zk"))]
         let d_setup_width = setup_dimensions.d_setup_width;
-        #[cfg(not(feature = "zk"))]
-        let _ = stride;
         #[cfg(feature = "zk")]
         let _ = setup_dimensions;
         #[cfg(feature = "zk")]
@@ -674,7 +672,7 @@ where
         transcript: &mut T,
         commitment: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
-        stride: usize,
+        #[cfg(feature = "zk")] stride: usize,
         m_row_layout: MRowLayout,
     ) -> Result<Self, AkitaError> {
         let num_claims = ring_opening_points.len();
@@ -705,8 +703,6 @@ where
         let setup_dimensions = SetupRoleDimensions::for_batched_shape(&lp, &[1], num_claims)?;
         #[cfg(not(feature = "zk"))]
         let d_setup_width = setup_dimensions.d_setup_width;
-        #[cfg(not(feature = "zk"))]
-        let _ = stride;
         #[cfg(feature = "zk")]
         let _ = setup_dimensions;
         #[cfg(feature = "zk")]
@@ -1388,7 +1384,7 @@ pub fn compute_r_split_eq<F, const D: usize>(
     num_public_outputs: usize,
     blocks_per_claim: usize,
     inner_width: usize,
-    stride: usize,
+    #[cfg(feature = "zk")] stride: usize,
     ntt_shared: &NttSlotCache<D>,
     m_row_layout: MRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
@@ -1456,8 +1452,6 @@ where
         SetupRoleDimensions::for_batched_shape(lp, num_polys_per_point, num_claims)?;
     #[cfg(not(feature = "zk"))]
     let d_setup_width = setup_dimensions.d_setup_width;
-    #[cfg(not(feature = "zk"))]
-    let _ = stride;
     #[cfg(feature = "zk")]
     let d_setup_width = stride;
     #[cfg(not(feature = "zk"))]

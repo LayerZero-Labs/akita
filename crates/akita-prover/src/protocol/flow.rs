@@ -1654,6 +1654,7 @@ where
             transcript,
             commitment_u,
             &y_rings,
+            #[cfg(feature = "zk")]
             expanded.seed.max_stride,
             MRowLayout::Intermediate,
         )?,
@@ -1855,6 +1856,7 @@ where
             transcript,
             commitment_u,
             &y_rings,
+            #[cfg(feature = "zk")]
             expanded.seed.max_stride,
             MRowLayout::Terminal,
         )?,
@@ -2581,6 +2583,7 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
+        #[cfg(feature = "zk")]
         expanded.seed.max_stride,
         MRowLayout::Intermediate,
     )?);
@@ -2945,6 +2948,7 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
+        #[cfg(feature = "zk")]
         expanded.seed.max_stride,
         MRowLayout::Intermediate,
     )?);
@@ -3297,6 +3301,7 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
+        #[cfg(feature = "zk")]
         expanded.seed.max_stride,
         MRowLayout::Terminal,
     )?);
@@ -3394,6 +3399,7 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
+        #[cfg(feature = "zk")]
         expanded.seed.max_stride,
         MRowLayout::Terminal,
     )?);

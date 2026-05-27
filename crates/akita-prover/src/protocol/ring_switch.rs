@@ -30,7 +30,7 @@ use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
     FlatRingVec, LevelParams, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingSubfieldEncoding,
+    RingOpeningPoint, RingSubfieldEncoding, SetupRoleDimensions,
 };
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -150,6 +150,7 @@ where
         quad_eq.num_public_rows(),
         lp.num_blocks,
         lp.inner_width(),
+        #[cfg(feature = "zk")]
         setup.seed.max_stride,
         ntt_shared,
         quad_eq.m_row_layout(),
@@ -493,7 +494,8 @@ pub fn commit_w<F, const D: usize>(
     w: &RecursiveWitnessFlat,
     ntt_shared: &NttSlotCache<D>,
     commit_layout: &LevelParams,
-    stride: usize,
+    a_setup_width: usize,
+    b_setup_width: usize,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -534,7 +536,7 @@ where
         commit_layout.num_digits_commit,
         commit_layout.num_digits_open,
         commit_layout.log_basis,
-        stride,
+        a_setup_width,
     )?;
 
     #[cfg(feature = "zk")]
@@ -549,7 +551,7 @@ where
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         ntt_shared,
         commit_layout.b_key.row_len(),
-        stride,
+        b_setup_width,
         &outer_input,
     );
     #[cfg(feature = "zk")]
@@ -566,6 +568,18 @@ where
         )
     };
     Ok((RingCommitment { u }, hint))
+}
+
+fn recursive_commit_setup_widths(
+    commit_layout: &LevelParams,
+    #[cfg(feature = "zk")] setup_stride: usize,
+) -> Result<(usize, usize), AkitaError> {
+    let role_dimensions = SetupRoleDimensions::for_batched_shape(commit_layout, &[1], 1)?;
+    #[cfg(not(feature = "zk"))]
+    let b_setup_width = role_dimensions.b_setup_width;
+    #[cfg(feature = "zk")]
+    let b_setup_width = setup_stride;
+    Ok((role_dimensions.a_setup_width, b_setup_width))
 }
 
 /// Dispatch a recursive `w` commitment to the selected ring dimension.
@@ -593,7 +607,6 @@ where
     Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let commit_d = commit_params.ring_dimension;
-    let stride = expanded.seed.max_stride;
     dispatch_with_ntt!(
         commit_d,
         commit_ntt_cache,
@@ -601,8 +614,18 @@ where
         |D_COMMIT, ntt_shared| {
             if L::EXT_DEGREE == 1 {
                 let commit_layout = layout_for_d(D_COMMIT, &commit_params, logical_w.len())?;
-                let (wc, wh) =
-                    commit_w::<F, { D_COMMIT }>(logical_w, ntt_shared, &commit_layout, stride)?;
+                let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(
+                    &commit_layout,
+                    #[cfg(feature = "zk")]
+                    expanded.seed.max_stride,
+                )?;
+                let (wc, wh) = commit_w::<F, { D_COMMIT }>(
+                    logical_w,
+                    ntt_shared,
+                    &commit_layout,
+                    a_setup_width,
+                    b_setup_width,
+                )?;
                 Ok(NextWitnessCommitment {
                     witness: None,
                     commitment: FlatRingVec::from_commitment(&wc),
@@ -611,8 +634,18 @@ where
             } else {
                 let committed_w = tensor_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
                 let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
-                let (wc, wh) =
-                    commit_w::<F, { D_COMMIT }>(&committed_w, ntt_shared, &commit_layout, stride)?;
+                let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(
+                    &commit_layout,
+                    #[cfg(feature = "zk")]
+                    expanded.seed.max_stride,
+                )?;
+                let (wc, wh) = commit_w::<F, { D_COMMIT }>(
+                    &committed_w,
+                    ntt_shared,
+                    &commit_layout,
+                    a_setup_width,
+                    b_setup_width,
+                )?;
                 Ok(NextWitnessCommitment {
                     witness: Some(committed_w),
                     commitment: FlatRingVec::from_commitment(&wc),
@@ -661,11 +694,17 @@ where
                 logical_w.len(),
                 same_d_decomposition,
             )?;
+            let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(
+                &commit_layout,
+                #[cfg(feature = "zk")]
+                expanded.seed.max_stride,
+            )?;
             let (wc, wh) = commit_w::<F, D>(
                 logical_w,
                 ntt_shared,
                 &commit_layout,
-                expanded.seed.max_stride,
+                a_setup_width,
+                b_setup_width,
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
@@ -680,11 +719,17 @@ where
                 committed_w.len(),
                 same_d_decomposition,
             )?;
+            let (a_setup_width, b_setup_width) = recursive_commit_setup_widths(
+                &commit_layout,
+                #[cfg(feature = "zk")]
+                expanded.seed.max_stride,
+            )?;
             let (wc, wh) = commit_w::<F, D>(
                 &committed_w,
                 ntt_shared,
                 &commit_layout,
-                expanded.seed.max_stride,
+                a_setup_width,
+                b_setup_width,
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
@@ -971,9 +1016,22 @@ where
         Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
     };
 
+    #[cfg(not(feature = "zk"))]
+    let role_dimensions =
+        SetupRoleDimensions::for_batched_shape(lp, num_polys_per_point, num_claims)?;
+    #[cfg(feature = "zk")]
     let stride = setup.seed.max_stride;
+    #[cfg(not(feature = "zk"))]
+    let d_view = setup.d_setup_view::<D>(role_dimensions)?;
+    #[cfg(feature = "zk")]
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride)?;
+    #[cfg(not(feature = "zk"))]
+    let b_view = setup.b_setup_view::<D>(role_dimensions)?;
+    #[cfg(feature = "zk")]
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride)?;
+    #[cfg(not(feature = "zk"))]
+    let a_view = setup.a_setup_view::<D>(role_dimensions)?;
+    #[cfg(feature = "zk")]
     let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride)?;
     let d_rows: Vec<_> = d_view.rows().collect();
     let b_rows: Vec<_> = b_view.rows().collect();
