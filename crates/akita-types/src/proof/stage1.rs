@@ -127,7 +127,7 @@ fn stage1_tree_stage_shape_from_b(rounds: usize, b: usize) -> Vec<AkitaStage1Sta
     debug_assert!(b >= 4 && b.is_power_of_two());
     if b <= 8 {
         return vec![AkitaStage1StageShape {
-            sumcheck: (rounds, b / 2),
+            sumcheck_proof: (rounds, b / 2),
             child_claims: 0,
         }];
     }
@@ -137,14 +137,14 @@ fn stage1_tree_stage_shape_from_b(rounds: usize, b: usize) -> Vec<AkitaStage1Sta
     for arity in stage1_tree_product_stage_arities(b) {
         let child_claims = parent_count * arity;
         out.push(AkitaStage1StageShape {
-            sumcheck: (rounds, arity),
+            sumcheck_proof: (rounds, arity),
             child_claims,
         });
         parent_count = child_claims;
     }
     debug_assert_eq!(parent_count, stage1_leaf_factor_count(b));
     out.push(AkitaStage1StageShape {
-        sumcheck: (rounds, 4),
+        sumcheck_proof: (rounds, 4),
         child_claims: 0,
     });
     out
