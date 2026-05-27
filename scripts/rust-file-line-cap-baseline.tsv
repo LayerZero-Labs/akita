@@ -15,4 +15,3 @@
 1857	crates/akita-config/src/proof_optimized.rs
 1771	crates/akita-prover/src/protocol/quadratic_equation.rs
 1576	crates/akita-prover/src/protocol/ring_switch.rs
-1503	crates/akita-algebra/src/ring/cyclotomic.rs
