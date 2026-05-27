@@ -1,4 +1,7 @@
-use super::inner_ajtai::{inner_ajtai_wide_multi_chunk, inner_ajtai_wide_single_chunk};
+use super::inner_ajtai::{
+    inner_ajtai_wide_multi_chunk, inner_ajtai_wide_single_chunk,
+    inner_ajtai_wide_single_chunk_tiled,
+};
 use super::*;
 
 /// L2 cache budget (in bytes) for the tile of wide accumulators in the

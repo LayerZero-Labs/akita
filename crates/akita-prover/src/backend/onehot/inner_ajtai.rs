@@ -90,8 +90,7 @@ where
 
     t_wide.into_iter().map(|w| w.reduce()).collect()
 }
-#[cfg(test)]
-pub(crate) fn inner_ajtai_wide_single_chunk_tiled<F, const D: usize>(
+pub(super) fn inner_ajtai_wide_single_chunk_tiled<F, const D: usize>(
     a_view: &akita_types::RingMatrixView<'_, F, D>,
     single_chunk_entries: &[SingleChunkEntry],
     num_digits: usize,

@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
@@ -16,6 +17,7 @@ pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usiz
     out
 }
 
+#[cfg(all(test, not(feature = "zk")))]
 pub(super) fn precompute_dense_mat_ntt_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
