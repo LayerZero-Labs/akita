@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao |
 | Created   | 2026-05-27 |
 | Status    | proposed |
-| Branch    | `quang/setup-layout-repack` |
+| Suggested branch | `setup-layout-repack` |
 | PR         | #112 |
 
 ## Scope
@@ -418,12 +418,12 @@ omega_S(lambda, y) = omega_bar_S(lambda) * alpha^y
 This is important: preprocessing can commit to `S`, but it cannot commit to
 `S_alpha`, because `alpha` is transcript-dependent.
 
-### Prefix Ladder
+### Prefix Commitments and Slot Policies
 
 Do not force the verifier to pay for `S_full` if the active shape is smaller.
 
-Later preprocessing should commit to one setup commitment for each power-of-two
-flat coefficient prefix in a ladder:
+Later setup offloading commits to power-of-two flat coefficient prefixes of
+`S`. A full ladder is one useful policy:
 
 ```text
 N_min <= N <= N_max
@@ -457,6 +457,80 @@ and direct setup verification is used.
 The first offloading implementation should make only the root and, at most, the
 first recursive level eligible; the prefix gate decides whether delegation
 actually fires.
+
+The prefix object is not just the public commitment. A prover-ready prefix slot
+must contain enough witness material to batch the selected setup opening claim
+in the next recursive fold:
+
+```text
+SetupPrefixSlot {
+  id: (setup digest/layout tag, D_setup, N_prefix, commitment params),
+  commitment: RingCommitment,
+  hint: AkitaCommitmentHint,
+  natural_len,
+  padded_len = N_prefix,
+}
+```
+
+The `AkitaCommitmentHint` carries the decomposed inner rows, i.e. the `t_hat`
+material produced while committing to the prefix, plus the recomposed inner
+rows when available and any ZK blinding digit streams required by the active
+feature set. If this hint is not cached with the prefix slot, the prover would
+need to recompute it precisely when the setup claim is being batched, which
+defeats much of the purpose of preprocessing.
+
+Verifier setup metadata only needs the public half:
+
+```text
+SetupPrefixVerifierSlot {
+  id,
+  commitment,
+  natural_len,
+  padded_len = N_prefix,
+}
+```
+
+The preprocessing policy should be explicit, because the right tradeoff differs
+between production artifacts and CI benches:
+
+```text
+FullLadder(min, max)
+  generate every power-of-two prefix in [min, max]
+
+SelectedSlots({N_0, N_1, ...})
+  generate only the listed prefix sizes
+
+Disabled
+  never delegate setup claims
+```
+
+`FullLadder` is the general deployment policy: one setup artifact can serve
+many future batching shapes. `SelectedSlots` is the right policy for CI,
+benchmark fixtures, and single-config deployments. If a benchmark knows that
+only one root shape will ever be exercised, it can generate exactly that root
+prefix slot, and perhaps one first-recursive slot later if the benchmark starts
+covering L1 delegation.
+
+Missing prefix slots should be handled by configured behavior:
+
+```text
+StrictError
+  selected slot must already exist, otherwise return a setup/policy error
+
+GenerateAndPersist
+  prover-side local/bench convenience: create the missing slot and save it
+
+DirectFallback
+  skip delegation for this shape and use the direct setup computation
+```
+
+`StrictError` is the clean production mode once preprocessing is meant to be
+complete. `GenerateAndPersist` is ergonomic for CI cache warmup and local
+experimentation, but the newly generated commitment still has to be transcript
+bound and surfaced to the verifier through ordinary metadata. `DirectFallback`
+is useful while setup offloading remains an optimization. Protocol code should
+not panic on a missing slot; a benchmark harness may choose to panic, but the
+library boundary should return an `AkitaError`.
 
 ### Inner Product Shape
 
@@ -505,6 +579,90 @@ s_rho = S_tilde_{<= N_setup}(rho_lambda, rho_y)
 The intended recursive route is to carry this selected-prefix setup opening
 claim into the next recursive fold and batch it with the folded-witness
 opening, rather than verify a nested setup PCS inside the same level.
+
+### Product Sumcheck Placement
+
+There are two protocol placements worth distinguishing.
+
+The cleaner first implementation is a post-Stage-2 placement. Current Stage 2
+already fuses the Stage-1 norm claim and the relation claim:
+
+```text
+gamma * s_claim + relation_claim
+  = sum_{x,y} [
+      gamma * eq(r_stage1, (x,y)) * W(x,y) * (W(x,y) + 1)
+      + W(x,y) * alpha(y) * m_tau1(x)
+    ].
+```
+
+At the sampled Stage-2 point `r_stage2 = (r_y, r_x)`, the verifier checks:
+
+```text
+gamma * eq(r_stage1, r_stage2) * W(r_stage2) * (W(r_stage2) + 1)
+  + W(r_stage2) * alpha(r_y) * m_tau1(r_x).
+```
+
+Setup offloading changes only the row evaluation:
+
+```text
+m_tau1(r_x) = m_local(r_x) + sigma_S.
+```
+
+After Stage 2 fixes `r_x`, a new setup product sumcheck proves:
+
+```text
+sigma_S = <S_{<=N_setup}, omega_S(tau_1, alpha, r_x)>.
+```
+
+This adds a Stage 3, but it is conceptually clean: Stage 2 continues to reduce
+the witness side to one folded-witness opening claim, and Stage 3 leaves only
+the setup-prefix opening claim `s_rho`.
+
+The more compact no-new-stage optimization is to shift the relation-matrix
+work back before the setup product sumcheck and use Stage 2 for the setup
+product. That optimization is not free. The shifted relation work creates a
+claim about the witness at relation randomness, while the norm/range side also
+creates a witness claim at its own randomness unless the two are algebraically
+fused. One of the following must then happen:
+
+- carry both witness openings into the next recursive incidence batch; or
+- add an explicit witness-claim reduction, e.g. a linear reduction from
+  `lambda * W(r_relation) + W(r_norm)` to one later opening `W(r_star)`.
+
+Without that extra carried opening or claim reduction, the shifted protocol
+leaves a witness claim unresolved. Therefore the first setup-offloading branch
+should implement the post-Stage-2 version, and treat the no-new-stage shift as
+a later optimization after recursive carried-opening batching exists.
+
+### Recursive Carried-Opening Boundary
+
+The current recursive protocol boundary is singleton-shaped: it carries one
+current witness commitment, one opening point, and one claimed opening value.
+Setup offloading needs the recursive boundary to become genuinely batched.
+
+The target recursive carry object is a list of claims:
+
+```text
+(commitment, point, value, basis, natural_len, padded_len, kind)
+```
+
+The first claim is the ordinary folded-witness opening. When setup offloading
+fires, the setup product sumcheck appends the selected-prefix setup claim:
+
+```text
+(S_{<=N_setup} commitment, (rho_lambda, rho_y), s_rho, ...)
+```
+
+The clean first implementation should use root-style incidence at the recursive
+boundary and batch all carried claims in one common padded power-of-two field
+domain. Claims whose natural MLE domain is smaller are embedded by zero-padding
+the table and fixing the extra point coordinates. This avoids heterogeneous
+MLE arity in the first cut and lets the recursive verifier consume one
+incidence shape.
+
+If a level has no subsequent recursive fold, setup offloading should be
+disabled at that level in the first implementation. A terminal closure rule can
+be added later only if benchmarks justify it.
 
 ### A/J Weight
 
@@ -561,6 +719,85 @@ The later setup-offload implementation must bind:
 - `r_x`, `tau_1`, and `alpha`;
 - the role-column view choices used to define `omega_S`.
 
+## Downstream Parallel Work Slices
+
+The setup-layout repack is the shared foundation. After it lands, the rest of
+setup offloading should be developed as parallel lanes, then integrated.
+
+### Layout Foundation
+
+This is the implementation branch for this spec. It removes `max_stride`,
+introduces `max_setup_len`, centralizes packed A/B/D role views, cuts over all
+existing setup-matrix consumers, and moves ZK B/D blinding to a separate
+seed/domain. It must not add setup-prefix commitments, setup product
+sumchecks, recursive carried-claim batching, or new proof objects for setup
+offloading.
+
+### Materialized Inner-Product Oracle
+
+This lane rewrites the direct setup contribution as:
+
+```text
+<S_{<=N_setup}, omega_S>
+```
+
+using a materialized `omega_S`. Its purpose is to pin the exact role pullbacks
+and give every later branch a correctness oracle. It should test D, B, and A/J
+weights, including the root digit-fast A slice and recursive block-fast role
+views.
+
+### Succinct Weight Evaluator
+
+This lane replaces materialized `omega_S` on the verifier side. It should
+evaluate:
+
+```text
+omega_tilde_S(rho_lambda, rho_y)
+```
+
+without scanning `S`. The hard part is the root A/J slice: root A remains
+digit-fast for one-hot, while the folded z side is block-fast, so the evaluator
+needs the row-aware carry-DP contraction.
+
+### Prefix Commitment Artifacts
+
+This lane is preprocessing and metadata only. It commits to the power-of-two
+prefixes of the flat coefficient vector of `S` and exposes runtime prefix
+selection:
+
+```text
+N_prefix = 2^ceil(log2(N_active^F))
+delegate iff N_prefix >= N_min
+N_setup = N_prefix
+```
+
+It should implement both full-ladder and selected-slot policies. A selected
+slot must be keyed by setup identity, `D_setup`, `N_prefix`, and commitment
+parameters. Prover-ready slots store `RingCommitment + AkitaCommitmentHint`
+so the later product-sumcheck integration can batch the setup-prefix opening
+without recomputing `t_hat`; verifier slots store only the public commitment
+and shape metadata.
+
+It does not verify a setup product sumcheck by itself.
+
+### Recursive Carried-Opening Batching
+
+This lane is independent of the setup weight algebra. It generalizes the
+recursive proof state from one carried opening to a root-style incidence batch
+of carried openings. The singleton recursive protocol should become the
+size-one incidence case.
+
+### Product Sumcheck and Integration
+
+This lane wires the delegated setup claim. It should start as a post-Stage-2
+Stage 3 against a materialized setup-opening oracle, then integrate the
+succinct `omega_S` evaluator, selected prefix commitments, gating policy, and
+recursive carried-opening batching.
+
+The no-new-stage placement should remain deferred until the witness
+claim-reduction path is explicit. It is an optimization over the clean Stage 3
+shape, not the correctness baseline.
+
 ## Implementation Plan for the Repack Branch
 
 The implementation branch should land as a fresh branch from current `main`.
@@ -604,6 +841,10 @@ For the later offloading branches:
 - root A/J evaluator matches materialized `eta_Z` and the row-aware A slice;
 - recursive block-fast D/B and optional recursive block-fast A evaluators match
   materialized weights;
+- selected-slot preprocessing can generate only the known CI/root prefix and
+  still exposes a prover-ready `RingCommitment + AkitaCommitmentHint` bundle;
+- missing prefix slots obey the configured behavior: strict error,
+  generate-and-persist, or direct fallback;
 - selected-prefix opening claims are transcript-bound and batched with the next
   recursive folded-witness opening.
 
@@ -625,29 +866,34 @@ For the later offloading branches:
 
 1. Where should role-view helpers live: `akita-types` near `FlatMatrix`, or
    prover/verifier-facing modules that know the prepared runtime shape?
-2. Should generated setup tables eventually advertise selectable prefix sizes,
-   or is the prefix ladder purely derived from `max_setup_len`?
-3. For recursive setup offloading, is the recursive block-fast A view worth the
+2. Which prefix-slot policy should each preset use: full ladder, selected
+   root/L1 slots, or direct fallback until the active size exceeds the gate?
+3. What is the exact cache serialization and validation boundary for
+   prover-ready prefix slots, especially `AkitaCommitmentHint` material and
+   ZK blinding digit streams?
+4. For recursive setup offloading, is the recursive block-fast A view worth the
    possible `L_bar` padding, or should recursive offload initially restrict to
    D/B if A padding is awkward?
-4. What is the exact NTT cache API that keeps contiguous row slices while
+5. What is the exact NTT cache API that keeps contiguous row slices while
    supporting root digit-fast and recursive block-fast views?
-5. Should the offload gate remain one global `N_min = 2^23`, or should it later
+6. Should the offload gate remain one global `N_min = 2^23`, or should it later
    depend on the pair `(base field, extension field)` after matrix-MLE
    benchmarks?
-6. What is the exact closure rule for the last eligible delegated setup claim
-   if there is no subsequent recursive fold available to batch the setup-prefix
-   opening?
+7. After the common padded recursive carry works, is heterogeneous-domain
+   carried-opening batching worth the extra verifier and scheduler complexity?
 
 ## Acceptance Criteria for This Spec PR
 
 - The PR diff contains only durable planning/spec documents.
 - The spec states that later committed setup offloading uses `S`, not
   `S_alpha`.
-- The spec records the prefix-ladder plan and the initial `D_setup = 32`,
-  `N_min = 2^23` decisions.
+- The spec records the prefix-commitment policy plan, including full-ladder and
+  selected-slot modes, plus the initial `D_setup = 32`, `N_min = 2^23`
+  decisions.
 - The spec records root digit-fast and recursive block-fast role-view policy,
   including the root A/one-hot constraint.
 - The spec records that ZK blinding is outside the base setup matrix.
+- The spec records that recursive setup openings are batched through carried
+  opening claims, with a common padded domain in the first implementation.
 - The implementation plan is explicit enough to restart the code work from
   current `main`.
