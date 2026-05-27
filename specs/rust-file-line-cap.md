@@ -180,106 +180,185 @@ Use a verification ladder matched to risk:
 - Backend and kernel splits additionally run representative profile or bench
   commands before their baseline rows are removed.
 
-## Follow-Up Modularization Plan
+## Four-PR Modularization Plan
 
-The split work should be done in small PRs that keep the public behavioral
-surface unchanged and remove baseline entries as soon as each file falls to at
-most 1500 lines. For production modules, prefer private submodules plus narrow
-`pub(crate)` exports over compatibility wrappers. Re-export existing public
-items from the existing module root only where the crate's current public API
-requires that path to remain stable.
+The baseline cleanup should land as four follow-up PRs. Fewer PRs would make the
+displayed diff too large to review confidently; more PRs would overpay the repo's
+merge latency. Each PR must be internally commit-sliced, but each PR should
+remove all of its listed baseline rows before merge.
 
-### Phase 1: Low-risk baseline shrink
+Every PR in this sequence must:
 
-Start with files that can fall under the cap without protocol surgery.
+- Preserve public behavior and transcript/proof ordering.
+- Prefer move-only refactors and module-root reexports over semantic rewrites.
+- Avoid compatibility wrappers, deprecated aliases, and duplicate entrypoints.
+- Keep existing public paths stable only where they are already crate-public API.
+- Remove the baseline rows for every target file that falls to at most 1500
+  lines.
+- Run `scripts/check-rust-file-lines.sh` after baseline edits so stale or
+  missing rows fail before review.
 
-1. Move large test bodies out of production files.
-   - `crates/akita-scheme/src/tests.rs` should become a `tests/` module tree
-     split by scenario family.
-   - `crates/akita-pcs/tests/algebra.rs` should split integration fixtures
-     from scenario groups.
-   - `crates/akita-types/src/field_reduction.rs` and
-     `crates/akita-algebra/src/ring/cyclotomic.rs` are barely over the cap;
-     moving tests or wide-ring-only tests should remove their baseline entries
-     with minimal production risk.
-2. Split config presets from config helpers in
-   `crates/akita-config/src/proof_optimized.rs`.
-   - Keep schedule/layout helper functions near the top-level module.
-   - Move `fp16`, `fp32`, `fp64`, and `fp128` preset modules into sibling
-     files under a `proof_optimized/` module directory.
+### PR A: Low-Risk Shared/Test/Config Shrink
 
-### Phase 2: Type and field modules
+Goal: remove five baseline rows without touching protocol logic. This PR should
+be the first follow-up because it proves the ratchet workflow with low semantic
+risk.
 
-Handle large type-definition files before protocol flow files.
+Targets:
 
-1. Split `crates/akita-types/src/proof/mod.rs` into proof-family modules.
-   Suggested first cut:
-   - `containers.rs` for `PackedDigits`, `FlatRingVec`, and
-     `FlatDigitBlocks`.
-   - `direct_witness.rs` for direct witness proof/shape handling.
-   - `hints.rs` for `AkitaCommitmentHint`.
-   - `levels.rs` for level, terminal, root, batched, and step proof structs.
-   - `shapes.rs` for shape structs/enums and shape derivation helpers.
-   - `wire.rs` for serialization/deserialization helpers and impl blocks.
-2. Split `crates/akita-field/src/fields/ext.rs` by extension family.
-   - Keep `Ext2`/`Fp2` together.
-   - Separate power-basis `Fp4`, tower-basis `Fp4`, ring-subfield `Fp4`, and
-     ring-subfield `Fp8`.
-   - Keep multiplication backend traits near the family that consumes them so
-     the full cutover does not leave a catch-all extension module.
-3. Split `crates/akita-field/src/fields/fp128.rs` only after `ext.rs`.
-   The field file is mostly trait impl surface and named prime config; splitting
-   it too early risks churn with less architectural payoff.
+- `crates/akita-pcs/tests/algebra.rs`
+- `crates/akita-scheme/src/tests.rs`
+- `crates/akita-types/src/field_reduction.rs`
+- `crates/akita-algebra/src/ring/cyclotomic.rs`
+- `crates/akita-config/src/proof_optimized.rs`
 
-### Phase 3: Sumcheck and extension-opening internals
+Implementation order:
 
-These files are algorithmically cohesive but have good internal seams.
+1. Split `crates/akita-pcs/tests/algebra.rs` into a `tests/algebra/` module tree
+   with shared fixtures separated from scenario groups such as field arithmetic,
+   NTT/CRT, cyclotomic ring behavior, and serialization.
+2. Split `crates/akita-scheme/src/tests.rs` into `src/tests/mod.rs` plus
+   scenario files for root/direct openings, standard verifier failures,
+   one-hot roundtrips, FP32 ring-subfield configs, recursive paths, and shared
+   fixtures.
+3. Move the `#[cfg(test)]` modules out of
+   `crates/akita-types/src/field_reduction.rs` and
+   `crates/akita-algebra/src/ring/cyclotomic.rs`; keep production definitions in
+   place unless moving a helper is necessary to keep test modules private.
+4. Split `crates/akita-config/src/proof_optimized.rs` by moving the `fp16`,
+   `fp32`, `fp64`, and `fp128` preset modules under a `proof_optimized/`
+   directory while keeping shared schedule/layout and matrix-envelope helpers in
+   the module root.
+5. Remove the five corresponding rows from
+   `scripts/rust-file-line-cap-baseline.tsv`.
 
-1. Split `two_round_prefix.rs` first because both stage drivers depend on it.
-   Suggested modules: `lookup_tables`, `interpolation`, `stage1_state`,
-   `stage2_state`, and tests.
+Minimum verification:
+
+- `cargo fmt -q`
+- `scripts/check-rust-file-lines.sh`
+- `cargo test -p akita-pcs --test algebra`
+- `cargo test -p akita-scheme`
+- `cargo test -p akita-types field_reduction`
+- `cargo test -p akita-algebra cyclotomic`
+- `cargo test -p akita-config`
+
+### PR B: Shared Proof And Field Types
+
+Goal: split the large shared proof and field-type files before protocol files
+start importing their concepts. This PR carries more public-surface risk than PR
+A, but it is still mostly type and trait implementation movement.
+
+Targets:
+
+- `crates/akita-types/src/proof/mod.rs`
+- `crates/akita-field/src/fields/ext.rs`
+- `crates/akita-field/src/fields/fp128.rs`
+
+Implementation order:
+
+1. Split `crates/akita-types/src/proof/mod.rs` into proof-family modules:
+   `containers.rs`, `direct_witness.rs`, `hints.rs`, `levels.rs`,
+   `shapes.rs`, `wire.rs`, and `tests.rs`. Keep the current `proof` module root
+   as the public reexport point.
+2. Split `crates/akita-field/src/fields/ext.rs` by extension family: `fp2`,
+   `tower_fp4`, `power_fp4`, `ring_subfield_fp4`, `ring_subfield_fp8`, and
+   tests. Keep multiplication backend traits near the family that consumes them.
+3. Split `crates/akita-field/src/fields/fp128.rs` after `ext.rs`, separating
+   core arithmetic, trait impls, named prime configs, FFT config impls, and
+   tests while preserving the existing exports from `fields::mod`.
+4. Remove the three corresponding baseline rows.
+
+Minimum verification:
+
+- `cargo fmt -q`
+- `scripts/check-rust-file-lines.sh`
+- `cargo test -p akita-types`
+- `cargo test -p akita-field`
+- `cargo clippy --all --message-format=short -q -- -D warnings`
+
+### PR C: Sumcheck And Protocol Flow
+
+Goal: split the correctness-sensitive protocol and verifier replay files after
+the shared type modules are smaller. This is the largest PR by displayed diff,
+so it must be commit-sliced and move-only whenever possible.
+
+Targets:
+
+- `crates/akita-prover/src/protocol/sumcheck/two_round_prefix.rs`
+- `crates/akita-prover/src/protocol/sumcheck/akita_stage1.rs`
+- `crates/akita-prover/src/protocol/sumcheck/akita_stage2.rs`
+- `crates/akita-sumcheck/src/extension_opening_reduction.rs`
+- `crates/akita-prover/src/protocol/ring_switch.rs`
+- `crates/akita-prover/src/protocol/quadratic_equation.rs`
+- `crates/akita-verifier/src/protocol/levels.rs`
+- `crates/akita-prover/src/protocol/flow.rs`
+
+Implementation order:
+
+1. Split `two_round_prefix.rs` first because both stage drivers depend on it:
+   `lookup_tables`, `accum`, `interpolation`, `stage1_state`, `stage2_state`,
+   and tests.
 2. Split `akita_stage1.rs` into range/precompute helpers, compact coefficient
    accumulation, prover state, round execution, and tests.
 3. Split `akita_stage2.rs` into compact accumulators, relation/norm helpers,
    prover state, round execution, and tests.
 4. Split `extension_opening_reduction.rs` into tensor helpers, dense prover,
-   sparse witness/factors, batched prover, verifier/sumcheck wrapper, and
-   validation helpers.
+   sparse witness/factors, batched prover, verifier/sumcheck wrapper,
+   validation helpers, and tests.
+5. Split `ring_switch.rs` into finalization, commitment construction, eval
+   builders, coefficient construction, and tests.
+6. Split `quadratic_equation.rs` into decompose-fold validation, witness
+   aggregation/V-row construction, high-half and cyclic products,
+   `compute_r_split_eq`, `generate_y`, and tests.
+7. Split verifier `levels.rs` by replay phase: ZK hiding, root level,
+   recursive level, terminal level, dispatch, and shared validation helpers.
+   Preserve the verifier no-panic boundary by keeping validation near API
+   boundaries.
+8. Split prover `flow.rs` last into `inputs`, `zk_hiding`, `proof_steps`,
+   `recursive_suffix`, `recursive_level`, `terminal_level`, `root_extension`,
+   and `root_fold`. Avoid changing transcript ordering or compute-backend
+   plumbing during this split.
+9. Remove the eight corresponding baseline rows.
 
-### Phase 4: Prover and verifier protocol flow
+Minimum verification:
 
-Do this after the type and sumcheck splits so the protocol files can import
-smaller concepts instead of moving huge blocks unchanged.
+- `cargo fmt -q`
+- `scripts/check-rust-file-lines.sh`
+- `cargo test -p akita-prover`
+- `cargo test -p akita-verifier`
+- `cargo test -p akita-sumcheck`
+- `cargo test`
+- `cargo clippy --all --message-format=short -q -- -D warnings`
 
-1. Split `crates/akita-prover/src/protocol/ring_switch.rs` first. It is only
-   76 lines over the cap and has a clean boundary between finalization,
-   commitment construction, eval builders, and coefficient construction.
-2. Split `crates/akita-prover/src/protocol/quadratic_equation.rs` next.
-   Separate witness aggregation/V-row construction from high-half/cyclic
-   product helpers and public `compute_r_split_eq` / `generate_y` entrypoints.
-3. Split `crates/akita-verifier/src/protocol/levels.rs` by replay phase while
-   preserving the verifier no-panic contract. Keep validation helpers close to
-   the API boundary rather than duplicating defensive checks in hot loops.
-4. Split `crates/akita-prover/src/protocol/flow.rs` last.
-   Suggested modules: `inputs`, `zk_hiding`, `proof_steps`,
-   `recursive_suffix`, `recursive_level`, `terminal_level`,
-   `root_extension`, and `root_fold`. This should be a move-only refactor
-   whenever possible; avoid rewriting transcript ordering or compute-backend
-   plumbing during the split.
+### PR D: Hot Backend And Kernel Files
 
-### Phase 5: Hot backend and kernel files
+Goal: remove the final two baseline rows from performance-sensitive code after
+the protocol splits are already merged. Keep this separate so benchmark fallout
+does not block the structural protocol cleanup.
 
-These should come after correctness-sensitive protocol files because they are
-performance-sensitive and need targeted benchmarks.
+Targets:
 
-1. Split `crates/akita-prover/src/backend/onehot.rs` by storage representation
-   and operation family: `blocks`, `poly`, `ops`, `fold`, `inner_ajtai`,
-   `column_sweep`, and tests.
-2. Split `crates/akita-prover/src/kernels/linear.rs` by kernel family:
-   `decompose`, `ntt_matvec`, `digit_matvec`, `block_parallel`,
-   `single_cyclic`, `fused_quotients`, and tests.
-3. Run the existing unit tests plus representative profile/bench commands
-   before removing the baseline entries for backend/kernel files.
+- `crates/akita-prover/src/backend/onehot.rs`
+- `crates/akita-prover/src/kernels/linear.rs`
+
+Implementation order:
+
+1. Split `onehot.rs` by storage representation and operation family:
+   `blocks`, `poly`, `ops`, `fold`, `inner_ajtai`, `column_sweep`, and tests.
+2. Split `linear.rs` by kernel family: `decompose`, `ntt_matvec`,
+   `digit_matvec`, `block_parallel`, `single_cyclic`, `fused_quotients`, and
+   tests.
+3. Remove the final two baseline rows.
+
+Minimum verification:
+
+- `cargo fmt -q`
+- `scripts/check-rust-file-lines.sh`
+- `cargo test -p akita-prover`
+- `cargo test`
+- `cargo clippy --all --message-format=short -q -- -D warnings`
+- Representative profile or benchmark runs for one-hot and dense paths before
+  removing the backend/kernel baseline rows.
 
 ## Design
 
