@@ -1,20 +1,212 @@
 //! Prover-owned commitment kernels.
 
-use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
+#[cfg(not(feature = "zk"))]
+use crate::kernels::crt_ntt::build_ntt_slot;
+#[cfg(not(feature = "zk"))]
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
+#[cfg(not(feature = "zk"))]
 use crate::kernels::matrix::derive_tier1_f_matrix_flat;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 #[cfg(not(feature = "zk"))]
 use crate::protocol::tiered_commit::{tiered_commit, TieredCommitParams};
-use crate::{AkitaPolyOps, AkitaProverSetup};
+use crate::{AkitaPolyOps, CommitInnerWitness, CommitmentComputeBackend};
 use akita_algebra::CyclotomicRing;
-use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    AkitaCommitmentHint, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams, RingCommitment,
+    AkitaCommitmentHint, AkitaExpandedSetup, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams,
+    RingCommitment,
 };
+
+pub(crate) fn commit_inner_block_digit_count(
+    n_a: usize,
+    num_digits_open: usize,
+) -> Result<usize, AkitaError> {
+    if num_digits_open == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "num_digits_open must be nonzero for inner commitment digits".to_string(),
+        ));
+    }
+    n_a.checked_mul(num_digits_open).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "commit inner witness block digit count overflowed usize".to_string(),
+        )
+    })
+}
+
+pub(crate) fn commit_inner_flat_digit_count(
+    num_blocks: usize,
+    n_a: usize,
+    num_digits_open: usize,
+) -> Result<usize, AkitaError> {
+    num_blocks
+        .checked_mul(commit_inner_block_digit_count(n_a, num_digits_open)?)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "commit inner witness flat digit count overflowed usize".to_string(),
+            )
+        })
+}
+
+pub(crate) fn validate_commit_inner_witness_shape<F, const D: usize>(
+    inner: &CommitInnerWitness<F, D>,
+    num_blocks: usize,
+    n_a: usize,
+    num_digits_open: usize,
+    log_basis: u32,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
+    let expected_flat_digits = commit_inner_flat_digit_count(num_blocks, n_a, num_digits_open)?;
+    if !(1..=128).contains(&log_basis) {
+        return Err(AkitaError::InvalidSetup(
+            "log_basis must be in 1..=128 when recomposing inner commitment digits".to_string(),
+        ));
+    }
+
+    if inner.recomposed_inner_rows.len() != num_blocks {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} inner commitment blocks, expected {}",
+            inner.recomposed_inner_rows.len(),
+            num_blocks
+        )));
+    }
+    for (block_idx, block_rows) in inner.recomposed_inner_rows.iter().enumerate() {
+        if block_rows.len() != n_a {
+            return Err(AkitaError::InvalidSetup(format!(
+                "backend returned {} A rows for inner commitment block {}, expected {}",
+                block_rows.len(),
+                block_idx,
+                n_a
+            )));
+        }
+    }
+
+    if inner.decomposed_inner_rows.block_count() != num_blocks {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} decomposed inner commitment blocks, expected {}",
+            inner.decomposed_inner_rows.block_count(),
+            num_blocks
+        )));
+    }
+    for (block_idx, &block_digits) in inner.decomposed_inner_rows.block_sizes().iter().enumerate() {
+        if block_digits != expected_block_digits {
+            return Err(AkitaError::InvalidSetup(format!(
+                "backend returned {} decomposed digits for inner commitment block {}, expected {}",
+                block_digits, block_idx, expected_block_digits
+            )));
+        }
+    }
+    if inner.decomposed_inner_rows.flat_digits().len() != expected_flat_digits {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} total decomposed inner commitment digits, expected {}",
+            inner.decomposed_inner_rows.flat_digits().len(),
+            expected_flat_digits
+        )));
+    }
+    for (block_idx, block_digits) in inner.decomposed_inner_rows.iter_blocks().enumerate() {
+        let recomposed_block = &inner.recomposed_inner_rows[block_idx];
+        for (row_idx, row_digits) in block_digits.chunks(num_digits_open).enumerate() {
+            let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(row_digits, log_basis);
+            if recomposed_block[row_idx] != recomposed {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "backend returned recomposed row {row_idx} for inner commitment block {block_idx} that does not match its decomposed digits"
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_commit_level_params<F, const D: usize>(
+    params: &LevelParams,
+    setup: &AkitaExpandedSetup<F>,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+{
+    if params.ring_dimension != D {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params ring dimension {} does not match static D={D}",
+            params.ring_dimension
+        )));
+    }
+    if params.num_blocks == 0 || params.block_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "commit params require nonzero num_blocks and block_len".to_string(),
+        ));
+    }
+    if params.num_digits_commit == 0 || params.num_digits_open == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "commit params require nonzero digit depths".to_string(),
+        ));
+    }
+    if setup.seed.max_stride == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "setup max_stride must be nonzero".to_string(),
+        ));
+    }
+    if !(1..=128).contains(&params.log_basis) {
+        return Err(AkitaError::InvalidSetup(
+            "commit params log_basis must be in 1..=128".to_string(),
+        ));
+    }
+    let expected_a_width = params
+        .block_len
+        .checked_mul(params.num_digits_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("A commit width overflow".to_string()))?;
+    if params.a_key.col_len() != expected_a_width {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params A width {} does not match block_len * num_digits_commit = {expected_a_width}",
+            params.a_key.col_len()
+        )));
+    }
+    if params.b_key.col_len() == 0 || params.d_key.col_len() == 0 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params require nonzero B and D widths, got B={} D={}",
+            params.b_key.col_len(),
+            params.d_key.col_len()
+        )));
+    }
+    if params.a_key.col_len() > setup.seed.max_stride
+        || params.b_key.col_len() > setup.seed.max_stride
+        || params.d_key.col_len() > setup.seed.max_stride
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params column widths A={} B={} D={} exceed setup max_stride {}",
+            params.a_key.col_len(),
+            params.b_key.col_len(),
+            params.d_key.col_len(),
+            setup.seed.max_stride
+        )));
+    }
+    let max_rows = setup.shared_matrix.total_ring_elements_at::<D>()? / setup.seed.max_stride;
+    if params.a_key.row_len() > max_rows
+        || params.b_key.row_len() > max_rows
+        || params.d_key.row_len() > max_rows
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params row counts A={} B={} D={} exceed setup max_rows {max_rows}",
+            params.a_key.row_len(),
+            params.b_key.row_len(),
+            params.d_key.row_len()
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<(), AkitaError> {
+    if active_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "commit B input must be nonempty".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 /// Validate a singleton commitment request against prover setup capacity.
 ///
@@ -24,7 +216,7 @@ use akita_types::{
 /// exceeds the prover setup capacity.
 pub fn prepare_commit_inputs<F, const D: usize, P>(
     polys: &[P],
-    setup: &AkitaProverSetup<F, D>,
+    setup: &AkitaExpandedSetup<F>,
 ) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
@@ -41,70 +233,52 @@ where
             "all polynomials in a batched commit must have the same num_vars".to_string(),
         ));
     }
-    if polys.len() > setup.expanded.seed.max_num_batched_polys {
+    if polys.len() > setup.seed.max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
             "commit received {} polynomials but setup supports at most {}",
             polys.len(),
-            setup.expanded.seed.max_num_batched_polys
+            setup.seed.max_num_batched_polys
         )));
     }
-    if num_vars > setup.expanded.seed.max_num_vars {
+    if num_vars > setup.seed.max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "commit received a polynomial with {} variables but setup supports at most {}",
-            num_vars, setup.expanded.seed.max_num_vars
+            num_vars, setup.seed.max_num_vars
         )));
     }
 
     ClaimIncidenceSummary::same_point(num_vars, polys.len())
 }
 
-/// Commit a group of polynomials using already-selected level parameters.
-///
-/// Config/schedule policy chooses `params`; this function owns only the
-/// prover-side matrix work for the supplied concrete layout.
-///
-/// Dispatches on `params.is_tiered_root()`:
-///   - **Tiered (`split_factor > 1`):** delegates to
-///     [`commit_tiered_with_params`] with an F NTT cache derived
-///     on-demand from the setup's `public_matrix_seed` via
-///     [`derive_tier1_f_matrix_flat`]. Cache derivation is a one-shot
-///     cost per call; future revisions may memoize per `(n_F, F_width)`
-///     on the prover setup once that integration lands.
-///   - **Legacy (`split_factor == 1`):** runs today's single-tier
-///     `u = B · t̂` path verbatim.
-///
-/// # Errors
-///
-/// Returns an error if an inner witness commitment or hint allocation
-/// fails, or — in the tiered branch — if the F NTT cache cannot be
-/// built for the current field / ring-dimension pair.
-pub fn commit_with_params<F, const D: usize, P>(
+fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usize, AkitaError> {
+    total_polys.checked_mul(per_poly).ok_or_else(|| {
+        AkitaError::InvalidInput(format!(
+            "commit B digit input length overflow for {total_polys} polynomials with {per_poly} digits each"
+        ))
+    })
+}
+
+fn commit_with_validated_params<F, const D: usize, P, B>(
     polys: &[P],
-    setup: &AkitaProverSetup<F, D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D>,
+    B: CommitmentComputeBackend<F>,
 {
     if params.is_tiered_root() {
-        // F lives in its own backing storage, derived deterministically
-        // from the same public matrix seed with a distinct label.
-        let f_width = params.f_key.col_len();
-        let n_f = params.f_key.row_len();
-        let total_f_ring_elements = n_f.checked_mul(f_width).ok_or_else(|| {
-            AkitaError::InvalidSetup("tiered F backing storage total overflow".to_string())
-        })?;
-        let f_flat = derive_tier1_f_matrix_flat::<F, D>(
-            total_f_ring_elements,
-            &setup.expanded.seed.public_matrix_seed,
-        );
-        let f_ntt_cache = build_ntt_slot(f_flat.ring_view::<D>(n_f, f_width)?)?;
-        return commit_tiered_with_params::<F, D, P>(polys, setup, params, &f_ntt_cache, f_width);
+        return commit_tiered_with_params::<F, D, P, B>(polys, backend, prepared, params);
     }
-
-    let b_input_len_per_poly = params.num_blocks * params.a_key.row_len() * params.num_digits_open;
-    let mut b_input_digits = vec![[0i8; D]; polys.len() * b_input_len_per_poly];
+    let b_input_len_per_poly = commit_inner_flat_digit_count(
+        params.num_blocks,
+        params.a_key.row_len(),
+        params.num_digits_open,
+    )?;
+    let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
+    let mut b_input_digits = vec![[0i8; D]; total_b_input_len];
     let mut decomposed_inner_rows: Vec<FlatDigitBlocks<D>> = (0..polys.len())
         .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
         .collect::<Result<_, _>>()?;
@@ -117,14 +291,20 @@ where
         .try_for_each(
             |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
                 let inner = poly.commit_inner_witness(
-                    &setup.expanded.shared_matrix,
-                    &setup.ntt_shared,
+                    backend,
+                    prepared,
                     params.a_key.row_len(),
                     params.block_len,
                     params.num_digits_commit,
                     params.num_digits_open,
                     params.log_basis,
-                    setup.expanded.seed.max_stride,
+                )?;
+                validate_commit_inner_witness_shape(
+                    &inner,
+                    params.num_blocks,
+                    params.a_key.row_len(),
+                    params.num_digits_open,
+                    params.log_basis,
                 )?;
                 dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
                 *decomposed = inner.decomposed_inner_rows;
@@ -139,12 +319,16 @@ where
         b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
         b_blinding_digits
     };
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-        &setup.ntt_shared,
-        params.b_key.row_len(),
-        setup.expanded.seed.max_stride,
-        &b_input_digits,
-    );
+    validate_commit_outer_input_nonempty(b_input_digits.len())?;
+    let u: Vec<CyclotomicRing<F, D>> =
+        backend.digit_rows::<D>(prepared, params.b_key.row_len(), &b_input_digits)?;
+    if u.len() != params.b_key.row_len() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned {} B commitment rows, expected {}",
+            u.len(),
+            params.b_key.row_len()
+        )));
+    }
     let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
         decomposed_inner_rows,
         recomposed_inner_rows,
@@ -157,56 +341,39 @@ where
 /// Tiered (two-tier) commit per `specs/tiered_commit.md`.
 ///
 /// Splits the flat `t̂` into `params.split_factor` equal contiguous
-/// chunks against the **same** `B'` (a column-window view of the shared
-/// matrix's B-row block; physically realised by passing the chunk-width
-/// digit vector into the existing `mat_vec_mul_ntt_single_i8` kernel,
-/// which honours a `vec_len < max_stride` input). For each chunk it
-/// computes `u_i = B' · t̂_i`, gadget-decomposes `u_i → û_i` with depth
-/// `δ_outer` and basis `2^{outer_log_basis}`, and finally multiplies the
-/// concatenated `û_concat = û_1 ‖ … ‖ û_f` against the caller-supplied F
-/// matrix to produce `u_final = F · û_concat`.
+/// chunks against the same `B'`. For each chunk computes
+/// `u_i = B' · t̂_i`, gadget-decomposes `u_i → û_i` with depth
+/// `δ_outer` and basis `2^{outer_log_basis}`, and finally multiplies
+/// the concatenated `û_concat = û_1 ‖ … ‖ û_f` against the F matrix
+/// (derived deterministically from the setup seed under the
+/// `b"tier1-f"` domain label) to produce `u_final = F · û_concat`.
 ///
 /// The public commitment is `RingCommitment { u: u_final }`
-/// (`u.len() == lp.outer_commitment_rows() == n_F`). The hint carries
-/// `û_concat` as a single per-point entry in `outer_digits`, alongside
-/// the existing per-poly `decomposed_inner_rows` / `recomposed_inner_rows`.
-///
-/// `f_ntt_cache` is the precomputed NTT cache of the F matrix; its
-/// physical row stride is `f_max_stride`. F's row count is
-/// `params.f_key.row_len()` and its active column width is
-/// `params.f_key.col_len() = n_b' · split_factor · num_digits_outer`.
-/// (Once `AkitaProverSetup` is extended to embed F, the runtime call
-/// site will pull both `f_ntt_cache` and `f_max_stride` from `setup`;
-/// this signature lets unit tests inject a synthetic F.)
+/// (`u.len() == params.outer_commitment_rows() == n_F`). The hint
+/// carries `û_concat` as a single per-point entry in `outer_digits`,
+/// alongside the existing per-poly inner-witness data.
 ///
 /// # Errors
 ///
 /// Returns an error when `params.split_factor < 2`, when any other
-/// tiered-commit shape validation fails (see
-/// `crate::protocol::tiered_commit::TieredCommitParams::validate`),
-/// or when an inner commitment fails.
-pub fn commit_tiered_with_params<F, const D: usize, P>(
+/// tiered-commit shape validation fails, or when an inner commitment
+/// fails.
+pub fn commit_tiered_with_params<F, const D: usize, P, B>(
     polys: &[P],
-    setup: &AkitaProverSetup<F, D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
-    f_ntt_cache: &NttSlotCache<D>,
-    f_max_stride: usize,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D>,
+    B: CommitmentComputeBackend<F>,
 {
-    // Spec §7: tiering under `--features zk` is intentionally out
-    // of scope for the first landing — the planner must not emit
-    // `split_factor > 1` candidates when `zk` is on until a follow-
-    // up resolves the ûhat blinding question. We reject loudly at
-    // the function boundary (rather than partway through the body)
-    // so the rest of the function is unambiguously dead code under
-    // `--features zk` and clippy can stop warning about
-    // unreachable variable bindings.
+    // Spec §7: tiering under `--features zk` is intentionally out of
+    // scope for the first landing.
     #[cfg(feature = "zk")]
     {
-        let _ = (polys, setup, params, f_ntt_cache, f_max_stride);
+        let _ = (polys, backend, prepared, params);
         Err(AkitaError::InvalidSetup(
             "tiered commit path is not enabled under `--features zk` in this revision; \
              see specs/tiered_commit.md §7"
@@ -215,26 +382,25 @@ where
     }
     #[cfg(not(feature = "zk"))]
     {
-        commit_tiered_with_params_inner(polys, setup, params, f_ntt_cache, f_max_stride)
+        commit_tiered_with_params_inner::<F, D, P, B>(polys, backend, prepared, params)
     }
 }
 
 #[cfg(not(feature = "zk"))]
-fn commit_tiered_with_params_inner<F, const D: usize, P>(
+fn commit_tiered_with_params_inner<F, const D: usize, P, B>(
     polys: &[P],
-    setup: &AkitaProverSetup<F, D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
-    f_ntt_cache: &NttSlotCache<D>,
-    f_max_stride: usize,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D>,
+    B: CommitmentComputeBackend<F>,
 {
     if !params.is_tiered_root() {
         return Err(AkitaError::InvalidInput(
-            "commit_tiered_with_params requires params.is_tiered_root() (split_factor > 1); \
-             use commit_with_params for the legacy path"
+            "commit_tiered_with_params requires params.is_tiered_root() (split_factor > 1)"
                 .to_string(),
         ));
     }
@@ -260,11 +426,15 @@ where
         ));
     }
 
-    // Stage 1: build t̂ exactly as the legacy path. We deliberately
-    // reuse the legacy preamble verbatim so any later refactor of the
-    // inner-witness commit kernel benefits both paths.
-    let b_input_len_per_poly = params.num_blocks * params.a_key.row_len() * params.num_digits_open;
-    let mut b_input_digits = vec![[0i8; D]; polys.len() * b_input_len_per_poly];
+    // Stage 1: build t̂ via the same per-poly inner-witness path the
+    // legacy commit takes — through the compute backend.
+    let b_input_len_per_poly = commit_inner_flat_digit_count(
+        params.num_blocks,
+        params.a_key.row_len(),
+        params.num_digits_open,
+    )?;
+    let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
+    let mut b_input_digits = vec![[0i8; D]; total_b_input_len];
     let mut decomposed_inner_rows: Vec<FlatDigitBlocks<D>> = (0..polys.len())
         .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
         .collect::<Result<_, _>>()?;
@@ -277,14 +447,20 @@ where
         .try_for_each(
             |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
                 let inner = poly.commit_inner_witness(
-                    &setup.expanded.shared_matrix,
-                    &setup.ntt_shared,
+                    backend,
+                    prepared,
                     params.a_key.row_len(),
                     params.block_len,
                     params.num_digits_commit,
                     params.num_digits_open,
                     params.log_basis,
-                    setup.expanded.seed.max_stride,
+                )?;
+                validate_commit_inner_witness_shape(
+                    &inner,
+                    params.num_blocks,
+                    params.a_key.row_len(),
+                    params.num_digits_open,
+                    params.log_basis,
                 )?;
                 dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
                 *decomposed = inner.decomposed_inner_rows;
@@ -292,22 +468,25 @@ where
                 Ok(())
             },
         )?;
-    // Stage 2: feed t̂ into the closure-based tiered kernel. The B' arm
-    // calls the existing NTT kernel on the shared matrix with a chunk-
-    // length input; the F arm uses the caller-supplied F NTT cache.
-    let n_b_prime_local = n_b_prime;
-    let setup_ntt = &setup.ntt_shared;
-    let setup_max_stride = setup.expanded.seed.max_stride;
+
+    // Stage 2: feed t̂ into the tiered kernel. B' uses the backend's
+    // `digit_rows`; F uses a locally-built NTT cache derived from the
+    // public matrix seed.
+    let expanded = backend.prepared_expanded_setup::<D>(prepared);
+    let f_flat = derive_tier1_f_matrix_flat::<F, D>(
+        n_f.checked_mul(expected_f_width).ok_or_else(|| {
+            AkitaError::InvalidSetup("tiered F backing storage total overflow".to_string())
+        })?,
+        &expanded.seed.public_matrix_seed,
+    );
+    let f_ntt = build_ntt_slot(f_flat.ring_view::<D>(n_f, expected_f_width)?)?;
     let b_prime_multiply = |chunk: &[[i8; D]]| -> Vec<CyclotomicRing<F, D>> {
-        // The kernel reads each B row's first `chunk.len()` cells (i.e.
-        // B'), since `vec_len = vec.len().min(inner_width)`. Callers
-        // that pass a `chunk.len() > setup_max_stride` would silently
-        // drop tail cells; tiered_commit's own length validation rejects
-        // that shape upstream.
-        mat_vec_mul_ntt_single_i8(setup_ntt, n_b_prime_local, setup_max_stride, chunk)
+        backend
+            .digit_rows::<D>(prepared, n_b_prime, chunk)
+            .expect("tiered B' digit_rows failed")
     };
     let f_multiply = |uhat_concat: &[[i8; D]]| -> Vec<CyclotomicRing<F, D>> {
-        mat_vec_mul_ntt_single_i8(f_ntt_cache, n_f, f_max_stride, uhat_concat)
+        mat_vec_mul_ntt_single_i8::<F, D>(&f_ntt, n_f, expected_f_width, uhat_concat)
     };
 
     let out = tiered_commit::<F, _, _, D>(
@@ -322,9 +501,8 @@ where
         f_multiply,
     )?;
 
-    // Stage 3: assemble the hint. `outer_digits` carries `uhat_concat`
-    // as one entry (this is a per-opening-point hint; the batched commit
-    // surface above this function flattens per-point entries).
+    // Stage 3: assemble the hint with `uhat_concat` as the single
+    // per-opening-point entry.
     let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
         decomposed_inner_rows,
         recomposed_inner_rows,
@@ -332,6 +510,62 @@ where
     .with_outer_digits(vec![out.uhat_concat]);
 
     Ok((RingCommitment { u: out.u_final }, hint))
+}
+
+/// Commit a group of polynomials using already-selected level parameters.
+///
+/// Config/schedule policy chooses `params`; this function owns only the
+/// prover-side matrix work for the supplied concrete layout.
+///
+/// # Errors
+///
+/// Returns an error if input validation, inner witness commitment, or hint
+/// allocation fails.
+pub fn commit_with_params<F, const D: usize, P, B>(
+    polys: &[P],
+    expanded: &AkitaExpandedSetup<F>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    params: &LevelParams,
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    P: AkitaPolyOps<F, D>,
+    B: CommitmentComputeBackend<F>,
+{
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    prepare_commit_inputs::<F, D, P>(polys, expanded)?;
+    validate_commit_level_params::<F, D>(params, expanded)?;
+    commit_with_validated_params::<F, D, P, B>(polys, backend, prepared, params)
+}
+
+/// Commit a group of polynomials using caller-supplied config policy.
+///
+/// The prover crate owns config-free input validation and commitment execution;
+/// the caller supplies only the layout-selection policy.
+///
+/// # Errors
+///
+/// Returns an error if input validation, parameter selection, or commitment
+/// execution fails.
+pub fn commit_with_policy<F, const D: usize, P, B, SelectParams>(
+    polys: &[P],
+    expanded: &AkitaExpandedSetup<F>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    select_params: SelectParams,
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    P: AkitaPolyOps<F, D>,
+    B: CommitmentComputeBackend<F>,
+    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
+{
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    let incidence = prepare_commit_inputs::<F, D, P>(polys, expanded)?;
+    let params = select_params(&incidence)?;
+    validate_commit_level_params::<F, D>(&params, expanded)?;
+    commit_with_validated_params::<F, D, P, B>(polys, backend, prepared, &params)
 }
 
 /// Validate a multipoint commitment request and derive its
@@ -349,7 +583,7 @@ where
 /// setup capacity, or the variable count exceeds the prover setup capacity.
 pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
     polys_per_point: &[&[P]],
-    setup: &AkitaProverSetup<F, D>,
+    setup: &AkitaExpandedSetup<F>,
 ) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
@@ -360,11 +594,11 @@ where
             "batched_commit requires at least one opening point".to_string(),
         ));
     }
-    if polys_per_point.len() > setup.expanded.seed.max_num_points {
+    if polys_per_point.len() > setup.seed.max_num_points {
         return Err(AkitaError::InvalidInput(format!(
             "batched_commit received {} opening points but setup supports at most {}",
             polys_per_point.len(),
-            setup.expanded.seed.max_num_points
+            setup.seed.max_num_points
         )));
     }
     let first_bundle = polys_per_point.first().ok_or_else(|| {
@@ -374,10 +608,10 @@ where
         AkitaError::InvalidInput("batched_commit bundles must be nonempty".to_string())
     })?;
     let num_vars = first_poly.num_vars();
-    if num_vars > setup.expanded.seed.max_num_vars {
+    if num_vars > setup.seed.max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "batched_commit received a polynomial with {} variables but setup supports at most {}",
-            num_vars, setup.expanded.seed.max_num_vars
+            num_vars, setup.seed.max_num_vars
         )));
     }
 
@@ -399,547 +633,170 @@ where
             AkitaError::InvalidInput("batched_commit total polynomial count overflow".to_string())
         })?;
     }
-    if total_polys > setup.expanded.seed.max_num_batched_polys {
+    if total_polys > setup.seed.max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
             "batched_commit received {total_polys} polynomials but setup supports at most {}",
-            setup.expanded.seed.max_num_batched_polys
+            setup.seed.max_num_batched_polys
         )));
     }
 
     ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
 }
 
-/// Commit one polynomial bundle per opening point using already-selected
-/// level parameters.
+/// Commit one polynomial bundle per opening point using a caller-supplied
+/// layout-selection policy.
 ///
-/// The caller has already resolved the shared root commitment layout (e.g.
-/// via [`crate::batched_commit`]); this function owns only the prover-
-/// side matrix work for the supplied concrete layout.
+/// The policy callback receives the full multipoint incidence and returns the
+/// shared root commitment layout. Every per-point bundle is then committed
+/// with that one layout via [`commit_with_params`], guaranteeing that the
+/// produced commitments are compatible with the layout `batched_prove` will
+/// select for the same incidence.
 ///
 /// # Errors
 ///
-/// Returns an error if any per-point commitment fails.
+/// Returns an error if input validation, parameter selection, or any per-
+/// point commitment fails.
 #[allow(clippy::type_complexity)]
-pub fn batched_commit_with_params<F, const D: usize, P>(
+pub fn batched_commit_with_policy<F, const D: usize, P, B, SelectParams>(
     polys_per_point: &[&[P]],
-    setup: &AkitaProverSetup<F, D>,
+    expanded: &AkitaExpandedSetup<F>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    select_params: SelectParams,
+) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    P: AkitaPolyOps<F, D>,
+    B: CommitmentComputeBackend<F>,
+    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
+{
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    let incidence = prepare_batched_commit_inputs::<F, D, P>(polys_per_point, expanded)?;
+    let params = select_params(&incidence)?;
+    validate_commit_level_params::<F, D>(&params, expanded)?;
+    batched_commit_with_validated_params::<F, D, P, B>(polys_per_point, backend, prepared, &params)
+}
+
+#[allow(clippy::type_complexity)]
+fn batched_commit_with_validated_params<F, const D: usize, P, B>(
+    polys_per_point: &[&[P]],
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
     params: &LevelParams,
 ) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D>,
+    B: CommitmentComputeBackend<F>,
 {
     let mut out = Vec::with_capacity(polys_per_point.len());
     for polys in polys_per_point {
-        out.push(commit_with_params::<F, D, P>(polys, setup, params)?);
+        out.push(commit_with_validated_params::<F, D, P, B>(
+            polys, backend, prepared, params,
+        )?);
     }
     Ok(out)
 }
 
-/// Commit a group of polynomials.
+/// Commit one polynomial bundle per opening point using already-selected
+/// level parameters.
 ///
-/// Routes through `Cfg::get_params_for_batched_commitment` so all per-config
-/// layout decisions land in the trait body.
-///
-/// # Errors
-///
-/// Returns an error if input validation, parameter selection, or commitment
-/// execution fails.
-pub fn commit<F, Cfg, P, const D: usize>(
-    polys: &[P],
-    setup: &AkitaProverSetup<F, D>,
-) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    Cfg: CommitmentConfig<Field = F>,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-{
-    let incidence = prepare_commit_inputs::<F, D, P>(polys, setup)?;
-    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
-    commit_with_params::<F, D, P>(polys, setup, &params)
-}
-
-/// Commit one polynomial bundle per opening point.
+/// The caller has already resolved the shared root commitment layout (e.g.
+/// via [`batched_commit_with_policy`]); this function owns only the prover-
+/// side matrix work for the supplied concrete layout.
 ///
 /// # Errors
 ///
-/// Returns an error if input validation, parameter selection, or any
-/// per-point commitment fails.
+/// Returns an error if batched input validation fails or any per-point
+/// commitment fails.
 #[allow(clippy::type_complexity)]
-pub fn batched_commit<F, Cfg, P, const D: usize>(
+pub fn batched_commit_with_params<F, const D: usize, P, B>(
     polys_per_point: &[&[P]],
-    setup: &AkitaProverSetup<F, D>,
+    expanded: &AkitaExpandedSetup<F>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    params: &LevelParams,
 ) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    Cfg: CommitmentConfig<Field = F>,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D>,
+    B: CommitmentComputeBackend<F>,
 {
-    let incidence = prepare_batched_commit_inputs::<F, D, P>(polys_per_point, setup)?;
-    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
-    batched_commit_with_params::<F, D, P>(polys_per_point, setup, &params)
+    backend.validate_prepared_setup::<D>(prepared, expanded)?;
+    prepare_batched_commit_inputs::<F, D, P>(polys_per_point, expanded)?;
+    validate_commit_level_params::<F, D>(params, expanded)?;
+    batched_commit_with_validated_params::<F, D, P, B>(polys_per_point, backend, prepared, params)
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::DensePoly;
-    use crate::kernels::crt_ntt::build_ntt_slot;
-    use akita_algebra::CyclotomicRing;
-    use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
-    use akita_types::layout::sis_derivation::balanced_digit_delta_bound;
-    use akita_types::{AjtaiKeyParams, FlatMatrix, LevelParams as LP, SisModulusFamily};
 
     type F = Fp64<4294967197>;
-    const D: usize = 4;
+    const D: usize = 32;
 
-    /// Build a small `LevelParams` configured for the tiered root commit
-    /// path. The shape is deliberately tiny so the test stays fast while
-    /// still exercising every code path in `commit_tiered_with_params`.
-    #[allow(clippy::too_many_arguments)]
-    fn tiered_level_params(
-        n_a: usize,
-        n_b_prime: usize,
-        n_d: usize,
-        n_f: usize,
-        num_blocks: usize,
-        block_len: usize,
-        num_digits_commit: usize,
-        num_digits_open: usize,
-        split_factor: usize,
-        outer_log_basis: u32,
-        num_digits_outer: usize,
-    ) -> LP {
-        let log_basis: u32 = 2;
-        let stage1 = SparseChallengeConfig::Uniform {
-            weight: 2,
-            nonzero_coeffs: vec![-1, 1],
-        };
-        let chunk_width = n_a * num_digits_open * num_blocks / split_factor;
-        let f_width = n_b_prime * split_factor * num_digits_outer;
-        let inner_width = block_len * num_digits_commit;
-        let d_matrix_width = num_digits_open * num_blocks;
-        LP {
-            ring_dimension: D,
-            log_basis,
-            a_key: AjtaiKeyParams::new_unchecked(
-                SisModulusFamily::Q64,
-                n_a,
-                inner_width,
-                balanced_digit_delta_bound(log_basis),
-                D,
-            ),
-            // The B key carries B' shape under tiering.
-            b_key: AjtaiKeyParams::new_unchecked(
-                SisModulusFamily::Q64,
-                n_b_prime,
-                chunk_width,
-                balanced_digit_delta_bound(log_basis),
-                D,
-            ),
-            d_key: AjtaiKeyParams::new_unchecked(
-                SisModulusFamily::Q64,
-                n_d,
-                d_matrix_width,
-                balanced_digit_delta_bound(log_basis),
-                D,
-            ),
-            num_blocks,
-            block_len,
-            m_vars: block_len.trailing_zeros() as usize,
-            r_vars: num_blocks.trailing_zeros() as usize,
-            stage1_config: stage1,
-            num_digits_commit,
-            num_digits_open,
-            num_digits_fold: 1,
-            split_factor,
-            outer_log_basis,
-            num_digits_outer,
-            f_key: AjtaiKeyParams::new_unchecked(
-                SisModulusFamily::Q64,
-                n_f,
-                f_width,
-                balanced_digit_delta_bound(outer_log_basis),
-                D,
-            ),
-            fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-        }
-    }
-
-    fn legacy_level_params_matching(tier: &LP) -> LP {
-        let mut legacy = tier.clone();
-        legacy.split_factor = 1;
-        legacy.outer_log_basis = 0;
-        legacy.num_digits_outer = 0;
-        legacy.f_key = AjtaiKeyParams::default();
-        // Legacy B key spans the full outer width.
-        legacy.b_key = AjtaiKeyParams::new_unchecked(
-            tier.b_key.sis_family(),
-            tier.b_key.row_len(),
-            tier.full_outer_width(),
-            tier.b_key.collision_inf(),
-            tier.ring_dimension,
-        );
-        legacy
-    }
-
-    /// Build an F NTT cache from a deterministic small `FlatMatrix`.
-    fn build_synthetic_f_cache(n_f: usize, f_width: usize) -> (NttSlotCache<D>, usize) {
-        // Use small distinct values per cell so any indexing mismatch
-        // would change the resulting product.
-        let total = n_f * f_width * D;
-        let data: Vec<F> = (0..total)
-            .map(|idx| F::from_canonical_u128_reduced(1 + (idx as u128 * 13) % 97))
-            .collect();
-        let flat = FlatMatrix::<F>::from_flat_data(data, D);
-        let view = flat
-            .ring_view::<D>(n_f, f_width)
-            .expect("test F view shape");
-        let cache = build_ntt_slot(view).expect("build F NTT cache");
-        (cache, f_width)
-    }
-
-    // Tiered outer-digit parameters covering the full Fp64 modulus
-    // (≈ 32 bits). `outer_log_basis = 6` (the max the i8 storage admits)
-    // with `num_digits_outer = 6` covers ≤ 2^36 entries, well above the
-    // field modulus, so the gadget identity `u_i = G · û_i` holds
-    // exactly.
-    const OUTER_LOG_BASIS: u32 = 6;
-    const NUM_DIGITS_OUTER: usize = 6;
-
-    #[test]
-    fn commit_tiered_with_params_rejects_split_factor_one() {
-        let mut tier =
-            tiered_level_params(1, 2, 1, 2, 2, 2, 1, 2, 2, OUTER_LOG_BASIS, NUM_DIGITS_OUTER);
-        tier.split_factor = 1;
-        let f_width = tier.b_key.row_len() * 2 * NUM_DIGITS_OUTER;
-        let (f_cache, f_stride) = build_synthetic_f_cache(2, f_width);
-        let poly = DensePoly::<F, D>::from_field_evals(
-            (4u32 + D.trailing_zeros()) as usize - D.trailing_zeros() as usize,
-            &vec![F::zero(); 1 << ((D.trailing_zeros() as usize) + 2)],
-        )
-        .expect("dense");
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 16).unwrap();
-        let err = commit_tiered_with_params::<F, D, _>(
-            std::slice::from_ref(&poly),
-            &setup,
-            &tier,
-            &f_cache,
-            f_stride,
-        )
-        .expect_err("split_factor == 1 must take the legacy path");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("is_tiered_root"),
-            "error names is_tiered_root: {msg}"
-        );
-    }
-
-    #[test]
-    fn commit_tiered_with_params_recomposes_to_b_prime_chunks() {
-        // f = 2 chunks, n_b' = 2, depth NUM_DIGITS_OUTER (full-field for
-        // Fp64), basis 2^OUTER_LOG_BASIS; n_F = 2.
-        // n_a = 1, num_blocks = 2, block_len = 2, num_digits_commit = 1,
-        // num_digits_open = 2 ⇒ outer_width = 4, chunk_width = 2,
-        // f_width = 2 * 2 * NUM_DIGITS_OUTER.
-        let tier =
-            tiered_level_params(1, 2, 1, 2, 2, 2, 1, 2, 2, OUTER_LOG_BASIS, NUM_DIGITS_OUTER);
-        let f_width = tier.f_key.col_len();
-        let n_f = tier.f_key.row_len();
-        let (f_cache, f_stride) = build_synthetic_f_cache(n_f, f_width);
-
-        // Choose a polynomial with num_ring_elems = num_blocks * block_len
-        // = 4; with D = 4 that gives 16 field evaluations = 2^4 evals.
-        let num_ring = tier.num_blocks * tier.block_len;
-        let num_vars = (num_ring * D).trailing_zeros() as usize;
-        let evals: Vec<F> = (0..(1usize << num_vars))
-            .map(|idx| F::from_canonical_u128_reduced(((idx as u128) * 17 + 3) % 991))
-            .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).expect("dense");
-
-        let max_stride = tier.full_outer_width().max(tier.inner_width());
-        let max_rows = tier
-            .a_key
-            .row_len()
-            .max(tier.b_key.row_len())
-            .max(tier.d_key.row_len())
-            .max(tier.f_key.row_len());
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(
-            num_vars + 4,
-            1,
-            1,
-            max_rows,
-            max_stride,
-        )
-        .expect("setup");
-
-        let (commitment, hint) = commit_tiered_with_params::<F, D, _>(
-            std::slice::from_ref(&poly),
-            &setup,
-            &tier,
-            &f_cache,
-            f_stride,
-        )
-        .expect("tiered commit");
-
-        // Shape contract.
-        assert_eq!(
-            commitment.u.len(),
-            tier.outer_commitment_rows(),
-            "RingCommitment.u length matches outer_commitment_rows (= n_F)"
-        );
-        assert_eq!(commitment.u.len(), n_f);
-        assert_eq!(
-            hint.outer_digits().len(),
-            1,
-            "one outer_digits entry per opening-point commitment"
-        );
-        let uhat_concat = &hint.outer_digits()[0];
-        assert_eq!(
-            uhat_concat.flat_digits().len(),
-            tier.b_key.row_len() * tier.split_factor * tier.num_digits_outer,
-            "uhat_concat digit count = n_b' * split * δ_outer"
-        );
-
-        // Independently rebuild u_final from t_hat using the kernel via
-        // the tiered_commit helper directly.
-        let inner = <DensePoly<F, D> as AkitaPolyOps<F, D>>::commit_inner_witness(
-            &poly,
-            &setup.expanded.shared_matrix,
-            &setup.ntt_shared,
-            tier.a_key.row_len(),
-            tier.block_len,
-            tier.num_digits_commit,
-            tier.num_digits_open,
-            tier.log_basis,
-            setup.expanded.seed.max_stride,
-        )
-        .expect("inner");
-
-        let b_input_digits: Vec<[i8; D]> = inner.decomposed_inner_rows.flat_digits().to_vec();
-        let expected = crate::protocol::tiered_commit::tiered_commit::<F, _, _, D>(
-            crate::protocol::tiered_commit::TieredCommitParams {
-                split_factor: tier.split_factor,
-                n_b_prime: tier.b_key.row_len(),
-                outer_log_basis: tier.outer_log_basis,
-                num_digits_outer: tier.num_digits_outer,
-            },
-            &b_input_digits,
-            |chunk| {
-                mat_vec_mul_ntt_single_i8::<F, D>(
-                    &setup.ntt_shared,
-                    tier.b_key.row_len(),
-                    setup.expanded.seed.max_stride,
-                    chunk,
-                )
-            },
-            |uhat_concat| mat_vec_mul_ntt_single_i8::<F, D>(&f_cache, n_f, f_stride, uhat_concat),
-        )
-        .expect("reference tiered commit");
-
-        assert_eq!(
-            commitment.u, expected.u_final,
-            "commit_tiered_with_params output matches the reference tiered_commit kernel"
-        );
-        assert_eq!(
-            uhat_concat.flat_digits(),
-            expected.uhat_concat.flat_digits(),
-            "uhat_concat flat digits match the reference reconstruction"
-        );
-
-        // Sanity: the gadget identity holds for every (chunk, b'_row).
-        let depth = tier.num_digits_outer;
-        let n_b = tier.b_key.row_len();
-        let log_basis = tier.outer_log_basis;
-        // Recompute u_i directly using the existing NTT kernel on each
-        // chunk and confirm gadget recomposition.
-        for chunk_idx in 0..tier.split_factor {
-            let lo = chunk_idx * (b_input_digits.len() / tier.split_factor);
-            let hi = lo + (b_input_digits.len() / tier.split_factor);
-            let u_i = mat_vec_mul_ntt_single_i8::<F, D>(
-                &setup.ntt_shared,
-                n_b,
-                setup.expanded.seed.max_stride,
-                &b_input_digits[lo..hi],
-            );
-            for (row, expected_u) in u_i.iter().enumerate() {
-                let plane_offset = chunk_idx * n_b * depth + row * depth;
-                let digits = &uhat_concat.flat_digits()[plane_offset..plane_offset + depth];
-                let recomposed =
-                    CyclotomicRing::<F, D>::gadget_recompose_pow2_i8(digits, log_basis);
-                assert_eq!(
-                    recomposed, *expected_u,
-                    "gadget identity holds for chunk = {chunk_idx}, row = {row}"
-                );
-            }
+    fn inner_witness(
+        recomposed_blocks: usize,
+        rows_per_block: usize,
+        block_sizes: Vec<usize>,
+    ) -> CommitInnerWitness<F, D> {
+        let total_digits = block_sizes.iter().sum();
+        CommitInnerWitness {
+            recomposed_inner_rows: vec![
+                vec![CyclotomicRing::<F, D>::zero(); rows_per_block];
+                recomposed_blocks
+            ],
+            decomposed_inner_rows: FlatDigitBlocks::new(vec![[0i8; D]; total_digits], block_sizes)
+                .expect("valid flat digit blocks"),
         }
     }
 
     #[test]
-    fn commit_tiered_with_params_rejects_mismatched_f_key_width() {
-        let mut tier =
-            tiered_level_params(1, 2, 1, 2, 2, 2, 1, 2, 2, OUTER_LOG_BASIS, NUM_DIGITS_OUTER);
-        // Corrupt f_key.col_len so the validation triggers.
-        tier.f_key = AjtaiKeyParams::new_unchecked(
-            SisModulusFamily::Q64,
-            tier.f_key.row_len(),
-            tier.f_key.col_len() + 1,
-            tier.f_key.collision_inf(),
-            D,
-        );
-
-        let n_f = tier.f_key.row_len();
-        // Build an F cache whose width matches the *corrupted* col_len so
-        // the validation error is what triggers, not an NTT-cache mismatch.
-        let (f_cache, f_stride) = build_synthetic_f_cache(n_f, tier.f_key.col_len());
-
-        let num_ring = tier.num_blocks * tier.block_len;
-        let num_vars = (num_ring * D).trailing_zeros() as usize;
-        let evals = vec![F::zero(); 1usize << num_vars];
-        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).expect("dense");
-
-        let max_stride = tier.full_outer_width().max(tier.inner_width());
-        let max_rows = tier
-            .a_key
-            .row_len()
-            .max(tier.b_key.row_len())
-            .max(tier.d_key.row_len())
-            .max(tier.f_key.row_len());
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(
-            num_vars + 4,
-            1,
-            1,
-            max_rows,
-            max_stride,
-        )
-        .unwrap();
-
-        let err = commit_tiered_with_params::<F, D, _>(
-            std::slice::from_ref(&poly),
-            &setup,
-            &tier,
-            &f_cache,
-            f_stride,
-        )
-        .expect_err("mismatched f_key width must be rejected");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("f_key.col_len"),
-            "error names f_key.col_len: {msg}"
-        );
+    fn commit_inner_witness_shape_accepts_expected_layout() {
+        let inner = inner_witness(2, 3, vec![6, 6]);
+        validate_commit_inner_witness_shape(&inner, 2, 3, 2, 4).expect("shape should match");
     }
 
     #[test]
-    fn commit_with_params_dispatches_to_tiered_when_is_tiered_root() {
-        // Use the unified `commit_with_params` entry point and verify it
-        // produces the same `u_final` as a direct `commit_tiered_with_params`
-        // call with a hand-built F NTT cache derived from the same seed
-        // and label. This guards the public dispatch contract.
-        use crate::kernels::matrix::derive_tier1_f_matrix_flat;
-
-        let tier =
-            tiered_level_params(1, 2, 1, 2, 2, 2, 1, 2, 2, OUTER_LOG_BASIS, NUM_DIGITS_OUTER);
-        let n_f = tier.f_key.row_len();
-        let f_width = tier.f_key.col_len();
-
-        let num_ring = tier.num_blocks * tier.block_len;
-        let num_vars = (num_ring * D).trailing_zeros() as usize;
-        let evals: Vec<F> = (0..(1usize << num_vars))
-            .map(|idx| F::from_canonical_u128_reduced(((idx as u128) * 41 + 5) % 977))
-            .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).expect("dense");
-
-        let max_stride = tier.full_outer_width().max(tier.inner_width());
-        let max_rows = tier
-            .a_key
-            .row_len()
-            .max(tier.b_key.row_len())
-            .max(tier.d_key.row_len())
-            .max(tier.f_key.row_len());
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(
-            num_vars + 4,
-            1,
-            1,
-            max_rows,
-            max_stride,
-        )
-        .expect("setup");
-
-        // Path A: unified entry point.
-        let (commitment_a, hint_a) =
-            commit_with_params::<F, D, _>(std::slice::from_ref(&poly), &setup, &tier)
-                .expect("unified commit dispatches to tiered");
-
-        // Path B: explicit tiered call with the same setup-derived F.
-        let total_f_ring_elements = n_f * f_width;
-        let f_flat = derive_tier1_f_matrix_flat::<F, D>(
-            total_f_ring_elements,
-            &setup.expanded.seed.public_matrix_seed,
-        );
-        let f_view = f_flat
-            .ring_view::<D>(n_f, f_width)
-            .expect("test F view shape");
-        let f_cache = build_ntt_slot(f_view).expect("f cache");
-        let (commitment_b, hint_b) = commit_tiered_with_params::<F, D, _>(
-            std::slice::from_ref(&poly),
-            &setup,
-            &tier,
-            &f_cache,
-            f_width,
-        )
-        .expect("explicit tiered commit");
-
-        assert_eq!(
-            commitment_a.u, commitment_b.u,
-            "unified dispatch must produce the same u_final as explicit tiered call"
-        );
-        assert_eq!(
-            hint_a.outer_digits()[0].flat_digits(),
-            hint_b.outer_digits()[0].flat_digits(),
-            "unified dispatch must produce the same uhat_concat as explicit tiered call"
-        );
+    fn commit_inner_witness_shape_rejects_bad_block_count() {
+        let inner = inner_witness(1, 3, vec![6, 6]);
+        assert!(validate_commit_inner_witness_shape(&inner, 2, 3, 2, 4).is_err());
     }
 
     #[test]
-    fn legacy_commit_with_params_unchanged_for_split_factor_one() {
-        // Sanity check: the legacy `commit_with_params` path is
-        // untouched when `split_factor == 1`. We construct a tiered
-        // LevelParams, derive a matching legacy LevelParams, and verify
-        // commit_with_params produces an `n_b`-length commitment exactly
-        // matching today's behaviour.
-        let tier =
-            tiered_level_params(1, 2, 1, 2, 2, 2, 1, 2, 2, OUTER_LOG_BASIS, NUM_DIGITS_OUTER);
-        let legacy = legacy_level_params_matching(&tier);
-        assert!(!legacy.is_tiered_root());
-        assert_eq!(legacy.outer_commitment_rows(), legacy.b_key.row_len());
+    fn commit_inner_witness_shape_rejects_bad_digit_block_size() {
+        let inner = inner_witness(2, 3, vec![6, 5]);
+        assert!(validate_commit_inner_witness_shape(&inner, 2, 3, 2, 4).is_err());
+    }
 
-        let num_ring = legacy.num_blocks * legacy.block_len;
-        let num_vars = (num_ring * D).trailing_zeros() as usize;
-        let evals: Vec<F> = (0..(1usize << num_vars))
-            .map(|idx| F::from_canonical_u128_reduced(((idx as u128) * 31 + 7) % 503))
-            .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(num_vars, &evals).expect("dense");
+    #[test]
+    fn commit_inner_witness_shape_rejects_recomposition_mismatch() {
+        let mut inner = inner_witness(1, 1, vec![2]);
+        inner.decomposed_inner_rows.flat_digits_mut()[0][0] = 1;
+        assert!(validate_commit_inner_witness_shape(&inner, 1, 1, 2, 4).is_err());
+    }
 
-        let max_stride = legacy.full_outer_width().max(legacy.inner_width());
-        let max_rows = legacy
-            .a_key
-            .row_len()
-            .max(legacy.b_key.row_len())
-            .max(legacy.d_key.row_len());
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(
-            num_vars + 4,
-            1,
-            1,
-            max_rows,
-            max_stride,
-        )
-        .unwrap();
+    #[test]
+    fn commit_b_input_len_rejects_overflow() {
+        assert_eq!(checked_commit_b_input_len(3, 5).expect("fits"), 15);
+        assert!(matches!(
+            checked_commit_b_input_len(usize::MAX, 2),
+            Err(AkitaError::InvalidInput(_))
+        ));
+    }
 
-        let (commitment, hint) =
-            commit_with_params::<F, D, _>(std::slice::from_ref(&poly), &setup, &legacy)
-                .expect("legacy commit");
-        assert_eq!(commitment.u.len(), legacy.b_key.row_len());
-        assert!(hint.outer_digits().is_empty());
+    #[test]
+    fn commit_outer_input_validation_allows_logical_input_longer_than_setup_stride() {
+        validate_commit_outer_input_nonempty(9).expect("logical B input may exceed row stride");
+        assert!(matches!(
+            validate_commit_outer_input_nonempty(0),
+            Err(AkitaError::InvalidSetup(_))
+        ));
     }
 }
+
+// Tier-3 commit-side tests removed during the origin/main merge: they
+// targeted the pre-#105 `AkitaProverSetup`-based commit_with_params
+// API. The production `fp128::D32OneHotFastVerify` preset retains
+// end-to-end coverage through `crates/akita-pcs/examples/portable_bench.rs`.

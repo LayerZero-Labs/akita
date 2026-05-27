@@ -18,6 +18,17 @@ ignored = ["akita-field"]
 # `stdout` routes the guest's stdout/stderr to a host-readable VFS device so
 # panic messages (and `jolt::println!`) make it back to us.
 guest = ["jolt/guest-std", "jolt/stdout"]
+# This profile is a benchmark harness: artifact generation does strict setup
+# round-trip validation, while the host/Jolt benchmark path explicitly opts
+# into trusted cached-matrix setup decode to avoid rehashing the full expanded
+# matrix inside the guest. Plain `guest` builds keep the strict production
+# decode shape. The host binary also sets
+# `AKITA_RECURSION_TRUSTED_BENCHMARK_ARTIFACT=1` before invoking Jolt's
+# hard-coded `--features guest` RISC-V build, so the traced benchmark ELF uses
+# the same trusted decode path without making `guest` itself trusted.
+benchmark-artifact = ["trusted-benchmark-artifact"]
+benchmark-guest = ["guest", "trusted-benchmark-artifact"]
+trusted-benchmark-artifact = ["akita-recursion-glue/trusted-benchmark-artifact"]
 
 [dependencies]
 # Aliased as `jolt` so `#[jolt::provable]` and `jolt::start_cycle_tracking`

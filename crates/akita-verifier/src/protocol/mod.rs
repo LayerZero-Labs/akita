@@ -10,11 +10,10 @@ pub(crate) mod slice_mle;
 pub(crate) mod tier1_f_matrix;
 
 pub use batched::{
-    verify_batched, verify_root_direct_commitments_with_params, RootDirectBlindingPayload,
+    verify_batched_with_policy, verify_root_direct_commitments_with_params,
+    RootDirectBlindingPayload,
 };
 pub use ring_switch::{prepare_ring_switch_row_eval, RingSwitchDeferredRowEval};
-
-pub(crate) use crate::proof::claims::prepare_verifier_claims;
 
 #[inline]
 pub(crate) fn validate_ring_dispatch<const D: usize>() -> Result<usize, AkitaError> {

@@ -304,7 +304,7 @@ where
             "matrix-row pattern evaluation requires at least one SIS row".to_string(),
         ));
     }
-    if n_cols_total > setup.seed.max_stride {
+    if n_cols_total > setup.seed().max_stride {
         return Err(AkitaError::InvalidSetup(
             "shared matrix stride is too small for selected verifier layout".to_string(),
         ));
@@ -497,8 +497,8 @@ where
         Z,
     }
     let shared_view = setup
-        .shared_matrix
-        .ring_view::<D>(r_max, setup.seed.max_stride)?;
+        .shared_matrix()
+        .ring_view::<D>(r_max, setup.seed().max_stride)?;
     let shared_stride = shared_view.num_cols();
     let shared_flat = shared_view.as_slice();
 
@@ -781,17 +781,18 @@ mod tests {
                 }))
             })
             .collect();
-        let setup = AkitaExpandedSetup::from_parts(
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 32,
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
                 max_stride,
+                gen_ring_dim: D,
+                total_ring_elements: matrix_entries.len(),
                 public_matrix_seed: [7u8; 32],
             },
             FlatMatrix::from_ring_slice::<D>(&matrix_entries),
-        )
-        .unwrap();
+        );
 
         let eq_tau1: Vec<F> = (0..rows.next_power_of_two())
             .map(|idx| f(11 + idx as u128))
@@ -865,7 +866,7 @@ mod tests {
         .unwrap();
 
         let shared_view = setup
-            .shared_matrix
+            .shared_matrix()
             .ring_view::<D>(r_max, max_stride)
             .unwrap();
         let shared_rows: Vec<_> = shared_view.rows().collect();

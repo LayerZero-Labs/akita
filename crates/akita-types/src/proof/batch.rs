@@ -397,18 +397,19 @@ where
             "{label} requires all opening points to have the same length"
         )));
     }
-    if num_vars > setup.seed.max_num_vars {
+    if num_vars > setup.seed().max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "{label} received opening points with {} variables but setup supports at most {}",
-            num_vars, setup.seed.max_num_vars
+            num_vars,
+            setup.seed().max_num_vars
         )));
     }
-    if inputs.len() > setup.seed.max_num_points {
+    if inputs.len() > setup.seed().max_num_points {
         if for_prover {
             return Err(AkitaError::InvalidInput(format!(
                 "batched_prove received {} opening points but setup supports at most {}",
                 inputs.len(),
-                setup.seed.max_num_points
+                setup.seed().max_num_points
             )));
         }
         return Err(AkitaError::InvalidProof);
@@ -426,11 +427,11 @@ where
             .checked_add(point_claims)
             .ok_or_else(|| shape_error(format!("{label} total claim count overflow")))?;
     }
-    if num_claims > setup.seed.max_num_batched_polys {
+    if num_claims > setup.seed().max_num_batched_polys {
         if for_prover {
             return Err(AkitaError::InvalidInput(format!(
                 "batched_prove received {num_claims} polynomials but setup supports at most {}",
-                setup.seed.max_num_batched_polys
+                setup.seed().max_num_batched_polys
             )));
         }
         return Err(AkitaError::InvalidProof);
@@ -879,17 +880,18 @@ mod tests {
     type L = RingSubfieldFp4<F>;
 
     fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup::from_parts(
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 3,
                 max_num_batched_polys: 8,
                 max_num_points: 2,
                 max_stride: 1,
+                gen_ring_dim: 1,
+                total_ring_elements: 1,
                 public_matrix_seed: [0u8; 32],
             },
             FlatMatrix::from_flat_data(vec![F::zero()], 1),
         )
-        .unwrap()
     }
 
     #[test]

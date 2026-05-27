@@ -23,6 +23,7 @@
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
+use akita_prover::{ComputeBackendSetup as _, CpuBackend};
 use akita_field::FromPrimitiveInt as _;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, CommittedPolynomials, OneHotPoly};
@@ -71,6 +72,7 @@ where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             Field,
             D,
+            ProverSetup = akita_prover::AkitaProverSetup<Field, D>,
             ClaimField = Field,
             VerifierSetup = AkitaVerifierSetup<Field>,
             Commitment = akita_types::RingCommitment<Field, D>,
@@ -107,15 +109,21 @@ where
     let opening = opening_from_indices(&indices, ONEHOT_K, &point);
 
     let t_setup = Instant::now();
-    let setup = <Scheme<D, Cfg> as CommitmentProver<Field, D>>::setup_prover(nv, 1, 1);
+    let setup = <Scheme<D, Cfg> as CommitmentProver<Field, D>>::setup_prover(nv, 1, 1)
+        .expect("setup_prover");
+    let prepared = CpuBackend.prepare_setup(&setup).expect("prepare_setup");
     let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<Field, D>>::setup_verifier(&setup);
     let setup_secs = t_setup.elapsed().as_secs_f64();
     println!("[{label}] setup: {:.4}s", setup_secs);
 
     let t_commit = Instant::now();
-    let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentProver<Field, D>>::commit(std::slice::from_ref(&poly), &setup)
-            .expect("commit");
+    let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<Field, D>>::commit(
+        &setup,
+        &CpuBackend,
+        &prepared,
+        std::slice::from_ref(&poly),
+    )
+    .expect("commit");
     let commit_secs = t_commit.elapsed().as_secs_f64();
     println!("[{label}] commit: {:.4}s", commit_secs);
 
@@ -125,6 +133,8 @@ where
     let mut prover_transcript = AkitaTranscript::<Field>::new(b"portable_bench");
     let proof = <Scheme<D, Cfg> as CommitmentProver<Field, D>>::batched_prove(
         &setup,
+        &CpuBackend,
+        &prepared,
         vec![(
             &point[..],
             CommittedPolynomials {

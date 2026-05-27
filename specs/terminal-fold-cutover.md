@@ -288,10 +288,10 @@ Affected crates and the change at each boundary:
     `prove_terminal_root_fold_from_quadratic`,
     `prove_terminal_root_fold_with_params`, and
     `prove_terminal_recursive_fold_with_params` are new (or renamed)
-    entry points; each absorbs the cleartext `final_witness`
-    (`PackedDigits`) into the transcript via `ABSORB_SUMCHECK_W`
-    before sampling any ring-switch challenges, runs stage-2 in
-    relation-only mode, and emits a `TerminalLevelProof`.
+    entry points; each absorbs logical terminal `w_hat` before sparse
+    challenge sampling, then absorbs the remaining cleartext
+    `final_witness` digits before ring-switch `alpha`/`tau1`, runs
+    stage-2 in relation-only mode, and emits a `TerminalLevelProof`.
   - The relation claim is built with `&[]` for the `v` argument at
     terminal levels (no D-block rows to sum).
   - Dispatch (`batched_prove` root loop): 1-fold schedule routes the
@@ -303,9 +303,10 @@ Affected crates and the change at each boundary:
 - **akita-verifier / `protocol/levels.rs`**
   - Splits the verifier path into `verify_intermediate_level` and
     `verify_terminal_level` (or equivalent inline branches), keyed
-    off the proof variant. Terminal verification absorbs the
-    cleartext `final_witness` into the transcript, re-derives the
-    ring-switch challenges, and runs stage-2 in relation-only mode.
+    off the proof variant. Terminal verification absorbs logical
+    `w_hat`, samples the sparse seed, absorbs the final-witness
+    remainder, re-derives ring-switch `alpha`/`tau1` without terminal
+    `tau0`, and runs stage-2 in relation-only mode.
   - `derive_stage1_challenges` accepts `MRowLayout` and skips the
     `ABSORB_PROVER_V` absorb when the layout is Terminal (no `v` is
     transmitted).
@@ -360,10 +361,11 @@ Affected crates and the change at each boundary:
 
 - `AGENTS.md` / `CLAUDE.md`: no changes required; the canonical
   profiling command is unchanged.
-- `crates/akita-pcs/tests/transcript_trace.rs` (audit fixture): now
-  shows the cleartext witness absorbed via `ABSORB_SUMCHECK_W` at the
-  terminal fold and no `next_w_commitment` / `next_w_eval` /
-  stage-1 sumcheck absorbs at the terminal level.
+- `crates/akita-pcs/tests/transcript_hardening.rs` (audit fixture): now
+  shows terminal `w_hat`, sparse seed, final-witness remainder,
+  ring-switch `alpha`, and `tau1` in order, with no terminal `tau0`
+  and no `next_w_commitment` / `next_w_eval` / stage-1 sumcheck absorbs
+  at the terminal level.
 - `specs/SPEC_REVIEW.md`: this spec follows the existing review
   workflow; no template changes.
 - Per-crate `README` / docs (none currently exist beyond `AGENTS.md`):
