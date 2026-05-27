@@ -1,6 +1,7 @@
 use super::*;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
+    #[inline]
     pub(super) fn use_sparse_x_y_round(&self) -> bool {
         !self.in_x_phase() && self.live_x_cols < (1usize << self.col_bits)
     }
@@ -271,6 +272,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         (out, poly)
     }
 
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_full_sparse_x_y")]
     pub(super) fn fold_s_full_sparse_x_y(
         s_full: &[E],
         live_x_cols: usize,

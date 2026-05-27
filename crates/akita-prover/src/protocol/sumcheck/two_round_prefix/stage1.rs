@@ -49,6 +49,7 @@ pub(crate) fn stage1_is_boolean_corner(x_idx: usize, y_idx: usize) -> bool {
     x_idx < 2 && y_idx < 2
 }
 
+#[inline]
 pub(crate) fn stage1_quartic_coeffs_from_prefix_values<E: FieldCore + FromPrimitiveInt>(
     values: [E; 5],
 ) -> [E; 5] {
