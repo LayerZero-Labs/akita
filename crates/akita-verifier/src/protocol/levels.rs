@@ -10,7 +10,7 @@ use crate::protocol::batched::{
     append_direct_blinding, direct_decomposed_inner_rows, field_evals_to_rings,
     mat_vec_mul_i8_plain,
 };
-use crate::protocol::ring_switch::{ring_switch_verifier, ring_switch_verifier_after_absorb};
+use crate::protocol::ring_switch::{ring_switch_verifier, ring_switch_verifier_terminal};
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
 use akita_algebra::CyclotomicRing;
@@ -42,7 +42,8 @@ use akita_sumcheck::{
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, ABSORB_SUMCHECK_W, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_HAT, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
@@ -56,11 +57,12 @@ use akita_types::{
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
     relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
-    sample_public_row_coefficients, schedule_num_fold_levels, w_ring_element_count_with_counts,
-    AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof,
-    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, DirectWitnessProof,
-    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
-    RingOpeningPoint, RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_segment_layout,
+    w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
+    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
+    ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
+    LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule,
+    Step, TerminalLevelProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -80,6 +82,29 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub w_len: usize,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
+}
+
+struct TerminalWitnessReplay {
+    parts: TerminalWitnessTranscriptParts,
+}
+
+fn prepare_terminal_witness_replay<F, T>(
+    transcript: &mut T,
+    final_witness: &DirectWitnessProof<F>,
+    final_w_len: usize,
+    layout: TerminalWitnessSegmentLayout,
+) -> Result<TerminalWitnessReplay, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    if final_witness.num_elems() != final_w_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    let parts = final_witness.terminal_transcript_parts(layout)?;
+    transcript.record_wire_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
+    transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
+    Ok(TerminalWitnessReplay { parts })
 }
 
 #[cfg(feature = "zk")]
@@ -152,16 +177,16 @@ where
         &proof.b_blinding_digits,
         &hiding_params,
     )?;
-    if b_input_digits.len() > setup.expanded.seed.max_stride {
+    let expanded = setup.expanded.as_ref();
+    let seed = expanded.seed();
+    let shared_matrix = expanded.shared_matrix();
+    if b_input_digits.len() > seed.max_stride {
         return Err(AkitaError::InvalidSetup(
             "ZK hiding commitment exceeds shared matrix stride".to_string(),
         ));
     }
 
-    let b_matrix = setup.expanded.shared_matrix.ring_view::<D>(
-        hiding_params.b_key.row_len(),
-        setup.expanded.seed.max_stride,
-    )?;
+    let b_matrix = shared_matrix.ring_view::<D>(hiding_params.b_key.row_len(), seed.max_stride)?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
     let expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
     let expected_len = expected_u_blind_rings
@@ -735,19 +760,6 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let stage1_challenges = derive_stage1_challenges::<F, T, D>(
-        transcript,
-        v_typed,
-        root_lp.num_blocks,
-        num_claims,
-        batched_lp,
-        if is_terminal {
-            MRowLayout::Terminal
-        } else {
-            MRowLayout::Intermediate
-        },
-    )?;
-
     let w_len = if is_terminal {
         final_w_len_opt.ok_or(AkitaError::InvalidProof)?
     } else {
@@ -761,11 +773,34 @@ where
         .checked_mul(D)
         .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
     };
-    if let RootStageInput::Terminal { final_witness, .. } = &stage_input {
-        if final_witness.num_elems() != w_len {
-            return Err(AkitaError::InvalidProof);
-        }
-    }
+    let terminal_replay = if let RootStageInput::Terminal { final_witness, .. } = &stage_input {
+        let layout = terminal_witness_segment_layout(
+            batched_lp,
+            num_claims,
+            incidence_summary.num_public_rows(),
+        )?;
+        Some(prepare_terminal_witness_replay::<F, T>(
+            transcript,
+            final_witness,
+            w_len,
+            layout,
+        )?)
+    } else {
+        None
+    };
+
+    let stage1_challenges = derive_stage1_challenges::<F, T, D>(
+        transcript,
+        v_typed,
+        root_lp.num_blocks,
+        num_claims,
+        batched_lp,
+        if is_terminal {
+            MRowLayout::Terminal
+        } else {
+            MRowLayout::Intermediate
+        },
+    )?;
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = incidence_summary
         .public_rows()
@@ -798,27 +833,23 @@ where
             incidence_summary.claim_poly_indices(),
             &row_coefficients,
             incidence_summary.num_public_rows(),
-            MRowLayout::Intermediate,
         )?,
-        RootStageInput::Terminal { final_witness, .. } => {
-            // Bind the ring-switch challenges to the cleartext witness rather
-            // than to a separate commitment, mirroring the prover.
-            transcript.record_wire_serde(ABSORB_SUMCHECK_W, *final_witness);
-            transcript.append_serde(ABSORB_SUMCHECK_W, *final_witness);
-            ring_switch_verifier_after_absorb::<F, C, T, { D }>(
+        RootStageInput::Terminal { .. } => {
+            let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
+            ring_switch_verifier_terminal::<F, C, T, { D }>(
                 &ring_opening_points,
                 &ring_multiplier_points,
                 incidence_summary.claim_to_point(),
                 &stage1_challenges,
                 w_len,
                 transcript,
+                &replay.parts,
                 batched_lp,
                 incidence_summary.num_polys_per_point(),
                 incidence_summary.claim_to_point(),
                 incidence_summary.claim_poly_indices(),
                 &row_coefficients,
                 incidence_summary.num_public_rows(),
-                MRowLayout::Terminal,
             )?
         }
     };
@@ -1305,6 +1336,24 @@ where
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
     let num_claims = y_rings.len();
+    let w_len = if is_last {
+        final_w_len.ok_or(AkitaError::InvalidProof)?
+    } else {
+        w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
+            .checked_mul(D)
+            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
+    };
+    let terminal_replay = if let FoldProofView::Terminal(terminal_proof) = &proof {
+        let layout = terminal_witness_segment_layout(lp, num_claims, num_claims)?;
+        Some(prepare_terminal_witness_replay::<F, T>(
+            transcript,
+            &terminal_proof.final_witness,
+            w_len,
+            layout,
+        )?)
+    } else {
+        None
+    };
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
         v_typed,
@@ -1317,19 +1366,6 @@ where
             MRowLayout::Intermediate
         },
     )?;
-
-    let w_len = if is_last {
-        final_w_len.ok_or(AkitaError::InvalidProof)?
-    } else {
-        w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
-            .checked_mul(D)
-            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
-    };
-    if let FoldProofView::Terminal(terminal_proof) = &proof {
-        if terminal_proof.final_witness.num_elems() != w_len {
-            return Err(AkitaError::InvalidProof);
-        }
-    }
     tracing::debug!(w_len, is_last, "verify ring_switch");
     let claim_to_point = (0..num_claims).collect::<Vec<_>>();
     let claim_to_point_poly = vec![0usize; num_claims];
@@ -1351,25 +1387,23 @@ where
             &claim_poly_indices,
             &gamma,
             num_claims,
-            MRowLayout::Intermediate,
         )?,
-        FoldProofView::Terminal(terminal_proof) => {
-            transcript.record_wire_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
-            transcript.append_serde(ABSORB_SUMCHECK_W, &terminal_proof.final_witness);
-            ring_switch_verifier_after_absorb::<F, L, T, { D }>(
+        FoldProofView::Terminal(_) => {
+            let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
+            ring_switch_verifier_terminal::<F, L, T, { D }>(
                 &ring_opening_points,
                 &ring_multiplier_points,
                 &claim_to_point,
                 &stage1_challenges,
                 w_len,
                 transcript,
+                &replay.parts,
                 lp,
                 &[1usize],
                 &claim_to_point_poly,
                 &claim_poly_indices,
                 &gamma,
                 num_claims,
-                MRowLayout::Terminal,
             )?
         }
     };

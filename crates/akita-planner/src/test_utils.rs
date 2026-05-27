@@ -133,7 +133,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
         if let Some(plan) = Cfg::schedule_plan(key)? {
             return Ok(schedule_from_plan(&plan, Cfg::decomposition().field_bits()));
         }
-        find_optimal_schedule::<Self>(key, true)
+        find_optimal_schedule::<Self>(key, crate::ScheduleSearchMode::RuntimeTableSeeded)
     }
 }
 

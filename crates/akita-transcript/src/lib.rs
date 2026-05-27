@@ -35,6 +35,9 @@ where
     /// Record a verifier-side structured proof-field use for logging checks.
     fn record_wire_serde<S: AkitaSerialize>(&mut self, _label: &[u8], _s: &S) {}
 
+    /// Record verifier-side canonical bytes for logging checks.
+    fn record_wire_bytes(&mut self, _label: &[u8], _bytes: &[u8]) {}
+
     /// Append labeled raw bytes.
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]);
 
@@ -92,11 +95,34 @@ where
     E::from_base_slice(&coeffs)
 }
 
-fn ext_limb_label(label: &[u8], limb: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(label.len() + 17);
+const EXT_LIMB_LABEL_SUFFIX_LEN: usize = 12;
+
+/// Return the diagnostic label used for an extension-field limb.
+///
+/// Production [`AkitaTranscript`] bytes remain positional; this helper exists
+/// so logging tests and label validators do not duplicate the limb-label wire
+/// format.
+#[must_use]
+pub fn ext_limb_label(label: &[u8], limb: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(label.len() + EXT_LIMB_LABEL_SUFFIX_LEN);
     out.extend_from_slice(label);
     out.push(0xff);
     out.extend_from_slice(&(limb as u64).to_le_bytes());
     out.extend_from_slice(b"ext");
     out
+}
+
+/// Return the base diagnostic label when `label` names an extension-field
+/// limb, otherwise `None`.
+#[must_use]
+pub fn ext_limb_base_label(label: &[u8]) -> Option<&[u8]> {
+    let suffix_start = label.len().checked_sub(EXT_LIMB_LABEL_SUFFIX_LEN)?;
+    let (&marker, rest) = label[suffix_start..].split_first()?;
+    (marker == 0xff && rest.len() == 11 && rest[8..] == *b"ext").then_some(&label[..suffix_start])
+}
+
+/// Return whether `candidate` is an extension-field limb label for `base`.
+#[must_use]
+pub fn is_ext_limb_label(candidate: &[u8], base: &[u8]) -> bool {
+    ext_limb_base_label(candidate).is_some_and(|candidate_base| candidate_base == base)
 }

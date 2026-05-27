@@ -29,8 +29,8 @@ where
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
     let b_view = setup
-        .shared_matrix
-        .ring_view::<D>(prepared.n_b, setup.seed.max_stride)?;
+        .shared_matrix()
+        .ring_view::<D>(prepared.n_b, setup.seed().max_stride)?;
     let b_stride = b_view.num_cols();
     let b_flat = b_view.as_slice();
     let b_start = 1 + prepared.num_public_rows + prepared.n_d_active();
@@ -106,8 +106,8 @@ where
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
     let d_view = setup
-        .shared_matrix
-        .ring_view::<D>(prepared.n_d, setup.seed.max_stride)?;
+        .shared_matrix()
+        .ring_view::<D>(prepared.n_d, setup.seed().max_stride)?;
     let d_stride = d_view.num_cols();
     let d_flat = d_view.as_slice();
     let d_start = 1 + prepared.num_public_rows;
@@ -219,17 +219,18 @@ mod tests {
                 }))
             })
             .collect();
-        let setup = AkitaExpandedSetup::from_parts(
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
             AkitaSetupSeed {
                 max_num_vars: 32,
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
                 max_stride,
+                gen_ring_dim: D,
+                total_ring_elements: matrix_entries.len(),
                 public_matrix_seed: [9u8; 32],
             },
             FlatMatrix::from_ring_slice::<D>(&matrix_entries),
-        )
-        .unwrap();
+        );
         let prepared = RingSwitchDeferredRowEval {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks)
@@ -285,8 +286,8 @@ mod tests {
         let alpha_pows = scalar_powers(fx.alpha, D);
         let b_view = fx
             .setup
-            .shared_matrix
-            .ring_view::<D>(p.n_b, fx.setup.seed.max_stride)
+            .shared_matrix()
+            .ring_view::<D>(p.n_b, fx.setup.seed().max_stride)
             .unwrap();
         let b_rows: Vec<_> = b_view.rows().collect();
         let b_start = 1 + p.num_public_rows + p.n_d;
@@ -322,8 +323,8 @@ mod tests {
         let alpha_pows = scalar_powers(fx.alpha, D);
         let d_view = fx
             .setup
-            .shared_matrix
-            .ring_view::<D>(p.n_d, fx.setup.seed.max_stride)
+            .shared_matrix()
+            .ring_view::<D>(p.n_d, fx.setup.seed().max_stride)
             .unwrap();
         let d_rows: Vec<_> = d_view.rows().collect();
         let d_start = 1 + p.num_public_rows;

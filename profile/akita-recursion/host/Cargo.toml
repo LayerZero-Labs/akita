@@ -26,7 +26,14 @@ jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb57
 jolt-sdk-macros = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", features = [
   "guest-std",
 ] }
-guest = { package = "akita-recursion-guest", path = "../guest" }
+guest = { package = "akita-recursion-guest", path = "../guest", features = [
+  "benchmark-artifact",
+] }
+akita-recursion-glue = { path = "../glue" }
+akita-config = { path = "../../../crates/akita-config", default-features = false }
+akita-transcript = { path = "../../../crates/akita-transcript" }
+akita-types = { path = "../../../crates/akita-types" }
+akita-verifier = { path = "../../../crates/akita-verifier", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }

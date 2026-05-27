@@ -415,7 +415,13 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
 
 #[test]
 fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
-    run_zk_fp32_extension_opening_reduction::<13>(
+    // The fp32 D32Full zk schedule transitions from a one-fold (Terminal)
+    // root to a multi-fold root early in the supported range. After
+    // regenerating the schedule tables with an idempotent DP, `nv = 12` is
+    // the largest singleton key that still picks a 1-fold root for this
+    // preset; `nv = 13` already escalates to a 2-fold root and is the
+    // matching `Fold`-root fixture below.
+    run_zk_fp32_extension_opening_reduction::<12>(
         b"zk/fp32-extension-root-terminal",
         ExpectedRoot::Terminal,
     );
@@ -423,7 +429,7 @@ fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
 
 #[test]
 fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
-    run_zk_fp32_extension_opening_reduction::<14>(
+    run_zk_fp32_extension_opening_reduction::<13>(
         b"zk/fp32-extension-root-fold",
         ExpectedRoot::Fold,
     );
