@@ -305,19 +305,6 @@ pub trait PackedField:
         out
     }
 
-    /// Backend hook for inverting packed ring-subfield degree-8 elements.
-    ///
-    /// Fp8 inversion uses Gaussian elimination in the scalar path, which
-    /// cannot be expressed generically over packed lanes. `PackedRingSubfieldFp8`
-    /// overrides `PackedField::inverse` with lane-by-lane scalar delegation.
-    #[inline(always)]
-    fn ring_subfield_fp8_inverse(a: [Self; 8]) -> Option<[Self; 8]>
-    where
-        Self::Scalar: Invertible,
-    {
-        let _ = a;
-        None
-    }
 }
 
 /// Scalar fallback packed type with one lane.
