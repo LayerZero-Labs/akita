@@ -10,8 +10,8 @@
 //! permutations. The aggregated suite now focuses on the unique
 //! single-commitment path with a few representative cases:
 //!
-//! * **One-hot** — singleton baseline, irregular larger batch, and a
-//!   max-`nv` schedule.
+//! * **One-hot** — singleton baseline, irregular larger batch, and a larger
+//!   logical domain.
 //! * **Dense** — singleton baseline and irregular larger batch.
 //! * **Mixed dense + one-hot under the dense config** — heterogeneous
 //!   aggregated commitment/proof/verify.
@@ -51,7 +51,7 @@ mod non_zk_aggregated_cases {
     use super::*;
 
     /// All one-hot polynomials are aggregated into a single commitment group.
-    fn run_aggregated_onehot(nv: usize, batch_size: usize) {
+    fn run_aggregated_onehot(nv: usize, batch_size: usize, expect_folded: bool) {
         init_rayon_pool();
         run_on_large_stack(move || {
             let incidence = ClaimIncidenceSummary::same_point(nv, batch_size).expect("incidence");
@@ -110,6 +110,12 @@ mod non_zk_aggregated_cases {
                 BasisMode::Lagrange,
             )
             .expect("batched prove");
+            if expect_folded {
+                assert!(
+                    !proof.is_root_direct(),
+                    "aggregated onehot nv={nv} batch={batch_size} should exercise folded proof path"
+                );
+            }
 
             let mut serialized = Vec::new();
             let proof_shape = proof.shape();
@@ -144,7 +150,7 @@ mod non_zk_aggregated_cases {
     }
 
     /// All dense polynomials are aggregated into a single commitment group.
-    fn run_aggregated_dense(nv: usize, batch_size: usize) {
+    fn run_aggregated_dense(nv: usize, batch_size: usize, expect_folded: bool) {
         init_rayon_pool();
         run_on_large_stack(move || {
             let incidence = ClaimIncidenceSummary::same_point(nv, batch_size).expect("incidence");
@@ -205,6 +211,12 @@ mod non_zk_aggregated_cases {
                 BasisMode::Lagrange,
             )
             .expect("batched prove");
+            if expect_folded {
+                assert!(
+                    !proof.is_root_direct(),
+                    "aggregated dense nv={nv} batch={batch_size} should exercise folded proof path"
+                );
+            }
 
             let mut serialized = Vec::new();
             let proof_shape = proof.shape();
@@ -239,36 +251,36 @@ mod non_zk_aggregated_cases {
     }
 
     macro_rules! aggregated_onehot_case {
-        ($name:ident, $nv:expr, $batch:expr) => {
+        ($name:ident, $nv:expr, $batch:expr, $expect_folded:expr) => {
             #[test]
             fn $name() {
-                run_aggregated_onehot($nv, $batch);
+                run_aggregated_onehot($nv, $batch, $expect_folded);
             }
         };
     }
 
     macro_rules! aggregated_dense_case {
-        ($name:ident, $nv:expr, $batch:expr) => {
+        ($name:ident, $nv:expr, $batch:expr, $expect_folded:expr) => {
             #[test]
             fn $name() {
-                run_aggregated_dense($nv, $batch);
+                run_aggregated_dense($nv, $batch, $expect_folded);
             }
         };
     }
 
-    aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1);
-    aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7);
-    aggregated_onehot_case!(aggregated_onehot_nv25_batch4, 25, 4);
+    aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1, false);
+    aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7, true);
+    aggregated_onehot_case!(aggregated_onehot_nv23_batch4, 23, 4, true);
 
-    aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1);
-    aggregated_dense_case!(aggregated_dense_nv20_batch7, 20, 7);
+    aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1, false);
+    aggregated_dense_case!(aggregated_dense_nv17_batch5, 17, 5, true);
 }
 
 #[test]
 fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        const NV: usize = 20;
+        const NV: usize = 17;
         const BATCH_SIZE: usize = 4;
 
         let incidence = ClaimIncidenceSummary::same_point(NV, BATCH_SIZE).expect("incidence");
@@ -328,6 +340,10 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             BasisMode::Lagrange,
         )
         .expect("mixed batched prove");
+        assert!(
+            !proof.is_root_direct(),
+            "aggregated mixed dense/onehot should exercise folded proof path"
+        );
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();

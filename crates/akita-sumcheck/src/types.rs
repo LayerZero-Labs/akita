@@ -162,6 +162,74 @@ pub struct SumcheckProof<E: FieldCore> {
     pub round_polys: Vec<CompressedUniPoly<E>>,
 }
 
+/// ZK plain-opening mask payload for standard sumcheck rounds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SumcheckProofMasked<E: FieldCore> {
+    /// Transcript-visible masked compressed round polynomials.
+    pub masked_round_polys: Vec<CompressedUniPoly<E>>,
+}
+
+impl<E: Valid + FieldCore> Valid for SumcheckProofMasked<E> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.masked_round_polys.check()
+    }
+}
+
+impl<E: FieldCore + AkitaSerialize> AkitaSerialize for SumcheckProofMasked<E> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        for poly in &self.masked_round_polys {
+            poly.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.masked_round_polys
+            .iter()
+            .map(|poly| poly.serialized_size(compress))
+            .sum()
+    }
+}
+
+impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for SumcheckProofMasked<E>
+{
+    /// Per-round compressed coefficient counts.
+    type Context = SumcheckProofShape;
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        ctx: &SumcheckProofShape,
+    ) -> Result<Self, SerializationError> {
+        let mut masked_round_polys = Vec::new();
+        masked_round_polys
+            .try_reserve_exact(ctx.len())
+            .map_err(|_| {
+                SerializationError::InvalidData(
+                    "masked sumcheck proof allocation failed".to_string(),
+                )
+            })?;
+        for degree in ctx {
+            masked_round_polys.push(CompressedUniPoly::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                degree,
+            )?);
+        }
+        let out = Self { masked_round_polys };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
 impl<E: Valid + FieldCore> Valid for SumcheckProof<E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.round_polys.check()
@@ -293,6 +361,75 @@ impl<E: FieldCore> SumcheckProof<E> {
 pub struct EqFactoredSumcheckProof<E: FieldCore> {
     /// One eq-factored inner polynomial per sumcheck round.
     pub round_polys: Vec<EqFactoredUniPoly<E>>,
+}
+
+/// ZK plain-opening mask payload for eq-factored sumcheck rounds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EqFactoredSumcheckProofMasked<E: FieldCore> {
+    /// Transcript-visible masked eq-factored round polynomials.
+    pub masked_round_polys: Vec<EqFactoredUniPoly<E>>,
+}
+
+impl<E: Valid + FieldCore> Valid for EqFactoredSumcheckProofMasked<E> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.masked_round_polys.check()
+    }
+}
+
+impl<E: FieldCore + AkitaSerialize> AkitaSerialize for EqFactoredSumcheckProofMasked<E> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        for poly in &self.masked_round_polys {
+            poly.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.masked_round_polys
+            .iter()
+            .map(|poly| poly.serialized_size(compress))
+            .sum()
+    }
+}
+
+impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for EqFactoredSumcheckProofMasked<E>
+{
+    /// `(num_rounds, q_degree)` — number of round polynomials and the degree of `q`.
+    type Context = EqFactoredSumcheckProofShape;
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        ctx: &EqFactoredSumcheckProofShape,
+    ) -> Result<Self, SerializationError> {
+        let (num_rounds, degree) = *ctx;
+        let mut masked_round_polys = Vec::new();
+        masked_round_polys
+            .try_reserve_exact(num_rounds)
+            .map_err(|_| {
+                SerializationError::InvalidData(
+                    "masked eq-factored sumcheck proof allocation failed".to_string(),
+                )
+            })?;
+        for _ in 0..num_rounds {
+            masked_round_polys.push(EqFactoredUniPoly::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &degree,
+            )?);
+        }
+        let out = Self { masked_round_polys };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
 }
 
 impl<E: Valid + FieldCore> Valid for EqFactoredSumcheckProof<E> {

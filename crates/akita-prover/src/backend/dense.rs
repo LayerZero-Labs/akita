@@ -8,7 +8,7 @@ use akita_algebra::ring::cyclotomic::{
     decompose_centering_threshold, BalancedDecomposePow2I8Params,
 };
 use akita_algebra::{CyclotomicRing, EqPolynomial};
-use akita_challenges::SparseChallenge;
+use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_sumcheck::tensor_opening_split;
@@ -24,6 +24,8 @@ use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+
+mod tensor_fold;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DenseDigitCache<const D: usize> {
@@ -431,6 +433,19 @@ where
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();
         build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
+    }
+
+    #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold_tensor_batched")]
+    fn decompose_fold_tensor_batched(
+        polys: &[&Self],
+        tensor: &TensorChallengeSet,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        tensor_fold::decompose_fold_batched_tensor_dense(
+            polys, tensor, block_len, num_digits, log_basis,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]

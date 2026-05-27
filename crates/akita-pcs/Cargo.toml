@@ -49,6 +49,7 @@ disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 zk = [
   "akita-config/zk",
+  "akita-planner/zk",
   "akita-prover/zk",
   "akita-scheme/zk",
   "akita-setup/zk",
