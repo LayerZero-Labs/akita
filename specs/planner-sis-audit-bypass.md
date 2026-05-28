@@ -263,3 +263,214 @@ for family in ALL_GENERATED_FAMILIES {
 - `cargo test -p akita-derive`: 8 / 8 pass.
 - `cargo test -p akita-planner --lib`: 2 / 2 pass.
 - `cargo test -p akita-planner --test generated_tables` (drift guard): **fails as expected**. The new (correct) planner output diverges from the shipped tables on hundreds of keys. The follow-up step is regenerating the tables.
+
+---
+
+# Follow-up finding: Placeholder-direct DP introduces a systematic bias against `Direct` and a hidden parent-formula trade-off
+
+| Field       | Value                                                                                  |
+|-------------|----------------------------------------------------------------------------------------|
+| Author(s)   | Planner refactor investigation, 2026-05-28                                             |
+| Status      | findings + fix landed on this branch                                                   |
+| Scope       | `crates/akita-planner/src/schedule_params.rs`, all 34 shipped schedule tables          |
+| Related     | builds on the SIS-audit-bypass fixes above; touches no SIS-audit code path             |
+
+## Summary
+
+The suffix DP in `derive_optimal_suffix_schedule` modelled a terminal-direct step in two stages: emit a `Step::Direct` *placeholder* whose witness shape used the parent's `MRowLayout::Intermediate` length (the same value used in the fold branch), and later patch the shape to `MRowLayout::Terminal` in `finalize_terminal_direct_witness_shape` when the parent fold actually selected this direct as its terminal suffix.
+
+That structure produced two distinct, compounding suboptimalities in the planner's choices:
+
+1. **Direct-vs-fold bias.** Inside the DP at level `L`, the "direct now" cost was the inflated Intermediate-shape `direct_bytes(current_w_len, log_basis)`. The "fold now then continue" cost was correctly scored (terminal directs deeper in the chain were patched at their own parents). The local `min(...)` therefore systematically over-rejected `Direct` in favor of one more fold, even when the corrected direct would have been cheaper. The error is bounded by the Intermediate–Terminal gap, which is `d_key.row_len() · num_digits_full_field(field_bits, log_basis) · ring_dimension` field elements (plus, under `zk`, the D-blinding term). For modest `n_d` and small `log_basis`, that gap is in the few-percent range.
+
+2. **Hidden parent-formula trade-off.** The placeholder/finalize architecture also forced the DP to return one *single* best suffix per memo state, but the parent's proof-size formula at level `L-1` depends on whether its child at level `L` is `Fold` or `Direct`:
+   - child = `Direct` → parent uses `compute_terminal_level_proof_size` (drops v-rows and the stage-1 sumcheck at the parent level — strictly smaller),
+   - child = `Fold(lb)` → parent uses `compute_level_proof_size` with `next_lp.b_key.row_len()` from the child's chosen `lb`.
+
+   A child that locally prefers a deeper `Fold` chain by a small margin can force the parent into the larger intermediate proof formula, costing more than the local savings. Even within the fold branch, different child `log_basis` choices yield different child `b_key.row_len`, hence different parent intermediate proofs. The old DP collapsed these into one `(cost, schedule)` pair and hid the trade-off from the parent.
+
+The two effects pull in opposite directions and partially canceled by accident on most keys, so the old planner was *usually* close to optimal. But the SIS-audit fixes earlier in this doc forced regenerating the shipped tables anyway, and exposing both effects to the parent was the simplest way to make the regen monotone in proof size.
+
+## Mechanism (old)
+
+`crates/akita-planner/src/schedule_params.rs`, pre-fix structure:
+
+- `to_direct_step(current_w_len, log_basis) -> Step::Direct` produced a placeholder with `current_w_len` from the parent's `MRowLayout::Intermediate` computation and **no SIS check**. SIS feasibility was deferred.
+- `derive_optimal_suffix_schedule(level, current_w_len, log_basis) -> (best_cost, schedule)` returned a single best suffix. Its `best_cost` was seeded with the inflated placeholder bytes.
+- `finalize_terminal_direct_witness_shape(suffix_steps, candidate, num_points, num_t_vectors, num_w_vectors, num_public_rows, fold_level)` walked the suffix's head step (must be a `Direct`), recomputed the terminal-layout witness length from the parent fold's `lp` plus the root-level batching counts, and patched `direct.current_w_len`, `direct.direct_bytes`, `direct.witness_shape`, and `direct.level_params` in place. It also ran the SIS check (`direct_level_params_with_log_basis`) and propagated any failure as the rejection signal for the whole parent candidate.
+- Both call sites (the recursive DP loop and the `find_schedule` root loop) then ran the same patch dance: snapshot `old_direct_bytes`, call `finalize`, read back `new_direct_bytes`, and apply `suffix_cost += new_direct_bytes - old_direct_bytes` to repair the DP's accumulated cost. ~25 lines duplicated across two sites.
+
+The placeholder is *not* a "wrong number that gets fixed later" — both call sites do correctly produce the right total bytes at scoring time. The bug is that **the DP's comparator decisions are made on the inflated placeholder**, so it picks the wrong `arg min` even when the final cost arithmetic is right.
+
+## Mechanism (new)
+
+The fix routes both fixups into the DP's primary search:
+
+### 1. Two witness shapes per candidate (`CandidateLevelParams`)
+
+Every candidate level (both root and recursive) now carries both shapes:
+
+```rust
+struct CandidateLevelParams {
+    lp: LevelParams,
+    /// Witness length entering the next level under `MRowLayout::Intermediate`.
+    /// Used to recurse into the suffix DP's fold branch.
+    next_w_len: usize,
+    /// Witness length entering the next level under `MRowLayout::Terminal`.
+    /// Used to cost the suffix DP's direct branch correctly the first time.
+    next_w_len_terminal: usize,
+}
+```
+
+`recursive_next_witness_len(level_lp, field_bits, layout)` and `root_next_witness_len_for_layout(lp, key, layout)` route both through the shared `w_ring_element_count_with_counts_for_layout_bits`, which already handles the `MRowLayout::Terminal` D-block dropout and the ZK D-blinding gating. The recursive shrink check still gates on the Intermediate shape (Terminal is `<= Intermediate`, so this matches the previous behavior).
+
+### 2. Eager, SIS-aware `to_direct_step`
+
+```rust
+fn to_direct_step<Cfg>(
+    num_vars: usize,
+    level: usize,
+    current_w_len_terminal: usize,
+    log_basis: u32,
+) -> Result<Option<Step>, AkitaError>
+```
+
+Builds the direct step under `MRowLayout::Terminal` in one shot. Runs `akita_derive::direct_level_params_with_log_basis(...)` for SIS — returns `Ok(None)` on infeasibility, so the DP state simply has no direct option. The same SIS derivation that the old `finalize_terminal_direct_witness_shape` ran, now decided at the emission site and memoized.
+
+`finalize_terminal_direct_witness_shape` is **deleted**. `successor_level_params_from_schedule` is **deleted** (no longer needed; the next-level params come directly off the child fold step).
+
+### 3. Two-shape DP signature + two-best result
+
+```rust
+type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
+//                          (level, w_len, w_len_terminal, log_basis)
+
+struct SuffixResult {
+    best_direct: Option<(usize, Vec<Step>)>,
+    best_fold_per_lb: BTreeMap<u32, (usize, Vec<Step>)>,
+}
+```
+
+The DP at state `(level, w_len, w_len_terminal, log_basis)` returns:
+
+- **`best_direct`** — the optimal schedule whose first step is `Step::Direct` at this level. `None` iff SIS is infeasible.
+- **`best_fold_per_lb`** — *one entry per first-fold `log_basis`*. The key is intentional: for each first-fold lb, the parent's `compute_level_proof_size` sees a different `next_lp.b_key.row_len()`. Collapsing into a single `best_fold` (as the previous iteration of this refactor did) re-introduces the trade-off bug. Listing one entry per `lb` lets the parent enumerate all relevant child layouts against its own formula.
+
+The memo key extends to four dimensions because `w_len_terminal` is not deterministic from `w_len + log_basis` — the gap depends on the parent's `d_key.row_len`, which varies between different grandparents reaching the same `(level, w_len, log_basis)` state. State-space growth is bounded by the small number of distinct audited `d_key.row_len` values per family / log_basis.
+
+### 4. Parent-side enumeration
+
+Both the recursive DP loop and the `find_schedule` root loop now run:
+
+```rust
+// Branch A: child is a Direct → use terminal proof formula at this level.
+if let Some((child_cost, child_sched)) = child.best_direct.as_ref() {
+    let proof = compute_terminal_level_proof_size(&candidate, candidate.next_w_len_terminal, claims) + eor;
+    try_update(proof + child_cost, [Fold(.., next_w_len=Terminal)] ++ child_sched);
+}
+// Branch B: child is a Fold → use intermediate proof formula, one option per child first_lb.
+for (_lb, (child_cost, child_sched)) in &child.best_fold_per_lb {
+    let next_lp = level_params_from_fold_step(child_sched[0]);
+    let proof = compute_level_proof_size(&candidate, &next_lp, claims) + eor;
+    try_update(proof + child_cost, [Fold(.., next_w_len=Intermediate)] ++ child_sched);
+}
+```
+
+Both call sites used to be ~50 lines of placeholder snapshot + finalize call + read-back + cost-delta arithmetic, and both used to make decisions on inflated direct costs. They are now uniform and short.
+
+## Worked example: why the parent-formula trade-off matters
+
+Cfg: `fp16::D64OneHot`. Key: `num_vars = 20`, singleton.
+
+Suffix DP at level 1 with `current_w_len = 269_312`, considering the level-1 fold options at all log-bases:
+
+```text
+L1 lb=2 -> child.best_fold first_lb=2, n_b=4 -> total via branch B = 26_160
+L1 lb=3 -> child.best_fold first_lb=4, n_b=5 -> total via branch B = 26_512
+L1 lb=4 -> child.best_fold first_lb=4, n_b=5 -> total via branch B = 26_080
+L1 lb=5 -> child.best_fold first_lb=5, n_b=6 -> total via branch B = 34_688
+L1 lb=6 -> child.best_fold first_lb=6, n_b=7 -> total via branch B = 37_216
+```
+
+A single-best DP picks lb=4 (total 26,080) and forwards `next_lp.b_key.row_len = 5` to the root. The root's `compute_level_proof_size` consumes that and produces a root proof of 3,504 bytes. Grand total: 29,584.
+
+A `best_fold_per_lb` DP keeps every first_lb option. The root now also evaluates `child.best_fold_per_lb[lb=2]` (suffix cost 26,160) with `next_lp.b_key.row_len = 4`, producing a root proof of 3,376 bytes. Grand total: 29,536.
+
+Difference: 48 bytes. The locally cheaper child (lb=4) costs the parent 128 bytes of extra intermediate proof to save 80 bytes of suffix. The single-best DP cannot see this. The `best_fold_per_lb` DP does.
+
+## Impact on shipped tables
+
+Comparing `find_schedule(key, true)` (old shipped tables = old planner) against `find_schedule(key, false)` (new pure DP), before regenerating the tables:
+
+| family                  | keys | improved | unchanged | regressed | total_old              | total_new              | ratio  |
+|-------------------------|-----:|---------:|----------:|----------:|-----------------------:|-----------------------:|-------:|
+| fp128_d32_full          |  100 |       75 |        25 |         0 | 27 021 597 769 445 448 | 27 021 597 769 350 936 | 1.0000 |
+| fp128_d32_onehot        |  100 |       68 |        32 |         0 |              4 768 488 |              4 677 116 | 0.9808 |
+| fp128_d64_full          |  100 |       24 |        76 |         0 |              5 879 768 |              5 869 488 | 0.9983 |
+| fp128_d64_onehot        |  100 |       20 |        80 |         0 |              5 273 736 |              5 266 400 | 0.9986 |
+| fp128_d64_onehot_tensor |  100 |       26 |        74 |         0 |              5 343 784 |              5 332 888 | 0.9980 |
+| fp16_d32_full           |   64 |       26 |        38 |         0 |          8 591 128 808 |          8 591 114 768 | 1.0000 |
+| fp16_d32_onehot         |   64 |       26 |        38 |         0 |              1 088 296 |              1 074 168 | 0.9870 |
+| fp16_d64_full           |   64 |       24 |        40 |         0 |              1 384 328 |              1 374 152 | 0.9926 |
+| fp16_d64_onehot         |   64 |       20 |        44 |         0 |              1 235 240 |              1 229 960 | 0.9957 |
+| fp32_d32                |   64 |       28 |        36 |         0 |              1 451 632 |              1 443 656 | 0.9945 |
+| fp32_d32_onehot         |   64 |       22 |        42 |         0 |              1 235 600 |              1 231 912 | 0.9970 |
+| fp32_d64                |   64 |       34 |        30 |         0 |         25 771 430 016 |         25 771 397 248 | 1.0000 |
+| fp32_d64_onehot         |   64 |       34 |        30 |         0 |              1 459 408 |              1 422 000 | 0.9744 |
+| fp64_d32                |   64 |       36 |        28 |         0 |         94 490 904 368 |         94 490 870 552 | 1.0000 |
+| fp64_d32_onehot         |   64 |       34 |        30 |         0 |              1 471 000 |              1 433 720 | 0.9747 |
+| fp64_d64                |   64 |       36 |        28 |         0 |              2 211 392 |              2 170 192 | 0.9814 |
+| fp64_d64_onehot         |   64 |       30 |        34 |         0 |              1 804 112 |              1 768 432 | 0.9802 |
+
+Total across all 17 families: **461 keys improved, 711 keys unchanged, 0 keys regressed** (1,172 keys total). Worst-family ratio 0.9744, i.e. ~2.6% smaller proofs on `fp32_d64_onehot`; best families are flat to four decimals because savings are dominated by direct-bytes deltas on huge witness configurations where the total is in the gigabytes.
+
+The "ratio = 1.0000" rows are real improvements buried in trailing digits — e.g. `fp16_d32_full` saved 14,040 bytes total but the total is 8.59 GB.
+
+After regen, the new shipped tables are byte-for-byte equal to the new DP's output. The drift guard re-runs cleanly.
+
+## Invariants
+
+The new architecture guarantees:
+
+1. **No more placeholder/patch dance.** Every `Step::Direct` emitted by the DP carries its real `MRowLayout::Terminal` witness length and SIS-secure `level_params` from the moment of construction. No subsequent mutation, no two-pass cost accounting.
+2. **Correct local comparator.** At every state `(level, w_len, w_len_terminal, log_basis)`, `best_direct` and `best_fold_per_lb` are scored on their actual final byte costs against the parent's actual proof formula. No inflated placeholder bias.
+3. **Parent sees all relevant child layouts.** Because `best_fold_per_lb` is keyed by first-fold `log_basis` rather than collapsed, the parent's intermediate proof can be computed against every distinct `next_lp.b_key.row_len()` the child can produce. The parent picks the global minimum.
+4. **Monotone in proof size vs the old planner.** Verified empirically across 1,172 `(family, key)` pairs (0 regressions). Verified architecturally: the new DP enumerates a strict superset of the options the old DP considered correctly, while the old DP's `arg min` on inflated direct costs was a strict subset of the new comparator's option set.
+
+## What did NOT change
+
+- SIS feasibility decisions. The new `to_direct_step` calls exactly the same `direct_level_params_with_log_basis` that the old `finalize_terminal_direct_witness_shape` did, with identical `(num_vars, level, current_w_len)` inputs. Schedules previously rejected for SIS-infeasibility are still rejected; schedules previously accepted are still accepted with the same `level_params`.
+- The root-direct `commit_params` path (lines around `root_direct_commit_layout` + `scale_batched_root_layout`). That's the zero-fold baseline and lives outside the suffix DP — the "uncommittable root-direct edge case" with `commit_params: None` is unchanged.
+- All proof-size formulas (`level_proof_bytes`, `terminal_level_proof_bytes`, `direct_witness_bytes`). Refactor only changed which schedules the DP picks, not how it costs them.
+- Memo state space order of magnitude. The new key adds one dimension (`w_len_terminal`), but values are bounded by the small set of distinct `d_key.row_len` per family/log_basis. Empirically `find_schedule` runtime on the full 1,172-key sweep is indistinguishable from before.
+
+## File-level diff summary (this section)
+
+- `crates/akita-planner/src/schedule_params.rs`
+  - `CandidateLevelParams` — added `next_w_len_terminal`.
+  - `derive_candidate_level_params` — computes both shapes via new helper `recursive_next_witness_len`.
+  - `root_next_witness_len` → `root_next_witness_len_for_layout` — layout-parametric; root loop calls it twice for both shapes.
+  - `to_direct_step` — new signature `(num_vars, level, current_w_len_terminal, log_basis) -> Result<Option<Step>, _>`; SIS check eager.
+  - `finalize_terminal_direct_witness_shape` — **removed**.
+  - `successor_level_params_from_schedule` — **removed**.
+  - `SuffixResult` — new struct with `best_direct` + `best_fold_per_lb: BTreeMap<u32, _>`.
+  - `derive_optimal_suffix_schedule` — return type `SuffixResult`; memo key 4-tuple; enumerates branch A (child=Direct → terminal proof at parent) and branch B per child first_lb (child=Fold → intermediate proof at parent with that lb's `next_lp`).
+  - `find_schedule` root loop — consumes both `best_direct` and `best_fold_per_lb` entries; computes both proof formulas; picks global min.
+- `crates/akita-types/src/generated/*.rs` (34 files) — regenerated against the new planner via `gen_schedule_tables` (both default and `--features zk` runs).
+- `crates/akita-planner/tests/proof_size_comparison.rs` — new diagnostic test that walks every `(family, key)` and asserts `find_schedule(key, false).total_bytes <= find_schedule(key, true).total_bytes`. Pre-regen, it surfaced the per-family improvement table above. Post-regen, it functions as a structural consistency check (both paths produce identical schedules). Safe to keep as a drift sentinel.
+
+## Test status on this branch (updated)
+
+- `cargo fmt -q` / `cargo clippy --all -- -D warnings`: clean (default and `--features zk`).
+- `cargo test -p akita-planner --release` — all green:
+  - `generated_schedule_tables_match_find_schedule` (drift guard, against the regenerated tables): pass.
+  - `refactor_does_not_increase_proof_sizes` (new): pass (0 regressions across 1,172 keys).
+  - Unit tests inside `schedule_params.rs`: pass.
+- `cargo test --release --features zk -p akita-planner`: same set, all green.
+- `cargo test --release` (full workspace): all green.
+
+## Open follow-ups
+
+- The `tests/proof_size_comparison.rs` diagnostic now compares regenerated-tables against regenerated-DP and is therefore a structural check (always equal). It could be renamed (e.g. `tables_match_pure_dp_total_bytes`) or removed once it stops carrying useful diff information — the drift guard already enforces the same property.
+- The DP could in principle also enumerate over **parent log_basis** for the same reason it now enumerates over child first_lb (the parent's own `lp.d_key.row_len()` affects `current_w_len_terminal`). Empirically the monotone constraint `child_lb >= parent_lb` and the small number of distinct `d_key.row_len` values make this redundant in practice, but it's a theoretical sharper bound. Not pursued.
+- Adding a per-family proof-size baseline test (golden file) would make future refactors' net effect visible at a glance. Out of scope here.
