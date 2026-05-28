@@ -1216,9 +1216,8 @@ where
         Vec::new()
     } else {
         // Each commitment group is committed independently with a group-local B
-        // input `[group t_hat || group blinding]`. The witness stores one
-        // blinding segment per point, but every segment reuses the same stored
-        // per-commitment zkB row view with fresh digits.
+        // input `[group t_hat || group blinding]`; witness segments are
+        // point-local but reuse the same stored per-commitment zkB row view.
         let b_zk_view = setup
             .zk_b_matrix()
             .ring_view::<D>(n_b, b_blinding_digit_planes_per_point)?;

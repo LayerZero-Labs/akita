@@ -8,6 +8,8 @@ pub mod prg;
 pub mod quadratic_equation;
 pub mod ring_switch;
 pub mod sumcheck;
+#[cfg(feature = "zk")]
+pub(crate) mod zk_hiding_commit;
 
 pub use flow::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix,
