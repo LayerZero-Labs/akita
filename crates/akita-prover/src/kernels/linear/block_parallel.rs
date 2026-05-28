@@ -525,27 +525,61 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
 
     cfg_into_iter!(blocks)
         .map(|block| {
-            let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
+            let inner_width = mat_row.len().min(block.len().saturating_mul(num_digits));
+            if inner_width == 0 {
+                return CyclotomicRing::<F, D>::zero();
+            }
+            let chunk_width = bounded_i8_tile_width(
+                crt_accumulation_chunk_width::<F, W, K, D>(I8_RHS_MAX_ABS, inner_width),
+                inner_width,
+                num_digits,
+            );
+            let mut out = CyclotomicRing::<F, D>::zero();
             let mut digit_buf = vec![[0i8; D]; num_digits];
             let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
-            let mut col = 0usize;
 
-            for coeff_vec in block.iter() {
-                coeff_vec
-                    .balanced_decompose_pow2_i8_into_with_params(&mut digit_buf, &decompose_params);
-                for digit in &digit_buf {
-                    acc.add_assign_pointwise_mul_i8_with_lut_scratch(
-                        &mat_row[col],
-                        digit,
-                        params,
-                        &lut,
-                        &mut rhs_scratch,
+            for chunk_start in (0..inner_width).step_by(chunk_width) {
+                let chunk_end = (chunk_start + chunk_width).min(inner_width);
+                let ring_start = chunk_start / num_digits;
+                let ring_end = ((chunk_end - 1) / num_digits) + 1;
+                let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
+
+                for (offset, coeff_vec) in block[ring_start..ring_end].iter().enumerate() {
+                    coeff_vec.balanced_decompose_pow2_i8_into_with_params(
+                        &mut digit_buf,
+                        &decompose_params,
                     );
-                    col += 1;
+                    let ring_idx = ring_start + offset;
+                    let first_digit = if ring_idx == ring_start {
+                        chunk_start - ring_start * num_digits
+                    } else {
+                        0
+                    };
+                    let digit_limit = if ring_idx + 1 == ring_end {
+                        chunk_end - ring_idx * num_digits
+                    } else {
+                        num_digits
+                    };
+                    for (digit_idx, digit) in digit_buf
+                        .iter()
+                        .enumerate()
+                        .take(digit_limit)
+                        .skip(first_digit)
+                    {
+                        let col = ring_idx * num_digits + digit_idx;
+                        acc.add_assign_pointwise_mul_i8_with_lut_scratch(
+                            &mat_row[col],
+                            digit,
+                            params,
+                            &lut,
+                            &mut rhs_scratch,
+                        );
+                    }
                 }
+                add_ring_into(&mut out, acc.to_ring_with_params(params));
             }
 
-            acc.to_ring_with_params(params)
+            out
         })
         .collect()
 }

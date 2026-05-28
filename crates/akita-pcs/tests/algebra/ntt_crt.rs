@@ -9,7 +9,11 @@ use akita_algebra::{
     CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, LimbQ, MontCoeff, PackedPartialSplitEval16,
     PartialSplitEval16, PartialSplitNtt16, ScalarBackend,
 };
-use akita_field::{Fp128, Fp32, Fp64, HasPacking, Prime128Offset159, Prime128Offset275};
+use akita_field::{
+    CanonicalField, Fp128, Fp32, Fp64, HasPacking, Prime128Offset159, Prime128Offset275,
+};
+use akita_prover::kernels::{build_ntt_slot, linear::fused_split_eq_quotients};
+use akita_types::layout::FlatMatrix;
 
 #[test]
 fn limbq_from_to_u128_round_trip() {
@@ -780,6 +784,84 @@ fn partial_split_quotient_matches_schoolbook_high_half_q128m159() {
 
     let quotient = split.unreduced_quotient_d32(&lhs, &rhs);
     assert_eq!(quotient.coefficients(), &high);
+}
+
+#[test]
+fn q128_ntt_quotient_rows_handle_large_matrix_small_rhs_coefficients() {
+    type F = Prime128Offset275;
+    const D: usize = 32;
+    const Q: u128 = u128::MAX - 274;
+
+    let large_coeff = |seed: usize| {
+        let delta = ((seed as u128)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .wrapping_add((seed as u128) << 17))
+            & 0xffff;
+        let magnitude = Q / 2 - 1 - delta;
+        let value = F::from_canonical_u128_reduced(magnitude);
+        if seed % 2 == 0 {
+            value
+        } else {
+            -value
+        }
+    };
+
+    let rows = 2;
+    let cols = 64;
+    let flat_rows: Vec<CyclotomicRing<F, D>> = (0..rows * cols)
+        .map(|idx| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|k| large_coeff(idx * D + k)))
+        })
+        .collect();
+    let flat = FlatMatrix::from_ring_slice(&flat_rows);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(rows, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("Q128 dispatch should support D=32");
+    let z_pre: Vec<[i32; D]> = (0..cols)
+        .map(|idx| {
+            std::array::from_fn(|k| {
+                let magnitude = 7_157i64 - ((idx * D + k) % 257) as i64;
+                if (idx + k) % 2 == 0 {
+                    magnitude as i32
+                } else {
+                    -(magnitude as i32)
+                }
+            })
+        })
+        .collect();
+    let z_rings: Vec<CyclotomicRing<F, D>> = z_pre
+        .iter()
+        .map(|coeffs| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                F::from_i64(coeffs[k] as i64)
+            }))
+        })
+        .collect();
+
+    let (_, _, got) =
+        fused_split_eq_quotients::<F, D>(&slot, 0, 0, rows, cols, &[], &[], &z_pre, 7_157);
+    let expected: Vec<CyclotomicRing<F, D>> = (0..rows)
+        .map(|row| {
+            let mut high = [F::zero(); D];
+            for col in 0..cols {
+                let lhs = flat_rows[row * cols + col].coefficients();
+                let rhs = z_rings[col].coefficients();
+                for (i, &a) in lhs.iter().enumerate() {
+                    for (j, &b) in rhs.iter().enumerate() {
+                        let degree = i + j;
+                        if degree >= D {
+                            high[degree - D] += a * b;
+                        }
+                    }
+                }
+            }
+            CyclotomicRing::from_coefficients(high)
+        })
+        .collect();
+
+    assert_eq!(got, expected);
 }
 
 #[test]

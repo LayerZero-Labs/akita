@@ -1,14 +1,18 @@
 use super::{
-    aligned_i8_tile_width, fused_split_eq_quotients, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many,
-    mat_vec_mul_digits_i8_strided_with_params, mat_vec_mul_digits_i8_with_params,
-    mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
-    mat_vec_mul_i8_with_params, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
-    precompute_dense_mat_ntt_with_params,
+    aligned_i8_tile_width, bounded_i8_tile_width, crt_accumulation_chunk_width,
+    crt_field_rhs_accumulation_chunk_width, fused_split_eq_quotients, mat_vec_mul_crt_ntt,
+    mat_vec_mul_crt_ntt_many, mat_vec_mul_digits_i8_strided_with_params,
+    mat_vec_mul_digits_i8_with_params, mat_vec_mul_i8_dense_with_params,
+    mat_vec_mul_i8_strided_with_params, mat_vec_mul_i8_with_params,
+    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
+    max_centered_abs, precompute_dense_mat_ntt_with_params,
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
-use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
+use akita_algebra::ntt::tables::{
+    Q128_MODULUS, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES,
+};
 use akita_algebra::CyclotomicRing;
-use akita_field::Fp64;
+use akita_field::{CanonicalField, Fp64, Prime128Offset275};
 use akita_types::layout::FlatMatrix;
 
 #[test]
@@ -17,6 +21,51 @@ fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {
     assert_eq!(aligned_i8_tile_width(63, 512, 64), 64);
     assert_eq!(aligned_i8_tile_width(1024, 65, 64), 64);
     assert_eq!(aligned_i8_tile_width(1024, 48, 64), 48);
+}
+
+#[test]
+fn bounded_i8_tile_width_never_exceeds_raw_bound() {
+    assert_eq!(bounded_i8_tile_width(63, 512, 64), 63);
+    assert_eq!(bounded_i8_tile_width(130, 512, 64), 128);
+    assert_eq!(bounded_i8_tile_width(1024, 48, 64), 48);
+}
+
+#[test]
+fn crt_chunk_width_uses_full_convolution_term_count() {
+    const D: usize = 32;
+    let width =
+        crt_accumulation_chunk_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(32, usize::MAX);
+
+    assert_eq!(width, 1024);
+}
+
+#[test]
+fn crt_chunk_width_accounts_for_rhs_above_u32() {
+    type F = Fp64<{ Q64_MODULUS }>;
+    const D: usize = 128;
+    let max_width = 100_000;
+
+    let full_rhs_width = crt_field_rhs_accumulation_chunk_width::<F, i32, Q64_NUM_PRIMES, D>(
+        u128::from(Q64_MODULUS / 2),
+        max_width,
+    );
+    let capped_rhs_width = crt_field_rhs_accumulation_chunk_width::<F, i32, Q64_NUM_PRIMES, D>(
+        u128::from(u32::MAX),
+        max_width,
+    );
+
+    assert!(full_rhs_width < capped_rhs_width);
+    assert_eq!(full_rhs_width, 32_768);
+}
+
+#[test]
+fn centered_abs_preserves_rhs_above_u32() {
+    type F = Fp64<{ Q64_MODULUS }>;
+    const D: usize = 128;
+    let coeff = F::from_canonical_u64(Q64_MODULUS / 2 - 17);
+    let rings = [CyclotomicRing::from_coefficients([coeff; D])];
+
+    assert!(max_centered_abs(&rings) > u128::from(u32::MAX));
 }
 
 #[test]
@@ -155,6 +204,41 @@ fn dense_mat_vec_many_matches_individual_crt_ntt_q32_d64() {
     let got =
         mat_vec_mul_crt_ntt_many(&mat, &vecs).expect("batched CRT+NTT mat-vec should succeed");
     assert_eq!(expected, got);
+}
+
+#[test]
+fn dense_single_row_i8_path_chunks_q128_accumulation() {
+    type F = Prime128Offset275;
+    const D: usize = 32;
+    const COLS: usize = 2048;
+
+    let matrix_row: Vec<CyclotomicRing<F, D>> = (0..COLS)
+        .map(|col| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                let magnitude = Q128_MODULUS / 2 - 1 - ((col + k) & 7) as u128;
+                F::from_canonical_u128_reduced(magnitude)
+            }))
+        })
+        .collect();
+    let flat = FlatMatrix::from_ring_slice(&matrix_row);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(1, COLS)
+            .expect("valid single-row ring matrix view"),
+    )
+    .expect("Q128 dispatch should support D=32");
+
+    let block: Vec<CyclotomicRing<F, D>> = (0..COLS)
+        .map(|col| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                let digit = if (col + k) % 2 == 0 { -32 } else { 31 };
+                F::from_i64(digit)
+            }))
+        })
+        .collect();
+    let got = mat_vec_mul_ntt_i8_dense_single_row::<F, D>(&slot, COLS, &[&block], 1, 6);
+    let expected = mat_vec_mul_unchecked(&[matrix_row], &block);
+
+    assert_eq!(got, expected);
 }
 
 #[test]

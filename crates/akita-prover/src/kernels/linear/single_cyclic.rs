@@ -84,43 +84,51 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
 
     let lut = DigitMontLut::new(params);
     let vec_len = vec.len().min(inner_width);
-    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
-    let num_tiles = vec_len.div_ceil(tw);
+    let chunk_width = crt_accumulation_chunk_width::<F, W, K, D>(I8_RHS_MAX_ABS, vec_len);
+    let cache_tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>()))
+        .max(1)
+        .min(chunk_width);
+    let num_chunks = vec_len.div_ceil(chunk_width);
 
-    let final_accs: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_fold_reduce!(
-        0..num_tiles,
-        || vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a],
-        |mut accs: Vec<CyclotomicCrtNtt<W, K, D>>, tile_idx| {
-            let tile_start = tile_idx * tw;
-            let tile_end = (tile_start + tw).min(vec_len);
-            for (j, digit) in vec[tile_start..tile_end].iter().enumerate() {
-                if is_zero_plane(digit) {
-                    continue;
+    let final_accs: Vec<CyclotomicRing<F, D>> = cfg_fold_reduce!(
+        0..num_chunks,
+        || vec![CyclotomicRing::<F, D>::zero(); n_a],
+        |mut accs: Vec<CyclotomicRing<F, D>>, chunk_idx| {
+            let chunk_start = chunk_idx * chunk_width;
+            let chunk_end = (chunk_start + chunk_width).min(vec_len);
+            let mut chunk_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
+            for tile_start in (chunk_start..chunk_end).step_by(cache_tw) {
+                let tile_end = (tile_start + cache_tw).min(chunk_end);
+                for (j, digit) in vec[tile_start..tile_end].iter().enumerate() {
+                    if is_zero_plane(digit) {
+                        continue;
+                    }
+                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                    for (acc, mat_row) in chunk_accs.iter_mut().zip(ntt_mat.iter()) {
+                        accumulate_pointwise_product_into(
+                            acc,
+                            &mat_row[tile_start + j],
+                            &ntt_d,
+                            params,
+                        );
+                    }
                 }
-                let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
-                    accumulate_pointwise_product_into(
-                        acc,
-                        &mat_row[tile_start + j],
-                        &ntt_d,
-                        params,
-                    );
-                }
+            }
+            for row in 0..n_a {
+                let partial = chunk_accs[row].to_ring_with_params(params);
+                add_ring_into(&mut accs[row], partial);
             }
             accs
         },
-        |mut a: Vec<CyclotomicCrtNtt<W, K, D>>, b| {
+        |mut a: Vec<CyclotomicRing<F, D>>, b| {
             for row in 0..n_a {
-                add_ntt_into(&mut a[row], &b[row], params);
+                add_ring_into(&mut a[row], b[row]);
             }
             a
         }
     );
 
     final_accs
-        .into_iter()
-        .map(|acc| acc.to_ring_with_params(params))
-        .collect()
 }
 
 pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
@@ -141,41 +149,49 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
 
     let lut = DigitMontLut::new(params);
     let vec_len = vec.len().min(inner_width);
-    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
-    let num_tiles = vec_len.div_ceil(tw);
+    let chunk_width = crt_accumulation_chunk_width::<F, W, K, D>(I8_RHS_MAX_ABS, vec_len);
+    let cache_tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>()))
+        .max(1)
+        .min(chunk_width);
+    let num_chunks = vec_len.div_ceil(chunk_width);
 
-    let final_accs: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_fold_reduce!(
-        0..num_tiles,
-        || vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a],
-        |mut accs: Vec<CyclotomicCrtNtt<W, K, D>>, tile_idx| {
-            let tile_start = tile_idx * tw;
-            let tile_end = (tile_start + tw).min(vec_len);
-            for (j, digit) in vec[tile_start..tile_end].iter().enumerate() {
-                if is_zero_plane(digit) {
-                    continue;
+    let final_accs: Vec<CyclotomicRing<F, D>> = cfg_fold_reduce!(
+        0..num_chunks,
+        || vec![CyclotomicRing::<F, D>::zero(); n_a],
+        |mut accs: Vec<CyclotomicRing<F, D>>, chunk_idx| {
+            let chunk_start = chunk_idx * chunk_width;
+            let chunk_end = (chunk_start + chunk_width).min(vec_len);
+            let mut chunk_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
+            for tile_start in (chunk_start..chunk_end).step_by(cache_tw) {
+                let tile_end = (tile_start + cache_tw).min(chunk_end);
+                for (j, digit) in vec[tile_start..tile_end].iter().enumerate() {
+                    if is_zero_plane(digit) {
+                        continue;
+                    }
+                    let ntt_d = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
+                    for (acc, mat_row) in chunk_accs.iter_mut().zip(ntt_mat.iter()) {
+                        accumulate_pointwise_product_into(
+                            acc,
+                            &mat_row[tile_start + j],
+                            &ntt_d,
+                            params,
+                        );
+                    }
                 }
-                let ntt_d = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
-                for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
-                    accumulate_pointwise_product_into(
-                        acc,
-                        &mat_row[tile_start + j],
-                        &ntt_d,
-                        params,
-                    );
-                }
+            }
+            for row in 0..n_a {
+                let partial = chunk_accs[row].to_ring_cyclic(params);
+                add_ring_into(&mut accs[row], partial);
             }
             accs
         },
-        |mut a: Vec<CyclotomicCrtNtt<W, K, D>>, b| {
+        |mut a: Vec<CyclotomicRing<F, D>>, b| {
             for row in 0..n_a {
-                add_ntt_into(&mut a[row], &b[row], params);
+                add_ring_into(&mut a[row], b[row]);
             }
             a
         }
     );
 
     final_accs
-        .into_iter()
-        .map(|acc| acc.to_ring_cyclic(params))
-        .collect()
 }
