@@ -19,8 +19,8 @@ use akita_types::{
     terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaPlannedDirectStep,
     AkitaPlannedLevel, AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, CommitmentEnvelope, DecompositionParams,
-    DirectWitnessShape, LevelParams, MRowLayout, SisModulusFamily,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, DecompositionParams, DirectWitnessShape,
+    LevelParams, MRowLayout, SisModulusFamily,
 };
 
 /// Policy hooks needed to materialize generated schedule-table entries into
@@ -46,11 +46,6 @@ pub struct PlanPolicy<Stage1Config> {
     /// Result-returning so config-side validation propagates instead of
     /// panicking on the verifier replay path.
     pub stage1_challenge_config: Stage1Config,
-    /// Pre-computed commitment envelope for `key.num_vars`. Consumed by
-    /// [`crate::direct_level_params_with_log_basis`] when materializing a
-    /// terminal-direct step. Caller computes it once via
-    /// `Cfg::envelope(num_vars)` at policy construction.
-    pub envelope: CommitmentEnvelope,
     /// Infinity-norm expansion introduced when claim-field coordinates are
     /// embedded into the ring subfield via `psi`. Mirrors
     /// `CommitmentConfig::ring_subfield_embedding_norm_bound`. Consumed by
@@ -229,7 +224,6 @@ where
         recursive_public_rows,
         extension_opening_width,
         stage1_challenge_config,
-        envelope,
         ring_subfield_norm_bound,
         fold_challenge_shape,
     } = policy;
@@ -388,7 +382,6 @@ where
                             root_decomp,
                             stage1_challenge_config(ring_dimension)?,
                             ring_subfield_norm_bound,
-                            &envelope,
                             next_inputs,
                             next_log_basis,
                         )?;
@@ -578,7 +571,6 @@ where
                         root_decomp,
                         stage1_challenge_config(ring_dimension)?,
                         ring_subfield_norm_bound,
-                        &envelope,
                         AkitaScheduleInputs {
                             num_vars: key.num_vars,
                             level: fold_level,
@@ -660,7 +652,6 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
     use akita_types::generated::{GeneratedScheduleKey, GeneratedScheduleTable};
-    use akita_types::CommitmentEnvelope;
 
     type Field = Fp32<251>;
     const RING_DIMENSION: usize = 8;
@@ -719,11 +710,6 @@ mod tests {
             recursive_public_rows: 1,
             extension_opening_width: 1,
             stage1_challenge_config: supported_stage1,
-            envelope: CommitmentEnvelope {
-                max_n_a: 1,
-                max_n_b: 1,
-                max_n_d: 1,
-            },
             ring_subfield_norm_bound: 1,
             fold_challenge_shape: |_| TensorChallengeShape::Flat,
         }

@@ -10,8 +10,8 @@ pub mod fp128 {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::generated::GeneratedScheduleTable;
     use akita_types::{
-        AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
-        CommitmentEnvelope, DecompositionParams, SisModulusFamily,
+        AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DecompositionParams,
+        SisModulusFamily,
     };
 
     /// Base field for the fp128 tensor-verifier presets.
@@ -74,20 +74,7 @@ pub mod fp128 {
         fn schedule_plan(
             key: AkitaScheduleLookupKey,
         ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-            let envelope = <Self as CommitmentConfig>::envelope(key.num_vars);
-            crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key, envelope)
-        }
-
-        fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
-            let threshold: Option<usize> = match role {
-                AjtaiRole::Inner => None,
-                AjtaiRole::Outer => Some(38),
-            };
-            1 + usize::from(threshold.is_some_and(|t| max_num_vars >= t))
-        }
-
-        fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-            crate::proof_optimized::proof_optimized_envelope::<Self>(max_num_vars)
+            crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
         }
 
         fn max_setup_matrix_size(

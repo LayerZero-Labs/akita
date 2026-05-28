@@ -17,8 +17,8 @@ use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     lagrange_weights, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
     AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup,
-    AppendToTranscript, ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams,
-    FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
+    AppendToTranscript, ClaimIncidenceSummary, DecompositionParams, FlatRingVec, MRowLayout,
+    RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -58,14 +58,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         _key: AkitaScheduleLookupKey,
     ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
         Ok(None)
-    }
-
-    fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
-        Cfg::audited_root_rank(role, max_num_vars)
-    }
-
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        Cfg::envelope(max_num_vars)
     }
 
     fn max_setup_matrix_size(

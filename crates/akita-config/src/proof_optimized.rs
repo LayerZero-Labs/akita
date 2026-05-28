@@ -3,13 +3,12 @@
 //! Presets are unit structs that bind [`CommitmentConfig`] hooks to
 //! [`akita_derive`] SIS primitives and generated schedule tables.
 
-use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope};
+use super::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_field::{
     Ext2, Prime128OffsetA7F7, Prime16Offset99, Prime32Offset99, Prime64Offset59, RingSubfieldFp4,
     RingSubfieldFp8,
 };
-use akita_types::generated::table_entry_envelope_up_to_num_vars;
 use akita_types::ClaimIncidenceSummary;
 use akita_types::{
     AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
@@ -31,7 +30,6 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 /// Proof-optimized `schedule_plan` impl.
 pub(crate) fn proof_optimized_schedule_plan<Cfg>(
     key: AkitaScheduleLookupKey,
-    envelope: CommitmentEnvelope,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -50,7 +48,6 @@ where
             recursive_public_rows: 1,
             extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
             stage1_challenge_config: Cfg::stage1_challenge_config,
-            envelope,
             ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
             fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
         },
@@ -67,45 +64,18 @@ pub fn level_params_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
-    let envelope = Cfg::envelope(inputs.num_vars);
-    let plan = proof_optimized_schedule_plan::<Cfg>(
-        AkitaScheduleLookupKey::singleton(inputs.num_vars),
-        envelope,
-    )?;
+    let plan =
+        proof_optimized_schedule_plan::<Cfg>(AkitaScheduleLookupKey::singleton(inputs.num_vars))?;
     akita_derive::level_params_with_log_basis(
         Cfg::sis_modulus_family(),
         Cfg::D,
         Cfg::decomposition(),
         Cfg::ring_subfield_embedding_norm_bound(),
         plan.as_ref(),
-        &envelope,
         Cfg::stage1_challenge_config,
         inputs,
         log_basis,
     )
-}
-
-/// Proof-optimized `envelope` impl.
-pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-) -> CommitmentEnvelope {
-    let inner_floor = Cfg::audited_root_rank(AjtaiRole::Inner, max_num_vars);
-    let outer_floor = Cfg::audited_root_rank(AjtaiRole::Outer, max_num_vars);
-    let mut envelope = CommitmentEnvelope {
-        max_n_a: inner_floor,
-        max_n_b: outer_floor,
-        max_n_d: outer_floor,
-    };
-    if let Some(table) = Cfg::schedule_table() {
-        if let Some((gen_n_a, gen_n_b, gen_n_d)) =
-            table_entry_envelope_up_to_num_vars(table, max_num_vars)
-        {
-            envelope.max_n_a = envelope.max_n_a.max(gen_n_a);
-            envelope.max_n_b = envelope.max_n_b.max(gen_n_b);
-            envelope.max_n_d = envelope.max_n_d.max(gen_n_d);
-        }
-    }
-    envelope
 }
 
 /// Size the shared setup matrix from the planned schedule.
@@ -137,17 +107,12 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     let mut max_stride: usize = 1;
     let mut saw_supported_shape = false;
     for num_vars in 1..=max_num_vars {
-        // Envelope only depends on `num_vars`, so compute it once per
-        // outer iteration instead of repeating the table scan inside
-        // `Cfg::envelope` for every `(num_polys, num_points)`.
-        let envelope = Cfg::envelope(num_vars);
         for num_polys in 1..=max_num_batched_polys {
             let upper_pts = num_polys.min(max_num_points);
             for num_points in 1..=upper_pts {
                 let incidence =
                     ClaimIncidenceSummary::from_counts(num_vars, num_polys, num_points)?;
-                let Some((rows, stride)) =
-                    setup_matrix_envelope_for_shape::<Cfg>(&incidence, envelope)?
+                let Some((rows, stride)) = setup_matrix_envelope_for_shape::<Cfg>(&incidence)?
                 else {
                     continue;
                 };
@@ -169,16 +134,12 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     incidence: &ClaimIncidenceSummary,
-    envelope: CommitmentEnvelope,
 ) -> Result<Option<(usize, usize)>, AkitaError> {
     let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
 
     // Table-only: configs that want a runtime DP fallback override the
     // `max_setup_matrix_size` trait method directly (see `PlannerCfg`).
-    // The caller hoisted `envelope` out of the (num_polys, num_points)
-    // loop so we skip the table scan that `Cfg::envelope` does on every
-    // call.
-    let Some(plan) = proof_optimized_schedule_plan::<Cfg>(cached_key, envelope)? else {
+    let Some(plan) = proof_optimized_schedule_plan::<Cfg>(cached_key)? else {
         return Ok(None);
     };
     let setup_levels = setup_level_params_from_plan(&plan);
@@ -330,33 +291,7 @@ macro_rules! impl_fp128_preset {
             fn schedule_plan(
                 key: akita_types::AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                let envelope = <Self as $crate::CommitmentConfig>::envelope(key.num_vars);
-                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key, envelope)
-            }
-
-            fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
-                // Returns `1`, escalating to `2` once `max_num_vars` crosses the
-                // threshold for the audited `(D, log_commit_bound, role)` cell.
-                let log_commit_bound =
-                    <Self as $crate::CommitmentConfig>::decomposition().log_commit_bound;
-                let threshold: Option<usize> = match (
-                    <Self as $crate::CommitmentConfig>::D,
-                    log_commit_bound,
-                    role,
-                ) {
-                    // `D=128` full-field A escalates to 2 from `max_num_vars=59` onward.
-                    (128, lcb, akita_types::AjtaiRole::Inner) if lcb != 1 => Some(59),
-                    // `D=128` outer (B/D) escalates from `max_num_vars=54` onward.
-                    (128, _, akita_types::AjtaiRole::Outer) => Some(54),
-                    // `D=64` onehot outer (B/D) escalates from `max_num_vars=38` onward.
-                    (64, 1, akita_types::AjtaiRole::Outer) => Some(38),
-                    _ => None,
-                };
-                1 + usize::from(threshold.is_some_and(|t| max_num_vars >= t))
-            }
-
-            fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
-                $crate::proof_optimized::proof_optimized_envelope::<Self>(max_num_vars)
+                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
             }
 
             fn max_setup_matrix_size(
@@ -428,17 +363,7 @@ macro_rules! impl_small_field_preset {
             fn schedule_plan(
                 key: akita_types::AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                let envelope = <Self as $crate::CommitmentConfig>::envelope(key.num_vars);
-                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key, envelope)
-            }
-
-            fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
-                let _ = (role, max_num_vars);
-                1
-            }
-
-            fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
-                $crate::proof_optimized::proof_optimized_envelope::<Self>(max_num_vars)
+                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
             }
 
             fn max_setup_matrix_size(
@@ -587,16 +512,6 @@ mod tests {
             ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
                 Ok(None)
             }
-            fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {
-                1
-            }
-            fn envelope(_max_num_vars: usize) -> akita_types::CommitmentEnvelope {
-                akita_types::CommitmentEnvelope {
-                    max_n_a: 1,
-                    max_n_b: 1,
-                    max_n_d: 1,
-                }
-            }
             fn max_setup_matrix_size(
                 _max_num_vars: usize,
                 _max_num_batched_polys: usize,
@@ -684,11 +599,9 @@ mod tests {
     fn setup_matrix_envelope_covers_grouped_batch_schedules() {
         let incidence =
             ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
-        let envelope = <fp128::D32Full as CommitmentConfig>::envelope(incidence.num_vars());
-        let grouped_same_point =
-            setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence, envelope)
-                .unwrap()
-                .expect("D32 full table must contain the grouped same-point schedule");
+        let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence)
+            .unwrap()
+            .expect("D32 full table must contain the grouped same-point schedule");
 
         let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
             .expect("setup envelope should cover generated grouped batch schedules");
@@ -1018,7 +931,6 @@ mod tests {
                 recursive_public_rows: 1,
                 extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
                 stage1_challenge_config: Cfg::stage1_challenge_config,
-                envelope: Cfg::envelope(key.num_vars),
                 ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
                 fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
             },
@@ -1135,18 +1047,18 @@ mod tests {
             .trailing_zeros() as usize;
 
         assert!(w_12_7 < w_11_8);
-        assert_eq!(
-            optimal_m_r_split(
-                params.a_key.row_len() as u32,
-                params.challenge_l1_mass(),
-                decomp.log_commit_bound,
-                decomp.log_basis,
-                reduced_vars,
-                num_ring,
-                decomp.field_bits(),
-            ),
-            (12, 7)
+        let (m, r, _n_a) = optimal_m_r_split(
+            params.a_key.sis_family(),
+            params.ring_dimension as u32,
+            params.a_key.collision_inf(),
+            params.challenge_l1_mass(),
+            decomp.log_commit_bound,
+            decomp.log_basis,
+            reduced_vars,
+            num_ring,
+            decomp.field_bits(),
         );
+        assert_eq!((m, r), (12, 7));
     }
 
     #[test]

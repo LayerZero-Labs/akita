@@ -28,52 +28,14 @@ use akita_types::{
     decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
     level_proof_bytes, root_extension_opening_partials, scale_batched_root_layout,
     schedule_from_plan, terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AjtaiRole,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentEnvelope, DecompositionParams,
-    DirectStep, DirectWitnessShape, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, DecompositionParams, DirectStep, DirectWitnessShape, FoldStep,
+    LevelParams, MRowLayout, Schedule, Step,
 };
 
 use akita_derive::{schedule_plan_from_table, PlanPolicy};
 
 const MAX_RECURSION_DEPTH: usize = 12;
-
-/// Iteration cap for the recursive-level `n_a` fixed point inside
-/// [`derive_recursive_candidate_layout`].
-///
-/// Each iteration grows `candidate_n_a` monotonically (both
-/// `optimal_m_r_split`'s `block_len` and `min_rank_for_secure_width` are
-/// monotone non-decreasing in `n_a`), and the audited SIS-floor rank
-/// tables have at most ~32 rows per bucket, so the fixed point
-/// converges well within this bound. Non-convergence is treated as "no
-/// SIS-secure layout exists for this state" and falls through to the
-/// envelope-rank cost-estimate fallback.
-const RECURSIVE_RANK_ITERATION_CAP: usize = 64;
-
-/// Build the [`CommitmentEnvelope`] the planner uses at `num_vars` under
-/// `Cfg`.
-///
-/// When `use_lookup` is true, the envelope is the one `Cfg` ships for
-/// production. When `use_lookup` is false (the `gen_schedule_tables`
-/// idempotency path), the envelope is reconstructed from the audited
-/// SIS-floor rank accessors alone so the planner cannot read back any
-/// value that came from a stored schedule entry — otherwise table
-/// regeneration would not be a fixed point.
-fn planner_envelope<Cfg: CommitmentConfig>(
-    num_vars: usize,
-    use_lookup: bool,
-) -> CommitmentEnvelope {
-    if use_lookup {
-        Cfg::envelope(num_vars)
-    } else {
-        let inner = Cfg::audited_root_rank(AjtaiRole::Inner, num_vars);
-        let outer = Cfg::audited_root_rank(AjtaiRole::Outer, num_vars);
-        CommitmentEnvelope {
-            max_n_a: inner,
-            max_n_b: outer,
-            max_n_d: outer,
-        }
-    }
-}
 
 // -----------------------------------------------------------------------
 // Single-level evaluation
@@ -92,38 +54,18 @@ struct CandidateLevelParams {
 /// Pick the recursive `LevelParams` for a `(current_w_len, log_basis)`
 /// candidate as a single direct construction.
 ///
-/// This is the fused inline of what used to be three chained
-/// constructors:
+/// Single-shot: `optimal_m_r_split` derives `n_a` per candidate `r`
+/// from the SIS-floor table and returns `(m_vars, r_vars, n_a)`
+/// jointly. The remaining `(n_b, n_d)` widths are read straight off
+/// the audited tables for the chosen geometry. All three Ajtai keys
+/// and the layout coordinates flow into a single `LevelParams` struct
+/// literal at the end.
 ///
-/// - `sis_derived_recursive_params` (fixed-point on `n_a` to find a
-///   self-consistent SIS-secure rank for the current `(num_blocks,
-///   block_len)` choice),
-/// - `LevelParams::params_only(envelope ranks)` (cost-estimate fallback
-///   when SIS coverage is missing),
-/// - `recursive_level_layout_from_params` (`optimal_m_r_split` →
-///   `with_decomp` to populate layout fields).
-///
-/// Each of those steps allocated its own intermediate `LevelParams`;
-/// they all collapse here into a single struct literal at the bottom.
-///
-/// **SIS-secure path** (preferred): iterate `n_a` until
-/// `min_rank_for_secure_width(a_collision, inner_width(n_a)) <= n_a`.
-/// Both `optimal_m_r_split`'s `block_len` and `min_rank_for_secure_width`
-/// are monotone non-decreasing in `n_a`, so the fixed point converges
-/// in a small constant number of iterations. After convergence, the
-/// outer/D-matrix widths and the corresponding `n_b` / `n_d` are
-/// derived from the same audited tables.
-///
-/// **Envelope fallback** (cost-estimate only): if any SIS-floor lookup
-/// or shift overflows (or the fixed point fails to converge), build the
-/// layout against `envelope.max_{n_a, n_b, n_d}` with `collision_inf =
-/// 0`. The strict `AjtaiKeyParams::try_new` audit rejects this layout,
-/// but the planner only consumes it as a proof-bytes upper bound for
-/// the DP; if the schedule materializer or prover later picks a
-/// candidate that landed on the fallback, they re-derive against the
-/// SIS-strict tables.
+/// Returns `Ok(None)` when the candidate is infeasible for any reason
+/// (SIS-bound overflow, missing audited bucket / rank coverage,
+/// non-divisible `current_w_len`, …). The planner DP treats this as
+/// "skip this candidate".
 fn derive_recursive_candidate_layout<Cfg: CommitmentConfig>(
-    envelope: &CommitmentEnvelope,
     current_w_len: usize,
     log_basis: u32,
 ) -> Result<Option<LevelParams>, AkitaError> {
@@ -154,80 +96,40 @@ fn derive_recursive_candidate_layout<Cfg: CommitmentConfig>(
     };
     let field_bits = recursive_decomp.field_bits();
     let (num_digits_commit, num_digits_open) = decomp_depths(recursive_decomp);
-    // Recursive levels always run with the flat-shape stage-1
-    // challenge — `LevelParams::params_only` (the seed used by every
-    // SIS-derivation helper) hard-codes `TensorChallengeShape::Flat`.
     let l1_mass = TensorChallengeShape::Flat.effective_l1_mass(&stage1_config);
 
-    // Helper: given a candidate `n_a`, derive the block geometry that
-    // an `optimal_m_r_split`-driven recursive layout would pick for it.
-    let geometry_for = |n_a: usize| -> Result<(usize, usize, usize, usize, usize), AkitaError> {
-        let (m_vars, r_vars) = optimal_m_r_split(
-            n_a as u32,
-            l1_mass,
-            recursive_decomp.log_commit_bound,
-            recursive_decomp.log_basis,
-            reduced_vars,
-            num_ring_elems,
-            field_bits,
-        );
-        let num_blocks = 1usize
-            .checked_shl(r_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidSetup("2^r_vars does not fit usize".to_string()))?;
-        let block_len = num_ring_elems.div_ceil(num_blocks);
-        let inner_width = block_len
-            .checked_mul(num_digits_commit)
-            .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
-        Ok((m_vars, r_vars, num_blocks, block_len, inner_width))
-    };
-
-    // Try the SIS-floor secure path. Success returns
-    // `(n_a, n_b, n_d, a_collision, bd_collision)` for the converged
-    // layout; `None` falls through to the envelope fallback below.
-    let secure = (|| -> Option<(usize, usize, usize, u32, u32)> {
+    // Audited SIS collision buckets for this `(log_basis, family, d)`.
+    let Some(collisions) = (|| -> Option<(u32, u32)> {
         let bd_collision = 1u32.checked_shl(log_basis)?.checked_sub(1)?;
         let a_collision_raw = bd_collision
             .checked_mul(stage1_config.infinity_norm())?
             .checked_mul(Cfg::ring_subfield_embedding_norm_bound())?;
         let a_collision = ceil_supported_collision(sis_family, d as u32, a_collision_raw)?;
+        Some((a_collision, bd_collision))
+    })() else {
+        return Ok(None);
+    };
+    let (collision_a, collision_bd) = collisions;
 
-        // Fixed point on `n_a`. Once `secure_n_a <= candidate_n_a` the
-        // converged rank is `secure_n_a`; we then re-derive geometry
-        // against this final `n_a` (matches the historical behaviour
-        // where the outer `recursive_level_layout_from_params` re-ran
-        // `optimal_m_r_split` with `derived.a_key.row_len()`).
-        let mut candidate_n_a = envelope.max_n_a.max(1);
-        let n_a = (0..RECURSIVE_RANK_ITERATION_CAP).find_map(|_| {
-            let (_, _, _, _, inner_width) = geometry_for(candidate_n_a).ok()?;
-            let secure_n_a =
-                min_rank_for_secure_width(sis_family, d as u32, a_collision, inner_width as u64)?
-                    .max(envelope.max_n_a);
-            if secure_n_a <= candidate_n_a {
-                Some(secure_n_a)
-            } else {
-                candidate_n_a = secure_n_a;
-                None
-            }
-        })?;
-        let (_, _, num_blocks, _, _) = geometry_for(n_a).ok()?;
-        let outer_width = n_a.checked_mul(num_digits_open)?.checked_mul(num_blocks)?;
-        let d_matrix_width = num_digits_open.checked_mul(num_blocks)?;
-        let n_b =
-            min_rank_for_secure_width(sis_family, d as u32, bd_collision, outer_width as u64)?
-                .max(envelope.max_n_b);
-        let n_d =
-            min_rank_for_secure_width(sis_family, d as u32, bd_collision, d_matrix_width as u64)?
-                .max(envelope.max_n_d);
-        Some((n_a, n_b, n_d, a_collision, bd_collision))
-    })();
-
-    // `n_a` (and the geometry it induces) is the only thing the SIS
-    // path has to fix-point on. The remaining ranks (`n_b`, `n_d`) and
-    // both collision buckets are read straight off the audited tables
-    // for the converged geometry — or zeroed when we fall back.
-    let (n_a, n_b, n_d, collision_a, collision_bd) =
-        secure.unwrap_or((envelope.max_n_a, envelope.max_n_b, envelope.max_n_d, 0, 0));
-    let (m_vars, r_vars, num_blocks, block_len, inner_width) = geometry_for(n_a)?;
+    let (m_vars, r_vars, picked_n_a) = optimal_m_r_split(
+        sis_family,
+        d as u32,
+        collision_a,
+        l1_mass,
+        recursive_decomp.log_commit_bound,
+        recursive_decomp.log_basis,
+        reduced_vars,
+        num_ring_elems,
+        field_bits,
+    );
+    let num_blocks = 1usize
+        .checked_shl(r_vars as u32)
+        .ok_or_else(|| AkitaError::InvalidSetup("2^r_vars does not fit usize".to_string()))?;
+    let block_len = num_ring_elems.div_ceil(num_blocks);
+    let inner_width = block_len
+        .checked_mul(num_digits_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
+    let n_a = picked_n_a as usize;
     let outer_width = n_a
         .checked_mul(num_digits_open)
         .and_then(|w| w.checked_mul(num_blocks))
@@ -235,6 +137,18 @@ fn derive_recursive_candidate_layout<Cfg: CommitmentConfig>(
     let d_matrix_width = num_digits_open
         .checked_mul(num_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
+
+    let Some(n_b) =
+        min_rank_for_secure_width(sis_family, d as u32, collision_bd, outer_width as u64)
+    else {
+        return Ok(None);
+    };
+    let Some(n_d) =
+        min_rank_for_secure_width(sis_family, d as u32, collision_bd, d_matrix_width as u64)
+    else {
+        return Ok(None);
+    };
+
     let num_digits_fold =
         compute_num_digits_fold_with_claims(r_vars, l1_mass, log_basis, 1, field_bits);
 
@@ -270,7 +184,6 @@ fn derive_recursive_candidate_layout<Cfg: CommitmentConfig>(
 /// fold's `next_w_len` becomes a fresh memo key, so the dedup that
 /// makes the DP tractable disappears.
 fn derive_candidate_level_params<Cfg: CommitmentConfig>(
-    envelope: &CommitmentEnvelope,
     level: usize,
     current_w_len: usize,
     log_basis: u32,
@@ -280,9 +193,7 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
         "derive_candidate_level_params is recursive-only; root candidates are built directly in find_schedule",
     );
 
-    let Some(level_lp) =
-        derive_recursive_candidate_layout::<Cfg>(envelope, current_w_len, log_basis)?
-    else {
+    let Some(level_lp) = derive_recursive_candidate_layout::<Cfg>(current_w_len, log_basis)? else {
         return Ok(None);
     };
 
@@ -431,7 +342,6 @@ fn to_direct_step<Cfg: CommitmentConfig>(current_w_len: usize, log_basis: u32) -
 
 #[allow(clippy::too_many_arguments)]
 fn finalize_terminal_direct_witness_shape<Cfg: CommitmentConfig>(
-    envelope: &CommitmentEnvelope,
     num_vars: usize,
     suffix_steps: &mut [Step],
     candidate: &CandidateLevelParams,
@@ -484,7 +394,6 @@ fn finalize_terminal_direct_witness_shape<Cfg: CommitmentConfig>(
         Cfg::decomposition(),
         Cfg::stage1_challenge_config(Cfg::D)?,
         Cfg::ring_subfield_embedding_norm_bound(),
-        envelope,
         AkitaScheduleInputs {
             num_vars,
             level: fold_level + 1,
@@ -507,7 +416,6 @@ fn level_params_from_fold_step<Cfg: CommitmentConfig>(step: &FoldStep) -> LevelP
 }
 
 fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
-    envelope: &CommitmentEnvelope,
     num_vars: usize,
     level: usize,
     current_w_len: usize,
@@ -524,7 +432,6 @@ fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
             Cfg::decomposition(),
             Cfg::stage1_challenge_config(Cfg::D)?,
             Cfg::ring_subfield_embedding_norm_bound(),
-            envelope,
             AkitaScheduleInputs {
                 num_vars,
                 level,
@@ -541,7 +448,6 @@ fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
 
 type ScheduleMemo = HashMap<(usize, usize, u32), (usize, Vec<Step>)>;
 
-#[allow(clippy::too_many_arguments)]
 /// Suffix DP that searches for the optimal recursive schedule starting
 /// at `(level, current_w_len, current_lb)`.
 ///
@@ -565,7 +471,6 @@ type ScheduleMemo = HashMap<(usize, usize, u32), (usize, Vec<Step>)>;
 ///   can afford explicit enumeration only because it is entered once,
 ///   not recursively).
 fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
-    envelope: &CommitmentEnvelope,
     memo: &mut ScheduleMemo,
     num_vars: usize,
     level: usize,
@@ -601,14 +506,12 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
         if lb < current_lb {
             continue;
         }
-        let Some(candidate) =
-            derive_candidate_level_params::<Cfg>(envelope, level, current_w_len, lb)?
+        let Some(candidate) = derive_candidate_level_params::<Cfg>(level, current_w_len, lb)?
         else {
             continue;
         };
 
         let (mut suffix_cost, mut suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
-            envelope,
             memo,
             num_vars,
             level + 1,
@@ -635,7 +538,6 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
             // `finalize_terminal_direct_witness_shape` re-runs the same
             // SIS-secure derivation here.
             if finalize_terminal_direct_witness_shape::<Cfg>(
-                envelope,
                 num_vars,
                 &mut suffix_steps,
                 &candidate,
@@ -672,7 +574,6 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
             compute_terminal_level_proof_size::<Cfg>(&candidate, terminal_next_w_len, 1) + eor_bytes
         } else {
             let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-                envelope,
                 num_vars,
                 level + 1,
                 candidate.next_w_len,
@@ -1001,7 +902,6 @@ fn compute_ajtai_key_params_d<Cfg: CommitmentConfig>(
 fn offline_schedule_for_key<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
-    envelope: CommitmentEnvelope,
 ) -> Result<Option<Schedule>, AkitaError> {
     // Materialization arithmetic is bit-width driven and uses
     // `root_decomp.field_bits()` everywhere, so the field marker is just
@@ -1018,7 +918,6 @@ fn offline_schedule_for_key<Cfg: CommitmentConfig>(
             recursive_public_rows: 1,
             extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
             stage1_challenge_config: Cfg::stage1_challenge_config,
-            envelope,
             ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
             fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
         },
@@ -1057,20 +956,9 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
         ));
     }
 
-    // `envelope` is the only per-search input not derivable from `Cfg`
-    // alone — it depends on `key.num_vars` and on `use_lookup`. Compute
-    // it once and thread it through the helpers as a plain reference.
-    //
-    // We no longer thread `Cfg::schedule_plan(...)` into the suffix DP:
-    // `current_level_layout_with_log_basis`'s exact-plan match was a
-    // single-`(m, r)` shortcut that would fire on at most one of the
-    // log_basis values per state; the DP already explores every
-    // log_basis itself, so the shortcut never improves the optimum.
-    let envelope = planner_envelope::<Cfg>(key.num_vars, use_lookup);
-
     if use_lookup {
         if let Some(table) = Cfg::schedule_table() {
-            if let Some(schedule) = offline_schedule_for_key::<Cfg>(key, table, envelope)? {
+            if let Some(schedule) = offline_schedule_for_key::<Cfg>(key, table)? {
                 tracing::debug!(
                     ?key,
                     total_bytes = schedule.total_bytes,
@@ -1290,7 +1178,6 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                 // worse `next_w_len` but a smaller total proof can no
                 // longer be silently dropped.
                 let (mut suffix_cost, mut suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
-                    &envelope,
                     &mut memo,
                     key.num_vars,
                     1,
@@ -1314,13 +1201,8 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                     };
                     // Lazy SIS check: skip this root candidate if its
                     // terminal direct cannot be SIS-secured under the
-                    // candidate's batched `LevelParams`. Mirrors the
-                    // recursive suffix DP's behaviour (replaces the
-                    // previous unconditional `?`, which would have
-                    // failed the entire search rather than discarding
-                    // one infeasible candidate).
+                    // candidate's batched `LevelParams`.
                     if finalize_terminal_direct_witness_shape::<Cfg>(
-                        &envelope,
                         key.num_vars,
                         &mut suffix_steps,
                         &candidate,
@@ -1354,7 +1236,6 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                     ) + eor_bytes
                 } else {
                     let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-                        &envelope,
                         key.num_vars,
                         1,
                         candidate.next_w_len,

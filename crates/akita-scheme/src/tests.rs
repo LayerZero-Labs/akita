@@ -1510,18 +1510,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         Ok(None)
     }
 
-    fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {
-        1
-    }
-
-    fn envelope(_max_num_vars: usize) -> akita_types::CommitmentEnvelope {
-        akita_types::CommitmentEnvelope {
-            max_n_a: 1,
-            max_n_b: 1,
-            max_n_d: 1,
-        }
-    }
-
     fn max_setup_matrix_size(
         _max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -1627,18 +1615,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         _key: AkitaScheduleLookupKey,
     ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
         Ok(None)
-    }
-
-    fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {
-        1
-    }
-
-    fn envelope(_max_num_vars: usize) -> akita_types::CommitmentEnvelope {
-        akita_types::CommitmentEnvelope {
-            max_n_a: 1,
-            max_n_b: 1,
-            max_n_d: 1,
-        }
     }
 
     fn max_setup_matrix_size(

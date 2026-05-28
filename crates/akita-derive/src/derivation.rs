@@ -13,14 +13,12 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_types::generated::sis_floor::{
-    ceil_supported_collision, min_rank_for_secure_width, sis_max_widths,
-};
+use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 use akita_types::layout::digit_math::{compute_num_digits_fold_with_claims, optimal_m_r_split};
 use akita_types::{
     decomp_depths, exact_planned_level_execution, level_layout_from_params,
     recursive_level_layout_from_params, AjtaiKeyParams, AkitaScheduleInputs, AkitaSchedulePlan,
-    CommitmentEnvelope, DecompositionParams, LevelParams, SisModulusFamily,
+    DecompositionParams, LevelParams, SisModulusFamily,
 };
 
 /// SIS-secure rank derivation inputs, bundled to keep
@@ -57,10 +55,10 @@ fn a_role_collision_raw(
 /// Build a SIS-secure `LevelParams` from the explicit width budget.
 ///
 /// Looks up the minimum module-SIS rank for each of `(a, b, d)` against the
-/// generated 128-bit security tables. The optional fallback envelope is only
-/// a setup-sizing floor: when present, the selected rank is
-/// `max(generated_floor, envelope_floor)`. Missing generated SIS coverage is
-/// always an error.
+/// generated 128-bit security tables and returns the resulting layout-free
+/// `LevelParams`. There is no rank floor beyond what the SIS-floor tables
+/// require — anything above is secure but unnecessary, so the planner /
+/// materializer always uses the tight minimum.
 ///
 /// # Errors
 ///
@@ -72,38 +70,20 @@ pub fn sis_secure_level_params(
     log_basis: u32,
     collisions: SisCollisionBounds,
     widths: SisRoleWidths,
-    fallback: Option<&CommitmentEnvelope>,
     stage1_config: SparseChallengeConfig,
 ) -> Result<LevelParams, AkitaError> {
-    let resolve = |role: &str, collision: u32, width: u64, fallback_rank: Option<usize>| {
-        min_rank_for_secure_width(sis_family, d as u32, collision, width)
-            .map(|floor| fallback_rank.map_or(floor, |rank| floor.max(rank)))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "missing secure root {role}-row rank for family={sis_family:?} \
-                     D={d} lb={log_basis} width={width}"
-                ))
-            })
+    let resolve = |role: &str, collision: u32, width: u64| {
+        min_rank_for_secure_width(sis_family, d as u32, collision, width).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "missing secure root {role}-row rank for family={sis_family:?} \
+                 D={d} lb={log_basis} width={width}"
+            ))
+        })
     };
 
-    let n_a = resolve(
-        "A",
-        collisions.a,
-        widths.inner as u64,
-        fallback.map(|e| e.max_n_a),
-    )?;
-    let n_b = resolve(
-        "B",
-        collisions.bd,
-        widths.outer as u64,
-        fallback.map(|e| e.max_n_b),
-    )?;
-    let n_d = resolve(
-        "D",
-        collisions.bd,
-        widths.d_matrix as u64,
-        fallback.map(|e| e.max_n_d),
-    )?;
+    let n_a = resolve("A", collisions.a, widths.inner as u64)?;
+    let n_b = resolve("B", collisions.bd, widths.outer as u64)?;
+    let n_d = resolve("D", collisions.bd, widths.d_matrix as u64)?;
 
     let mut result =
         LevelParams::params_only(sis_family, d, log_basis, n_a, n_b, n_d, stage1_config);
@@ -127,9 +107,9 @@ pub fn sis_secure_level_params(
 ///
 /// Prefers the exact entry from a pre-materialized
 /// [`AkitaSchedulePlan`] (`schedule_plan = Cfg::schedule_plan(singleton_key(num_vars))?`
-/// — fixed throughout a search), otherwise derives SIS-secure recursive
-/// params from the envelope (level > 0) or returns the envelope-row-floor
-/// params-only `LevelParams` (level 0 / final fallback).
+/// — fixed throughout a search). Otherwise derives SIS-secure recursive
+/// params (level > 0) and returns a params-only fallback (level 0) when
+/// no SIS-secure derivation is available.
 ///
 /// `stage1_chooser` resolves the sparse-challenge config for a ring
 /// dimension; it's the same hook `Cfg::stage1_challenge_config` plays at
@@ -139,8 +119,7 @@ pub fn sis_secure_level_params(
 /// # Errors
 ///
 /// Returns an error if `stage1_chooser` rejects `d`, if exact-plan
-/// resolution fails, or if envelope-driven recursive derivation
-/// over/underflows.
+/// resolution fails, or if SIS-driven recursive derivation over/underflows.
 #[allow(clippy::too_many_arguments)]
 pub fn level_params_with_log_basis(
     sis_family: SisModulusFamily,
@@ -148,7 +127,6 @@ pub fn level_params_with_log_basis(
     decomp: DecompositionParams,
     ring_subfield_norm_bound: u32,
     schedule_plan: Option<&AkitaSchedulePlan>,
-    envelope: &CommitmentEnvelope,
     stage1_chooser: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     inputs: AkitaScheduleInputs,
     log_basis: u32,
@@ -171,7 +149,6 @@ pub fn level_params_with_log_basis(
             inputs.current_w_len,
             &stage1_config,
             ring_subfield_norm_bound,
-            envelope,
         ) {
             if let Ok(lp) =
                 recursive_level_layout_from_params(&params, inputs.current_w_len, decomp)
@@ -182,13 +159,18 @@ pub fn level_params_with_log_basis(
         }
     }
 
+    // Final fallback: bare params-only seed with all ranks at 1. The
+    // schedule planner has its own root path (`find_schedule`) and
+    // doesn't take this branch in practice for level > 0; for level == 0
+    // the caller (`root_level_layout_with_log_basis`) handles the
+    // strict root SIS derivation.
     Ok(LevelParams::params_only(
         sis_family,
         d,
         log_basis,
-        envelope.max_n_a,
-        envelope.max_n_b,
-        envelope.max_n_d,
+        1,
+        1,
+        1,
         stage1_config,
     ))
 }
@@ -217,7 +199,6 @@ pub fn direct_level_params_with_log_basis(
     root_decomp: DecompositionParams,
     stage1_config: SparseChallengeConfig,
     ring_subfield_norm_bound: u32,
-    envelope: &CommitmentEnvelope,
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
@@ -240,7 +221,6 @@ pub fn direct_level_params_with_log_basis(
         inputs.current_w_len,
         &stage1_config,
         ring_subfield_norm_bound,
-        envelope,
     )
     .ok_or_else(|| {
         AkitaError::InvalidSetup(format!(
@@ -251,38 +231,33 @@ pub fn direct_level_params_with_log_basis(
     akita_types::recursive_level_layout_from_params(&params, inputs.current_w_len, root_decomp)
 }
 
-/// Derive SIS-secure recursive (level > 0) params from the active envelope.
+/// Derive SIS-secure recursive (level > 0) params at this state.
 ///
-/// Iterates a fixed point over the A-row rank `n_a`: the seed `n_a` is
-/// the envelope floor, the layout `recursive_level_layout_from_params`
-/// builds for it picks `(m, r)` via `optimal_m_r_split(n_a, ...)`, and
-/// `sis_derived_recursive_params_for_layout` returns the SIS-secure
-/// rank for that layout's `inner_width`. A larger derived rank changes
-/// the next `optimal_m_r_split` choice, which changes `block_len` and
-/// therefore `inner_width`, which may bump the required rank again —
-/// so iterate until the derived rank matches the seed.
+/// Single-pass derivation:
 ///
-/// Without this loop the seed `n_a = envelope.max_n_a` builds one
-/// layout, the derived rank is computed for *that* layout, and then
-/// downstream callers
-/// (`level_params_with_log_basis` → `recursive_level_layout_from_params`)
-/// rebuild the layout with the bumped rank — producing a different
-/// `inner_width` that the bumped rank may not actually cover at the
-/// audited SIS bucket. The shipped tables encoded SIS-insecure
-/// recursive ranks for some `(num_vars, log_basis)` combinations as a
-/// result (see `specs/planner-sis-audit-bypass.md`).
+/// 1. Compute the audited A-role SIS bucket `a_collision` from
+///    `log_basis`, the stage-1 challenge, and the ring-subfield
+///    embedding norm.
+/// 2. Build a layout-free seed `LevelParams` whose
+///    `a_key.collision_inf = a_collision`. The seed only exists so
+///    [`recursive_level_layout_from_params`] has a `LevelParams` to
+///    attach the layout to; its `row_len` is a placeholder.
+/// 3. Apply [`recursive_level_layout_from_params`]: internally,
+///    [`optimal_m_r_split`] uses `(seed.a_key.sis_family,
+///    seed.ring_dimension, seed.a_key.collision_inf)` to derive
+///    `n_a(r)` per candidate `r` from the SIS-floor table, picking the
+///    `(m, r, n_a)` whose layout minimises next-level witness size.
+/// 4. Hand the resulting layout to
+///    [`sis_derived_recursive_params_for_layout`], which re-runs the
+///    SIS-floor lookups to populate `(n_a, n_b, n_d)`.
 ///
-/// Returns `None` when either the layout step or the SIS derivation
-/// rejects the candidate, or when the fixed point does not converge
-/// within [`RECURSIVE_RANK_ITERATION_CAP`] iterations (the audited
-/// rank tables have at most ~32 rows per bucket, so monotone growth
-/// converges well within that bound).
+/// No envelope rank floor: SIS-floor lookups give the tight secure
+/// minimum, and the setup matrix is sized via `matrix_envelope_for_levels`
+/// over all materialized plans, so per-level inflation would only
+/// pessimise proof sizes.
 ///
-/// Sibling of [`sis_derived_recursive_params_for_layout`]: this is the
-/// "I have an envelope, give me both a layout and SIS-secure params"
-/// entry point; the `_for_layout` form is the "I already have a layout"
-/// entry point.
-#[allow(clippy::too_many_arguments)]
+/// Returns `None` when any SIS-floor lookup, collision-bucket
+/// resolution, or layout/derivation step rejects the candidate.
 pub fn sis_derived_recursive_params(
     sis_family: SisModulusFamily,
     d: usize,
@@ -291,59 +266,26 @@ pub fn sis_derived_recursive_params(
     current_w_len: usize,
     stage1_config: &SparseChallengeConfig,
     ring_subfield_norm_bound: u32,
-    envelope: &CommitmentEnvelope,
 ) -> Option<LevelParams> {
-    let mut candidate_n_a = envelope.max_n_a.max(1);
-    for _ in 0..RECURSIVE_RANK_ITERATION_CAP {
-        let layout = recursive_level_layout_from_params(
-            &LevelParams::params_only(
-                sis_family,
-                d,
-                log_basis,
-                candidate_n_a,
-                1,
-                1,
-                stage1_config.clone(),
-            ),
-            current_w_len,
-            root_decomp,
-        )
-        .ok()?;
-        let derived = sis_derived_recursive_params_for_layout(
-            sis_family,
-            d,
-            log_basis,
-            stage1_config,
-            ring_subfield_norm_bound,
-            envelope,
-            &layout,
-        )?;
-        let derived_n_a = derived.a_key.row_len();
-        if derived_n_a == candidate_n_a {
-            return Some(derived);
-        }
-        // `min_rank_for_secure_width` is monotone non-decreasing in
-        // `col_len` and `optimal_m_r_split`'s `block_len` is monotone
-        // non-decreasing in `n_a`, so the derived rank should only grow
-        // across iterations. If the optimizer ever returns a smaller
-        // rank for the bumped layout, accept it (still SIS-secure for
-        // that layout) instead of looping forever.
-        if derived_n_a < candidate_n_a {
-            return Some(derived);
-        }
-        candidate_n_a = derived_n_a;
-    }
-    None
-}
+    let bd_collision = 1u32.checked_shl(log_basis).and_then(|b| b.checked_sub(1))?;
+    let a_collision_raw =
+        a_role_collision_raw(bd_collision, stage1_config, ring_subfield_norm_bound)?;
+    let a_collision = ceil_supported_collision(sis_family, d as u32, a_collision_raw)?;
 
-/// Iteration cap for the [`sis_derived_recursive_params`] fixed point.
-///
-/// Each iteration can only grow `candidate_n_a` monotonically, and the
-/// audited SIS-floor rank tables have at most ~32 rows per bucket, so
-/// the fixed point converges well within this bound. Treat
-/// non-convergence as "no SIS-secure layout exists" and surface it as
-/// `None`.
-const RECURSIVE_RANK_ITERATION_CAP: usize = 64;
+    let mut seed =
+        LevelParams::params_only(sis_family, d, log_basis, 1, 1, 1, stage1_config.clone());
+    seed.a_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, a_collision, d);
+
+    let layout = recursive_level_layout_from_params(&seed, current_w_len, root_decomp).ok()?;
+    sis_derived_recursive_params_for_layout(
+        sis_family,
+        d,
+        log_basis,
+        stage1_config,
+        ring_subfield_norm_bound,
+        &layout,
+    )
+}
 
 /// Derive SIS-secure recursive params for a concrete recursive layout.
 pub fn sis_derived_recursive_params_for_layout(
@@ -352,7 +294,6 @@ pub fn sis_derived_recursive_params_for_layout(
     log_basis: u32,
     stage1_config: &SparseChallengeConfig,
     ring_subfield_embedding_norm_bound: u32,
-    envelope: &CommitmentEnvelope,
     layout: &LevelParams,
 ) -> Option<LevelParams> {
     // Checked: malformed inputs (e.g. `log_basis >= 32`) reach this
@@ -364,14 +305,15 @@ pub fn sis_derived_recursive_params_for_layout(
         a_role_collision_raw(a_raw, stage1_config, ring_subfield_embedding_norm_bound)?;
     let a_collision = ceil_supported_collision(sis_family, d as u32, a_collision_raw)?;
 
+    // Outer B-matrix width is sized against the tight SIS-secure A-rank
+    // for this layout's inner width — no extra rank floor.
     let exact_outer_width = {
         let n_a = min_rank_for_secure_width(
             sis_family,
             d as u32,
             a_collision,
             layout.inner_width() as u64,
-        )?
-        .max(envelope.max_n_a);
+        )?;
         n_a * layout.num_digits_open * layout.num_blocks
     };
     sis_secure_level_params(
@@ -387,7 +329,6 @@ pub fn sis_derived_recursive_params_for_layout(
             outer: exact_outer_width,
             d_matrix: layout.d_matrix_width(),
         },
-        Some(envelope),
         stage1_config.clone(),
     )
     .ok()
@@ -409,7 +350,7 @@ pub fn sis_derived_root_params_for_layout(
     lp: &LevelParams,
 ) -> Result<LevelParams, AkitaError> {
     // Checked: malformed verifier-reachable inputs (e.g. `log_basis >= 32`)
-    // must surface as `AkitaError`, not a panic. Matches `root_a_rank_cap`.
+    // must surface as `AkitaError`, not a panic.
     let bd_collision = 1u32
         .checked_shl(lp.log_basis)
         .and_then(|bound| bound.checked_sub(1))
@@ -451,7 +392,6 @@ pub fn sis_derived_root_params_for_layout(
             outer: lp.outer_width(),
             d_matrix: lp.d_matrix_width(),
         },
-        None,
         stage1_config,
     )
 }
@@ -485,8 +425,14 @@ pub fn derived_root_commitment_layout_from_params(
 
     let mut decomp = decomp;
     decomp.log_basis = params.log_basis;
-    let (m_vars, r_vars) = optimal_m_r_split(
-        params.a_key.row_len() as u32,
+    // `optimal_m_r_split` derives `n_a` per `r` from the SIS-floor table.
+    // `params.a_key` must carry the audited bucket on `collision_inf`
+    // (every caller in this crate goes through `sis_secure_level_params`
+    // or its root analogues, so this holds in practice).
+    let (m_vars, r_vars, n_a) = optimal_m_r_split(
+        params.a_key.sis_family(),
+        params.ring_dimension as u32,
+        params.a_key.collision_inf(),
         params.challenge_l1_mass(),
         decomp.log_commit_bound,
         decomp.log_basis,
@@ -502,7 +448,19 @@ pub fn derived_root_commitment_layout_from_params(
         1,
         decomp.field_bits(),
     );
-    params.with_decomp(m_vars, r_vars, depth_commit, depth_open, depth_fold, 0)
+    // Sync `a_key.row_len` with the per-`r` SIS-secure rank from
+    // `optimal_m_r_split` so `with_decomp`'s derived widths match the
+    // cost the optimizer scored. No rank floor — SIS gives the tight
+    // secure minimum.
+    let mut layout_seed = params.clone();
+    layout_seed.a_key = AjtaiKeyParams::new_unchecked(
+        params.a_key.sis_family(),
+        n_a as usize,
+        params.a_key.col_len(),
+        params.a_key.collision_inf(),
+        params.ring_dimension,
+    );
+    layout_seed.with_decomp(m_vars, r_vars, depth_commit, depth_open, depth_fold, 0)
 }
 
 /// Derive the root commit layout for a root-direct schedule at `num_vars`.
@@ -545,8 +503,16 @@ pub fn root_direct_commit_layout(
     let alpha = (d as u32).trailing_zeros() as usize;
 
     if num_vars > alpha {
-        // Normal root: iterate A-row rank against the SIS-floor table.
-        let rank_cap = root_a_rank_cap(
+        // Normal root: single-shot derivation. `optimal_m_r_split`
+        // (invoked inside `derived_root_commitment_layout_from_params`)
+        // picks `(m, r, n_a)` jointly using the SIS-floor table — no
+        // outer fixed point on `n_a` is needed.
+        //
+        // The seed's `a_key.collision_inf` must carry the audited A-role
+        // bucket so the per-`r` SIS lookup inside `optimal_m_r_split`
+        // can do its job; otherwise every `r` is rejected as infeasible
+        // and the optimizer falls back to the degenerate symmetric split.
+        let a_collision = root_a_collision(
             sis_family,
             d,
             &decomp,
@@ -554,40 +520,19 @@ pub fn root_direct_commit_layout(
             &stage1,
             ring_subfield_norm_bound,
         )?;
-        let mut candidate_n_a = 1usize;
-        for _ in 0..rank_cap {
-            let candidate_params = LevelParams::params_only(
-                sis_family,
-                d,
-                log_basis,
-                candidate_n_a,
-                1,
-                1,
-                stage1.clone(),
-            );
-            let root_lp = derived_root_commitment_layout_from_params(
-                inputs,
-                decomp,
-                &candidate_params,
-                false,
-            )?;
-            let derived_params = sis_derived_root_params_for_layout(
-                sis_family,
-                d,
-                decomp,
-                stage1.clone(),
-                ring_subfield_norm_bound,
-                inputs,
-                &root_lp,
-            )?;
-            if derived_params.a_key.row_len() == candidate_n_a {
-                return Ok(derived_params.with_layout(&root_lp));
-            }
-            candidate_n_a = derived_params.a_key.row_len();
-        }
-        return Err(AkitaError::InvalidSetup(format!(
-            "failed to converge on self-consistent root A-row rank for D={d} lb={log_basis}"
-        )));
+        let mut seed = LevelParams::params_only(sis_family, d, log_basis, 1, 1, 1, stage1.clone());
+        seed.a_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, a_collision, d);
+        let root_lp = derived_root_commitment_layout_from_params(inputs, decomp, &seed, false)?;
+        let derived_params = sis_derived_root_params_for_layout(
+            sis_family,
+            d,
+            decomp,
+            stage1.clone(),
+            ring_subfield_norm_bound,
+            inputs,
+            &root_lp,
+        )?;
+        return Ok(derived_params.with_layout(&root_lp));
     }
 
     // Tiny-root: fits in one padded ring element, allow zero-outer layout.
@@ -626,20 +571,23 @@ pub fn root_direct_commit_layout(
     )))
 }
 
-/// Audited root-rank-cap iteration: iterate the root A-row rank against
-/// the SIS-floor table until self-consistent, then return the converged
-/// `LevelParams`.
+/// Single-shot root layout derivation.
 ///
-/// This is the "normal root" variant used by the planner DP, the table
-/// materializer, and the config's `level_params_with_log_basis` fast-path.
-/// For root-direct (tiny-root) layouts use
-/// [`root_direct_commit_layout`] instead.
+/// Mirrors the simplified branch in [`root_direct_commit_layout`]:
+/// `optimal_m_r_split` (called inside
+/// [`derived_root_commitment_layout_from_params`]) picks `(m, r, n_a)`
+/// jointly via the SIS-floor table, then
+/// [`sis_derived_root_params_for_layout`] derives the matching
+/// `(n_a, n_b, n_d)` triple. No fixed point.
+///
+/// Used by the planner DP, the table materializer, and the config's
+/// `level_params_with_log_basis` fast-path. For root-direct (tiny-root)
+/// layouts use [`root_direct_commit_layout`] instead.
 ///
 /// # Errors
 ///
-/// Returns an error when the rank-cap iteration does not converge, when
-/// the SIS-floor table does not cover the candidate widths, or when the
-/// layout arithmetic overflows.
+/// Returns an error when the SIS-floor table does not cover the
+/// candidate widths or when the layout arithmetic overflows.
 pub fn root_level_layout_with_log_basis(
     sis_family: SisModulusFamily,
     d: usize,
@@ -649,7 +597,7 @@ pub fn root_level_layout_with_log_basis(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
-    let rank_cap = root_a_rank_cap(
+    let a_collision = root_a_collision(
         sis_family,
         d,
         &decomp,
@@ -657,36 +605,19 @@ pub fn root_level_layout_with_log_basis(
         &stage1,
         ring_subfield_norm_bound,
     )?;
-    let mut candidate_n_a = 1usize;
-    for _ in 0..rank_cap {
-        let candidate_params = LevelParams::params_only(
-            sis_family,
-            d,
-            log_basis,
-            candidate_n_a,
-            1,
-            1,
-            stage1.clone(),
-        );
-        let root_lp =
-            derived_root_commitment_layout_from_params(inputs, decomp, &candidate_params, false)?;
-        let derived_params = sis_derived_root_params_for_layout(
-            sis_family,
-            d,
-            decomp,
-            stage1.clone(),
-            ring_subfield_norm_bound,
-            inputs,
-            &root_lp,
-        )?;
-        if derived_params.a_key.row_len() == candidate_n_a {
-            return Ok(derived_params.with_layout(&root_lp));
-        }
-        candidate_n_a = derived_params.a_key.row_len();
-    }
-    Err(AkitaError::InvalidSetup(format!(
-        "failed to converge on self-consistent root A-row rank for D={d} lb={log_basis}"
-    )))
+    let mut seed = LevelParams::params_only(sis_family, d, log_basis, 1, 1, 1, stage1.clone());
+    seed.a_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, a_collision, d);
+    let root_lp = derived_root_commitment_layout_from_params(inputs, decomp, &seed, false)?;
+    let derived_params = sis_derived_root_params_for_layout(
+        sis_family,
+        d,
+        decomp,
+        stage1,
+        ring_subfield_norm_bound,
+        inputs,
+        &root_lp,
+    )?;
+    Ok(derived_params.with_layout(&root_lp))
 }
 
 /// Apply [`sis_derived_root_params_for_layout`] to an explicit root layout
@@ -721,24 +652,22 @@ pub fn root_level_params_for_layout_with_log_basis(
     Ok(params.with_layout(lp))
 }
 
-/// Number of audited A-row SIS-rank buckets available for the root A role
-/// at this `(sis_family, d, log_basis, decomp.log_commit_bound, stage1,
-/// ring_subfield_norm_bound)`. Used as the iteration cap when probing
-/// self-consistent root A-row ranks.
+/// Compute the audited A-role SIS collision bucket for the root layout.
 ///
-/// `log_basis` is the candidate basis being evaluated (which the planner
-/// DP varies independently of `decomp.log_basis`), NOT `decomp.log_basis`
-/// — the rank cap depends on the candidate's collision bound, so reading
-/// it off the default decomposition would understate the cap and produce
-/// spurious "failed to converge" errors at non-default bases.
-fn root_a_rank_cap(
+/// The root path applies a different `a_raw` rule than recursive levels:
+/// when `decomp.log_commit_bound == 1` the bound is the tight constant
+/// `2`; otherwise it falls back to `bd_collision = 2^log_basis - 1`. The
+/// result is then multiplied by `stage1.infinity_norm() *
+/// ring_subfield_norm_bound` and rounded up to the nearest audited
+/// bucket via [`ceil_supported_collision`].
+fn root_a_collision(
     sis_family: SisModulusFamily,
     d: usize,
     decomp: &DecompositionParams,
     log_basis: u32,
     stage1: &SparseChallengeConfig,
     ring_subfield_norm_bound: u32,
-) -> Result<usize, AkitaError> {
+) -> Result<u32, AkitaError> {
     let bd_collision = 1u32
         .checked_shl(log_basis)
         .and_then(|bound| bound.checked_sub(1))
@@ -747,8 +676,6 @@ fn root_a_rank_cap(
                 "root collision bound overflow for D={d} lb={log_basis}"
             ))
         })?;
-    // Root level (level == 0); for `log_commit_bound == 1` the A-role bound
-    // is the tight constant `2`, otherwise it equals the B/D collision bound.
     let a_raw = if decomp.log_commit_bound == 1 {
         2
     } else {
@@ -762,21 +689,12 @@ fn root_a_rank_cap(
                 "root A-role collision overflow for family={sis_family:?}, D={d}"
             ))
         })?;
-    let a_collision =
-        ceil_supported_collision(sis_family, d as u32, a_collision_raw).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "missing supported root A-role collision bucket for family={sis_family:?}, D={d} \
-                 and raw collision {a_collision_raw}"
-            ))
-        })?;
-    sis_max_widths(sis_family, d as u32, a_collision)
-        .map(<[u64]>::len)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "missing root A-role SIS rank table for family={sis_family:?}, D={d}, \
-                 collision_inf={a_collision}"
-            ))
-        })
+    ceil_supported_collision(sis_family, d as u32, a_collision_raw).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "missing supported root A-role collision bucket for family={sis_family:?}, D={d} \
+             and raw collision {a_collision_raw}"
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -784,12 +702,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sis_floor_miss_is_not_rescued_by_envelope() {
-        let envelope = CommitmentEnvelope {
-            max_n_a: 4,
-            max_n_b: 4,
-            max_n_d: 4,
-        };
+    fn sis_floor_miss_surfaces_as_error() {
         let err = sis_secure_level_params(
             SisModulusFamily::Q32,
             32,
@@ -800,7 +713,6 @@ mod tests {
                 outer: 1,
                 d_matrix: 1,
             },
-            Some(&envelope),
             SparseChallengeConfig::Uniform {
                 weight: 1,
                 nonzero_coeffs: vec![1],

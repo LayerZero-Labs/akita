@@ -120,31 +120,6 @@ pub fn table_entry(
     table.entries.iter().find(|entry| entry.key == key)
 }
 
-pub fn table_entry_envelope_up_to_num_vars(
-    table: GeneratedScheduleTable,
-    upper_num_vars: usize,
-) -> Option<(usize, usize, usize)> {
-    let mut max_n_a = 0usize;
-    let mut max_n_b = 0usize;
-    let mut max_n_d = 0usize;
-    let mut saw_entry = false;
-    for entry in table
-        .entries
-        .iter()
-        .filter(|entry| entry.key.num_vars <= upper_num_vars)
-    {
-        for step in entry.steps {
-            if let GeneratedStep::Fold(fold) = step {
-                saw_entry = true;
-                max_n_a = max_n_a.max(fold.n_a as usize);
-                max_n_b = max_n_b.max(fold.n_b as usize);
-                max_n_d = max_n_d.max(fold.n_d as usize);
-            }
-        }
-    }
-    saw_entry.then_some((max_n_a, max_n_b, max_n_d))
-}
-
 pub fn fp128_d32_full_table() -> GeneratedScheduleTable {
     #[cfg(feature = "zk")]
     {

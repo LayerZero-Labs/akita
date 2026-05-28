@@ -23,9 +23,8 @@ use akita_config::{
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
-    schedule_from_plan, AjtaiRole, AkitaScheduleLookupKey, AkitaSchedulePlan,
-    ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, LevelParams, Schedule,
-    SisModulusFamily,
+    schedule_from_plan, AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary,
+    DecompositionParams, LevelParams, Schedule, SisModulusFamily,
 };
 
 use crate::find_schedule;
@@ -68,14 +67,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
 
     fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
         Cfg::schedule_plan(key)
-    }
-
-    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
-        Cfg::audited_root_rank(role, max_num_vars)
-    }
-
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        Cfg::envelope(max_num_vars)
     }
 
     fn max_setup_matrix_size(

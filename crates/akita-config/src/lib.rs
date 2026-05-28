@@ -14,9 +14,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
-    AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
-    ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, LevelParams, Schedule,
-    SisModulusFamily,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary,
+    DecompositionParams, LevelParams, Schedule, SisModulusFamily,
 };
 use std::marker::PhantomData;
 
@@ -150,14 +149,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         }
     }
 
-    /// Audited root-rank floor for one Ajtai role.
-    #[doc(hidden)]
-    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize;
-
-    /// Max matrix-row envelope across all runtime levels.
-    #[doc(hidden)]
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
-
     /// `(max_rows, max_stride)` bounds for the shared setup matrix.
     ///
     /// # Errors
@@ -267,14 +258,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::schedule_plan(key)
     }
 
-    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
-        Cfg::audited_root_rank(role, max_num_vars)
-    }
-
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        Cfg::envelope(max_num_vars)
-    }
-
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -343,18 +326,6 @@ mod tests {
             _key: AkitaScheduleLookupKey,
         ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
             Ok(None)
-        }
-
-        fn audited_root_rank(_role: AjtaiRole, _max_num_vars: usize) -> usize {
-            1
-        }
-
-        fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-            CommitmentEnvelope {
-                max_n_a: 1,
-                max_n_b: 1,
-                max_n_d: 1,
-            }
         }
 
         fn max_setup_matrix_size(
