@@ -7,7 +7,7 @@ use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
-use crate::protocol::validation::validate_i8_log_basis;
+use crate::validation::validate_i8_setup_log_basis;
 use crate::{
     tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat, RingSwitchComputeBackend,
@@ -117,7 +117,7 @@ where
     let mut hint = quad_eq
         .take_hint()
         .ok_or_else(|| AkitaError::InvalidInput("missing hint in prover".to_string()))?;
-    validate_i8_log_basis(lp.log_basis)?;
+    validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
     hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
     #[cfg(feature = "zk")]
     let (decomposed_inner_rows, recomposed_inner_rows, b_blinding_digits) = hint.into_flat_parts();

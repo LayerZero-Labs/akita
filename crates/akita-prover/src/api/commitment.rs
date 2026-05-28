@@ -2,6 +2,7 @@
 
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
+use crate::validation::validate_i8_setup_log_basis;
 use crate::{AkitaPolyOps, CommitInnerWitness, CommitmentComputeBackend};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
@@ -10,8 +11,6 @@ use akita_types::{
     AkitaCommitmentHint, AkitaExpandedSetup, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams,
     RingCommitment,
 };
-
-const MAX_I8_LOG_BASIS: u32 = 6;
 
 pub(crate) fn commit_inner_block_digit_count(
     n_a: usize,
@@ -55,11 +54,7 @@ where
 {
     let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
     let expected_flat_digits = commit_inner_flat_digit_count(num_blocks, n_a, num_digits_open)?;
-    if !(1..=MAX_I8_LOG_BASIS).contains(&log_basis) {
-        return Err(AkitaError::InvalidSetup(
-            "log_basis must be in 1..=6 when recomposing i8 inner commitment digits".to_string(),
-        ));
-    }
+    validate_i8_setup_log_basis(log_basis, "when recomposing i8 inner commitment digits")?;
 
     if inner.recomposed_inner_rows.len() != num_blocks {
         return Err(AkitaError::InvalidSetup(format!(
@@ -144,11 +139,7 @@ where
             "setup max_stride must be nonzero".to_string(),
         ));
     }
-    if !(1..=MAX_I8_LOG_BASIS).contains(&params.log_basis) {
-        return Err(AkitaError::InvalidSetup(
-            "commit params log_basis must be in 1..=6 for i8 decomposition".to_string(),
-        ));
-    }
+    validate_i8_setup_log_basis(params.log_basis, "for i8 commitment decomposition")?;
     let expected_a_width = params
         .block_len
         .checked_mul(params.num_digits_commit)

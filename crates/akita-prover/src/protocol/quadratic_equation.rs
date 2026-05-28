@@ -4,7 +4,7 @@
 //! the quadratic equation components M, y, z, and v.
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
-use crate::protocol::validation::validate_i8_log_basis;
+use crate::validation::validate_i8_setup_log_basis;
 use crate::{
     AkitaPolyOps, CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend,
     RecursiveWitnessView, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
@@ -379,7 +379,7 @@ where
                 "QuadraticEquation::new_prover"
             );
         }
-        validate_i8_log_basis(lp.log_basis)?;
+        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         if opening_points.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one opening point".to_string(),
@@ -702,7 +702,7 @@ where
         T: Transcript<F>,
         B: DigitRowsComputeBackend<F>,
     {
-        validate_i8_log_basis(lp.log_basis)?;
+        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         let num_claims = ring_opening_points.len();
         if num_claims == 0
             || ring_multiplier_points.len() != num_claims
@@ -1425,7 +1425,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
     B: RingSwitchComputeBackend<F>,
 {
-    validate_i8_log_basis(lp.log_basis)?;
+    validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
     if num_polys_per_point.is_empty() || num_polys_per_point.contains(&0) {
         return Err(AkitaError::InvalidProof);
     }

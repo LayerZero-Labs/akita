@@ -1,4 +1,5 @@
 use super::*;
+use crate::validation::{is_i8_log_basis, validate_i8_input_log_basis};
 
 #[inline]
 pub(super) fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usize>(
@@ -56,13 +57,7 @@ pub(super) const SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS: usize = 16;
 
 #[inline]
 pub(super) fn validate_i8_log_basis(log_basis: u32) -> Result<(), AkitaError> {
-    if (1..=6).contains(&log_basis) {
-        Ok(())
-    } else {
-        Err(AkitaError::InvalidInput(
-            "log_basis must be in 1..=6 for i8 NTT kernels".to_string(),
-        ))
-    }
+    validate_i8_input_log_basis(log_basis, "for i8 NTT kernels")
 }
 
 #[cfg(not(feature = "parallel"))]
@@ -85,7 +80,7 @@ pub(super) fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
 
 #[inline]
 pub(super) fn balanced_digit_abs_bound(log_basis: u32) -> u64 {
-    debug_assert!((1..=6).contains(&log_basis));
+    debug_assert!(is_i8_log_basis(log_basis));
     1u64 << (log_basis - 1)
 }
 
