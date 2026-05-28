@@ -50,6 +50,21 @@ fn bit_len_usize(x: usize) -> u32 {
 }
 
 #[inline]
+fn coefficient_term_bits(rhs_max_abs: u128, coefficient_terms: usize) -> u32 {
+    let terms = coefficient_terms.max(1);
+    let bits = bit_len_usize(terms);
+
+    // The i8 paths already retain a full bit of RHS slack for [-32, 31].
+    // Recover the extra bit lost when an exact power-of-two term count is
+    // represented by `bit_len_usize`, without relaxing arbitrary-RHS paths.
+    if rhs_max_abs <= I8_RHS_MAX_ABS && terms > 1 && terms.is_power_of_two() {
+        bits - 1
+    } else {
+        bits
+    }
+}
+
+#[inline]
 fn crt_accumulation_chunk_width_with_terms<F: CanonicalField, W: PrimeWidth, const K: usize>(
     rhs_max_abs: u128,
     coefficient_terms: usize,
@@ -64,7 +79,7 @@ fn crt_accumulation_chunk_width_with_terms<F: CanonicalField, W: PrimeWidth, con
     };
     let product_half_bits = (K as u32).saturating_mul(prime_bits).saturating_sub(1);
     let rhs_bits = bit_len_u128(rhs_max_abs.max(1));
-    let terms_bits = bit_len_usize(coefficient_terms.max(1));
+    let terms_bits = coefficient_term_bits(rhs_max_abs, coefficient_terms);
     let used_bits = q_half_bits + rhs_bits + terms_bits;
     let chunk_bits = product_half_bits.saturating_sub(used_bits);
     let width = if chunk_bits >= usize::BITS {

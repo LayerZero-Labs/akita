@@ -31,12 +31,12 @@ fn bounded_i8_tile_width_never_exceeds_raw_bound() {
 }
 
 #[test]
-fn crt_chunk_width_uses_full_convolution_term_count() {
+fn crt_chunk_width_recovers_small_i8_power_of_two_slack() {
     const D: usize = 32;
     let width =
         crt_accumulation_chunk_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(32, usize::MAX);
 
-    assert_eq!(width, 1024);
+    assert_eq!(width, 2048);
 }
 
 #[test]
@@ -208,7 +208,7 @@ fn dense_mat_vec_many_matches_individual_crt_ntt_q32_d64() {
 fn dense_single_row_i8_path_chunks_q128_accumulation() {
     type F = Prime128Offset275;
     const D: usize = 32;
-    const COLS: usize = 2048;
+    const COLS: usize = 2049;
 
     let matrix_row: Vec<CyclotomicRing<F, D>> = (0..COLS)
         .map(|col| {
