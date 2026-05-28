@@ -45,19 +45,24 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
     #[inline]
     pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] += self.coeffs[i];
-            }
-            return;
-        }
+        let k = k % (D << 1);
+
+        let global_neg = k >= D;
+        let shift = k % D;
+
         for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] += self.coeffs[i];
+            let target = i + shift;
+            let wrap_neg = target >= D;
+            let coeff = if global_neg ^ wrap_neg {
+                -self.coeffs[i]
             } else {
-                dst.coeffs[target - D] -= self.coeffs[i];
+                self.coeffs[i]
+            };
+
+            if target < D {
+                dst.coeffs[target] += coeff;
+            } else {
+                dst.coeffs[target - D] += coeff;
             }
         }
     }
@@ -65,19 +70,23 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
     #[inline]
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] -= self.coeffs[i];
-            }
-            return;
-        }
+        let k = k % (D << 1);
+
+        let global_neg = k >= D;
+        let shift = k % D;
+
         for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] -= self.coeffs[i];
+            let target = i + shift;
+            let wrap_neg = target >= D;
+            let coeff = if global_neg ^ wrap_neg {
+                -self.coeffs[i]
             } else {
-                dst.coeffs[target - D] += self.coeffs[i];
+                self.coeffs[i]
+            };
+            if target < D {
+                dst.coeffs[target] -= coeff;
+            } else {
+                dst.coeffs[target - D] -= coeff;
             }
         }
     }
