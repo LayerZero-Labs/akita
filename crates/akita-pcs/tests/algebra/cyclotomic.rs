@@ -223,7 +223,7 @@ fn negacyclic_shift_equals_mul_by_monomial() {
     assert_eq!(
         a.negacyclic_shift(8),
         -a,
-        "shift by D should be identity mod D"
+        "shift by D should negate (X^D = -1)"
     );
 }
 

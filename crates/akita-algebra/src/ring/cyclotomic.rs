@@ -158,10 +158,6 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         let shift = k % D;
 
         if shift == 0 {
-            assert!(
-                global_neg,
-                "shift 0 with global_neg == false is not allowed"
-            );
             return self.neg();
         }
 
