@@ -1,7 +1,7 @@
 //! End-to-end Akita PCS scheme orchestration.
 
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig, WCommitmentConfig};
-use akita_field::fields::wide::HasWide;
+use akita_field::fields::wide::{HasOptimizedFold, HasWide};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
@@ -124,6 +124,7 @@ where
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + HasUnreducedOps
+        + HasOptimizedFold
         + AkitaSerialize,
 {
     if level_d == D {
@@ -241,6 +242,7 @@ where
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + HasUnreducedOps
+        + HasOptimizedFold
         + AkitaSerialize,
 {
     akita_prover::prove_recursive_suffix_with_policy::<F, Cfg::ChallengeField, _, _>(
@@ -313,6 +315,7 @@ where
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + HasUnreducedOps
+        + HasOptimizedFold
         + AkitaSerialize,
 {
     if level_d == D {
@@ -381,6 +384,7 @@ where
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + HasUnreducedOps
+        + HasOptimizedFold
         + AkitaSerialize,
 {
     type ProverSetup = AkitaProverSetup<F, D>;

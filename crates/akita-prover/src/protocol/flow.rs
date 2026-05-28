@@ -16,7 +16,7 @@ use crate::{
     RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::fields::wide::HasWide;
+use akita_field::fields::wide::{HasOptimizedFold, HasWide};
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
@@ -1103,6 +1103,7 @@ where
         + ExtField<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
@@ -1412,7 +1413,12 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    L: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    L: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
@@ -1647,7 +1653,12 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    L: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    L: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
 {
@@ -1798,7 +1809,7 @@ fn prove_recursive_extension_opening_reduction<F, L, T>(
 ) -> Result<RecursiveExtensionOpeningReduction<L>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: ExtField<F> + HasUnreducedOps + AkitaSerialize,
+    L: ExtField<F> + HasUnreducedOps + HasOptimizedFold + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_vars = opening_point.len();
@@ -1952,6 +1963,7 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
@@ -2155,6 +2167,7 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
@@ -2353,6 +2366,7 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
@@ -2433,6 +2447,7 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
@@ -2642,7 +2657,12 @@ fn prove_prepared_root_extension_opening_reduction<F, E, C, T, P, const D: usize
 where
     F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F> + ExtField<E> + ExtField<F> + HasUnreducedOps + AkitaSerialize,
+    C: RingSubfieldEncoding<F>
+        + ExtField<E>
+        + ExtField<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
 {
@@ -2966,7 +2986,12 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
-    C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    C: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
@@ -3088,6 +3113,7 @@ where
         + ExtField<E>
         + ExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
@@ -3450,7 +3476,12 @@ pub fn prove_terminal_root_fold_with_params<F, E, C, T, P, B, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
     E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F> + ExtField<E> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    C: RingSubfieldEncoding<F>
+        + ExtField<E>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
@@ -3793,7 +3824,12 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, B, const D: usiz
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
-    C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    C: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
@@ -3906,7 +3942,12 @@ pub fn prove_root_fold_from_quadratic<F, C, T, B, const D: usize, CommitW>(
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
-    C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    C: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
@@ -4132,7 +4173,12 @@ pub fn prove_terminal_root_fold_from_quadratic<F, C, T, B, const D: usize>(
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
-    C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    C: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
 {

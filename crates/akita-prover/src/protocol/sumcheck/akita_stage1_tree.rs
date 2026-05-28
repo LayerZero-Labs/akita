@@ -15,6 +15,7 @@
 
 use super::akita_stage1 as single_stage_backend;
 use akita_algebra::split_eq::GruenSplitEq;
+use akita_field::fields::wide::HasOptimizedFold;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
@@ -221,7 +222,9 @@ impl<E: FieldCore> ProductStageProver<E> {
     }
 }
 
-impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E> {
+impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
+    for ProductStageProver<E>
+{
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
@@ -337,7 +340,9 @@ impl<E: FieldCore> PolynomialStageProver<E> {
     }
 }
 
-impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for PolynomialStageProver<E> {
+impl<E: FieldCore + HasOptimizedFold> EqFactoredSumcheckInstanceProver<E>
+    for PolynomialStageProver<E>
+{
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
@@ -492,7 +497,9 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + AkitaSerialize>
+    AkitaStage1Prover<E>
+{
     /// Produce the full stage-1 tree proof and return the final `r_stage1`.
     ///
     /// # Errors

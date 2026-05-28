@@ -20,6 +20,7 @@ use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
 use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_algebra::uni_poly::UniPoly;
 use akita_algebra::EqPolynomial;
+use akita_field::fields::wide::HasOptimizedFold;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, Zero};
 #[cfg(feature = "zk")]
@@ -692,7 +693,7 @@ fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
     (coeff * constant, coeff * quadratic)
 }
 
-fn fold_dense_reduction_tables_in_place<E: FieldCore>(
+fn fold_dense_reduction_tables_in_place<E: HasUnreducedOps + HasOptimizedFold>(
     witness_evals: &mut Vec<E>,
     factor_evals: &mut Vec<E>,
     r_round: E,
@@ -703,37 +704,117 @@ fn fold_dense_reduction_tables_in_place<E: FieldCore>(
     )
     .entered();
     debug_assert_eq!(witness_evals.len(), factor_evals.len());
+    fold_evals_in_place(witness_evals, r_round);
+    fold_evals_in_place(factor_evals, r_round);
+}
+
+/// Fold both tables by one variable AND pre-compute the next round's
+/// `(constant, quadratic)` accumulation in a single pass over the data.
+fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
+    witness_evals: &mut Vec<E>,
+    factor_evals: &mut Vec<E>,
+    r_round: E,
+) -> (E, E) {
+    let _span = tracing::trace_span!("fused_fold_and_accumulate", table_len = witness_evals.len())
+        .entered();
+    debug_assert_eq!(witness_evals.len(), factor_evals.len());
     debug_assert!(witness_evals.len().is_power_of_two());
-    debug_assert!(witness_evals.len() >= 2);
+    debug_assert!(witness_evals.len() >= 4);
+
     let half = witness_evals.len() / 2;
+    let quarter = half / 2;
+    let ctx = E::precompute_fold(r_round);
+
     #[cfg(feature = "parallel")]
     {
-        if half >= DENSE_PARALLEL_PAIR_THRESHOLD {
-            let fold_pair = |pair: &[E]| pair[0] + r_round * (pair[1] - pair[0]);
-            let (folded_witness, folded_factor) = rayon::join(
-                || witness_evals.par_chunks_exact(2).map(fold_pair).collect(),
-                || factor_evals.par_chunks_exact(2).map(fold_pair).collect(),
-            );
-            *witness_evals = folded_witness;
-            *factor_evals = folded_factor;
-            return;
+        if quarter >= DENSE_PARALLEL_PAIR_THRESHOLD {
+            let mut folded_w = Vec::<E>::with_capacity(half);
+            let mut folded_f = Vec::<E>::with_capacity(half);
+            // SAFETY: both vectors are allocated with capacity `half`. `half` is
+            // even (table length is a power of two >= 4), so the `par_chunks_mut(2)`
+            // loop below yields exactly `quarter` chunks of length 2 and writes all
+            // `half` slots before the first read (`*witness_evals = folded_w`).
+            // `E: FieldCore` is `Copy` with a trivial drop, so overwriting the
+            // uninitialized slots is sound.
+            unsafe {
+                folded_w.set_len(half);
+                folded_f.set_len(half);
+            }
+
+            let (const_sum, quad_sum) = {
+                let input_w: &[E] = witness_evals;
+                let input_f: &[E] = factor_evals;
+
+                folded_w
+                    .par_chunks_mut(2)
+                    .zip(folded_f.par_chunks_mut(2))
+                    .enumerate()
+                    .fold(
+                        || (E::ProductAccum::zero(), E::ProductAccum::zero()),
+                        |(mut c_acc, mut q_acc), (i, (w_out, f_out))| {
+                            let fw0 = E::fold_one(&ctx, input_w[4 * i], input_w[4 * i + 1]);
+                            let fw1 = E::fold_one(&ctx, input_w[4 * i + 2], input_w[4 * i + 3]);
+                            let fa0 = E::fold_one(&ctx, input_f[4 * i], input_f[4 * i + 1]);
+                            let fa1 = E::fold_one(&ctx, input_f[4 * i + 2], input_f[4 * i + 3]);
+
+                            c_acc += fw0.mul_to_product_accum(fa0);
+                            q_acc += (fw1 - fw0).mul_to_product_accum(fa1 - fa0);
+
+                            w_out[0] = fw0;
+                            w_out[1] = fw1;
+                            f_out[0] = fa0;
+                            f_out[1] = fa1;
+
+                            (c_acc, q_acc)
+                        },
+                    )
+                    .reduce(
+                        || (E::ProductAccum::zero(), E::ProductAccum::zero()),
+                        |(c1, q1), (c2, q2)| (c1 + c2, q1 + q2),
+                    )
+            };
+
+            *witness_evals = folded_w;
+            *factor_evals = folded_f;
+            let constant = E::reduce_product_accum(const_sum);
+            let quadratic = E::reduce_product_accum(quad_sum);
+            return (constant, quadratic);
         }
     }
-    for i in 0..half {
-        witness_evals[i] =
-            witness_evals[2 * i] + r_round * (witness_evals[2 * i + 1] - witness_evals[2 * i]);
-        factor_evals[i] =
-            factor_evals[2 * i] + r_round * (factor_evals[2 * i + 1] - factor_evals[2 * i]);
+
+    let mut const_accum = E::ProductAccum::zero();
+    let mut quad_accum = E::ProductAccum::zero();
+    for i in 0..quarter {
+        let fw0 = E::fold_one(&ctx, witness_evals[4 * i], witness_evals[4 * i + 1]);
+        let fw1 = E::fold_one(&ctx, witness_evals[4 * i + 2], witness_evals[4 * i + 3]);
+        let fa0 = E::fold_one(&ctx, factor_evals[4 * i], factor_evals[4 * i + 1]);
+        let fa1 = E::fold_one(&ctx, factor_evals[4 * i + 2], factor_evals[4 * i + 3]);
+
+        const_accum += fw0.mul_to_product_accum(fa0);
+        quad_accum += (fw1 - fw0).mul_to_product_accum(fa1 - fa0);
+
+        witness_evals[2 * i] = fw0;
+        witness_evals[2 * i + 1] = fw1;
+        factor_evals[2 * i] = fa0;
+        factor_evals[2 * i + 1] = fa1;
     }
     witness_evals.truncate(half);
     factor_evals.truncate(half);
+    let constant = E::reduce_product_accum(const_accum);
+    let quadratic = E::reduce_product_accum(quad_accum);
+    (constant, quadratic)
 }
 
 /// Prover state for the degree-two extension-opening reduction sumcheck.
+///
+/// Uses a fused fold+accumulate strategy: after each fold, the next round's
+/// accumulation is pre-computed in the same pass, avoiding a redundant read
+/// of the folded table.
 #[derive(Debug, Clone)]
 pub struct ExtensionOpeningReductionProver<E: FieldCore> {
     current_witness_evals: Vec<E>,
     current_factor_evals: Vec<E>,
+    cached_accumulate: Option<(E, E)>,
     input_claim: E,
     num_rounds: usize,
 }
@@ -752,6 +833,7 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
         Ok(Self {
             current_witness_evals: witness_evals,
             current_factor_evals: factor_evals,
+            cached_accumulate: None,
             input_claim,
             num_rounds,
         })
@@ -775,7 +857,7 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps> SumcheckInstanceProver<E>
+impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
     for ExtensionOpeningReductionProver<E>
 {
     fn num_rounds(&self) -> usize {
@@ -800,18 +882,31 @@ impl<E: FieldCore + HasUnreducedOps> SumcheckInstanceProver<E>
             self.current_witness_evals.len()
         );
 
-        let (constant, quadratic) = accumulate_dense_round(
-            &self.current_witness_evals,
-            &self.current_factor_evals,
-            E::one(),
-        );
+        let (constant, quadratic) = self.cached_accumulate.take().unwrap_or_else(|| {
+            accumulate_dense_round(
+                &self.current_witness_evals,
+                &self.current_factor_evals,
+                E::one(),
+            )
+        });
         let linear = previous_claim - constant - constant - quadratic;
 
         UniPoly::from_coeffs(vec![constant, linear, quadratic])
     }
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
-        if self.current_witness_evals.len() > 1 {
+        let current_len = self.current_witness_evals.len();
+        if current_len <= 1 {
+            return;
+        }
+        if current_len >= 4 {
+            let (constant, quadratic) = fused_fold_and_accumulate(
+                &mut self.current_witness_evals,
+                &mut self.current_factor_evals,
+                r_round,
+            );
+            self.cached_accumulate = Some((constant, quadratic));
+        } else {
             fold_dense_reduction_tables_in_place(
                 &mut self.current_witness_evals,
                 &mut self.current_factor_evals,
@@ -1633,7 +1728,7 @@ impl<E: FieldCore + HasUnreducedOps> BatchedExtensionOpeningWitness<E> {
     }
 }
 
-impl<E: FieldCore> BatchedExtensionOpeningWitness<E> {
+impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> BatchedExtensionOpeningWitness<E> {
     fn fold_with_factor_in_place(
         &mut self,
         factor: &mut BatchedExtensionOpeningFactor<E>,
@@ -1837,7 +1932,7 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionProver<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps> SumcheckInstanceProver<E>
+impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
     for BatchedExtensionOpeningReductionProver<E>
 {
     fn num_rounds(&self) -> usize {
@@ -2037,7 +2132,7 @@ impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningReductionSumcheck<E> {
+impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductionSumcheck<E> {
     /// Prove an extension-opening reduction sumcheck.
     ///
     /// # Errors
@@ -2070,7 +2165,7 @@ impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningReductionSumcheck<E> {
 }
 
 #[cfg(feature = "zk")]
-impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningReductionSumcheck<E> {
+impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductionSumcheck<E> {
     /// Prove an extension-opening reduction sumcheck with ZK round masks.
     ///
     /// # Errors

@@ -39,6 +39,7 @@ use super::two_round_prefix::{
     stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1BivariateSkipState,
 };
 use akita_algebra::split_eq::GruenSplitEq;
+use akita_field::fields::wide::HasOptimizedFold;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
@@ -2118,8 +2119,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> EqFactoredSumcheckInstanceProver<E>
-    for AkitaStage1Prover<E>
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
+    EqFactoredSumcheckInstanceProver<E> for AkitaStage1Prover<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_vars
@@ -2297,7 +2298,7 @@ pub(crate) fn pad_compact_witness(
 
 #[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn advance_stage1_claim<
-    F: FieldCore + FromPrimitiveInt + akita_field::CanonicalField + HasUnreducedOps,
+    F: FieldCore + FromPrimitiveInt + akita_field::CanonicalField + HasUnreducedOps + HasOptimizedFold,
 >(
     prover: &AkitaStage1Prover<F>,
     scaled_claim: F,

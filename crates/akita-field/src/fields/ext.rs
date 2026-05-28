@@ -1,7 +1,8 @@
 //! Quadratic, quartic, and ring-subfield extension fields.
 
 use super::wide::{
-    AccumPair, Fp2Fp64ProductAccum, HasUnreducedOps, RingSubfieldFp4Fp32ProductAccum,
+    AccumPair, FoldMatrixFp32, Fp2Fp64ProductAccum, HasOptimizedFold, HasUnreducedOps,
+    RingSubfieldFp4Fp32ProductAccum,
 };
 use super::{fp128::Fp128, fp16::Fp16, fp32::Fp32, fp64::Fp64};
 use crate::{BalancedDigitLookup, CanonicalField, FieldCore, HalvingField};
@@ -419,6 +420,27 @@ macro_rules! impl_fp2_unreduced_identity {
 impl_fp2_unreduced_identity!(Fp16<P: u32>);
 impl_fp2_unreduced_identity!(Fp32<P: u32>);
 impl_fp2_unreduced_identity!(Fp128<P: u128>);
+
+macro_rules! impl_fp2_default_optimized_fold {
+    ($base:ident<$p:ident: $pty:ty>) => {
+        impl<const $p: $pty, C: Fp2Config<$base<$p>>> HasOptimizedFold for Fp2<$base<$p>, C> {
+            type FoldCtx = Self;
+            #[inline]
+            fn precompute_fold(r: Self) -> Self {
+                r
+            }
+            #[inline]
+            fn fold_one(r: &Self, even: Self, odd: Self) -> Self {
+                even + *r * (odd - even)
+            }
+        }
+    };
+}
+
+impl_fp2_default_optimized_fold!(Fp16<P: u32>);
+impl_fp2_default_optimized_fold!(Fp32<P: u32>);
+impl_fp2_default_optimized_fold!(Fp64<P: u64>);
+impl_fp2_default_optimized_fold!(Fp128<P: u128>);
 
 /// Widening `Fp2<Fp64<P>, C>` multiplication with delayed reduction.
 ///
@@ -1930,6 +1952,67 @@ impl<const P: u32> HasUnreducedOps for RingSubfieldFp4<Fp32<P>> {
     }
 }
 
+impl<const P: u32> HasOptimizedFold for RingSubfieldFp4<Fp32<P>> {
+    type FoldCtx = FoldMatrixFp32;
+
+    #[inline]
+    fn precompute_fold(r: Self) -> FoldMatrixFp32 {
+        let [r0, r1, r2, r3] = r.coeffs;
+        let two = Fp32::<P>::from_u64(2);
+        FoldMatrixFp32([
+            [
+                r0.to_limbs(),
+                (two * r1).to_limbs(),
+                (two * r2).to_limbs(),
+                (two * r3).to_limbs(),
+            ],
+            [
+                r1.to_limbs(),
+                (r0 + r2).to_limbs(),
+                (r1 + r3).to_limbs(),
+                r2.to_limbs(),
+            ],
+            [
+                r2.to_limbs(),
+                (r1 + r3).to_limbs(),
+                r0.to_limbs(),
+                (r1 - r3).to_limbs(),
+            ],
+            [
+                r3.to_limbs(),
+                r2.to_limbs(),
+                (r1 - r3).to_limbs(),
+                (r0 - r2).to_limbs(),
+            ],
+        ])
+    }
+
+    #[inline]
+    fn fold_one(ctx: &FoldMatrixFp32, even: Self, odd: Self) -> Self {
+        let m = &ctx.0;
+        let d: [u32; 4] = std::array::from_fn(|j| (odd.coeffs[j] - even.coeffs[j]).to_limbs());
+        let folded: [Fp32<P>; 4] = if P < (1u32 << 31) {
+            // P < 2^31: each product < 2^62, sum of 4 < 2^64, fits in u64.
+            std::array::from_fn(|row| {
+                let acc: u64 = (m[row][0] as u64) * (d[0] as u64)
+                    + (m[row][1] as u64) * (d[1] as u64)
+                    + (m[row][2] as u64) * (d[2] as u64)
+                    + (m[row][3] as u64) * (d[3] as u64);
+                Fp32::<P>::from_u64(acc) + even.coeffs[row]
+            })
+        } else {
+            std::array::from_fn(|row| {
+                let acc: u128 = (m[row][0] as u128) * (d[0] as u128)
+                    + (m[row][1] as u128) * (d[1] as u128)
+                    + (m[row][2] as u128) * (d[2] as u128)
+                    + (m[row][3] as u128) * (d[3] as u128);
+                Fp32::<P>::from_canonical_u128_reduced(acc) + even.coeffs[row]
+            })
+        };
+        RingSubfieldFp4::new(folded)
+    }
+}
+
 macro_rules! impl_ring_subfield_fp4_unreduced_identity {
     ($base:ident<$p:ident: $pty:ty>) => {
         impl<const $p: $pty> HasUnreducedOps for RingSubfieldFp4<$base<$p>> {
@@ -1959,6 +2042,25 @@ macro_rules! impl_ring_subfield_fp4_unreduced_identity {
 
 impl_ring_subfield_fp4_unreduced_identity!(Fp64<P: u64>);
 impl_ring_subfield_fp4_unreduced_identity!(Fp128<P: u128>);
+
+macro_rules! impl_ring_subfield_fp4_default_optimized_fold {
+    ($base:ident<$p:ident: $pty:ty>) => {
+        impl<const $p: $pty> HasOptimizedFold for RingSubfieldFp4<$base<$p>> {
+            type FoldCtx = Self;
+            #[inline]
+            fn precompute_fold(r: Self) -> Self {
+                r
+            }
+            #[inline]
+            fn fold_one(r: &Self, even: Self, odd: Self) -> Self {
+                even + *r * (odd - even)
+            }
+        }
+    };
+}
+
+impl_ring_subfield_fp4_default_optimized_fold!(Fp64<P: u64>);
+impl_ring_subfield_fp4_default_optimized_fold!(Fp128<P: u128>);
 
 /// Degree-8 ring subfield element in canonical basis `[1, e1, ..., e7]`.
 #[repr(transparent)]
@@ -2328,6 +2430,21 @@ where
     #[inline]
     fn reduce_product_accum(accum: Self::ProductAccum) -> Self {
         accum
+    }
+}
+
+impl<F> HasOptimizedFold for RingSubfieldFp8<F>
+where
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp8MulBackend,
+{
+    type FoldCtx = Self;
+    #[inline]
+    fn precompute_fold(r: Self) -> Self {
+        r
+    }
+    #[inline]
+    fn fold_one(r: &Self, even: Self, odd: Self) -> Self {
+        even + *r * (odd - even)
     }
 }
 

@@ -1124,6 +1124,30 @@ impl<const P: u128> ReduceTo<Fp128<P>> for Fp128x8i32 {
     }
 }
 
+/// Precomputed fold context for `RingSubfieldFp4<Fp32<P>>`.
+///
+/// Stores a 4×4 multiplication matrix derived from the challenge `r`,
+/// enabling fold via 4 scalar multiply-accumulates per coefficient
+/// instead of the general 22-product ring multiplication.
+#[derive(Debug, Clone, Copy)]
+pub struct FoldMatrixFp32(pub(crate) [[u32; 4]; 4]);
+
+/// Per-element fold optimization trait.
+///
+/// Allows field types to precompute a fold context from challenge `r`
+/// (e.g. a multiplication matrix) and apply it per-element. The loop
+/// structure and parallelism live in the caller (`fold_evals_in_place`).
+pub trait HasOptimizedFold: FieldCore {
+    /// Precomputed context for folding by a fixed challenge `r`.
+    type FoldCtx: Copy + Send + Sync;
+
+    /// Build the fold context from challenge `r`.
+    fn precompute_fold(r: Self) -> Self::FoldCtx;
+
+    /// Fold one element pair: `even + r*(odd - even)`.
+    fn fold_one(ctx: &Self::FoldCtx, even: Self, odd: Self) -> Self;
+}
+
 /// Multi-level unreduced multiplication hierarchy.
 ///
 /// Provides `field × u64` and `field × field` widening multiplies that return
@@ -1145,6 +1169,27 @@ pub trait HasUnreducedOps: FieldCore {
     /// Reduce a full-product accumulator to a canonical field element.
     fn reduce_product_accum(accum: Self::ProductAccum) -> Self;
 }
+
+macro_rules! impl_default_optimized_fold {
+    ($base:ident<$p:ident: $pty:ty>) => {
+        impl<const $p: $pty> HasOptimizedFold for $base<$p> {
+            type FoldCtx = Self;
+            #[inline]
+            fn precompute_fold(r: Self) -> Self {
+                r
+            }
+            #[inline]
+            fn fold_one(r: &Self, even: Self, odd: Self) -> Self {
+                even + *r * (odd - even)
+            }
+        }
+    };
+}
+
+impl_default_optimized_fold!(Fp64<P: u64>);
+impl_default_optimized_fold!(Fp32<P: u32>);
+impl_default_optimized_fold!(Fp16<P: u32>);
+impl_default_optimized_fold!(Fp128<P: u128>);
 
 impl<const P: u64> HasUnreducedOps for Fp64<P> {
     type MulU64Accum = Fp64ProductAccum;

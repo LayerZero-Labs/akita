@@ -55,6 +55,7 @@ use super::two_round_prefix::{
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
+use akita_field::fields::wide::HasOptimizedFold;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
@@ -2315,7 +2316,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> SumcheckInstanceProver<E>
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
     for AkitaStage2Prover<E>
 {
     fn num_rounds(&self) -> usize {
