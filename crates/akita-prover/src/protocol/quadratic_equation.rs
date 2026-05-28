@@ -29,9 +29,9 @@ use akita_types::{
 };
 use akita_types::{ClaimIncidenceSummary, LevelParams};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
-#[cfg(feature = "zk")]
-use repeated_b::add_blinding_cyclic_rows;
 use repeated_b::repeated_b_commitment_rows;
+#[cfg(feature = "zk")]
+use repeated_b::{add_zk_b_blinding_cyclic_rows, add_zk_d_blinding_cyclic_rows};
 use std::iter::repeat_n;
 use std::time::Instant;
 
@@ -309,9 +309,16 @@ where
 {
     #[cfg(feature = "zk")]
     {
-        let mut d_input_digits = w_hat.flat_digits().to_vec();
-        d_input_digits.extend_from_slice(d_blinding_digits.flat_digits());
-        let rows = backend.digit_rows::<D>(prepared, row_len, &d_input_digits)?;
+        let mut rows = backend.digit_rows::<D>(prepared, row_len, w_hat.flat_digits())?;
+        let blinding_rows = backend.zk_d_digit_rows::<D>(
+            prepared,
+            row_len,
+            d_blinding_digits.flat_digits().len(),
+            d_blinding_digits.flat_digits(),
+        )?;
+        for (row, blinding) in rows.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
         if rows.len() != row_len {
             return Err(AkitaError::InvalidProof);
         }
@@ -1423,37 +1430,8 @@ where
     let mut z_segments = z_pre_centered.chunks(inner_width);
     let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
-    #[cfg(feature = "zk")]
-    let relation_w_hat_storage: std::borrow::Cow<'_, [[i8; D]]> = if d_blinding_digits.is_empty() {
-        std::borrow::Cow::Borrowed(w_hat_flat)
-    } else {
-        let mut padded = vec![[0i8; D]; w_hat_flat.len() + d_blinding_digits.flat_digits().len()];
-        padded[..w_hat_flat.len()].copy_from_slice(w_hat_flat);
-        std::borrow::Cow::Owned(padded)
-    };
-    #[cfg(feature = "zk")]
-    let relation_w_hat = relation_w_hat_storage.as_ref();
-    #[cfg(not(feature = "zk"))]
     let relation_w_hat = w_hat_flat;
 
-    #[cfg(feature = "zk")]
-    let relation_t_hat_storage: std::borrow::Cow<'_, [[i8; D]]> = if num_points == 1 {
-        let blinding_len = b_blinding_digits
-            .first()
-            .map_or(0usize, |digits| digits.flat_digits().len());
-        if blinding_len == 0 {
-            std::borrow::Cow::Borrowed(t_hat.flat_digits())
-        } else {
-            let mut padded = vec![[0i8; D]; t_hat.flat_digits().len() + blinding_len];
-            padded[..t_hat.flat_digits().len()].copy_from_slice(t_hat.flat_digits());
-            std::borrow::Cow::Owned(padded)
-        }
-    } else {
-        std::borrow::Cow::Borrowed(t_hat.flat_digits())
-    };
-    #[cfg(feature = "zk")]
-    let relation_t_hat = relation_t_hat_storage.as_ref();
-    #[cfg(not(feature = "zk"))]
     let relation_t_hat = t_hat.flat_digits();
 
     let relation_rows = backend.ring_switch_relation_rows::<D>(
@@ -1481,11 +1459,10 @@ where
     #[cfg(not(feature = "zk"))]
     let d_cyclic = relation_rows.d_cyclic;
     #[cfg(feature = "zk")]
-    add_blinding_cyclic_rows(
+    add_zk_d_blinding_cyclic_rows(
         backend,
         prepared,
         n_d_active,
-        w_hat_flat.len(),
         d_blinding_digits,
         &mut d_cyclic,
     )?;
@@ -1513,11 +1490,11 @@ where
         #[cfg(feature = "zk")]
         {
             let blinding = b_blinding_digits.first().ok_or(AkitaError::InvalidProof)?;
-            add_blinding_cyclic_rows(
+            add_zk_b_blinding_cyclic_rows(
                 backend,
                 prepared,
                 n_b,
-                t_hat.flat_digits().len(),
+                blinding.flat_digits().len(),
                 blinding,
                 &mut rows,
             )?;

@@ -211,6 +211,42 @@ where
         .collect()
 }
 
+#[cfg(feature = "zk")]
+pub(crate) fn zk_b_blinding_rows<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    row_len: usize,
+    col_offset: usize,
+    row_width: usize,
+    blinding_digits: &[i8],
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    if D == 0 || !blinding_digits.len().is_multiple_of(D) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let digits = blinding_digits
+        .chunks_exact(D)
+        .map(|chunk| {
+            let mut plane = [0i8; D];
+            plane.copy_from_slice(chunk);
+            plane
+        })
+        .collect::<Vec<_>>();
+    let col_end = col_offset
+        .checked_add(digits.len())
+        .ok_or(AkitaError::InvalidProof)?;
+    if col_end > row_width {
+        return Err(AkitaError::InvalidProof);
+    }
+    let b_zk_view = setup
+        .expanded
+        .zk_b_matrix()
+        .ring_view::<D>(row_len, row_width)?;
+    let b_zk_rows: Vec<_> = b_zk_view.rows().collect();
+    Ok(mat_vec_mul_i8_plain::<F, D>(&b_zk_rows, &digits))
+}
+
 fn decompose_rows_i8<F, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     num_digits: usize,
@@ -274,7 +310,6 @@ where
 
 #[cfg(feature = "zk")]
 pub(crate) fn append_direct_blinding<F, const D: usize>(
-    input: &mut Vec<[i8; D]>,
     revealed_b_blinding_digits: &[i8],
     params: &LevelParams,
 ) -> Result<(), AkitaError>
@@ -292,11 +327,6 @@ where
     if revealed_b_blinding_digits.len() != expected_digits {
         return Err(AkitaError::InvalidProof);
     }
-    input.extend(revealed_b_blinding_digits.chunks_exact(D).map(|chunk| {
-        let mut plane = [0i8; D];
-        plane.copy_from_slice(chunk);
-        plane
-    }));
     Ok(())
 }
 
@@ -319,17 +349,32 @@ where
         outer_input.extend(direct_decomposed_inner_rows(&witness_rings, setup, params)?);
     }
 
-    #[cfg(feature = "zk")]
-    append_direct_blinding::<F, D>(&mut outer_input, blinding_digits, params)?;
-
     let b_matrix = setup
         .expanded
         .shared_matrix()
         .ring_view::<D>(params.b_key.row_len(), outer_input.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
-    Ok(RingCommitment {
-        u: mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input),
-    })
+    let u = mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input);
+    #[cfg(feature = "zk")]
+    {
+        let mut u = u;
+        append_direct_blinding::<F, D>(blinding_digits, params)?;
+        let blinding_rows = zk_b_blinding_rows::<F, D>(
+            setup,
+            params.b_key.row_len(),
+            0,
+            blinding_digits.len() / D,
+            blinding_digits,
+        )?;
+        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
+        Ok(RingCommitment { u })
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        Ok(RingCommitment { u })
+    }
 }
 
 /// Recompute root-direct commitments from direct witnesses and compare them to
@@ -733,6 +778,10 @@ mod tests {
             max_num_points: 1,
             gen_ring_dim: D,
             max_setup_len: 3,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
             public_matrix_seed: [0u8; 32],
         };
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
@@ -761,6 +810,10 @@ mod tests {
             max_num_points: 1,
             gen_ring_dim: D,
             max_setup_len: 128,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
             public_matrix_seed: [0u8; 32],
         };
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(

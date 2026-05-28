@@ -45,8 +45,8 @@ does three bad things:
   reason about `row * max_stride + col` instead of the actual role map.
 
 The target layout removes the global setup-stride contract. There is still one
-shared random setup object, denoted `S`, but A, B, and D are packed prefix views
-of it:
+shared random setup object, labeled `shared` in setup derivation and formulas,
+but A, B, and D are packed prefix views of it:
 
 ```text
 A: ring_view(n_a, a_setup_width)
@@ -59,13 +59,15 @@ prefix views of the same raw setup vector. If a raw setup index is reached by
 more than one role view, later setup-claim offloading adds the corresponding
 role weights at that shared coordinate.
 
-ZK blinding tails are not part of this base setup object. They have separate,
-smaller, point-local semantics and should use a dedicated ZK setup seed/domain.
+ZK blinding tails are not part of this base setup object. Under
+`feature = "zk"`, setup materializes separate smaller `zkB` and `zkD`
+matrices from the same `public_matrix_seed` under short, fixed labels.
 
 ## Notation
 
-`S` is the base shared setup object. For the layout branch, `S[lambda]` is a
-ring element. Later setup-claim offloading will expose its coefficient axis:
+`S` is the base shared setup object. Its setup derivation label is `shared`.
+For the layout branch, `S[lambda]` is a ring element. Later setup-claim
+offloading will expose its coefficient axis:
 
 ```text
 S(lambda, y) = coefficient y of S[lambda]
@@ -178,7 +180,9 @@ with an explicit packed capacity:
 
 ```text
 SetupMatrixEnvelope {
-    max_setup_len: usize,   // ring slots at setup generation dimension
+    max_setup_len: usize,   // base shared ring slots at setup generation dimension
+    max_zk_b_len: usize,    // feature = "zk": B-blinding ring slots
+    max_zk_d_len: usize,    // feature = "zk": D-blinding ring slots
 }
 ```
 
@@ -195,7 +199,8 @@ max_setup_len = max over supported levels/shapes of {
 This is a maximum, not a sum. A/B/D remain overlapping prefix views of one
 shared setup vector.
 
-Do not add ZK blinding tail widths to `max_setup_len`.
+Do not add ZK blinding tail widths to `max_setup_len`. Under
+`feature = "zk"`, size them separately as `max_zk_b_len` and `max_zk_d_len`.
 
 ### Setup Seed Metadata
 
@@ -213,8 +218,9 @@ to:
 ```text
 AkitaSetupSeed {
     max_setup_len,
-    public_matrix_seed,      // base A/B/D setup only
-    zk_blinding_seed,        // or equivalent separated ZK domain
+    max_zk_b_len,            // feature = "zk"
+    max_zk_d_len,            // feature = "zk"
+    public_matrix_seed,      // labels: shared, zkB, zkD
     ...
 }
 ```
@@ -340,14 +346,30 @@ without forcing a fake global stride.
 ## ZK Blinding Split
 
 Under `feature = "zk"`, B/D blinding terms should not be columns of the base
-setup matrix. They should be derived from a separate ZK setup seed/domain:
+setup matrix. They should not add another seed either. Instead, setup
+materializes three labeled public matrices from `public_matrix_seed`:
 
 ```text
-ZK_B_BLINDING(point_idx, b_row, local, coeff_idx)
-ZK_D_BLINDING(d_row, local, coeff_idx)
+shared[lambda]
+  = PRF(public_matrix_seed, "shared", lambda)
+
+zkB[lambda_B]
+  = PRF(public_matrix_seed, "zkB", lambda_B)
+
+zkD[lambda_D]
+  = PRF(public_matrix_seed, "zkD", lambda_D)
 ```
 
-B is point-local:
+The PRF/XOF input tuple is encoded as seed, label, and the listed flat ring
+slot index as an unsigned 64-bit little-endian integer under the setup
+derivation's length-prefixed field encoding. Coefficients are output
+coordinates in `[0, D_setup)`, not additional seed inputs.
+
+These labels are protocol labels, not version strings. If a future incompatible
+derivation is needed, change the setup-layout domain around the seed/descriptor
+rather than appending a label version.
+
+B blinding witnesses are point-local:
 
 ```text
 b_blinding_digit_planes_per_point =
@@ -355,6 +377,17 @@ b_blinding_digit_planes_per_point =
 
 b_blinding_segment_len =
   num_points * b_blinding_digit_planes_per_point
+```
+
+The materialized B-blinding setup view is per commitment and reused for each
+point with fresh blinding digits:
+
+```text
+setup.zk_b_matrix().ring_view(n_b, b_blinding_digit_planes_per_point)
+
+lambda_B =
+  b_row * b_blinding_digit_planes_per_point
+  + local
 ```
 
 D is global and is absent in terminal M-row layout:
@@ -365,10 +398,24 @@ d_blinding_segment_len =
   0                                               // terminal
 ```
 
-The verifier can evaluate ZK blinding directly from the ZK domain. This work is
-intentionally outside the base `S` claim. If ZK blinding is ever offloaded, it
-should be a separate small claim over the ZK domain, not an expansion of the
-base A/B/D setup matrix.
+The materialized D-blinding view is:
+
+```text
+setup.zk_d_matrix().ring_view(n_d, d_blinding_segment_len)
+
+lambda_D =
+  d_row * d_blinding_segment_len
+  + local
+```
+
+Prover and verifier read these stored matrices during protocol replay. They do
+not derive ZK blinding rows on demand. Setup validation checks the materialized
+`shared`, `zkB`, and `zkD` matrices against `public_matrix_seed` and the seed's
+declared lengths.
+
+This work is intentionally outside the base `S` claim. If ZK blinding is ever
+offloaded, it should be a separate small claim over the matching ZK matrix, not
+an expansion of the base A/B/D setup matrix.
 
 ## Setup Contribution After Repack
 
@@ -728,10 +775,10 @@ setup offloading should be developed as parallel lanes, then integrated.
 
 This is the implementation branch for this spec. It removes `max_stride`,
 introduces `max_setup_len`, centralizes packed A/B/D role views, cuts over all
-existing setup-matrix consumers, and moves ZK B/D blinding to a separate
-seed/domain. It must not add setup-prefix commitments, setup product
-sumchecks, recursive carried-claim batching, or new proof objects for setup
-offloading.
+existing setup-matrix consumers, and moves ZK B/D blinding out of base `S`
+into stored `zkB` and `zkD` matrices derived from `public_matrix_seed`. It must
+not add setup-prefix commitments, setup product sumchecks, recursive
+carried-claim batching, or new proof objects for setup offloading.
 
 ### Materialized Inner-Product Oracle
 
@@ -811,7 +858,8 @@ Suggested commit boundaries:
    already multiply by A/B setup rows; it does not add new commitments.
 5. Cut over fused NTT quotient kernels to role-width row slices.
 6. Rewrite direct `compute_setup_contribution` as explicit packed D/B/A sums.
-7. Split ZK B/D blinding into the separate ZK setup seed/domain.
+7. Split ZK B/D blinding into stored `zkB`/`zkD` matrices derived from
+   `public_matrix_seed`.
 8. Add focused equivalence tests and then broader end-to-end tests.
 
 The direct verifier should continue to work before setup-claim offloading is
@@ -831,8 +879,9 @@ Minimum tests for the implementation branch:
   batched fixtures after converting fixtures from `r_max * max_stride` to
   packed role widths.
 - Root direct witness recomputation still verifies commitments.
-- ZK B/D blinding tests derive entries from `zk_blinding_seed` and no longer
-  allocate blinding tail columns in the base setup matrix.
+- ZK B/D blinding tests read entries from stored `zkB`/`zkD` matrices derived
+  from `public_matrix_seed` with labels `zkB`/`zkD`, and no longer allocate
+  blinding tail columns in the base setup matrix.
 
 For the later offloading branches:
 

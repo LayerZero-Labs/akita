@@ -515,12 +515,20 @@ where
         hiding_params.num_digits_open,
         hiding_params.log_basis,
     )?;
-    let mut b_input_digits = inner.decomposed_inner_rows.flat_digits().to_vec();
+    let b_input_digits = inner.decomposed_inner_rows.flat_digits().to_vec();
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(hiding_params.b_key.row_len(), hiding_params.log_basis)?;
-    b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
-    let u_blind_rings: Vec<CyclotomicRing<F, D>> =
+    let mut u_blind_rings: Vec<CyclotomicRing<F, D>> =
         backend.digit_rows::<D>(prepared, hiding_params.b_key.row_len(), &b_input_digits)?;
+    let blinding_rows = backend.zk_b_digit_rows::<D>(
+        prepared,
+        hiding_params.b_key.row_len(),
+        b_blinding_digits.flat_digits().len(),
+        b_blinding_digits.flat_digits(),
+    )?;
+    for (row, blinding) in u_blind_rings.iter_mut().zip(blinding_rows) {
+        *row += blinding;
+    }
     if u_blind_rings.len() != hiding_params.b_key.row_len() {
         return Err(AkitaError::InvalidSetup(format!(
             "backend returned {} ZK hiding rows, expected {}",
@@ -4291,8 +4299,16 @@ mod tests {
                 max_num_points: 2,
                 gen_ring_dim: 1,
                 max_setup_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
                 public_matrix_seed: [0u8; 32],
             },
+            FlatMatrix::from_flat_data(vec![F::zero()], 1),
+            #[cfg(feature = "zk")]
+            FlatMatrix::from_flat_data(vec![F::zero()], 1),
+            #[cfg(feature = "zk")]
             FlatMatrix::from_flat_data(vec![F::zero()], 1),
         )
     }

@@ -1,11 +1,14 @@
 use super::*;
 
 #[cfg(feature = "zk")]
-pub(super) fn add_blinding_cyclic_rows<F, B, const D: usize>(
+#[cfg(test)]
+use crate::protocol::masking::zk_matrix_cyclic_digit_rows;
+
+#[cfg(feature = "zk")]
+pub(super) fn add_zk_d_blinding_cyclic_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
-    n_b: usize,
-    message_planes: usize,
+    n_d: usize,
     blinding: &FlatDigitBlocks<D>,
     rows: &mut [CyclotomicRing<F, D>],
 ) -> Result<(), AkitaError>
@@ -13,27 +16,55 @@ where
     F: FieldCore + CanonicalField,
     B: CyclicRowsComputeBackend<F>,
 {
-    let row_width = message_planes
-        .checked_add(blinding.flat_digits().len())
-        .ok_or(AkitaError::InvalidProof)?;
-    add_blinding_cyclic_rows_with_width(
+    add_zk_blinding_cyclic_rows(
         backend,
         prepared,
-        n_b,
-        row_width,
-        message_planes,
+        ZkBlindingRole::D,
+        n_d,
+        blinding.flat_digits().len(),
         blinding,
         rows,
     )
 }
 
 #[cfg(feature = "zk")]
-fn add_blinding_cyclic_rows_with_width<F, B, const D: usize>(
+pub(super) fn add_zk_b_blinding_cyclic_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     n_b: usize,
     row_width: usize,
-    message_planes: usize,
+    blinding: &FlatDigitBlocks<D>,
+    rows: &mut [CyclotomicRing<F, D>],
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    B: CyclicRowsComputeBackend<F>,
+{
+    add_zk_blinding_cyclic_rows(
+        backend,
+        prepared,
+        ZkBlindingRole::B,
+        n_b,
+        row_width,
+        blinding,
+        rows,
+    )
+}
+
+#[cfg(feature = "zk")]
+#[derive(Clone, Copy)]
+enum ZkBlindingRole {
+    B,
+    D,
+}
+
+#[cfg(feature = "zk")]
+fn add_zk_blinding_cyclic_rows<F, B, const D: usize>(
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    role: ZkBlindingRole,
+    row_len: usize,
+    row_width: usize,
     blinding: &FlatDigitBlocks<D>,
     rows: &mut [CyclotomicRing<F, D>],
 ) -> Result<(), AkitaError>
@@ -44,22 +75,27 @@ where
     if blinding.is_empty() {
         return Ok(());
     }
-    if rows.len() != n_b {
+    if rows.len() != row_len {
         return Err(AkitaError::InvalidProof);
     }
-    let blinding_end = message_planes
-        .checked_add(blinding.flat_digits().len())
-        .ok_or(AkitaError::InvalidProof)?;
-    if blinding_end > row_width {
+    let blinding_rows = match role {
+        ZkBlindingRole::B => backend.zk_b_cyclic_digit_rows::<D>(
+            prepared,
+            row_len,
+            row_width,
+            blinding.flat_digits(),
+        )?,
+        ZkBlindingRole::D => backend.zk_d_cyclic_digit_rows::<D>(
+            prepared,
+            row_len,
+            row_width,
+            blinding.flat_digits(),
+        )?,
+    };
+    if blinding_rows.len() != row_len {
         return Err(AkitaError::InvalidProof);
     }
-    let mut padded = vec![[0i8; D]; row_width];
-    padded[message_planes..blinding_end].copy_from_slice(blinding.flat_digits());
-    let b_blinding_rows = backend.cyclic_digit_rows::<D>(prepared, n_b, &padded)?;
-    if b_blinding_rows.len() != n_b {
-        return Err(AkitaError::InvalidProof);
-    }
-    for (row, b_blinding_row) in rows.iter_mut().zip(b_blinding_rows) {
+    for (row, b_blinding_row) in rows.iter_mut().zip(blinding_rows) {
         *row += b_blinding_row;
     }
     Ok(())
@@ -123,9 +159,7 @@ where
             .flat_digits()
             .get(plane_offset..next_plane_offset)
             .ok_or(AkitaError::InvalidProof)?;
-        let group_width = group_planes
-            .checked_add(blinding.flat_digits().len())
-            .ok_or(AkitaError::InvalidProof)?;
+        let group_width = group_planes;
         row_width = row_width.max(group_width);
         groups.push((plane_offset, next_plane_offset, group_planes, blinding));
         block_offset = next_block_offset;
@@ -139,6 +173,8 @@ where
     for (start, end, group_planes, blinding) in groups {
         #[cfg(not(feature = "zk"))]
         let _ = (group_planes, blinding);
+        #[cfg(feature = "zk")]
+        let _ = group_planes;
         let group_digits = t_hat
             .flat_digits()
             .get(start..end)
@@ -157,12 +193,11 @@ where
         #[cfg(feature = "zk")]
         {
             let row_start = rows.len() - n_b;
-            add_blinding_cyclic_rows_with_width(
+            add_zk_b_blinding_cyclic_rows(
                 backend,
                 prepared,
                 n_b,
-                row_width,
-                group_planes,
+                blinding.flat_digits().len(),
                 blinding,
                 &mut rows[row_start..row_start + n_b],
             )?;
@@ -204,9 +239,17 @@ mod tests {
                 max_num_points: 2,
                 gen_ring_dim: D,
                 max_setup_len: setup_rows.len(),
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
                 public_matrix_seed: [7u8; 32],
             },
             FlatMatrix::from_ring_slice::<D>(&setup_rows),
+            #[cfg(feature = "zk")]
+            FlatMatrix::from_flat_data(vec![F::zero(); D], D),
+            #[cfg(feature = "zk")]
+            FlatMatrix::from_flat_data(vec![F::zero(); D], D),
         );
         let setup = AkitaProverSetup::from_seed_validated_expanded(expanded).expect("valid setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
@@ -266,13 +309,20 @@ mod tests {
         let blinding_width = 2;
         let row_width = num_polys_per_point
             .iter()
-            .map(|&count| count * block_width + blinding_width)
+            .map(|&count| count * block_width)
             .max()
             .unwrap();
         let setup_rows: Vec<CyclotomicRing<F, D>> = (0..(n_b * row_width))
             .map(|idx| {
                 CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
                     F::from_i64(((idx * 19 + k * 7) % 47) as i64 - 23)
+                }))
+            })
+            .collect();
+        let zk_b_rows: Vec<CyclotomicRing<F, D>> = (0..(n_b * blinding_width))
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                    F::from_i64(((idx * 23 + k * 11) % 53) as i64 - 26)
                 }))
             })
             .collect();
@@ -283,9 +333,17 @@ mod tests {
                 max_num_points: 2,
                 gen_ring_dim: D,
                 max_setup_len: setup_rows.len(),
+                #[cfg(feature = "zk")]
+                max_zk_b_len: zk_b_rows.len(),
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
                 public_matrix_seed: [9u8; 32],
             },
             FlatMatrix::from_ring_slice::<D>(&setup_rows),
+            #[cfg(feature = "zk")]
+            FlatMatrix::from_ring_slice::<D>(&zk_b_rows),
+            #[cfg(feature = "zk")]
+            FlatMatrix::from_flat_data(vec![F::zero(); D], D),
         );
         let setup = AkitaProverSetup::from_seed_validated_expanded(expanded).expect("valid setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
@@ -332,17 +390,36 @@ mod tests {
         let mut first_digits = vec![[0i8; D]; row_width];
         first_digits[..(2 * block_width)]
             .copy_from_slice(&t_hat.flat_digits()[..(2 * block_width)]);
-        first_digits[(2 * block_width)..(2 * block_width + blinding_width)]
-            .copy_from_slice(b_blinding[0].flat_digits());
-        let first = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_b, row_width, &first_digits);
+        let mut first =
+            mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_b, row_width, &first_digits);
+        let first_blinding = zk_matrix_cyclic_digit_rows(
+            setup.expanded.zk_b_matrix(),
+            n_b,
+            0,
+            blinding_width,
+            b_blinding[0].flat_digits(),
+        )
+        .unwrap();
+        for (row, blinding) in first.iter_mut().zip(first_blinding) {
+            *row += blinding;
+        }
 
         let mut second_digits = vec![[0i8; D]; row_width];
         second_digits[..block_width]
             .copy_from_slice(&t_hat.flat_digits()[(2 * block_width)..(3 * block_width)]);
-        second_digits[block_width..(block_width + blinding_width)]
-            .copy_from_slice(b_blinding[1].flat_digits());
-        let second =
+        let mut second =
             mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_b, row_width, &second_digits);
+        let second_blinding = zk_matrix_cyclic_digit_rows(
+            setup.expanded.zk_b_matrix(),
+            n_b,
+            0,
+            blinding_width,
+            b_blinding[1].flat_digits(),
+        )
+        .unwrap();
+        for (row, blinding) in second.iter_mut().zip(second_blinding) {
+            *row += blinding;
+        }
 
         let expected = first.into_iter().chain(second).collect::<Vec<_>>();
         assert_eq!(got, expected);

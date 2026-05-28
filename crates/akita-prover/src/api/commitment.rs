@@ -295,15 +295,27 @@ where
             },
         )?;
     #[cfg(feature = "zk")]
-    let b_blinding_digits = {
-        let b_blinding_digits =
-            sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
-        b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
-        b_blinding_digits
-    };
+    let b_blinding_digits =
+        sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
     validate_commit_outer_input_nonempty(b_input_digits.len())?;
+    #[cfg(feature = "zk")]
+    let mut u: Vec<CyclotomicRing<F, D>> =
+        backend.digit_rows::<D>(prepared, params.b_key.row_len(), &b_input_digits)?;
+    #[cfg(not(feature = "zk"))]
     let u: Vec<CyclotomicRing<F, D>> =
         backend.digit_rows::<D>(prepared, params.b_key.row_len(), &b_input_digits)?;
+    #[cfg(feature = "zk")]
+    {
+        let blinding_rows = backend.zk_b_digit_rows::<D>(
+            prepared,
+            params.b_key.row_len(),
+            b_blinding_digits.flat_digits().len(),
+            b_blinding_digits.flat_digits(),
+        )?;
+        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
+    }
     if u.len() != params.b_key.row_len() {
         return Err(AkitaError::InvalidSetup(format!(
             "backend returned {} B commitment rows, expected {}",

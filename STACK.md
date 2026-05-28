@@ -241,8 +241,9 @@ Akita setup offloading cuts through shared protocol invariants:
 - prover paths that consume A/B/D setup rows;
 - verifier direct-recommit paths that consume A/B setup rows;
 - fused setup contribution replay;
-- ZK blinding paths, which deliberately use a separate small setup seed/domain
-  instead of the base setup matrix;
+- ZK blinding paths, which deliberately use stored `zkB`/`zkD` matrices
+  derived from `public_matrix_seed` instead of tail columns in the base setup
+  matrix;
 - recursive proof state and carried opening claims;
 - generated schedule/table policy.
 

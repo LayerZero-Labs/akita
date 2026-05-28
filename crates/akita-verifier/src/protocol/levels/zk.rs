@@ -1,6 +1,6 @@
 use crate::protocol::batched::{
     append_direct_blinding, direct_decomposed_inner_rows, field_evals_to_rings,
-    mat_vec_mul_i8_plain,
+    mat_vec_mul_i8_plain, zk_b_blinding_rows,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -72,21 +72,15 @@ where
         num_ring,
     )?;
     let witness_rings = field_evals_to_rings::<F, D>(&evals)?;
-    let mut b_input_digits = direct_decomposed_inner_rows(&witness_rings, setup, &hiding_params)?;
-    append_direct_blinding::<F, D>(
-        &mut b_input_digits,
-        &proof.b_blinding_digits,
-        &hiding_params,
-    )?;
-    let expanded = setup.expanded.as_ref();
-    let seed = expanded.seed();
-    let shared_matrix = expanded.shared_matrix();
+    let b_input_digits = direct_decomposed_inner_rows(&witness_rings, setup, &hiding_params)?;
+    append_direct_blinding::<F, D>(&proof.b_blinding_digits, &hiding_params)?;
+    let shared_matrix = setup.expanded.shared_matrix();
     let b_required = hiding_params
         .b_key
         .row_len()
         .checked_mul(b_input_digits.len())
         .ok_or_else(|| AkitaError::InvalidSetup("ZK hiding B footprint overflow".to_string()))?;
-    if b_required > seed.max_setup_len {
+    if b_required > shared_matrix.total_ring_elements_at::<D>()? {
         return Err(AkitaError::InvalidSetup(
             "ZK hiding commitment exceeds shared matrix length".to_string(),
         ));
@@ -95,7 +89,17 @@ where
     let b_matrix =
         shared_matrix.ring_view::<D>(hiding_params.b_key.row_len(), b_input_digits.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
-    let expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
+    let mut expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
+    let blinding_rows = zk_b_blinding_rows::<F, D>(
+        setup,
+        hiding_params.b_key.row_len(),
+        0,
+        proof.b_blinding_digits.len() / D,
+        &proof.b_blinding_digits,
+    )?;
+    for (row, blinding) in expected_u_blind_rings.iter_mut().zip(blinding_rows) {
+        *row += blinding;
+    }
     let expected_len = expected_u_blind_rings
         .len()
         .checked_mul(D)

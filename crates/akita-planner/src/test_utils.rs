@@ -98,6 +98,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
             )));
         }
         let mut max_setup_len: usize = 1;
+        #[cfg(feature = "zk")]
+        let mut max_zk_b_len: usize = 1;
+        #[cfg(feature = "zk")]
+        let mut max_zk_d_len: usize = 1;
         for num_vars in 1..=max_num_vars {
             for num_polys in 1..=max_num_batched_polys {
                 let upper_pts = num_polys.min(max_num_points);
@@ -107,10 +111,21 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
                     let schedule = <Self as CommitmentConfig>::get_params_for_prove(&incidence)?;
                     let envelope = matrix_envelope_for_schedule::<Self>(&schedule, &incidence)?;
                     max_setup_len = max_setup_len.max(envelope.max_setup_len);
+                    #[cfg(feature = "zk")]
+                    {
+                        max_zk_b_len = max_zk_b_len.max(envelope.max_zk_b_len);
+                        max_zk_d_len = max_zk_d_len.max(envelope.max_zk_d_len);
+                    }
                 }
             }
         }
-        Ok(akita_types::SetupMatrixEnvelope { max_setup_len })
+        Ok(akita_types::SetupMatrixEnvelope {
+            max_setup_len,
+            #[cfg(feature = "zk")]
+            max_zk_b_len,
+            #[cfg(feature = "zk")]
+            max_zk_d_len,
+        })
     }
 
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {

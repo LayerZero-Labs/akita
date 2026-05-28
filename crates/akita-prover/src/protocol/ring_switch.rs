@@ -645,15 +645,26 @@ where
     #[cfg(feature = "zk")]
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(commit_layout.b_key.row_len(), commit_layout.log_basis)?;
-    #[cfg(feature = "zk")]
-    let mut outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
-    #[cfg(not(feature = "zk"))]
     let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
-    #[cfg(feature = "zk")]
-    outer_input.extend_from_slice(b_blinding_digits.flat_digits());
     validate_commit_outer_input_nonempty(outer_input.len())?;
+    #[cfg(feature = "zk")]
+    let mut u: Vec<CyclotomicRing<F, D>> =
+        backend.digit_rows::<D>(prepared, commit_layout.b_key.row_len(), &outer_input)?;
+    #[cfg(not(feature = "zk"))]
     let u: Vec<CyclotomicRing<F, D>> =
         backend.digit_rows::<D>(prepared, commit_layout.b_key.row_len(), &outer_input)?;
+    #[cfg(feature = "zk")]
+    {
+        let blinding_rows = backend.zk_b_digit_rows::<D>(
+            prepared,
+            commit_layout.b_key.row_len(),
+            b_blinding_digits.flat_digits().len(),
+            b_blinding_digits.flat_digits(),
+        )?;
+        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
+    }
     if u.len() != commit_layout.b_key.row_len() {
         return Err(AkitaError::InvalidProof);
     }
@@ -1051,11 +1062,6 @@ where
     let d_message_width = total_blocks
         .checked_mul(depth_open)
         .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
-    #[cfg(feature = "zk")]
-    let d_width = d_message_width
-        .checked_add(d_blinding_segment_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
-    #[cfg(not(feature = "zk"))]
     let d_width = d_message_width;
     let t_cols_per_vector = n_a
         .checked_mul(depth_open)
@@ -1064,11 +1070,6 @@ where
     let b_message_width = max_group_poly_count
         .checked_mul(t_cols_per_vector)
         .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
-    #[cfg(feature = "zk")]
-    let b_width = b_message_width
-        .checked_add(b_blinding_digit_planes_per_point)
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
-    #[cfg(not(feature = "zk"))]
     let b_width = b_message_width;
     let a_width = inner_width;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, d_width)?;
@@ -1159,13 +1160,18 @@ where
         Vec::new()
     } else {
         let d_weights = &eq_tau1[d_start..(d_start + n_d_active)];
+        let d_zk_view = setup
+            .zk_d_matrix()
+            .ring_view::<D>(n_d, d_blinding_segment_len)?;
+        let d_zk = d_zk_view.as_slice();
+        let d_zk_stride = d_zk_view.num_cols();
         cfg_into_iter!(0..d_blinding_segment_len)
             .map(|local| {
-                let local_col = d_message_width + local;
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in d_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        acc += *eq_i * eval_ring_at_pows(&d_rows[row_idx][local_col], alpha_pows);
+                        acc += *eq_i
+                            * eval_ring_at_pows(&d_zk[row_idx * d_zk_stride + local], alpha_pows);
                     }
                 }
                 acc
@@ -1210,21 +1216,26 @@ where
         Vec::new()
     } else {
         // Each commitment group is committed independently with a group-local B
-        // input `[group t_hat || group blinding]`, even though the ring-switch
-        // witness stores all groups in one concatenated segment.
+        // input `[group t_hat || group blinding]`. The witness stores one
+        // blinding segment per point, but every segment reuses the same stored
+        // per-commitment zkB row view with fresh digits.
+        let b_zk_view = setup
+            .zk_b_matrix()
+            .ring_view::<D>(n_b, b_blinding_digit_planes_per_point)?;
+        let b_zk = b_zk_view.as_slice();
+        let b_zk_stride = b_zk_view.num_cols();
         cfg_into_iter!(0..b_blinding_segment_len)
             .map(|idx| {
                 let group_stride = b_blinding_digit_planes_per_point;
                 let point_idx = idx / group_stride;
                 let local = idx % group_stride;
-                let group_message_planes = num_polys_per_point[point_idx] * t_cols_per_vector;
-                let local_col = group_message_planes + local;
                 let commitment_weights =
                     &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
-                        acc += *eq_i * eval_ring_at_pows(&b_rows[row_idx][local_col], alpha_pows);
+                        acc += *eq_i
+                            * eval_ring_at_pows(&b_zk[row_idx * b_zk_stride + local], alpha_pows);
                     }
                 }
                 acc

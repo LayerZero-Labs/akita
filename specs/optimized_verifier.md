@@ -87,7 +87,7 @@ This spec uses short dimension names for fields on
 | **structured (tensor) rows** over `ŵ`, `t̂`, `ẑ` | rows of the form `vᵀ ⊗ G` for known small public vectors `v` and gadget vectors `G` | every entry factors as a product of public scalars → no SIS-matrix scan | §4, §5, §6 |
 | **setup-matrix rows** `D·ŵ + B·t̂ + A·ẑ` | rows of the shared SIS commitment matrix evaluated at `α` | one column-pattern build + a single SIS-row scan, with `r_eval` shared across all three halves | §7 |
 | **r-tail** | the `rows × levels` `r`-tail planes | pow2: multi-factor `eval_offset_eq_tensor`; non-pow2: materialise + single-factor | §8 |
-| **ZK B-blinding** *(feature-gated)* | per-group `B`-side blinding planes | dedicated single-factor `eval_offset_eq_tensor` on a materialised segment | §9.1 |
+| **ZK B-blinding** *(feature-gated)* | point-local `B`-side blinding planes over a per-commitment `zkB` prefix view | dedicated single-factor `eval_offset_eq_tensor` on a materialised segment | §9.1 |
 | **ZK D-blinding** *(feature-gated)* | global `D`-side blinding planes | dedicated single-factor `eval_offset_eq_tensor` on a materialised segment | §9.2 |
 
 The first row of the table — structured rows — uses the same algorithmic
@@ -114,7 +114,7 @@ Segment lengths and axes:
 | `ŵ` | `L · C · B` | `block → claim → dig` | open-side digit depth `L`, claims `C`, blocks `B` |
 | `t̂` | `L · n_A · C · B` | `block → claim → dig → a_row` | adds the `A`-row axis `n_A` |
 | `ẑ` | `DF · DC · P · block_len` | `blk → pt → df → dc` | commit-side `DC`, fold-side `DF`, points `P`, in-block `block_len` |
-| `b_blind` | `prepared.b_blinding_segment_len` (0 without zk) | per-group t̂-tail (§9.1) | per-group append after `t̂` |
+| `b_blind` | `prepared.b_blinding_segment_len` (0 without zk) | point-local blinding segment (§9.1) | fresh digits per B commitment; stored `zkB` uses a per-commitment prefix view |
 | `d_blind` | `prepared.d_blinding_segment_len` (0 without zk) | global D-side tail (§9.2) | per-row append after `b_blind` |
 | `r-tail` | `rows · levels` | `level → row` | rows-of-`M` × gadget levels |
 
@@ -541,7 +541,13 @@ Length of the `r`-tail in `M`'s column space: `rows · levels`, located at
 column offset
 
 ```text
-offset_r = w_len + d_blinding_segment_len + t_len + b_blinding_segment_len + z_len.
+z_first = true:
+  offset_r = z_len + w_len + t_len + b_blinding_segment_len
+           + d_blinding_segment_len
+
+z_first = false:
+  offset_r = w_len + t_len + b_blinding_segment_len
+           + d_blinding_segment_len + z_len
 ```
 
 There is no separate witness for the `r`-tail; the M-table entries are
@@ -598,24 +604,25 @@ compiled out otherwise.
 
 ### 9.1 B-blinding segment
 
-A small per-commitment-group `t̂`-tail is appended after each group's
-witness rows in the M-layout. The verifier reads it via the `B` SIS
-matrix view, weighted by the per-group eq weights, and combines with
-single-factor `eval_offset_eq_tensor`.
+A small B-blinding segment is appended after `t̂` in the M-layout. The
+witness has one segment per point, but each point reuses the same stored
+per-commitment `zkB` prefix view with fresh blinding digits. The verifier
+weights the materialised segment by the per-point B-row eq weights and
+combines it with single-factor `eval_offset_eq_tensor`.
 
 Format:
 
 - Located at witness offset `b_blinding_segment_offset = offset_t + t_len`.
-- Length `prepared.b_blinding_segment_len` (a multiple of the per-group
-  blinding plane count `b_blinding_digit_planes_per_group`).
+- Length `prepared.b_blinding_segment_len`, equal to
+  `num_points * b_blinding_digit_planes_per_point`.
 - Per-cell entry at index `idx`:
 
   ```text
-  group_idx = idx / group_stride;
-  local     = idx % group_stride;
-  local_col = group_poly_counts[group_idx] · t_cols_per_claim + local;
-  entry     = Σ_{row_idx ∈ [b_start + g·n_b, b_start + (g+1)·n_b)} eq_τ₁[row_idx]
-                                  · eval_ring_at_pows(B[row_idx, local_col], α)
+  group_idx = idx / b_blinding_digit_planes_per_point;
+  local     = idx % b_blinding_digit_planes_per_point;
+  local_col = local;
+  entry     = Σ_{row_idx ∈ [b_start + group_idx·n_b, b_start + (group_idx+1)·n_b)} eq_τ₁[row_idx]
+                                  · eval_ring_at_pows(zkB[row_idx, local_col], α)
   ```
 
 Evaluation: build the materialised segment, then call

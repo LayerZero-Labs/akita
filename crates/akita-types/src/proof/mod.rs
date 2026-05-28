@@ -53,6 +53,8 @@ pub use setup::{
     AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
+#[cfg(feature = "zk")]
+pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
     ExtensionOpeningReductionShape, LevelProofShape, TerminalLevelProofShape,

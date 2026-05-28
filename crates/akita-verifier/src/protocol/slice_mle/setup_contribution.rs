@@ -260,11 +260,6 @@ where
         .num_claims
         .checked_mul(b_per_claim_w)
         .ok_or_else(|| AkitaError::InvalidSetup("W column width overflow".to_string()))?;
-    #[cfg(feature = "zk")]
-    let d_stride = n_cols_w
-        .checked_add(prepared.d_blinding_segment_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup stride overflow".to_string()))?;
-    #[cfg(not(feature = "zk"))]
     let d_stride = n_cols_w;
 
     // T's row weight is group-dependent and its c-axis indexes `poly_idx`
@@ -286,11 +281,6 @@ where
     let n_cols_t = max_group_poly_count
         .checked_mul(cols_per_poly_t)
         .ok_or_else(|| AkitaError::InvalidSetup("T column width overflow".to_string()))?;
-    #[cfg(feature = "zk")]
-    let b_stride = n_cols_t
-        .checked_add(prepared.b_blinding_digit_planes_per_point)
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup stride overflow".to_string()))?;
-    #[cfg(not(feature = "zk"))]
     let b_stride = n_cols_t;
 
     // Row range covers every SIS row that any of W/T/Z touch. Z extends
@@ -683,9 +673,17 @@ mod tests {
                 max_num_points: num_points,
                 gen_ring_dim: D,
                 max_setup_len,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
                 public_matrix_seed: [7u8; 32],
             },
             FlatMatrix::from_ring_slice::<D>(&matrix_entries),
+            #[cfg(feature = "zk")]
+            FlatMatrix::from_flat_data(vec![F::zero(); D], D),
+            #[cfg(feature = "zk")]
+            FlatMatrix::from_flat_data(vec![F::zero(); D], D),
         );
 
         let eq_tau1: Vec<F> = (0..rows.next_power_of_two())

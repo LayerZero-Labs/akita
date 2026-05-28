@@ -910,6 +910,10 @@ mod tests {
             max_num_points: 1,
             gen_ring_dim: 4,
             max_setup_len: 2,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
             public_matrix_seed: [7; 32],
         };
         let level_params = [sample_level_params()];

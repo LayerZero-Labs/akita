@@ -137,6 +137,10 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     }
 
     let mut max_setup_len: usize = 1;
+    #[cfg(feature = "zk")]
+    let mut max_zk_b_len: usize = 1;
+    #[cfg(feature = "zk")]
+    let mut max_zk_d_len: usize = 1;
     let mut saw_supported_shape = false;
     for num_vars in 1..=max_num_vars {
         // Envelope only depends on `num_vars`, so compute it once per
@@ -154,6 +158,11 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
                 };
                 saw_supported_shape = true;
                 max_setup_len = max_setup_len.max(envelope.max_setup_len);
+                #[cfg(feature = "zk")]
+                {
+                    max_zk_b_len = max_zk_b_len.max(envelope.max_zk_b_len);
+                    max_zk_d_len = max_zk_d_len.max(envelope.max_zk_d_len);
+                }
             }
         }
     }
@@ -164,7 +173,13 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
         )));
     }
 
-    Ok(SetupMatrixEnvelope { max_setup_len })
+    Ok(SetupMatrixEnvelope {
+        max_setup_len,
+        #[cfg(feature = "zk")]
+        max_zk_b_len,
+        #[cfg(feature = "zk")]
+        max_zk_d_len,
+    })
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
@@ -231,7 +246,13 @@ where
     for lp in setup_levels {
         accumulate_matrix_envelope_for_level::<Cfg>(lp, &mut max_setup_len)?;
     }
-    Ok(SetupMatrixEnvelope { max_setup_len })
+    Ok(SetupMatrixEnvelope {
+        max_setup_len,
+        #[cfg(feature = "zk")]
+        max_zk_b_len: 1,
+        #[cfg(feature = "zk")]
+        max_zk_d_len: 1,
+    })
 }
 
 pub fn matrix_envelope_for_schedule<Cfg>(
@@ -246,7 +267,8 @@ where
     #[cfg(feature = "zk")]
     {
         let mut envelope = envelope;
-        accumulate_zk_hiding_envelope::<Cfg>(schedule, _incidence, &mut envelope.max_setup_len)?;
+        accumulate_zk_blinding_envelope::<Cfg>(schedule, _incidence, &mut envelope)?;
+        accumulate_zk_hiding_envelope::<Cfg>(schedule, _incidence, &mut envelope)?;
         Ok(envelope)
     }
     #[cfg(not(feature = "zk"))]
@@ -260,24 +282,6 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
     max_setup_len: &mut usize,
 ) -> Result<(), AkitaError> {
     let _cfg_marker = core::marker::PhantomData::<Cfg>;
-    let outer_width = lp.outer_width();
-    #[cfg(feature = "zk")]
-    let outer_width = outer_width
-        .checked_add(akita_types::zk::blinding_column_count::<Cfg::Field>(
-            lp.b_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("ZK B setup envelope overflow".to_string()))?;
-    let d_matrix_width = lp.d_matrix_width();
-    #[cfg(feature = "zk")]
-    let d_matrix_width = d_matrix_width
-        .checked_add(akita_types::zk::blinding_column_count::<Cfg::Field>(
-            lp.d_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("ZK D setup envelope overflow".to_string()))?;
     let a_len = lp
         .a_key
         .row_len()
@@ -286,14 +290,45 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
     let b_len = lp
         .b_key
         .row_len()
-        .checked_mul(outer_width)
+        .checked_mul(lp.outer_width())
         .ok_or_else(|| AkitaError::InvalidSetup("B setup envelope overflow".to_string()))?;
     let d_len = lp
         .d_key
         .row_len()
-        .checked_mul(d_matrix_width)
+        .checked_mul(lp.d_matrix_width())
         .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
     *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len);
+    Ok(())
+}
+
+#[cfg(feature = "zk")]
+fn accumulate_zk_blinding_envelope<Cfg: CommitmentConfig>(
+    schedule: &Schedule,
+    _incidence: &ClaimIncidenceSummary,
+    envelope: &mut SetupMatrixEnvelope,
+) -> Result<(), AkitaError> {
+    for lp in setup_level_params_from_runtime_schedule(&schedule.steps) {
+        let b_planes = akita_types::zk::blinding_digit_plane_count::<Cfg::Field>(
+            lp.b_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+        );
+        let b_len =
+            lp.b_key.row_len().checked_mul(b_planes).ok_or_else(|| {
+                AkitaError::InvalidSetup("ZK B setup envelope overflow".to_string())
+            })?;
+        let d_planes = akita_types::zk::blinding_digit_plane_count::<Cfg::Field>(
+            lp.d_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+        );
+        let d_len =
+            lp.d_key.row_len().checked_mul(d_planes).ok_or_else(|| {
+                AkitaError::InvalidSetup("ZK D setup envelope overflow".to_string())
+            })?;
+        envelope.max_zk_b_len = envelope.max_zk_b_len.max(b_len);
+        envelope.max_zk_d_len = envelope.max_zk_d_len.max(d_len);
+    }
     Ok(())
 }
 
@@ -301,7 +336,7 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
 fn accumulate_zk_hiding_envelope<Cfg: CommitmentConfig>(
     schedule: &Schedule,
     incidence: &ClaimIncidenceSummary,
-    max_setup_len: &mut usize,
+    envelope: &mut SetupMatrixEnvelope,
 ) -> Result<(), AkitaError> {
     let Some(root_commit_params) = root_commit_params_from_schedule(schedule)? else {
         return Ok(());
@@ -316,7 +351,22 @@ fn accumulate_zk_hiding_envelope<Cfg: CommitmentConfig>(
         root_commit_params.num_digits_fold,
         num_ring,
     )?;
-    accumulate_matrix_envelope_for_level::<Cfg>(&hiding_params, max_setup_len)
+    accumulate_matrix_envelope_for_level::<Cfg>(&hiding_params, &mut envelope.max_setup_len)?;
+
+    let b_blinding_cols = akita_types::zk::blinding_digit_plane_count::<Cfg::Field>(
+        hiding_params.b_key.row_len(),
+        hiding_params.ring_dimension,
+        hiding_params.log_basis,
+    );
+    let b_len = hiding_params
+        .b_key
+        .row_len()
+        .checked_mul(b_blinding_cols)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("ZK hiding B setup envelope overflow".to_string())
+        })?;
+    envelope.max_zk_b_len = envelope.max_zk_b_len.max(b_len);
+    Ok(())
 }
 
 #[cfg(feature = "zk")]

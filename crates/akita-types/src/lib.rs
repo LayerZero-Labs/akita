@@ -71,6 +71,8 @@ pub use proof::{
     TerminalWitnessTranscriptParts, VerifierClaims, EXTENSION_OPENING_REDUCTION_DEGREE,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
+#[cfg(feature = "zk")]
+pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use schedule::{
     detect_field_modulus, exact_planned_level_execution, generated_schedule_lookup_key,
     planned_schedule_key_from_schedule, r_decomp_levels, root_current_w_len, root_direct_schedule,
