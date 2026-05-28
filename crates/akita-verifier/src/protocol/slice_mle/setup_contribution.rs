@@ -84,6 +84,51 @@ fn get_eq_indices_for_a(
     (low_eq_idx, depth_commit_idx, block_carry)
 }
 
+/// Sum a contiguous absolute slice of the packed setup prefix after alpha
+/// evaluation. The const generics select which of the row-local D/B/A
+/// intervals cover this slice, so inactive arms disappear after
+/// monomorphisation.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn packed_slice_inner_sum<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
+    range: std::ops::Range<usize>,
+    setup_alpha: &[E],
+    d_start: usize,
+    d_weight: E,
+    w_eq: &[E],
+    b_start: usize,
+    b_weights: &[E],
+    t_eq_per_group: &[Vec<E>],
+    a_start: usize,
+    a_weight: E,
+    z_eq: &[E],
+) -> E
+where
+    E: FieldCore,
+{
+    cfg_into_iter!(range)
+        .map(|lambda| {
+            let mut weight = E::zero();
+            if HAS_D {
+                weight += d_weight * w_eq[lambda - d_start];
+            }
+            if HAS_B {
+                for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
+                    weight += b_weights[g] * t_eq_slice[lambda - b_start];
+                }
+            }
+            if HAS_A {
+                weight += a_weight * z_eq[lambda - a_start];
+            }
+            if weight.is_zero() {
+                E::zero()
+            } else {
+                setup_alpha[lambda] * weight
+            }
+        })
+        .sum()
+}
+
 /// Compute the fused setup-matrix contribution `D · ŵ + B · t̂ + A · ẑ`
 /// over packed role-local A/B/D setup views. The three role views overlap as
 /// prefixes of the same raw setup vector but use their natural row widths.
@@ -434,6 +479,9 @@ where
 
     let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
     let setup_flat = setup_view.as_slice();
+    let setup_alpha: Vec<E> = cfg_into_iter!(0..required)
+        .map(|lambda| eval_ring_at_pows(&setup_flat[lambda], alpha_pows))
+        .collect();
     let b_weights_by_row: Vec<Vec<E>> = (0..prepared.n_b)
         .map(|row| {
             (0..prepared.num_points)
@@ -443,71 +491,209 @@ where
         .collect();
 
     let row_contribs: Vec<E> = cfg_into_iter!(0..r_max)
-        .map(|row| {
+        .map(|row| -> Result<E, AkitaError> {
+            let mut intervals = Vec::with_capacity(3);
+            let d_start = if row < n_d_active {
+                let start = row.checked_mul(d_stride).ok_or_else(|| {
+                    AkitaError::InvalidSetup("packed D row offset overflow".to_string())
+                })?;
+                if n_cols_w > 0 {
+                    let end = start.checked_add(n_cols_w).ok_or_else(|| {
+                        AkitaError::InvalidSetup("packed D row end overflow".to_string())
+                    })?;
+                    intervals.push((start, end));
+                }
+                start
+            } else {
+                0
+            };
+            let b_start_abs = if row < prepared.n_b {
+                let start = row.checked_mul(b_stride).ok_or_else(|| {
+                    AkitaError::InvalidSetup("packed B row offset overflow".to_string())
+                })?;
+                if n_cols_t > 0 {
+                    let end = start.checked_add(n_cols_t).ok_or_else(|| {
+                        AkitaError::InvalidSetup("packed B row end overflow".to_string())
+                    })?;
+                    intervals.push((start, end));
+                }
+                start
+            } else {
+                0
+            };
+            let a_start = if row < prepared.n_a && z_used {
+                let start = row.checked_mul(z_range).ok_or_else(|| {
+                    AkitaError::InvalidSetup("packed A row offset overflow".to_string())
+                })?;
+                if z_range > 0 {
+                    let end = start.checked_add(z_range).ok_or_else(|| {
+                        AkitaError::InvalidSetup("packed A row end overflow".to_string())
+                    })?;
+                    intervals.push((start, end));
+                }
+                start
+            } else {
+                0
+            };
+            if intervals.is_empty() {
+                return Ok(E::zero());
+            }
+
+            let d_end = if row < n_d_active {
+                d_start.checked_add(n_cols_w).ok_or_else(|| {
+                    AkitaError::InvalidSetup("packed D row end overflow".to_string())
+                })?
+            } else {
+                0
+            };
+            let b_end = if row < prepared.n_b {
+                b_start_abs.checked_add(n_cols_t).ok_or_else(|| {
+                    AkitaError::InvalidSetup("packed B row end overflow".to_string())
+                })?
+            } else {
+                0
+            };
+            let a_end = if row < prepared.n_a && z_used {
+                a_start.checked_add(z_range).ok_or_else(|| {
+                    AkitaError::InvalidSetup("packed A row end overflow".to_string())
+                })?
+            } else {
+                0
+            };
+            let mut endpoints = Vec::with_capacity(intervals.len() * 2);
+            for &(start, end) in &intervals {
+                endpoints.push(start);
+                endpoints.push(end);
+            }
+            endpoints.sort_unstable();
+            endpoints.dedup();
+
+            let d_weight = if row < n_d_active {
+                d_weights[row]
+            } else {
+                E::zero()
+            };
+            let b_weights: &[E] = if row < prepared.n_b {
+                &b_weights_by_row[row]
+            } else {
+                &[]
+            };
+            let a_weight = if row < prepared.n_a && z_used {
+                a_weights[row]
+            } else {
+                E::zero()
+            };
+
             let mut acc = E::zero();
-
-            let (mut d_pos, d_end) = if row < n_d_active {
-                let start = row * d_stride;
-                (start, start + n_cols_w)
-            } else {
-                (0, 0)
-            };
-            let (mut b_pos, b_end) = if row < prepared.n_b {
-                let start = row * b_stride;
-                (start, start + n_cols_t)
-            } else {
-                (0, 0)
-            };
-            let (mut a_pos, a_end) = if row < prepared.n_a && z_used {
-                let start = row * z_range;
-                (start, start + z_range)
-            } else {
-                (0, 0)
-            };
-
-            loop {
-                let mut lambda = usize::MAX;
-                if d_pos < d_end {
-                    lambda = lambda.min(d_pos);
+            for window in endpoints.windows(2) {
+                let lo = window[0];
+                let hi = window[1];
+                if lo == hi {
+                    continue;
                 }
-                if b_pos < b_end {
-                    lambda = lambda.min(b_pos);
-                }
-                if a_pos < a_end {
-                    lambda = lambda.min(a_pos);
-                }
-                if lambda == usize::MAX {
-                    break;
-                }
-
-                let mut weight = E::zero();
-                if d_pos < d_end && d_pos == lambda {
-                    let d_col = d_pos - row * d_stride;
-                    weight += d_weights[row] * w_eq_slice[d_col];
-                    d_pos += 1;
-                }
-                if b_pos < b_end && b_pos == lambda {
-                    let b_col = b_pos - row * b_stride;
-                    for g in 0..prepared.num_points {
-                        weight += b_weights_by_row[row][g] * t_eq_slice_per_group[g][b_col];
-                    }
-                    b_pos += 1;
-                }
-                if a_pos < a_end && a_pos == lambda {
-                    let a_col = a_pos - row * z_range;
-                    weight += a_weights[row] * z_eq_slice[a_col];
-                    a_pos += 1;
-                }
-
-                if !weight.is_zero() {
-                    acc += eval_ring_at_pows(&setup_flat[lambda], alpha_pows) * weight;
-                }
+                let has_d = row < n_d_active && d_start <= lo && hi <= d_end;
+                let has_b = row < prepared.n_b && b_start_abs <= lo && hi <= b_end;
+                let has_a = row < prepared.n_a && z_used && a_start <= lo && hi <= a_end;
+                acc += match (has_d, has_b, has_a) {
+                    (true, true, true) => packed_slice_inner_sum::<E, true, true, true>(
+                        lo..hi,
+                        &setup_alpha,
+                        d_start,
+                        d_weight,
+                        &w_eq_slice,
+                        b_start_abs,
+                        b_weights,
+                        &t_eq_slice_per_group,
+                        a_start,
+                        a_weight,
+                        &z_eq_slice,
+                    ),
+                    (true, true, false) => packed_slice_inner_sum::<E, true, true, false>(
+                        lo..hi,
+                        &setup_alpha,
+                        d_start,
+                        d_weight,
+                        &w_eq_slice,
+                        b_start_abs,
+                        b_weights,
+                        &t_eq_slice_per_group,
+                        a_start,
+                        E::zero(),
+                        &z_eq_slice,
+                    ),
+                    (true, false, true) => packed_slice_inner_sum::<E, true, false, true>(
+                        lo..hi,
+                        &setup_alpha,
+                        d_start,
+                        d_weight,
+                        &w_eq_slice,
+                        b_start_abs,
+                        b_weights,
+                        &t_eq_slice_per_group,
+                        a_start,
+                        a_weight,
+                        &z_eq_slice,
+                    ),
+                    (false, true, true) => packed_slice_inner_sum::<E, false, true, true>(
+                        lo..hi,
+                        &setup_alpha,
+                        d_start,
+                        E::zero(),
+                        &w_eq_slice,
+                        b_start_abs,
+                        b_weights,
+                        &t_eq_slice_per_group,
+                        a_start,
+                        a_weight,
+                        &z_eq_slice,
+                    ),
+                    (true, false, false) => packed_slice_inner_sum::<E, true, false, false>(
+                        lo..hi,
+                        &setup_alpha,
+                        d_start,
+                        d_weight,
+                        &w_eq_slice,
+                        b_start_abs,
+                        b_weights,
+                        &t_eq_slice_per_group,
+                        a_start,
+                        E::zero(),
+                        &z_eq_slice,
+                    ),
+                    (false, true, false) => packed_slice_inner_sum::<E, false, true, false>(
+                        lo..hi,
+                        &setup_alpha,
+                        d_start,
+                        E::zero(),
+                        &w_eq_slice,
+                        b_start_abs,
+                        b_weights,
+                        &t_eq_slice_per_group,
+                        a_start,
+                        E::zero(),
+                        &z_eq_slice,
+                    ),
+                    (false, false, true) => packed_slice_inner_sum::<E, false, false, true>(
+                        lo..hi,
+                        &setup_alpha,
+                        d_start,
+                        E::zero(),
+                        &w_eq_slice,
+                        b_start_abs,
+                        b_weights,
+                        &t_eq_slice_per_group,
+                        a_start,
+                        a_weight,
+                        &z_eq_slice,
+                    ),
+                    (false, false, false) => E::zero(),
+                };
             }
             Ok(acc)
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
 
-    Ok(row_contribs.into_iter().sum::<E>())
+    Ok(row_contribs.into_iter().sum())
 }
 
 #[cfg(test)]
