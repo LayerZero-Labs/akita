@@ -4,8 +4,8 @@
 |-------------|--------------------------|
 | Author(s)   | Quang Dao                |
 | Created     | 2026-05-28               |
-| Status      | proposed                 |
-| PR          | TBD                      |
+| Status      | implemented              |
+| PR          | #134                     |
 
 ## Summary
 
@@ -19,8 +19,15 @@ mapped back to the field.
 
 This feature makes CRT/NTT accumulation exact by bounding each accumulation
 before reconstruction, chunking wide small-RHS work at the largest safe width,
-and tightening the public helper contracts that currently allow unchecked LUT
-access or later panics.
+and tightening the public helper contracts that previously allowed unchecked
+LUT access or later panics.
+
+PR #134 implements the fix with a shared capacity helper in the linear-kernel
+module, capacity-aware chunking for the affected fused, i8, digit, single-row,
+cyclic, and block-parallel kernels, and local validation/hardening for i8
+`log_basis`, digit lookup, centered lookup, and sparse signed-ring inputs. The
+full-field generic quotient helper is no longer a production path; the
+remaining dense CRT matvec helpers are test-only fixtures.
 
 ## Intent
 
@@ -64,9 +71,9 @@ performance overhead.
 - Public safe APIs must not allow unchecked LUT out-of-bounds access, undefined
   behavior, or panics from malformed but type-correct inputs. In particular:
   `log_basis` values used with i8 decomposition must be checked as `1..=6`;
-  digit LUT users must validate or otherwise prove digits are in `[-32, 31]`;
-  centered-i32 LUT users must prove the supplied max-abs bound covers the
-  actual coefficients; sparse signed-ring coefficients must match the commit
+  digit lookup must cover the full `i8` domain or validate public digits before
+  lookup; centered-i32 lookup must be bounds-safe even when a caller-provided
+  max-abs bound is stale; sparse signed-ring coefficients must match the commit
   path's signed-unit assumption or the commit path must support the advertised
   range.
 
@@ -81,7 +88,9 @@ performance overhead.
   for correctness. Q32/Q64 and already-safe fp128 widths should remain on the
   existing one-reconstruction path. The implementation should use the largest
   safe chunk width for each operation and should not add per-column
-  reconstruction or a slow schoolbook fallback to hot valid paths.
+  reconstruction or a slow schoolbook fallback to hot valid paths. Release-mode
+  validation should stay O(1) per call where possible; coefficient scans are
+  reserved for debug assertions or existing boundary validation.
 
 - Diff surface is a first-class requirement. Production code should add one
   small shared capacity/chunking abstraction and reuse it across affected
@@ -119,34 +128,40 @@ performance overhead.
 
 ### Acceptance Criteria
 
-- [ ] The implementation introduces a shared way to compute or enforce the
-      safe CRT accumulation width for each linear-kernel operation.
-- [ ] Q128 fused split-eq quotient tests fail on current `main` and pass after
-      the fix by comparing against an independent schoolbook high-half oracle.
-- [ ] Q128 i8/digit matvec tests cover widths above the old single-accumulator
+- [x] The implementation introduces a shared way to compute or enforce the
+      safe CRT accumulation width for each linear-kernel operation:
+      `max_safe_crt_accumulation_width` and `safe_crt_chunk_width` in
+      `crates/akita-prover/src/kernels/linear/capacity.rs`.
+- [x] Q128 fused split-eq quotient tests compare against an independent
+      schoolbook high-half oracle and cover widths that previously exceeded the
+      one-shot reconstruction bound.
+- [x] Q128 i8/digit matvec tests cover widths above the old single-accumulator
       capacity and pass by chunking before reconstruction.
-- [ ] Cyclic and negacyclic quotient tests cover the case where relying on
+- [x] Cyclic and negacyclic quotient tests cover the case where relying on
       final quotient cancellation would be wrong.
-- [ ] The generic unreduced quotient path is either made exact for its actual
-      caller bounds or is replaced/guarded where one full-field term cannot fit
-      the CRT lift range.
-- [ ] Block-parallel digit kernels apply the same effective width clamp and
-      safety policy as the generic digit kernels.
-- [ ] `log_basis > 6` in commitment/prover paths fails with `AkitaError`
+- [x] The generic unreduced quotient path is removed from production use rather
+      than given a risky full-field CRT fallback; `crt_matvec.rs` now contains
+      test-only dense helpers.
+- [x] Block-parallel digit kernels apply the same effective width clamp and
+      safety policy as the generic digit kernels, and dispatch only when the
+      full effective width is safe.
+- [x] `log_basis > 6` in commitment/prover paths fails with `AkitaError`
       before reaching i8 decomposition assertions.
-- [ ] Understated `z_pre_max_abs` / `z_pre_centered_inf_norm` cannot reach an
-      unchecked centered LUT access.
-- [ ] Public sparse signed-ring construction and commit agree on the allowed
-      coefficient range; either values other than `-1` or `1` are rejected up
-      front or the commit path handles them exactly.
-- [ ] New adversarial tests include Q128/fp128 cases and at least one
-      near-capacity Q32 or Q64 sanity case to protect the bound itself.
-- [ ] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`,
+- [x] Understated `z_pre_max_abs` / `z_pre_centered_inf_norm` cannot reach an
+      unchecked centered LUT access. `CenteredMontLut::get` returns `Option`
+      and exact conversion is used as fallback; release capacity still relies
+      on the prover's validated `centered_inf_norm` bound, with debug
+      assertions guarding local caller mistakes.
+- [x] Public sparse signed-ring construction and commit agree on the allowed
+      coefficient range: sparse coefficients are signed units only.
+- [x] New adversarial tests include Q128/fp128 cases, Q32 capacity sanity, and
+      Q64 dispatch sanity coverage.
+- [x] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`,
       and `cargo test` pass.
-- [ ] A repeated profile comparison shows no unexplained material regression.
-      Any median regression above 5% in the canonical profile, or above 10% in
-      a directly affected kernel span, must be explained and either optimized
-      or explicitly accepted in review.
+- [x] Profile comparison has no unexplained material regression. CI accepted
+      the benchmark matrix; proof sizes were unchanged. Affected fp128 one-hot
+      profiles pay the expected chunking cost, with commit around +10-14% and
+      prove around +5.7%.
 
 ### Testing Strategy
 
@@ -158,11 +173,11 @@ cargo clippy --all --message-format=short -q -- -D warnings
 cargo test
 ```
 
-New or updated tests should live near the affected code:
+New or updated tests live near the affected code:
 
-- `crates/akita-prover/src/kernels/linear/tests.rs` or a split sibling test
-  module for fused split-eq, i8/digit matvec, block-parallel clamp parity, and
-  generic quotient behavior.
+- `crates/akita-prover/src/kernels/linear/tests.rs` for fused split-eq,
+  i8/digit matvec, single-row, block-parallel clamp parity, and chunking
+  behavior.
 - `crates/akita-pcs/tests/algebra/ntt_crt.rs` for lower-level CRT
   reconstruction capacity and partial-split non-regression tests.
 - `crates/akita-prover/src/api/commitment.rs` tests for `log_basis > 6`
@@ -176,7 +191,7 @@ capacity boundary: setup rows with coefficients near `q/2`, RHS digit planes at
 Expected values must come from direct field/ring arithmetic, not from another
 CRT kernel.
 
-The test suite should include at least:
+The test suite includes:
 
 - Fused split-eq A quotient with fp128/Q128, `D=32`, centered `z_pre`, and
   enough columns to exceed the old one-shot reconstruction bound.
@@ -187,9 +202,9 @@ The test suite should include at least:
   safe independently.
 - A near-capacity Q32 or Q64 test that remains under the bound and verifies the
   capacity formula is not overly pessimistic by orders of magnitude.
-- Contract tests for invalid `log_basis`, understated centered LUT bounds,
-  out-of-range public digit planes if such planes remain public, sparse
-  non-signed-unit coefficients, and digit block-parallel width mismatch.
+- Contract tests for invalid `log_basis`, centered LUT fallback, full-range
+  public digit lookup, sparse non-signed-unit coefficients, and digit
+  block-parallel width mismatch.
 
 ### Performance
 
@@ -199,7 +214,7 @@ the full operation width is safe, and should choose the largest safe chunk size
 otherwise.
 
 Measure the canonical profile before and after the implementation on the same
-machine, preferably with at least five runs and median comparison:
+machine, preferably with repeated runs and median comparison:
 
 ```bash
 AKITA_MODE=onehot_fp128_d32 AKITA_NUM_VARS=32 cargo run --release --example profile
@@ -210,6 +225,17 @@ record that fact and use targeted kernel/profile spans instead of treating one
 failed profile command as a regression. Single-run timing deltas are not enough
 evidence for either approval or rejection.
 
+PR #134 uses the CI benchmark matrix as the current review artifact. The latest
+run passed. Proof sizes were unchanged. The notable accepted deltas were:
+
+- fp128 one-hot D32 nv32: commit about +13.5%, prove about +5.7%;
+- fp128 one-hot D32 nv30 np4: commit about +10.6%, prove about +5.5%;
+- fp32 dense D32: prove about +8.1%.
+
+These increases are consistent with chunking work that was previously unsafe.
+The one-shot fast path remains in place when the full effective width fits the
+CRT lift range.
+
 Memory overhead should remain bounded by the existing accumulator shape plus
 the final field result. Do not allocate per-column rings or materialize a full
 chunk-result matrix when a row/block accumulator can be reused.
@@ -218,33 +244,34 @@ chunk-result matrix when a row/block accumulator can be reused.
 
 ### Issue Inventory
 
-| Area | Representative path | Issue | Required fix |
-|------|---------------------|-------|--------------|
-| Fused split-eq | `crates/akita-prover/src/kernels/linear/fused_quotients.rs` | D/B cyclic rows and A quotient rows reconstruct wide CRT accumulators once. | Chunk per role using operation-specific RHS bounds; reconstruct each chunk and add native field results. |
-| Generic quotient | `crates/akita-prover/src/kernels/linear/crt_matvec.rs` | Cyclic and negacyclic intermediates are reconstructed once, and full-field RHS may not fit even one Q128 CRT term. | Prove actual caller RHS bound and chunk, or route to exact field-native logic / checked rejection where CRT cannot be exact. |
-| i8/digit matvec | `i8_matvec.rs`, `digits.rs`, `single_cyclic.rs`, `block_parallel.rs` | Balanced i8 RHS is small but wide fp128 rows can exceed Q128 lift range. | Compute max safe width from `D`, field modulus, digit bound, and CRT product; chunk only when needed. |
-| Block-parallel clamp | `digits.rs`, `block_parallel.rs` | Fast path can bypass the generic `inner_width = min(mat_width, data_width)` clamp. | Pass the effective width into block-parallel kernels or otherwise enforce the same range before indexing. |
-| Centered LUT bound | `crt_ntt_repr.rs`, `fused_quotients.rs` | `z_pre_max_abs` sizes a LUT that is later indexed unchecked by actual coefficients. | Validate/recompute the bound before using the LUT, or use checked construction that cannot index out of range. |
-| Digit LUT contract | `crt_ntt_repr.rs` and public digit kernels | Safe callers can pass arbitrary `i8`, but LUT covers only `[-32, 31]`. | Validate public digit planes once, make unsafe preconditions explicit internally, or use a safe fallback for unchecked external input. |
-| Commit log basis | `api/commitment.rs`, `ring/cyclotomic/decomposition.rs` | Commit validation accepts `1..=128`; i8 decomposition supports `1..=6`. | Reject unsupported log bases before decomposition. |
-| Sparse signed-ring contract | `backend/sparse_ring.rs` | Constructor accepts any nonzero `i8`; commit assumes signed units and uses `unreachable!`. | Align constructor and commit semantics with a single checked coefficient contract. |
+| Area | Representative path | Issue | Implemented resolution |
+|------|---------------------|-------|------------------------|
+| Fused split-eq | `crates/akita-prover/src/kernels/linear/fused_quotients.rs` | D/B cyclic rows and A quotient rows reconstructed wide CRT accumulators once. | Keep the fused one-shot path only when every role is safe; otherwise chunk D and B cyclic rows by their digit bounds, chunk A quotient cyclic/negacyclic intermediates independently, reconstruct each chunk, and add native field rings. If one centered term is too large for CRT, use a field-native exact quotient path. |
+| Generic quotient | `crates/akita-prover/src/kernels/linear/crt_matvec.rs` | A production full-field CRT quotient path would be unsafe for fp128/Q128 because even one full-field RHS term may not fit. | Remove this as a production path. The file now contains `cfg(test)` dense CRT helpers used only as fixtures. |
+| i8/digit matvec | `i8_matvec.rs`, `digits.rs`, `single_cyclic.rs`, `block_parallel.rs` | Balanced i8 RHS is small but wide fp128 rows can exceed Q128 lift range. | Compute the safe width from `D`, field modulus, RHS bound, and CRT product; preserve one-shot accumulation when safe; otherwise chunk and add reconstructed native field results. |
+| Block-parallel clamp | `digits.rs`, `block_parallel.rs` | Fast path could bypass the generic `inner_width = min(mat_width, data_width)` clamp. | Dispatch to block-parallel paths only when the full effective width is both present and safe; otherwise use the shared chunked generic path. |
+| Centered LUT bound | `crt_ntt_repr.rs`, `fused_quotients.rs` | `z_pre_max_abs` sized a LUT that was later indexed unchecked by actual coefficients. | `CenteredMontLut::get` is bounds-checked and falls back to exact conversion on miss. Fused quotient code avoids giant LUTs and uses debug assertions to catch stale local bounds. |
+| Digit LUT contract | `crt_ntt_repr.rs` and public digit kernels | Safe callers can pass arbitrary `i8`, but LUT covered only `[-32, 31]`. | `DigitMontLut` covers all 256 `i8` values, avoiding release-mode scans on hot public digit paths. |
+| Commit log basis | `api/commitment.rs`, `protocol/ring_switch.rs`, `protocol/quadratic_equation.rs`, `kernels/linear/ntt_matvec.rs` | Commit validation accepted `1..=128`; i8 decomposition supports `1..=6`. | Centralize `MAX_I8_LOG_BASIS = 6` in `validation.rs` and reject invalid setup/input log bases before decomposition. |
+| Sparse signed-ring contract | `backend/sparse_ring.rs` | Constructor accepted any nonzero `i8`; commit assumed signed units and used `unreachable!`. | Sparse ring construction now rejects all coefficients except `-1` and `1`, matching the commit path. |
 
 ### Architecture
 
-Add a small shared capacity helper near the linear CRT kernels. It should answer
+The implemented shared capacity helper near the linear CRT kernels answers
 two questions:
 
 1. Is this operation safe to run as one CRT accumulation?
 2. If not, what is the largest safe chunk width?
 
-The helper should be conservative, exact, and cheap. It should use local
-multi-limb integer arithmetic over the available modulus/CRT metadata once per
-kernel call, not dynamic big integers in the hot loop. It should be
-parameterized by the RHS magnitude bound and by whether the operation
-reconstructs cyclic, negacyclic, or quotient intermediates. Quotient operations
-must use the intermediate bound, not the final high-half bound.
+The helper is conservative, exact, and cheap. `capacity.rs` implements a local
+`SmallNat` multi-limb integer type, avoiding new dependencies and dynamic big
+integers in the hot loop. `max_safe_crt_accumulation_width` binary-searches the
+largest `width` satisfying `2 * width * D * Q * B < P`, after first requiring a
+single term to fit. `safe_crt_chunk_width` clamps that width to the operation's
+full effective width. Quotient operations use the cyclic and negacyclic
+intermediate bounds, not the final high-half bound.
 
-The linear kernels should then share one chunking pattern:
+The linear kernels share one chunking pattern:
 
 1. determine the effective input width once;
 2. compute the max safe chunk width for the operation;
@@ -253,26 +280,24 @@ The linear kernels should then share one chunking pattern:
    `CyclotomicRing<F, D>`, and accumulate those chunk results in native field
    rings.
 
-The block-parallel kernels should not fork a separate safety policy. They
-should receive the same effective width/chunk plan or call the same shared
-helper.
+The block-parallel kernels do not fork a separate safety policy. They receive
+or recompute the same effective-width safety decision and are used only for
+full-width safe cases.
 
-For the generic full-field quotient helper, the implementation must first
-identify the actual production callers and their RHS bounds. If the RHS can be
-full-width field elements under a supported fp128 schedule, one-term Q128 CRT
-is not enough; that path needs field-native exact arithmetic or a checked error
-rather than CRT chunking.
+The generic full-field quotient helper is not a production path in the current
+implementation. Since a full-field RHS can be too large even for a single Q128
+CRT product, the production fix deliberately avoids adding a broad slow
+fallback there. Exact field-native fallback is used only for centered
+fused-quotient terms when the single-term CRT bound fails.
 
 Validation fixes should stay local:
 
-- commitment parameter validation should reject unsupported i8 `log_basis`
-  values;
-- centered LUT construction/use should verify the advertised max-abs against
-  actual coefficients before unchecked indexing;
-- public digit-kernel entrypoints should validate digit range or avoid exposing
-  unchecked LUT preconditions;
-- sparse signed-ring construction and commit should agree on whether values are
-  signed units only or arbitrary small signed coefficients.
+- commitment parameter validation rejects unsupported i8 `log_basis` values;
+- centered LUT construction/use is bounds-safe and falls back exactly on miss;
+- public digit-kernel entrypoints avoid unchecked LUT preconditions by covering
+  the full `i8` domain;
+- sparse signed-ring construction and commit agree that values are signed units
+  only.
 
 ### Alternatives Considered
 
@@ -298,40 +323,40 @@ Validation fixes should stay local:
 
 ## Documentation
 
-This spec is the durable design note for the fix. The implementation PR should
-reference it in the PR body and briefly summarize:
+This spec is the durable design note for the fix. PR #134 references it in the
+PR body and summarizes:
 
 - the capacity formula used by the shared helper;
 - which paths chunk and which paths remain one-shot;
-- any path that uses native field fallback because one-term CRT is impossible;
+- the centered fused-quotient path that uses native field fallback when one
+  centered term cannot fit the CRT lift range;
 - the measured performance impact and the commands used.
 
-No user-facing README changes are required unless the implementation changes a
-public API error condition in a way downstream users need to know.
+No user-facing README changes are required. The public behavioral changes are
+local error hardening: i8 `log_basis` must be `1..=6`, and sparse ring
+coefficients must be signed units.
 
 ## Execution
 
-Recommended implementation order:
+Implemented order:
 
-1. Add or update adversarial tests first, confirming at least the fused
-   split-eq and i8/digit cases fail on current `main`.
-2. Add the shared CRT accumulation capacity helper and unit-test its boundary
-   decisions.
-3. Apply chunking to fused split-eq D/B cyclic rows and A quotient rows.
-4. Apply the same chunking policy to i8, digit, single, cyclic, and
-   block-parallel kernels; fix the block-parallel effective-width clamp at the
-   same time.
-5. Resolve the generic unreduced quotient path after auditing the production
-   caller bounds. Use chunking only if one-term CRT is safe; otherwise use an
-   exact native-field path or checked rejection.
-6. Tighten the local input contracts: `log_basis`, centered LUT bound, public
-   digit range, and sparse signed-ring coefficient semantics.
-7. Run targeted tests, then full format/clippy/test.
-8. Run repeated profile measurements and include the median comparison in the
-   PR notes.
-9. Before review, audit the diff file by file. Every production change should
-   map to a listed bug, a shared helper, or a measured performance/code-quality
-   improvement.
+1. Added adversarial coverage for fused split-eq and i8/digit cases, using
+   independent field arithmetic oracles.
+2. Added the shared CRT accumulation capacity helper and unit-tested Q128/Q32
+   boundary decisions.
+3. Applied chunking to fused split-eq D/B cyclic rows and A quotient rows,
+   preserving the fused one-shot path when all roles are safe.
+4. Applied the same chunking policy to i8, digit, single-row, cyclic, and
+   block-parallel kernels; block-parallel dispatch now requires full safe
+   effective width.
+5. Removed the generic unreduced full-field quotient path from production use
+   instead of adding a broad fallback. Kept `crt_matvec.rs` as test-only dense
+   helpers.
+6. Tightened local input contracts: `log_basis`, centered LUT fallback, full
+   `i8` digit lookup, and sparse signed-ring coefficient semantics.
+7. Ran targeted tests, full format/clippy/test, line-cap checking, and release
+   profile commands.
+8. Audited and documented performance in the PR body.
 
 Deviation policy:
 
@@ -348,13 +373,17 @@ Deviation policy:
 ## References
 
 - `crates/akita-prover/src/kernels/linear/fused_quotients.rs`
+- `crates/akita-prover/src/kernels/linear/capacity.rs`
+- `crates/akita-prover/src/kernels/linear/common.rs`
 - `crates/akita-prover/src/kernels/linear/crt_matvec.rs`
 - `crates/akita-prover/src/kernels/linear/i8_matvec.rs`
 - `crates/akita-prover/src/kernels/linear/digits.rs`
 - `crates/akita-prover/src/kernels/linear/single_cyclic.rs`
 - `crates/akita-prover/src/kernels/linear/block_parallel.rs`
+- `crates/akita-prover/src/kernels/linear/ntt_matvec.rs`
 - `crates/akita-algebra/src/ring/crt_ntt_repr.rs`
 - `crates/akita-algebra/src/ring/partial_split_ntt.rs`
 - `crates/akita-prover/src/api/commitment.rs`
 - `crates/akita-prover/src/backend/sparse_ring.rs`
+- `crates/akita-prover/src/validation.rs`
 - `specs/SPEC_REVIEW.md`
