@@ -272,6 +272,7 @@ where
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn repeated_b_commitment_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -545,6 +546,7 @@ where
         n_d_active,
         w_hat_flat.len(),
         d_blinding_digits,
+        lp.log_basis,
         &mut d_cyclic,
     )?;
     for z_segment in z_segments {

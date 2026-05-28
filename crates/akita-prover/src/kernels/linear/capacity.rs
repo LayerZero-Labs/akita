@@ -1,6 +1,6 @@
 use super::*;
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(super) const BALANCED_DIGIT_RHS_MAX_ABS: u64 = 32;
 #[cfg(test)]
 pub(super) const I8_RHS_MAX_ABS: u64 = 128;
