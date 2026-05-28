@@ -193,55 +193,6 @@ pub fn level_params_with_log_basis(
     ))
 }
 
-/// Current-level commitment-layout hook used by the planner DP at
-/// recursive (level > 0) candidate evaluation.
-///
-/// Level 0 delegates to [`root_level_layout_with_log_basis`]. Level > 0
-/// reads params via [`level_params_with_log_basis`] (which prefers the
-/// plan's exact entry) and re-applies the recursive layout.
-///
-/// # Errors
-///
-/// Returns an error if the params lookup or the recursive layout
-/// derivation fails.
-#[allow(clippy::too_many_arguments)]
-pub fn current_level_layout_with_log_basis(
-    sis_family: SisModulusFamily,
-    d: usize,
-    decomp: DecompositionParams,
-    ring_subfield_norm_bound: u32,
-    schedule_plan: Option<&AkitaSchedulePlan>,
-    envelope: &CommitmentEnvelope,
-    stage1_chooser: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    inputs: AkitaScheduleInputs,
-    log_basis: u32,
-) -> Result<LevelParams, AkitaError> {
-    if inputs.level == 0 {
-        return root_level_layout_with_log_basis(
-            sis_family,
-            d,
-            decomp,
-            stage1_chooser(d)?,
-            ring_subfield_norm_bound,
-            inputs,
-            log_basis,
-        );
-    }
-    let params = level_params_with_log_basis(
-        sis_family,
-        d,
-        decomp,
-        ring_subfield_norm_bound,
-        schedule_plan,
-        envelope,
-        stage1_chooser,
-        inputs,
-        log_basis,
-    )?;
-    let layout = recursive_level_layout_from_params(&params, inputs.current_w_len, decomp)?;
-    Ok(params.with_layout(&layout))
-}
-
 /// Direct-step level-params hook used by the planner DP and the schedule
 /// materializer.
 ///
