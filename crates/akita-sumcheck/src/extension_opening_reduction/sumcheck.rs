@@ -233,7 +233,10 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductio
             },
         ))
     }
+}
 
+#[cfg(feature = "zk")]
+impl<E: FieldCore> ExtensionOpeningReductionSumcheck<E> {
     /// Replay masked extension-opening reduction sumcheck rounds and return the
     /// unmasked final claim as a deferred R1CS linear combination.
     ///
