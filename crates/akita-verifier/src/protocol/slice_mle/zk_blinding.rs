@@ -288,10 +288,9 @@ mod tests {
             let point_idx = idx / p.b_blinding_digit_planes_per_point;
             let local = idx % p.b_blinding_digit_planes_per_point;
             let mut entry = F::zero();
-            for row_idx in 0..p.n_b {
+            for (row_idx, row) in b_zk_rows.iter().enumerate().take(p.n_b) {
                 let weight = p.eq_tau1[b_start + point_idx * p.n_b + row_idx];
-                let ring = &b_zk_rows[row_idx][local];
-                entry += weight * eval_ring_at_pows(&ring, &alpha_pows);
+                entry += weight * eval_ring_at_pows(&row[local], &alpha_pows);
             }
             expected += entry * eq[b_offset + idx];
         }
@@ -321,10 +320,9 @@ mod tests {
         let mut expected = F::zero();
         for local in 0..p.d_blinding_segment_len {
             let mut entry = F::zero();
-            for row_idx in 0..p.n_d {
+            for (row_idx, row) in d_zk_rows.iter().enumerate().take(p.n_d) {
                 let weight = p.eq_tau1[d_start + row_idx];
-                let ring = &d_zk_rows[row_idx][local];
-                entry += weight * eval_ring_at_pows(&ring, &alpha_pows);
+                entry += weight * eval_ring_at_pows(&row[local], &alpha_pows);
             }
             expected += entry * eq[d_offset + local];
         }
