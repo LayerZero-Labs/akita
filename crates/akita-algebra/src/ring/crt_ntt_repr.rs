@@ -50,15 +50,15 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     pub garner: GarnerData<W, K>,
 }
 
-/// Precomputed Montgomery forms for small balanced digit values.
+/// Precomputed Montgomery forms for balanced digit values.
 ///
-/// Covers the full `{-32, ..., 31}` range, which is sufficient for any
-/// validated `log_basis <= 6` balanced decomposition. Storing the Montgomery
+/// For a balanced radix-`2^log_basis` decomposition, the table covers exactly
+/// `[-2^(log_basis - 1), 2^(log_basis - 1) - 1]`. Storing the Montgomery
 /// representation eliminates one `from_canonical` Montgomery multiply per
 /// coefficient in the hot digit path.
 #[derive(Debug, Clone)]
-pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
-    vals: [[MontCoeff<W>; DIGIT_LUT_LEN]; K],
+pub struct DigitMontLut<W: PrimeWidth, const K: usize, const L: usize> {
+    vals: [[MontCoeff<W>; L]; K],
 }
 
 /// Precomputed Montgomery forms for centered integer coefficients in
@@ -69,35 +69,51 @@ pub struct CenteredMontLut<W: PrimeWidth, const K: usize> {
     offset: i32,
 }
 
-const DIGIT_LUT_MIN: i16 = -32;
-const DIGIT_LUT_MAX_EXCLUSIVE: i16 = 32;
-const DIGIT_LUT_OFFSET: i16 = -DIGIT_LUT_MIN;
-const DIGIT_LUT_LEN: usize = (DIGIT_LUT_MAX_EXCLUSIVE - DIGIT_LUT_MIN) as usize;
-
-impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
+impl<W: PrimeWidth, const K: usize, const L: usize> DigitMontLut<W, K, L> {
     /// Build the lookup table from CRT primes.
     ///
-    /// Covers every balanced digit value emitted by `log_basis <= 6`
-    /// decomposition.
+    /// Covers exactly `L` balanced digit values centered at zero:
+    /// `[-L/2, L/2)`.
     pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>) -> Self {
-        let mut vals = [[MontCoeff::from_raw(W::default()); DIGIT_LUT_LEN]; K];
-        for (table, prime) in vals.iter_mut().zip(params.primes.iter()) {
-            for (v_idx, dst) in table.iter_mut().enumerate() {
-                let v = i64::from(DIGIT_LUT_MIN + v_idx as i16);
-                *dst = prime.from_canonical(W::from_i64(v));
-            }
-        }
+        debug_assert!((2..=64).contains(&L));
+        debug_assert!(L.is_power_of_two());
+        let offset = Self::offset();
+        let vals = from_fn(|k| {
+            let prime = params.primes[k];
+            from_fn(|idx| {
+                let v = idx as i64 - i64::from(offset);
+                prime.from_canonical(W::from_i64(v))
+            })
+        });
         Self { vals }
     }
 
     /// Look up the Montgomery form of a balanced digit for CRT prime `k`.
     #[inline(always)]
     pub fn get(&self, k: usize, digit: i8) -> MontCoeff<W> {
+        let idx = i16::from(digit) + Self::offset();
         debug_assert!(
-            (DIGIT_LUT_MIN..DIGIT_LUT_MAX_EXCLUSIVE).contains(&i16::from(digit)),
-            "digit LUT only covers balanced digits in [-32, 31]"
+            (0..L as i16).contains(&idx),
+            "digit LUT only covers balanced digits in [-L/2, L/2)"
         );
-        self.vals[k][(i16::from(digit) + DIGIT_LUT_OFFSET) as usize]
+        self.vals[k][idx as usize]
+    }
+
+    /// Number of balanced digit values covered by this table.
+    #[inline]
+    pub fn len(&self) -> usize {
+        L
+    }
+
+    /// Whether this table covers no digit values.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        L == 0
+    }
+
+    #[inline]
+    fn offset() -> i16 {
+        (L / 2) as i16
     }
 }
 
@@ -297,10 +313,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// [`DigitMontLut`] to replace per-coefficient `from_canonical`
     /// (Montgomery multiply) with a table lookup.
     #[inline]
-    pub fn from_i8_with_lut(
+    pub fn from_i8_with_lut<const L: usize>(
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K>,
+        lut: &DigitMontLut<W, K, L>,
     ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
@@ -315,12 +331,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// Accumulate `lhs * rhs(digits)` into `self` while reusing caller-owned
     /// scratch storage for the digit CRT+NTT conversion.
     #[inline]
-    pub fn add_assign_pointwise_mul_i8_with_lut_scratch(
+    pub fn add_assign_pointwise_mul_i8_with_lut_scratch<const L: usize>(
         &mut self,
         lhs: &Self,
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K>,
+        lut: &DigitMontLut<W, K, L>,
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
         #[cfg(target_arch = "aarch64")]
@@ -377,12 +393,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// Accumulate `lhs0 * rhs(digits)` and `lhs1 * rhs(digits)` into
     /// `(acc0, acc1)` while sharing the digit CRT+NTT conversion scratch.
     #[inline]
-    pub fn add_assign_pointwise_mul_i8_pair_with_lut_scratch(
+    pub fn add_assign_pointwise_mul_i8_pair_with_lut_scratch<const L: usize>(
         accs: [&mut Self; 2],
         lhs: [&Self; 2],
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K>,
+        lut: &DigitMontLut<W, K, L>,
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
         let [acc0, acc1] = accs;
@@ -474,12 +490,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// `lhs2 * rhs(digits)` into `(acc0, acc1, acc2)` while sharing the digit
     /// CRT+NTT conversion scratch.
     #[inline]
-    pub fn add_assign_pointwise_mul_i8_triple_with_lut_scratch(
+    pub fn add_assign_pointwise_mul_i8_triple_with_lut_scratch<const L: usize>(
         accs: [&mut Self; 3],
         lhs: [&Self; 3],
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K>,
+        lut: &DigitMontLut<W, K, L>,
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
         let [acc0, acc1, acc2] = accs;
@@ -588,10 +604,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
     /// Like [`Self::from_i8_cyclic`] but uses a precomputed [`DigitMontLut`].
     #[inline]
-    pub fn from_i8_cyclic_with_lut(
+    pub fn from_i8_cyclic_with_lut<const L: usize>(
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K>,
+        lut: &DigitMontLut<W, K, L>,
     ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {

@@ -241,6 +241,7 @@ fn add_blinding_cyclic_rows<F, B, const D: usize>(
     n_b: usize,
     message_planes: usize,
     blinding: &FlatDigitBlocks<D>,
+    log_basis: u32,
     rows: &mut [CyclotomicRing<F, D>],
 ) -> Result<(), AkitaError>
 where
@@ -261,7 +262,7 @@ where
     if padded.len() != total_planes {
         return Err(AkitaError::InvalidProof);
     }
-    let b_blinding_rows = backend.cyclic_digit_rows::<D>(prepared, n_b, &padded)?;
+    let b_blinding_rows = backend.cyclic_digit_rows::<D>(prepared, n_b, &padded, log_basis)?;
     if b_blinding_rows.len() != n_b {
         return Err(AkitaError::InvalidProof);
     }
@@ -279,6 +280,7 @@ fn repeated_b_commitment_rows<F, B, const D: usize>(
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     num_polys_per_point: &[usize],
     blocks_per_claim: usize,
+    log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -331,7 +333,7 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         #[cfg(feature = "zk")]
         let row_start = rows.len();
-        let group_rows = backend.cyclic_digit_rows::<D>(prepared, n_b, group_digits)?;
+        let group_rows = backend.cyclic_digit_rows::<D>(prepared, n_b, group_digits, log_basis)?;
         if group_rows.len() != n_b {
             return Err(AkitaError::InvalidProof);
         }
@@ -344,6 +346,7 @@ where
                 n_b,
                 group_planes,
                 blinding,
+                log_basis,
                 &mut rows[row_start..row_start + n_b],
             )?;
         }
@@ -520,6 +523,7 @@ where
             t_hat: t_hat.flat_digits(),
             z_segment: first_z_segment,
             z_pre_centered_inf_norm,
+            log_basis: lp.log_basis,
         },
     )?;
     if relation_rows.d_cyclic.len() != n_d_active
@@ -573,6 +577,7 @@ where
                 n_b,
                 t_hat.flat_digits().len(),
                 blinding,
+                lp.log_basis,
                 &mut rows,
             )?;
         }
@@ -587,6 +592,7 @@ where
             b_blinding_digits,
             num_polys_per_point,
             blocks_per_claim,
+            lp.log_basis,
         )?
     };
     if commitment_cyclic_rows.len() != commitment_row_count {

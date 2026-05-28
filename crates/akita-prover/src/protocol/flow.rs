@@ -549,8 +549,12 @@ where
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(hiding_params.b_key.row_len(), hiding_params.log_basis)?;
     b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
-    let u_blind_rings: Vec<CyclotomicRing<F, D>> =
-        backend.digit_rows::<D>(prepared, hiding_params.b_key.row_len(), &b_input_digits)?;
+    let u_blind_rings: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
+        prepared,
+        hiding_params.b_key.row_len(),
+        &b_input_digits,
+        hiding_params.log_basis,
+    )?;
     if u_blind_rings.len() != hiding_params.b_key.row_len() {
         return Err(AkitaError::InvalidSetup(format!(
             "backend returned {} ZK hiding rows, expected {}",

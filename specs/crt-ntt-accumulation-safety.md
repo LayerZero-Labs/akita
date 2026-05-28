@@ -28,10 +28,10 @@ cyclic, and block-parallel kernels, and local validation/hardening for i8
 `log_basis`, digit lookup, centered lookup, and sparse signed-ring inputs.
 Akita-owned predecomposed digit paths use the validated balanced
 base-`2^log_basis` digit bound (`log_basis <= 6`) for both capacity planning
-and the optimized 64-entry digit LUT. Direct non-LUT `i8` conversion remains
-available for raw arbitrary-byte helpers. The full-field generic quotient
-helper is no longer a production path; the remaining dense CRT matvec helpers
-are test-only fixtures.
+and the optimized allocation-free per-basis digit LUT. Direct non-LUT `i8`
+conversion remains available for raw arbitrary-byte helpers. The full-field
+generic quotient helper is no longer a production path; the remaining dense CRT
+matvec helpers are test-only fixtures.
 
 ## Intent
 
@@ -75,19 +75,20 @@ performance overhead.
 - Checked boundaries must reject malformed but type-correct inputs before they
   reach optimized kernels. In particular: `log_basis` values used with i8
   decomposition must be checked as `1..=6`; LUT-backed digit paths are for
-  balanced `[-32, 31]` digits and are guarded by that validation plus local
-  debug assertions for predecomposed callers; centered-i32 lookup must be
-  bounds-safe even when a caller-provided max-abs bound is stale; sparse
-  signed-ring coefficients must match the commit path's signed-unit assumption
-  or the commit path must support the advertised range.
+  balanced `[-2^(log_basis-1), 2^(log_basis-1))` digits and are guarded by
+  that validation plus local debug assertions for predecomposed callers;
+  centered-i32 lookup must be bounds-safe even when a caller-provided max-abs
+  bound is stale; sparse signed-ring coefficients must match the commit path's
+  signed-unit assumption or the commit path must support the advertised range.
 
 - Capacity planning and LUT sizing must distinguish digit provenance. Raw
   direct digit conversion can handle the full `i8` domain without using the
   balanced LUT. Prover-owned digit planes produced by Akita balanced
-  decomposition use `B = 32`, the maximum balanced digit magnitude for
-  `log_basis <= 6`; the 64-entry `DigitMontLut` intentionally covers exactly
-  that range. Release code should rely on existing log-basis validation at the
-  decomposition boundary, not scan every digit plane in hot loops.
+  decomposition use `B = 1 << (log_basis - 1)`, whose worst case is `32` at
+  `log_basis = 6`; the const-generic `DigitMontLut` intentionally covers
+  exactly `2^log_basis` entries. Release code should rely on existing
+  log-basis validation at the decomposition boundary, not scan every digit
+  plane in hot loops.
 
 - The proof format, transcript order, Fiat-Shamir bytes, setup seed semantics,
   generated schedule tables, and verifier replay behavior must not change.
@@ -263,7 +264,7 @@ chunk-result matrix when a row/block accumulator can be reused.
 | i8/digit matvec | `i8_matvec.rs`, `digits.rs`, `single_cyclic.rs`, `block_parallel.rs` | Balanced i8 RHS is small but wide fp128 rows can exceed Q128 lift range. | Compute the safe width from `D`, field modulus, RHS bound, and CRT product; use `log_basis <= 6` to plan Akita-owned predecomposed digits with the balanced bound rather than the full `i8` bound; preserve one-shot accumulation when safe; otherwise chunk and add reconstructed native field results. |
 | Block-parallel clamp | `digits.rs`, `block_parallel.rs` | Fast path could bypass the generic `inner_width = min(mat_width, data_width)` clamp. | Dispatch to block-parallel paths only when the full effective width is both present and safe; otherwise use the shared chunked generic path. |
 | Centered LUT bound | `crt_ntt_repr.rs`, `fused_quotients.rs` | `z_pre_max_abs` sized a LUT that was later indexed unchecked by actual coefficients. | `CenteredMontLut::get` is bounds-checked and falls back to exact conversion on miss. Fused quotient code avoids giant LUTs and uses debug assertions to catch stale local bounds. |
-| Digit LUT contract | `crt_ntt_repr.rs` and predecomposed digit kernels | Full-`i8` LUT coverage solved a broader contract than Akita-owned digit kernels need, while using full `i8` as the capacity bound over-chunks fp128 paths. | `DigitMontLut` is a 64-entry balanced-digit table for `[-32, 31]`, matching validated `log_basis <= 6` decomposition. Akita-owned predecomposed digit paths use the same balanced maximum (`32`) for capacity planning, with debug assertions instead of release-mode scans. |
+| Digit LUT contract | `crt_ntt_repr.rs` and predecomposed digit kernels | Full-`i8` LUT coverage solved a broader contract than Akita-owned digit kernels need, while using full `i8` as the capacity bound over-chunks fp128 paths. | `DigitMontLut` is a fixed-array, const-generic balanced-digit table sized to exactly `2^log_basis` entries. Akita-owned predecomposed digit paths thread `log_basis` into both LUT selection and capacity planning, with debug assertions instead of release-mode scans. |
 | Commit log basis | `api/commitment.rs`, `protocol/ring_switch.rs`, `protocol/quadratic_equation.rs`, `kernels/linear/ntt_matvec.rs` | Commit validation accepted `1..=128`; i8 decomposition supports `1..=6`. | Centralize `MAX_I8_LOG_BASIS = 6` in `validation.rs` and reject invalid setup/input log bases before decomposition. |
 | Sparse signed-ring contract | `backend/sparse_ring.rs` | Constructor accepted any nonzero `i8`; commit assumed signed units and used `unreachable!`. | Sparse ring construction now rejects all coefficients except `-1` and `1`, matching the commit path. |
 
@@ -307,8 +308,8 @@ Validation fixes should stay local:
 - commitment parameter validation rejects unsupported i8 `log_basis` values;
 - centered LUT construction/use is bounds-safe and falls back exactly on miss;
 - LUT-backed digit kernels use the `log_basis <= 6` balanced capacity and
-  lookup contract, with debug assertions for predecomposed callers rather than
-  release-mode scans;
+  exact per-basis lookup contract, with debug assertions for predecomposed
+  callers rather than release-mode scans;
 - sparse signed-ring construction and commit agree that values are signed units
   only.
 
@@ -366,8 +367,8 @@ Implemented order:
    instead of adding a broad fallback. Kept `crt_matvec.rs` as test-only dense
    helpers.
 6. Tightened local input contracts: `log_basis`, centered LUT fallback,
-   64-entry balanced digit LUT safety, log-basis-bounded predecomposed digit capacity,
-   and sparse signed-ring coefficient semantics.
+   allocation-free per-basis digit LUT safety, log-basis-bounded predecomposed
+   digit capacity, and sparse signed-ring coefficient semantics.
 7. Ran targeted tests, full format/clippy/test, line-cap checking, and release
    profile commands.
 8. Audited and documented performance in the PR body.

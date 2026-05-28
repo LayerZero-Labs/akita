@@ -1,6 +1,9 @@
 use super::*;
 use crate::validation::{is_i8_log_basis, validate_i8_input_log_basis};
 
+#[derive(Clone, Copy)]
+pub(super) struct DigitLutLen<const L: usize>;
+
 #[inline]
 pub(super) fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usize>(
     acc: &mut CyclotomicCrtNtt<W, K, D>,
@@ -85,15 +88,15 @@ pub(super) fn balanced_digit_abs_bound(log_basis: u32) -> u64 {
 }
 
 #[inline]
-pub(super) fn digit_rows_within_abs_bound<const D: usize>(
+pub(super) fn digit_rows_within_lut_range<const D: usize, const L: usize>(
     rows: &[[i8; D]],
     len: usize,
-    bound: u64,
 ) -> bool {
+    let bound = (L / 2) as i16;
     rows.iter()
         .take(len)
         .flat_map(|row| row.iter())
-        .all(|&coeff| u64::from(coeff.unsigned_abs()) <= bound)
+        .all(|&coeff| (-bound..bound).contains(&i16::from(coeff)))
 }
 
 #[inline]

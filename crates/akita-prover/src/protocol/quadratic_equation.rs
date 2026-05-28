@@ -297,6 +297,7 @@ fn compute_v_rows<F, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     row_len: usize,
     w_hat: &FlatDigitBlocks<D>,
+    log_basis: u32,
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
@@ -307,7 +308,7 @@ where
     {
         let mut d_input_digits = w_hat.flat_digits().to_vec();
         d_input_digits.extend_from_slice(d_blinding_digits.flat_digits());
-        let rows = backend.digit_rows::<D>(prepared, row_len, &d_input_digits)?;
+        let rows = backend.digit_rows::<D>(prepared, row_len, &d_input_digits, log_basis)?;
         if rows.len() != row_len {
             return Err(AkitaError::InvalidProof);
         }
@@ -315,7 +316,7 @@ where
     }
     #[cfg(not(feature = "zk"))]
     {
-        let rows = backend.digit_rows::<D>(prepared, row_len, w_hat.flat_digits())?;
+        let rows = backend.digit_rows::<D>(prepared, row_len, w_hat.flat_digits(), log_basis)?;
         if rows.len() != row_len {
             return Err(AkitaError::InvalidProof);
         }
@@ -568,6 +569,7 @@ where
                     prepared,
                     lp.d_key.row_len(),
                     &w_hat,
+                    lp.log_basis,
                     #[cfg(feature = "zk")]
                     &d_blinding_digits,
                 )?;
@@ -778,6 +780,7 @@ where
                     prepared,
                     lp.d_key.row_len(),
                     &w_hat,
+                    lp.log_basis,
                     #[cfg(feature = "zk")]
                     &d_blinding_digits,
                 )?;

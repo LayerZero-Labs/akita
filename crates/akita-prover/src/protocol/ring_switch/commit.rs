@@ -93,8 +93,12 @@ where
     #[cfg(feature = "zk")]
     outer_input.extend_from_slice(b_blinding_digits.flat_digits());
     validate_commit_outer_input_nonempty(outer_input.len())?;
-    let u: Vec<CyclotomicRing<F, D>> =
-        backend.digit_rows::<D>(prepared, commit_layout.b_key.row_len(), &outer_input)?;
+    let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
+        prepared,
+        commit_layout.b_key.row_len(),
+        &outer_input,
+        commit_layout.log_basis,
+    )?;
     if u.len() != commit_layout.b_key.row_len() {
         return Err(AkitaError::InvalidProof);
     }

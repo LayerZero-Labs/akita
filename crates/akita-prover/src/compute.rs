@@ -92,6 +92,8 @@ pub enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
     CachedDigits {
         /// Per-block digit slices.
         digit_block_slices: Vec<&'a [[i8; D]]>,
+        /// Logarithm of the gadget basis used to produce the cached digits.
+        log_basis: u32,
     },
     /// Ring coefficients need backend-side digit decomposition.
     CoeffBlocks {
@@ -239,6 +241,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         row_len: usize,
         digits: &[[i8; D]],
+        log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 
@@ -253,6 +256,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         row_len: usize,
         digits: &[[i8; D]],
+        log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 
@@ -312,6 +316,8 @@ pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
     pub z_segment: &'a [[i32; D]],
     /// Infinity norm of the full centered `z_pre` witness.
     pub z_pre_centered_inf_norm: u32,
+    /// Logarithm of the gadget basis used to produce `w_hat` and `t_hat`.
+    pub log_basis: u32,
 }
 
 /// Additional public-row quotient operation input.
@@ -445,14 +451,16 @@ where
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         let stride = prepared.expanded.seed.max_stride;
         match plan.input {
-            DenseCommitInput::CachedDigits { digit_block_slices } => {
-                Ok(mat_vec_mul_ntt_dense_digits_i8(
-                    &prepared.ntt_shared,
-                    plan.n_a,
-                    stride,
-                    &digit_block_slices,
-                ))
-            }
+            DenseCommitInput::CachedDigits {
+                digit_block_slices,
+                log_basis,
+            } => mat_vec_mul_ntt_dense_digits_i8(
+                &prepared.ntt_shared,
+                plan.n_a,
+                stride,
+                &digit_block_slices,
+                log_basis,
+            ),
             DenseCommitInput::CoeffBlocks {
                 block_slices,
                 num_digits_commit,
@@ -568,14 +576,15 @@ where
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         let stride = prepared.expanded.seed.max_stride;
         if plan.num_digits_commit == 1 {
-            Ok(mat_vec_mul_ntt_digits_i8_strided(
+            mat_vec_mul_ntt_digits_i8_strided(
                 &prepared.ntt_shared,
                 plan.n_rows,
                 stride,
                 plan.coeffs,
                 plan.num_blocks,
                 plan.block_len,
-            ))
+                plan.log_basis,
+            )
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = plan
                 .coeffs
@@ -608,6 +617,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         row_len: usize,
         digits: &[[i8; D]],
+        log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         validate_digit_row_request(
             row_len,
@@ -617,12 +627,13 @@ where
                 .shared_matrix
                 .total_ring_elements_at::<D>()?,
         )?;
-        Ok(mat_vec_mul_ntt_single_i8(
+        mat_vec_mul_ntt_single_i8(
             &prepared.ntt_shared,
             row_len,
             prepared.expanded.seed.max_stride,
             digits,
-        ))
+            log_basis,
+        )
     }
 }
 
@@ -635,6 +646,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         row_len: usize,
         digits: &[[i8; D]],
+        log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         validate_digit_row_request(
             row_len,
@@ -644,12 +656,13 @@ where
                 .shared_matrix
                 .total_ring_elements_at::<D>()?,
         )?;
-        Ok(mat_vec_mul_ntt_single_i8_cyclic(
+        mat_vec_mul_ntt_single_i8_cyclic(
             &prepared.ntt_shared,
             row_len,
             prepared.expanded.seed.max_stride,
             digits,
-        ))
+            log_basis,
+        )
     }
 }
 
@@ -675,6 +688,7 @@ where
             plan.t_hat,
             plan.z_segment,
             plan.z_pre_centered_inf_norm,
+            plan.log_basis,
         )?;
         Ok(RingSwitchRelationRows {
             d_cyclic,
@@ -701,6 +715,7 @@ where
             &[][..],
             plan.z_segment,
             plan.z_pre_centered_inf_norm,
+            1,
         )?;
         Ok(a_quotients)
     }
@@ -753,10 +768,12 @@ mod tests {
     fn cpu_digit_rows_match_direct_kernel() {
         let prepared = prepared();
         let digits = vec![[1i8; D], [-1i8; D], [2i8; D]];
+        let log_basis = 3;
         let via_backend = CpuBackend
-            .digit_rows::<D>(&prepared, 2, &digits)
+            .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
-        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, 8, &digits);
+        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, 8, &digits, log_basis)
+            .expect("direct digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -764,10 +781,12 @@ mod tests {
     fn cpu_digit_rows_accept_logical_input_longer_than_stride() {
         let prepared = prepared();
         let digits = vec![[1i8; D]; 12];
+        let log_basis = 3;
         let via_backend = CpuBackend
-            .digit_rows::<D>(&prepared, 2, &digits)
+            .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
-        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, 8, &digits);
+        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, 8, &digits, log_basis)
+            .expect("direct digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -775,10 +794,13 @@ mod tests {
     fn cpu_cyclic_digit_rows_match_direct_kernel() {
         let prepared = prepared();
         let digits = vec![[1i8; D], [0i8; D], [-2i8; D], [3i8; D]];
+        let log_basis = 3;
         let via_backend = CpuBackend
-            .cyclic_digit_rows::<D>(&prepared, 2, &digits)
+            .cyclic_digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend cyclic digit rows");
-        let direct = mat_vec_mul_ntt_single_i8_cyclic(&prepared.ntt_shared, 2, 8, &digits);
+        let direct =
+            mat_vec_mul_ntt_single_i8_cyclic(&prepared.ntt_shared, 2, 8, &digits, log_basis)
+                .expect("direct cyclic digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -799,6 +821,7 @@ mod tests {
                     t_hat: &t_hat,
                     z_segment: &z_segment,
                     z_pre_centered_inf_norm: 3,
+                    log_basis: 3,
                 },
             )
             .expect("backend ring-switch relation rows");

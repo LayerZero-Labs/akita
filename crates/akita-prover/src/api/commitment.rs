@@ -302,8 +302,12 @@ where
         b_blinding_digits
     };
     validate_commit_outer_input_nonempty(b_input_digits.len())?;
-    let u: Vec<CyclotomicRing<F, D>> =
-        backend.digit_rows::<D>(prepared, params.b_key.row_len(), &b_input_digits)?;
+    let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
+        prepared,
+        params.b_key.row_len(),
+        &b_input_digits,
+        params.log_basis,
+    )?;
     if u.len() != params.b_key.row_len() {
         return Err(AkitaError::InvalidSetup(format!(
             "backend returned {} B commitment rows, expected {}",

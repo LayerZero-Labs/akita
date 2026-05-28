@@ -124,7 +124,9 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                 n_a,
                 inner_width,
                 black_box(&digit_block_slices),
+                layout.log_basis,
             ))
+            .unwrap()
         })
     });
     group.finish();
