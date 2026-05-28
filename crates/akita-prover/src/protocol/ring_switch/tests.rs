@@ -1,4 +1,4 @@
-use super::balanced_decompose_centered_i32_i8_into;
+use super::coeffs::balanced_decompose_centered_i32_i8_into;
 use akita_algebra::CyclotomicRing;
 use akita_field::Prime128OffsetA7F7;
 use std::array::from_fn;
