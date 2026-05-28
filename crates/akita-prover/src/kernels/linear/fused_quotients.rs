@@ -320,13 +320,7 @@ fn centered_rows_within_bound<const D: usize>(rows: &[[i32; D]], len: usize, bou
     rows.iter()
         .take(len)
         .flat_map(|row| row.iter())
-        .all(|&coeff| {
-            if coeff == i32::MIN {
-                bound >= (1u64 << 31)
-            } else {
-                u64::from(coeff.unsigned_abs()) <= bound
-            }
-        })
+        .all(|&coeff| u64::from(coeff.unsigned_abs()) <= bound)
 }
 
 fn centered_i32_ring<F: CanonicalField, const D: usize>(coeffs: &[i32; D]) -> CyclotomicRing<F, D> {
