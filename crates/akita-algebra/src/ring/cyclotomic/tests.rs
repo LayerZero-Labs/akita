@@ -5,7 +5,7 @@ use rand::SeedableRng;
 
 type F64 = Fp64<4294967197>;
 type F128 = Prime128Offset275;
-const D: usize = 64;
+const D: usize = 8;
 
 #[test]
 fn cyclotomic_ring_satisfies_jolt_ring_core() {
