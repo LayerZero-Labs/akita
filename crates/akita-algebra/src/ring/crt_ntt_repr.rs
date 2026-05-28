@@ -50,15 +50,14 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     pub garner: GarnerData<W, K>,
 }
 
-/// Precomputed Montgomery forms for small balanced digit values.
+/// Precomputed Montgomery forms for every `i8` digit value.
 ///
-/// Covers the full `{-32, ..., 31}` range (64 entries per CRT prime),
-/// which is sufficient for any `log_basis <= 6`. Storing the Montgomery
-/// representation eliminates one `from_canonical` (a Montgomery multiply)
-/// per coefficient in the `from_i8` hot path.
+/// Balanced decomposition only emits `{-32, ..., 31}` when `log_basis <= 6`,
+/// but public digit kernels accept `i8` inputs directly. Covering the full
+/// byte range keeps those safe APIs exact without unchecked indexing.
 #[derive(Debug, Clone)]
 pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
-    vals: [[MontCoeff<W>; 64]; K],
+    vals: [[MontCoeff<W>; 256]; K],
 }
 
 /// Precomputed Montgomery forms for centered integer coefficients in
@@ -69,39 +68,34 @@ pub struct CenteredMontLut<W: PrimeWidth, const K: usize> {
     offset: i32,
 }
 
-const DIGIT_LUT_HALF_B: i16 = 32;
+const DIGIT_LUT_OFFSET: i16 = 128;
 
 impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
     /// Build the lookup table from CRT primes.
     ///
-    /// Covers digit values in `{-32, ..., 31}` (balanced representation for
-    /// `log_basis <= 6`).
+    /// Covers every `i8` digit value.
     pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>) -> Self {
-        let mut vals = [[MontCoeff::from_raw(W::default()); 64]; K];
+        let mut vals = [[MontCoeff::from_raw(W::default()); 256]; K];
         for (k, prime) in params.primes.iter().enumerate() {
-            for v_idx in 0..64u8 {
-                let v = v_idx as i64 - DIGIT_LUT_HALF_B as i64;
+            for v_idx in 0..=255u16 {
+                let v = i64::from(v_idx as i16 - DIGIT_LUT_OFFSET);
                 vals[k][v_idx as usize] = prime.from_canonical(W::from_i64(v));
             }
         }
         Self { vals }
     }
 
-    /// Look up the Montgomery form of a balanced digit for CRT prime `k`.
+    /// Look up the Montgomery form of an `i8` digit for CRT prime `k`.
     #[inline(always)]
     pub fn get(&self, k: usize, digit: i8) -> MontCoeff<W> {
-        unsafe {
-            *self
-                .vals
-                .get_unchecked(k)
-                .get_unchecked((digit as i16 + DIGIT_LUT_HALF_B) as usize)
-        }
+        self.vals[k][(i16::from(digit) + DIGIT_LUT_OFFSET) as usize]
     }
 }
 
 impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
     /// Build a lookup table for all centered coefficients in `[-max_abs, max_abs]`.
     pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>, max_abs: i32) -> Self {
+        let max_abs = max_abs.max(0);
         let vals = from_fn(|k| {
             let prime = params.primes[k];
             (-max_abs..=max_abs)
@@ -116,13 +110,9 @@ impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
 
     /// Look up the Montgomery form of a centered coefficient for CRT prime `k`.
     #[inline(always)]
-    pub fn get(&self, k: usize, coeff: i32) -> MontCoeff<W> {
-        unsafe {
-            *self
-                .vals
-                .get_unchecked(k)
-                .get_unchecked((coeff + self.offset) as usize)
-        }
+    pub fn get(&self, k: usize, coeff: i32) -> Option<MontCoeff<W>> {
+        let idx = coeff.checked_add(self.offset)?;
+        self.vals.get(k)?.get(usize::try_from(idx).ok()?).copied()
     }
 }
 
@@ -737,7 +727,15 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         {
             if let Some(lut) = lut {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
-                    *dst = lut.get(k, coeff);
+                    *dst = lut.get(k, coeff).unwrap_or_else(|| {
+                        let p = prime.p.to_i64();
+                        let half_p = p / 2;
+                        let mut r = (coeff as i64).rem_euclid(p);
+                        if r >= half_p {
+                            r -= p;
+                        }
+                        B::from_canonical(*prime, W::from_i64(r))
+                    });
                 }
             } else {
                 let p = prime.p.to_i64();

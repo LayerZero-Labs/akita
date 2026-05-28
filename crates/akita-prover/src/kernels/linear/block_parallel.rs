@@ -518,34 +518,102 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     debug_assert_eq!(ntt_mat.len(), 1);
+    let num_blocks = blocks.len();
+    if num_blocks == 0 {
+        return vec![];
+    }
+    let mat_width = ntt_mat.first().map_or(0, |row| row.len());
+    let max_data_width = blocks
+        .iter()
+        .map(|block| block.len().saturating_mul(num_digits))
+        .max()
+        .unwrap_or(0);
+    let inner_width = mat_width.min(max_data_width);
+    if inner_width == 0 {
+        return vec![CyclotomicRing::<F, D>::zero(); num_blocks];
+    }
+
+    let digit_bound = balanced_digit_abs_bound(log_basis);
+    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
+        .expect("single i8 CRT term must fit supported parameters");
     let lut = DigitMontLut::new(params);
     let mat_row = &ntt_mat[0];
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
+    if inner_width <= safe_width && inner_width == max_data_width {
+        return cfg_into_iter!(blocks)
+            .map(|block| {
+                let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
+                let mut digit_buf = vec![[0i8; D]; num_digits];
+                let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+                let mut col = 0usize;
+
+                for coeff_vec in block.iter() {
+                    coeff_vec.balanced_decompose_pow2_i8_into_with_params(
+                        &mut digit_buf,
+                        &decompose_params,
+                    );
+                    for digit in &digit_buf {
+                        acc.add_assign_pointwise_mul_i8_with_lut_scratch(
+                            &mat_row[col],
+                            digit,
+                            params,
+                            &lut,
+                            &mut rhs_scratch,
+                        );
+                        col += 1;
+                    }
+                }
+
+                acc.to_ring_with_params(params)
+            })
+            .collect();
+    }
+
+    let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
+    let num_chunks = inner_width.div_ceil(chunk_width);
+
     cfg_into_iter!(blocks)
         .map(|block| {
-            let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
-            let mut digit_buf = vec![[0i8; D]; num_digits];
+            let mut out = CyclotomicRing::<F, D>::zero();
             let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
-            let mut col = 0usize;
 
-            for coeff_vec in block.iter() {
-                coeff_vec
-                    .balanced_decompose_pow2_i8_into_with_params(&mut digit_buf, &decompose_params);
-                for digit in &digit_buf {
+            for chunk_idx in 0..num_chunks {
+                let tile_start = chunk_idx * chunk_width;
+                let tile_end = (tile_start + chunk_width).min(inner_width);
+                let ring_start = tile_start / num_digits;
+                let ring_end = ((tile_end - 1) / num_digits) + 1;
+                let digit_offset = tile_start - ring_start * num_digits;
+                let tile_len = tile_end - tile_start;
+                if ring_start >= block.len() {
+                    break;
+                }
+
+                let block_ring_end = ring_end.min(block.len());
+                let partial_coeffs = &block[ring_start..block_ring_end];
+                let all_digits = decompose_block_i8(partial_coeffs, num_digits, log_basis);
+                let available = all_digits.len().saturating_sub(digit_offset);
+                let n = tile_len.min(available);
+                let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
+
+                for (j, digit) in all_digits[digit_offset..digit_offset + n]
+                    .iter()
+                    .enumerate()
+                {
                     acc.add_assign_pointwise_mul_i8_with_lut_scratch(
-                        &mat_row[col],
+                        &mat_row[tile_start + j],
                         digit,
                         params,
                         &lut,
                         &mut rhs_scratch,
                     );
-                    col += 1;
                 }
+
+                out += acc.to_ring_with_params(params);
             }
 
-            acc.to_ring_with_params(params)
+            out
         })
         .collect()
 }

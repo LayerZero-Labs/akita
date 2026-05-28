@@ -11,6 +11,8 @@ use akita_types::{
     RingCommitment,
 };
 
+const MAX_I8_LOG_BASIS: u32 = 6;
+
 pub(crate) fn commit_inner_block_digit_count(
     n_a: usize,
     num_digits_open: usize,
@@ -53,9 +55,9 @@ where
 {
     let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
     let expected_flat_digits = commit_inner_flat_digit_count(num_blocks, n_a, num_digits_open)?;
-    if !(1..=128).contains(&log_basis) {
+    if !(1..=MAX_I8_LOG_BASIS).contains(&log_basis) {
         return Err(AkitaError::InvalidSetup(
-            "log_basis must be in 1..=128 when recomposing inner commitment digits".to_string(),
+            "log_basis must be in 1..=6 when recomposing i8 inner commitment digits".to_string(),
         ));
     }
 
@@ -142,9 +144,9 @@ where
             "setup max_stride must be nonzero".to_string(),
         ));
     }
-    if !(1..=128).contains(&params.log_basis) {
+    if !(1..=MAX_I8_LOG_BASIS).contains(&params.log_basis) {
         return Err(AkitaError::InvalidSetup(
-            "commit params log_basis must be in 1..=128".to_string(),
+            "commit params log_basis must be in 1..=6 for i8 decomposition".to_string(),
         ));
     }
     let expected_a_width = params
@@ -546,7 +548,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AkitaProverSetup;
+    use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
+    use akita_types::SisModulusFamily;
 
     type F = Fp64<4294967197>;
     const D: usize = 32;
@@ -590,6 +595,41 @@ mod tests {
         let mut inner = inner_witness(1, 1, vec![2]);
         inner.decomposed_inner_rows.flat_digits_mut()[0][0] = 1;
         assert!(validate_commit_inner_witness_shape(&inner, 1, 1, 2, 4).is_err());
+    }
+
+    #[test]
+    fn commit_inner_witness_shape_rejects_log_basis_above_i8_range() {
+        let inner = inner_witness(1, 1, vec![2]);
+        assert!(matches!(
+            validate_commit_inner_witness_shape(&inner, 1, 1, 2, 7),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+
+    #[test]
+    fn commit_level_params_reject_log_basis_above_i8_range() {
+        let expanded = AkitaProverSetup::<F, D>::generate_with_capacity(5, 1, 1, 4, 8)
+            .unwrap()
+            .expanded;
+        let params = LevelParams::params_only(
+            SisModulusFamily::Q32,
+            D,
+            7,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_decomp(1, 1, 2, 2, 2, 0)
+        .unwrap();
+
+        assert!(matches!(
+            validate_commit_level_params::<F, D>(&params, &expanded),
+            Err(AkitaError::InvalidSetup(_))
+        ));
     }
 
     #[test]

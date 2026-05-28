@@ -6,8 +6,8 @@ use akita_algebra::tables::{
     Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES,
 };
 use akita_algebra::{
-    CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, LimbQ, MontCoeff, PackedPartialSplitEval16,
-    PartialSplitEval16, PartialSplitNtt16, ScalarBackend,
+    CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, LimbQ,
+    MontCoeff, PackedPartialSplitEval16, PartialSplitEval16, PartialSplitNtt16, ScalarBackend,
 };
 use akita_field::{Fp128, Fp32, Fp64, HasPacking, Prime128Offset159, Prime128Offset275};
 
@@ -100,6 +100,39 @@ fn mont_coeff_round_trip() {
             assert_eq!(back, val, "round-trip failed for val={val}, p={}", prime.p);
         }
     }
+}
+
+#[test]
+fn digit_lut_covers_full_i8_range() {
+    let params = CrtNttParamSet::<i16, Q32_NUM_PRIMES, 64>::new(Q32_PRIMES);
+    let lut = DigitMontLut::new(&params);
+
+    for (k, prime) in params.primes.iter().enumerate() {
+        for raw in i8::MIN..=i8::MAX {
+            assert_eq!(lut.get(k, raw), prime.from_canonical(i16::from(raw)));
+        }
+    }
+}
+
+#[test]
+fn centered_lut_understated_bound_falls_back_exactly() {
+    const D: usize = 64;
+    let params = CrtNttParamSet::<i16, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
+    let lut = CenteredMontLut::new(&params, 1);
+    let coeffs = std::array::from_fn(|i| {
+        if i % 2 == 0 {
+            20 + i as i32
+        } else {
+            -20 - i as i32
+        }
+    });
+
+    let with_lut = CyclotomicCrtNtt::from_centered_i32_pair_with_lut(&coeffs, &params, &lut);
+    let direct = CyclotomicCrtNtt::<i16, Q32_NUM_PRIMES, D>::from_centered_i32_pair_with_params(
+        &coeffs, &params,
+    );
+
+    assert_eq!(with_lut, direct);
 }
 
 #[test]

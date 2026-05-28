@@ -2,9 +2,9 @@
 //!
 //! This module encapsulates the stage-1 prover logic and the generation of
 //! the quadratic equation components M, y, z, and v.
-
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
+use crate::protocol::validation::validate_i8_log_basis;
 use crate::{
     AkitaPolyOps, CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend,
     RecursiveWitnessView, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
@@ -29,7 +29,6 @@ use akita_types::{ClaimIncidenceSummary, LevelParams};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 use std::iter::repeat_n;
 use std::time::Instant;
-
 fn beta_linf_fold_bound(
     r: usize,
     challenge_l1_mass: usize,
@@ -41,18 +40,15 @@ fn beta_linf_fold_bound(
     if r >= 128 {
         return Err(AkitaError::InvalidSetup("r_vars must be < 128".to_string()));
     }
-
     let blocks = 1u128 << r;
     let b = 1u128 << log_basis;
     let half_b = b / 2;
-
     let term = blocks
         .checked_mul(challenge_l1_mass as u128)
         .ok_or_else(|| AkitaError::InvalidSetup("beta bound overflow".to_string()))?;
     term.checked_mul(half_b)
         .ok_or_else(|| AkitaError::InvalidSetup("beta bound overflow".to_string()))
 }
-
 fn beta_linf_fold_bound_with_num_claims(
     r: usize,
     challenge_l1_mass: usize,
@@ -383,6 +379,7 @@ where
                 "QuadraticEquation::new_prover"
             );
         }
+        validate_i8_log_basis(lp.log_basis)?;
         if opening_points.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one opening point".to_string(),
@@ -705,6 +702,7 @@ where
         T: Transcript<F>,
         B: DigitRowsComputeBackend<F>,
     {
+        validate_i8_log_basis(lp.log_basis)?;
         let num_claims = ring_opening_points.len();
         if num_claims == 0
             || ring_multiplier_points.len() != num_claims
@@ -1427,6 +1425,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
     B: RingSwitchComputeBackend<F>,
 {
+    validate_i8_log_basis(lp.log_basis)?;
     if num_polys_per_point.is_empty() || num_polys_per_point.contains(&0) {
         return Err(AkitaError::InvalidProof);
     }

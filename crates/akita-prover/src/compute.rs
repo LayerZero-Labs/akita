@@ -11,10 +11,13 @@ use crate::backend::onehot::{
 };
 use crate::backend::sparse_ring::{column_sweep_sparse, SparseRingBlockEntry};
 use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
+#[cfg(test)]
+use crate::kernels::linear::fused_split_eq_quotients;
 use crate::kernels::linear::{
-    fused_split_eq_quotients, mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8_strided,
-    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
-    mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8,
+    mat_vec_mul_ntt_digits_i8_strided, mat_vec_mul_ntt_i8_dense,
+    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided, mat_vec_mul_ntt_single_i8,
+    mat_vec_mul_ntt_single_i8_cyclic,
 };
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
@@ -441,14 +444,14 @@ where
         plan: DenseCommitRowsPlan<'_, F, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         let stride = prepared.expanded.seed.max_stride;
-        Ok(match plan.input {
+        match plan.input {
             DenseCommitInput::CachedDigits { digit_block_slices } => {
-                mat_vec_mul_ntt_dense_digits_i8(
+                Ok(mat_vec_mul_ntt_dense_digits_i8(
                     &prepared.ntt_shared,
                     plan.n_a,
                     stride,
                     &digit_block_slices,
-                )
+                ))
             }
             DenseCommitInput::CoeffBlocks {
                 block_slices,
@@ -456,16 +459,16 @@ where
                 log_basis,
             } => {
                 if plan.n_a == 1 {
-                    mat_vec_mul_ntt_i8_dense_single_row(
+                    Ok(mat_vec_mul_ntt_i8_dense_single_row(
                         &prepared.ntt_shared,
                         stride,
                         &block_slices,
                         num_digits_commit,
                         log_basis,
-                    )
+                    )?
                     .into_iter()
                     .map(|ring| vec![ring])
-                    .collect()
+                    .collect())
                 } else {
                     mat_vec_mul_ntt_i8_dense(
                         &prepared.ntt_shared,
@@ -477,7 +480,7 @@ where
                     )
                 }
             }
-        })
+        }
     }
 
     fn onehot_commit_rows<const D: usize>(
@@ -582,7 +585,7 @@ where
                     CyclotomicRing::from_coefficients(coeffs)
                 })
                 .collect();
-            Ok(mat_vec_mul_ntt_i8_strided(
+            mat_vec_mul_ntt_i8_strided(
                 &prepared.ntt_shared,
                 plan.n_rows,
                 stride,
@@ -591,7 +594,7 @@ where
                 plan.block_len,
                 plan.num_digits_commit,
                 plan.log_basis,
-            ))
+            )
         }
     }
 }
@@ -662,7 +665,7 @@ where
     where
         F: HalvingField,
     {
-        let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients(
+        let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
             &prepared.ntt_shared,
             plan.n_d,
             plan.n_b,
@@ -672,7 +675,7 @@ where
             plan.t_hat,
             plan.z_segment,
             plan.z_pre_centered_inf_norm,
-        );
+        )?;
         Ok(RingSwitchRelationRows {
             d_cyclic,
             b_cyclic,
@@ -688,7 +691,7 @@ where
     where
         F: HalvingField,
     {
-        let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients(
+        let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
             &prepared.ntt_shared,
             0,
             0,
@@ -698,7 +701,7 @@ where
             &[][..],
             plan.z_segment,
             plan.z_pre_centered_inf_norm,
-        );
+        )?;
         Ok(a_quotients)
     }
 }
@@ -809,7 +812,8 @@ mod tests {
             &t_hat,
             &z_segment,
             3,
-        );
+        )
+        .expect("direct fused split-eq rows");
         assert_eq!(
             (
                 via_backend.d_cyclic,

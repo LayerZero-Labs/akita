@@ -1,5 +1,4 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
-
 use crate::api::commitment::{
     validate_commit_inner_witness_shape, validate_commit_level_params,
     validate_commit_outer_input_nonempty,
@@ -8,6 +7,7 @@ use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
+use crate::protocol::validation::validate_i8_log_basis;
 use crate::{
     tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat, RingSwitchComputeBackend,
@@ -35,7 +35,6 @@ use akita_types::{
     RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
     TerminalWitnessSegmentLayout,
 };
-
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
 pub struct RingSwitchOutput<E: FieldCore> {
@@ -118,6 +117,7 @@ where
     let mut hint = quad_eq
         .take_hint()
         .ok_or_else(|| AkitaError::InvalidInput("missing hint in prover".to_string()))?;
+    validate_i8_log_basis(lp.log_basis)?;
     hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
     #[cfg(feature = "zk")]
     let (decomposed_inner_rows, recomposed_inner_rows, b_blinding_digits) = hint.into_flat_parts();

@@ -39,8 +39,9 @@ pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    dispatch_slot!(
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    validate_i8_log_basis(log_basis)?;
+    Ok(dispatch_slot!(
         slot,
         num_rows,
         num_cols,
@@ -48,7 +49,7 @@ pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
         blocks,
         num_digits,
         log_basis
-    )
+    ))
 }
 
 /// Dense-optimized variant of [`mat_vec_mul_ntt_i8`].
@@ -63,8 +64,9 @@ pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    dispatch_slot!(
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    validate_i8_log_basis(log_basis)?;
+    Ok(dispatch_slot!(
         slot,
         num_rows,
         num_cols,
@@ -72,7 +74,7 @@ pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
         blocks,
         num_digits,
         log_basis
-    )
+    ))
 }
 
 /// Single-row dense variant of [`mat_vec_mul_ntt_i8_dense`].
@@ -83,8 +85,9 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const 
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-) -> Vec<CyclotomicRing<F, D>> {
-    dispatch_slot!(
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+    validate_i8_log_basis(log_basis)?;
+    Ok(dispatch_slot!(
         slot,
         1usize,
         num_cols,
@@ -92,7 +95,7 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const 
         blocks,
         num_digits,
         log_basis
-    )
+    ))
 }
 
 /// Strided variant of [`mat_vec_mul_ntt_i8`] for recursive witnesses.
@@ -107,8 +110,9 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
     block_len: usize,
     num_digits: usize,
     log_basis: u32,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    dispatch_slot!(
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    validate_i8_log_basis(log_basis)?;
+    Ok(dispatch_slot!(
         slot,
         num_rows,
         num_cols,
@@ -118,7 +122,7 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
         block_len,
         num_digits,
         log_basis
-    )
+    ))
 }
 
 /// Column-tiled A*x across multiple blocks of pre-decomposed i8 digit planes.

@@ -2,14 +2,50 @@ use super::{
     aligned_i8_tile_width, fused_split_eq_quotients, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many,
     mat_vec_mul_digits_i8_strided_with_params, mat_vec_mul_digits_i8_with_params,
     mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
-    mat_vec_mul_i8_with_params, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
-    precompute_dense_mat_ntt_with_params,
+    mat_vec_mul_i8_with_params, mat_vec_mul_ntt_i8_dense_single_row,
+    mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked, precompute_dense_mat_ntt_with_params,
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
 use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
 use akita_algebra::CyclotomicRing;
-use akita_field::Fp64;
+use akita_field::{CanonicalField, Fp64, Prime128Offset275};
 use akita_types::layout::FlatMatrix;
+
+fn centered_i32_ring<F: akita_field::CanonicalField, const D: usize>(
+    coeffs: &[i32; D],
+) -> CyclotomicRing<F, D> {
+    CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx] as i64)))
+}
+
+fn cyclic_product<F: akita_field::FieldCore, const D: usize>(
+    lhs: &CyclotomicRing<F, D>,
+    rhs: &CyclotomicRing<F, D>,
+) -> CyclotomicRing<F, D> {
+    let mut out = CyclotomicRing::<F, D>::zero();
+    for (i, &a) in lhs.coefficients().iter().enumerate() {
+        if a.is_zero() {
+            continue;
+        }
+        for (j, &b) in rhs.coefficients().iter().enumerate() {
+            if !b.is_zero() {
+                out.coefficients_mut()[(i + j) % D] += a * b;
+            }
+        }
+    }
+    out
+}
+
+fn quotient_from_cyclic_and_negacyclic<
+    F: akita_field::FieldCore + akita_field::HalvingField,
+    const D: usize,
+>(
+    cyclic: &CyclotomicRing<F, D>,
+    negacyclic: &CyclotomicRing<F, D>,
+) -> CyclotomicRing<F, D> {
+    let cyc = cyclic.coefficients();
+    let neg = negacyclic.coefficients();
+    CyclotomicRing::from_coefficients(std::array::from_fn(|idx| (cyc[idx] - neg[idx]).half()))
+}
 
 #[test]
 fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {
@@ -54,10 +90,133 @@ fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
     let expected_d = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &w_hat);
     let expected_b = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &t_hat);
     let (d_rows, b_rows, _a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, rows, rows, 1, cols, &w_hat, &t_hat, &z_pre, 1);
+        fused_split_eq_quotients::<F, D>(&slot, rows, rows, 1, cols, &w_hat, &t_hat, &z_pre, 1)
+            .expect("fused split-eq rows");
 
     assert_eq!(d_rows, expected_d);
     assert_eq!(b_rows, expected_b);
+}
+
+#[test]
+fn fused_split_eq_q128_quotient_chunks_before_crt_wrap() {
+    type F = Prime128Offset275;
+    const D: usize = 32;
+    let cols = 4;
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let row = CyclotomicRing::from_coefficients([half; D]);
+    let flat_rows = vec![row; cols];
+    let flat = FlatMatrix::from_ring_slice(&flat_rows);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(1, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("Q128 dispatch should support this field and ring dimension");
+    let z_pre = vec![[32_768i32; D]; cols];
+
+    let (_d_rows, _b_rows, a_rows) =
+        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, cols, &[], &[], &z_pre, 32_768)
+            .expect("fused split-eq rows");
+
+    let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, j| {
+        let z = centered_i32_ring(&z_pre[j]);
+        let cyclic = cyclic_product(&row, &z);
+        let negacyclic = row * z;
+        acc += quotient_from_cyclic_and_negacyclic(&cyclic, &negacyclic);
+        acc
+    });
+
+    assert_eq!(a_rows, vec![expected]);
+}
+
+#[test]
+fn fused_split_eq_q128_quotient_falls_back_when_one_term_exceeds_crt() {
+    type F = Prime128Offset275;
+    const D: usize = 128;
+    let cols = 1;
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let row = CyclotomicRing::from_coefficients([half; D]);
+    let flat = FlatMatrix::from_ring_slice(&[row]);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(1, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("Q128 dispatch should support this field and ring dimension");
+    let z_pre = vec![[32_768i32; D]; cols];
+
+    let (_d_rows, _b_rows, a_rows) =
+        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, cols, &[], &[], &z_pre, 32_768)
+            .expect("fused split-eq rows");
+
+    let z = centered_i32_ring(&z_pre[0]);
+    let expected = quotient_from_cyclic_and_negacyclic(&cyclic_product(&row, &z), &(row * z));
+
+    assert_eq!(a_rows, vec![expected]);
+}
+
+#[test]
+fn fused_split_eq_q128_cyclic_i8_chunks_before_crt_wrap() {
+    type F = Prime128Offset275;
+    const D: usize = 64;
+    let cols = 2_050;
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let row = CyclotomicRing::from_coefficients([half; D]);
+    let flat_rows = vec![row; cols];
+    let flat = FlatMatrix::from_ring_slice(&flat_rows);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(1, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("Q128 dispatch should support this field and ring dimension");
+    let w_hat = vec![[-32i8; D]; cols];
+
+    let (d_rows, _b_rows, _a_rows) =
+        fused_split_eq_quotients::<F, D>(&slot, 1, 0, 0, cols, &w_hat, &[], &[], 0)
+            .expect("fused split-eq rows");
+
+    let digit = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
+    let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, _| {
+        acc += cyclic_product(&row, &digit);
+        acc
+    });
+
+    assert_eq!(d_rows, vec![expected]);
+}
+
+#[test]
+fn mat_vec_mul_ntt_i8_dense_single_row_chunks_q128() {
+    type F = Prime128Offset275;
+    const D: usize = 64;
+    let cols = 2_050;
+    let log_basis = 6;
+    let num_digits = 1;
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let row = CyclotomicRing::from_coefficients([half; D]);
+    let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
+    let flat_rows = vec![row; cols];
+    let flat = FlatMatrix::from_ring_slice(&flat_rows);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(1, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("Q128 dispatch should support this field and ring dimension");
+    let block = vec![digit_ring; cols];
+    let block_slices: Vec<&[CyclotomicRing<F, D>]> = vec![block.as_slice()];
+
+    let got =
+        mat_vec_mul_ntt_i8_dense_single_row(&slot, cols, &block_slices, num_digits, log_basis)
+            .expect("single-row dense mat-vec");
+
+    let product = row * digit_ring;
+    let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, _| {
+        acc += product;
+        acc
+    });
+
+    assert_eq!(got, vec![expected]);
 }
 
 #[test]

@@ -35,13 +35,18 @@ performance overhead.
 
 - Every Garner reconstruction from a CRT accumulator must be preceded by an
   operation-specific capacity argument. If `P` is the product of the auxiliary
-  CRT primes, `A` bounds the centered setup coefficient magnitude, `B` bounds
-  the RHS coefficient magnitude, `D` is the ring degree, and `W` is the number
-  of accumulated columns, the conservative safety condition is:
+  CRT primes, `Q` is the native field modulus, `B` bounds the RHS coefficient
+  magnitude, `D` is the ring degree, and `W` is the number of accumulated
+  columns, the implemented conservative safety condition is:
 
   ```text
-  W * D * A * B < P / 2
+  W * D * Q * B < P / 2
   ```
+
+  This intentionally uses `Q` rather than the tighter centered setup bound
+  `Q / 2`. Adversarial fp128 rows at the half-modulus boundary can otherwise
+  sit too close to the CRT/Garner lift boundary, and the extra factor preserves
+  correctness with modest additional chunking.
 
 - For quotient kernels that compute `(cyclic - negacyclic) / 2`, the cyclic
   and negacyclic intermediates must each satisfy the CRT lift bound before
@@ -232,12 +237,12 @@ two questions:
 1. Is this operation safe to run as one CRT accumulation?
 2. If not, what is the largest safe chunk width?
 
-The helper should be conservative and cheap. It can use bit-length arithmetic or
-checked integer arithmetic over the available modulus/CRT metadata; it does not
-need dynamic big integers in the hot loop. It should be parameterized by the
-RHS magnitude bound and by whether the operation reconstructs cyclic,
-negacyclic, or quotient intermediates. Quotient operations must use the
-intermediate bound, not the final high-half bound.
+The helper should be conservative, exact, and cheap. It should use local
+multi-limb integer arithmetic over the available modulus/CRT metadata once per
+kernel call, not dynamic big integers in the hot loop. It should be
+parameterized by the RHS magnitude bound and by whether the operation
+reconstructs cyclic, negacyclic, or quotient intermediates. Quotient operations
+must use the intermediate bound, not the final high-half bound.
 
 The linear kernels should then share one chunking pattern:
 
