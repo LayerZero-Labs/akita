@@ -28,6 +28,7 @@
 //! SIS derivation, `(m, r)` split, and table materialization live in the
 //! sibling crate [`akita_derive`].
 
+mod ajtai_params;
 pub mod generated_families;
 pub mod schedule_params;
 #[cfg(feature = "test-utils")]
