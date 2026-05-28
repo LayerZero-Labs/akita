@@ -6,10 +6,7 @@
 
 use super::validate_level_dispatch;
 #[cfg(feature = "zk")]
-use crate::protocol::batched::{
-    append_direct_blinding, direct_decomposed_inner_rows, field_evals_to_rings,
-    mat_vec_mul_i8_plain,
-};
+mod zk;
 use crate::protocol::ring_switch::{ring_switch_verifier, ring_switch_verifier_terminal};
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
@@ -22,9 +19,9 @@ use akita_field::{
 };
 #[cfg(feature = "zk")]
 use akita_r1cs::{
-    lift_hiding_witness, zk_base_mask_lcs, zk_ext_mask_lc, zk_ext_mask_lc_at,
-    zk_masked_linear_value_lc, zk_push_linear_zero, zk_relation_claim_mask_from_y_masks,
-    zk_row_masks_from_column_masks, ZkR1csLinearCombination, ZkRelationAccumulator,
+    lift_hiding_witness, zk_base_mask_lcs, zk_ext_mask_lc, zk_ext_mask_lc_at, zk_push_linear_zero,
+    zk_relation_claim_mask_from_y_masks, zk_row_masks_from_column_masks, ZkR1csLinearCombination,
+    ZkRelationAccumulator,
 };
 use akita_serialization::AkitaSerialize;
 #[cfg(feature = "zk")]
@@ -48,14 +45,13 @@ use akita_transcript::labels::{
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
 use akita_types::dispatch_trace_inner_product_check;
-#[cfg(feature = "zk")]
-use akita_types::ZkHidingProof;
+#[cfg(not(feature = "zk"))]
+use akita_types::recover_ring_subfield_inner_product;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript,
     flatten_batched_commitment_rows, prepare_recursive_opening_point_ext,
-    prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
-    relation_claim_from_rows_extension, reorder_stage1_coords,
+    prepare_root_opening_point_ext, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
     sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_segment_layout,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
@@ -64,6 +60,8 @@ use akita_types::{
     LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule,
     Step, TerminalLevelProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
+#[cfg(feature = "zk")]
+use zk::{verify_zk_hiding_commitment, zk_recovered_y_ring_lc};
 
 /// Verifier state carried between recursive fold levels.
 pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
@@ -105,112 +103,6 @@ where
     transcript.record_wire_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
     transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
     Ok(TerminalWitnessReplay { parts })
-}
-
-#[cfg(feature = "zk")]
-fn zk_recovered_y_ring_lc<F, E, const D: usize>(
-    y_ring: &CyclotomicRing<F, D>,
-    y_masks: &[ZkR1csLinearCombination<E>],
-    inner_reduction: &CyclotomicRing<F, D>,
-) -> Result<ZkR1csLinearCombination<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F>,
-{
-    if y_masks.len() != D {
-        return Err(AkitaError::InvalidProof);
-    }
-    let masked_opening = recover_ring_subfield_inner_product::<F, E, D>(y_ring, inner_reduction)?;
-    let mut mask_coeffs = Vec::with_capacity(D);
-    for coeff_idx in 0..D {
-        let mut basis_y = CyclotomicRing::<F, D>::zero();
-        basis_y.coeffs[coeff_idx] = F::one();
-        mask_coeffs.push(recover_ring_subfield_inner_product::<F, E, D>(
-            &basis_y,
-            inner_reduction,
-        )?);
-    }
-    zk_masked_linear_value_lc(masked_opening, y_masks, &mask_coeffs)
-}
-
-#[cfg(feature = "zk")]
-fn verify_zk_hiding_commitment<F, const D: usize>(
-    setup: &AkitaVerifierSetup<F>,
-    root_params: &LevelParams,
-    proof: &ZkHidingProof<F>,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if D == 0 || proof.u_blind.is_empty() || proof.hiding_witness.is_empty() {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let num_ring = proof
-        .hiding_witness
-        .len()
-        .div_ceil(D)
-        .max(1)
-        .checked_next_power_of_two()
-        .ok_or(AkitaError::InvalidProof)?;
-    let eval_len = num_ring
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidSetup("ZK hiding witness length overflow".to_string()))?;
-    let mut evals = vec![F::zero(); eval_len];
-    let live_evals = evals
-        .get_mut(..proof.hiding_witness.len())
-        .ok_or(AkitaError::InvalidProof)?;
-    live_evals.copy_from_slice(&proof.hiding_witness);
-
-    let hiding_params = root_params.with_decomp(
-        num_ring.trailing_zeros() as usize,
-        0,
-        root_params.num_digits_commit,
-        root_params.num_digits_open,
-        root_params.num_digits_fold,
-        num_ring,
-    )?;
-    let witness_rings = field_evals_to_rings::<F, D>(&evals)?;
-    let mut b_input_digits = direct_decomposed_inner_rows(&witness_rings, setup, &hiding_params)?;
-    append_direct_blinding::<F, D>(
-        &mut b_input_digits,
-        &proof.b_blinding_digits,
-        &hiding_params,
-    )?;
-    let expanded = setup.expanded.as_ref();
-    let seed = expanded.seed();
-    let shared_matrix = expanded.shared_matrix();
-    let b_required = hiding_params
-        .b_key
-        .row_len()
-        .checked_mul(b_input_digits.len())
-        .ok_or_else(|| AkitaError::InvalidSetup("ZK hiding B footprint overflow".to_string()))?;
-    if b_required > seed.max_setup_len {
-        return Err(AkitaError::InvalidSetup(
-            "ZK hiding commitment exceeds shared matrix length".to_string(),
-        ));
-    }
-
-    let b_matrix =
-        shared_matrix.ring_view::<D>(hiding_params.b_key.row_len(), b_input_digits.len())?;
-    let b_rows: Vec<_> = b_matrix.rows().collect();
-    let expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
-    let expected_len = expected_u_blind_rings
-        .len()
-        .checked_mul(D)
-        .ok_or(AkitaError::InvalidProof)?;
-    if proof.u_blind.len() != expected_len {
-        return Err(AkitaError::InvalidProof);
-    }
-    let expected_u_blind = expected_u_blind_rings
-        .iter()
-        .flat_map(|ring| ring.coeffs.iter().copied())
-        .collect::<Vec<_>>();
-    if proof.u_blind.as_slice() != expected_u_blind.as_slice() {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    Ok(())
 }
 
 /// Verify the intermediate-root proof payload for batched proofs whose root

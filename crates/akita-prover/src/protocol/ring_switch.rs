@@ -1048,16 +1048,28 @@ where
     };
 
     let max_group_poly_count = num_polys_per_point.iter().copied().max().unwrap_or(0);
-    let d_width = total_blocks
+    let d_message_width = total_blocks
         .checked_mul(depth_open)
         .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
+    #[cfg(feature = "zk")]
+    let d_width = d_message_width
+        .checked_add(d_blinding_segment_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
+    #[cfg(not(feature = "zk"))]
+    let d_width = d_message_width;
     let t_cols_per_vector = n_a
         .checked_mul(depth_open)
         .and_then(|len| len.checked_mul(num_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("B setup vector width overflow".to_string()))?;
-    let b_width = max_group_poly_count
+    let b_message_width = max_group_poly_count
         .checked_mul(t_cols_per_vector)
         .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
+    #[cfg(feature = "zk")]
+    let b_width = b_message_width
+        .checked_add(b_blinding_digit_planes_per_point)
+        .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
+    #[cfg(not(feature = "zk"))]
+    let b_width = b_message_width;
     let a_width = inner_width;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, d_width)?;
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, b_width)?;
@@ -1149,7 +1161,7 @@ where
         let d_weights = &eq_tau1[d_start..(d_start + n_d_active)];
         cfg_into_iter!(0..d_blinding_segment_len)
             .map(|local| {
-                let local_col = w_len + local;
+                let local_col = d_message_width + local;
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in d_weights.iter().enumerate() {
                     if !eq_i.is_zero() {
@@ -1551,36 +1563,4 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::balanced_decompose_centered_i32_i8_into;
-    use akita_algebra::CyclotomicRing;
-    use akita_field::Prime128OffsetA7F7;
-    use std::array::from_fn;
-
-    #[test]
-    fn centered_i32_decompose_matches_ring_decompose() {
-        type F = Prime128OffsetA7F7;
-        const D: usize = 128;
-
-        let centered = from_fn(|i| ((37 * i as i32 + 11) % 95) - 47);
-        let ring =
-            CyclotomicRing::<F, D>::from_coefficients(from_fn(|i| F::from_i64(centered[i] as i64)));
-
-        for (num_digits, log_basis) in [
-            (7usize, 3u32),
-            (10usize, 2u32),
-            (5usize, 5u32),
-            (4usize, 6u32),
-        ] {
-            let mut got = vec![[0i8; D]; num_digits];
-            balanced_decompose_centered_i32_i8_into(&centered, &mut got, log_basis);
-
-            let mut expected = vec![[0i8; D]; num_digits];
-            ring.balanced_decompose_pow2_i8_into(&mut expected, log_basis);
-            assert_eq!(
-                got, expected,
-                "centered i32 decomposition mismatch for num_digits={num_digits} log_basis={log_basis}"
-            );
-        }
-    }
-}
+mod tests;

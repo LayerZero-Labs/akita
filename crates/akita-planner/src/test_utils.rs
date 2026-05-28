@@ -18,9 +18,7 @@
 use std::marker::PhantomData;
 
 use akita_challenges::SparseChallengeConfig;
-use akita_config::{
-    matrix_envelope_for_levels, setup_level_params_from_runtime_schedule, CommitmentConfig,
-};
+use akita_config::{matrix_envelope_for_schedule, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
@@ -107,8 +105,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
                     let incidence =
                         ClaimIncidenceSummary::from_counts(num_vars, num_polys, num_points)?;
                     let schedule = <Self as CommitmentConfig>::get_params_for_prove(&incidence)?;
-                    let setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
-                    let envelope = matrix_envelope_for_levels::<Self>(&setup_levels)?;
+                    let envelope = matrix_envelope_for_schedule::<Self>(&schedule, &incidence)?;
                     max_setup_len = max_setup_len.max(envelope.max_setup_len);
                 }
             }

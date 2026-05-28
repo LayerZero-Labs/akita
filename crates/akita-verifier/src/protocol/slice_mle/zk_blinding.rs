@@ -274,6 +274,7 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
+        let t_cols_per_claim = p.num_blocks * p.n_a * p.depth_open;
         let b_view = fx
             .setup
             .shared_matrix()
@@ -289,7 +290,6 @@ mod tests {
         let b_rows: Vec<_> = b_view.rows().collect();
         let b_start = 1 + p.num_public_rows + p.n_d;
         let b_offset = fx.w_len + fx.t_len;
-        let t_cols_per_claim = p.num_blocks * p.n_a * p.depth_open;
 
         let got =
             compute_b_blinding_part::<F, F, D>(p, &fx.full_vec_randomness, &fx.setup, fx.alpha)

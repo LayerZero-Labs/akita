@@ -1,0 +1,246 @@
+use super::*;
+
+/// Prover-side hint for one opening-point commitment bundle.
+///
+/// Stores per-polynomial decomposed inner rows and, when available, the
+/// corresponding recomposed inner rows for all polynomials bundled into the
+/// single commitment at one opening point.
+#[derive(Debug, Clone)]
+pub struct AkitaCommitmentHint<F: FieldCore, const D: usize> {
+    /// Per-polynomial digit decompositions of the inner `A * s_i` rows.
+    pub decomposed_inner_rows: Vec<FlatDigitBlocks<D>>,
+    /// Per-commitment fresh B-blinding digit streams.
+    #[cfg(feature = "zk")]
+    b_blinding_digits: Vec<FlatDigitBlocks<D>>,
+    /// Optional recomposed inner rows grouped by polynomial then block.
+    recomposed_inner_rows: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
+    _marker: PhantomData<F>,
+}
+
+impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
+    /// Construct a new batched hint from per-polynomial digit streams.
+    #[cfg(not(feature = "zk"))]
+    pub fn new(decomposed_inner_rows: Vec<FlatDigitBlocks<D>>) -> Self {
+        Self {
+            decomposed_inner_rows,
+            recomposed_inner_rows: None,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Construct a singleton batched hint from one polynomial's digit stream.
+    #[cfg(not(feature = "zk"))]
+    pub fn singleton(decomposed_inner_rows: FlatDigitBlocks<D>) -> Self {
+        Self::new(vec![decomposed_inner_rows])
+    }
+
+    /// Construct a batched hint that also preserves recomposed inner rows.
+    pub fn with_recomposed_inner_rows(
+        decomposed_inner_rows: Vec<FlatDigitBlocks<D>>,
+        recomposed_inner_rows: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
+        #[cfg(feature = "zk")] b_blinding_digits: Vec<FlatDigitBlocks<D>>,
+    ) -> Self {
+        Self {
+            decomposed_inner_rows,
+            #[cfg(feature = "zk")]
+            b_blinding_digits,
+            recomposed_inner_rows: Some(recomposed_inner_rows),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Construct a singleton batched hint that also preserves recomposed rows.
+    pub fn singleton_with_recomposed_inner_rows(
+        decomposed_inner_rows: FlatDigitBlocks<D>,
+        recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
+        #[cfg(feature = "zk")] b_blinding_digits: FlatDigitBlocks<D>,
+    ) -> Self {
+        Self::with_recomposed_inner_rows(
+            vec![decomposed_inner_rows],
+            vec![recomposed_inner_rows],
+            #[cfg(feature = "zk")]
+            vec![b_blinding_digits],
+        )
+    }
+
+    /// Get the optional recomposed inner rows grouped by polynomial.
+    pub fn recomposed_inner_rows(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
+        self.recomposed_inner_rows.as_deref()
+    }
+
+    /// Get the B-blinding digit streams, one per opening-point commitment.
+    #[cfg(feature = "zk")]
+    pub fn b_blinding_digits(&self) -> &[FlatDigitBlocks<D>] {
+        &self.b_blinding_digits
+    }
+
+    /// Consume the hint and return per-polynomial digit rows plus optional
+    /// recomposed inner rows, plus B-blinding digits when `zk` is enabled.
+    #[allow(clippy::type_complexity)]
+    #[cfg(not(feature = "zk"))]
+    pub fn into_parts(
+        self,
+    ) -> (
+        Vec<FlatDigitBlocks<D>>,
+        Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
+    ) {
+        (self.decomposed_inner_rows, self.recomposed_inner_rows)
+    }
+
+    /// Consume the hint and return per-polynomial digit rows plus optional
+    /// recomposed inner rows, plus B-blinding digits when `zk` is enabled.
+    #[allow(clippy::type_complexity)]
+    #[cfg(feature = "zk")]
+    pub fn into_parts(
+        self,
+    ) -> (
+        Vec<FlatDigitBlocks<D>>,
+        Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
+        Vec<FlatDigitBlocks<D>>,
+    ) {
+        (
+            self.decomposed_inner_rows,
+            self.recomposed_inner_rows,
+            self.b_blinding_digits,
+        )
+    }
+
+    /// Populate recomposed inner rows from the decomposed rows when absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `num_digits_open` is zero or if any decomposed inner
+    /// row block length is not a multiple of `num_digits_open`.
+    pub fn ensure_recomposed_inner_rows(
+        &mut self,
+        num_digits_open: usize,
+        log_basis: u32,
+    ) -> Result<(), AkitaError>
+    where
+        F: CanonicalField,
+    {
+        if self.recomposed_inner_rows.is_some() {
+            return Ok(());
+        }
+        if num_digits_open == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "num_digits_open must be nonzero when recomposing inner rows".to_string(),
+            ));
+        }
+
+        let recomposed_inner_rows = self
+            .decomposed_inner_rows
+            .iter()
+            .map(|digits| {
+                digits
+                    .iter_blocks()
+                    .map(|block| {
+                        if block.len() % num_digits_open != 0 {
+                            return Err(AkitaError::InvalidSetup(format!(
+                                "decomposed inner row block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
+                                block.len()
+                            )));
+                        }
+                        Ok(block
+                            .chunks(num_digits_open)
+                            .map(|digits| {
+                                CyclotomicRing::gadget_recompose_pow2_i8(digits, log_basis)
+                            })
+                            .collect())
+                    })
+                    .collect()
+            })
+            .collect::<Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>>()?;
+        self.recomposed_inner_rows = Some(recomposed_inner_rows);
+        Ok(())
+    }
+
+    /// Flatten the batched hint into the ring-switch view over all claims.
+    ///
+    /// Returns B-blinding digits as an additional part when `zk` is enabled.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the flattened digit planes do not match the concatenated
+    /// block-size metadata. This would indicate an internal bug, since the
+    /// flattened view is derived directly from well-formed component hints.
+    #[allow(clippy::type_complexity)]
+    #[cfg(not(feature = "zk"))]
+    pub fn into_flat_parts(self) -> (FlatDigitBlocks<D>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
+        let mut block_sizes = Vec::new();
+        let total_planes: usize = self
+            .decomposed_inner_rows
+            .iter()
+            .map(|digits| digits.flat_digits().len())
+            .sum();
+        let mut flat_digits = Vec::with_capacity(total_planes);
+        for digits in &self.decomposed_inner_rows {
+            block_sizes.extend_from_slice(digits.block_sizes());
+            digits.extend_flat_digits(&mut flat_digits);
+        }
+        let decomposed_inner_rows = FlatDigitBlocks::new(flat_digits, block_sizes)
+            .expect("batched hint flattening preserves block metadata");
+        let recomposed_inner_rows = self
+            .recomposed_inner_rows
+            .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
+        (decomposed_inner_rows, recomposed_inner_rows)
+    }
+
+    /// Flatten the batched hint into the ring-switch view over all claims.
+    ///
+    /// Returns B-blinding digits as an additional part when `zk` is enabled.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the flattened digit planes do not match the concatenated
+    /// block-size metadata. This would indicate an internal bug, since the
+    /// flattened view is derived directly from well-formed component hints.
+    #[allow(clippy::type_complexity)]
+    #[cfg(feature = "zk")]
+    pub fn into_flat_parts(
+        self,
+    ) -> (
+        FlatDigitBlocks<D>,
+        Option<Vec<Vec<CyclotomicRing<F, D>>>>,
+        Vec<FlatDigitBlocks<D>>,
+    ) {
+        let mut block_sizes = Vec::new();
+        let total_planes: usize = self
+            .decomposed_inner_rows
+            .iter()
+            .map(|digits| digits.flat_digits().len())
+            .sum();
+        let mut flat_digits = Vec::with_capacity(total_planes);
+        for digits in &self.decomposed_inner_rows {
+            block_sizes.extend_from_slice(digits.block_sizes());
+            digits.extend_flat_digits(&mut flat_digits);
+        }
+        let decomposed_inner_rows = FlatDigitBlocks::new(flat_digits, block_sizes)
+            .expect("batched hint flattening preserves block metadata");
+        let recomposed_inner_rows = self
+            .recomposed_inner_rows
+            .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
+        (
+            decomposed_inner_rows,
+            recomposed_inner_rows,
+            self.b_blinding_digits,
+        )
+    }
+}
+
+impl<F: FieldCore, const D: usize> PartialEq for AkitaCommitmentHint<F, D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.decomposed_inner_rows == other.decomposed_inner_rows && {
+            #[cfg(feature = "zk")]
+            {
+                self.b_blinding_digits == other.b_blinding_digits
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                true
+            }
+        }
+    }
+}
+
+impl<F: FieldCore, const D: usize> Eq for AkitaCommitmentHint<F, D> {}

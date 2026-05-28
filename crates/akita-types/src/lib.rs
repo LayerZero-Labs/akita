@@ -68,7 +68,8 @@ pub use proof::{
     PreparedRootOpeningPoint, PublicMatrixSeed, PublicOpeningRow, RelationOnlyStage2Inputs,
     RingCommitment, RingMultiplierOpeningPoint, RingSliceSerializer, SetupMatrixEnvelope,
     TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts, VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    TerminalWitnessTranscriptParts, VerifierClaims, EXTENSION_OPENING_REDUCTION_DEGREE,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 pub use schedule::{
     detect_field_modulus, exact_planned_level_execution, generated_schedule_lookup_key,

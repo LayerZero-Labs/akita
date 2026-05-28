@@ -70,18 +70,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
 
     fn max_setup_matrix_size(
         max_num_vars: usize,
-        _max_num_batched_polys: usize,
-        _max_num_points: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
     ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
-        let envelope = Cfg::envelope(max_num_vars);
-        let rows = envelope
-            .max_n_a
-            .max(envelope.max_n_b)
-            .max(envelope.max_n_d)
-            .max(4);
-        Ok(akita_types::SetupMatrixEnvelope {
-            max_setup_len: rows * 16_384,
-        })
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
     fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {

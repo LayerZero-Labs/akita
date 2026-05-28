@@ -182,6 +182,12 @@ where
         .num_claims
         .checked_mul(b_per_claim_w)
         .ok_or_else(|| AkitaError::InvalidSetup("W column width overflow".to_string()))?;
+    #[cfg(feature = "zk")]
+    let d_stride = n_cols_w
+        .checked_add(prepared.d_blinding_segment_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("D setup stride overflow".to_string()))?;
+    #[cfg(not(feature = "zk"))]
+    let d_stride = n_cols_w;
 
     // T's row weight is group-dependent and its c-axis indexes `poly_idx`
     // within the group. Its M-layout high index, however, is the global
@@ -202,6 +208,12 @@ where
     let n_cols_t = max_group_poly_count
         .checked_mul(cols_per_poly_t)
         .ok_or_else(|| AkitaError::InvalidSetup("T column width overflow".to_string()))?;
+    #[cfg(feature = "zk")]
+    let b_stride = n_cols_t
+        .checked_add(prepared.b_blinding_digit_planes_per_point)
+        .ok_or_else(|| AkitaError::InvalidSetup("B setup stride overflow".to_string()))?;
+    #[cfg(not(feature = "zk"))]
+    let b_stride = n_cols_t;
 
     // Row range covers every SIS row that any of W/T/Z touch. Z extends
     // it to `n_a` when active, so Z-only rows participate inside the loop
@@ -224,11 +236,11 @@ where
     }
     let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
     let d_required = n_d_active
-        .checked_mul(n_cols_w)
+        .checked_mul(d_stride)
         .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
     let b_required = prepared
         .n_b
-        .checked_mul(n_cols_t)
+        .checked_mul(b_stride)
         .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
     let a_required = if z_used {
         prepared
@@ -435,13 +447,13 @@ where
             let mut acc = E::zero();
 
             let (mut d_pos, d_end) = if row < n_d_active {
-                let start = row * n_cols_w;
+                let start = row * d_stride;
                 (start, start + n_cols_w)
             } else {
                 (0, 0)
             };
             let (mut b_pos, b_end) = if row < prepared.n_b {
-                let start = row * n_cols_t;
+                let start = row * b_stride;
                 (start, start + n_cols_t)
             } else {
                 (0, 0)
@@ -470,12 +482,12 @@ where
 
                 let mut weight = E::zero();
                 if d_pos < d_end && d_pos == lambda {
-                    let d_col = d_pos - row * n_cols_w;
+                    let d_col = d_pos - row * d_stride;
                     weight += d_weights[row] * w_eq_slice[d_col];
                     d_pos += 1;
                 }
                 if b_pos < b_end && b_pos == lambda {
-                    let b_col = b_pos - row * n_cols_t;
+                    let b_col = b_pos - row * b_stride;
                     for g in 0..prepared.num_points {
                         weight += b_weights_by_row[row][g] * t_eq_slice_per_group[g][b_col];
                     }
