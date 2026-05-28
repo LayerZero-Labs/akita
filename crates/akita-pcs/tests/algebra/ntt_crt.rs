@@ -799,7 +799,7 @@ fn q128_ntt_quotient_rows_handle_large_matrix_small_rhs_coefficients() {
             & 0xffff;
         let magnitude = Q / 2 - 1 - delta;
         let value = F::from_canonical_u128_reduced(magnitude);
-        if seed % 2 == 0 {
+        if seed.is_multiple_of(2) {
             value
         } else {
             -value
