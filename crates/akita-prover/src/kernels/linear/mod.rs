@@ -1,7 +1,5 @@
 //! Linear algebra helpers for ring commitment.
 
-#[cfg(all(target_arch = "aarch64", feature = "parallel"))]
-use akita_algebra::ntt::neon;
 use akita_algebra::ntt::MontCoeff;
 use akita_algebra::ntt::PrimeWidth;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;

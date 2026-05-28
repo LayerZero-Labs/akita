@@ -132,6 +132,7 @@ fn unreduced_quotient_ntt<F, W, const K: usize, const D: usize>(
     cyc_row: &[CyclotomicCrtNtt<W, K, D>],
     vec_neg: &[CyclotomicCrtNtt<W, K, D>],
     vec_cyc: &[CyclotomicCrtNtt<W, K, D>],
+    rhs_max_abs: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> CyclotomicRing<F, D>
 where
@@ -139,22 +140,29 @@ where
     W: PrimeWidth,
 {
     let n = ntt_row.len().min(vec_neg.len());
+    let chunk_width = crt_accumulation_chunk_width::<F, W, K, D>(rhs_max_abs, n);
+    let mut out = CyclotomicRing::<F, D>::zero();
 
-    let mut acc_neg = CyclotomicCrtNtt::<W, K, D>::zero();
-    let mut acc_cyc = CyclotomicCrtNtt::<W, K, D>::zero();
+    for chunk_start in (0..n).step_by(chunk_width) {
+        let chunk_end = (chunk_start + chunk_width).min(n);
+        let mut acc_neg = CyclotomicCrtNtt::<W, K, D>::zero();
+        let mut acc_cyc = CyclotomicCrtNtt::<W, K, D>::zero();
 
-    for j in 0..n {
-        accumulate_pointwise_product_into(&mut acc_neg, &ntt_row[j], &vec_neg[j], params);
-        accumulate_pointwise_product_into(&mut acc_cyc, &cyc_row[j], &vec_cyc[j], params);
+        for j in chunk_start..chunk_end {
+            accumulate_pointwise_product_into(&mut acc_neg, &ntt_row[j], &vec_neg[j], params);
+            accumulate_pointwise_product_into(&mut acc_cyc, &cyc_row[j], &vec_cyc[j], params);
+        }
+
+        let neg_ring: CyclotomicRing<F, D> = acc_neg.to_ring_with_params(params);
+        let cyc_ring: CyclotomicRing<F, D> = acc_cyc.to_ring_cyclic(params);
+
+        let neg_coeffs = neg_ring.coefficients();
+        let cyc_coeffs = cyc_ring.coefficients();
+        let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]).half());
+        add_ring_into(&mut out, CyclotomicRing::from_coefficients(quotient));
     }
 
-    let neg_ring: CyclotomicRing<F, D> = acc_neg.to_ring_with_params(params);
-    let cyc_ring: CyclotomicRing<F, D> = acc_cyc.to_ring_cyclic(params);
-
-    let neg_coeffs = neg_ring.coefficients();
-    let cyc_coeffs = cyc_ring.coefficients();
-    let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]).half());
-    CyclotomicRing::from_coefficients(quotient)
+    out
 }
 
 /// Compute unreduced quotients for matrix rows against a witness vector.
@@ -189,8 +197,11 @@ pub fn unreduced_quotient_rows_ntt_cached<
             let v_cyc: Vec<_> = cfg_iter!(vec[..n])
                 .map(|x| CyclotomicCrtNtt::from_ring_cyclic(x, p))
                 .collect();
+            let rhs_max_abs = max_centered_abs_u32(&vec[..n]).unwrap_or(u32::MAX);
             cfg_into_iter!(0..num_rows)
-                .map(|i| unreduced_quotient_ntt(neg_rows[i], cyc_rows[i], &v_neg, &v_cyc, p))
+                .map(|i| {
+                    unreduced_quotient_ntt(neg_rows[i], cyc_rows[i], &v_neg, &v_cyc, rhs_max_abs, p)
+                })
                 .collect()
         }
         NttSlotCache::Q64 {
@@ -211,8 +222,11 @@ pub fn unreduced_quotient_rows_ntt_cached<
             let v_cyc: Vec<_> = cfg_iter!(vec[..n])
                 .map(|x| CyclotomicCrtNtt::from_ring_cyclic(x, p))
                 .collect();
+            let rhs_max_abs = max_centered_abs_u32(&vec[..n]).unwrap_or(u32::MAX);
             cfg_into_iter!(0..num_rows)
-                .map(|i| unreduced_quotient_ntt(neg_rows[i], cyc_rows[i], &v_neg, &v_cyc, p))
+                .map(|i| {
+                    unreduced_quotient_ntt(neg_rows[i], cyc_rows[i], &v_neg, &v_cyc, rhs_max_abs, p)
+                })
                 .collect()
         }
         NttSlotCache::Q128 {
@@ -233,8 +247,11 @@ pub fn unreduced_quotient_rows_ntt_cached<
             let v_cyc: Vec<_> = cfg_iter!(vec[..n])
                 .map(|x| CyclotomicCrtNtt::from_ring_cyclic(x, p))
                 .collect();
+            let rhs_max_abs = max_centered_abs_u32(&vec[..n]).unwrap_or(u32::MAX);
             cfg_into_iter!(0..num_rows)
-                .map(|i| unreduced_quotient_ntt(neg_rows[i], cyc_rows[i], &v_neg, &v_cyc, p))
+                .map(|i| {
+                    unreduced_quotient_ntt(neg_rows[i], cyc_rows[i], &v_neg, &v_cyc, rhs_max_abs, p)
+                })
                 .collect()
         }
     }
