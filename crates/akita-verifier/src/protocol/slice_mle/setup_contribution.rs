@@ -214,7 +214,11 @@ where
     }
     let z_offset_low = offset_z & prepared.block_len.saturating_sub(1);
     let z_range = prepared.inner_width;
-    let z_used = prepared.n_a > 0 && z_range > 0;
+    if prepared.n_a == 0 || z_range == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "A/Z layout requires non-zero A rows and Z width".to_string(),
+        ));
+    }
     let z_dims_pow2 = prepared.block_len.is_power_of_two();
 
     let n_d_active = prepared.n_d_active();
@@ -283,15 +287,11 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("T column width overflow".to_string()))?;
     let b_stride = n_cols_t;
 
-    // Row range covers every SIS row that any of W/T/Z touch. Z extends
-    // it to `n_a` when active, so Z-only rows participate inside the loop
-    // — no separate post-loop matrix-A scan.
-    let r_max = if z_used {
-        n_d_active.max(prepared.n_b).max(prepared.n_a)
-    } else {
-        n_d_active.max(prepared.n_b)
-    };
-    let n_cols_total = n_cols_w.max(n_cols_t).max(if z_used { z_range } else { 0 });
+    // Row range covers every SIS row that any of W/T/Z touch. Z extends it to
+    // `n_a`, so Z-only rows participate inside the loop; no separate
+    // post-loop matrix-A scan is needed.
+    let r_max = n_d_active.max(prepared.n_b).max(prepared.n_a);
+    let n_cols_total = n_cols_w.max(n_cols_t).max(z_range);
     if n_cols_total == 0 {
         return Err(AkitaError::InvalidSetup(
             "matrix-row pattern evaluation requires at least one SIS column".to_string(),
@@ -310,14 +310,10 @@ where
         .n_b
         .checked_mul(b_stride)
         .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let a_required = if z_used {
-        prepared
-            .n_a
-            .checked_mul(z_range)
-            .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?
-    } else {
-        0
-    };
+    let a_required = prepared
+        .n_a
+        .checked_mul(z_range)
+        .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
     let required = d_required.max(b_required).max(a_required);
     if required > setup_len {
         return Err(AkitaError::InvalidSetup(
@@ -384,14 +380,11 @@ where
         })
         .collect();
 
-    // `z_eq_slice[c]` — column-only Z pattern. Length `z_range`, empty
-    // when `!z_used`. Pow2: peeled-block lookup `z_block_low_eq[low] ·
-    // S_per_dc_per_carry[dc][carry]`. Non-pow2: dense aggregation over
-    // `(pt, df)` with a one-shot peeled eq cache so per-cell cost stays
-    // O(P · DF).
-    let z_eq_slice: Vec<E> = if !z_used {
-        Vec::new()
-    } else if z_dims_pow2 {
+    // `z_eq_slice[c]` — column-only Z pattern. Pow2: peeled-block lookup
+    // `z_block_low_eq[low] · S_per_dc_per_carry[dc][carry]`. Non-pow2:
+    // dense aggregation over `(pt, df)` with a one-shot peeled eq cache so
+    // per-cell cost stays O(P · DF).
+    let z_eq_slice: Vec<E> = if z_dims_pow2 {
         // `S_per_dc_per_carry[dc][carry] = -Σ_{pt, df} fold_gadget[df]
         //   · eq_hi_z[z_offset_high + (pt + P·df + P·DF·dc) + carry]`
         let z_offset_high = offset_z >> z_offset_low_bits;
@@ -517,8 +510,7 @@ where
         .map(|row| -> Result<E, AkitaError> {
             let d_interval = packed_interval(row < n_d_active, row, d_stride, n_cols_w, "D")?;
             let b_interval = packed_interval(row < prepared.n_b, row, b_stride, n_cols_t, "B")?;
-            let a_interval =
-                packed_interval(row < prepared.n_a && z_used, row, z_range, z_range, "A")?;
+            let a_interval = packed_interval(row < prepared.n_a, row, z_range, z_range, "A")?;
 
             let mut endpoints = [0usize; 6];
             let mut n_endpoints = 0usize;
@@ -553,7 +545,7 @@ where
             } else {
                 &[]
             };
-            let a_weight = if row < prepared.n_a && z_used {
+            let a_weight = if row < prepared.n_a {
                 a_weights[row]
             } else {
                 E::zero()
