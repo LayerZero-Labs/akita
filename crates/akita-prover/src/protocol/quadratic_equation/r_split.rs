@@ -389,20 +389,27 @@ where
     let mut z_segments = z_pre_centered.chunks(inner_width);
     let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
+    let use_relation_b_rows = commitment_row_count == n_b && num_points == 1;
+    let relation_n_b = if use_relation_b_rows { n_b } else { 0 };
+    let relation_t_hat: &[[i8; D]] = if use_relation_b_rows {
+        t_hat.flat_digits()
+    } else {
+        &[]
+    };
     let relation_rows = backend.ring_switch_relation_rows::<D>(
         prepared,
         RingSwitchRelationRowsPlan {
             n_d: n_d_active,
-            n_b,
+            n_b: relation_n_b,
             n_a,
             w_hat: w_hat_flat,
-            t_hat: t_hat.flat_digits(),
+            t_hat: relation_t_hat,
             z_segment: first_z_segment,
             z_pre_centered_inf_norm,
         },
     )?;
     if relation_rows.d_cyclic.len() != n_d_active
-        || relation_rows.b_cyclic.len() != n_b
+        || relation_rows.b_cyclic.len() != relation_n_b
         || relation_rows.a_quotients.len() != n_a
     {
         return Err(AkitaError::InvalidProof);
@@ -437,7 +444,7 @@ where
             *dst += src;
         }
     }
-    let commitment_cyclic_rows = if commitment_row_count == n_b && num_points == 1 {
+    let commitment_cyclic_rows = if use_relation_b_rows {
         #[cfg(feature = "zk")]
         let mut rows = b_cyclic;
         #[cfg(not(feature = "zk"))]

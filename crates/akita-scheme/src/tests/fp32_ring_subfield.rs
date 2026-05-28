@@ -32,7 +32,6 @@ where
     F: akita_field::CanonicalField,
 {
     let _field_marker = core::marker::PhantomData::<F>;
-    let max_num_claims = max_num_claims.max(1);
     let outer_width = lp
         .outer_width()
         .checked_mul(max_num_claims)
@@ -80,6 +79,28 @@ where
         #[cfg(feature = "zk")]
         max_zk_d_len,
     })
+}
+
+fn fp32_ring_subfield_max_claims(
+    max_num_batched_polys: usize,
+    max_num_points: usize,
+) -> Result<usize, AkitaError> {
+    if max_num_batched_polys == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "max_num_batched_polys must be at least 1".to_string(),
+        ));
+    }
+    if max_num_points == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "max_num_points must be at least 1".to_string(),
+        ));
+    }
+    if max_num_points > max_num_batched_polys {
+        return Err(AkitaError::InvalidSetup(format!(
+            "max_num_points ({max_num_points}) cannot exceed max_num_batched_polys ({max_num_batched_polys})"
+        )));
+    }
+    Ok(max_num_batched_polys)
 }
 
 impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
@@ -135,10 +156,11 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     fn max_setup_matrix_size(
         _max_num_vars: usize,
         max_num_batched_polys: usize,
-        _max_num_points: usize,
+        max_num_points: usize,
     ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         let lp = Self::root_lp();
-        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_batched_polys)
+        let max_num_claims = fp32_ring_subfield_max_claims(max_num_batched_polys, max_num_points)?;
+        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
     fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
@@ -267,10 +289,11 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     fn max_setup_matrix_size(
         _max_num_vars: usize,
         max_num_batched_polys: usize,
-        _max_num_points: usize,
+        max_num_points: usize,
     ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         let lp = Self::root_lp();
-        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_batched_polys)
+        let max_num_claims = fp32_ring_subfield_max_claims(max_num_batched_polys, max_num_points)?;
+        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
     fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
@@ -327,6 +350,19 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             total_bytes: 0,
         })
     }
+}
+
+#[test]
+fn fp32_ring_subfield_setup_sizing_uses_total_claim_limit() {
+    let one_point = Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 2, 1).unwrap();
+    let two_points = Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 2, 2).unwrap();
+    assert_eq!(one_point.max_setup_len, two_points.max_setup_len);
+}
+
+#[test]
+fn fp32_ring_subfield_setup_rejects_more_points_than_claims() {
+    assert!(Fp32RingSubfieldRootFoldCfg::max_setup_matrix_size(5, 1, 2).is_err());
+    assert!(Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 1, 2).is_err());
 }
 
 #[test]
