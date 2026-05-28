@@ -50,14 +50,15 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     pub garner: GarnerData<W, K>,
 }
 
-/// Precomputed Montgomery forms for every `i8` digit value.
+/// Precomputed Montgomery forms for small balanced digit values.
 ///
-/// Balanced decomposition only emits `{-32, ..., 31}` when `log_basis <= 6`,
-/// but public digit kernels accept `i8` inputs directly. Covering the full
-/// byte range keeps those safe APIs exact without unchecked indexing.
+/// Covers the full `{-32, ..., 31}` range, which is sufficient for any
+/// validated `log_basis <= 6` balanced decomposition. Storing the Montgomery
+/// representation eliminates one `from_canonical` Montgomery multiply per
+/// coefficient in the hot digit path.
 #[derive(Debug, Clone)]
 pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
-    vals: [[MontCoeff<W>; 256]; K],
+    vals: [[MontCoeff<W>; DIGIT_LUT_LEN]; K],
 }
 
 /// Precomputed Montgomery forms for centered integer coefficients in
@@ -68,26 +69,34 @@ pub struct CenteredMontLut<W: PrimeWidth, const K: usize> {
     offset: i32,
 }
 
-const DIGIT_LUT_OFFSET: i16 = 128;
+const DIGIT_LUT_MIN: i16 = -32;
+const DIGIT_LUT_MAX_EXCLUSIVE: i16 = 32;
+const DIGIT_LUT_OFFSET: i16 = -DIGIT_LUT_MIN;
+const DIGIT_LUT_LEN: usize = (DIGIT_LUT_MAX_EXCLUSIVE - DIGIT_LUT_MIN) as usize;
 
 impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
     /// Build the lookup table from CRT primes.
     ///
-    /// Covers every `i8` digit value.
+    /// Covers every balanced digit value emitted by `log_basis <= 6`
+    /// decomposition.
     pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>) -> Self {
-        let mut vals = [[MontCoeff::from_raw(W::default()); 256]; K];
-        for (k, prime) in params.primes.iter().enumerate() {
-            for v_idx in 0..=255u16 {
-                let v = i64::from(v_idx as i16 - DIGIT_LUT_OFFSET);
-                vals[k][v_idx as usize] = prime.from_canonical(W::from_i64(v));
+        let mut vals = [[MontCoeff::from_raw(W::default()); DIGIT_LUT_LEN]; K];
+        for (table, prime) in vals.iter_mut().zip(params.primes.iter()) {
+            for (v_idx, dst) in table.iter_mut().enumerate() {
+                let v = i64::from(DIGIT_LUT_MIN + v_idx as i16);
+                *dst = prime.from_canonical(W::from_i64(v));
             }
         }
         Self { vals }
     }
 
-    /// Look up the Montgomery form of an `i8` digit for CRT prime `k`.
+    /// Look up the Montgomery form of a balanced digit for CRT prime `k`.
     #[inline(always)]
     pub fn get(&self, k: usize, digit: i8) -> MontCoeff<W> {
+        debug_assert!(
+            (DIGIT_LUT_MIN..DIGIT_LUT_MAX_EXCLUSIVE).contains(&i16::from(digit)),
+            "digit LUT only covers balanced digits in [-32, 31]"
+        );
         self.vals[k][(i16::from(digit) + DIGIT_LUT_OFFSET) as usize]
     }
 }

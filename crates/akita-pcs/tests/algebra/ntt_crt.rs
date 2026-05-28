@@ -103,12 +103,12 @@ fn mont_coeff_round_trip() {
 }
 
 #[test]
-fn digit_lut_covers_full_i8_range() {
+fn digit_lut_covers_log_basis_six_balanced_range() {
     let params = CrtNttParamSet::<i16, Q32_NUM_PRIMES, 64>::new(Q32_PRIMES);
     let lut = DigitMontLut::new(&params);
 
     for (k, prime) in params.primes.iter().enumerate() {
-        for raw in i8::MIN..=i8::MAX {
+        for raw in -32i8..=31 {
             assert_eq!(lut.get(k, raw), prime.from_canonical(i16::from(raw)));
         }
     }
