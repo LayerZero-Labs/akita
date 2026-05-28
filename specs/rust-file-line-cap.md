@@ -154,8 +154,8 @@ modularization work resolves the ratchet itself. The endpoint is:
 - Every tracked Rust file is at most 1500 physical lines.
 - `scripts/rust-file-line-cap-baseline.tsv` contains zero active entries because
   no current offender needs a ratchet row.
-- CI still runs the repository-wide checker, so the cap remains enforced after
-  the baseline reaches zero entries.
+- CI runs the repository-wide checker with `--no-baseline`, so the cap remains
+  enforced after the baseline reaches zero entries.
 
 Treat each baseline row as a concrete debt item. A split PR that brings a file
 to at most 1500 lines must remove that file's baseline row in the same change;
@@ -449,7 +449,7 @@ rather than grow.
   offenders.
 - Add a `Rust file line cap` job to `.github/workflows/ci.yml`.
 - Verify with `scripts/test-rust-file-lines.sh` and
-  `scripts/check-rust-file-lines.sh`.
+  `scripts/check-rust-file-lines.sh --no-baseline`.
 
 ## References
 

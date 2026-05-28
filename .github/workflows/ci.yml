@@ -48,8 +48,8 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Test Rust file line checker
         run: scripts/test-rust-file-lines.sh
-      - name: Check Rust file line lengths
-        run: scripts/check-rust-file-lines.sh
+      - name: Check Rust file line lengths without baseline
+        run: scripts/check-rust-file-lines.sh --no-baseline
 
   clippy:
     name: Clippy
