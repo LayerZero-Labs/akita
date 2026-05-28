@@ -85,6 +85,18 @@ pub(super) fn balanced_digit_abs_bound(log_basis: u32) -> u64 {
 }
 
 #[inline]
+pub(super) fn digit_rows_within_abs_bound<const D: usize>(
+    rows: &[[i8; D]],
+    len: usize,
+    bound: u64,
+) -> bool {
+    rows.iter()
+        .take(len)
+        .flat_map(|row| row.iter())
+        .all(|&coeff| u64::from(coeff.unsigned_abs()) <= bound)
+}
+
+#[inline]
 pub(super) fn aligned_i8_tile_width(
     raw_width: usize,
     inner_width: usize,

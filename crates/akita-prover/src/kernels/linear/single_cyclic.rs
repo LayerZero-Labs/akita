@@ -3,8 +3,8 @@ use super::*;
 /// Column-tiled mat-vec for a single pre-decomposed i8 digit vector.
 ///
 /// Same tiling strategy as [`mat_vec_mul_ntt_i8`] but for a single
-/// input vector of i8 digit planes (already decomposed). Tiles the matrix
-/// columns to keep each tile in L2, eliminating the full `ntt_vec`
+/// input vector of i8 digit planes (already decomposed with `log_basis <= 6`).
+/// Tiles the matrix columns to keep each tile in L2, eliminating the full `ntt_vec`
 /// materialization of the non-tiled path.
 /// Tile width is auto-computed from ring parameters and target L2 cache size.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8")]
@@ -87,7 +87,12 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
     if vec_len == 0 {
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
-    let chunk_width = safe_crt_chunk_width::<F, W, K, D>(params, vec_len, I8_RHS_MAX_ABS)
+    let digit_bound = BALANCED_DIGIT_RHS_MAX_ABS;
+    debug_assert!(
+        digit_rows_within_abs_bound(vec, vec_len, digit_bound),
+        "single digit vector bound is smaller than the actual max"
+    );
+    let chunk_width = safe_crt_chunk_width::<F, W, K, D>(params, vec_len, digit_bound)
         .expect("single i8 CRT term must fit supported parameters");
     if vec_len <= chunk_width {
         let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
@@ -188,7 +193,12 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
     if vec_len == 0 {
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
-    let chunk_width = safe_crt_chunk_width::<F, W, K, D>(params, vec_len, I8_RHS_MAX_ABS)
+    let digit_bound = BALANCED_DIGIT_RHS_MAX_ABS;
+    debug_assert!(
+        digit_rows_within_abs_bound(vec, vec_len, digit_bound),
+        "single cyclic digit vector bound is smaller than the actual max"
+    );
+    let chunk_width = safe_crt_chunk_width::<F, W, K, D>(params, vec_len, digit_bound)
         .expect("single i8 CRT term must fit supported parameters");
     if vec_len <= chunk_width {
         let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);

@@ -57,11 +57,11 @@ pub(super) fn fused_split_eq_quotients_with_params<
 
     let z_abs_bound = u64::from(z_pre_max_abs);
     debug_assert!(
-        digit_rows_within_bound(w_hat, w_len, w_digit_abs_bound),
+        digit_rows_within_abs_bound(w_hat, w_len, w_digit_abs_bound),
         "fused quotient w_hat bound is smaller than the actual max"
     );
     debug_assert!(
-        digit_rows_within_bound(t_hat, t_len, t_digit_abs_bound),
+        digit_rows_within_abs_bound(t_hat, t_len, t_digit_abs_bound),
         "fused quotient t_hat bound is smaller than the actual max"
     );
     debug_assert!(
@@ -329,13 +329,6 @@ fn centered_rows_within_bound<const D: usize>(rows: &[[i32; D]], len: usize, bou
         })
 }
 
-fn digit_rows_within_bound<const D: usize>(rows: &[[i8; D]], len: usize, bound: u64) -> bool {
-    rows.iter()
-        .take(len)
-        .flat_map(|row| row.iter())
-        .all(|&coeff| u64::from(coeff.unsigned_abs()) <= bound)
-}
-
 fn centered_i32_ring<F: CanonicalField, const D: usize>(coeffs: &[i32; D]) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(from_fn(|k| F::from_i64(coeffs[k] as i64)))
 }
@@ -554,7 +547,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
         z_pre,
         z_pre_max_abs,
         BALANCED_DIGIT_RHS_MAX_ABS,
-        I8_RHS_MAX_ABS,
+        BALANCED_DIGIT_RHS_MAX_ABS,
     )
 }
 

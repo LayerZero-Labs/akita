@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) const BALANCED_DIGIT_RHS_MAX_ABS: u64 = 32;
+#[cfg(test)]
 pub(super) const I8_RHS_MAX_ABS: u64 = 128;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -183,6 +184,26 @@ mod tests {
         .expect("one i8 term should fit");
 
         assert_eq!(width, 1023);
+    }
+
+    #[test]
+    fn q128_balanced_digit_bound_recovers_chunk_width() {
+        const D: usize = 64;
+        let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
+        let balanced_width =
+            max_safe_crt_accumulation_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(
+                &params,
+                BALANCED_DIGIT_RHS_MAX_ABS,
+            )
+            .expect("one balanced digit term should fit");
+        let full_i8_width =
+            max_safe_crt_accumulation_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(
+                &params,
+                I8_RHS_MAX_ABS,
+            )
+            .expect("one full i8 term should fit");
+
+        assert_eq!(balanced_width, 4 * full_i8_width + 3);
     }
 
     #[test]

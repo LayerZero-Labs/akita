@@ -788,7 +788,6 @@ fn mat_vec_mul_digits_i8_three_row_matches_generic_on_block_parallel_path() {
 fn mat_vec_mul_digits_i8_strided_three_row_matches_block_path_on_block_parallel_path() {
     type F = Fp64<4294967197>;
     const D: usize = 64;
-
     let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..3)
         .map(|i| {
             (0..6)

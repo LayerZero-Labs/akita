@@ -49,7 +49,16 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
-    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, I8_RHS_MAX_ABS)
+    let digit_bound = BALANCED_DIGIT_RHS_MAX_ABS;
+    debug_assert!(
+        blocks.iter().all(|block| digit_rows_within_abs_bound(
+            block,
+            inner_width.min(block.len()),
+            digit_bound
+        )),
+        "predecomposed digit block bound is smaller than the actual max"
+    );
+    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
         .expect("single i8 CRT term must fit supported parameters");
     if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS
         && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
@@ -188,7 +197,12 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
-    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, I8_RHS_MAX_ABS)
+    let digit_bound = BALANCED_DIGIT_RHS_MAX_ABS;
+    debug_assert!(
+        digit_rows_within_abs_bound(coeffs, inner_width.saturating_mul(num_blocks), digit_bound),
+        "predecomposed strided digit bound is smaller than the actual max"
+    );
+    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
         .expect("single i8 CRT term must fit supported parameters");
     if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS
         && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
