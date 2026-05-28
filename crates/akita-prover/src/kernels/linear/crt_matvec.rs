@@ -140,7 +140,24 @@ where
     W: PrimeWidth,
 {
     let n = ntt_row.len().min(vec_neg.len());
-    let chunk_width = crt_field_rhs_accumulation_chunk_width::<F, W, K, D>(rhs_max_abs, n);
+    let chunk_width = crt_accumulation_chunk_width::<F, W, K, D>(rhs_max_abs, n);
+    if n <= chunk_width {
+        let mut acc_neg = CyclotomicCrtNtt::<W, K, D>::zero();
+        let mut acc_cyc = CyclotomicCrtNtt::<W, K, D>::zero();
+
+        for j in 0..n {
+            accumulate_pointwise_product_into(&mut acc_neg, &ntt_row[j], &vec_neg[j], params);
+            accumulate_pointwise_product_into(&mut acc_cyc, &cyc_row[j], &vec_cyc[j], params);
+        }
+
+        let neg_ring: CyclotomicRing<F, D> = acc_neg.to_ring_with_params(params);
+        let cyc_ring: CyclotomicRing<F, D> = acc_cyc.to_ring_cyclic(params);
+        let neg_coeffs = neg_ring.coefficients();
+        let cyc_coeffs = cyc_ring.coefficients();
+        let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]).half());
+        return CyclotomicRing::from_coefficients(quotient);
+    }
+
     let mut out = CyclotomicRing::<F, D>::zero();
 
     for chunk_start in (0..n).step_by(chunk_width) {
@@ -159,7 +176,7 @@ where
         let neg_coeffs = neg_ring.coefficients();
         let cyc_coeffs = cyc_ring.coefficients();
         let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]).half());
-        add_ring_into(&mut out, CyclotomicRing::from_coefficients(quotient));
+        out += CyclotomicRing::from_coefficients(quotient);
     }
 
     out

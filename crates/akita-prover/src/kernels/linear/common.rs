@@ -75,6 +75,11 @@ fn crt_accumulation_chunk_width_with_terms<F: CanonicalField, W: PrimeWidth, con
     width.clamp(1, max_width.max(1))
 }
 
+/// Maximum number of matrix columns that may be accumulated in CRT+NTT
+/// form before reconstructing back to the field.
+///
+/// The bound keeps `width * coefficient_terms * (q / 2) * rhs_max_abs`
+/// below half of the CRT product, so centered reconstruction cannot wrap.
 #[inline]
 pub(super) fn crt_accumulation_chunk_width<
     F: CanonicalField,
@@ -89,24 +94,45 @@ pub(super) fn crt_accumulation_chunk_width<
 }
 
 #[inline]
-pub(super) fn crt_field_rhs_accumulation_chunk_width<
-    F: CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    rhs_max_abs: u128,
-    max_width: usize,
-) -> usize {
-    crt_accumulation_chunk_width::<F, W, K, D>(rhs_max_abs, max_width)
-}
-
-#[inline]
-pub(super) fn add_ring_into<F: FieldCore, const D: usize>(
-    lhs: &mut CyclotomicRing<F, D>,
-    rhs: CyclotomicRing<F, D>,
+#[cfg(feature = "parallel")]
+pub(super) fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
+    acc: &mut CyclotomicCrtNtt<W, K, D>,
+    other: &CyclotomicCrtNtt<W, K, D>,
+    params: &CrtNttParamSet<W, K, D>,
 ) {
-    *lhs += rhs;
+    #[cfg(all(target_arch = "aarch64", feature = "parallel"))]
+    if neon::use_neon_ntt() {
+        for k in 0..K {
+            let prime = params.primes[k];
+            unsafe {
+                if size_of::<W>() == size_of::<i32>() {
+                    neon::add_reduce_i32(
+                        acc.limbs[k].as_mut_ptr() as *mut i32,
+                        other.limbs[k].as_ptr() as *const i32,
+                        D,
+                        prime.p.to_i64() as i32,
+                    );
+                } else {
+                    neon::add_reduce_i16(
+                        acc.limbs[k].as_mut_ptr() as *mut i16,
+                        other.limbs[k].as_ptr() as *const i16,
+                        D,
+                        prime.p.to_i64() as i16,
+                    );
+                }
+            }
+        }
+        return;
+    }
+
+    for k in 0..K {
+        let prime = params.primes[k];
+        for d in 0..D {
+            let sum =
+                MontCoeff::from_raw(acc.limbs[k][d].raw().wrapping_add(other.limbs[k][d].raw()));
+            acc.limbs[k][d] = prime.reduce_range(sum);
+        }
+    }
 }
 
 pub(super) fn max_centered_abs<F: CanonicalField, const D: usize>(
@@ -130,7 +156,6 @@ pub(super) fn max_centered_abs<F: CanonicalField, const D: usize>(
 }
 
 #[inline]
-#[cfg(all(test, not(feature = "zk")))]
 pub(super) fn aligned_i8_tile_width(
     raw_width: usize,
     inner_width: usize,

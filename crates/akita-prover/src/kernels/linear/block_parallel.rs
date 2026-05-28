@@ -576,7 +576,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
                         );
                     }
                 }
-                add_ring_into(&mut out, acc.to_ring_with_params(params));
+                out += acc.to_ring_with_params(params);
             }
 
             out

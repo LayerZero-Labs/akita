@@ -59,12 +59,127 @@ pub(super) fn fused_split_eq_quotients_with_params<
     let z_chunk_width =
         crt_accumulation_chunk_width::<F, W, K, D>(u128::from(z_pre_max_abs.max(1)), max_col);
     let chunk_width = i8_chunk_width.min(z_chunk_width).max(1);
+    let zero = CyclotomicCrtNtt::<W, K, D>::zero();
+    if max_col <= chunk_width {
+        let tw = base_tw.min(max_col.div_ceil(MIN_FUSED_TILES).max(1));
+        let num_tiles = max_col.div_ceil(tw);
+
+        let (d_accs, b_accs, a_neg_accs, a_cyc_accs) = cfg_fold_reduce!(
+            0..num_tiles,
+            || (
+                vec![zero.clone(); n_d],
+                vec![zero.clone(); n_b],
+                vec![zero.clone(); n_a],
+                vec![zero.clone(); n_a],
+            ),
+            |mut accs: (
+                Vec<CyclotomicCrtNtt<W, K, D>>,
+                Vec<CyclotomicCrtNtt<W, K, D>>,
+                Vec<CyclotomicCrtNtt<W, K, D>>,
+                Vec<CyclotomicCrtNtt<W, K, D>>,
+            ),
+             tile_idx| {
+                let tile_start = tile_idx * tw;
+                let tile_end = (tile_start + tw).min(max_col);
+
+                for j in tile_start..tile_end {
+                    if j < w_len && !is_zero_plane(&w_hat[j]) {
+                        let ntt_w =
+                            CyclotomicCrtNtt::from_i8_cyclic_with_lut(&w_hat[j], params, &lut);
+                        for (acc_d, cyc_row) in accs.0.iter_mut().zip(cyc_rows.iter()) {
+                            accumulate_pointwise_product_into(acc_d, &cyc_row[j], &ntt_w, params);
+                        }
+                    }
+
+                    if j < t_len && !is_zero_plane(&t_hat[j]) {
+                        let ntt_t =
+                            CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, &lut);
+                        for (acc_b, cyc_row) in accs.1.iter_mut().zip(cyc_rows.iter()) {
+                            accumulate_pointwise_product_into(acc_b, &cyc_row[j], &ntt_t, params);
+                        }
+                    }
+
+                    if j < z_len && !is_zero_centered_row(&z_pre[j]) {
+                        let (ntt_z_neg, ntt_z_cyc) = if let Some(ref clut) = centered_lut {
+                            CyclotomicCrtNtt::from_centered_i32_pair_with_lut(
+                                &z_pre[j], params, clut,
+                            )
+                        } else {
+                            CyclotomicCrtNtt::from_centered_i32_pair_with_params(&z_pre[j], params)
+                        };
+                        for ((acc_neg, acc_cyc), (neg_row, cyc_row)) in accs
+                            .2
+                            .iter_mut()
+                            .zip(accs.3.iter_mut())
+                            .zip(neg_rows.iter().zip(cyc_rows.iter()))
+                        {
+                            accumulate_pointwise_product_into(
+                                acc_neg,
+                                &neg_row[j],
+                                &ntt_z_neg,
+                                params,
+                            );
+                            accumulate_pointwise_product_into(
+                                acc_cyc,
+                                &cyc_row[j],
+                                &ntt_z_cyc,
+                                params,
+                            );
+                        }
+                    }
+                }
+                accs
+            },
+            |mut a: (
+                Vec<CyclotomicCrtNtt<W, K, D>>,
+                Vec<CyclotomicCrtNtt<W, K, D>>,
+                Vec<CyclotomicCrtNtt<W, K, D>>,
+                Vec<CyclotomicCrtNtt<W, K, D>>,
+            ),
+             b| {
+                for r in 0..n_d {
+                    add_ntt_into(&mut a.0[r], &b.0[r], params);
+                }
+                for r in 0..n_b {
+                    add_ntt_into(&mut a.1[r], &b.1[r], params);
+                }
+                for r in 0..n_a {
+                    add_ntt_into(&mut a.2[r], &b.2[r], params);
+                    add_ntt_into(&mut a.3[r], &b.3[r], params);
+                }
+                a
+            }
+        );
+
+        let d_result = d_accs
+            .into_iter()
+            .map(|acc| acc.to_ring_cyclic(params))
+            .collect();
+        let b_result = b_accs
+            .into_iter()
+            .map(|acc| acc.to_ring_cyclic(params))
+            .collect();
+        let a_result = a_neg_accs
+            .into_iter()
+            .zip(a_cyc_accs)
+            .map(|(neg_acc, cyc_acc)| {
+                let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
+                let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
+                let neg_c = neg_ring.coefficients();
+                let cyc_c = cyc_ring.coefficients();
+                let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]).half());
+                CyclotomicRing::from_coefficients(q)
+            })
+            .collect();
+
+        return (d_result, b_result, a_result);
+    }
+
     let cache_tw = base_tw
         .min(max_col.div_ceil(MIN_FUSED_TILES).max(1))
         .min(chunk_width)
         .max(1);
     let num_chunks = max_col.div_ceil(chunk_width);
-    let zero = CyclotomicCrtNtt::<W, K, D>::zero();
 
     cfg_fold_reduce!(
         0..num_chunks,
@@ -135,10 +250,10 @@ pub(super) fn fused_split_eq_quotients_with_params<
                 }
             }
             for (dst, acc) in accs.0.iter_mut().zip(d_accs.into_iter()) {
-                add_ring_into(dst, acc.to_ring_cyclic(params));
+                *dst += acc.to_ring_cyclic(params);
             }
             for (dst, acc) in accs.1.iter_mut().zip(b_accs.into_iter()) {
-                add_ring_into(dst, acc.to_ring_cyclic(params));
+                *dst += acc.to_ring_cyclic(params);
             }
             for ((dst, neg_acc), cyc_acc) in accs
                 .2
@@ -151,7 +266,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
                 let neg_c = neg_ring.coefficients();
                 let cyc_c = cyc_ring.coefficients();
                 let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]).half());
-                add_ring_into(dst, CyclotomicRing::from_coefficients(q));
+                *dst += CyclotomicRing::from_coefficients(q);
             }
             accs
         },
@@ -162,13 +277,13 @@ pub(super) fn fused_split_eq_quotients_with_params<
         ),
          b| {
             for (dst, rhs) in a.0.iter_mut().zip(b.0.into_iter()) {
-                add_ring_into(dst, rhs);
+                *dst += rhs;
             }
             for (dst, rhs) in a.1.iter_mut().zip(b.1.into_iter()) {
-                add_ring_into(dst, rhs);
+                *dst += rhs;
             }
             for (dst, rhs) in a.2.iter_mut().zip(b.2.into_iter()) {
-                add_ring_into(dst, rhs);
+                *dst += rhs;
             }
             a
         }

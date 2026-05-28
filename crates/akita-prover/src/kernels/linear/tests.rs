@@ -1,11 +1,11 @@
 use super::{
     aligned_i8_tile_width, bounded_i8_tile_width, crt_accumulation_chunk_width,
-    crt_field_rhs_accumulation_chunk_width, fused_split_eq_quotients, mat_vec_mul_crt_ntt,
-    mat_vec_mul_crt_ntt_many, mat_vec_mul_digits_i8_strided_with_params,
-    mat_vec_mul_digits_i8_with_params, mat_vec_mul_i8_dense_with_params,
-    mat_vec_mul_i8_strided_with_params, mat_vec_mul_i8_with_params,
-    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
-    max_centered_abs, precompute_dense_mat_ntt_with_params,
+    fused_split_eq_quotients, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many,
+    mat_vec_mul_digits_i8_strided_with_params, mat_vec_mul_digits_i8_with_params,
+    mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
+    mat_vec_mul_i8_with_params, mat_vec_mul_ntt_i8_dense_single_row,
+    mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked, max_centered_abs,
+    precompute_dense_mat_ntt_with_params,
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
 use akita_algebra::ntt::tables::{
@@ -45,14 +45,12 @@ fn crt_chunk_width_accounts_for_rhs_above_u32() {
     const D: usize = 128;
     let max_width = 100_000;
 
-    let full_rhs_width = crt_field_rhs_accumulation_chunk_width::<F, i32, Q64_NUM_PRIMES, D>(
+    let full_rhs_width = crt_accumulation_chunk_width::<F, i32, Q64_NUM_PRIMES, D>(
         u128::from(Q64_MODULUS / 2),
         max_width,
     );
-    let capped_rhs_width = crt_field_rhs_accumulation_chunk_width::<F, i32, Q64_NUM_PRIMES, D>(
-        u128::from(u32::MAX),
-        max_width,
-    );
+    let capped_rhs_width =
+        crt_accumulation_chunk_width::<F, i32, Q64_NUM_PRIMES, D>(u128::from(u32::MAX), max_width);
 
     assert!(full_rhs_width < capped_rhs_width);
     assert_eq!(full_rhs_width, 32_768);
