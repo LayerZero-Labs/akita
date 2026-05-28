@@ -1,0 +1,457 @@
+use super::*;
+use crate::fields::lift::{
+    canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
+    ExtField, FrobeniusExtField,
+};
+use crate::{Fp64, Prime16Offset99};
+use crate::{FromPrimitiveInt, Invertible};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
+
+type F = Fp64<4294967197>;
+type E2 = Ext2<F>;
+type E4 = TowerBasisFp4<F, TwoNr, UnitNr>;
+type P4 = PowerBasisFp4<F, TwoNr>;
+type R4 = RingSubfieldFp4<F>;
+type R8 = RingSubfieldFp8<F>;
+type R8Fp16 = RingSubfieldFp8<Prime16Offset99>;
+
+#[test]
+fn fp2_add_sub_identity() {
+    let a = E2::new(F::from_u64(3), F::from_u64(5));
+    let b = E2::new(F::from_u64(7), F::from_u64(11));
+    let c = a + b;
+    assert_eq!(c - b, a);
+    assert_eq!(c - a, b);
+}
+
+#[test]
+fn fp2_mul_one() {
+    let a = E2::new(F::from_u64(42), F::from_u64(13));
+    assert_eq!(a * E2::one(), a);
+    assert_eq!(E2::one() * a, a);
+}
+
+#[test]
+fn fp2_mul_commutativity() {
+    let mut rng = StdRng::seed_from_u64(1234);
+    let a = E2::random(&mut rng);
+    let b = E2::random(&mut rng);
+    assert_eq!(a * b, b * a);
+}
+
+#[test]
+fn fp2_karatsuba_matches_schoolbook() {
+    let mut rng = StdRng::seed_from_u64(5678);
+    for _ in 0..100 {
+        let a = E2::random(&mut rng);
+        let b = E2::random(&mut rng);
+        let nr = <TwoNr as Fp2Config<F>>::non_residue();
+        let expected = E2::new(
+            (a.coeffs[0] * b.coeffs[0]) + (nr * (a.coeffs[1] * b.coeffs[1])),
+            (a.coeffs[0] * b.coeffs[1]) + (a.coeffs[1] * b.coeffs[0]),
+        );
+        assert_eq!(a * b, expected);
+    }
+}
+
+#[test]
+fn fp2_square_matches_mul() {
+    let mut rng = StdRng::seed_from_u64(9012);
+    for _ in 0..100 {
+        let a = E2::random(&mut rng);
+        assert_eq!(a.square(), a * a, "square mismatch for {a:?}");
+    }
+}
+
+#[test]
+fn fp2_inv() {
+    let mut rng = StdRng::seed_from_u64(3456);
+    for _ in 0..50 {
+        let a = E2::random(&mut rng);
+        if !a.is_zero() {
+            let inv = a.inverse().unwrap();
+            assert_eq!(a * inv, E2::one());
+        }
+    }
+}
+
+#[test]
+fn fp4_mul_commutativity() {
+    let mut rng = StdRng::seed_from_u64(7890);
+    let a = E4::random(&mut rng);
+    let b = E4::random(&mut rng);
+    assert_eq!(a * b, b * a);
+}
+
+#[test]
+fn fp4_square_matches_mul() {
+    let mut rng = StdRng::seed_from_u64(1111);
+    for _ in 0..50 {
+        let a = E4::random(&mut rng);
+        assert_eq!(a.square(), a * a);
+    }
+}
+
+#[test]
+fn fp4_inv() {
+    let mut rng = StdRng::seed_from_u64(2222);
+    for _ in 0..50 {
+        let a = E4::random(&mut rng);
+        if !a.is_zero() {
+            let inv = a.inverse().unwrap();
+            assert_eq!(a * inv, E4::one());
+        }
+    }
+}
+
+#[test]
+fn power_basis_fp4_square_matches_mul() {
+    let mut rng = StdRng::seed_from_u64(3333);
+    for _ in 0..50 {
+        let a = P4::random(&mut rng);
+        assert_eq!(a.square(), a * a);
+    }
+}
+
+#[test]
+fn power_basis_fp4_inv() {
+    let mut rng = StdRng::seed_from_u64(4444);
+    for _ in 0..50 {
+        let a = P4::random(&mut rng);
+        if !a.is_zero() {
+            let inv = a.inverse().unwrap();
+            assert_eq!(a * inv, P4::one());
+        }
+    }
+}
+
+#[test]
+fn ring_subfield_fp4_multiplication_table() {
+    let two = F::from_u64(2);
+    let e1 = R4::new([F::zero(), F::one(), F::zero(), F::zero()]);
+    let e2 = R4::new([F::zero(), F::zero(), F::one(), F::zero()]);
+    let e3 = R4::new([F::zero(), F::zero(), F::zero(), F::one()]);
+    let two_const = R4::new([two, F::zero(), F::zero(), F::zero()]);
+
+    assert_eq!(e1 * e1, two_const + e2);
+    assert_eq!(e1 * e2, e1 + e3);
+    assert_eq!(e1 * e3, e2);
+    assert_eq!(e2 * e2, two_const);
+    assert_eq!(e2 * e3, e1 - e3);
+    assert_eq!(e3 * e3, two_const - e2);
+}
+
+#[test]
+fn ring_subfield_fp4_square_matches_mul() {
+    let mut rng = StdRng::seed_from_u64(5555);
+    for _ in 0..50 {
+        let a = R4::random(&mut rng);
+        assert_eq!(a.square(), a * a);
+    }
+}
+
+#[test]
+fn ring_subfield_fp4_inv() {
+    let mut rng = StdRng::seed_from_u64(6666);
+    for _ in 0..50 {
+        let a = R4::random(&mut rng);
+        if !a.is_zero() {
+            let inv = a.inverse().unwrap();
+            assert_eq!(a * inv, R4::one());
+        }
+    }
+}
+
+#[test]
+fn ring_subfield_fp8_multiplication_table_spot_checks() {
+    let two = F::from_u64(2);
+    let e = |idx: usize| {
+        R8::new(std::array::from_fn(|i| {
+            if i == idx {
+                F::one()
+            } else {
+                F::zero()
+            }
+        }))
+    };
+    let two_const = R8::new([
+        two,
+        F::zero(),
+        F::zero(),
+        F::zero(),
+        F::zero(),
+        F::zero(),
+        F::zero(),
+        F::zero(),
+    ]);
+
+    assert_eq!(e(1) * e(1), two_const + e(2));
+    assert_eq!(e(2) * e(2), two_const + e(4));
+    assert_eq!(e(4) * e(4), two_const);
+    assert_eq!(e(7) * e(7), two_const - e(2));
+    assert_eq!(e(5) * e(7), e(2) - e(4));
+}
+
+#[test]
+fn ring_subfield_fp8_square_matches_mul() {
+    let mut rng = StdRng::seed_from_u64(7777);
+    for _ in 0..50 {
+        let a = R8::random(&mut rng);
+        assert_eq!(a.square(), a * a);
+    }
+}
+
+#[test]
+fn ring_subfield_fp8_inv() {
+    let mut rng = StdRng::seed_from_u64(8888);
+    for _ in 0..50 {
+        let a = R8::random(&mut rng);
+        if !a.is_zero() {
+            let inv = a.inverse().unwrap();
+            assert_eq!(a * inv, R8::one());
+        }
+    }
+}
+
+#[test]
+fn ring_subfield_fp8_fp16_serialization_is_coeff_ordered() {
+    let x = R8Fp16::new(std::array::from_fn(|i| {
+        Prime16Offset99::from_u64(i as u64 + 1)
+    }));
+    let mut bytes = Vec::new();
+    x.serialize_with_mode(&mut bytes, Compress::No).unwrap();
+    assert_eq!(x.serialized_size(Compress::No), 16);
+    assert_eq!(bytes, vec![1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8, 0]);
+
+    let decoded =
+        R8Fp16::deserialize_with_mode(&bytes[..], Compress::No, Validate::Yes, &()).unwrap();
+    assert_eq!(decoded, x);
+}
+
+#[test]
+fn frobenius_fp2_is_conjugation() {
+    let x = E2::new(F::from_u64(13), F::from_u64(21));
+    assert_eq!(<E2 as FrobeniusExtField<F>>::frobenius_pow(x, 0), x);
+    assert_eq!(
+        <E2 as FrobeniusExtField<F>>::frobenius_pow(x, 1),
+        x.conjugate()
+    );
+    assert_eq!(<E2 as FrobeniusExtField<F>>::frobenius_pow(x, 2), x);
+    assert_eq!(
+        <E2 as FrobeniusExtField<F>>::frobenius_inv_pow(x, 1),
+        x.conjugate()
+    );
+}
+
+#[test]
+fn canonical_moore_thetas_solve_fp2() {
+    validate_canonical_frobenius_thetas::<F, E2>(2).unwrap();
+    let thetas = canonical_frobenius_thetas::<F, E2>(2).unwrap();
+    let z = [
+        E2::new(F::from_u64(3), F::from_u64(5)),
+        E2::new(F::from_u64(7), F::from_u64(11)),
+    ];
+    let r = (0..2)
+        .map(|row| {
+            thetas
+                .iter()
+                .zip(z.iter())
+                .fold(E2::zero(), |acc, (&theta, &z_h)| {
+                    acc + <E2 as FrobeniusExtField<F>>::frobenius_inv_pow(theta, row) * z_h
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        solve_frobenius_moore::<F, E2>(&thetas, &r).unwrap(),
+        z.to_vec()
+    );
+}
+
+#[test]
+fn canonical_ring_subfield_thetas_are_the_packing_basis() {
+    let thetas = canonical_frobenius_thetas::<F, R4>(4).unwrap();
+    assert_eq!(
+        thetas[0],
+        R4::new([F::one(), F::zero(), F::zero(), F::zero()])
+    );
+    assert_eq!(
+        thetas[1],
+        R4::new([F::zero(), F::one(), F::zero(), F::zero()])
+    );
+    assert_eq!(
+        thetas[2],
+        R4::new([F::zero(), F::zero(), F::one(), F::zero()])
+    );
+    assert_eq!(
+        thetas[3],
+        R4::new([F::zero(), F::zero(), F::zero(), F::one()])
+    );
+    validate_canonical_frobenius_thetas::<F, R4>(4).unwrap();
+}
+
+#[test]
+fn canonical_ring_subfield_fp8_thetas_are_the_packing_basis() {
+    let thetas = canonical_frobenius_thetas::<F, R8>(8).unwrap();
+    for (idx, theta) in thetas.iter().enumerate().take(8) {
+        assert_eq!(
+            *theta,
+            R8::new(std::array::from_fn(|i| {
+                if i == idx {
+                    F::one()
+                } else {
+                    F::zero()
+                }
+            }))
+        );
+    }
+    validate_canonical_frobenius_thetas::<F, R8>(8).unwrap();
+}
+
+#[test]
+fn duplicate_moore_theta_rejects() {
+    let theta = E2::one();
+    let err = solve_frobenius_moore::<F, E2>(&[theta, theta], &[E2::one(), E2::one()])
+        .expect_err("duplicate theta should be singular");
+    assert!(format!("{err}").contains("singular"));
+}
+
+#[test]
+fn from_small_int_fp2() {
+    let a = E2::from_u64(42);
+    assert_eq!(a, E2::new(F::from_u64(42), F::zero()));
+
+    let b = E2::from_i64(-3);
+    assert_eq!(b, E2::new(F::from_i64(-3), F::zero()));
+
+    let c = E2::from_u8(7);
+    assert_eq!(c, E2::from_u64(7));
+
+    let d = E2::from_u32(100_000);
+    assert_eq!(d, E2::from_u64(100_000));
+}
+
+#[test]
+fn from_small_int_fp4() {
+    let a = E4::from_u64(42);
+    assert_eq!(a, E4::new(E2::from_u64(42), E2::zero()));
+
+    let b = E4::from_i64(-7);
+    assert_eq!(b, E4::new(E2::from_i64(-7), E2::zero()));
+}
+
+#[test]
+fn ext_field_degree() {
+    assert_eq!(<F as ExtField<F>>::EXT_DEGREE, 1);
+    assert_eq!(<E2 as ExtField<F>>::EXT_DEGREE, 2);
+    assert_eq!(<E4 as ExtField<F>>::EXT_DEGREE, 4);
+    assert_eq!(<R4 as ExtField<F>>::EXT_DEGREE, 4);
+    assert_eq!(<R8 as ExtField<F>>::EXT_DEGREE, 8);
+}
+
+#[test]
+fn ext_field_from_base_slice() {
+    let c0 = F::from_u64(3);
+    let c1 = F::from_u64(5);
+    let e2 = E2::from_base_slice(&[c0, c1]);
+    assert_eq!(e2, E2::new(c0, c1));
+
+    let c2 = F::from_u64(7);
+    let c3 = F::from_u64(11);
+    let e4 = E4::from_base_slice(&[c0, c1, c2, c3]);
+    assert_eq!(e4, E4::new(E2::new(c0, c2), E2::new(c1, c3)));
+
+    let p4 = P4::from_base_slice(&[c0, c1, c2, c3]);
+    assert_eq!(p4, P4::new([c0, c1, c2, c3]));
+
+    let r4 = R4::from_base_slice(&[c0, c1, c2, c3]);
+    assert_eq!(r4, R4::new([c0, c1, c2, c3]));
+
+    let c4 = F::from_u64(13);
+    let c5 = F::from_u64(17);
+    let c6 = F::from_u64(19);
+    let c7 = F::from_u64(23);
+    let r8 = R8::from_base_slice(&[c0, c1, c2, c3, c4, c5, c6, c7]);
+    assert_eq!(r8, R8::new([c0, c1, c2, c3, c4, c5, c6, c7]));
+}
+
+#[test]
+fn tower_and_power_basis_fp4_multiplication_agree() {
+    let x_p = P4::new([
+        F::from_u64(1),
+        F::from_u64(2),
+        F::from_u64(3),
+        F::from_u64(4),
+    ]);
+    let y_p = P4::new([
+        F::from_u64(5),
+        F::from_u64(6),
+        F::from_u64(7),
+        F::from_u64(8),
+    ]);
+    let x_t: E4 = x_p.into();
+    let y_t: E4 = y_p.into();
+
+    let got: P4 = (x_t * y_t).into();
+    assert_eq!(got, x_p * y_p);
+}
+
+#[test]
+fn power_basis_fp4_transcript_limb_order_is_univariate() {
+    let x = P4::new([
+        F::from_u64(1),
+        F::from_u64(2),
+        F::from_u64(3),
+        F::from_u64(4),
+    ]);
+    assert_eq!(
+        <P4 as ExtField<F>>::to_base_vec(&x),
+        vec![
+            F::from_u64(1),
+            F::from_u64(2),
+            F::from_u64(3),
+            F::from_u64(4)
+        ]
+    );
+}
+
+#[test]
+fn tower_basis_fp4_transcript_limb_order_is_univariate() {
+    let x = E4::new(
+        E2::new(F::from_u64(1), F::from_u64(3)),
+        E2::new(F::from_u64(2), F::from_u64(4)),
+    );
+    assert_eq!(
+        <E4 as ExtField<F>>::to_base_vec(&x),
+        vec![
+            F::from_u64(1),
+            F::from_u64(2),
+            F::from_u64(3),
+            F::from_u64(4)
+        ]
+    );
+}
+
+#[test]
+fn extension_fields_are_array_layouts() {
+    assert_eq!(core::mem::size_of::<E2>(), core::mem::size_of::<[F; 2]>());
+    assert_eq!(core::mem::align_of::<E2>(), core::mem::align_of::<[F; 2]>());
+    assert_eq!(core::mem::size_of::<P4>(), core::mem::size_of::<[F; 4]>());
+    assert_eq!(core::mem::align_of::<P4>(), core::mem::align_of::<[F; 4]>());
+    assert_eq!(core::mem::size_of::<R4>(), core::mem::size_of::<[F; 4]>());
+    assert_eq!(core::mem::align_of::<R4>(), core::mem::align_of::<[F; 4]>());
+    assert_eq!(core::mem::size_of::<E4>(), core::mem::size_of::<[E2; 2]>());
+    assert_eq!(
+        core::mem::align_of::<E4>(),
+        core::mem::align_of::<[E2; 2]>()
+    );
+}
+
+#[test]
+fn eq_impl() {
+    let a = E2::new(F::from_u64(1), F::from_u64(2));
+    let b = E2::new(F::from_u64(1), F::from_u64(2));
+    let c = E2::new(F::from_u64(1), F::from_u64(3));
+    assert_eq!(a, b);
+    assert_ne!(a, c);
+}

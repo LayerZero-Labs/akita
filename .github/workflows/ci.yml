@@ -41,6 +41,16 @@ jobs:
       - name: Check TOML formatting
         run: taplo fmt --check
 
+  rust-file-lines:
+    name: Rust file line cap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Test Rust file line checker
+        run: scripts/test-rust-file-lines.sh
+      - name: Check Rust file line lengths
+        run: scripts/check-rust-file-lines.sh
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
