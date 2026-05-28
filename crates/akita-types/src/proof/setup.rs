@@ -28,6 +28,17 @@ pub const MAX_SETUP_MATRIX_FIELD_ELEMENTS: usize = 1 << 26;
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-matrix-1d";
 const SHARED_MATRIX_LABEL: &[u8] = b"shared";
 
+/// Packed capacity envelope for the shared public setup vector.
+///
+/// The setup stores one flat vector of ring elements. A/B/D matrices are
+/// role-local prefix views of this vector, so capacity is the maximum required
+/// role footprint, not `max_rows * max_stride`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetupMatrixEnvelope {
+    /// Number of generated ring elements at the setup generation dimension.
+    pub max_setup_len: usize,
+}
+
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaSetupSeed {
@@ -41,12 +52,10 @@ pub struct AkitaSetupSeed {
     /// widths the setup can serve; a multi-point batched opening that exceeds
     /// this bound would otherwise silently read past the shared matrix prefix.
     pub max_num_points: usize,
-    /// Global row stride for the flat NTT cache.
-    pub max_stride: usize,
     /// Ring dimension used to generate `shared_matrix`.
     pub gen_ring_dim: usize,
     /// Number of generated ring elements at `gen_ring_dim`.
-    pub total_ring_elements: usize,
+    pub max_setup_len: usize,
     /// Public seed used to derive commitment matrices.
     pub public_matrix_seed: PublicMatrixSeed,
 }
@@ -58,7 +67,7 @@ impl AkitaSetupSeed {
     ///
     /// Returns an error if the seed shape overflows `usize`.
     pub fn matrix_field_elements(&self) -> Result<usize, SerializationError> {
-        self.total_ring_elements
+        self.max_setup_len
             .checked_mul(self.gen_ring_dim)
             .ok_or_else(|| {
                 SerializationError::InvalidData(
@@ -207,7 +216,7 @@ pub fn validate_public_matrix_shape_matches_seed<F: FieldCore + Valid>(
             "setup shared_matrix generation dimension does not match setup seed".to_string(),
         ));
     }
-    if shared_matrix.total_ring_elements() != seed.total_ring_elements {
+    if shared_matrix.total_ring_elements() != seed.max_setup_len {
         return Err(SerializationError::InvalidData(
             "setup shared_matrix length does not match setup seed".to_string(),
         ));
@@ -295,11 +304,6 @@ fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
 
 impl Valid for AkitaSetupSeed {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.max_stride == 0 {
-            return Err(SerializationError::InvalidData(
-                "setup seed max_stride must be non-zero".to_string(),
-            ));
-        }
         if self.max_num_batched_polys == 0 {
             return Err(SerializationError::InvalidData(
                 "setup seed max_num_batched_polys must be at least 1".to_string(),
@@ -315,14 +319,9 @@ impl Valid for AkitaSetupSeed {
                 "setup seed gen_ring_dim must be non-zero".to_string(),
             ));
         }
-        if self.total_ring_elements == 0 {
+        if self.max_setup_len == 0 {
             return Err(SerializationError::InvalidData(
-                "setup seed total_ring_elements must be non-zero".to_string(),
-            ));
-        }
-        if !self.total_ring_elements.is_multiple_of(self.max_stride) {
-            return Err(SerializationError::InvalidData(
-                "setup seed total_ring_elements must be a multiple of max_stride".to_string(),
+                "setup seed max_setup_len must be non-zero".to_string(),
             ));
         }
         self.matrix_field_elements()?;
@@ -342,10 +341,9 @@ impl AkitaSerialize for AkitaSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.max_num_points
             .serialize_with_mode(&mut writer, compress)?;
-        self.max_stride.serialize_with_mode(&mut writer, compress)?;
         self.gen_ring_dim
             .serialize_with_mode(&mut writer, compress)?;
-        self.total_ring_elements
+        self.max_setup_len
             .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
         Ok(())
@@ -355,9 +353,8 @@ impl AkitaSerialize for AkitaSetupSeed {
         self.max_num_vars.serialized_size(compress)
             + self.max_num_batched_polys.serialized_size(compress)
             + self.max_num_points.serialized_size(compress)
-            + self.max_stride.serialized_size(compress)
             + self.gen_ring_dim.serialized_size(compress)
-            + self.total_ring_elements.serialized_size(compress)
+            + self.max_setup_len.serialized_size(compress)
             + 32
     }
 }
@@ -374,19 +371,16 @@ impl AkitaDeserialize for AkitaSetupSeed {
         let max_num_batched_polys =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_num_points = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let max_stride = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let total_ring_elements =
-            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let max_setup_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
         let out = Self {
             max_num_vars,
             max_num_batched_polys,
             max_num_points,
-            max_stride,
             gen_ring_dim,
-            total_ring_elements,
+            max_setup_len,
             public_matrix_seed,
         };
         if matches!(validate, Validate::Yes) {
@@ -438,7 +432,7 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
             &mut reader,
             compress,
             validate,
-            seed.total_ring_elements,
+            seed.max_setup_len,
             seed.gen_ring_dim,
             MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         )?;
@@ -509,9 +503,8 @@ mod tests {
             max_num_vars: 8,
             max_num_batched_polys: 1,
             max_num_points: 1,
-            max_stride: 2,
             gen_ring_dim: D,
-            total_ring_elements: 2,
+            max_setup_len: 2,
             public_matrix_seed,
         }
     }
@@ -581,9 +574,8 @@ mod tests {
             max_num_vars: 32,
             max_num_batched_polys: 1,
             max_num_points: 1,
-            max_stride: 1,
             gen_ring_dim: D,
-            total_ring_elements: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
+            max_setup_len: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
             public_matrix_seed: [7u8; 32],
         };
 
@@ -597,9 +589,8 @@ mod tests {
             max_num_vars: 32,
             max_num_batched_polys: 1,
             max_num_points: 1,
-            max_stride: 1,
             gen_ring_dim: D,
-            total_ring_elements: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
+            max_setup_len: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
             public_matrix_seed: [7u8; 32],
         };
         let mut bytes = Vec::new();

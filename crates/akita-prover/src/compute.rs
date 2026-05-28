@@ -384,17 +384,17 @@ pub struct CpuPreparedSetup<F: FieldCore, const D: usize> {
 
 fn validate_digit_row_request(
     row_len: usize,
-    max_stride: usize,
+    row_width: usize,
     total_ring_elements: usize,
 ) -> Result<(), AkitaError> {
-    if max_stride == 0 {
+    if row_width == 0 {
         return Err(AkitaError::InvalidSetup(
-            "prepared setup max_stride must be nonzero".to_string(),
+            "prepared setup row width must be nonzero".to_string(),
         ));
     }
-    let required = row_len.checked_mul(max_stride).ok_or_else(|| {
+    let required = row_len.checked_mul(row_width).ok_or_else(|| {
         AkitaError::InvalidSetup(format!(
-            "digit row request overflows: row_len={row_len} max_stride={max_stride}"
+            "digit row request overflows: row_len={row_len} row_width={row_width}"
         ))
     })?;
     if required > total_ring_elements {
@@ -440,13 +440,13 @@ where
         prepared: &Self::PreparedSetup<D>,
         plan: DenseCommitRowsPlan<'_, F, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let stride = prepared.expanded.seed.max_stride;
         Ok(match plan.input {
             DenseCommitInput::CachedDigits { digit_block_slices } => {
+                let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
                 mat_vec_mul_ntt_dense_digits_i8(
                     &prepared.ntt_shared,
                     plan.n_a,
-                    stride,
+                    row_width,
                     &digit_block_slices,
                 )
             }
@@ -455,10 +455,13 @@ where
                 num_digits_commit,
                 log_basis,
             } => {
+                let row_width = block_slices.first().map_or(0usize, |block| {
+                    block.len().saturating_mul(num_digits_commit)
+                });
                 if plan.n_a == 1 {
                     mat_vec_mul_ntt_i8_dense_single_row(
                         &prepared.ntt_shared,
-                        stride,
+                        row_width,
                         &block_slices,
                         num_digits_commit,
                         log_basis,
@@ -470,7 +473,7 @@ where
                     mat_vec_mul_ntt_i8_dense(
                         &prepared.ntt_shared,
                         plan.n_a,
-                        stride,
+                        row_width,
                         &block_slices,
                         num_digits_commit,
                         log_basis,
@@ -489,21 +492,14 @@ where
         F: HasWide,
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
-        let stride = prepared.expanded.seed.max_stride;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, stride)?;
         let active_a_cols = plan
             .block_len
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        if active_a_cols > a_view.num_cols() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "active A width {active_a_cols} exceeds setup envelope {}",
-                a_view.num_cols()
-            )));
-        }
+        let a_view = prepared
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(plan.n_a, active_a_cols)?;
         Ok(match plan.blocks {
             OneHotCommitBlocks::SingleChunk(blocks) => column_sweep_ajtai_single_chunk::<F, D>(
                 &a_view,
@@ -531,21 +527,14 @@ where
         F: HasWide,
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
-        let stride = prepared.expanded.seed.max_stride;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, stride)?;
         let active_a_cols = plan
             .block_len
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        if active_a_cols > a_view.num_cols() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "active A width {active_a_cols} exceeds setup envelope {}",
-                a_view.num_cols()
-            )));
-        }
+        let a_view = prepared
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(plan.n_a, active_a_cols)?;
         let a_rows = (0..plan.n_a)
             .map(|idx| a_view.row(idx))
             .collect::<Result<Vec<_>, _>>()?;
@@ -563,12 +552,15 @@ where
         prepared: &Self::PreparedSetup<D>,
         plan: RecursiveWitnessCommitRowsPlan<'_, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let stride = prepared.expanded.seed.max_stride;
+        let row_width = plan
+            .block_len
+            .checked_mul(plan.num_digits_commit)
+            .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
         if plan.num_digits_commit == 1 {
             Ok(mat_vec_mul_ntt_digits_i8_strided(
                 &prepared.ntt_shared,
                 plan.n_rows,
-                stride,
+                row_width,
                 plan.coeffs,
                 plan.num_blocks,
                 plan.block_len,
@@ -585,7 +577,7 @@ where
             Ok(mat_vec_mul_ntt_i8_strided(
                 &prepared.ntt_shared,
                 plan.n_rows,
-                stride,
+                row_width,
                 &ring_elems,
                 plan.num_blocks,
                 plan.block_len,
@@ -608,7 +600,7 @@ where
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         validate_digit_row_request(
             row_len,
-            prepared.expanded.seed.max_stride,
+            digits.len(),
             prepared
                 .expanded
                 .shared_matrix
@@ -617,7 +609,7 @@ where
         Ok(mat_vec_mul_ntt_single_i8(
             &prepared.ntt_shared,
             row_len,
-            prepared.expanded.seed.max_stride,
+            digits.len(),
             digits,
         ))
     }
@@ -635,7 +627,7 @@ where
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         validate_digit_row_request(
             row_len,
-            prepared.expanded.seed.max_stride,
+            digits.len(),
             prepared
                 .expanded
                 .shared_matrix
@@ -644,7 +636,7 @@ where
         Ok(mat_vec_mul_ntt_single_i8_cyclic(
             &prepared.ntt_shared,
             row_len,
-            prepared.expanded.seed.max_stride,
+            digits.len(),
             digits,
         ))
     }
@@ -667,7 +659,6 @@ where
             plan.n_d,
             plan.n_b,
             plan.n_a,
-            prepared.expanded.seed.max_stride,
             plan.w_hat,
             plan.t_hat,
             plan.z_segment,
@@ -693,7 +684,6 @@ where
             0,
             0,
             plan.n_a,
-            prepared.expanded.seed.max_stride,
             &[][..],
             &[][..],
             plan.z_segment,
@@ -712,14 +702,14 @@ mod tests {
     const D: usize = 32;
 
     fn prepared() -> CpuPreparedSetup<F, D> {
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
+        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 32).unwrap();
         CpuBackend.prepare_setup(&setup).unwrap()
     }
 
     #[test]
     fn cpu_prepared_setup_identity_rejects_mismatched_setup() {
-        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
-        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(9, 1, 1, 4, 8).unwrap();
+        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 32).unwrap();
+        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(9, 1, 1, 32).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
 
         CpuBackend
@@ -735,8 +725,8 @@ mod tests {
 
     #[test]
     fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
-        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
-        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
+        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 32).unwrap();
+        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 32).unwrap();
         assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
 
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
@@ -753,7 +743,7 @@ mod tests {
         let via_backend = CpuBackend
             .digit_rows::<D>(&prepared, 2, &digits)
             .expect("backend digit rows");
-        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, 8, &digits);
+        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, digits.len(), &digits);
         assert_eq!(via_backend, direct);
     }
 
@@ -764,7 +754,7 @@ mod tests {
         let via_backend = CpuBackend
             .digit_rows::<D>(&prepared, 2, &digits)
             .expect("backend digit rows");
-        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, 8, &digits);
+        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, digits.len(), &digits);
         assert_eq!(via_backend, direct);
     }
 
@@ -775,7 +765,8 @@ mod tests {
         let via_backend = CpuBackend
             .cyclic_digit_rows::<D>(&prepared, 2, &digits)
             .expect("backend cyclic digit rows");
-        let direct = mat_vec_mul_ntt_single_i8_cyclic(&prepared.ntt_shared, 2, 8, &digits);
+        let direct =
+            mat_vec_mul_ntt_single_i8_cyclic(&prepared.ntt_shared, 2, digits.len(), &digits);
         assert_eq!(via_backend, direct);
     }
 
@@ -799,17 +790,8 @@ mod tests {
                 },
             )
             .expect("backend ring-switch relation rows");
-        let direct = fused_split_eq_quotients(
-            &prepared.ntt_shared,
-            1,
-            1,
-            1,
-            8,
-            &w_hat,
-            &t_hat,
-            &z_segment,
-            3,
-        );
+        let direct =
+            fused_split_eq_quotients(&prepared.ntt_shared, 1, 1, 1, &w_hat, &t_hat, &z_segment, 3);
         assert_eq!(
             (
                 via_backend.d_cyclic,

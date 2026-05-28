@@ -28,11 +28,6 @@ where
     // Layout offsets and SIS-matrix view derived directly from inputs.
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
-    let b_view = setup
-        .shared_matrix()
-        .ring_view::<D>(prepared.n_b, setup.seed().max_stride)?;
-    let b_stride = b_view.num_cols();
-    let b_flat = b_view.as_slice();
     let b_start = 1 + prepared.num_public_rows + prepared.n_d_active();
 
     // Mirror the prover's group-local B input layout:
@@ -53,11 +48,11 @@ where
         .checked_mul(t_cols_per_claim)
         .and_then(|cols| cols.checked_add(group_stride))
         .ok_or_else(|| AkitaError::InvalidSetup("B blinding column width overflow".to_string()))?;
-    if max_b_blinding_col > b_stride {
-        return Err(AkitaError::InvalidSetup(
-            "shared matrix stride is too small for B blinding".to_string(),
-        ));
-    }
+    let b_view = setup
+        .shared_matrix()
+        .ring_view::<D>(prepared.n_b, max_b_blinding_col)?;
+    let b_stride = b_view.num_cols();
+    let b_flat = b_view.as_slice();
     let b_blinding_segment: Vec<E> = cfg_into_iter!(0..b_blinding_segment_len)
         .map(|idx| {
             let point_idx = idx / group_stride;
@@ -105,11 +100,6 @@ where
     // from inputs.
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
-    let d_view = setup
-        .shared_matrix()
-        .ring_view::<D>(prepared.n_d, setup.seed().max_stride)?;
-    let d_stride = d_view.num_cols();
-    let d_flat = d_view.as_slice();
     let d_start = 1 + prepared.num_public_rows;
     let n_d_active = prepared.n_d_active();
     let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
@@ -117,11 +107,11 @@ where
         .w_len
         .checked_add(d_blinding_segment_len)
         .ok_or_else(|| AkitaError::InvalidSetup("D blinding column width overflow".to_string()))?;
-    if max_d_blinding_col > d_stride {
-        return Err(AkitaError::InvalidSetup(
-            "shared matrix stride is too small for D blinding".to_string(),
-        ));
-    }
+    let d_view = setup
+        .shared_matrix()
+        .ring_view::<D>(prepared.n_d, max_d_blinding_col)?;
+    let d_stride = d_view.num_cols();
+    let d_flat = d_view.as_slice();
 
     let d_blinding_segment: Vec<E> = cfg_into_iter!(0..d_blinding_segment_len)
         .map(|local| {
@@ -209,10 +199,11 @@ mod tests {
             .max()
             .unwrap_or(0);
         let max_d_local_col = w_len + d_blinding_segment_len;
-        let max_stride = max_b_local_col.max(max_d_local_col).max(inner_width);
-        let r_max = n_a.max(n_b).max(n_d);
+        let max_setup_len = (n_b * max_b_local_col)
+            .max(n_d * max_d_local_col)
+            .max(n_a * inner_width);
 
-        let matrix_entries: Vec<CyclotomicRing<F, D>> = (0..(r_max * max_stride))
+        let matrix_entries: Vec<CyclotomicRing<F, D>> = (0..max_setup_len)
             .map(|idx| {
                 CyclotomicRing::from_coefficients(std::array::from_fn(|coeff| {
                     f(1_000 + (idx * D + coeff) as u128)
@@ -224,9 +215,8 @@ mod tests {
                 max_num_vars: 32,
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
-                max_stride,
                 gen_ring_dim: D,
-                total_ring_elements: matrix_entries.len(),
+                max_setup_len,
                 public_matrix_seed: [9u8; 32],
             },
             FlatMatrix::from_ring_slice::<D>(&matrix_entries),
@@ -287,7 +277,14 @@ mod tests {
         let b_view = fx
             .setup
             .shared_matrix()
-            .ring_view::<D>(p.n_b, fx.setup.seed().max_stride)
+            .ring_view::<D>(
+                p.n_b,
+                p.num_polys_per_point
+                    .iter()
+                    .map(|&count| count * t_cols_per_claim + p.b_blinding_digit_planes_per_point)
+                    .max()
+                    .unwrap_or(0),
+            )
             .unwrap();
         let b_rows: Vec<_> = b_view.rows().collect();
         let b_start = 1 + p.num_public_rows + p.n_d;
@@ -324,7 +321,7 @@ mod tests {
         let d_view = fx
             .setup
             .shared_matrix()
-            .ring_view::<D>(p.n_d, fx.setup.seed().max_stride)
+            .ring_view::<D>(p.n_d, fx.w_len + p.d_blinding_segment_len)
             .unwrap();
         let d_rows: Vec<_> = d_view.rows().collect();
         let d_start = 1 + p.num_public_rows;

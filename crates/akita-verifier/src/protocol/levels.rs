@@ -180,13 +180,19 @@ where
     let expanded = setup.expanded.as_ref();
     let seed = expanded.seed();
     let shared_matrix = expanded.shared_matrix();
-    if b_input_digits.len() > seed.max_stride {
+    let b_required = hiding_params
+        .b_key
+        .row_len()
+        .checked_mul(b_input_digits.len())
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK hiding B footprint overflow".to_string()))?;
+    if b_required > seed.max_setup_len {
         return Err(AkitaError::InvalidSetup(
-            "ZK hiding commitment exceeds shared matrix stride".to_string(),
+            "ZK hiding commitment exceeds shared matrix length".to_string(),
         ));
     }
 
-    let b_matrix = shared_matrix.ring_view::<D>(hiding_params.b_key.row_len(), seed.max_stride)?;
+    let b_matrix =
+        shared_matrix.ring_view::<D>(hiding_params.b_key.row_len(), b_input_digits.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
     let expected_u_blind_rings = mat_vec_mul_i8_plain::<F, D>(&b_rows, &b_input_digits);
     let expected_len = expected_u_blind_rings

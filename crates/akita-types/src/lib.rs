@@ -66,9 +66,9 @@ pub use proof::{
     ExtensionOpeningReductionShape, FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec,
     IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits, PreparedRecursiveOpeningPoint,
     PreparedRootOpeningPoint, PublicMatrixSeed, PublicOpeningRow, RelationOnlyStage2Inputs,
-    RingCommitment, RingMultiplierOpeningPoint, RingSliceSerializer, TerminalLevelProof,
-    TerminalLevelProofShape, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
-    VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    RingCommitment, RingMultiplierOpeningPoint, RingSliceSerializer, SetupMatrixEnvelope,
+    TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
+    TerminalWitnessTranscriptParts, VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 pub use schedule::{
     detect_field_modulus, exact_planned_level_execution, generated_schedule_lookup_key,

@@ -31,7 +31,7 @@ pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension}
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
-    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed,
+    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 pub use stage1::{

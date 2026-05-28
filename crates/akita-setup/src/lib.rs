@@ -60,32 +60,20 @@ where
             "max_num_points must be at least 1".to_string(),
         ));
     }
-    let (max_rows, max_stride) =
+    let setup_envelope =
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
+    let max_setup_len = setup_envelope.max_setup_len;
 
     #[cfg(feature = "disk-persistence")]
     {
-        let max_total = max_rows
-            .checked_mul(max_stride)
-            .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
         match load_expanded_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
         {
             Ok(expanded) => {
-                // A cached setup is acceptable only if its physical
-                // backing is large enough *and* its recorded
-                // `max_stride` matches (or exceeds) what the current
-                // request needs. For configs where `max_rows` can vary
-                // inversely with `max_stride`, a smaller cached stride
-                // would cause `ring_view` to interpret rows/columns with
-                // the wrong stride — the total-elements check alone is
-                // insufficient.
+                // A cached setup is acceptable only if its physical backing
+                // covers the packed setup envelope for the current request.
                 let cached_total = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-                let cached_stride = expanded.seed().max_stride;
                 let cached_points = expanded.seed().max_num_points;
-                if cached_total >= max_total
-                    && cached_stride >= max_stride
-                    && cached_points >= max_num_points
-                {
+                if cached_total >= max_setup_len && cached_points >= max_num_points {
                     tracing::info!("Loaded setup from disk; backend preparation is explicit");
                     return AkitaProverSetup::from_seed_validated_expanded(expanded);
                 }
@@ -94,12 +82,12 @@ where
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
-                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating",
+                            "Rejected cached setup from {}: have (total={cached_total}, points={cached_points}), need (total>={max_setup_len}, points>={max_num_points}); regenerating",
                             storage_path.display()
                         );
                 } else {
                     tracing::warn!(
-                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating"
+                            "Rejected cached setup: have (total={cached_total}, points={cached_points}), need (total>={max_setup_len}, points>={max_num_points}); regenerating"
                         );
                 }
             }
@@ -123,8 +111,7 @@ where
         max_num_vars,
         max_num_batched_polys,
         max_num_points,
-        max_rows,
-        max_stride,
+        max_setup_len,
     )?;
 
     #[cfg(feature = "disk-persistence")]
@@ -358,7 +345,7 @@ fn deserialize_cached_setup<
             "cached setup seed capacity does not match cache key".to_string(),
         ));
     }
-    let (expected_rows, expected_stride) = Cfg::max_setup_matrix_size(
+    let expected_envelope = Cfg::max_setup_matrix_size(
         expected_max_num_vars,
         expected_max_num_batched_polys,
         expected_max_num_points,
@@ -366,10 +353,7 @@ fn deserialize_cached_setup<
     .map_err(|err| {
         SerializationError::InvalidData(format!("cached setup expected shape failed: {err}"))
     })?;
-    let expected_total = expected_rows.checked_mul(expected_stride).ok_or_else(|| {
-        SerializationError::InvalidData("cached setup expected matrix size overflow".to_string())
-    })?;
-    if seed.max_stride != expected_stride || seed.total_ring_elements != expected_total {
+    if seed.max_setup_len != expected_envelope.max_setup_len {
         return Err(SerializationError::InvalidData(
             "cached setup seed matrix shape does not match cache key".to_string(),
         ));
@@ -378,7 +362,7 @@ fn deserialize_cached_setup<
         &mut *reader,
         Compress::Yes,
         Validate::Yes,
-        seed.total_ring_elements,
+        seed.max_setup_len,
         seed.gen_ring_dim,
         seed.matrix_field_elements()?,
     )?;

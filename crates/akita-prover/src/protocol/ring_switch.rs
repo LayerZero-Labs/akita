@@ -1047,10 +1047,21 @@ where
         Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
     };
 
-    let stride = setup.seed.max_stride;
-    let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride)?;
-    let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride)?;
-    let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride)?;
+    let max_group_poly_count = num_polys_per_point.iter().copied().max().unwrap_or(0);
+    let d_width = total_blocks
+        .checked_mul(depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
+    let t_cols_per_vector = n_a
+        .checked_mul(depth_open)
+        .and_then(|len| len.checked_mul(num_blocks))
+        .ok_or_else(|| AkitaError::InvalidSetup("B setup vector width overflow".to_string()))?;
+    let b_width = max_group_poly_count
+        .checked_mul(t_cols_per_vector)
+        .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
+    let a_width = inner_width;
+    let d_view = setup.shared_matrix.ring_view::<D>(n_d, d_width)?;
+    let b_view = setup.shared_matrix.ring_view::<D>(n_b, b_width)?;
+    let a_view = setup.shared_matrix.ring_view::<D>(n_a, a_width)?;
     let d_rows: Vec<_> = d_view.rows().collect();
     let b_rows: Vec<_> = b_view.rows().collect();
     let a_rows: Vec<_> = a_view.rows().collect();
@@ -1150,7 +1161,6 @@ where
             .collect()
     };
 
-    let t_cols_per_vector = t_compound_per_block * num_blocks;
     let mut challenge_sums_by_t_block = vec![E::zero(); t_total_blocks];
     for (claim_idx, &t_vector_idx) in claim_to_t_vector.iter().enumerate() {
         let dst_offset = t_vector_idx * num_blocks;

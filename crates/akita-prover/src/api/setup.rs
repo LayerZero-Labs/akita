@@ -34,30 +34,25 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-        max_rows: usize,
-        max_stride: usize,
+        max_setup_len: usize,
     ) -> Result<Self, AkitaError>
     where
         F: CanonicalField + RandomSampling + AkitaSerialize,
     {
-        let max_total = max_rows
-            .checked_mul(max_stride)
-            .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
         let public_matrix_seed = sample_public_matrix_seed();
         let seed = AkitaSetupSeed {
             max_num_vars,
             max_num_batched_polys,
             max_num_points,
-            max_stride,
             gen_ring_dim: D,
-            total_ring_elements: max_total,
+            max_setup_len,
             public_matrix_seed,
         };
         seed.check().map_err(|err| {
             AkitaError::InvalidSetup(format!("setup seed validation failed: {err}"))
         })?;
 
-        let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
+        let shared_flat = derive_public_matrix_flat::<F, D>(max_setup_len, &public_matrix_seed);
         let expanded = Arc::new(
             AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
         );
@@ -124,7 +119,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
                 "expanded setup matrix generation dimension does not match setup seed".to_string(),
             ));
         }
-        if expanded.shared_matrix().total_ring_elements() != expanded.seed().total_ring_elements {
+        if expanded.shared_matrix().total_ring_elements() != expanded.seed().max_setup_len {
             return Err(AkitaError::InvalidSetup(
                 "expanded setup matrix length does not match setup seed".to_string(),
             ));
@@ -162,9 +157,8 @@ mod tests {
 
     #[test]
     fn validated_expanded_setup_rejects_mismatched_ring_dimension() {
-        let setup =
-            AkitaProverSetup::<Prime128Offset275, 64>::generate_with_capacity(8, 1, 1, 1, 1)
-                .expect("generate D=64 setup");
+        let setup = AkitaProverSetup::<Prime128Offset275, 64>::generate_with_capacity(8, 1, 1, 1)
+            .expect("generate D=64 setup");
         let expanded = (*setup.expanded).clone();
 
         let err = AkitaProverSetup::<Prime128Offset275, 32>::from_validated_expanded(expanded)
@@ -174,15 +168,10 @@ mod tests {
     }
 
     #[test]
-    fn generate_with_capacity_rejects_zero_rows_and_stride() {
-        let zero_rows =
-            AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(8, 1, 1, 0, 1)
-                .expect_err("zero rows must not produce an undecodable setup");
-        assert!(zero_rows.to_string().contains("total_ring_elements"));
-
-        let zero_stride =
-            AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(8, 1, 1, 1, 0)
-                .expect_err("zero stride must not produce an undecodable setup");
-        assert!(zero_stride.to_string().contains("max_stride"));
+    fn generate_with_capacity_rejects_zero_setup_len() {
+        let zero_len =
+            AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(8, 1, 1, 0)
+                .expect_err("zero setup length must not produce an undecodable setup");
+        assert!(zero_len.to_string().contains("max_setup_len"));
     }
 }

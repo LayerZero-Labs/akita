@@ -84,53 +84,9 @@ fn get_eq_indices_for_a(
     (low_eq_idx, depth_commit_idx, block_carry)
 }
 
-/// Sum `Σ r_eval[c] · (Σ_{p ∈ active} weight_p · pattern_p[c])` over one
-/// contiguous column slice. The const generics select which of `{W, T, Z}`
-/// is active — the compiler strips the inactive arms at monomorphisation.
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn slice_inner_sum<F, E, const HAS_W: bool, const HAS_T: bool, const HAS_Z: bool>(
-    range: std::ops::Range<usize>,
-    r_eval: &[E],
-    d_w: E,
-    w_eq: &[E],
-    b_w_for_groups: &[E],
-    t_eq_per_group: &[Vec<E>],
-    num_groups: usize,
-    a_w: E,
-    z_eq: &[E],
-) -> E
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    cfg_into_iter!(range)
-        .map(|c| {
-            let mut m = E::zero();
-            if HAS_W {
-                m += d_w * w_eq[c];
-            }
-            if HAS_T {
-                for g in 0..num_groups {
-                    m += b_w_for_groups[g] * t_eq_per_group[g][c];
-                }
-            }
-            if HAS_Z {
-                m += a_w * z_eq[c];
-            }
-            r_eval[c] * m
-        })
-        .sum()
-}
-
 /// Compute the fused setup-matrix contribution `D · ŵ + B · t̂ + A · ẑ`
-/// as a single `<M_Flat, Eval>` over the shared SIS matrix. W, T, and Z
-/// share `r_eval[c] = M_Flat[row, c]` for every row that participates in
-/// more than one half. Per-row, the column axis is partitioned into three
-/// contiguous slices sorted by each pattern's endpoint; the active subset
-/// of `{W, T, Z}` is constant inside each slice and selected at the type
-/// level via `slice_inner_sum`'s const generics. See
-/// `specs/optimized_verifier.md` for the full derivation.
+/// over packed role-local A/B/D setup views. The three role views overlap as
+/// prefixes of the same raw setup vector but use their natural row widths.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_setup_contribution<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
@@ -266,9 +222,26 @@ where
             "matrix-row pattern evaluation requires at least one SIS row".to_string(),
         ));
     }
-    if n_cols_total > setup.seed().max_stride {
+    let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
+    let d_required = n_d_active
+        .checked_mul(n_cols_w)
+        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
+    let b_required = prepared
+        .n_b
+        .checked_mul(n_cols_t)
+        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
+    let a_required = if z_used {
+        prepared
+            .n_a
+            .checked_mul(z_range)
+            .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?
+    } else {
+        0
+    };
+    let required = d_required.max(b_required).max(a_required);
+    if required > setup_len {
         return Err(AkitaError::InvalidSetup(
-            "shared matrix stride is too small for selected verifier layout".to_string(),
+            "shared matrix is too small for selected verifier layout".to_string(),
         ));
     }
 
@@ -447,22 +420,8 @@ where
             .collect()
     };
 
-    // Per-row inner products. Each row's column axis splits into three
-    // contiguous slices sorted by which pattern's endpoint comes first;
-    // the active subset of {W, T, Z} is constant inside each slice and
-    // dispatched via `slice_inner_sum`'s const generics. The B / D / A
-    // sub-matrices alias the same backing storage.
-    #[derive(Copy, Clone)]
-    enum Pat {
-        W,
-        T,
-        Z,
-    }
-    let shared_view = setup
-        .shared_matrix()
-        .ring_view::<D>(r_max, setup.seed().max_stride)?;
-    let shared_stride = shared_view.num_cols();
-    let shared_flat = shared_view.as_slice();
+    let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
+    let setup_flat = setup_view.as_slice();
     let b_weights_by_row: Vec<Vec<E>> = (0..prepared.n_b)
         .map(|row| {
             (0..prepared.num_points)
@@ -473,144 +432,68 @@ where
 
     let row_contribs: Vec<E> = cfg_into_iter!(0..r_max)
         .map(|row| {
-            let row_start = row * shared_stride;
-            let row_slice = &shared_flat[row_start..row_start + shared_stride];
+            let mut acc = E::zero();
 
-            let e_w = if row < n_d_active { n_cols_w } else { 0 };
-            let e_t = if row < prepared.n_b { n_cols_t } else { 0 };
-            let e_z = if row < prepared.n_a && z_used {
-                z_range
+            let (mut d_pos, d_end) = if row < n_d_active {
+                let start = row * n_cols_w;
+                (start, start + n_cols_w)
             } else {
-                0
+                (0, 0)
+            };
+            let (mut b_pos, b_end) = if row < prepared.n_b {
+                let start = row * n_cols_t;
+                (start, start + n_cols_t)
+            } else {
+                (0, 0)
+            };
+            let (mut a_pos, a_end) = if row < prepared.n_a && z_used {
+                let start = row * z_range;
+                (start, start + z_range)
+            } else {
+                (0, 0)
             };
 
-            let mut ends = [(e_w, Pat::W), (e_t, Pat::T), (e_z, Pat::Z)];
-            ends.sort_by_key(|&(e, _)| e);
-            let [(e1, k1), (e2, _), (e3, k3)] = ends;
-            if e3 == 0 {
-                return E::zero();
+            loop {
+                let mut lambda = usize::MAX;
+                if d_pos < d_end {
+                    lambda = lambda.min(d_pos);
+                }
+                if b_pos < b_end {
+                    lambda = lambda.min(b_pos);
+                }
+                if a_pos < a_end {
+                    lambda = lambda.min(a_pos);
+                }
+                if lambda == usize::MAX {
+                    break;
+                }
+
+                let mut weight = E::zero();
+                if d_pos < d_end && d_pos == lambda {
+                    let d_col = d_pos - row * n_cols_w;
+                    weight += d_weights[row] * w_eq_slice[d_col];
+                    d_pos += 1;
+                }
+                if b_pos < b_end && b_pos == lambda {
+                    let b_col = b_pos - row * n_cols_t;
+                    for g in 0..prepared.num_points {
+                        weight += b_weights_by_row[row][g] * t_eq_slice_per_group[g][b_col];
+                    }
+                    b_pos += 1;
+                }
+                if a_pos < a_end && a_pos == lambda {
+                    let a_col = a_pos - row * z_range;
+                    weight += a_weights[row] * z_eq_slice[a_col];
+                    a_pos += 1;
+                }
+
+                if !weight.is_zero() {
+                    acc += eval_ring_at_pows(&setup_flat[lambda], alpha_pows) * weight;
+                }
             }
-
-            let r_eval: Vec<E> = cfg_into_iter!(0..e3)
-                .map(|c| eval_ring_at_pows(&row_slice[c], alpha_pows))
-                .collect();
-
-            // `b_w_for_groups` is only read when `HAS_T = true`, which
-            let b_w_for_groups: &[E] = if row < prepared.n_b {
-                &b_weights_by_row[row]
-            } else {
-                &[]
-            };
-            let d_weight = if row < n_d_active {
-                d_weights[row]
-            } else {
-                E::zero()
-            };
-            let a_weight = if row < prepared.n_a && z_used {
-                a_weights[row]
-            } else {
-                E::zero()
-            };
-
-            let s1 = if e1 > 0 {
-                slice_inner_sum::<F, E, true, true, true>(
-                    0..e1,
-                    &r_eval,
-                    d_weight,
-                    &w_eq_slice,
-                    b_w_for_groups,
-                    &t_eq_slice_per_group,
-                    prepared.num_points,
-                    a_weight,
-                    &z_eq_slice,
-                )
-            } else {
-                E::zero()
-            };
-
-            let s2 = if e2 > e1 {
-                match k1 {
-                    Pat::W => slice_inner_sum::<F, E, false, true, true>(
-                        e1..e2,
-                        &r_eval,
-                        E::zero(),
-                        &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
-                        a_weight,
-                        &z_eq_slice,
-                    ),
-                    Pat::T => slice_inner_sum::<F, E, true, false, true>(
-                        e1..e2,
-                        &r_eval,
-                        d_weight,
-                        &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
-                        a_weight,
-                        &z_eq_slice,
-                    ),
-                    Pat::Z => slice_inner_sum::<F, E, true, true, false>(
-                        e1..e2,
-                        &r_eval,
-                        d_weight,
-                        &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
-                        E::zero(),
-                        &z_eq_slice,
-                    ),
-                }
-            } else {
-                E::zero()
-            };
-
-            let s3 = if e3 > e2 {
-                match k3 {
-                    Pat::W => slice_inner_sum::<F, E, true, false, false>(
-                        e2..e3,
-                        &r_eval,
-                        d_weight,
-                        &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
-                        E::zero(),
-                        &z_eq_slice,
-                    ),
-                    Pat::T => slice_inner_sum::<F, E, false, true, false>(
-                        e2..e3,
-                        &r_eval,
-                        E::zero(),
-                        &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
-                        E::zero(),
-                        &z_eq_slice,
-                    ),
-                    Pat::Z => slice_inner_sum::<F, E, false, false, true>(
-                        e2..e3,
-                        &r_eval,
-                        E::zero(),
-                        &w_eq_slice,
-                        b_w_for_groups,
-                        &t_eq_slice_per_group,
-                        prepared.num_points,
-                        a_weight,
-                        &z_eq_slice,
-                    ),
-                }
-            } else {
-                E::zero()
-            };
-
-            s1 + s2 + s3
+            Ok(acc)
         })
-        .collect();
+        .collect::<Result<Vec<_>, AkitaError>>()?;
 
     Ok(row_contribs.into_iter().sum::<E>())
 }
@@ -668,10 +551,9 @@ mod tests {
         let cols_per_poly_t = stride_t * num_blocks;
         let n_cols_w = num_claims * num_blocks * depth_open;
         let n_cols_t = num_polys_per_point.iter().copied().max().unwrap() * cols_per_poly_t;
-        let max_stride = n_cols_w.max(n_cols_t).max(inner_width);
-        let r_max = n_d.max(n_b).max(n_a);
+        let max_setup_len = (n_d * n_cols_w).max(n_b * n_cols_t).max(n_a * inner_width);
 
-        let matrix_entries: Vec<CyclotomicRing<F, D>> = (0..(r_max * max_stride))
+        let matrix_entries: Vec<CyclotomicRing<F, D>> = (0..max_setup_len)
             .map(|idx| {
                 CyclotomicRing::from_coefficients(std::array::from_fn(|coeff| {
                     f(1_000 + (idx * D + coeff) as u128)
@@ -683,9 +565,8 @@ mod tests {
                 max_num_vars: 32,
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
-                max_stride,
                 gen_ring_dim: D,
-                total_ring_elements: matrix_entries.len(),
+                max_setup_len,
                 public_matrix_seed: [7u8; 32],
             },
             FlatMatrix::from_ring_slice::<D>(&matrix_entries),
@@ -756,11 +637,15 @@ mod tests {
         )
         .unwrap();
 
-        let shared_view = setup
+        let d_view = setup.shared_matrix().ring_view::<D>(n_d, n_cols_w).unwrap();
+        let d_rows: Vec<_> = d_view.rows().collect();
+        let b_view = setup.shared_matrix().ring_view::<D>(n_b, n_cols_t).unwrap();
+        let b_rows: Vec<_> = b_view.rows().collect();
+        let a_view = setup
             .shared_matrix()
-            .ring_view::<D>(r_max, max_stride)
+            .ring_view::<D>(n_a, inner_width)
             .unwrap();
-        let shared_rows: Vec<_> = shared_view.rows().collect();
+        let a_rows: Vec<_> = a_view.rows().collect();
         let d_start = 1 + num_public_rows;
         let b_start = d_start + n_d;
         let a_start = b_start + n_b * num_points;
@@ -775,7 +660,7 @@ mod tests {
                         let d_phys_col = (claim * num_blocks + block) * depth_open + digit;
                         let m_idx = block + num_blocks * (claim + num_claims * digit);
                         expected += weight
-                            * eval_ring_at_pows(&shared_rows[row][d_phys_col], &alpha_pows)
+                            * eval_ring_at_pows(&d_rows[row][d_phys_col], &alpha_pows)
                             * eq[offset_w + m_idx];
                     }
                 }
@@ -800,7 +685,7 @@ mod tests {
                                             + num_t_vectors * digit
                                             + num_t_vectors * depth_open * a_idx);
                                 expected += weight
-                                    * eval_ring_at_pows(&shared_rows[row][local_col], &alpha_pows)
+                                    * eval_ring_at_pows(&b_rows[row][local_col], &alpha_pows)
                                     * eq[offset_t + m_idx];
                             }
                         }
@@ -821,7 +706,7 @@ mod tests {
                                 + block_len
                                     * (point + num_points * df + num_points * depth_fold * dc);
                             expected -= weight
-                                * eval_ring_at_pows(&shared_rows[row][local_col], &alpha_pows)
+                                * eval_ring_at_pows(&a_rows[row][local_col], &alpha_pows)
                                 * fold_weight
                                 * eq[offset_z + m_idx];
                         }
