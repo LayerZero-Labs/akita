@@ -84,6 +84,39 @@ fn get_eq_indices_for_a(
     (low_eq_idx, depth_commit_idx, block_carry)
 }
 
+#[derive(Copy, Clone)]
+struct PackedInterval {
+    start: usize,
+    end: usize,
+}
+
+impl PackedInterval {
+    #[inline(always)]
+    fn contains(self, start: usize, end: usize) -> bool {
+        self.start <= start && end <= self.end
+    }
+}
+
+#[inline(always)]
+fn packed_interval(
+    active: bool,
+    row: usize,
+    stride: usize,
+    width: usize,
+    name: &'static str,
+) -> Result<Option<PackedInterval>, AkitaError> {
+    if !active || width == 0 {
+        return Ok(None);
+    }
+    let start = row
+        .checked_mul(stride)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("packed {name} row offset overflow")))?;
+    let end = start
+        .checked_add(width)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("packed {name} row end overflow")))?;
+    Ok(Some(PackedInterval { start, end }))
+}
+
 /// Sum a contiguous absolute slice of the packed setup prefix after alpha
 /// evaluation. The const generics select which of the row-local D/B/A
 /// intervals cover this slice, so inactive arms disappear after
@@ -492,82 +525,34 @@ where
 
     let row_contribs: Vec<E> = cfg_into_iter!(0..r_max)
         .map(|row| -> Result<E, AkitaError> {
-            let mut intervals = Vec::with_capacity(3);
-            let d_start = if row < n_d_active {
-                let start = row.checked_mul(d_stride).ok_or_else(|| {
-                    AkitaError::InvalidSetup("packed D row offset overflow".to_string())
-                })?;
-                if n_cols_w > 0 {
-                    let end = start.checked_add(n_cols_w).ok_or_else(|| {
-                        AkitaError::InvalidSetup("packed D row end overflow".to_string())
-                    })?;
-                    intervals.push((start, end));
-                }
-                start
-            } else {
-                0
-            };
-            let b_start_abs = if row < prepared.n_b {
-                let start = row.checked_mul(b_stride).ok_or_else(|| {
-                    AkitaError::InvalidSetup("packed B row offset overflow".to_string())
-                })?;
-                if n_cols_t > 0 {
-                    let end = start.checked_add(n_cols_t).ok_or_else(|| {
-                        AkitaError::InvalidSetup("packed B row end overflow".to_string())
-                    })?;
-                    intervals.push((start, end));
-                }
-                start
-            } else {
-                0
-            };
-            let a_start = if row < prepared.n_a && z_used {
-                let start = row.checked_mul(z_range).ok_or_else(|| {
-                    AkitaError::InvalidSetup("packed A row offset overflow".to_string())
-                })?;
-                if z_range > 0 {
-                    let end = start.checked_add(z_range).ok_or_else(|| {
-                        AkitaError::InvalidSetup("packed A row end overflow".to_string())
-                    })?;
-                    intervals.push((start, end));
-                }
-                start
-            } else {
-                0
-            };
-            if intervals.is_empty() {
+            let d_interval = packed_interval(row < n_d_active, row, d_stride, n_cols_w, "D")?;
+            let b_interval = packed_interval(row < prepared.n_b, row, b_stride, n_cols_t, "B")?;
+            let a_interval =
+                packed_interval(row < prepared.n_a && z_used, row, z_range, z_range, "A")?;
+
+            let mut endpoints = [0usize; 6];
+            let mut n_endpoints = 0usize;
+            for interval in [d_interval, b_interval, a_interval].into_iter().flatten() {
+                endpoints[n_endpoints] = interval.start;
+                endpoints[n_endpoints + 1] = interval.end;
+                n_endpoints += 2;
+            }
+            if n_endpoints == 0 {
                 return Ok(E::zero());
             }
-
-            let d_end = if row < n_d_active {
-                d_start.checked_add(n_cols_w).ok_or_else(|| {
-                    AkitaError::InvalidSetup("packed D row end overflow".to_string())
-                })?
-            } else {
-                0
-            };
-            let b_end = if row < prepared.n_b {
-                b_start_abs.checked_add(n_cols_t).ok_or_else(|| {
-                    AkitaError::InvalidSetup("packed B row end overflow".to_string())
-                })?
-            } else {
-                0
-            };
-            let a_end = if row < prepared.n_a && z_used {
-                a_start.checked_add(z_range).ok_or_else(|| {
-                    AkitaError::InvalidSetup("packed A row end overflow".to_string())
-                })?
-            } else {
-                0
-            };
-            let mut endpoints = Vec::with_capacity(intervals.len() * 2);
-            for &(start, end) in &intervals {
-                endpoints.push(start);
-                endpoints.push(end);
-            }
+            let endpoints = &mut endpoints[..n_endpoints];
             endpoints.sort_unstable();
-            endpoints.dedup();
+            let mut dedup_len = 0usize;
+            for idx in 0..endpoints.len() {
+                if dedup_len == 0 || endpoints[idx] != endpoints[dedup_len - 1] {
+                    endpoints[dedup_len] = endpoints[idx];
+                    dedup_len += 1;
+                }
+            }
 
+            let d_start = d_interval.map_or(0, |interval| interval.start);
+            let b_start_abs = b_interval.map_or(0, |interval| interval.start);
+            let a_start = a_interval.map_or(0, |interval| interval.start);
             let d_weight = if row < n_d_active {
                 d_weights[row]
             } else {
@@ -585,107 +570,40 @@ where
             };
 
             let mut acc = E::zero();
-            for window in endpoints.windows(2) {
-                let lo = window[0];
-                let hi = window[1];
+            macro_rules! segment_sum {
+                ($lo:expr, $hi:expr, $has_d:literal, $has_b:literal, $has_a:literal) => {
+                    packed_slice_inner_sum::<E, $has_d, $has_b, $has_a>(
+                        $lo..$hi,
+                        &setup_alpha,
+                        d_start,
+                        d_weight,
+                        &w_eq_slice,
+                        b_start_abs,
+                        b_weights,
+                        &t_eq_slice_per_group,
+                        a_start,
+                        a_weight,
+                        &z_eq_slice,
+                    )
+                };
+            }
+            for idx in 0..dedup_len.saturating_sub(1) {
+                let lo = endpoints[idx];
+                let hi = endpoints[idx + 1];
                 if lo == hi {
                     continue;
                 }
-                let has_d = row < n_d_active && d_start <= lo && hi <= d_end;
-                let has_b = row < prepared.n_b && b_start_abs <= lo && hi <= b_end;
-                let has_a = row < prepared.n_a && z_used && a_start <= lo && hi <= a_end;
+                let has_d = d_interval.is_some_and(|interval| interval.contains(lo, hi));
+                let has_b = b_interval.is_some_and(|interval| interval.contains(lo, hi));
+                let has_a = a_interval.is_some_and(|interval| interval.contains(lo, hi));
                 acc += match (has_d, has_b, has_a) {
-                    (true, true, true) => packed_slice_inner_sum::<E, true, true, true>(
-                        lo..hi,
-                        &setup_alpha,
-                        d_start,
-                        d_weight,
-                        &w_eq_slice,
-                        b_start_abs,
-                        b_weights,
-                        &t_eq_slice_per_group,
-                        a_start,
-                        a_weight,
-                        &z_eq_slice,
-                    ),
-                    (true, true, false) => packed_slice_inner_sum::<E, true, true, false>(
-                        lo..hi,
-                        &setup_alpha,
-                        d_start,
-                        d_weight,
-                        &w_eq_slice,
-                        b_start_abs,
-                        b_weights,
-                        &t_eq_slice_per_group,
-                        a_start,
-                        E::zero(),
-                        &z_eq_slice,
-                    ),
-                    (true, false, true) => packed_slice_inner_sum::<E, true, false, true>(
-                        lo..hi,
-                        &setup_alpha,
-                        d_start,
-                        d_weight,
-                        &w_eq_slice,
-                        b_start_abs,
-                        b_weights,
-                        &t_eq_slice_per_group,
-                        a_start,
-                        a_weight,
-                        &z_eq_slice,
-                    ),
-                    (false, true, true) => packed_slice_inner_sum::<E, false, true, true>(
-                        lo..hi,
-                        &setup_alpha,
-                        d_start,
-                        E::zero(),
-                        &w_eq_slice,
-                        b_start_abs,
-                        b_weights,
-                        &t_eq_slice_per_group,
-                        a_start,
-                        a_weight,
-                        &z_eq_slice,
-                    ),
-                    (true, false, false) => packed_slice_inner_sum::<E, true, false, false>(
-                        lo..hi,
-                        &setup_alpha,
-                        d_start,
-                        d_weight,
-                        &w_eq_slice,
-                        b_start_abs,
-                        b_weights,
-                        &t_eq_slice_per_group,
-                        a_start,
-                        E::zero(),
-                        &z_eq_slice,
-                    ),
-                    (false, true, false) => packed_slice_inner_sum::<E, false, true, false>(
-                        lo..hi,
-                        &setup_alpha,
-                        d_start,
-                        E::zero(),
-                        &w_eq_slice,
-                        b_start_abs,
-                        b_weights,
-                        &t_eq_slice_per_group,
-                        a_start,
-                        E::zero(),
-                        &z_eq_slice,
-                    ),
-                    (false, false, true) => packed_slice_inner_sum::<E, false, false, true>(
-                        lo..hi,
-                        &setup_alpha,
-                        d_start,
-                        E::zero(),
-                        &w_eq_slice,
-                        b_start_abs,
-                        b_weights,
-                        &t_eq_slice_per_group,
-                        a_start,
-                        a_weight,
-                        &z_eq_slice,
-                    ),
+                    (true, true, true) => segment_sum!(lo, hi, true, true, true),
+                    (true, true, false) => segment_sum!(lo, hi, true, true, false),
+                    (true, false, true) => segment_sum!(lo, hi, true, false, true),
+                    (false, true, true) => segment_sum!(lo, hi, false, true, true),
+                    (true, false, false) => segment_sum!(lo, hi, true, false, false),
+                    (false, true, false) => segment_sum!(lo, hi, false, true, false),
+                    (false, false, true) => segment_sum!(lo, hi, false, false, true),
                     (false, false, false) => E::zero(),
                 };
             }
