@@ -215,7 +215,6 @@ where
 pub(crate) fn zk_b_blinding_rows<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     row_len: usize,
-    col_offset: usize,
     row_width: usize,
     blinding_digits: &[i8],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
@@ -233,10 +232,7 @@ where
             plane
         })
         .collect::<Vec<_>>();
-    let col_end = col_offset
-        .checked_add(digits.len())
-        .ok_or(AkitaError::InvalidProof)?;
-    if col_end > row_width {
+    if digits.len() > row_width {
         return Err(AkitaError::InvalidProof);
     }
     let b_zk_view = setup
@@ -362,7 +358,6 @@ where
         let blinding_rows = zk_b_blinding_rows::<F, D>(
             setup,
             params.b_key.row_len(),
-            0,
             blinding_digits.len() / D,
             blinding_digits,
         )?;

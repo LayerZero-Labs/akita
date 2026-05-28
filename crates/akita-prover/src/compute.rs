@@ -23,6 +23,8 @@ use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingF
 use akita_types::AkitaExpandedSetup;
 use std::array::from_fn;
 use std::sync::Arc;
+#[cfg(feature = "zk")]
+use std::sync::OnceLock;
 
 /// Flat block table handed to a compute backend.
 ///
@@ -421,9 +423,9 @@ pub struct CpuPreparedSetup<F: FieldCore, const D: usize> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     ntt_shared: NttSlotCache<D>,
     #[cfg(feature = "zk")]
-    ntt_zk_b: NttSlotCache<D>,
+    ntt_zk_b: OnceLock<NttSlotCache<D>>,
     #[cfg(feature = "zk")]
-    ntt_zk_d: NttSlotCache<D>,
+    ntt_zk_d: OnceLock<NttSlotCache<D>>,
 }
 
 fn validate_digit_row_request(
@@ -491,6 +493,42 @@ fn zk_cyclic_digit_rows_from_slot<F: FieldCore + CanonicalField, const D: usize>
     ))
 }
 
+#[cfg(feature = "zk")]
+fn zk_b_slot<F: FieldCore + CanonicalField, const D: usize>(
+    prepared: &CpuPreparedSetup<F, D>,
+) -> Result<&NttSlotCache<D>, AkitaError> {
+    if let Some(slot) = prepared.ntt_zk_b.get() {
+        return Ok(slot);
+    }
+    let total = prepared
+        .expanded
+        .zk_b_matrix
+        .total_ring_elements_at::<D>()?;
+    let slot = build_ntt_slot(prepared.expanded.zk_b_matrix.ring_view::<D>(1, total)?)?;
+    let _ = prepared.ntt_zk_b.set(slot);
+    prepared.ntt_zk_b.get().ok_or_else(|| {
+        AkitaError::InvalidSetup("failed to initialize ZK B prepared slot".to_string())
+    })
+}
+
+#[cfg(feature = "zk")]
+fn zk_d_slot<F: FieldCore + CanonicalField, const D: usize>(
+    prepared: &CpuPreparedSetup<F, D>,
+) -> Result<&NttSlotCache<D>, AkitaError> {
+    if let Some(slot) = prepared.ntt_zk_d.get() {
+        return Ok(slot);
+    }
+    let total = prepared
+        .expanded
+        .zk_d_matrix
+        .total_ring_elements_at::<D>()?;
+    let slot = build_ntt_slot(prepared.expanded.zk_d_matrix.ring_view::<D>(1, total)?)?;
+    let _ = prepared.ntt_zk_d.set(slot);
+    prepared.ntt_zk_d.get().ok_or_else(|| {
+        AkitaError::InvalidSetup("failed to initialize ZK D prepared slot".to_string())
+    })
+}
+
 impl<F> ComputeBackendSetup<F> for CpuBackend
 where
     F: FieldCore + CanonicalField,
@@ -503,23 +541,13 @@ where
     ) -> Result<Self::PreparedSetup<D>, AkitaError> {
         let total = expanded.shared_matrix.total_ring_elements_at::<D>()?;
         let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total)?)?;
-        #[cfg(feature = "zk")]
-        let ntt_zk_b = {
-            let total = expanded.zk_b_matrix.total_ring_elements_at::<D>()?;
-            build_ntt_slot(expanded.zk_b_matrix.ring_view::<D>(1, total)?)?
-        };
-        #[cfg(feature = "zk")]
-        let ntt_zk_d = {
-            let total = expanded.zk_d_matrix.total_ring_elements_at::<D>()?;
-            build_ntt_slot(expanded.zk_d_matrix.ring_view::<D>(1, total)?)?
-        };
         Ok(CpuPreparedSetup {
             expanded,
             ntt_shared,
             #[cfg(feature = "zk")]
-            ntt_zk_b,
+            ntt_zk_b: OnceLock::new(),
             #[cfg(feature = "zk")]
-            ntt_zk_d,
+            ntt_zk_d: OnceLock::new(),
         })
     }
 
@@ -723,7 +751,7 @@ where
         digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         zk_digit_rows_from_slot(
-            &prepared.ntt_zk_b,
+            zk_b_slot(prepared)?,
             row_len,
             row_width,
             prepared
@@ -743,7 +771,7 @@ where
         digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         zk_digit_rows_from_slot(
-            &prepared.ntt_zk_d,
+            zk_d_slot(prepared)?,
             row_len,
             row_width,
             prepared
@@ -790,7 +818,7 @@ where
         digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         zk_cyclic_digit_rows_from_slot(
-            &prepared.ntt_zk_b,
+            zk_b_slot(prepared)?,
             row_len,
             row_width,
             prepared
@@ -810,7 +838,7 @@ where
         digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         zk_cyclic_digit_rows_from_slot(
-            &prepared.ntt_zk_d,
+            zk_d_slot(prepared)?,
             row_len,
             row_width,
             prepared

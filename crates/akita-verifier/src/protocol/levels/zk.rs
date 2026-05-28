@@ -93,7 +93,6 @@ where
     let blinding_rows = zk_b_blinding_rows::<F, D>(
         setup,
         hiding_params.b_key.row_len(),
-        0,
         proof.b_blinding_digits.len() / D,
         &proof.b_blinding_digits,
     )?;
