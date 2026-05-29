@@ -51,6 +51,7 @@ macro_rules! dispatch_digit_lut_len {
 
 mod block_parallel;
 mod capacity;
+mod chunked_matvec;
 mod common;
 mod crt_matvec;
 mod decompose;
@@ -64,6 +65,7 @@ mod tests;
 
 use block_parallel::*;
 use capacity::*;
+use chunked_matvec::*;
 use common::*;
 #[cfg(all(test, not(feature = "zk")))]
 use crt_matvec::precompute_dense_mat_ntt_with_params;
