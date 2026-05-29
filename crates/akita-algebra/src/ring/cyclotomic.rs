@@ -184,6 +184,8 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     ///
     /// Each term is a negacyclic shift, so the total cost is
     /// `O(positions.len() * D)` field additions with zero multiplications.
+    /// All positions must be less than `D`.
+    #[inline]
     pub fn mul_by_monomial_sum(&self, nonzero_positions: &[usize]) -> Self {
         let mut result = Self::zero();
         for &k in nonzero_positions {
@@ -203,14 +205,13 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
             "fused method shift_accumulate_into: k={k} must be < D={D}"
         );
 
-        for i in 0..D {
-            let target = i + k;
-
-            if target < D {
-                dst.coeffs[target] += self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] -= self.coeffs[i];
-            }
+        let (lo, hi) = dst.coeffs.split_at_mut(k);
+        let (self_lo, self_hi) = self.coeffs.split_at(D - k);
+        for (d, s) in hi.iter_mut().zip(self_lo) {
+            *d += *s; // i + k < D
+        }
+        for (d, s) in lo.iter_mut().zip(self_hi) {
+            *d -= *s; // i + k >= D
         }
     }
 
@@ -222,14 +223,13 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
         debug_assert!(k < D, "fused method shift_sub_into: k={k} must be < D={D}");
 
-        for i in 0..D {
-            let target = i + k;
-
-            if target < D {
-                dst.coeffs[target] -= self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] += self.coeffs[i];
-            }
+        let (lo, hi) = dst.coeffs.split_at_mut(k);
+        let (self_lo, self_hi) = self.coeffs.split_at(D - k);
+        for (d, s) in hi.iter_mut().zip(self_lo) {
+            *d -= *s; // i + k < D
+        }
+        for (d, s) in lo.iter_mut().zip(self_hi) {
+            *d += *s; // i + k >= D
         }
     }
 
@@ -241,13 +241,13 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
             "fused method shift_scale_accumulate_into: k={k} must be < D={D}"
         );
 
-        for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] += self.coeffs[i] * scale;
-            } else {
-                dst.coeffs[target - D] -= self.coeffs[i] * scale;
-            }
+        let (lo, hi) = dst.coeffs.split_at_mut(k);
+        let (self_lo, self_hi) = self.coeffs.split_at(D - k);
+        for (d, s) in hi.iter_mut().zip(self_lo) {
+            *d += *s * scale; // i + k < D
+        }
+        for (d, s) in lo.iter_mut().zip(self_hi) {
+            *d -= *s * scale; // i + k >= D
         }
     }
 

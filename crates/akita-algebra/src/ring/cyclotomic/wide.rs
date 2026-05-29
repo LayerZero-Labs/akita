@@ -50,14 +50,13 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
             "fused method shift_accumulate_into: k={k} must be < D={D}"
         );
 
-        for i in 0..D {
-            let target = i + k;
-
-            if target < D {
-                dst.coeffs[target] += self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] -= self.coeffs[i];
-            }
+        let (lo, hi) = dst.coeffs.split_at_mut(k);
+        let (self_lo, self_hi) = self.coeffs.split_at(D - k);
+        for (d, s) in hi.iter_mut().zip(self_lo) {
+            *d += *s; // i + k < D
+        }
+        for (d, s) in lo.iter_mut().zip(self_hi) {
+            *d -= *s; // i + k >= D
         }
     }
 
@@ -66,13 +65,13 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
         debug_assert!(k < D, "fused method shift_sub_into: k={k} must be < D={D}");
 
-        for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] -= self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] += self.coeffs[i];
-            }
+        let (lo, hi) = dst.coeffs.split_at_mut(k);
+        let (self_lo, self_hi) = self.coeffs.split_at(D - k);
+        for (d, s) in hi.iter_mut().zip(self_lo) {
+            *d -= *s; // i + k < D
+        }
+        for (d, s) in lo.iter_mut().zip(self_hi) {
+            *d += *s; // i + k >= D
         }
     }
 
