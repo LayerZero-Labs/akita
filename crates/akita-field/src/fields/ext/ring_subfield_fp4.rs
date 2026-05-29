@@ -485,6 +485,12 @@ impl<const P: u32> HasUnreducedOps for RingSubfieldFp4<Fp32<P>> {
     type MulU64Accum = Self;
     type ProductAccum = RingSubfieldFp4Fp32ProductAccum;
 
+    // `ring_subfield_fp4_mul_to_accum_fp32` widens each Fp32 limb product
+    // (< 7·p² ≈ 2^65) into a u128 slot with no `mod 2^128` wrap, so summing a
+    // batch and reducing once matches per-limb reduce-then-add exactly. Covered
+    // by `ring_subfield_fp4_fp32_accum_summation`.
+    const DELAYED_PRODUCT_SUM_IS_EXACT: bool = true;
+
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
         let small = Fp32::<P>::from_u64(small);

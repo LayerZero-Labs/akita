@@ -27,7 +27,13 @@ pub(super) const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub(super) const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 pub(super) const CENTERED_LUT_MAX_ABS: u32 = (1 << 16) - 1;
-pub(super) const SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS: usize = 4;
+// Row-count ceiling for the block-parallel matvec. Commitments up to `n_a == 7`
+// still parallelize over blocks through the generic accumulator loop instead of
+// falling back to the column-tiled path, which has too few tiles to scale at
+// high nv. The block-parallel and column-tiled paths produce identical ring
+// output (per-step `reduce_range` accumulation + canonicalizing `to_ring`), so
+// raising the cap is a pure performance change.
+pub(super) const SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS: usize = 7;
 pub(super) const SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS: usize = 16;
 
 #[inline]

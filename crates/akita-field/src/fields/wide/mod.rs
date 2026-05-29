@@ -626,6 +626,17 @@ pub trait HasUnreducedOps: FieldCore {
     /// Accumulator for `self × self` products.
     type ProductAccum: AdditiveGroup;
 
+    /// Whether delayed reduction over `ProductAccum` is exact relative to
+    /// per-term `Mul` for the small product batches used by inner products.
+    ///
+    /// When `true`, `reduce_product_accum(sum_i mul_to_product_accum(a_i, b_i))`
+    /// equals `sum_i a_i * b_i` for batch sizes within the accumulator's
+    /// non-wrapping headroom. The conservative default is `false`: callers that
+    /// must stay byte-identical to `Mul` then keep the per-term reduce path. The
+    /// `Fp2<Fp64>` accumulator, for example, folds its schoolbook product mod
+    /// `2^128`, which is not congruent to `Mul` mod `p`.
+    const DELAYED_PRODUCT_SUM_IS_EXACT: bool = false;
+
     /// Widening `self × small` with no reduction.
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum;
     /// Widening `self × other` with no reduction.

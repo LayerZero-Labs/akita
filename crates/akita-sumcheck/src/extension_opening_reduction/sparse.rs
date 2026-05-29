@@ -664,21 +664,6 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         self.eval_state_at_suffix(&self.low_states[low], suffix_index)
     }
 
-    fn factor_pair(&self, pair: usize) -> (E, E) {
-        let low_bits = self.materialize_at - self.round;
-        debug_assert!(low_bits > 0);
-        let rest_low_bits = low_bits - 1;
-        let low_mask = (1usize << rest_low_bits).saturating_sub(1);
-        let low_rest = pair & low_mask;
-        let suffix_index = pair >> rest_low_bits;
-        let low_zero = low_rest << 1;
-        let low_one = low_zero | 1;
-        (
-            self.eval_state_at_suffix(&self.low_states[low_zero], suffix_index),
-            self.eval_state_at_suffix(&self.low_states[low_one], suffix_index),
-        )
-    }
-
     fn fold_in_place(&mut self, r_round: E) {
         if self.len() <= 1 {
             return;
@@ -712,6 +697,52 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
                 .map(|idx| self.eval_state_at_suffix(&self.prefix_state, idx))
                 .collect()
         }
+    }
+}
+
+impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
+    /// Factor inner product `sum_i state[i] * suffix_tables[i][suffix_index]`,
+    /// reducing once at the end when the field's product accumulator is exact
+    /// w.r.t. `Mul`, and otherwise falling back to the per-term
+    /// [`Self::eval_state_at_suffix`].
+    ///
+    /// On the exact path (e.g. the fp32 `RingSubfieldFp4<Fp32>` campaign field)
+    /// each product is widened into `E::ProductAccum` and the
+    /// `state.len() == E::EXT_DEGREE` terms are summed before a single
+    /// `reduce_product_accum`. The per-coefficient reduction is additive over
+    /// the accumulator and the wide sum cannot overflow (`EXT_DEGREE` is a small
+    /// power of two — 4 here — far below the accumulator's >= 2^63 headroom), so
+    /// the result is byte-identical to `eval_state_at_suffix`.
+    ///
+    /// Fields whose wide accumulator is lossy versus `Mul` (e.g. the
+    /// `Fp2<Fp64>` schoolbook product, which wraps mod 2^128) leave
+    /// `DELAYED_PRODUCT_SUM_IS_EXACT` at `false` and take the per-term path, so
+    /// the emitted factor — and the proof — stays unchanged.
+    #[inline]
+    fn eval_state_at_suffix_fast(&self, state: &[E], suffix_index: usize) -> E {
+        if !E::DELAYED_PRODUCT_SUM_IS_EXACT {
+            return self.eval_state_at_suffix(state, suffix_index);
+        }
+        let mut accum = E::ProductAccum::zero();
+        for (table, coeff) in self.suffix_tables.iter().zip(state.iter().copied()) {
+            accum += coeff.mul_to_product_accum(table[suffix_index]);
+        }
+        E::reduce_product_accum(accum)
+    }
+
+    fn factor_pair(&self, pair: usize) -> (E, E) {
+        let low_bits = self.materialize_at - self.round;
+        debug_assert!(low_bits > 0);
+        let rest_low_bits = low_bits - 1;
+        let low_mask = (1usize << rest_low_bits).saturating_sub(1);
+        let low_rest = pair & low_mask;
+        let suffix_index = pair >> rest_low_bits;
+        let low_zero = low_rest << 1;
+        let low_one = low_zero | 1;
+        (
+            self.eval_state_at_suffix_fast(&self.low_states[low_zero], suffix_index),
+            self.eval_state_at_suffix_fast(&self.low_states[low_one], suffix_index),
+        )
     }
 }
 

@@ -6,9 +6,9 @@ use super::{
     precompute_dense_mat_ntt_with_params,
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
-use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
+use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES};
 use akita_algebra::CyclotomicRing;
-use akita_field::Fp64;
+use akita_field::{Fp64, Prime128Offset275, Prime64Offset59};
 use akita_types::layout::FlatMatrix;
 
 #[test]
@@ -624,6 +624,113 @@ fn mat_vec_mul_digits_i8_three_row_matches_generic_on_block_parallel_path() {
         _ => panic!("unexpected parameter family"),
     }
 }
+
+// Block-parallel and column-tiled matvec must produce byte-identical ring output for
+// wide rows (n_a 5..=7) across EVERY CRT+NTT parameter family the commit path can
+// select: Q32 (<= 32-bit moduli), Q64 (64-bit), and Q128 (fp128). Raising
+// `SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS` only changes which path runs, never the result,
+// so this guards that invariant for all field families, not just fp32. One `#[test]`
+// per family pinpoints a regression to the offending CRT family.
+macro_rules! block_parallel_matches_column_tiled_wide_rows_test {
+    ($name:ident, $field:ty, $d:literal, $variant:ident, $width:ident, $num_primes:ident) => {
+        #[test]
+        fn $name() {
+            type F = $field;
+            const D: usize = $d;
+            // Wide enough to push the column-tiled reference path across >= 2 cache tiles
+            // on both aarch64 (4 MiB L2) and x86_64 (1 MiB L2), so the block-parallel
+            // single-accumulator result is checked against the tiled
+            // accumulate-then-`add_ntt_into` combine.
+            let width = 5_500;
+            // Keep the reference on the column-tiled path:
+            // `mat_vec_mul_digits_i8_with_params` only takes the block-parallel branch
+            // when `num_blocks >= 16`.
+            let num_blocks = 2;
+
+            let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..7)
+                .map(|i| {
+                    (0..width)
+                        .map(|j| {
+                            let coeffs = std::array::from_fn(|k| {
+                                let raw = ((17 * i as i64 + 9 * j as i64 + k as i64) % 9) - 4;
+                                F::from_i64(raw)
+                            });
+                            CyclotomicRing::from_coefficients(coeffs)
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
+                .map(|block_idx| {
+                    (0..width)
+                        .map(|digit_idx| {
+                            std::array::from_fn(|k| {
+                                (((block_idx as i64 + 2 * digit_idx as i64 + k as i64) % 7) - 3)
+                                    as i8
+                            })
+                        })
+                        .collect()
+                })
+                .collect();
+            let digit_block_slices: Vec<&[[i8; D]]> =
+                digit_blocks.iter().map(Vec::as_slice).collect();
+
+            match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
+                ProtocolCrtNttParams::$variant(params) => {
+                    let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                    let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
+                    for n_a in 5..=7 {
+                        let column_tiled =
+                            mat_vec_mul_digits_i8_with_params::<F, $width, $num_primes, D>(
+                                &ntt_mat[..n_a],
+                                &digit_block_slices,
+                                &params,
+                            );
+                        let block_parallel =
+                            super::mat_vec_mul_digits_i8_block_parallel::<
+                                F,
+                                $width,
+                                $num_primes,
+                                D,
+                                true,
+                            >(&ntt_mat[..n_a], &digit_block_slices, &params);
+                        assert_eq!(
+                            block_parallel, column_tiled,
+                            "block-parallel must match column-tiled for n_a={n_a}"
+                        );
+                    }
+                }
+                _ => panic!("unexpected parameter family"),
+            }
+        }
+    };
+}
+
+block_parallel_matches_column_tiled_wide_rows_test!(
+    mat_vec_mul_digits_i8_block_parallel_matches_column_tiled_for_wide_rows,
+    Fp64<4294967197>,
+    64,
+    Q32,
+    i16,
+    Q32_NUM_PRIMES
+);
+block_parallel_matches_column_tiled_wide_rows_test!(
+    mat_vec_mul_digits_i8_block_parallel_matches_column_tiled_for_wide_rows_q64,
+    Prime64Offset59,
+    64,
+    Q64,
+    i32,
+    Q64_NUM_PRIMES
+);
+block_parallel_matches_column_tiled_wide_rows_test!(
+    mat_vec_mul_digits_i8_block_parallel_matches_column_tiled_for_wide_rows_q128,
+    Prime128Offset275,
+    64,
+    Q128,
+    i32,
+    Q128_NUM_PRIMES
+);
 
 #[test]
 fn mat_vec_mul_digits_i8_strided_three_row_matches_block_path_on_block_parallel_path() {
