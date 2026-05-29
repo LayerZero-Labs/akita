@@ -931,6 +931,35 @@ stay correct.
 It is independent of setup-claim offloading and can land before or after the
 offloading lanes.
 
+## Implemented: Setup Derivation Performance
+
+The packed layout does not change how the shared setup vector is derived, but
+the repack branch also tightened the derivation hot path (`setup_expand`),
+which dominates setup time.
+
+The derivation keeps its per-element domain separation
+(`domain || seed || matrix || index`), so the absorbed byte stream and every
+derived ring element are bit-for-bit unchanged.
+The implementation now absorbs the fixed `domain || seed || matrix` prefix once
+and clones the SHAKE state per element before absorbing only the element index,
+fills the flat coefficient buffer in place instead of collecting an
+intermediate `Vec<CyclotomicRing>` and copying it, and holds the XOF reader
+inline instead of behind a per-element boxed trait object.
+The matrix-validation paths reuse the same pre-absorbed prefix.
+These are equivalence-preserving and are pinned by the existing determinism,
+prefix-stability, and ring-random-stream tests.
+Local `setup_expand` drops roughly 14 to 20 percent across the fp16/fp32/fp64
+D32 profile cases.
+
+The profile benchmark workflow compiles with a fixed `x86-64-v3` ISA instead of
+`-C target-cpu=native`.
+GitHub-hosted `ubuntu-latest` is a heterogeneous CPU fleet, so `native` built a
+different binary per run and compared a PR run against a main-baseline run that
+targeted and executed on different silicon, which produced phantom setup-time
+regressions even when the derivation code was unchanged.
+The workflow also records an `lscpu` fingerprint so any residual cross-run
+variance is visible in the logs.
+
 ## Non-Goals
 
 - No Rust implementation in this spec-only PR.
