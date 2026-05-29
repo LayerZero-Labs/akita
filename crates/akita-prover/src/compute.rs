@@ -428,6 +428,14 @@ pub struct CpuPreparedSetup<F: FieldCore, const D: usize> {
     ntt_zk_d: OnceLock<NttSlotCache<D>>,
 }
 
+impl<F: FieldCore, const D: usize> CpuPreparedSetup<F, D> {
+    /// In-memory byte footprint of the shared setup NTT cache (negacyclic plus
+    /// cyclic slots). Diagnostic surface for the profiler / bench report.
+    pub fn shared_ntt_cache_bytes(&self) -> usize {
+        self.ntt_shared.cache_bytes()
+    }
+}
+
 fn validate_digit_row_request(
     row_len: usize,
     row_width: usize,
