@@ -1,6 +1,7 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
 use crate::FlatMatrix;
+#[cfg(test)]
 use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
@@ -256,17 +257,14 @@ fn derive_public_matrix_flat_labeled<F: FieldCore + RandomSampling, const D: usi
     seed: &PublicMatrixSeed,
     matrix_label: &[u8],
 ) -> FlatMatrix<F> {
-    let ring_elements: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..total_ring_elements)
-        .map(|idx| {
-            let mut entry_rng = ShakeXofRng::new_labeled(seed, matrix_label, &[idx as u64]);
-            CyclotomicRing::random(&mut entry_rng)
-        })
-        .collect();
-
-    let mut data = Vec::with_capacity(total_ring_elements * D);
-    for ring in ring_elements {
-        data.extend(ring.coeffs);
-    }
+    let xof = LabeledMatrixXof::new(seed, matrix_label);
+    let mut data = vec![F::zero(); total_ring_elements * D];
+    cfg_chunks_mut!(data, D).enumerate().for_each(|(idx, coeffs)| {
+        let mut entry_rng = xof.entry_rng(idx);
+        for coeff in coeffs.iter_mut() {
+            *coeff = F::random(&mut entry_rng);
+        }
+    });
 
     FlatMatrix::from_flat_data(data, D)
 }
@@ -287,26 +285,6 @@ pub fn derive_zk_d_matrix<F: FieldCore + RandomSampling, const D: usize>(
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {
     derive_public_matrix_flat_labeled::<F, D>(total_ring_elements, seed, ZK_D_MATRIX_LABEL)
-}
-
-fn fill_public_matrix_coefficients<F: FieldCore + RandomSampling>(
-    seed: &PublicMatrixSeed,
-    flat_index: usize,
-    coeffs: &mut [F],
-) {
-    fill_public_matrix_coefficients_labeled(seed, SHARED_MATRIX_LABEL, flat_index, coeffs);
-}
-
-fn fill_public_matrix_coefficients_labeled<F: FieldCore + RandomSampling>(
-    seed: &PublicMatrixSeed,
-    matrix_label: &[u8],
-    flat_index: usize,
-    coeffs: &mut [F],
-) {
-    let mut entry_rng = ShakeXofRng::new_labeled(seed, matrix_label, &[flat_index as u64]);
-    for coeff in coeffs {
-        *coeff = F::random(&mut entry_rng);
-    }
 }
 
 /// Check that a materialized public matrix has exactly the shape declared by
@@ -371,13 +349,17 @@ pub fn validate_public_matrix_matches_seed<F: FieldCore + RandomSampling + Valid
 ) -> Result<(), SerializationError> {
     validate_public_matrix_shape_matches_seed(shared_matrix, seed)?;
     let gen_ring_dim = shared_matrix.gen_ring_dim();
+    let xof = LabeledMatrixXof::new(&seed.public_matrix_seed, SHARED_MATRIX_LABEL);
+    let mut expected = vec![F::zero(); gen_ring_dim];
     for (idx, coeffs) in shared_matrix
         .as_field_slice()
         .chunks_exact(gen_ring_dim)
         .enumerate()
     {
-        let mut expected = vec![F::zero(); gen_ring_dim];
-        fill_public_matrix_coefficients(&seed.public_matrix_seed, idx, &mut expected);
+        let mut entry_rng = xof.entry_rng(idx);
+        for value in expected.iter_mut() {
+            *value = F::random(&mut entry_rng);
+        }
         if coeffs != expected.as_slice() {
             return Err(SerializationError::InvalidData(
                 "setup shared_matrix does not match public matrix seed".to_string(),
@@ -397,18 +379,17 @@ fn validate_labeled_public_matrix_matches_seed<F: FieldCore + RandomSampling + V
 ) -> Result<(), SerializationError> {
     validate_zk_public_matrix_shape_matches_seed(matrix, expected_len, seed, name)?;
     let gen_ring_dim = matrix.gen_ring_dim();
+    let xof = LabeledMatrixXof::new(&seed.public_matrix_seed, matrix_label);
+    let mut expected = vec![F::zero(); gen_ring_dim];
     for (idx, coeffs) in matrix
         .as_field_slice()
         .chunks_exact(gen_ring_dim)
         .enumerate()
     {
-        let mut expected = vec![F::zero(); gen_ring_dim];
-        fill_public_matrix_coefficients_labeled(
-            &seed.public_matrix_seed,
-            matrix_label,
-            idx,
-            &mut expected,
-        );
+        let mut entry_rng = xof.entry_rng(idx);
+        for value in expected.iter_mut() {
+            *value = F::random(&mut entry_rng);
+        }
         if coeffs != expected.as_slice() {
             return Err(SerializationError::InvalidData(format!(
                 "setup {name} does not match public matrix seed"
@@ -418,11 +399,20 @@ fn validate_labeled_public_matrix_matches_seed<F: FieldCore + RandomSampling + V
     Ok(())
 }
 
+/// Concrete SHAKE256 XOF reader for public-matrix derivation. Naming it via the
+/// `ExtendableOutput` associated type lets each per-element RNG hold the reader
+/// inline instead of behind a `Box<dyn XofReader>`, removing one heap
+/// allocation per derived ring element.
+type PublicMatrixXofReader = <Shake256 as ExtendableOutput>::Reader;
+
 struct ShakeXofRng {
-    reader: Box<dyn XofReader>,
+    reader: PublicMatrixXofReader,
 }
 
 impl ShakeXofRng {
+    /// Independent full-prefix constructor retained for tests that cross-check
+    /// the prefix-reuse derivation against a from-scratch absorb.
+    #[cfg(test)]
     fn new_labeled(seed: &PublicMatrixSeed, matrix_label: &[u8], indices: &[u64]) -> Self {
         let mut xof = Shake256::default();
         absorb_len_prefixed(&mut xof, b"domain", PUBLIC_MATRIX_DOMAIN);
@@ -432,7 +422,33 @@ impl ShakeXofRng {
             absorb_len_prefixed(&mut xof, b"index", &index.to_le_bytes());
         }
         Self {
-            reader: Box::new(xof.finalize_xof()),
+            reader: xof.finalize_xof(),
+        }
+    }
+}
+
+/// Pre-absorbs the fixed `domain‖seed‖matrix` prefix of the public-matrix XOF
+/// once. Each per-element RNG then clones the sponge state and absorbs only the
+/// element index, so the absorbed byte stream (and therefore every derived ring
+/// element) is bit-for-bit identical to absorbing the full prefix per element.
+struct LabeledMatrixXof {
+    base: Shake256,
+}
+
+impl LabeledMatrixXof {
+    fn new(seed: &PublicMatrixSeed, matrix_label: &[u8]) -> Self {
+        let mut base = Shake256::default();
+        absorb_len_prefixed(&mut base, b"domain", PUBLIC_MATRIX_DOMAIN);
+        absorb_len_prefixed(&mut base, b"seed", seed);
+        absorb_len_prefixed(&mut base, b"matrix", matrix_label);
+        Self { base }
+    }
+
+    fn entry_rng(&self, flat_index: usize) -> ShakeXofRng {
+        let mut xof = self.base.clone();
+        absorb_len_prefixed(&mut xof, b"index", &(flat_index as u64).to_le_bytes());
+        ShakeXofRng {
+            reader: xof.finalize_xof(),
         }
     }
 }
@@ -451,7 +467,7 @@ impl RngCore for ShakeXofRng {
     }
 
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.reader.read(dest);
+        XofReader::read(&mut self.reader, dest);
     }
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
