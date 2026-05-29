@@ -1,5 +1,6 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
+use super::setup_prefix::SetupPrefixVerifierRegistry;
 use crate::FlatMatrix;
 #[cfg(test)]
 use akita_algebra::CyclotomicRing;
@@ -144,6 +145,8 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 pub struct AkitaVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
+    /// Public setup-prefix commitment metadata for setup-claim offloading.
+    pub prefix_slots: SetupPrefixVerifierRegistry<F>,
 }
 
 impl<F: FieldCore> AkitaExpandedSetup<F> {
@@ -771,6 +774,7 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
                 validate,
                 &(),
             )?),
+            prefix_slots: SetupPrefixVerifierRegistry::new(),
         })
     }
 }
@@ -826,6 +830,7 @@ mod tests {
                     zk_d_matrix,
                 ),
             ),
+            prefix_slots: SetupPrefixVerifierRegistry::new(),
         };
 
         let mut bytes = Vec::new();
@@ -854,6 +859,7 @@ mod tests {
                     zk_d_matrix,
                 ),
             ),
+            prefix_slots: SetupPrefixVerifierRegistry::new(),
         };
 
         let mut bytes = Vec::new();

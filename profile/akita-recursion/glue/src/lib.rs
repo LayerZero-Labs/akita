@@ -16,8 +16,8 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, CommittedOpenings, FlatMatrix, RingCommitment, VerifierClaims,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    AkitaVerifierSetup, CommittedOpenings, FlatMatrix, RingCommitment, SetupPrefixVerifierRegistry,
+    VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -405,6 +405,7 @@ where
                 seed,
                 shared_matrix,
             )?),
+            prefix_slots: SetupPrefixVerifierRegistry::new(),
         })
     }
 
@@ -434,6 +435,7 @@ where
             expanded: Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix),
             ),
+            prefix_slots: SetupPrefixVerifierRegistry::new(),
         })
     }
 

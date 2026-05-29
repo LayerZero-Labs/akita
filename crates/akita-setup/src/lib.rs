@@ -11,13 +11,13 @@ use akita_serialization::{
 };
 #[cfg(any(feature = "disk-persistence", test))]
 use akita_types::AkitaExpandedSetup;
-#[cfg(test)]
-use akita_types::AkitaVerifierSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
     detect_field_modulus, planned_schedule_key_from_schedule, AkitaScheduleLookupKey,
     AkitaSetupSeed, FlatMatrix,
 };
+#[cfg(test)]
+use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
@@ -448,9 +448,7 @@ mod tests {
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
         let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(10, 3, 1).unwrap();
-        let verifier_setup = AkitaVerifierSetup {
-            expanded: Arc::clone(&prover_setup.expanded),
-        };
+        let verifier_setup = prover_setup.verifier_setup();
 
         let mut bytes = Vec::new();
         prover_setup
@@ -464,6 +462,7 @@ mod tests {
 
         let derived_verifier = AkitaVerifierSetup {
             expanded: Arc::new(decoded.clone()),
+            prefix_slots: SetupPrefixVerifierRegistry::new(),
         };
         assert_eq!(derived_verifier, verifier_setup);
     }

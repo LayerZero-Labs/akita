@@ -4,7 +4,8 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_flat, sample_public_matrix_seed, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, SetupMatrixEnvelope,
+    AkitaVerifierSetup, SetupMatrixEnvelope, SetupPrefixProverRegistry,
+    SetupPrefixVerifierRegistry,
 };
 #[cfg(feature = "zk")]
 use akita_types::{derive_zk_b_matrix, derive_zk_d_matrix};
@@ -18,6 +19,8 @@ use std::sync::Arc;
 pub struct AkitaProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
+    /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
+    pub prefix_slots: SetupPrefixProverRegistry<F, D>,
 }
 
 impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
@@ -77,14 +80,22 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             ),
         );
 
-        Ok(Self { expanded })
+        Ok(Self {
+            expanded,
+            prefix_slots: SetupPrefixProverRegistry::new(),
+        })
     }
 
     /// Derive a verifier setup from this prover setup.
     #[must_use]
     pub fn verifier_setup(&self) -> AkitaVerifierSetup<F> {
+        let mut prefix_slots = SetupPrefixVerifierRegistry::new();
+        prefix_slots
+            .replace_from_prover_registry(&self.prefix_slots)
+            .expect("prover prefix slots must have unique ids");
         AkitaVerifierSetup {
             expanded: self.expanded.clone(),
+            prefix_slots,
         }
     }
 
@@ -186,7 +197,10 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
             expanded.zk_b_matrix().total_ring_elements_at::<D>()?;
             expanded.zk_d_matrix().total_ring_elements_at::<D>()?;
         }
-        Ok(Self { expanded })
+        Ok(Self {
+            expanded,
+            prefix_slots: SetupPrefixProverRegistry::new(),
+        })
     }
 
     /// Wrap a pre-built [`AkitaExpandedSetup`] in a prover setup.

@@ -8,6 +8,7 @@ pub mod incidence;
 pub mod relation;
 pub mod scheme;
 pub mod setup;
+pub mod setup_prefix;
 pub mod stage1;
 pub mod terminal_witness;
 
@@ -55,6 +56,17 @@ pub use setup::{
 };
 #[cfg(feature = "zk")]
 pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
+pub use setup_prefix::{
+    active_setup_field_len, active_setup_ring_slots, active_setup_role_widths,
+    filter_prefix_lengths_for_level_params, level_params_matches_setup_prefix,
+    padded_setup_prefix_len, prefix_lengths_for_policy, select_prefix_len,
+    setup_prefix_commit_ring_slots,
+    select_setup_prefix_slot, setup_prefix_slot_id, MissingSetupPrefixSlotPolicy,
+    SetupPrefixDirectReason, SetupPrefixPopulatePolicy, SetupPrefixProverRegistry,
+    SetupPrefixPublicCommitment, SetupPrefixSelectionOutcome, SetupPrefixSelectionRequest,
+    SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_N_MIN,
+};
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
     ExtensionOpeningReductionShape, LevelProofShape, TerminalLevelProofShape,

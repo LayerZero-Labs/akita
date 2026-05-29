@@ -64,12 +64,18 @@ pub use proof::{
     ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentVerifier, CommittedOpenings,
     DirectWitnessProof, DirectWitnessShape, DummyProof, ExtensionOpeningReductionProof,
     ExtensionOpeningReductionShape, FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec,
-    IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits, PreparedRecursiveOpeningPoint,
-    PreparedRootOpeningPoint, PublicMatrixSeed, PublicOpeningRow, RelationOnlyStage2Inputs,
-    RingCommitment, RingMultiplierOpeningPoint, RingSliceSerializer, SetupMatrixEnvelope,
+    IncidenceClaim, LevelProofShape, MissingSetupPrefixSlotPolicy, OpeningPoints, PackedDigits,
+    PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint, PublicMatrixSeed, PublicOpeningRow,
+    RelationOnlyStage2Inputs, RingCommitment, RingMultiplierOpeningPoint, RingSliceSerializer,
+    SetupMatrixEnvelope, SetupPrefixDirectReason, SetupPrefixPopulatePolicy,
+    SetupPrefixProverRegistry, SetupPrefixSelectionOutcome, SetupPrefixSelectionRequest,
+    SetupPrefixSlot, SetupPrefixVerifierRegistry, active_setup_field_len,
+    filter_prefix_lengths_for_level_params, level_params_matches_setup_prefix,
+    padded_setup_prefix_len, prefix_lengths_for_policy, select_prefix_len,
+    select_setup_prefix_slot, setup_prefix_commit_ring_slots, setup_prefix_slot_id,
     TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
     TerminalWitnessTranscriptParts, VerifierClaims, EXTENSION_OPENING_REDUCTION_DEGREE,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_N_MIN,
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
