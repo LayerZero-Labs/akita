@@ -11,11 +11,9 @@ use akita_field::{
 };
 use akita_types::generated::table_entry_envelope_up_to_num_vars;
 use akita_types::ClaimIncidenceSummary;
-#[cfg(feature = "zk")]
-use akita_types::Step;
 use akita_types::{
     AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
-    Schedule, SetupMatrixEnvelope,
+    Schedule, SetupMatrixEnvelope, Step,
 };
 
 /// Minimum proof-optimized log-basis.
@@ -151,7 +149,7 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
             let upper_pts = num_polys.min(max_num_points);
             for num_points in 1..=upper_pts {
                 let incidence =
-                    ClaimIncidenceSummary::from_counts(num_vars, num_polys, num_points)?;
+                    worst_case_grouped_incidence_for_shape(num_vars, num_polys, num_points)?;
                 let Some(envelope) = setup_matrix_envelope_for_shape::<Cfg>(&incidence, envelope)?
                 else {
                     continue;
@@ -180,6 +178,24 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
         #[cfg(feature = "zk")]
         max_zk_d_len,
     })
+}
+
+fn worst_case_grouped_incidence_for_shape(
+    num_vars: usize,
+    num_claims: usize,
+    num_points: usize,
+) -> Result<ClaimIncidenceSummary, AkitaError> {
+    if num_points == 0 || num_claims == 0 || num_points > num_claims {
+        return ClaimIncidenceSummary::from_counts(num_vars, num_claims, num_points);
+    }
+    let mut num_polys_per_point = vec![1usize; num_points];
+    num_polys_per_point[0] = num_claims
+        .checked_sub(num_points)
+        .and_then(|n| n.checked_add(1))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("batched incidence group width overflow".to_string())
+        })?;
+    ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
@@ -257,18 +273,22 @@ where
 
 pub fn matrix_envelope_for_schedule<Cfg>(
     schedule: &Schedule,
-    _incidence: &ClaimIncidenceSummary,
+    incidence: &ClaimIncidenceSummary,
 ) -> Result<SetupMatrixEnvelope, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
     let setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
-    let envelope = matrix_envelope_for_levels::<Cfg>(&setup_levels)?;
+    let mut envelope = matrix_envelope_for_levels::<Cfg>(&setup_levels)?;
+    accumulate_root_matrix_envelope_for_incidence(
+        schedule,
+        incidence,
+        &mut envelope.max_setup_len,
+    )?;
     #[cfg(feature = "zk")]
     {
-        let mut envelope = envelope;
-        accumulate_zk_blinding_envelope::<Cfg>(schedule, _incidence, &mut envelope)?;
-        accumulate_zk_hiding_envelope::<Cfg>(schedule, _incidence, &mut envelope)?;
+        accumulate_zk_blinding_envelope::<Cfg>(schedule, incidence, &mut envelope)?;
+        accumulate_zk_hiding_envelope::<Cfg>(schedule, incidence, &mut envelope)?;
         Ok(envelope)
     }
     #[cfg(not(feature = "zk"))]
@@ -299,6 +319,57 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
         .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
     *max_setup_len = (*max_setup_len).max(a_len).max(b_len).max(d_len);
     Ok(())
+}
+
+fn accumulate_root_matrix_envelope_for_incidence(
+    schedule: &Schedule,
+    incidence: &ClaimIncidenceSummary,
+    max_setup_len: &mut usize,
+) -> Result<(), AkitaError> {
+    let Some(root_params) = root_commit_params_from_schedule(schedule)? else {
+        return Ok(());
+    };
+    let root_len = root_runtime_matrix_len_for_incidence(&root_params, incidence)?;
+    *max_setup_len = (*max_setup_len).max(root_len);
+    Ok(())
+}
+
+fn root_runtime_matrix_len_for_incidence(
+    lp: &LevelParams,
+    incidence: &ClaimIncidenceSummary,
+) -> Result<usize, AkitaError> {
+    let num_claims = incidence.num_claims();
+    let max_group_poly_count = incidence
+        .num_polys_per_point()
+        .iter()
+        .copied()
+        .max()
+        .ok_or_else(|| AkitaError::InvalidSetup("empty claim incidence".to_string()))?;
+    let d_width = lp
+        .num_blocks
+        .checked_mul(num_claims)
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("batched D setup width overflow".to_string()))?;
+    let t_cols_per_vector = lp
+        .a_key
+        .row_len()
+        .checked_mul(lp.num_digits_open)
+        .and_then(|n| n.checked_mul(lp.num_blocks))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("batched B setup vector width overflow".to_string())
+        })?;
+    let b_width = max_group_poly_count
+        .checked_mul(t_cols_per_vector)
+        .ok_or_else(|| AkitaError::InvalidSetup("batched B setup width overflow".to_string()))?;
+    let d_len =
+        lp.d_key.row_len().checked_mul(d_width).ok_or_else(|| {
+            AkitaError::InvalidSetup("batched D setup envelope overflow".to_string())
+        })?;
+    let b_len =
+        lp.b_key.row_len().checked_mul(b_width).ok_or_else(|| {
+            AkitaError::InvalidSetup("batched B setup envelope overflow".to_string())
+        })?;
+    Ok(b_len.max(d_len))
 }
 
 #[cfg(feature = "zk")]
@@ -369,7 +440,6 @@ fn accumulate_zk_hiding_envelope<Cfg: CommitmentConfig>(
     Ok(())
 }
 
-#[cfg(feature = "zk")]
 fn root_commit_params_from_schedule(
     schedule: &Schedule,
 ) -> Result<Option<LevelParams>, AkitaError> {

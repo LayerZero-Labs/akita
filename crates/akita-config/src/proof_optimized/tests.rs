@@ -218,7 +218,6 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
 fn setup_matrix_envelope_covers_grouped_batch_schedules() {
     let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
     let envelope = <fp128::D32Full as CommitmentConfig>::envelope(incidence.num_vars());
@@ -230,6 +229,63 @@ fn setup_matrix_envelope_covers_grouped_batch_schedules() {
     let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
         .expect("setup envelope should cover generated grouped batch schedules");
     assert!(setup_envelope.max_setup_len >= grouped_same_point.max_setup_len);
+}
+
+fn expected_runtime_root_setup_len(lp: &LevelParams, incidence: &ClaimIncidenceSummary) -> usize {
+    let max_group_poly_count = incidence
+        .num_polys_per_point()
+        .iter()
+        .copied()
+        .max()
+        .expect("nonempty incidence");
+    let d_width = lp.num_blocks * incidence.num_claims() * lp.num_digits_open;
+    let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
+    let b_width = max_group_poly_count * t_cols_per_vector;
+    (lp.d_key.row_len() * d_width).max(lp.b_key.row_len() * b_width)
+}
+
+#[test]
+fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
+    type Cfg = fp128::D32Full;
+    let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
+    let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
+    let root_params = root_commit_params_from_schedule(&schedule)
+        .unwrap()
+        .expect("folded or direct root params");
+    let required = expected_runtime_root_setup_len(&root_params, &incidence);
+
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    assert!(runtime_envelope.max_setup_len >= required);
+
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(30, 4, 1)
+        .expect("setup envelope should cover generated batched root widths");
+    assert!(setup_envelope.max_setup_len >= required);
+}
+
+#[test]
+fn setup_matrix_envelope_covers_skewed_multipoint_root_widths() {
+    use akita_types::root_direct_schedule;
+
+    type Cfg = fp128::D32Full;
+    let incidence =
+        ClaimIncidenceSummary::from_point_polys(30, vec![3, 1]).expect("skewed incidence");
+    let commit_incidence =
+        ClaimIncidenceSummary::same_point(30, 4).expect("supported batched incidence");
+    let root_params = Cfg::get_params_for_batched_commitment(&commit_incidence)
+        .expect("supported batched commit params");
+    let schedule = root_direct_schedule(incidence.num_vars(), root_params.clone())
+        .expect("synthetic direct schedule");
+    let required = expected_runtime_root_setup_len(&root_params, &incidence);
+
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    assert!(runtime_envelope.max_setup_len >= required);
+}
+
+#[test]
+fn setup_matrix_scan_uses_worst_case_grouping_for_aggregate_shape() {
+    let incidence =
+        worst_case_grouped_incidence_for_shape(30, 4, 2).expect("valid aggregate incidence");
+    assert_eq!(incidence.num_polys_per_point(), &[3, 1]);
 }
 
 #[test]
