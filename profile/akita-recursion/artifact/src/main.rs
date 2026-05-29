@@ -19,7 +19,10 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, OneHotPoly};
+use akita_prover::{
+    AkitaPolyOps, CommitmentProver, CommittedPolynomials, ComputeBackendSetup, CpuBackend,
+    OneHotPoly,
+};
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
@@ -245,7 +248,11 @@ fn run() -> Result<(), String> {
 
     let t0 = Instant::now();
     let prover_setup =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1)
+            .map_err(|err| format!("prover setup failed: {err}"))?;
+    let prepared = CpuBackend
+        .prepare_setup(&prover_setup)
+        .map_err(|err| format!("backend setup preparation failed: {err}"))?;
     tracing::info!(
         elapsed_s = t0.elapsed().as_secs_f64(),
         "prover setup complete"
@@ -253,8 +260,10 @@ fn run() -> Result<(), String> {
 
     let t0 = Instant::now();
     let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-        std::slice::from_ref(&&onehot_poly),
         &prover_setup,
+        &CpuBackend,
+        &prepared,
+        std::slice::from_ref(&&onehot_poly),
     )
     .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
@@ -266,6 +275,8 @@ fn run() -> Result<(), String> {
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &prover_setup,
+        &CpuBackend,
+        &prepared,
         vec![(
             &opening_point[..],
             CommittedPolynomials {

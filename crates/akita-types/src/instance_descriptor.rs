@@ -908,9 +908,12 @@ mod tests {
             max_num_vars: 5,
             max_num_batched_polys: 2,
             max_num_points: 1,
-            max_stride: 2,
             gen_ring_dim: 4,
-            total_ring_elements: 2,
+            max_setup_len: 2,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
             public_matrix_seed: [7; 32],
         };
         let level_params = [sample_level_params()];

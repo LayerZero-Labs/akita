@@ -148,11 +148,11 @@ where
         .block_len
         .checked_mul(params.num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("direct A width overflow".to_string()))?;
-    if setup_seed.max_stride < a_required_cols {
-        return Err(AkitaError::InvalidSetup(
-            "shared matrix stride is too small for direct A layout".to_string(),
-        ));
-    }
+    let a_required = params
+        .a_key
+        .row_len()
+        .checked_mul(a_required_cols)
+        .ok_or_else(|| AkitaError::InvalidSetup("direct A footprint overflow".to_string()))?;
     let per_witness_outer_cols = params
         .num_blocks
         .checked_mul(params.a_key.row_len())
@@ -163,9 +163,14 @@ where
         let b_required_cols = point_size
             .checked_mul(per_witness_outer_cols)
             .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
-        if setup_seed.max_stride < b_required_cols {
+        let b_required = params
+            .b_key
+            .row_len()
+            .checked_mul(b_required_cols)
+            .ok_or_else(|| AkitaError::InvalidSetup("direct B footprint overflow".to_string()))?;
+        if a_required.max(b_required) > setup_seed.max_setup_len {
             return Err(AkitaError::InvalidSetup(
-                "shared matrix stride is too small for direct B layout".to_string(),
+                "shared matrix is too small for direct witness layout".to_string(),
             ));
         }
         let group_end = claim_offset
@@ -206,6 +211,38 @@ where
         .collect()
 }
 
+#[cfg(feature = "zk")]
+pub(crate) fn zk_b_blinding_rows<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    row_len: usize,
+    row_width: usize,
+    blinding_digits: &[i8],
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    if D == 0 || !blinding_digits.len().is_multiple_of(D) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let digits = blinding_digits
+        .chunks_exact(D)
+        .map(|chunk| {
+            let mut plane = [0i8; D];
+            plane.copy_from_slice(chunk);
+            plane
+        })
+        .collect::<Vec<_>>();
+    if digits.len() > row_width {
+        return Err(AkitaError::InvalidProof);
+    }
+    let b_zk_view = setup
+        .expanded
+        .zk_b_matrix()
+        .ring_view::<D>(row_len, row_width)?;
+    let b_zk_rows: Vec<_> = b_zk_view.rows().collect();
+    Ok(mat_vec_mul_i8_plain::<F, D>(&b_zk_rows, &digits))
+}
+
 fn decompose_rows_i8<F, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     num_digits: usize,
@@ -232,7 +269,7 @@ where
     let a_matrix = setup
         .expanded
         .shared_matrix()
-        .ring_view::<D>(params.a_key.row_len(), setup.expanded.seed().max_stride)?;
+        .ring_view::<D>(params.a_key.row_len(), params.a_key.col_len())?;
     let a_rows: Vec<_> = a_matrix.rows().collect();
     let out_capacity = params
         .num_blocks
@@ -269,7 +306,6 @@ where
 
 #[cfg(feature = "zk")]
 pub(crate) fn append_direct_blinding<F, const D: usize>(
-    input: &mut Vec<[i8; D]>,
     revealed_b_blinding_digits: &[i8],
     params: &LevelParams,
 ) -> Result<(), AkitaError>
@@ -287,11 +323,6 @@ where
     if revealed_b_blinding_digits.len() != expected_digits {
         return Err(AkitaError::InvalidProof);
     }
-    input.extend(revealed_b_blinding_digits.chunks_exact(D).map(|chunk| {
-        let mut plane = [0i8; D];
-        plane.copy_from_slice(chunk);
-        plane
-    }));
     Ok(())
 }
 
@@ -314,17 +345,31 @@ where
         outer_input.extend(direct_decomposed_inner_rows(&witness_rings, setup, params)?);
     }
 
-    #[cfg(feature = "zk")]
-    append_direct_blinding::<F, D>(&mut outer_input, blinding_digits, params)?;
-
     let b_matrix = setup
         .expanded
         .shared_matrix()
-        .ring_view::<D>(params.b_key.row_len(), setup.expanded.seed().max_stride)?;
+        .ring_view::<D>(params.b_key.row_len(), outer_input.len())?;
     let b_rows: Vec<_> = b_matrix.rows().collect();
-    Ok(RingCommitment {
-        u: mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input),
-    })
+    let u = mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input);
+    #[cfg(feature = "zk")]
+    {
+        let mut u = u;
+        append_direct_blinding::<F, D>(blinding_digits, params)?;
+        let blinding_rows = zk_b_blinding_rows::<F, D>(
+            setup,
+            params.b_key.row_len(),
+            blinding_digits.len() / D,
+            blinding_digits,
+        )?;
+        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
+        Ok(RingCommitment { u })
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        Ok(RingCommitment { u })
+    }
 }
 
 /// Recompute root-direct commitments from direct witnesses and compare them to
@@ -717,7 +762,7 @@ mod tests {
     }
 
     #[test]
-    fn root_direct_recommitment_rejects_undersized_setup_stride() {
+    fn root_direct_recommitment_rejects_undersized_setup() {
         let params =
             LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
                 .with_decomp(1, 0, 2, 1, 1, 0)
@@ -726,9 +771,12 @@ mod tests {
             max_num_vars: 6,
             max_num_batched_polys: 1,
             max_num_points: 1,
-            max_stride: 3,
             gen_ring_dim: D,
-            total_ring_elements: 3,
+            max_setup_len: 3,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
             public_matrix_seed: [0u8; 32],
         };
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
@@ -740,7 +788,7 @@ mod tests {
             &incidence_summary(6),
             &params,
         )
-        .expect_err("A layout needs four columns but setup stride has three");
+        .expect_err("A layout needs four setup entries but setup has three");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 
@@ -755,9 +803,12 @@ mod tests {
             max_num_vars: 6,
             max_num_batched_polys: 1,
             max_num_points: 1,
-            max_stride: 128,
             gen_ring_dim: D,
-            total_ring_elements: 128,
+            max_setup_len: 128,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
             public_matrix_seed: [0u8; 32],
         };
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
