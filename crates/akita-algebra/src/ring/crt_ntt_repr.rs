@@ -50,15 +50,16 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     pub garner: GarnerData<W, K>,
 }
 
-/// Precomputed Montgomery forms for balanced digit values.
+/// Precomputed Montgomery forms for every signed-byte digit value.
 ///
-/// For a balanced radix-`2^log_basis` decomposition, the table covers exactly
-/// `[-2^(log_basis - 1), 2^(log_basis - 1) - 1]`. Storing the Montgomery
+/// Indexed by the 2's-complement byte (`digit as u8`), so a lookup is a single
+/// bounds-free array access and the type carries no decomposition `log_basis`.
+/// The full 256-entry table is built once per mat-vec; storing the Montgomery
 /// representation eliminates one `from_canonical` Montgomery multiply per
 /// coefficient in the hot digit path.
 #[derive(Debug, Clone)]
-pub struct DigitMontLut<W: PrimeWidth, const K: usize, const L: usize> {
-    vals: [[MontCoeff<W>; L]; K],
+pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
+    vals: [[MontCoeff<W>; 256]; K],
 }
 
 /// Precomputed Montgomery forms for centered integer coefficients in
@@ -89,30 +90,22 @@ impl<W: PrimeWidth, const K: usize, const L: usize> DigitMontLut<W, K, L> {
     }
 
     /// Look up the Montgomery form of a balanced digit for CRT prime `k`.
+    ///
+    /// Contract: `digit` is a balanced base-`2^log_basis` digit in
+    /// `[-L/2, L/2)` and `k < K`. The i8-NTT kernel boundary upholds this (a
+    /// validated `log_basis` selects `L`, and per-block digit ranges are
+    /// checked there). Because `L` is a power of two, masking the index keeps
+    /// the lookup in-bounds and branch-free without a per-coefficient bounds
+    /// check, so the contract carries the perf rather than runtime indexing.
+    /// The debug assertion surfaces any contract violation in debug builds.
     #[inline(always)]
     pub fn get(&self, k: usize, digit: i8) -> MontCoeff<W> {
-        let idx = i16::from(digit) + Self::offset();
+        let idx = (i16::from(digit) + Self::offset()) as usize;
         debug_assert!(
-            (0..L as i16).contains(&idx),
+            idx < L,
             "digit LUT only covers balanced digits in [-L/2, L/2)"
         );
-        self.vals[k][idx as usize]
-    }
-
-    /// Look up the Montgomery form of a caller-validated balanced digit.
-    ///
-    /// # Safety
-    ///
-    /// `k` must be less than `K`, and `digit` must be in this LUT's balanced
-    /// range: `[-L/2, L/2)`.
-    #[inline(always)]
-    pub unsafe fn get_unchecked(&self, k: usize, digit: i8) -> MontCoeff<W> {
-        let idx = i16::from(digit) + Self::offset();
-        debug_assert!(
-            (0..L as i16).contains(&idx),
-            "digit LUT only covers balanced digits in [-L/2, L/2)"
-        );
-        unsafe { *self.vals.get_unchecked(k).get_unchecked(idx as usize) }
+        self.vals[k][idx & (L - 1)]
     }
 
     #[inline]
@@ -336,39 +329,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
         lut: &DigitMontLut<W, K, L>,
     ) -> Self {
-        Self::from_i8_with_lut_backend::<L>(digits, params, lut, false)
-    }
-
-    /// Like [`Self::from_i8_with_lut`] for caller-validated balanced digits.
-    ///
-    /// # Safety
-    ///
-    /// Every entry in `digits` must be in this LUT's balanced range:
-    /// `[-L/2, L/2)`.
-    #[inline]
-    pub unsafe fn from_i8_with_lut_unchecked<const L: usize>(
-        digits: &[i8; D],
-        params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K, L>,
-    ) -> Self {
-        Self::from_i8_with_lut_backend::<L>(digits, params, lut, true)
-    }
-
-    #[inline]
-    fn from_i8_with_lut_backend<const L: usize>(
-        digits: &[i8; D],
-        params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K, L>,
-        unchecked: bool,
-    ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
-                *dst = if unchecked {
-                    unsafe { lut.get_unchecked(k, d) }
-                } else {
-                    lut.get(k, d)
-                };
+                *dst = lut.get(k, d);
             }
             forward_ntt(limb, params.primes[k], tw);
         }
@@ -656,40 +620,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
         lut: &DigitMontLut<W, K, L>,
     ) -> Self {
-        Self::from_i8_cyclic_with_lut_backend::<L>(digits, params, lut, false)
-    }
-
-    /// Like [`Self::from_i8_cyclic_with_lut`] for caller-validated balanced
-    /// digits.
-    ///
-    /// # Safety
-    ///
-    /// Every entry in `digits` must be in this LUT's balanced range:
-    /// `[-L/2, L/2)`.
-    #[inline]
-    pub unsafe fn from_i8_cyclic_with_lut_unchecked<const L: usize>(
-        digits: &[i8; D],
-        params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K, L>,
-    ) -> Self {
-        Self::from_i8_cyclic_with_lut_backend::<L>(digits, params, lut, true)
-    }
-
-    #[inline]
-    fn from_i8_cyclic_with_lut_backend<const L: usize>(
-        digits: &[i8; D],
-        params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K, L>,
-        unchecked: bool,
-    ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
-                *dst = if unchecked {
-                    unsafe { lut.get_unchecked(k, d) }
-                } else {
-                    lut.get(k, d)
-                };
+                *dst = lut.get(k, d);
             }
             forward_ntt_cyclic(limb, params.primes[k], tw);
         }

@@ -257,7 +257,7 @@ pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: us
     num_blocks: usize,
     block_len: usize,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-    Ok(dispatch_slot!(
+    dispatch_slot!(
         slot,
         num_rows,
         num_cols,
@@ -265,5 +265,5 @@ pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: us
         coeffs,
         num_blocks,
         block_len
-    ))
+    )
 }

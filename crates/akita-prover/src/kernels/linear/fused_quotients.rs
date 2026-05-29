@@ -187,9 +187,7 @@ fn fused_split_eq_quotients_one_shot<
             for j in tile_start..tile_end {
                 if j < w_len && !is_zero_plane(&w_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
-                    let ntt_w = unsafe {
-                        CyclotomicCrtNtt::from_i8_cyclic_with_lut_unchecked(&w_hat[j], params, lut)
-                    };
+                    let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&w_hat[j], params, lut);
                     for (acc_d, cyc_row) in accs.0.iter_mut().zip(cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_d, &cyc_row[j], &ntt_w, params);
                     }
@@ -197,9 +195,7 @@ fn fused_split_eq_quotients_one_shot<
 
                 if j < t_len && !is_zero_plane(&t_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
-                    let ntt_t = unsafe {
-                        CyclotomicCrtNtt::from_i8_cyclic_with_lut_unchecked(&t_hat[j], params, lut)
-                    };
+                    let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, lut);
                     for (acc_b, cyc_row) in accs.1.iter_mut().zip(cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_b, &cyc_row[j], &ntt_t, params);
                     }
@@ -330,9 +326,7 @@ fn accumulate_cyclic_i8_rows<
                 if is_zero_plane(&rhs[j]) {
                     continue;
                 }
-                let ntt_rhs = unsafe {
-                    CyclotomicCrtNtt::from_i8_cyclic_with_lut_unchecked(&rhs[j], params, &lut)
-                };
+                let ntt_rhs = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&rhs[j], params, &lut);
                 for (acc, row) in accs.iter_mut().zip(cyc_rows.iter()) {
                     accumulate_pointwise_product_into(acc, &row[j], &ntt_rhs, params);
                 }

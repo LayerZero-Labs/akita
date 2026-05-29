@@ -101,9 +101,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
                     if CHECK_ZERO && is_zero_plane(digit) {
                         continue;
                     }
-                    let ntt_d = unsafe {
-                        CyclotomicCrtNtt::from_i8_with_lut_unchecked(digit, params, &lut)
-                    };
+                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
                     for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
                         accumulate_pointwise_product_into(acc, &mat_row[start + j], &ntt_d, params);
                     }
@@ -180,9 +178,7 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
                     if is_zero_plane(digit) {
                         continue;
                     }
-                    let ntt_d = unsafe {
-                        CyclotomicCrtNtt::from_i8_with_lut_unchecked(digit, params, &lut)
-                    };
+                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
                     for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
                         accumulate_pointwise_product_into(acc, &mat_row[col], &ntt_d, params);
                     }
@@ -203,21 +199,30 @@ pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
     num_blocks: usize,
     block_len: usize,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     if num_blocks == 0 {
-        return vec![];
+        return Ok(vec![]);
     }
     let n_a = ntt_mat.len();
     let mat_width = ntt_mat.first().map_or(0, |row| row.len());
     let inner_width = mat_width.min(block_len);
     if inner_width == 0 || n_a == 0 {
-        return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
+        return Ok(vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks]);
     }
 
+    // Unlike the balanced-digit paths (bound <= 32, always within capacity),
+    // the raw signed-i8 bound is read from the witness and can in principle be
+    // large enough that even a single CRT term cannot lift exactly. Reject that
+    // at this checked boundary rather than panicking on a `Result` path.
     let rhs_bound = strided_i8_abs_bound(coeffs, num_blocks, inner_width);
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, rhs_bound)
-        .expect("single raw i8 CRT term must fit supported parameters");
-    drive_block_chunked_matvec(
+        .ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "raw i8 recursive-witness coefficients exceed the CRT lift range for these parameters"
+                    .to_string(),
+            )
+        })?;
+    Ok(drive_block_chunked_matvec(
         num_blocks,
         n_a,
         inner_width,
@@ -228,7 +233,7 @@ pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
         |accs, start, end| {
             accumulate_raw_i8_strided_range(accs, ntt_mat, coeffs, num_blocks, start, end, params);
         },
-    )
+    ))
 }
 
 fn strided_i8_abs_bound<const D: usize>(
