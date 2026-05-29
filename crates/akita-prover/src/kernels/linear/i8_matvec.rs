@@ -35,17 +35,28 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
     if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS
         && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
         && inner_width == max_data_width
-        && inner_width <= safe_width
     {
-        return if CHECK_ZERO {
-            mat_vec_mul_i8_block_parallel_with_params(
-                ntt_mat, blocks, num_digits, log_basis, params,
-            )
-        } else {
-            mat_vec_mul_i8_dense_block_parallel_with_params(
-                ntt_mat, blocks, num_digits, log_basis, params,
-            )
-        };
+        if inner_width <= safe_width {
+            return if CHECK_ZERO {
+                mat_vec_mul_i8_block_parallel_with_params(
+                    ntt_mat, blocks, num_digits, log_basis, params,
+                )
+            } else {
+                mat_vec_mul_i8_dense_block_parallel_with_params(
+                    ntt_mat, blocks, num_digits, log_basis, params,
+                )
+            };
+        }
+        let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
+        return mat_vec_mul_i8_block_parallel_chunked_with_params::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat,
+            blocks,
+            inner_width,
+            chunk_width,
+            num_digits,
+            log_basis,
+            params,
+        );
     }
 
     let lut = DigitMontLut::<W, K>::new(params);

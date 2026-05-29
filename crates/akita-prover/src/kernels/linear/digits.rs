@@ -68,10 +68,18 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS
         && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
         && inner_width == max_data_width
-        && inner_width <= safe_width
     {
-        return mat_vec_mul_digits_i8_block_parallel::<F, W, K, D, CHECK_ZERO>(
-            ntt_mat, blocks, params,
+        if inner_width <= safe_width {
+            return mat_vec_mul_digits_i8_block_parallel::<F, W, K, D, CHECK_ZERO>(
+                ntt_mat, blocks, params,
+            );
+        }
+        return mat_vec_mul_digits_i8_block_parallel_chunked::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat,
+            blocks,
+            inner_width,
+            safe_width,
+            params,
         );
     }
 

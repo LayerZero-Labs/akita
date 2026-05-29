@@ -60,6 +60,49 @@ pub(super) fn mat_vec_mul_digits_i8_block_parallel<
         .collect()
 }
 
+pub(super) fn mat_vec_mul_digits_i8_block_parallel_chunked<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+    const CHECK_ZERO: bool,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[[i8; D]]],
+    inner_width: usize,
+    chunk_width: usize,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    debug_assert!(chunk_width > 0);
+    let n_a = ntt_mat.len();
+    let lut = DigitMontLut::<W, K>::new(params);
+
+    cfg_into_iter!(blocks)
+        .map(|block| {
+            let live_width = block.len().min(inner_width);
+            let mut out = vec![CyclotomicRing::<F, D>::zero(); n_a];
+            for chunk_start in (0..live_width).step_by(chunk_width) {
+                let chunk_end = (chunk_start + chunk_width).min(live_width);
+                let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
+                for (j, digit) in block[chunk_start..chunk_end].iter().enumerate() {
+                    if CHECK_ZERO && is_zero_plane(digit) {
+                        continue;
+                    }
+                    let mat_col = chunk_start + j;
+                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                    for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
+                        accumulate_pointwise_product_into(acc, &mat_row[mat_col], &ntt_d, params);
+                    }
+                }
+                for (dst, acc) in out.iter_mut().zip(accs) {
+                    *dst += acc.to_ring_with_params(params);
+                }
+            }
+            out
+        })
+        .collect()
+}
+
 pub(super) fn mat_vec_mul_digits_i8_single_row_block_parallel<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -467,6 +510,69 @@ pub(super) fn mat_vec_mul_i8_block_parallel_with_params<
     mat_vec_mul_i8_block_parallel_with_params_impl::<F, W, K, D, true>(
         ntt_mat, blocks, num_digits, log_basis, params,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn mat_vec_mul_i8_block_parallel_chunked_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+    const CHECK_ZERO: bool,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[CyclotomicRing<F, D>]],
+    inner_width: usize,
+    chunk_width: usize,
+    num_digits: usize,
+    log_basis: u32,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    debug_assert!(chunk_width > 0);
+    debug_assert!(num_digits > 0);
+    let n_a = ntt_mat.len();
+    let lut = DigitMontLut::<W, K>::new(params);
+
+    cfg_into_iter!(blocks)
+        .map(|block| {
+            let mut out = vec![CyclotomicRing::<F, D>::zero(); n_a];
+            for chunk_start in (0..inner_width).step_by(chunk_width) {
+                let chunk_end = (chunk_start + chunk_width).min(inner_width);
+                let ring_start = chunk_start / num_digits;
+                if ring_start >= block.len() {
+                    break;
+                }
+                let ring_end = ((chunk_end - 1) / num_digits) + 1;
+                let digit_offset = chunk_start - ring_start * num_digits;
+                let tile_len = chunk_end - chunk_start;
+                let block_ring_end = ring_end.min(block.len());
+                let partial_coeffs = &block[ring_start..block_ring_end];
+                let all_digits = decompose_block_i8(partial_coeffs, num_digits, log_basis);
+                let available = all_digits.len().saturating_sub(digit_offset);
+                let n = tile_len.min(available);
+                let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
+
+                for (j, digit) in all_digits[digit_offset..digit_offset + n]
+                    .iter()
+                    .enumerate()
+                {
+                    if CHECK_ZERO && is_zero_plane(digit) {
+                        continue;
+                    }
+                    let mat_col = chunk_start + j;
+                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                    for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
+                        accumulate_pointwise_product_into(acc, &mat_row[mat_col], &ntt_d, params);
+                    }
+                }
+
+                for (dst, acc) in out.iter_mut().zip(accs) {
+                    *dst += acc.to_ring_with_params(params);
+                }
+            }
+            out
+        })
+        .collect()
 }
 
 pub(super) fn mat_vec_mul_i8_dense_block_parallel_with_params<
