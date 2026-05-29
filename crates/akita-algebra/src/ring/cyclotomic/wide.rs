@@ -43,6 +43,11 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     }
 
     /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
+    ///
+    /// Requires `k < D`.
+    /// Equivalent to `*dst += self.negacyclic_shift(k)` within the
+    /// contract domain of `k < D`, but avoids allocating a temporary
+    /// ring element.
     #[inline]
     pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
         debug_assert!(
@@ -61,6 +66,11 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     }
 
     /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
+    ///
+    /// Requires `k < D`.
+    /// Equivalent to `*dst -= self.negacyclic_shift(k)` within the
+    /// contract domain of `k < D`, but avoids allocating a temporary
+    /// ring element.
     #[inline]
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
         debug_assert!(k < D, "fused method shift_sub_into: k={k} must be < D={D}");

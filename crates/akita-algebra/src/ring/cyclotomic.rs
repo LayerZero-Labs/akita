@@ -196,8 +196,10 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
 
     /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
     ///
-    /// Equivalent to `*dst += self.negacyclic_shift(k)` but avoids
-    /// allocating a temporary ring element.
+    /// Requires `k < D`.
+    /// Equivalent to `*dst += self.negacyclic_shift(k)` within the
+    /// contract domain of `k < D`, but avoids allocating a temporary
+    /// ring element.
     #[inline]
     pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
         debug_assert!(
@@ -217,8 +219,9 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
 
     /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
     ///
-    /// Equivalent to `*dst -= self.negacyclic_shift(k)` but avoids
-    /// allocating a temporary ring element.
+    /// Requires `k < D`.
+    /// Equivalent to `*dst -= self.negacyclic_shift(k)` within the
+    /// contract domain of `k < D`, but avoids allocating a temporary
     #[inline]
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
         debug_assert!(k < D, "fused method shift_sub_into: k={k} must be < D={D}");
@@ -234,6 +237,11 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     }
 
     /// Fused negacyclic shift + scaled accumulate: `dst += scale * self * X^k`.
+    ///
+    /// Requires `k < D`.
+    /// Equivalent to `*dst += self.scale(&scale).negacyclic_shift(k)` within the
+    /// contract domain of `k < D`, but avoids allocating a temporary
+    /// ring element.
     #[inline]
     pub fn shift_scale_accumulate_into(&self, dst: &mut Self, k: usize, scale: F) {
         debug_assert!(
