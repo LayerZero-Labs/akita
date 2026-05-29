@@ -103,10 +103,25 @@ jobs:
               core.exportVariable('AKITA_BENCH_MERGE_BASE_SHA', mergeBaseSha);
             }
 
+      # Pin a fixed baseline ISA instead of `-C target-cpu=native`.
+      # GitHub-hosted `ubuntu-latest` is a heterogeneous fleet (Skylake,
+      # Cascade Lake, Ice Lake, Zen3), so `native` compiles a different binary
+      # per run. The PR run and the main-baseline run then build for, and
+      # execute on, different CPUs, which makes the per-baseline deltas
+      # apples-to-oranges and produced phantom setup-time "regressions". Every
+      # CPU in that fleet supports AVX2, so `x86-64-v3` is a deterministic
+      # floor that still keeps SIMD enabled so bench wall-time stays within the
+      # hosted-runner budget.
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
-          rustflags: -D warnings -C target-cpu=native
+          rustflags: -D warnings -C target-cpu=x86-64-v3
           cache: false
+
+      - name: Record CPU fingerprint
+        run: |
+          echo "::group::CPU fingerprint"
+          lscpu || head -n 40 /proc/cpuinfo
+          echo "::endgroup::"
 
       - name: Build profile example
         run: cargo build --release --quiet --example profile
