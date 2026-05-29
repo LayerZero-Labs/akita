@@ -1,7 +1,6 @@
 use super::fixtures::{SetupContributionFixture, SetupContributionShape, TestField, TEST_RING_DIM};
 use crate::protocol::slice_mle::setup_inner_product_oracle::materialize_setup_omega;
 use akita_algebra::ring::scalar_powers;
-use akita_field::FieldCore;
 
 #[test]
 fn setup_contribution_matches_oracle_on_root_fixture() {
