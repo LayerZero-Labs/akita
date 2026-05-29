@@ -18,7 +18,9 @@
 use std::marker::PhantomData;
 
 use akita_challenges::SparseChallengeConfig;
-use akita_config::{matrix_envelope_for_schedule, CommitmentConfig};
+use akita_config::{
+    matrix_envelope_for_schedule, worst_case_grouped_incidence_for_shape, CommitmentConfig,
+};
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
@@ -106,8 +108,12 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
             for num_polys in 1..=max_num_batched_polys {
                 let upper_pts = num_polys.min(max_num_points);
                 for num_points in 1..=upper_pts {
+                    // Mirror production sizing: skew excess claims into one
+                    // group so the packed B width (`max_group_poly_count`) is
+                    // sized for the worst-case runtime incidence, not an even
+                    // split.
                     let incidence =
-                        ClaimIncidenceSummary::from_counts(num_vars, num_polys, num_points)?;
+                        worst_case_grouped_incidence_for_shape(num_vars, num_polys, num_points)?;
                     let schedule = <Self as CommitmentConfig>::get_params_for_prove(&incidence)?;
                     let envelope = matrix_envelope_for_schedule::<Self>(&schedule, &incidence)?;
                     max_setup_len = max_setup_len.max(envelope.max_setup_len);

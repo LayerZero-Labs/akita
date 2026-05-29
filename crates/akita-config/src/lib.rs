@@ -25,7 +25,7 @@ pub mod tensor_verifier;
 mod transcript_binding;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_plan,
-    setup_level_params_from_runtime_schedule,
+    setup_level_params_from_runtime_schedule, worst_case_grouped_incidence_for_shape,
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
 

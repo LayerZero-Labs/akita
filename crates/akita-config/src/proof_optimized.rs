@@ -180,7 +180,13 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     })
 }
 
-fn worst_case_grouped_incidence_for_shape(
+/// Worst-case grouped incidence for a `(num_vars, num_claims, num_points)`
+/// shape: all excess claims are skewed into a single point group so
+/// `max_group_poly_count` (and therefore the packed B setup width) is
+/// maximized. Setup-matrix sizing must use this shape, not an even split,
+/// so the shared matrix is large enough for any runtime incidence with the
+/// same counts.
+pub fn worst_case_grouped_incidence_for_shape(
     num_vars: usize,
     num_claims: usize,
     num_points: usize,
