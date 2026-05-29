@@ -97,7 +97,6 @@ fn akita_verify(input: &[u8]) -> u32 {
 
     let openings = [decoded.opening];
 
-    start_cycle_tracking("akita_verify");
     // We call `verify_batched` directly (rather than the public
     // `AkitaCommitmentScheme::<D, Cfg>::batched_verify` wrapper) to skip
     // its `Instant::now()` + final `tracing::info!` wall-clock log. The
