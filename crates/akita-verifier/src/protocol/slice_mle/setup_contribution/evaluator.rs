@@ -51,14 +51,14 @@ fn jolt_end_cycle_tracking(_marker_id: &str) {}
 
 /// Flat coefficient weights for `<S_{<=N}, omega_S>`.
 #[cfg(test)]
-pub(crate) struct MaterializedSetupOmega<E> {
-    pub bar_omega: Vec<E>,
-    pub omega_s: Vec<E>,
+struct MaterializedSetupOmega<E> {
+    bar_omega: Vec<E>,
+    omega_s: Vec<E>,
 }
 
 #[cfg(test)]
 impl<E: FieldCore> MaterializedSetupOmega<E> {
-    pub(super) fn coefficient_weight(
+    fn coefficient_weight(
         &self,
         lambda: usize,
         y: usize,
@@ -72,7 +72,7 @@ impl<E: FieldCore> MaterializedSetupOmega<E> {
         })
     }
 
-    pub(super) fn inner_product<F, const D: usize>(
+    fn inner_product<F, const D: usize>(
         &self,
         setup_entries: &[CyclotomicRing<F, D>],
     ) -> Result<E, AkitaError>
@@ -109,13 +109,15 @@ pub(crate) enum SetupEvaluatorMode<'a, F: FieldCore> {
         setup: &'a AkitaExpandedSetup<F>,
     },
     #[cfg(test)]
-    Recursive,
+    Recursive {
+        setup: &'a AkitaExpandedSetup<F>,
+    },
 }
 
 pub(crate) enum SetupEvaluation<E> {
     Direct(E),
     #[cfg(test)]
-    Recursive(MaterializedSetupOmega<E>),
+    Recursive(E),
 }
 
 pub(crate) struct SetupEvaluator<'a, F: FieldCore, E: FieldCore> {
@@ -177,9 +179,18 @@ where
                 Ok(SetupEvaluation::Direct(value))
             }
             #[cfg(test)]
-            SetupEvaluatorMode::Recursive => {
+            SetupEvaluatorMode::Recursive { setup } => {
+                let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
+                if plan.required > setup_len {
+                    return Err(AkitaError::InvalidSetup(
+                        "shared matrix is too small for selected verifier layout".into(),
+                    ));
+                }
+                let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
                 let omega = plan.materialize::<D>(self.alpha_pows)?;
-                Ok(SetupEvaluation::Recursive(omega))
+                Ok(SetupEvaluation::Recursive(
+                    omega.inner_product(setup_view.as_slice())?,
+                ))
             }
         }
     }
@@ -594,8 +605,9 @@ impl<E: FieldCore> SetupEvalPlan<E> {
     fn materialize_bar_omega(&self) -> Vec<E> {
         let mut bar_omega = vec![E::zero(); self.required];
         for segment in self.segments() {
-            for lambda in segment.lo..segment.hi {
-                bar_omega[lambda] = self.weight_at(lambda, &segment);
+            for (offset, slot) in bar_omega[segment.lo..segment.hi].iter_mut().enumerate() {
+                let lambda = segment.lo + offset;
+                *slot = self.weight_at(lambda, &segment);
             }
         }
         bar_omega
