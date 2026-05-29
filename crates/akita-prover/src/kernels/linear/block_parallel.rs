@@ -571,6 +571,11 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
             .collect();
     }
 
+    // Over-capacity fallback: parallelize over blocks (not chunks) and walk
+    // chunks serially per block. The single-row dense entry is the n_a == 1
+    // commit path, whose blocks are the commitment blocks (many), so block
+    // fanout already saturates Rayon; chunk-parallelism would serialize blocks
+    // and regress that common shape.
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     let num_chunks = inner_width.div_ceil(chunk_width);
 
