@@ -31,6 +31,7 @@ use std::iter::repeat_n;
 use std::time::Instant;
 
 mod r_split;
+mod repeated_b;
 
 pub use r_split::{compute_r_split_eq, generate_y};
 
@@ -306,9 +307,17 @@ where
 {
     #[cfg(feature = "zk")]
     {
-        let mut d_input_digits = w_hat.flat_digits().to_vec();
-        d_input_digits.extend_from_slice(d_blinding_digits.flat_digits());
-        let rows = backend.digit_rows::<D>(prepared, row_len, &d_input_digits, log_basis)?;
+        let mut rows =
+            backend.digit_rows::<D>(prepared, row_len, w_hat.flat_digits(), log_basis)?;
+        let blinding_rows = backend.zk_d_digit_rows::<D>(
+            prepared,
+            row_len,
+            d_blinding_digits.flat_digits().len(),
+            d_blinding_digits.flat_digits(),
+        )?;
+        for (row, blinding) in rows.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
         if rows.len() != row_len {
             return Err(AkitaError::InvalidProof);
         }

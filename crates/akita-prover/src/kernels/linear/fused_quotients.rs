@@ -21,7 +21,9 @@ pub(super) fn fused_split_eq_quotients_with_params<
     const K: usize,
     const D: usize,
 >(
-    cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    d_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    b_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    a_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     n_d: usize,
     n_b: usize,
@@ -41,10 +43,12 @@ pub(super) fn fused_split_eq_quotients_with_params<
     ),
     AkitaError,
 > {
-    let mat_width = cyc_rows.first().map_or(0, |r| r.len());
-    let w_len = w_hat.len().min(mat_width);
-    let t_len = t_hat.len().min(mat_width);
-    let z_len = z_pre.len().min(mat_width);
+    let d_width = d_cyc_rows.first().map_or(0, |r| r.len());
+    let b_width = b_cyc_rows.first().map_or(0, |r| r.len());
+    let a_width = a_cyc_rows.first().map_or(0, |r| r.len());
+    let w_len = w_hat.len().min(d_width);
+    let t_len = t_hat.len().min(b_width);
+    let z_len = z_pre.len().min(a_width);
     let max_col = w_len.max(t_len).max(z_len);
 
     if max_col == 0 {
@@ -79,7 +83,9 @@ pub(super) fn fused_split_eq_quotients_with_params<
         || safe_crt_chunk_width::<F, W, K, D>(params, z_len, z_abs_bound) == Some(z_len);
     if w_safe && t_safe && z_safe {
         return Ok(fused_split_eq_quotients_one_shot(
-            cyc_rows,
+            d_cyc_rows,
+            b_cyc_rows,
+            a_cyc_rows,
             neg_rows,
             n_d,
             n_b,
@@ -97,12 +103,12 @@ pub(super) fn fused_split_eq_quotients_with_params<
     }
 
     let d_result =
-        accumulate_cyclic_i8_rows(cyc_rows, n_d, w_hat, w_len, w_digit_abs_bound, params);
+        accumulate_cyclic_i8_rows(d_cyc_rows, n_d, w_hat, w_len, w_digit_abs_bound, params);
     let b_result =
-        accumulate_cyclic_i8_rows(cyc_rows, n_b, t_hat, t_len, t_digit_abs_bound, params);
+        accumulate_cyclic_i8_rows(b_cyc_rows, n_b, t_hat, t_len, t_digit_abs_bound, params);
     let a_result = accumulate_centered_quotient_rows(
         neg_rows,
-        cyc_rows,
+        a_cyc_rows,
         n_a,
         z_pre,
         z_len,
@@ -120,7 +126,9 @@ fn fused_split_eq_quotients_one_shot<
     const K: usize,
     const D: usize,
 >(
-    cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    d_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    b_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    a_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     n_d: usize,
     n_b: usize,
@@ -169,7 +177,7 @@ fn fused_split_eq_quotients_one_shot<
                 if j < w_len && !is_zero_plane(&w_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
                     let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&w_hat[j], params, lut);
-                    for (acc_d, cyc_row) in accs.0.iter_mut().zip(cyc_rows.iter()) {
+                    for (acc_d, cyc_row) in accs.0.iter_mut().zip(d_cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_d, &cyc_row[j], &ntt_w, params);
                     }
                 }
@@ -177,7 +185,7 @@ fn fused_split_eq_quotients_one_shot<
                 if j < t_len && !is_zero_plane(&t_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
                     let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, lut);
-                    for (acc_b, cyc_row) in accs.1.iter_mut().zip(cyc_rows.iter()) {
+                    for (acc_b, cyc_row) in accs.1.iter_mut().zip(b_cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_b, &cyc_row[j], &ntt_t, params);
                     }
                 }
@@ -196,7 +204,7 @@ fn fused_split_eq_quotients_one_shot<
                         .2
                         .iter_mut()
                         .zip(accs.3.iter_mut())
-                        .zip(neg_rows.iter().zip(cyc_rows.iter()))
+                        .zip(neg_rows.iter().zip(a_cyc_rows.iter()))
                     {
                         accumulate_pointwise_product_into(acc_neg, &neg_row[j], &ntt_z_neg, params);
                         accumulate_pointwise_product_into(acc_cyc, &cyc_row[j], &ntt_z_cyc, params);
@@ -272,6 +280,8 @@ fn accumulate_cyclic_i8_rows<
     if rhs_len <= chunk_width {
         let (rows, _, _) = fused_split_eq_quotients_one_shot(
             cyc_rows,
+            &[],
+            &[],
             &[],
             num_rows,
             0,
@@ -376,6 +386,8 @@ fn accumulate_centered_quotient_rows<
     };
     if z_len <= chunk_width {
         let (_, _, rows) = fused_split_eq_quotients_one_shot(
+            &[],
+            &[],
             cyc_rows,
             neg_rows,
             0,
@@ -487,9 +499,8 @@ fn accumulate_centered_quotient_rows_field<
 /// - B-cyclic: `cyc[0..n_b] · t_hat` (cyclic domain)
 /// - A-quotient: `(cyc[0..n_a]·z_cyc − neg[0..n_a]·z_neg) / 2`
 ///
-/// All roles share the same underlying coefficient matrix and must use the
-/// same row `stride` so that logical position `(i, j)` maps to the same
-/// physical flat-cache element regardless of role.
+/// All roles share the same underlying coefficient matrix, but each role uses
+/// its own packed row width.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "fused_split_eq_quotients")]
 #[cfg(test)]
@@ -501,7 +512,6 @@ pub(crate) fn fused_split_eq_quotients<
     n_d: usize,
     n_b: usize,
     n_a: usize,
-    stride: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_pre: &[[i32; D]],
@@ -519,7 +529,6 @@ pub(crate) fn fused_split_eq_quotients<
         n_d,
         n_b,
         n_a,
-        stride,
         w_hat,
         t_hat,
         z_pre,
@@ -538,7 +547,6 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     n_d: usize,
     n_b: usize,
     n_a: usize,
-    stride: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_pre: &[[i32; D]],
@@ -559,7 +567,6 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
         n_d,
         n_b,
         n_a,
-        stride,
         w_hat,
         t_hat,
         z_pre,
@@ -578,7 +585,6 @@ fn fused_split_eq_quotients_with_digit_bound<
     n_d: usize,
     n_b: usize,
     n_a: usize,
-    stride: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_pre: &[[i32; D]],
@@ -593,7 +599,9 @@ fn fused_split_eq_quotients_with_digit_bound<
     ),
     AkitaError,
 > {
-    let n_cyc = n_d.max(n_b).max(n_a);
+    let d_width = w_hat.len();
+    let b_width = t_hat.len();
+    let a_width = z_pre.len();
     match slot {
         NttSlotCache::Q32 {
             neg,
@@ -601,13 +609,21 @@ fn fused_split_eq_quotients_with_digit_bound<
             params: p,
         } => {
             let neg_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &neg[i * stride..(i + 1) * stride])
+                .map(|i| &neg[i * a_width..(i + 1) * a_width])
                 .collect();
-            let cyc_rows: Vec<&[_]> = (0..n_cyc)
-                .map(|i| &cyc[i * stride..(i + 1) * stride])
+            let d_rows: Vec<&[_]> = (0..n_d)
+                .map(|i| &cyc[i * d_width..(i + 1) * d_width])
+                .collect();
+            let b_rows: Vec<&[_]> = (0..n_b)
+                .map(|i| &cyc[i * b_width..(i + 1) * b_width])
+                .collect();
+            let a_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &cyc[i * a_width..(i + 1) * a_width])
                 .collect();
             fused_split_eq_quotients_with_params(
-                &cyc_rows,
+                &d_rows,
+                &b_rows,
+                &a_rows,
                 &neg_rows,
                 n_d,
                 n_b,
@@ -627,13 +643,21 @@ fn fused_split_eq_quotients_with_digit_bound<
             params: p,
         } => {
             let neg_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &neg[i * stride..(i + 1) * stride])
+                .map(|i| &neg[i * a_width..(i + 1) * a_width])
                 .collect();
-            let cyc_rows: Vec<&[_]> = (0..n_cyc)
-                .map(|i| &cyc[i * stride..(i + 1) * stride])
+            let d_rows: Vec<&[_]> = (0..n_d)
+                .map(|i| &cyc[i * d_width..(i + 1) * d_width])
+                .collect();
+            let b_rows: Vec<&[_]> = (0..n_b)
+                .map(|i| &cyc[i * b_width..(i + 1) * b_width])
+                .collect();
+            let a_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &cyc[i * a_width..(i + 1) * a_width])
                 .collect();
             fused_split_eq_quotients_with_params(
-                &cyc_rows,
+                &d_rows,
+                &b_rows,
+                &a_rows,
                 &neg_rows,
                 n_d,
                 n_b,
@@ -653,13 +677,21 @@ fn fused_split_eq_quotients_with_digit_bound<
             params: p,
         } => {
             let neg_rows: Vec<&[_]> = (0..n_a)
-                .map(|i| &neg[i * stride..(i + 1) * stride])
+                .map(|i| &neg[i * a_width..(i + 1) * a_width])
                 .collect();
-            let cyc_rows: Vec<&[_]> = (0..n_cyc)
-                .map(|i| &cyc[i * stride..(i + 1) * stride])
+            let d_rows: Vec<&[_]> = (0..n_d)
+                .map(|i| &cyc[i * d_width..(i + 1) * d_width])
+                .collect();
+            let b_rows: Vec<&[_]> = (0..n_b)
+                .map(|i| &cyc[i * b_width..(i + 1) * b_width])
+                .collect();
+            let a_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &cyc[i * a_width..(i + 1) * a_width])
                 .collect();
             fused_split_eq_quotients_with_params(
-                &cyc_rows,
+                &d_rows,
+                &b_rows,
+                &a_rows,
                 &neg_rows,
                 n_d,
                 n_b,

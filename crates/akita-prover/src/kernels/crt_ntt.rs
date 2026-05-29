@@ -195,6 +195,27 @@ impl<const D: usize> NttSlotCache<D> {
             NttSlotCache::Q128 { neg, .. } => neg.len(),
         }
     }
+
+    /// In-memory byte footprint of the negacyclic plus cyclic NTT slot
+    /// vectors. Diagnostic surface for the profiler / bench report; the cache
+    /// is the dominant prepared-setup allocation and is much larger than the
+    /// plain setup vector it is built from.
+    pub fn cache_bytes(&self) -> usize {
+        match self {
+            NttSlotCache::Q32 { neg, cyc, .. } => {
+                (neg.len() + cyc.len())
+                    * core::mem::size_of::<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>()
+            }
+            NttSlotCache::Q64 { neg, cyc, .. } => {
+                (neg.len() + cyc.len())
+                    * core::mem::size_of::<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>()
+            }
+            NttSlotCache::Q128 { neg, cyc, .. } => {
+                (neg.len() + cyc.len())
+                    * core::mem::size_of::<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>()
+            }
+        }
+    }
 }
 
 #[cfg(all(test, not(feature = "zk")))]

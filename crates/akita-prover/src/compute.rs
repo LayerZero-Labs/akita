@@ -18,6 +18,8 @@ use crate::kernels::linear::{
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
+#[cfg(feature = "zk")]
+use crate::validation::MAX_I8_LOG_BASIS;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::{HasWide, ReduceTo};
@@ -25,6 +27,8 @@ use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingF
 use akita_types::AkitaExpandedSetup;
 use std::array::from_fn;
 use std::sync::Arc;
+#[cfg(feature = "zk")]
+use std::sync::OnceLock;
 
 /// Flat block table handed to a compute backend.
 ///
@@ -242,6 +246,26 @@ where
         digits: &[[i8; D]],
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+
+    /// Negacyclic ZK B-blinding digit mat-vec rows.
+    #[cfg(feature = "zk")]
+    fn zk_b_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        row_width: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+
+    /// Negacyclic ZK D-blinding digit mat-vec rows.
+    #[cfg(feature = "zk")]
+    fn zk_d_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        row_width: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.
@@ -256,6 +280,26 @@ where
         row_len: usize,
         digits: &[[i8; D]],
         log_basis: u32,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+
+    /// Cyclic ZK B-blinding digit mat-vec rows.
+    #[cfg(feature = "zk")]
+    fn zk_b_cyclic_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        row_width: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+
+    /// Cyclic ZK D-blinding digit mat-vec rows.
+    #[cfg(feature = "zk")]
+    fn zk_d_cyclic_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        row_width: usize,
+        digits: &[[i8; D]],
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 
@@ -388,21 +432,33 @@ pub struct CpuBackend;
 pub struct CpuPreparedSetup<F: FieldCore, const D: usize> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     ntt_shared: NttSlotCache<D>,
+    #[cfg(feature = "zk")]
+    ntt_zk_b: OnceLock<NttSlotCache<D>>,
+    #[cfg(feature = "zk")]
+    ntt_zk_d: OnceLock<NttSlotCache<D>>,
+}
+
+impl<F: FieldCore, const D: usize> CpuPreparedSetup<F, D> {
+    /// In-memory byte footprint of the shared setup NTT cache (negacyclic plus
+    /// cyclic slots). Diagnostic surface for the profiler / bench report.
+    pub fn shared_ntt_cache_bytes(&self) -> usize {
+        self.ntt_shared.cache_bytes()
+    }
 }
 
 fn validate_digit_row_request(
     row_len: usize,
-    max_stride: usize,
+    row_width: usize,
     total_ring_elements: usize,
 ) -> Result<(), AkitaError> {
-    if max_stride == 0 {
+    if row_width == 0 {
         return Err(AkitaError::InvalidSetup(
-            "prepared setup max_stride must be nonzero".to_string(),
+            "prepared setup row width must be nonzero".to_string(),
         ));
     }
-    let required = row_len.checked_mul(max_stride).ok_or_else(|| {
+    let required = row_len.checked_mul(row_width).ok_or_else(|| {
         AkitaError::InvalidSetup(format!(
-            "digit row request overflows: row_len={row_len} max_stride={max_stride}"
+            "digit row request overflows: row_len={row_len} row_width={row_width}"
         ))
     })?;
     if required > total_ring_elements {
@@ -411,6 +467,82 @@ fn validate_digit_row_request(
         )));
     }
     Ok(())
+}
+
+#[cfg(feature = "zk")]
+fn zk_digit_rows_from_slot<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &NttSlotCache<D>,
+    row_len: usize,
+    row_width: usize,
+    total_ring_elements: usize,
+    digits: &[[i8; D]],
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+    if digits.is_empty() {
+        return Ok(vec![CyclotomicRing::zero(); row_len]);
+    }
+    if digits.len() > row_width {
+        return Err(AkitaError::InvalidSetup(
+            "ZK matrix digit columns exceed row width".to_string(),
+        ));
+    }
+    validate_digit_row_request(row_len, row_width, total_ring_elements)?;
+    mat_vec_mul_ntt_single_i8(slot, row_len, row_width, digits, MAX_I8_LOG_BASIS)
+}
+
+#[cfg(feature = "zk")]
+fn zk_cyclic_digit_rows_from_slot<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &NttSlotCache<D>,
+    row_len: usize,
+    row_width: usize,
+    total_ring_elements: usize,
+    digits: &[[i8; D]],
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+    if digits.is_empty() {
+        return Ok(vec![CyclotomicRing::zero(); row_len]);
+    }
+    if digits.len() > row_width {
+        return Err(AkitaError::InvalidSetup(
+            "ZK matrix digit columns exceed row width".to_string(),
+        ));
+    }
+    validate_digit_row_request(row_len, row_width, total_ring_elements)?;
+    mat_vec_mul_ntt_single_i8_cyclic(slot, row_len, row_width, digits, MAX_I8_LOG_BASIS)
+}
+
+#[cfg(feature = "zk")]
+fn zk_b_slot<F: FieldCore + CanonicalField, const D: usize>(
+    prepared: &CpuPreparedSetup<F, D>,
+) -> Result<&NttSlotCache<D>, AkitaError> {
+    if let Some(slot) = prepared.ntt_zk_b.get() {
+        return Ok(slot);
+    }
+    let total = prepared
+        .expanded
+        .zk_b_matrix
+        .total_ring_elements_at::<D>()?;
+    let slot = build_ntt_slot(prepared.expanded.zk_b_matrix.ring_view::<D>(1, total)?)?;
+    let _ = prepared.ntt_zk_b.set(slot);
+    prepared.ntt_zk_b.get().ok_or_else(|| {
+        AkitaError::InvalidSetup("failed to initialize ZK B prepared slot".to_string())
+    })
+}
+
+#[cfg(feature = "zk")]
+fn zk_d_slot<F: FieldCore + CanonicalField, const D: usize>(
+    prepared: &CpuPreparedSetup<F, D>,
+) -> Result<&NttSlotCache<D>, AkitaError> {
+    if let Some(slot) = prepared.ntt_zk_d.get() {
+        return Ok(slot);
+    }
+    let total = prepared
+        .expanded
+        .zk_d_matrix
+        .total_ring_elements_at::<D>()?;
+    let slot = build_ntt_slot(prepared.expanded.zk_d_matrix.ring_view::<D>(1, total)?)?;
+    let _ = prepared.ntt_zk_d.set(slot);
+    prepared.ntt_zk_d.get().ok_or_else(|| {
+        AkitaError::InvalidSetup("failed to initialize ZK D prepared slot".to_string())
+    })
 }
 
 impl<F> ComputeBackendSetup<F> for CpuBackend
@@ -428,6 +560,10 @@ where
         Ok(CpuPreparedSetup {
             expanded,
             ntt_shared,
+            #[cfg(feature = "zk")]
+            ntt_zk_b: OnceLock::new(),
+            #[cfg(feature = "zk")]
+            ntt_zk_d: OnceLock::new(),
         })
     }
 
@@ -448,27 +584,34 @@ where
         prepared: &Self::PreparedSetup<D>,
         plan: DenseCommitRowsPlan<'_, F, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let stride = prepared.expanded.seed.max_stride;
         match plan.input {
             DenseCommitInput::CachedDigits {
                 digit_block_slices,
                 log_basis,
-            } => mat_vec_mul_ntt_dense_digits_i8(
-                &prepared.ntt_shared,
-                plan.n_a,
-                stride,
-                &digit_block_slices,
-                log_basis,
-            ),
+            } => {
+                let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
+                mat_vec_mul_ntt_dense_digits_i8(
+                    &prepared.ntt_shared,
+                    plan.n_a,
+                    row_width,
+                    &digit_block_slices,
+                    log_basis,
+                )
+            }
             DenseCommitInput::CoeffBlocks {
                 block_slices,
                 num_digits_commit,
                 log_basis,
             } => {
+                let row_width = block_slices.first().map_or(Ok(0usize), |block| {
+                    block.len().checked_mul(num_digits_commit).ok_or_else(|| {
+                        AkitaError::InvalidSetup("dense coefficient row width overflow".to_string())
+                    })
+                })?;
                 if plan.n_a == 1 {
                     Ok(mat_vec_mul_ntt_i8_dense_single_row(
                         &prepared.ntt_shared,
-                        stride,
+                        row_width,
                         &block_slices,
                         num_digits_commit,
                         log_basis,
@@ -480,7 +623,7 @@ where
                     mat_vec_mul_ntt_i8_dense(
                         &prepared.ntt_shared,
                         plan.n_a,
-                        stride,
+                        row_width,
                         &block_slices,
                         num_digits_commit,
                         log_basis,
@@ -499,21 +642,14 @@ where
         F: HasWide,
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
-        let stride = prepared.expanded.seed.max_stride;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, stride)?;
         let active_a_cols = plan
             .block_len
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        if active_a_cols > a_view.num_cols() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "active A width {active_a_cols} exceeds setup envelope {}",
-                a_view.num_cols()
-            )));
-        }
+        let a_view = prepared
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(plan.n_a, active_a_cols)?;
         Ok(match plan.blocks {
             OneHotCommitBlocks::SingleChunk(blocks) => column_sweep_ajtai_single_chunk::<F, D>(
                 &a_view,
@@ -541,21 +677,14 @@ where
         F: HasWide,
         F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
     {
-        let stride = prepared.expanded.seed.max_stride;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, stride)?;
         let active_a_cols = plan
             .block_len
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        if active_a_cols > a_view.num_cols() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "active A width {active_a_cols} exceeds setup envelope {}",
-                a_view.num_cols()
-            )));
-        }
+        let a_view = prepared
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(plan.n_a, active_a_cols)?;
         let a_rows = (0..plan.n_a)
             .map(|idx| a_view.row(idx))
             .collect::<Result<Vec<_>, _>>()?;
@@ -573,12 +702,15 @@ where
         prepared: &Self::PreparedSetup<D>,
         plan: RecursiveWitnessCommitRowsPlan<'_, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let stride = prepared.expanded.seed.max_stride;
+        let row_width = plan
+            .block_len
+            .checked_mul(plan.num_digits_commit)
+            .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
         if plan.num_digits_commit == 1 {
             mat_vec_mul_ntt_raw_i8_strided(
                 &prepared.ntt_shared,
                 plan.n_rows,
-                stride,
+                row_width,
                 plan.coeffs,
                 plan.num_blocks,
                 plan.block_len,
@@ -595,7 +727,7 @@ where
             mat_vec_mul_ntt_i8_strided(
                 &prepared.ntt_shared,
                 plan.n_rows,
-                stride,
+                row_width,
                 &ring_elems,
                 plan.num_blocks,
                 plan.block_len,
@@ -619,7 +751,7 @@ where
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         validate_digit_row_request(
             row_len,
-            prepared.expanded.seed.max_stride,
+            digits.len(),
             prepared
                 .expanded
                 .shared_matrix
@@ -628,9 +760,49 @@ where
         mat_vec_mul_ntt_single_i8(
             &prepared.ntt_shared,
             row_len,
-            prepared.expanded.seed.max_stride,
+            digits.len(),
             digits,
             log_basis,
+        )
+    }
+
+    #[cfg(feature = "zk")]
+    fn zk_b_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        row_width: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        zk_digit_rows_from_slot(
+            zk_b_slot(prepared)?,
+            row_len,
+            row_width,
+            prepared
+                .expanded
+                .zk_b_matrix
+                .total_ring_elements_at::<D>()?,
+            digits,
+        )
+    }
+
+    #[cfg(feature = "zk")]
+    fn zk_d_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        row_width: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        zk_digit_rows_from_slot(
+            zk_d_slot(prepared)?,
+            row_len,
+            row_width,
+            prepared
+                .expanded
+                .zk_d_matrix
+                .total_ring_elements_at::<D>()?,
+            digits,
         )
     }
 }
@@ -648,7 +820,7 @@ where
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         validate_digit_row_request(
             row_len,
-            prepared.expanded.seed.max_stride,
+            digits.len(),
             prepared
                 .expanded
                 .shared_matrix
@@ -657,9 +829,49 @@ where
         mat_vec_mul_ntt_single_i8_cyclic(
             &prepared.ntt_shared,
             row_len,
-            prepared.expanded.seed.max_stride,
+            digits.len(),
             digits,
             log_basis,
+        )
+    }
+
+    #[cfg(feature = "zk")]
+    fn zk_b_cyclic_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        row_width: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        zk_cyclic_digit_rows_from_slot(
+            zk_b_slot(prepared)?,
+            row_len,
+            row_width,
+            prepared
+                .expanded
+                .zk_b_matrix
+                .total_ring_elements_at::<D>()?,
+            digits,
+        )
+    }
+
+    #[cfg(feature = "zk")]
+    fn zk_d_cyclic_digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup<D>,
+        row_len: usize,
+        row_width: usize,
+        digits: &[[i8; D]],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        zk_cyclic_digit_rows_from_slot(
+            zk_d_slot(prepared)?,
+            row_len,
+            row_width,
+            prepared
+                .expanded
+                .zk_d_matrix
+                .total_ring_elements_at::<D>()?,
+            digits,
         )
     }
 }
@@ -681,7 +893,6 @@ where
             plan.n_d,
             plan.n_b,
             plan.n_a,
-            prepared.expanded.seed.max_stride,
             plan.w_hat,
             plan.t_hat,
             plan.z_segment,
@@ -708,7 +919,6 @@ where
             0,
             0,
             plan.n_a,
-            prepared.expanded.seed.max_stride,
             &[][..],
             &[][..],
             plan.z_segment,
@@ -723,19 +933,79 @@ where
 mod tests {
     use super::*;
     use akita_field::Fp64;
+    #[cfg(feature = "zk")]
+    use akita_types::FlatMatrix;
+    use akita_types::SetupMatrixEnvelope;
 
     type F = Fp64<4294967197>;
     const D: usize = 32;
 
+    fn setup_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
+        SetupMatrixEnvelope {
+            max_setup_len,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn setup_envelope_with_zk(
+        max_setup_len: usize,
+        max_zk_b_len: usize,
+        max_zk_d_len: usize,
+    ) -> SetupMatrixEnvelope {
+        SetupMatrixEnvelope {
+            max_setup_len,
+            max_zk_b_len,
+            max_zk_d_len,
+        }
+    }
+
     fn prepared() -> CpuPreparedSetup<F, D> {
-        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
+        let setup =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
         CpuBackend.prepare_setup(&setup).unwrap()
+    }
+
+    #[cfg(feature = "zk")]
+    fn direct_negacyclic_rows(
+        matrix: &FlatMatrix<F>,
+        row_len: usize,
+        row_width: usize,
+        digits: &[[i8; D]],
+    ) -> Vec<CyclotomicRing<F, D>> {
+        let view = matrix.ring_view::<D>(row_len, row_width).unwrap();
+        let digit_rings = digits
+            .iter()
+            .map(|digit| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
+                    F::from_i64(digit[idx] as i64)
+                }))
+            })
+            .collect::<Vec<_>>();
+        (0..row_len)
+            .map(|row_idx| {
+                let row_start = row_idx * row_width;
+                let mut acc = CyclotomicRing::<F, D>::zero();
+                for (entry, digit) in view.as_slice()[row_start..row_start + digit_rings.len()]
+                    .iter()
+                    .zip(digit_rings.iter())
+                {
+                    entry.mul_accumulate_into(digit, &mut acc);
+                }
+                acc
+            })
+            .collect()
     }
 
     #[test]
     fn cpu_prepared_setup_identity_rejects_mismatched_setup() {
-        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
-        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(9, 1, 1, 4, 8).unwrap();
+        let setup_a =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
+        let setup_b =
+            AkitaProverSetup::<F, D>::generate_with_capacity(9, 1, 1, setup_envelope(32)).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
 
         CpuBackend
@@ -751,8 +1021,10 @@ mod tests {
 
     #[test]
     fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
-        let setup_a = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
-        let setup_b = AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, 4, 8).unwrap();
+        let setup_a =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
+        let setup_b =
+            AkitaProverSetup::<F, D>::generate_with_capacity(8, 1, 1, setup_envelope(32)).unwrap();
         assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
 
         let prepared = CpuBackend.prepare_setup(&setup_a).unwrap();
@@ -770,8 +1042,9 @@ mod tests {
         let via_backend = CpuBackend
             .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
-        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, 8, &digits, log_basis)
-            .expect("direct digit rows");
+        let direct =
+            mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, digits.len(), &digits, log_basis)
+                .expect("direct digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -783,8 +1056,9 @@ mod tests {
         let via_backend = CpuBackend
             .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
-        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, 8, &digits, log_basis)
-            .expect("direct digit rows");
+        let direct =
+            mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, digits.len(), &digits, log_basis)
+                .expect("direct digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -796,10 +1070,45 @@ mod tests {
         let via_backend = CpuBackend
             .cyclic_digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend cyclic digit rows");
-        let direct =
-            mat_vec_mul_ntt_single_i8_cyclic(&prepared.ntt_shared, 2, 8, &digits, log_basis)
-                .expect("direct cyclic digit rows");
+        let direct = mat_vec_mul_ntt_single_i8_cyclic(
+            &prepared.ntt_shared,
+            2,
+            digits.len(),
+            &digits,
+            log_basis,
+        )
+        .expect("direct cyclic digit rows");
         assert_eq!(via_backend, direct);
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn cpu_zk_digit_rows_match_direct_negacyclic_product() {
+        let row_len = 2;
+        let row_width = 3;
+        let setup = AkitaProverSetup::<F, D>::generate_with_capacity(
+            8,
+            1,
+            1,
+            setup_envelope_with_zk(32, row_len * row_width, row_len * row_width),
+        )
+        .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let digits = vec![[1i8; D], [-2i8; D]];
+
+        let b_rows = CpuBackend
+            .zk_b_digit_rows::<D>(&prepared, row_len, row_width, &digits)
+            .expect("backend zkB digit rows");
+        let b_direct =
+            direct_negacyclic_rows(setup.expanded.zk_b_matrix(), row_len, row_width, &digits);
+        assert_eq!(b_rows, b_direct);
+
+        let d_rows = CpuBackend
+            .zk_d_digit_rows::<D>(&prepared, row_len, row_width, &digits)
+            .expect("backend zkD digit rows");
+        let d_direct =
+            direct_negacyclic_rows(setup.expanded.zk_d_matrix(), row_len, row_width, &digits);
+        assert_eq!(d_rows, d_direct);
     }
 
     #[test]
@@ -823,18 +1132,9 @@ mod tests {
                 },
             )
             .expect("backend ring-switch relation rows");
-        let direct = fused_split_eq_quotients(
-            &prepared.ntt_shared,
-            1,
-            1,
-            1,
-            8,
-            &w_hat,
-            &t_hat,
-            &z_segment,
-            3,
-        )
-        .expect("direct fused split-eq rows");
+        let direct =
+            fused_split_eq_quotients(&prepared.ntt_shared, 1, 1, 1, &w_hat, &t_hat, &z_segment, 3)
+                .expect("direct fused split-eq rows");
         assert_eq!(
             (
                 via_backend.d_cyclic,

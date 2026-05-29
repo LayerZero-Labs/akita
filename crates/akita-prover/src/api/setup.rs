@@ -3,9 +3,11 @@
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
-    derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
-    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup,
+    derive_public_matrix_flat, sample_public_matrix_seed, AkitaExpandedSetup, AkitaSetupSeed,
+    AkitaVerifierSetup, SetupMatrixEnvelope,
 };
+#[cfg(feature = "zk")]
+use akita_types::{derive_zk_b_matrix, derive_zk_d_matrix};
 use std::sync::Arc;
 
 /// Prover setup artifact.
@@ -34,32 +36,45 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-        max_rows: usize,
-        max_stride: usize,
+        setup_envelope: SetupMatrixEnvelope,
     ) -> Result<Self, AkitaError>
     where
         F: CanonicalField + RandomSampling + AkitaSerialize,
     {
-        let max_total = max_rows
-            .checked_mul(max_stride)
-            .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
         let public_matrix_seed = sample_public_matrix_seed();
         let seed = AkitaSetupSeed {
             max_num_vars,
             max_num_batched_polys,
             max_num_points,
-            max_stride,
             gen_ring_dim: D,
-            total_ring_elements: max_total,
+            max_setup_len: setup_envelope.max_setup_len,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: setup_envelope.max_zk_b_len,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: setup_envelope.max_zk_d_len,
             public_matrix_seed,
         };
         seed.check().map_err(|err| {
             AkitaError::InvalidSetup(format!("setup seed validation failed: {err}"))
         })?;
 
-        let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
+        let shared_flat =
+            derive_public_matrix_flat::<F, D>(setup_envelope.max_setup_len, &public_matrix_seed);
+        #[cfg(feature = "zk")]
+        let zk_b_matrix =
+            derive_zk_b_matrix::<F, D>(setup_envelope.max_zk_b_len, &public_matrix_seed);
+        #[cfg(feature = "zk")]
+        let zk_d_matrix =
+            derive_zk_d_matrix::<F, D>(setup_envelope.max_zk_d_len, &public_matrix_seed);
         let expanded = Arc::new(
-            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                seed,
+                shared_flat,
+                #[cfg(feature = "zk")]
+                zk_b_matrix,
+                #[cfg(feature = "zk")]
+                zk_d_matrix,
+            ),
         );
 
         Ok(Self { expanded })
@@ -86,9 +101,9 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     where
         F: CanonicalField + RandomSampling + Valid,
     {
-        validate_public_matrix_matches_seed(expanded.shared_matrix(), expanded.seed()).map_err(
-            |err| AkitaError::InvalidSetup(format!("expanded setup validation failed: {err}")),
-        )?;
+        expanded.check().map_err(|err| {
+            AkitaError::InvalidSetup(format!("expanded setup validation failed: {err}"))
+        })?;
         Self::from_seed_validated_expanded(expanded)
     }
 
@@ -124,13 +139,53 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
                 "expanded setup matrix generation dimension does not match setup seed".to_string(),
             ));
         }
-        if expanded.shared_matrix().total_ring_elements() != expanded.seed().total_ring_elements {
+        if expanded.shared_matrix().total_ring_elements() != expanded.seed().max_setup_len {
             return Err(AkitaError::InvalidSetup(
                 "expanded setup matrix length does not match setup seed".to_string(),
             ));
         }
+        #[cfg(feature = "zk")]
+        {
+            expanded.zk_b_matrix().check().map_err(|err| {
+                AkitaError::InvalidSetup(format!(
+                    "expanded setup zkB matrix validation failed: {err}"
+                ))
+            })?;
+            expanded.zk_d_matrix().check().map_err(|err| {
+                AkitaError::InvalidSetup(format!(
+                    "expanded setup zkD matrix validation failed: {err}"
+                ))
+            })?;
+            if expanded.zk_b_matrix().gen_ring_dim() != expanded.seed().gen_ring_dim {
+                return Err(AkitaError::InvalidSetup(
+                    "expanded setup zkB matrix generation dimension does not match setup seed"
+                        .to_string(),
+                ));
+            }
+            if expanded.zk_d_matrix().gen_ring_dim() != expanded.seed().gen_ring_dim {
+                return Err(AkitaError::InvalidSetup(
+                    "expanded setup zkD matrix generation dimension does not match setup seed"
+                        .to_string(),
+                ));
+            }
+            if expanded.zk_b_matrix().total_ring_elements() != expanded.seed().max_zk_b_len {
+                return Err(AkitaError::InvalidSetup(
+                    "expanded setup zkB matrix length does not match setup seed".to_string(),
+                ));
+            }
+            if expanded.zk_d_matrix().total_ring_elements() != expanded.seed().max_zk_d_len {
+                return Err(AkitaError::InvalidSetup(
+                    "expanded setup zkD matrix length does not match setup seed".to_string(),
+                ));
+            }
+        }
         let expanded = Arc::new(expanded);
         expanded.shared_matrix().total_ring_elements_at::<D>()?;
+        #[cfg(feature = "zk")]
+        {
+            expanded.zk_b_matrix().total_ring_elements_at::<D>()?;
+            expanded.zk_d_matrix().total_ring_elements_at::<D>()?;
+        }
         Ok(Self { expanded })
     }
 
@@ -162,9 +217,19 @@ mod tests {
 
     #[test]
     fn validated_expanded_setup_rejects_mismatched_ring_dimension() {
-        let setup =
-            AkitaProverSetup::<Prime128Offset275, 64>::generate_with_capacity(8, 1, 1, 1, 1)
-                .expect("generate D=64 setup");
+        let setup = AkitaProverSetup::<Prime128Offset275, 64>::generate_with_capacity(
+            8,
+            1,
+            1,
+            SetupMatrixEnvelope {
+                max_setup_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
+            },
+        )
+        .expect("generate D=64 setup");
         let expanded = (*setup.expanded).clone();
 
         let err = AkitaProverSetup::<Prime128Offset275, 32>::from_validated_expanded(expanded)
@@ -174,15 +239,20 @@ mod tests {
     }
 
     #[test]
-    fn generate_with_capacity_rejects_zero_rows_and_stride() {
-        let zero_rows =
-            AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(8, 1, 1, 0, 1)
-                .expect_err("zero rows must not produce an undecodable setup");
-        assert!(zero_rows.to_string().contains("total_ring_elements"));
-
-        let zero_stride =
-            AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(8, 1, 1, 1, 0)
-                .expect_err("zero stride must not produce an undecodable setup");
-        assert!(zero_stride.to_string().contains("max_stride"));
+    fn generate_with_capacity_rejects_zero_setup_len() {
+        let zero_len = AkitaProverSetup::<Prime128Offset275, 32>::generate_with_capacity(
+            8,
+            1,
+            1,
+            SetupMatrixEnvelope {
+                max_setup_len: 0,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
+            },
+        )
+        .expect_err("zero setup length must not produce an undecodable setup");
+        assert!(zero_len.to_string().contains("max_setup_len"));
     }
 }

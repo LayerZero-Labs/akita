@@ -27,34 +27,80 @@ impl Fp32RingSubfieldRootFoldCfg {
 fn fp32_ring_subfield_setup_matrix_size<F>(
     lp: &LevelParams,
     max_num_claims: usize,
-) -> Result<(usize, usize), AkitaError>
+) -> Result<akita_types::SetupMatrixEnvelope, AkitaError>
 where
     F: akita_field::CanonicalField,
 {
     let _field_marker = core::marker::PhantomData::<F>;
-    let outer_width = lp.outer_width();
+    let outer_width = lp
+        .outer_width()
+        .checked_mul(max_num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("B matrix width overflow".to_string()))?;
     #[cfg(feature = "zk")]
-    let outer_width = {
-        outer_width
-            .checked_add(akita_types::zk::blinding_column_count::<F>(
-                lp.b_key.row_len(),
-                lp.ring_dimension,
-                lp.log_basis,
-            ))
-            .ok_or_else(|| AkitaError::InvalidSetup("ZK outer width overflow".to_string()))?
-    };
+    let max_zk_b_len = lp
+        .b_key
+        .row_len()
+        .checked_mul(akita_types::zk::blinding_digit_plane_count::<F>(
+            lp.b_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+        ))
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK B setup footprint overflow".to_string()))?;
 
-    Ok((
+    let d_width = lp
+        .d_matrix_width()
+        .checked_mul(max_num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("D matrix width overflow".to_string()))?;
+    #[cfg(feature = "zk")]
+    let max_zk_d_len = lp
+        .d_key
+        .row_len()
+        .checked_mul(akita_types::zk::blinding_digit_plane_count::<F>(
+            lp.d_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+        ))
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK D setup footprint overflow".to_string()))?;
+    let max_setup_len =
         lp.a_key
             .row_len()
-            .max(lp.b_key.row_len())
-            .max(lp.d_key.row_len()),
-        lp.inner_width().max(outer_width).max(
-            lp.d_matrix_width()
-                .checked_mul(max_num_claims.max(1))
-                .ok_or_else(|| AkitaError::InvalidSetup("D matrix width overflow".to_string()))?,
-        ),
-    ))
+            .checked_mul(lp.inner_width())
+            .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?
+            .max(lp.b_key.row_len().checked_mul(outer_width).ok_or_else(|| {
+                AkitaError::InvalidSetup("B setup footprint overflow".to_string())
+            })?)
+            .max(lp.d_key.row_len().checked_mul(d_width).ok_or_else(|| {
+                AkitaError::InvalidSetup("D setup footprint overflow".to_string())
+            })?);
+    Ok(akita_types::SetupMatrixEnvelope {
+        max_setup_len,
+        #[cfg(feature = "zk")]
+        max_zk_b_len,
+        #[cfg(feature = "zk")]
+        max_zk_d_len,
+    })
+}
+
+fn fp32_ring_subfield_max_claims(
+    max_num_batched_polys: usize,
+    max_num_points: usize,
+) -> Result<usize, AkitaError> {
+    if max_num_batched_polys == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "max_num_batched_polys must be at least 1".to_string(),
+        ));
+    }
+    if max_num_points == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "max_num_points must be at least 1".to_string(),
+        ));
+    }
+    if max_num_points > max_num_batched_polys {
+        return Err(AkitaError::InvalidSetup(format!(
+            "max_num_points ({max_num_points}) cannot exceed max_num_batched_polys ({max_num_batched_polys})"
+        )));
+    }
+    Ok(max_num_batched_polys)
 }
 
 impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
@@ -111,11 +157,9 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         _max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), AkitaError> {
-        let max_num_claims = max_num_batched_polys
-            .checked_mul(max_num_points)
-            .ok_or_else(|| AkitaError::InvalidSetup("claim count overflow".to_string()))?;
+    ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         let lp = Self::root_lp();
+        let max_num_claims = fp32_ring_subfield_max_claims(max_num_batched_polys, max_num_points)?;
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
@@ -246,11 +290,9 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         _max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), AkitaError> {
-        let max_num_claims = max_num_batched_polys
-            .checked_mul(max_num_points)
-            .ok_or_else(|| AkitaError::InvalidSetup("claim count overflow".to_string()))?;
+    ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         let lp = Self::root_lp();
+        let max_num_claims = fp32_ring_subfield_max_claims(max_num_batched_polys, max_num_points)?;
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
@@ -308,6 +350,19 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             total_bytes: 0,
         })
     }
+}
+
+#[test]
+fn fp32_ring_subfield_setup_sizing_uses_total_claim_limit() {
+    let one_point = Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 2, 1).unwrap();
+    let two_points = Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 2, 2).unwrap();
+    assert_eq!(one_point.max_setup_len, two_points.max_setup_len);
+}
+
+#[test]
+fn fp32_ring_subfield_setup_rejects_more_points_than_claims() {
+    assert!(Fp32RingSubfieldRootFoldCfg::max_setup_matrix_size(5, 1, 2).is_err());
+    assert!(Fp32RingSubfieldOuterFallbackCfg::max_setup_matrix_size(5, 1, 2).is_err());
 }
 
 #[test]
