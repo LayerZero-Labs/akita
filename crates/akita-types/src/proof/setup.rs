@@ -259,12 +259,14 @@ fn derive_public_matrix_flat_labeled<F: FieldCore + RandomSampling, const D: usi
 ) -> FlatMatrix<F> {
     let xof = LabeledMatrixXof::new(seed, matrix_label);
     let mut data = vec![F::zero(); total_ring_elements * D];
-    cfg_chunks_mut!(data, D).enumerate().for_each(|(idx, coeffs)| {
-        let mut entry_rng = xof.entry_rng(idx);
-        for coeff in coeffs.iter_mut() {
-            *coeff = F::random(&mut entry_rng);
-        }
-    });
+    cfg_chunks_mut!(data, D)
+        .enumerate()
+        .for_each(|(idx, coeffs)| {
+            let mut entry_rng = xof.entry_rng(idx);
+            for coeff in coeffs.iter_mut() {
+                *coeff = F::random(&mut entry_rng);
+            }
+        });
 
     FlatMatrix::from_flat_data(data, D)
 }
