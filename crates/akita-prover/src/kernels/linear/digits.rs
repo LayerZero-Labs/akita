@@ -71,7 +71,10 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     {
         if inner_width <= safe_width {
             return mat_vec_mul_digits_i8_block_parallel::<F, W, K, D, CHECK_ZERO>(
-                ntt_mat, blocks, params,
+                ntt_mat,
+                blocks,
+                digit_bound,
+                params,
             );
         }
         return mat_vec_mul_digits_i8_block_parallel_chunked::<F, W, K, D, CHECK_ZERO>(
@@ -79,11 +82,12 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
             blocks,
             inner_width,
             safe_width,
+            digit_bound,
             params,
         );
     }
 
-    let lut = DigitMontLut::<W, K>::new(params);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     drive_block_chunked_matvec(
         num_blocks,
         n_a,
@@ -156,11 +160,12 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
             coeffs,
             num_blocks,
             inner_width,
+            digit_bound,
             params,
         );
     }
 
-    let lut = DigitMontLut::<W, K>::new(params);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     drive_block_chunked_matvec(
         num_blocks,
         n_a,

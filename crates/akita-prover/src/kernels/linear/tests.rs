@@ -1127,7 +1127,12 @@ fn mat_vec_mul_digits_i8_three_row_matches_generic_on_block_parallel_path() {
                 Q32_NUM_PRIMES,
                 D,
                 true,
-            >(&ntt_mat, &digit_block_slices, &params);
+            >(
+                &ntt_mat,
+                &digit_block_slices,
+                super::balanced_digit_abs_bound(log_basis),
+                &params,
+            );
             assert_eq!(fused, generic);
         }
         _ => panic!("unexpected parameter family"),
@@ -1184,6 +1189,7 @@ fn mat_vec_mul_digits_i8_strided_three_row_matches_block_path_on_block_parallel_
                 &strided_digits,
                 digit_blocks.len(),
                 digit_blocks[0].len(),
+                super::balanced_digit_abs_bound(log_basis),
                 &params,
             );
             assert_eq!(strided_path, block_path);

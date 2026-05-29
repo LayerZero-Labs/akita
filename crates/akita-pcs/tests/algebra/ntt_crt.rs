@@ -115,6 +115,18 @@ fn digit_lut_covers_log_basis_six_balanced_range() {
 }
 
 #[test]
+fn digit_lut_can_cover_active_small_balanced_range() {
+    let params = CrtNttParamSet::<i16, Q32_NUM_PRIMES, 64>::new(Q32_PRIMES);
+    let lut = DigitMontLut::<_, Q32_NUM_PRIMES>::new_with_digit_bound(&params, 2);
+
+    for (k, prime) in params.primes.iter().enumerate() {
+        for raw in -2i8..=1 {
+            assert_eq!(lut.get(k, raw), prime.from_canonical(i16::from(raw)));
+        }
+    }
+}
+
+#[test]
 fn centered_lut_understated_bound_falls_back_exactly() {
     const D: usize = 64;
     let params = CrtNttParamSet::<i16, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);

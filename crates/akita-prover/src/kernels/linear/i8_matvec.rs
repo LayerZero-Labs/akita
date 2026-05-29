@@ -59,7 +59,7 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
         );
     }
 
-    let lut = DigitMontLut::<W, K>::new(params);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let tile_width = aligned_i8_tile_width(base_tile_width::<W, K, D>(), inner_width, num_digits);
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     drive_block_chunked_matvec(
@@ -176,7 +176,7 @@ pub(super) fn mat_vec_mul_i8_strided_with_params<
         );
     }
 
-    let lut = DigitMontLut::<W, K>::new(params);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let tile_width = aligned_i8_tile_width(base_tile_width::<W, K, D>(), inner_width, num_digits);
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     drive_block_chunked_matvec(

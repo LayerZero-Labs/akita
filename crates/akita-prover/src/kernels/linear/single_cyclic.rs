@@ -99,12 +99,12 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
 
-    let lut = DigitMontLut::<W, K>::new(params);
     let vec_len = vec.len().min(inner_width);
     if vec_len == 0 {
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
     let digit_bound = balanced_digit_abs_bound(log_basis);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     debug_assert!(
         digit_rows_within_digit_bound::<D>(vec, vec_len, digit_bound),
         "single digit vector contains digits outside its log_basis range"
@@ -150,12 +150,12 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
 
-    let lut = DigitMontLut::<W, K>::new(params);
     let vec_len = vec.len().min(inner_width);
     if vec_len == 0 {
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
     let digit_bound = balanced_digit_abs_bound(log_basis);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     debug_assert!(
         digit_rows_within_digit_bound::<D>(vec, vec_len, digit_bound),
         "single cyclic digit vector contains digits outside its log_basis range"

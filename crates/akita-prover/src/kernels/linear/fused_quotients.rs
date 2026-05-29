@@ -94,6 +94,8 @@ pub(super) fn fused_split_eq_quotients_with_params<
             t_hat,
             z_pre,
             z_abs_bound,
+            w_digit_abs_bound,
+            t_digit_abs_bound,
             max_col,
             w_len,
             t_len,
@@ -137,6 +139,8 @@ fn fused_split_eq_quotients_one_shot<
     t_hat: &[[i8; D]],
     z_pre: &[[i32; D]],
     z_abs_bound: u64,
+    w_digit_abs_bound: u64,
+    t_digit_abs_bound: u64,
     max_col: usize,
     w_len: usize,
     t_len: usize,
@@ -147,7 +151,9 @@ fn fused_split_eq_quotients_one_shot<
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
 ) {
-    let digit_lut = (w_len != 0 || t_len != 0).then(|| DigitMontLut::<W, K>::new(params));
+    let digit_bound = w_digit_abs_bound.max(t_digit_abs_bound);
+    let digit_lut = (w_len != 0 || t_len != 0)
+        .then(|| DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound));
     let centered_lut = (z_len != 0 && z_abs_bound <= u64::from(CENTERED_LUT_MAX_ABS))
         .then(|| CenteredMontLut::<W, K>::new(params, z_abs_bound as i32));
     let base_tw = (FUSED_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
@@ -290,6 +296,8 @@ fn accumulate_cyclic_i8_rows<
             &[],
             &[],
             0,
+            rhs_abs_bound,
+            0,
             rhs_len,
             rhs_len,
             0,
@@ -300,7 +308,7 @@ fn accumulate_cyclic_i8_rows<
     }
 
     let num_chunks = rhs_len.div_ceil(chunk_width);
-    let lut = DigitMontLut::<W, K>::new(params);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, rhs_abs_bound);
 
     cfg_fold_reduce!(
         0..num_chunks,
@@ -397,6 +405,8 @@ fn accumulate_centered_quotient_rows<
             &[],
             z_pre,
             z_abs_bound,
+            0,
+            0,
             z_len,
             0,
             0,

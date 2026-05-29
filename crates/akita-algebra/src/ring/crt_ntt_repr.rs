@@ -68,6 +68,8 @@ const DIGIT_LUT_OFFSET: i16 = (DIGIT_LUT_LEN / 2) as i16;
 #[derive(Debug, Clone)]
 pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
     vals: [[MontCoeff<W>; DIGIT_LUT_LEN]; K],
+    len: usize,
+    offset: i16,
 }
 
 /// Precomputed Montgomery forms for centered integer coefficients in
@@ -82,33 +84,52 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
     /// Build the lookup table from CRT primes, covering balanced digits in
     /// `[-32, 31]`.
     pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>) -> Self {
-        let vals = from_fn(|k| {
+        Self::new_with_digit_bound(params, DIGIT_LUT_OFFSET as u64)
+    }
+
+    /// Build a lookup table for the active balanced range `[-bound, bound)`.
+    ///
+    /// This keeps the fixed non-monomorphized LUT type while avoiding needless
+    /// Montgomery conversions for common small bases (`log_basis` 2, 3, or 4).
+    pub fn new_with_digit_bound<const D: usize>(
+        params: &CrtNttParamSet<W, K, D>,
+        digit_abs_bound: u64,
+    ) -> Self {
+        debug_assert!(digit_abs_bound.is_power_of_two());
+        debug_assert!((1..=DIGIT_LUT_OFFSET as u64).contains(&digit_abs_bound));
+        let digit_abs_bound = digit_abs_bound
+            .max(1)
+            .next_power_of_two()
+            .min(DIGIT_LUT_OFFSET as u64);
+        let len = (digit_abs_bound as usize) * 2;
+        let offset = digit_abs_bound as i16;
+        let mut vals = [[MontCoeff::from_raw(W::default()); DIGIT_LUT_LEN]; K];
+        for (k, limb) in vals.iter_mut().enumerate() {
             let prime = params.primes[k];
-            from_fn(|idx| {
-                let v = idx as i64 - i64::from(DIGIT_LUT_OFFSET);
-                prime.from_canonical(W::from_i64(v))
-            })
-        });
-        Self { vals }
+            for (idx, dst) in limb.iter_mut().enumerate().take(len) {
+                let v = idx as i64 - i64::from(offset);
+                *dst = prime.from_canonical(W::from_i64(v));
+            }
+        }
+        Self { vals, len, offset }
     }
 
     /// Look up the Montgomery form of a balanced digit for CRT prime `k`.
     ///
-    /// Contract: `digit` is a balanced base-`2^log_basis` digit in `[-32, 31]`
-    /// and `k < K`. The i8-NTT kernel boundary upholds this (a validated
-    /// `log_basis <= 6` and per-block digit ranges are checked there). Because
-    /// the table length is a power of two, masking the index keeps the lookup
-    /// in-bounds and branch-free without a per-coefficient bounds check, so the
-    /// contract carries the perf rather than runtime indexing. The debug
-    /// assertion surfaces any contract violation in debug builds.
+    /// Contract: `digit` is in this LUT's active balanced range and `k < K`.
+    /// The i8-NTT kernel boundary upholds this with validated `log_basis` and
+    /// per-block digit range checks. Because the active table length is a power
+    /// of two, masking keeps the lookup in-bounds and branch-free without a
+    /// per-coefficient bounds check. The debug assertion surfaces any contract
+    /// violation in debug builds.
     #[inline(always)]
     pub fn get(&self, k: usize, digit: i8) -> MontCoeff<W> {
-        let idx = (i16::from(digit) + DIGIT_LUT_OFFSET) as usize;
+        let idx = (i16::from(digit) + self.offset) as usize;
         debug_assert!(
-            idx < DIGIT_LUT_LEN,
-            "digit LUT only covers balanced digits in [-32, 31]"
+            idx < self.len,
+            "digit LUT lookup outside active balanced range"
         );
-        self.vals[k][idx & (DIGIT_LUT_LEN - 1)]
+        self.vals[k][idx & (self.len - 1)]
     }
 }
 
