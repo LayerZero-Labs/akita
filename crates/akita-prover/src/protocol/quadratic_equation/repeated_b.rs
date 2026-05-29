@@ -101,6 +101,36 @@ where
     Ok(())
 }
 
+fn checked_digit_plane_sum(sizes: &[usize]) -> Result<usize, AkitaError> {
+    sizes.iter().try_fold(0usize, |acc, &size| {
+        acc.checked_add(size).ok_or(AkitaError::InvalidProof)
+    })
+}
+
+fn repeated_b_planes_per_claim(
+    block_sizes: &[usize],
+    blocks_per_claim: usize,
+) -> Result<usize, AkitaError> {
+    if blocks_per_claim == 0
+        || block_sizes.is_empty()
+        || !block_sizes.len().is_multiple_of(blocks_per_claim)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let block_width = block_sizes[0];
+    if block_width == 0 {
+        return Err(AkitaError::InvalidProof);
+    }
+    for &size in block_sizes {
+        if size != block_width {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
+    block_width
+        .checked_mul(blocks_per_claim)
+        .ok_or(AkitaError::InvalidProof)
+}
+
 pub(super) fn repeated_b_commitment_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -117,19 +147,27 @@ where
     if num_polys_per_point.is_empty() || blocks_per_claim == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    let num_group_polys =
-        num_polys_per_point
-            .iter()
-            .try_fold(0usize, |acc, &group_poly_count| {
-                if group_poly_count == 0 {
-                    return Err(AkitaError::InvalidProof);
-                }
-                acc.checked_add(group_poly_count)
-                    .ok_or(AkitaError::InvalidProof)
-            })?;
-    if t_hat.block_count() != num_group_polys * blocks_per_claim {
+    let mut num_group_polys = 0usize;
+    let mut max_group_poly_count = 0usize;
+    for &group_poly_count in num_polys_per_point {
+        if group_poly_count == 0 {
+            return Err(AkitaError::InvalidProof);
+        }
+        num_group_polys = num_group_polys
+            .checked_add(group_poly_count)
+            .ok_or(AkitaError::InvalidProof)?;
+        max_group_poly_count = max_group_poly_count.max(group_poly_count);
+    }
+    let expected_block_count = num_group_polys
+        .checked_mul(blocks_per_claim)
+        .ok_or(AkitaError::InvalidProof)?;
+    if t_hat.block_count() != expected_block_count {
         return Err(AkitaError::InvalidProof);
     }
+    let planes_per_claim = repeated_b_planes_per_claim(t_hat.block_sizes(), blocks_per_claim)?;
+    let row_width = max_group_poly_count
+        .checked_mul(planes_per_claim)
+        .ok_or(AkitaError::InvalidProof)?;
     #[cfg(not(feature = "zk"))]
     let b_blinding_digits = vec![FlatDigitBlocks::<D>::empty(); num_polys_per_point.len()];
     if b_blinding_digits.len() != num_polys_per_point.len() {
@@ -139,7 +177,6 @@ where
     let mut groups = Vec::with_capacity(num_polys_per_point.len());
     let mut block_offset = 0usize;
     let mut plane_offset = 0usize;
-    let mut row_width = 0usize;
     for (&group_poly_count, blinding) in num_polys_per_point.iter().zip(b_blinding_digits.iter()) {
         let group_block_count = group_poly_count
             .checked_mul(blocks_per_claim)
@@ -151,7 +188,13 @@ where
             .block_sizes()
             .get(block_offset..next_block_offset)
             .ok_or(AkitaError::InvalidProof)?;
-        let group_planes: usize = group_block_sizes.iter().sum();
+        let group_planes = checked_digit_plane_sum(group_block_sizes)?;
+        let expected_group_planes = group_poly_count
+            .checked_mul(planes_per_claim)
+            .ok_or(AkitaError::InvalidProof)?;
+        if group_planes != expected_group_planes {
+            return Err(AkitaError::InvalidProof);
+        }
         let next_plane_offset = plane_offset
             .checked_add(group_planes)
             .ok_or(AkitaError::InvalidProof)?;
@@ -159,9 +202,7 @@ where
             .flat_digits()
             .get(plane_offset..next_plane_offset)
             .ok_or(AkitaError::InvalidProof)?;
-        let group_width = group_planes;
-        row_width = row_width.max(group_width);
-        groups.push((plane_offset, next_plane_offset, group_planes, blinding));
+        groups.push((plane_offset, next_plane_offset, blinding));
         block_offset = next_block_offset;
         plane_offset = next_plane_offset;
     }
@@ -170,11 +211,9 @@ where
     }
 
     let mut rows = Vec::with_capacity(num_polys_per_point.len() * n_b);
-    for (start, end, group_planes, blinding) in groups {
+    for (start, end, blinding) in groups {
         #[cfg(not(feature = "zk"))]
-        let _ = (group_planes, blinding);
-        #[cfg(feature = "zk")]
-        let _ = group_planes;
+        let _ = blinding;
         let group_digits = t_hat
             .flat_digits()
             .get(start..end)
@@ -295,6 +334,54 @@ mod tests {
             mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_b, row_width, &second_digits);
         let expected = first.into_iter().chain(second).collect::<Vec<_>>();
         assert_eq!(got, expected);
+
+        let nonuniform_blocks: Vec<Vec<[i8; D]>> = [block_width, block_width - 1, block_width]
+            .into_iter()
+            .enumerate()
+            .map(|(block, width)| {
+                (0..width)
+                    .map(|plane| std::array::from_fn(|k| ((block * 7 + plane + k) % 5) as i8 - 2))
+                    .collect()
+            })
+            .collect();
+        let nonuniform_t_hat = FlatDigitBlocks::from_blocks(nonuniform_blocks);
+        assert!(repeated_b_commitment_rows::<F, _, D>(
+            &CpuBackend,
+            &prepared,
+            n_b,
+            &nonuniform_t_hat,
+            #[cfg(feature = "zk")]
+            &b_blinding,
+            &num_polys_per_point,
+            blocks_per_claim,
+        )
+        .is_err());
+
+        let same_total_nonuniform_blocks: Vec<Vec<[i8; D]>> =
+            [block_width, block_width + 1, block_width + 1, block_width]
+                .into_iter()
+                .enumerate()
+                .map(|(block, width)| {
+                    (0..width)
+                        .map(|plane| {
+                            std::array::from_fn(|k| ((block * 11 + plane + k) % 5) as i8 - 2)
+                        })
+                        .collect()
+                })
+                .collect();
+        let same_total_nonuniform_t_hat =
+            FlatDigitBlocks::from_blocks(same_total_nonuniform_blocks);
+        assert!(repeated_b_commitment_rows::<F, _, D>(
+            &CpuBackend,
+            &prepared,
+            n_b,
+            &same_total_nonuniform_t_hat,
+            #[cfg(feature = "zk")]
+            &b_blinding,
+            &[1usize, 1usize],
+            2,
+        )
+        .is_err());
     }
 
     #[cfg(feature = "zk")]
