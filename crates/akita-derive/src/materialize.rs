@@ -14,14 +14,79 @@ use akita_types::generated::{
     GeneratedStep,
 };
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, generated_schedule_lookup_key,
-    level_layout_from_params, level_proof_bytes, root_extension_opening_partials,
-    terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaPlannedDirectStep,
-    AkitaPlannedLevel, AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, DecompositionParams, DirectWitnessShape,
-    LevelParams, MRowLayout, SisModulusFamily,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes,
+    generated_schedule_lookup_key, level_layout_from_params, proof_ring_vec_bytes,
+    root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
+    w_ring_element_count_with_counts_bits, w_ring_element_count_with_counts_for_layout_bits,
+    AjtaiKeyParams, AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedState, AkitaPlannedStep,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DecompositionParams,
+    DirectWitnessShape, LevelParams, MRowLayout, SisModulusFamily,
 };
+
+// Local duplicate of `akita-planner::proof_size::level_proof_bytes`.
+//
+// TODO: collapse this and the planner copy back into a single source of
+// truth once the planner / materializer dependency story is unified.
+fn level_proof_bytes(
+    base_field_bits: u32,
+    challenge_field_bits: u32,
+    lp: &LevelParams,
+    next_lp: &LevelParams,
+    next_w_len: usize,
+    num_claims: usize,
+    layout: MRowLayout,
+) -> usize {
+    fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
+        degree * elem_bytes
+    }
+    fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
+        rounds * compressed_unipoly_bytes(degree, elem_bytes)
+    }
+    #[cfg(feature = "zk")]
+    fn eq_factored_round_mask_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
+        sumcheck_bytes(rounds, degree, elem_bytes)
+    }
+    fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
+        stage1_tree_stage_shapes(rounds, b)
+            .into_iter()
+            .map(|stage| {
+                ({
+                    #[cfg(feature = "zk")]
+                    {
+                        eq_factored_round_mask_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
+                    }
+                    #[cfg(not(feature = "zk"))]
+                    {
+                        sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes)
+                    }
+                }) + stage.child_claims * elem_bytes
+            })
+            .sum::<usize>()
+            + elem_bytes
+    }
+
+    let base_elem_bytes = field_bytes(base_field_bits);
+    let challenge_elem_bytes = field_bytes(challenge_field_bits);
+    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, base_elem_bytes);
+    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+    let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
+    match layout {
+        MRowLayout::Terminal => y_bytes + sumcheck,
+        MRowLayout::Intermediate => {
+            let v_bytes =
+                proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
+            let next_commit_bytes = proof_ring_vec_bytes(
+                next_lp.b_key.row_len(),
+                next_lp.ring_dimension,
+                base_elem_bytes,
+            );
+            let next_eval_bytes = challenge_elem_bytes;
+            let b = 1usize << lp.log_basis;
+            let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
+            y_bytes + v_bytes + stage1_bytes + sumcheck + next_commit_bytes + next_eval_bytes
+        }
+    }
+}
 
 /// Policy hooks needed to materialize generated schedule-table entries into
 /// runtime schedules.
@@ -434,25 +499,23 @@ where
                 } else {
                     1
                 };
-                let base_level_bytes = if is_terminal {
-                    terminal_level_proof_bytes(
-                        field_bits,
-                        challenge_field_bits,
-                        &lp,
-                        next_inputs.current_w_len,
-                        num_claims_here,
-                    )
+                let layout = if is_terminal {
+                    MRowLayout::Terminal
                 } else {
-                    level_proof_bytes(
-                        field_bits,
-                        challenge_field_bits,
-                        &lp,
-                        &lp,
-                        &next_level_params,
-                        next_inputs.current_w_len,
-                        num_claims_here,
-                    )
+                    MRowLayout::Intermediate
                 };
+                let base_level_bytes = level_proof_bytes(
+                    field_bits,
+                    challenge_field_bits,
+                    &lp,
+                    // `next_level_params` is consulted only on the
+                    // Intermediate arm; terminal passes `&lp` as a
+                    // harmless placeholder.
+                    if is_terminal { &lp } else { &next_level_params },
+                    next_inputs.current_w_len,
+                    num_claims_here,
+                    layout,
+                );
                 let runtime_level_bytes = base_level_bytes
                     + extension_opening_reduction_level_bytes(
                         challenge_field_bits,

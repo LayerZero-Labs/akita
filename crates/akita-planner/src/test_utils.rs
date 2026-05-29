@@ -121,7 +121,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
     fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
         let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
         if let Some(plan) = Cfg::schedule_plan(key)? {
-            return Ok(schedule_from_plan(&plan, Cfg::decomposition().field_bits()));
+            return Ok(schedule_from_plan(&plan));
         }
         find_schedule::<Self>(key, true)
     }

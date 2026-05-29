@@ -1548,8 +1548,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                 Step::Fold(akita_types::FoldStep {
                     params: lp.clone(),
                     current_w_len: akita_types::root_current_w_len(&lp),
-                    delta_fold_per_poly: lp.num_digits_fold,
-                    w_ring,
                     next_w_len: compact_w_len,
                     level_bytes: 0,
                 }),
@@ -1659,8 +1657,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                 Step::Fold(akita_types::FoldStep {
                     params: lp.clone(),
                     current_w_len: akita_types::root_current_w_len(&lp),
-                    delta_fold_per_poly: lp.num_digits_fold,
-                    w_ring,
                     next_w_len,
                     level_bytes: 0,
                 }),

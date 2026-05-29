@@ -415,8 +415,6 @@ mod tests {
             Step::Fold(FoldStep {
                 params: fold_lp.clone(),
                 current_w_len: 1 << 8,
-                delta_fold_per_poly: 1,
-                w_ring: 1,
                 next_w_len: 1 << 4,
                 level_bytes: 0,
             }),

@@ -24,9 +24,9 @@ pub use opening_point::{
 };
 pub use params::{AjtaiKeyParams, LevelParams, MRowLayout, SisModulusFamily};
 pub use proof_size::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes, level_proof_bytes,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
-    root_extension_opening_partials, sumcheck_rounds, terminal_level_proof_bytes,
+    root_extension_opening_partials, sumcheck_rounds,
 };
 pub use sis_derivation::{
     decomp_depths, level_layout_from_params, recursive_level_layout_from_params,

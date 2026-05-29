@@ -174,8 +174,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
         let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
         if let Some(plan) = Self::schedule_plan(key)? {
-            let schedule =
-                akita_types::schedule_from_plan(&plan, Self::decomposition().field_bits());
+            let schedule = akita_types::schedule_from_plan(&plan);
             return Ok(schedule);
         }
         Err(missing_generated_schedule("prove schedule", key))

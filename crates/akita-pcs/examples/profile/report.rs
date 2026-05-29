@@ -92,9 +92,9 @@ pub(crate) fn emit_runtime_schedule_summary(label: &str, schedule: &Schedule, fi
             block_len = lp.block_len,
             delta_commit = lp.num_digits_commit,
             delta_open = lp.num_digits_open,
-            delta_fold = level.delta_fold_per_poly,
+            delta_fold = lp.num_digits_fold,
             current_w_len = level.current_w_len,
-            next_w_ring = level.w_ring,
+            next_w_ring = level.next_w_len / lp.ring_dimension,
             next_w_len = level.next_w_len,
             level_bytes = level.level_bytes,
             "planned fold level"

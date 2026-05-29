@@ -21,8 +21,7 @@ use akita_types::generated::GeneratedScheduleTable;
 use akita_types::layout::digit_math::{compute_num_digits_fold_with_claims, optimal_m_r_split};
 use akita_types::{
     decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
-    level_proof_bytes, root_extension_opening_partials, scale_batched_root_layout,
-    schedule_from_plan, terminal_level_proof_bytes,
+    root_extension_opening_partials, schedule_from_plan,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
     AkitaScheduleLookupKey, DecompositionParams, DirectStep, DirectWitnessShape, FoldStep,
     LevelParams, MRowLayout, Schedule, Step,
@@ -33,6 +32,7 @@ use akita_derive::{schedule_plan_from_table, PlanPolicy};
 use crate::ajtai_params::{
     compute_ajtai_key_params_a, compute_ajtai_key_params_b, compute_ajtai_key_params_d, WitnessType,
 };
+use crate::proof_size::level_proof_bytes;
 
 const MAX_RECURSION_DEPTH: usize = 12;
 
@@ -264,33 +264,27 @@ fn recursive_next_witness_len(
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))
 }
 
+/// Unified proof-size formula for one fold level under either M-row
+/// layout. `next_lp` is consulted only when `layout =
+/// MRowLayout::Intermediate`; terminal callers may pass any
+/// `&LevelParams` (typically `&candidate.lp`) as a placeholder.
 fn compute_level_proof_size<Cfg: CommitmentConfig>(
     candidate: &CandidateLevelParams,
-    next_level_params: &LevelParams,
+    next_lp: &LevelParams,
+    next_w_len: usize,
     num_public_outputs: usize,
+    layout: MRowLayout,
 ) -> usize {
+    let field_bits = Cfg::decomposition().field_bits();
+    let challenge_bits = field_bits * Cfg::CHAL_EXT_DEGREE as u32;
     level_proof_bytes(
-        Cfg::decomposition().field_bits(),
-        Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
+        field_bits,
+        challenge_bits,
         &candidate.lp,
-        &candidate.lp,
-        next_level_params,
-        candidate.next_w_len,
+        next_lp,
+        next_w_len,
         num_public_outputs,
-    )
-}
-
-fn compute_terminal_level_proof_size<Cfg: CommitmentConfig>(
-    candidate: &CandidateLevelParams,
-    terminal_next_w_len: usize,
-    num_public_outputs: usize,
-) -> usize {
-    terminal_level_proof_bytes(
-        Cfg::decomposition().field_bits(),
-        Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
-        &candidate.lp,
-        terminal_next_w_len,
-        num_public_outputs,
+        layout,
     )
 }
 
@@ -334,23 +328,12 @@ fn to_fold_step(
     c: &CandidateLevelParams,
     current_w_len: usize,
     level_bytes: usize,
-    field_bits: u32,
     next_w_len_override: Option<usize>,
 ) -> Step {
-    let per_poly_fold = compute_num_digits_fold_with_claims(
-        c.lp.r_vars,
-        c.lp.challenge_l1_mass(),
-        c.lp.log_basis,
-        1,
-        field_bits,
-    );
     let next_w_len = next_w_len_override.unwrap_or(c.next_w_len);
-    let w_ring = next_w_len / c.lp.ring_dimension;
     Step::Fold(FoldStep {
         params: c.lp.clone(),
         current_w_len,
-        delta_fold_per_poly: per_poly_fold,
-        w_ring,
         next_w_len,
         level_bytes,
     })
@@ -421,9 +404,9 @@ fn to_direct_step<Cfg: CommitmentConfig>(
 ///
 /// - `best_direct` — optimal schedule whose first step at this level is
 ///   a `Step::Direct`. Lets the parent score under
-///   `compute_terminal_level_proof_size` (drops the v-rows and stage-1
-///   sumcheck at the parent level). `None` when SIS is infeasible at
-///   this state.
+///   `compute_level_proof_size(..., MRowLayout::Terminal)` (drops the
+///   v-rows and stage-1 sumcheck at the parent level). `None` when SIS
+///   is infeasible at this state.
 /// - `best_fold_per_lb` — for each candidate `log_basis` at this level,
 ///   the optimal schedule whose first step is `Step::Fold` with that
 ///   `log_basis`. Keyed by first fold's `log_basis` because the
@@ -483,8 +466,9 @@ type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 ///   `optimal_m_r_split` internally to pick `(m_vars, r_vars)` and
 ///   computes both Intermediate and Terminal successor shapes). For
 ///   each candidate, we score both child-shape options (child is
-///   Direct → use `compute_terminal_level_proof_size`; child is Fold
-///   → use `compute_level_proof_size`) and keep the cheaper one.
+///   Direct → `compute_level_proof_size(..., MRowLayout::Terminal)`;
+///   child is Fold → `compute_level_proof_size(..., MRowLayout::Intermediate)`)
+///   and keep the cheaper one.
 ///
 /// The greedy "one candidate per `log_basis`" pre-selection is
 /// structurally required for memo dedup: explicit `(num_blocks,
@@ -532,7 +516,6 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
         return Ok(result);
     }
 
-    let field_bits = Cfg::decomposition().field_bits();
     let mut best_fold_per_lb: BTreeMap<u32, (usize, Vec<Step>)> = BTreeMap::new();
     let (min_log_basis, max_log_basis) = Cfg::basis_range();
     for lb in min_log_basis..=max_log_basis {
@@ -576,10 +559,12 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
         // Branch A: child is a Direct at level+1. This level uses the
         // terminal proof formula.
         if let Some((child_cost, child_sched)) = child.best_direct.as_ref() {
-            let level_proof_size = compute_terminal_level_proof_size::<Cfg>(
+            let level_proof_size = compute_level_proof_size::<Cfg>(
                 &candidate,
+                &candidate.lp,
                 candidate.next_w_len_terminal,
                 1,
+                MRowLayout::Terminal,
             ) + eor_bytes;
             let total = level_proof_size + child_cost;
             let mut steps = Vec::with_capacity(1 + child_sched.len());
@@ -587,7 +572,6 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
                 &candidate,
                 current_w_len,
                 level_proof_size,
-                field_bits,
                 Some(candidate.next_w_len_terminal),
             ));
             steps.extend(child_sched.iter().cloned());
@@ -601,15 +585,19 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
             let Step::Fold(child_fold_step) = &child_sched[0] else {
                 unreachable!("best_fold_per_lb schedules start with Step::Fold");
             };
-            let level_proof_size =
-                compute_level_proof_size::<Cfg>(&candidate, &child_fold_step.params, 1) + eor_bytes;
+            let level_proof_size = compute_level_proof_size::<Cfg>(
+                &candidate,
+                &child_fold_step.params,
+                candidate.next_w_len,
+                1,
+                MRowLayout::Intermediate,
+            ) + eor_bytes;
             let total = level_proof_size + child_cost;
             let mut steps = Vec::with_capacity(1 + child_sched.len());
             steps.push(to_fold_step(
                 &candidate,
                 current_w_len,
                 level_proof_size,
-                field_bits,
                 None,
             ));
             steps.extend(child_sched.iter().cloned());
@@ -653,7 +641,77 @@ fn offline_schedule_for_key<Cfg: CommitmentConfig>(
             fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
         },
     )?;
-    Ok(plan.map(|plan| schedule_from_plan(&plan, Cfg::decomposition().field_bits())))
+    Ok(plan.map(|plan| schedule_from_plan(&plan)))
+}
+
+/// Root-direct commitment `LevelParams` with a symmetric `(m, r)` split.
+///
+/// Root-direct schedules ship the cleartext witness on the wire, so
+/// they don't run the relation fold (D unused). They still build the
+/// outer Ajtai commitment `u = Σ B · t_i = Σ B · A · s_i`, so both A
+/// (witness commit) and B (outer commit) need real SIS-secure sizing.
+fn compute_root_direct_level_params<Cfg: CommitmentConfig>(
+    num_vars: usize,
+    log_basis: u32,
+) -> Result<Option<LevelParams>, AkitaError> {
+    let d = Cfg::D;
+    let alpha = (d as u32).trailing_zeros() as usize;
+    let reduced_vars = num_vars.saturating_sub(alpha);
+    // Symmetric split. `r_vars = log_num_blocks`, `m_vars = log_block_len`.
+    let r_vars = reduced_vars / 2;
+    let m_vars = reduced_vars - r_vars;
+    let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
+        return Ok(None);
+    };
+    let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
+        return Ok(None);
+    };
+    let Some(a_key) = compute_ajtai_key_params_a::<Cfg>(block_len, log_basis)? else {
+        return Ok(None);
+    };
+    let Some(b_key) = compute_ajtai_key_params_b::<Cfg>(a_key.row_len(), num_blocks, 1, log_basis)?
+    else {
+        return Ok(None);
+    };
+    // D is unused at proof time for root-direct (no relation fold).
+    // Placeholder zero-width key via `new_unchecked` to bypass the
+    // strict SIS audit — never flows through `try_new` from here.
+    let d_key = AjtaiKeyParams::new_unchecked(Cfg::sis_modulus_family(), 1, 0, 0, d);
+
+    let witness_len = 1usize.checked_shl(num_vars as u32).unwrap_or(0);
+    let stage1 = Cfg::stage1_challenge_config(d)?;
+    let fold_shape = Cfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
+        num_vars,
+        level: 0,
+        current_w_len: witness_len,
+    });
+    Ok(Some(LevelParams {
+        ring_dimension: d,
+        log_basis,
+        a_key,
+        b_key,
+        d_key,
+        num_blocks,
+        block_len,
+        m_vars,
+        r_vars,
+        stage1_config: stage1.clone(),
+        fold_challenge_shape: fold_shape,
+        num_digits_commit: WitnessType::S.decomposed_num_digits::<Cfg>(log_basis),
+        num_digits_open: WitnessType::T.decomposed_num_digits::<Cfg>(log_basis),
+        // TODO: drop this fake fold-digit count once the ring-switch
+        // validators are gated on schedule shape. Root-direct never
+        // folds, but the verifier's ring-switch path currently rejects
+        // any `LevelParams` with `num_digits_fold == 0`, so we compute
+        // the canonical singleton value here just to keep that check
+        // happy. The "real" value for root-direct is 0.
+        num_digits_fold: WitnessType::Z.decomposed_fold_num_digits::<Cfg>(
+            log_basis,
+            r_vars,
+            fold_shape.effective_l1_mass(&stage1),
+            1,
+        ),
+    }))
 }
 
 /// Find the optimal schedule for a root schedule lookup key under `Cfg`.
@@ -706,42 +764,8 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
     let root_witness_shape = DirectWitnessShape::FieldElements(witness_len);
     let mut best_cost =
         direct_witness_bytes(Cfg::decomposition().field_bits(), &root_witness_shape);
-    // Populate `commit_params` so consumers don't re-derive the root
-    // commit layout from the schedule shape. Large `num_vars` baselines
-    // whose root layout exceeds the audited SIS-floor are still valid as
-    // a proof-bytes upper bound for the DP comparator; they record
-    // `commit_params: None`.
-    let root_direct_commit_params = {
-        let singleton = akita_derive::root_direct_commit_layout(
-            Cfg::sis_modulus_family(),
-            Cfg::D,
-            Cfg::decomposition(),
-            Cfg::stage1_challenge_config(Cfg::D)?,
-            Cfg::ring_subfield_embedding_norm_bound(),
-            key.num_vars,
-            Cfg::decomposition().log_basis,
-        )
-        .ok();
-        // Apply the same batched-root scaling as the Fold-root path so
-        // `commit_params` carries the correct width for non-singleton
-        // incidences.
-        let root_is_batched = num_points != 1 || t_vectors != 1 || w_vectors != 1 || z_vectors != 1;
-        match singleton {
-            Some(lp) if root_is_batched => {
-                // Scaling the singleton root layout multiplies the B/D
-                // widths by `t_vectors` and re-runs `try_new` against
-                // the original ranks. The audit (post-hardening) may
-                // reject when those ranks no longer cover the batched
-                // widths. That's not an error — it just means the
-                // direct-baseline cannot be carried as a layout-typed
-                // hint; the schedule still falls back to `None` and
-                // the direct-witness bytes remain a valid DP upper
-                // bound.
-                scale_batched_root_layout(&lp, t_vectors, Cfg::decomposition().field_bits()).ok()
-            }
-            other => other,
-        }
-    };
+    let root_direct_commit_params =
+        compute_root_direct_level_params::<Cfg>(key.num_vars, Cfg::decomposition().log_basis)?;
     let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
         current_w_len: witness_len,
         witness_shape: root_witness_shape,
@@ -885,10 +909,12 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
 
             // Branch A: suffix at level 1 is a Direct
             if let Some((child_cost, child_sched)) = child.best_direct.as_ref() {
-                let root_proof_size = compute_terminal_level_proof_size::<Cfg>(
+                let root_proof_size = compute_level_proof_size::<Cfg>(
                     &candidate,
+                    &candidate.lp,
                     candidate.next_w_len_terminal,
                     z_vectors,
+                    MRowLayout::Terminal,
                 ) + eor_bytes;
                 let total = root_proof_size + child_cost;
                 if total < best_cost {
@@ -898,7 +924,6 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                         &candidate,
                         witness_len,
                         root_proof_size,
-                        field_bits,
                         Some(candidate.next_w_len_terminal),
                     ));
                     steps.extend(child_sched.iter().cloned());
@@ -910,20 +935,18 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                 let Step::Fold(child_fold_step) = &child_sched[0] else {
                     unreachable!("best_fold_per_lb schedules start with Step::Fold");
                 };
-                let root_proof_size =
-                    compute_level_proof_size::<Cfg>(&candidate, &child_fold_step.params, z_vectors)
-                        + eor_bytes;
+                let root_proof_size = compute_level_proof_size::<Cfg>(
+                    &candidate,
+                    &child_fold_step.params,
+                    candidate.next_w_len,
+                    z_vectors,
+                    MRowLayout::Intermediate,
+                ) + eor_bytes;
                 let total = root_proof_size + child_cost;
                 if total < best_cost {
                     best_cost = total;
                     let mut steps = Vec::with_capacity(1 + child_sched.len());
-                    steps.push(to_fold_step(
-                        &candidate,
-                        witness_len,
-                        root_proof_size,
-                        field_bits,
-                        None,
-                    ));
+                    steps.push(to_fold_step(&candidate, witness_len, root_proof_size, None));
                     steps.extend(child_sched.iter().cloned());
                     best_steps = steps;
                 }

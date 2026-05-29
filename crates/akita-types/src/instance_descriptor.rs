@@ -807,8 +807,6 @@ mod tests {
                 Step::Fold(FoldStep {
                     params: sample_level_params(),
                     current_w_len: 256,
-                    delta_fold_per_poly: 3,
-                    w_ring: 8,
                     next_w_len: 256,
                     level_bytes: 123,
                 }),
