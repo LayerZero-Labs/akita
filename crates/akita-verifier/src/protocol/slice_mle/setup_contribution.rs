@@ -1,6 +1,6 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::eval_ring_at_pows;
+use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_types::AkitaExpandedSetup;
@@ -84,48 +84,83 @@ fn get_eq_indices_for_a(
     (low_eq_idx, depth_commit_idx, block_carry)
 }
 
-#[derive(Copy, Clone)]
-struct PackedInterval {
-    start: usize,
-    end: usize,
-}
-
-impl PackedInterval {
-    #[inline(always)]
-    fn contains(self, start: usize, end: usize) -> bool {
-        self.start <= start && end <= self.end
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline(always)]
+fn jolt_cycle_marker(marker_id_str: &str, event_type: u32) {
+    const JOLT_CYCLE_TRACK_CALL_ID: u32 = 0xC7C1E;
+    let marker_id = marker_id_str.as_ptr() as usize as u32;
+    let marker_len = marker_id_str.len() as u32;
+    unsafe {
+        core::arch::asm!(
+            ".insn i 0x5B, 2, x0, x0, 0",
+            in("x10") JOLT_CYCLE_TRACK_CALL_ID,
+            in("x11") marker_id,
+            in("x12") marker_len,
+            in("x13") event_type,
+            options(nostack, preserves_flags)
+        );
     }
 }
+
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline(always)]
+fn jolt_start_cycle_tracking(marker_id: &str) {
+    jolt_cycle_marker(marker_id, 1);
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+#[inline(always)]
+fn jolt_start_cycle_tracking(_marker_id: &str) {}
+
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline(always)]
+fn jolt_end_cycle_tracking(marker_id: &str) {
+    jolt_cycle_marker(marker_id, 2);
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+#[inline(always)]
+fn jolt_end_cycle_tracking(_marker_id: &str) {}
 
 #[inline(always)]
-fn packed_interval(
-    active: bool,
-    row: usize,
+fn push_role_boundaries(
+    endpoints: &mut Vec<usize>,
+    rows: usize,
     stride: usize,
-    width: usize,
     name: &'static str,
-) -> Result<Option<PackedInterval>, AkitaError> {
-    if !active || width == 0 {
-        return Ok(None);
+) -> Result<(), AkitaError> {
+    if rows == 0 || stride == 0 {
+        return Ok(());
     }
-    let start = row
-        .checked_mul(stride)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("packed {name} row offset overflow")))?;
-    let end = start
-        .checked_add(width)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("packed {name} row end overflow")))?;
-    Ok(Some(PackedInterval { start, end }))
+    let mut boundary = 0usize;
+    for _ in 0..rows {
+        boundary = boundary
+            .checked_add(stride)
+            .ok_or_else(|| AkitaError::InvalidSetup(format!("packed {name} boundary overflow")))?;
+        endpoints.push(boundary);
+    }
+    Ok(())
 }
 
-/// Sum a contiguous absolute slice of the packed setup prefix after alpha
-/// evaluation. The const generics select which of the row-local D/B/A
-/// intervals cover this slice, so inactive arms disappear after
-/// monomorphisation.
+/// Sum a contiguous absolute slice of the packed setup prefix into coefficient
+/// buckets `inner[y] = Σ_λ S(λ,y)·bar_omega(λ)`.
+///
+/// The packed interval split first combines every active D/B/A contribution to
+/// `bar_omega(λ)`, then pairs that total weight with the coefficients of
+/// `S[λ]`. The caller multiplies these buckets by `α^y` only after the setup
+/// scan, making the full shape `Σ_y α^y · inner[y]`.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn packed_slice_inner_sum<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
+fn packed_slice_coefficient_sums<
+    F,
+    E,
+    const D: usize,
+    const HAS_D: bool,
+    const HAS_B: bool,
+    const HAS_A: bool,
+>(
     range: std::ops::Range<usize>,
-    setup_alpha: &[E],
+    setup_flat: &[CyclotomicRing<F, D>],
     d_start: usize,
     d_weight: E,
     w_eq: &[E],
@@ -135,12 +170,16 @@ fn packed_slice_inner_sum<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: 
     a_start: usize,
     a_weight: E,
     z_eq: &[E],
-) -> E
+) -> [E; D]
 where
-    E: FieldCore,
+    F: FieldCore,
+    E: ExtField<F>,
 {
-    cfg_into_iter!(range)
-        .map(|lambda| {
+    jolt_start_cycle_tracking("setup_packed_slice_coefficient_sums");
+    let result = cfg_fold_reduce!(
+        range,
+        || std::array::from_fn(|_| E::zero()),
+        |mut acc, lambda| {
             let mut weight = E::zero();
             if HAS_D {
                 weight += d_weight * w_eq[lambda - d_start];
@@ -153,13 +192,36 @@ where
             if HAS_A {
                 weight += a_weight * z_eq[lambda - a_start];
             }
-            if weight.is_zero() {
-                E::zero()
-            } else {
-                setup_alpha[lambda] * weight
+            if !weight.is_zero() {
+                add_setup_weighted_coefficients(&mut acc, &setup_flat[lambda], weight);
             }
-        })
-        .sum()
+            acc
+        },
+        |mut lhs, rhs| {
+            for (lhs_i, rhs_i) in lhs.iter_mut().zip(rhs) {
+                *lhs_i += rhs_i;
+            }
+            lhs
+        }
+    );
+    jolt_end_cycle_tracking("setup_packed_slice_coefficient_sums");
+    result
+}
+
+/// Add one ring slot to the coefficient buckets for
+/// `Σ_λ S(λ,y)·bar_omega(λ)`.
+#[inline(always)]
+fn add_setup_weighted_coefficients<F, E, const D: usize>(
+    acc: &mut [E; D],
+    setup_ring: &CyclotomicRing<F, D>,
+    setup_weight: E,
+) where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    for (acc_i, coeff) in acc.iter_mut().zip(setup_ring.coefficients()) {
+        *acc_i += setup_weight.mul_base(*coeff);
+    }
 }
 
 /// Compute the fused setup-matrix contribution `D · ŵ + B · t̂ + A · ẑ`
@@ -191,6 +253,12 @@ where
         return Err(AkitaError::InvalidSetup(
             "Z layout requires non-zero block length and commit depth".to_string(),
         ));
+    }
+    if alpha_pows.len() != D {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: alpha_pows.len(),
+        });
     }
     let block_bits = prepared.num_blocks.trailing_zeros() as usize;
     if block_bits > full_vec_randomness.len() {
@@ -330,12 +398,16 @@ where
         .checked_mul(prepared.depth_open)
         .and_then(|len| len.checked_mul(prepared.n_a))
         .ok_or_else(|| AkitaError::InvalidSetup("T high-eq width overflow".to_string()))?;
+    jolt_start_cycle_tracking("setup_hi_eq_tables");
     let eq_hi_w_table: Vec<E> = (0..=w_hi_len)
         .map(|k| eq_eval_at_index(high_challenges, w_offset_high + k))
         .collect();
     let eq_hi_t_table: Vec<E> = (0..=t_hi_len)
         .map(|k| eq_eval_at_index(high_challenges, t_offset_high + k))
         .collect();
+    jolt_end_cycle_tracking("setup_hi_eq_tables");
+
+    jolt_start_cycle_tracking("setup_w_eq_slice");
     let w_eq_slice: Vec<E> = cfg_into_iter!(0..n_cols_w)
         .map(|current_index| {
             let (low_eq_idx, high_eq_idx) = get_eq_indices_for_d(
@@ -351,7 +423,9 @@ where
             eq_low[low_eq_idx] * eq_hi_w_table[high_eq_idx]
         })
         .collect();
+    jolt_end_cycle_tracking("setup_w_eq_slice");
 
+    jolt_start_cycle_tracking("setup_t_eq_slices");
     let t_eq_slice_per_group: Vec<Vec<E>> = (0..prepared.num_points)
         .map(|g| {
             let group_size = prepared.num_polys_per_point[g];
@@ -379,11 +453,13 @@ where
                 .collect()
         })
         .collect();
+    jolt_end_cycle_tracking("setup_t_eq_slices");
 
     // `z_eq_slice[c]` — column-only Z pattern. Pow2: peeled-block lookup
     // `z_block_low_eq[low] · S_per_dc_per_carry[dc][carry]`. Non-pow2:
     // dense aggregation over `(pt, df)` with a one-shot peeled eq cache so
     // per-cell cost stays O(P · DF).
+    jolt_start_cycle_tracking("setup_z_eq_slice");
     let z_eq_slice: Vec<E> = if z_dims_pow2 {
         // `S_per_dc_per_carry[dc][carry] = -Σ_{pt, df} fold_gadget[df]
         //   · eq_hi_z[z_offset_high + (pt + P·df + P·DF·dc) + carry]`
@@ -492,12 +568,11 @@ where
             })
             .collect()
     };
+    jolt_end_cycle_tracking("setup_z_eq_slice");
 
     let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
     let setup_flat = setup_view.as_slice();
-    let setup_alpha: Vec<E> = cfg_into_iter!(0..required)
-        .map(|lambda| eval_ring_at_pows(&setup_flat[lambda], alpha_pows))
-        .collect();
+    jolt_start_cycle_tracking("setup_b_weights");
     let b_weights_by_row: Vec<Vec<E>> = (0..prepared.n_b)
         .map(|row| {
             (0..prepared.num_points)
@@ -505,95 +580,103 @@ where
                 .collect()
         })
         .collect();
+    jolt_end_cycle_tracking("setup_b_weights");
 
-    let row_contribs: Vec<E> = cfg_into_iter!(0..r_max)
-        .map(|row| -> Result<E, AkitaError> {
-            let d_interval = packed_interval(row < n_d_active, row, d_stride, n_cols_w, "D")?;
-            let b_interval = packed_interval(row < prepared.n_b, row, b_stride, n_cols_t, "B")?;
-            let a_interval = packed_interval(row < prepared.n_a, row, z_range, z_range, "A")?;
+    jolt_start_cycle_tracking("setup_inner_product_segments");
+    let mut endpoints = Vec::with_capacity(n_d_active + prepared.n_b + prepared.n_a + 2);
+    endpoints.push(0);
+    endpoints.push(required);
+    push_role_boundaries(&mut endpoints, n_d_active, d_stride, "D")?;
+    push_role_boundaries(&mut endpoints, prepared.n_b, b_stride, "B")?;
+    push_role_boundaries(&mut endpoints, prepared.n_a, z_range, "A")?;
+    endpoints.sort_unstable();
+    endpoints.dedup();
 
-            let mut endpoints = [0usize; 6];
-            let mut n_endpoints = 0usize;
-            for interval in [d_interval, b_interval, a_interval].into_iter().flatten() {
-                endpoints[n_endpoints] = interval.start;
-                endpoints[n_endpoints + 1] = interval.end;
-                n_endpoints += 2;
-            }
-            if n_endpoints == 0 {
-                return Ok(E::zero());
-            }
-            let endpoints = &mut endpoints[..n_endpoints];
-            endpoints.sort_unstable();
-            let mut dedup_len = 0usize;
-            for idx in 0..endpoints.len() {
-                if dedup_len == 0 || endpoints[idx] != endpoints[dedup_len - 1] {
-                    endpoints[dedup_len] = endpoints[idx];
-                    dedup_len += 1;
-                }
+    let segment_coeff_sums: Vec<[E; D]> = cfg_into_iter!(0..endpoints.len().saturating_sub(1))
+        .map(|idx| -> Result<[E; D], AkitaError> {
+            let lo = endpoints[idx];
+            let hi = endpoints[idx + 1];
+            if lo == hi {
+                return Ok(std::array::from_fn(|_| E::zero()));
             }
 
-            let d_start = d_interval.map_or(0, |interval| interval.start);
-            let b_start_abs = b_interval.map_or(0, |interval| interval.start);
-            let a_start = a_interval.map_or(0, |interval| interval.start);
-            let d_weight = if row < n_d_active {
-                d_weights[row]
+            let has_d = d_stride != 0 && lo < d_required;
+            let d_row = if has_d { lo / d_stride } else { 0 };
+            let d_start_abs = if has_d {
+                d_row.checked_mul(d_stride).ok_or_else(|| {
+                    AkitaError::InvalidSetup("D segment start overflow".to_string())
+                })?
             } else {
-                E::zero()
+                0
             };
-            let b_weights: &[E] = if row < prepared.n_b {
-                &b_weights_by_row[row]
-            } else {
-                &[]
-            };
-            let a_weight = if row < prepared.n_a {
-                a_weights[row]
-            } else {
-                E::zero()
-            };
+            let d_weight = if has_d { d_weights[d_row] } else { E::zero() };
 
-            let mut acc = E::zero();
+            let has_b = b_stride != 0 && lo < b_required;
+            let b_row = if has_b { lo / b_stride } else { 0 };
+            let b_start_abs = if has_b {
+                b_row.checked_mul(b_stride).ok_or_else(|| {
+                    AkitaError::InvalidSetup("B segment start overflow".to_string())
+                })?
+            } else {
+                0
+            };
+            let b_weights: &[E] = if has_b { &b_weights_by_row[b_row] } else { &[] };
+
+            let has_a = z_range != 0 && lo < a_required;
+            let a_row = if has_a { lo / z_range } else { 0 };
+            let a_start_abs = if has_a {
+                a_row.checked_mul(z_range).ok_or_else(|| {
+                    AkitaError::InvalidSetup("A segment start overflow".to_string())
+                })?
+            } else {
+                0
+            };
+            let a_weight = if has_a { a_weights[a_row] } else { E::zero() };
+
             macro_rules! segment_sum {
-                ($lo:expr, $hi:expr, $has_d:literal, $has_b:literal, $has_a:literal) => {
-                    packed_slice_inner_sum::<E, $has_d, $has_b, $has_a>(
-                        $lo..$hi,
-                        &setup_alpha,
-                        d_start,
+                ($has_d:literal, $has_b:literal, $has_a:literal) => {
+                    packed_slice_coefficient_sums::<F, E, D, $has_d, $has_b, $has_a>(
+                        lo..hi,
+                        setup_flat,
+                        d_start_abs,
                         d_weight,
                         &w_eq_slice,
                         b_start_abs,
                         b_weights,
                         &t_eq_slice_per_group,
-                        a_start,
+                        a_start_abs,
                         a_weight,
                         &z_eq_slice,
                     )
                 };
             }
-            for idx in 0..dedup_len.saturating_sub(1) {
-                let lo = endpoints[idx];
-                let hi = endpoints[idx + 1];
-                if lo == hi {
-                    continue;
-                }
-                let has_d = d_interval.is_some_and(|interval| interval.contains(lo, hi));
-                let has_b = b_interval.is_some_and(|interval| interval.contains(lo, hi));
-                let has_a = a_interval.is_some_and(|interval| interval.contains(lo, hi));
-                acc += match (has_d, has_b, has_a) {
-                    (true, true, true) => segment_sum!(lo, hi, true, true, true),
-                    (true, true, false) => segment_sum!(lo, hi, true, true, false),
-                    (true, false, true) => segment_sum!(lo, hi, true, false, true),
-                    (false, true, true) => segment_sum!(lo, hi, false, true, true),
-                    (true, false, false) => segment_sum!(lo, hi, true, false, false),
-                    (false, true, false) => segment_sum!(lo, hi, false, true, false),
-                    (false, false, true) => segment_sum!(lo, hi, false, false, true),
-                    (false, false, false) => E::zero(),
-                };
-            }
-            Ok(acc)
+
+            Ok(match (has_d, has_b, has_a) {
+                (true, true, true) => segment_sum!(true, true, true),
+                (true, true, false) => segment_sum!(true, true, false),
+                (true, false, true) => segment_sum!(true, false, true),
+                (false, true, true) => segment_sum!(false, true, true),
+                (true, false, false) => segment_sum!(true, false, false),
+                (false, true, false) => segment_sum!(false, true, false),
+                (false, false, true) => segment_sum!(false, false, true),
+                (false, false, false) => std::array::from_fn(|_| E::zero()),
+            })
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
+    jolt_end_cycle_tracking("setup_inner_product_segments");
 
-    Ok(row_contribs.into_iter().sum())
+    let mut coefficient_sums: [E; D] = std::array::from_fn(|_| E::zero());
+    for segment in segment_coeff_sums {
+        for (coeff_sum, segment_sum) in coefficient_sums.iter_mut().zip(segment) {
+            *coeff_sum += segment_sum;
+        }
+    }
+
+    Ok(coefficient_sums
+        .into_iter()
+        .zip(alpha_pows.iter())
+        .map(|(coeff_sum, alpha_pow)| *alpha_pow * coeff_sum)
+        .sum())
 }
 
 #[cfg(test)]
@@ -602,7 +685,7 @@ mod tests {
 
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
-    use akita_field::Prime128OffsetA7F7;
+    use akita_field::{MulBase, Prime128OffsetA7F7};
     use akita_types::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix, MRowLayout};
 
     type F = Prime128OffsetA7F7;
@@ -610,6 +693,146 @@ mod tests {
 
     fn f(value: u128) -> F {
         F::from_canonical_u128_reduced(value)
+    }
+
+    struct MaterializedSetupOmega {
+        bar_omega: Vec<F>,
+        omega_s: Vec<F>,
+    }
+
+    impl MaterializedSetupOmega {
+        fn coefficient_weight(&self, lambda: usize, y: usize) -> F {
+            self.omega_s[lambda * D + y]
+        }
+
+        fn inner_product(&self, setup_entries: &[CyclotomicRing<F, D>]) -> F {
+            setup_entries
+                .iter()
+                .enumerate()
+                .take(self.bar_omega.len())
+                .map(|(lambda, ring)| {
+                    ring.coefficients()
+                        .iter()
+                        .enumerate()
+                        .map(|(y, &coeff)| self.coefficient_weight(lambda, y).mul_base(coeff))
+                        .sum::<F>()
+                })
+                .sum()
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn materialized_setup_omega(
+        prepared: &RingSwitchDeferredRowEval<F>,
+        full_vec_randomness: &[F],
+        alpha_pows: &[F],
+        fold_gadget: &[F],
+        offset_w: usize,
+        offset_t: usize,
+        offset_z: usize,
+    ) -> MaterializedSetupOmega {
+        let n_d_active = prepared.n_d_active();
+        let d_start = 1 + prepared.num_public_rows;
+        let b_start = d_start + n_d_active;
+        let a_start = b_start + prepared.n_b * prepared.num_points;
+
+        let stride_t = prepared.n_a * prepared.depth_open;
+        let cols_per_poly_t = stride_t * prepared.num_blocks;
+        let b_per_claim_w = prepared.num_blocks * prepared.depth_open;
+        let n_cols_w = prepared.num_claims * b_per_claim_w;
+        let max_group_poly_count = prepared
+            .num_polys_per_point
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0);
+        let n_cols_t = max_group_poly_count * cols_per_poly_t;
+        let z_range = prepared.inner_width;
+        let required = (n_d_active * n_cols_w)
+            .max(prepared.n_b * n_cols_t)
+            .max(prepared.n_a * z_range);
+
+        let mut group_offsets = Vec::with_capacity(prepared.num_polys_per_point.len());
+        let mut next_offset = 0usize;
+        for &group_poly_count in &prepared.num_polys_per_point {
+            group_offsets.push(next_offset);
+            next_offset += group_poly_count;
+        }
+
+        let mut bar_omega = vec![F::zero(); required];
+
+        for row in 0..n_d_active {
+            let row_weight = prepared.eq_tau1[d_start + row];
+            for claim in 0..prepared.num_claims {
+                for block in 0..prepared.num_blocks {
+                    for digit in 0..prepared.depth_open {
+                        let col =
+                            (claim * prepared.num_blocks + block) * prepared.depth_open + digit;
+                        let lambda = row * n_cols_w + col;
+                        let m_idx =
+                            block + prepared.num_blocks * (claim + prepared.num_claims * digit);
+                        bar_omega[lambda] +=
+                            row_weight * eq_eval_at_index(full_vec_randomness, offset_w + m_idx);
+                    }
+                }
+            }
+        }
+
+        for (point_idx, &group_poly_count) in prepared.num_polys_per_point.iter().enumerate() {
+            for poly_idx in 0..group_poly_count {
+                let flat_t_vector = group_offsets[point_idx] + poly_idx;
+                for row in 0..prepared.n_b {
+                    let row_weight = prepared.eq_tau1[b_start + point_idx * prepared.n_b + row];
+                    for a_idx in 0..prepared.n_a {
+                        for digit in 0..prepared.depth_open {
+                            for block in 0..prepared.num_blocks {
+                                let col = poly_idx * cols_per_poly_t
+                                    + block * stride_t
+                                    + a_idx * prepared.depth_open
+                                    + digit;
+                                let lambda = row * n_cols_t + col;
+                                let m_idx = block
+                                    + prepared.num_blocks
+                                        * (flat_t_vector
+                                            + prepared.num_t_vectors * digit
+                                            + prepared.num_t_vectors * prepared.depth_open * a_idx);
+                                bar_omega[lambda] += row_weight
+                                    * eq_eval_at_index(full_vec_randomness, offset_t + m_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for row in 0..prepared.n_a {
+            let row_weight = prepared.eq_tau1[a_start + row];
+            for dc in 0..prepared.depth_commit {
+                for (df, &fold_weight) in fold_gadget.iter().enumerate() {
+                    for point in 0..prepared.num_points {
+                        for block in 0..prepared.block_len {
+                            let col = block * prepared.depth_commit + dc;
+                            let lambda = row * z_range + col;
+                            let m_idx = block
+                                + prepared.block_len
+                                    * (point
+                                        + prepared.num_points * df
+                                        + prepared.num_points * prepared.depth_fold * dc);
+                            bar_omega[lambda] -= row_weight
+                                * fold_weight
+                                * eq_eval_at_index(full_vec_randomness, offset_z + m_idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        let omega_s = bar_omega
+            .iter()
+            .flat_map(|&weight| alpha_pows.iter().map(move |&alpha_pow| weight * alpha_pow))
+            .collect();
+
+        MaterializedSetupOmega { bar_omega, omega_s }
     }
 
     #[test]
@@ -685,7 +908,7 @@ mod tests {
             c_alphas: PreparedChallengeEvals::Flat(
                 (0..total_blocks).map(|idx| f(41 + idx as u128)).collect(),
             ),
-            eq_tau1: eq_tau1.clone(),
+            eq_tau1,
             total_blocks,
             num_t_vectors: num_polys_per_point.iter().sum(),
             num_blocks,
@@ -709,17 +932,14 @@ mod tests {
             num_points,
             rows,
             z_first: false,
-            claim_to_point_poly: claim_to_point_poly.clone(),
-            num_polys_per_point: num_polys_per_point.clone(),
+            claim_to_point_poly,
+            num_polys_per_point,
             num_public_rows,
             gamma: vec![F::one(); num_claims],
             claim_to_point: vec![1, 0, 1],
         };
 
         let full_vec_randomness: Vec<F> = (0..bits).map(|idx| f(101 + idx as u128)).collect();
-        let eq: Vec<F> = (0..(1usize << bits))
-            .map(|idx| eq_eval_at_index(&full_vec_randomness, idx))
-            .collect();
         let alpha = f(19);
         let alpha_pows = scalar_powers(alpha, D);
         let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
@@ -743,87 +963,23 @@ mod tests {
         )
         .unwrap();
 
-        let d_view = setup.shared_matrix().ring_view::<D>(n_d, n_cols_w).unwrap();
-        let d_rows: Vec<_> = d_view.rows().collect();
-        let b_view = setup.shared_matrix().ring_view::<D>(n_b, n_cols_t).unwrap();
-        let b_rows: Vec<_> = b_view.rows().collect();
-        let a_view = setup
-            .shared_matrix()
-            .ring_view::<D>(n_a, inner_width)
-            .unwrap();
-        let a_rows: Vec<_> = a_view.rows().collect();
-        let d_start = 1 + num_public_rows;
-        let b_start = d_start + n_d;
-        let a_start = b_start + n_b * num_points;
+        let omega_s = materialized_setup_omega(
+            &prepared,
+            &full_vec_randomness,
+            &alpha_pows,
+            &fold_gadget,
+            offset_w,
+            offset_t,
+            offset_z,
+        );
+        assert_eq!(omega_s.bar_omega.len(), max_setup_len);
+        assert_eq!(omega_s.omega_s.len(), max_setup_len * D);
 
-        let mut expected = F::zero();
-
-        for row in 0..n_d {
-            let weight = eq_tau1[d_start + row];
-            for claim in 0..num_claims {
-                for block in 0..num_blocks {
-                    for digit in 0..depth_open {
-                        let d_phys_col = (claim * num_blocks + block) * depth_open + digit;
-                        let m_idx = block + num_blocks * (claim + num_claims * digit);
-                        expected += weight
-                            * eval_ring_at_pows(&d_rows[row][d_phys_col], &alpha_pows)
-                            * eq[offset_w + m_idx];
-                    }
-                }
-            }
-        }
-
-        let num_t_vectors: usize = num_polys_per_point.iter().sum();
-        let mut flat_t_vector = 0usize;
-        for (point_idx, &group_poly_count) in num_polys_per_point.iter().enumerate() {
-            for poly_idx in 0..group_poly_count {
-                for row in 0..n_b {
-                    let weight = eq_tau1[b_start + point_idx * n_b + row];
-                    for a_idx in 0..n_a {
-                        for digit in 0..depth_open {
-                            for block in 0..num_blocks {
-                                let phys_claim_offset =
-                                    block * stride_t + a_idx * depth_open + digit;
-                                let local_col = poly_idx * cols_per_poly_t + phys_claim_offset;
-                                let m_idx = block
-                                    + num_blocks
-                                        * (flat_t_vector
-                                            + num_t_vectors * digit
-                                            + num_t_vectors * depth_open * a_idx);
-                                expected += weight
-                                    * eval_ring_at_pows(&b_rows[row][local_col], &alpha_pows)
-                                    * eq[offset_t + m_idx];
-                            }
-                        }
-                    }
-                }
-                flat_t_vector += 1;
-            }
-        }
-
-        for row in 0..n_a {
-            let weight = eq_tau1[a_start + row];
-            for dc in 0..depth_commit {
-                for (df, &fold_weight) in fold_gadget.iter().enumerate() {
-                    for point in 0..num_points {
-                        for block in 0..block_len {
-                            let local_col = block * depth_commit + dc;
-                            let m_idx = block
-                                + block_len
-                                    * (point + num_points * df + num_points * depth_fold * dc);
-                            expected -= weight
-                                * eval_ring_at_pows(&a_rows[row][local_col], &alpha_pows)
-                                * fold_weight
-                                * eq[offset_z + m_idx];
-                        }
-                    }
-                }
-            }
-        }
+        let expected = omega_s.inner_product(&matrix_entries);
 
         assert_eq!(
             got, expected,
-            "fused setup contribution must follow num_polys_per_point and claim_poly_indices"
+            "fused setup contribution must equal <S, omega_S> for the packed coefficient tensor"
         );
     }
 }

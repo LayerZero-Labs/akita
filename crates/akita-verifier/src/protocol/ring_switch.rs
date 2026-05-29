@@ -34,6 +34,44 @@ mod tensor_challenges;
 #[cfg(test)]
 mod tests;
 
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline(always)]
+fn jolt_cycle_marker(marker_id_str: &str, event_type: u32) {
+    const JOLT_CYCLE_TRACK_CALL_ID: u32 = 0xC7C1E;
+    let marker_id = marker_id_str.as_ptr() as usize as u32;
+    let marker_len = marker_id_str.len() as u32;
+    unsafe {
+        core::arch::asm!(
+            ".insn i 0x5B, 2, x0, x0, 0",
+            in("x10") JOLT_CYCLE_TRACK_CALL_ID,
+            in("x11") marker_id,
+            in("x12") marker_len,
+            in("x13") event_type,
+            options(nostack, preserves_flags)
+        );
+    }
+}
+
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline(always)]
+fn jolt_start_cycle_tracking(marker_id: &str) {
+    jolt_cycle_marker(marker_id, 1);
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+#[inline(always)]
+fn jolt_start_cycle_tracking(_marker_id: &str) {}
+
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline(always)]
+fn jolt_end_cycle_tracking(marker_id: &str) {
+    jolt_cycle_marker(marker_id, 2);
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+#[inline(always)]
+fn jolt_end_cycle_tracking(_marker_id: &str) {}
+
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
@@ -884,7 +922,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- Fused D·ŵ + B·t̂ + A·ẑ ---------------------------------------
         let setup_contribution = {
             let _span = tracing::info_span!("setup_contribution").entered();
-            compute_setup_contribution::<F, E, D>(
+            jolt_start_cycle_tracking("setup_contribution");
+            let result = compute_setup_contribution::<F, E, D>(
                 self,
                 x_challenges,
                 setup,
@@ -895,7 +934,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 layout.offset_w,
                 layout.offset_t,
                 layout.offset_z,
-            )?
+            );
+            jolt_end_cycle_tracking("setup_contribution");
+            result?
         };
 
         // ----- Z (consistency-row) ------------------------------------------
