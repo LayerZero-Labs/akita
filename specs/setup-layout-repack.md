@@ -897,6 +897,40 @@ For the later offloading branches:
 - selected-prefix opening claims are transcript-bound and batched with the next
   recursive folded-witness opening.
 
+## Deferred: Multi-Point B Commitment Kernel
+
+The layout branch commits multi-point B with one cyclic NTT pass per opening
+point.
+`repeated_b_commitment_rows` loops over the `num_polys_per_point` groups and
+calls the single-RHS cyclic mat-vec once per group, zero-padding each group to
+the packed `W_B = max(num_polys_per_point) * n_a * num_blocks * depth_open`
+width.
+Single-point B avoids the extra passes by fusing into the
+`fused_split_eq_quotients` pass that already computes D and A.
+
+This single-vs-multi split is a consequence of a missing kernel, not of the
+packed B layout itself.
+There is no cyclic-domain mat-vec that multiplies one B setup view by several
+right-hand-side digit columns in a single cache pass, even though the
+negacyclic side already batches multiple RHS over shared column tiles.
+Because that kernel does not exist, multi-point B pays `num_points` full B
+cache traversals, and the prover forks single-point vs multi-point B in
+`compute_r_split_eq` via `use_relation_b_rows`.
+
+The clean follow-up extends `fused_split_eq_quotients` so its B branch loops
+over the point groups inside the existing column-tile pass, reusing each loaded
+B row across groups.
+D and A stay point-independent and unchanged.
+This recovers cache amortization for multi-point B and lets single-point be the
+`num_points == 1` case, which removes the prover fork and `repeated_b` entirely.
+ZK per-group B blinding folds in as a per-group add after the B accumulation.
+
+This is a prover-performance and code-simplification follow-up.
+It is out of scope for the layout cutover, which only needs the direct path to
+stay correct.
+It is independent of setup-claim offloading and can land before or after the
+offloading lanes.
+
 ## Non-Goals
 
 - No Rust implementation in this spec-only PR.
