@@ -1,5 +1,4 @@
-use super::fixtures::{SetupContributionFixture, SetupContributionShape, TestField, TEST_RING_DIM};
-use crate::protocol::slice_mle::setup_inner_product_oracle::materialize_setup_omega;
+use super::fixtures::{SetupContributionFixture, SetupContributionShape, TEST_RING_DIM};
 use akita_algebra::ring::scalar_powers;
 
 #[test]
@@ -49,16 +48,7 @@ fn setup_oracle_keeps_alpha_on_weight_side() {
     let fixture =
         SetupContributionFixture::from_shape(&SetupContributionShape::root_single_point());
     let alpha = fixture.alpha_pows[1];
-    let omega = materialize_setup_omega::<TestField, TestField, TEST_RING_DIM>(
-        &fixture.prepared,
-        &fixture.full_vec_randomness,
-        &fixture.alpha_pows,
-        &fixture.fold_gadget,
-        fixture.offset_w,
-        fixture.offset_t,
-        fixture.offset_z,
-    )
-    .unwrap();
+    let omega = fixture.materialized_omega_with_alpha(&fixture.alpha_pows);
 
     for (lambda, &bar_weight) in omega.bar_omega.iter().enumerate() {
         if bar_weight.is_zero() {
@@ -76,16 +66,7 @@ fn setup_oracle_keeps_alpha_on_weight_side() {
 
     let shifted_alpha = alpha + fixture.full_vec_randomness[0];
     let shifted_alpha_pows = scalar_powers(shifted_alpha, TEST_RING_DIM);
-    let shifted_omega = materialize_setup_omega::<TestField, TestField, TEST_RING_DIM>(
-        &fixture.prepared,
-        &fixture.full_vec_randomness,
-        &shifted_alpha_pows,
-        &fixture.fold_gadget,
-        fixture.offset_w,
-        fixture.offset_t,
-        fixture.offset_z,
-    )
-    .unwrap();
+    let shifted_omega = fixture.materialized_omega_with_alpha(&shifted_alpha_pows);
     assert_ne!(
         omega.omega_s, shifted_omega.omega_s,
         "changing alpha must change omega_S while bar_omega stays fixed"

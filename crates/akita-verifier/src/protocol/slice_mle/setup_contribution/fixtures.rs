@@ -8,9 +8,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout};
 
+use super::{MaterializedSetupOmega, SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
 use crate::protocol::ring_switch::{PreparedChallengeEvals, RingSwitchDeferredRowEval};
-use crate::protocol::slice_mle::setup_contribution::compute_setup_contribution;
-use crate::protocol::slice_mle::setup_inner_product_oracle::materialize_setup_omega;
 
 pub(crate) type TestField = Prime128OffsetA7F7;
 pub(crate) const TEST_RING_DIM: usize = 32;
@@ -259,32 +258,56 @@ impl SetupContributionFixture {
     }
 
     pub fn compute_contribution(&self) -> TestField {
-        compute_setup_contribution::<TestField, TestField, TEST_RING_DIM>(
+        let evaluator = SetupEvaluator::new(
             &self.prepared,
             &self.full_vec_randomness,
-            &self.setup,
-            &self.eq_low,
-            &self.z_block_low_eq,
+            Some(&self.eq_low),
+            Some(&self.z_block_low_eq),
             &self.alpha_pows,
             &self.fold_gadget,
             self.offset_w,
             self.offset_t,
             self.offset_z,
-        )
-        .unwrap()
+        );
+        match evaluator
+            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Direct { setup: &self.setup })
+            .unwrap()
+        {
+            SetupEvaluation::Direct(value) => value,
+            SetupEvaluation::Recursive(_) => {
+                panic!("setup evaluator returned recursive output for direct mode")
+            }
+        }
+    }
+
+    pub fn materialized_omega_with_alpha(
+        &self,
+        alpha_pows: &[TestField],
+    ) -> MaterializedSetupOmega<TestField> {
+        let evaluator = SetupEvaluator::new(
+            &self.prepared,
+            &self.full_vec_randomness,
+            None,
+            None,
+            alpha_pows,
+            &self.fold_gadget,
+            self.offset_w,
+            self.offset_t,
+            self.offset_z,
+        );
+        match evaluator
+            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Recursive)
+            .unwrap()
+        {
+            SetupEvaluation::Recursive(omega) => omega,
+            SetupEvaluation::Direct(_) => {
+                panic!("setup evaluator returned direct output for recursive mode")
+            }
+        }
     }
 
     pub fn materialized_inner_product(&self) -> TestField {
-        let omega = materialize_setup_omega::<TestField, TestField, TEST_RING_DIM>(
-            &self.prepared,
-            &self.full_vec_randomness,
-            &self.alpha_pows,
-            &self.fold_gadget,
-            self.offset_w,
-            self.offset_t,
-            self.offset_z,
-        )
-        .unwrap();
+        let omega = self.materialized_omega_with_alpha(&self.alpha_pows);
         assert_eq!(omega.bar_omega.len(), self.max_setup_len);
         assert_eq!(omega.omega_s.len(), self.max_setup_len * TEST_RING_DIM);
         omega.inner_product(&self.matrix_entries).unwrap()

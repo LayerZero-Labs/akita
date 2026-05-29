@@ -23,9 +23,9 @@ use akita_types::{
 #[cfg(feature = "zk")]
 use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
-    compute_r_contribution, compute_setup_contribution, StructuredSliceMleEvaluator,
-    TStructuredSlicesEvaluator, WStructuredSlicesEvaluator, ZDenseSlicesEvaluator,
-    ZStructuredPow2SlicesEvaluator,
+    compute_r_contribution, SetupEvaluation, SetupEvaluator, SetupEvaluatorMode,
+    StructuredSliceMleEvaluator, TStructuredSlicesEvaluator, WStructuredSlicesEvaluator,
+    ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
 use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
@@ -779,7 +779,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
 
         // Eq table over the low `log₂(num_blocks)` bits, shared by W/T
-        // peeled summaries and by `compute_setup_contribution`.
+        // peeled summaries and by `SetupEvaluator` direct mode.
         let offset_low_bits = self.num_blocks.trailing_zeros() as usize;
         if offset_low_bits > x_challenges.len() {
             return Err(AkitaError::InvalidSize {
@@ -923,18 +923,24 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let setup_contribution = {
             let _span = tracing::info_span!("setup_contribution").entered();
             jolt_start_cycle_tracking("setup_contribution");
-            let result = compute_setup_contribution::<F, E, D>(
+            let evaluator = SetupEvaluator::new(
                 self,
                 x_challenges,
-                setup,
-                &eq_low,
-                &z_block_low_eq,
+                Some(&eq_low),
+                Some(&z_block_low_eq),
                 &alpha_pows,
                 &fold_gadget,
                 layout.offset_w,
                 layout.offset_t,
                 layout.offset_z,
             );
+            let result = match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
+                SetupEvaluation::Direct(value) => Ok(value),
+                #[cfg(test)]
+                SetupEvaluation::Recursive(_) => Err(AkitaError::InvalidSetup(
+                    "setup evaluator returned recursive output for direct mode".into(),
+                )),
+            };
             jolt_end_cycle_tracking("setup_contribution");
             result?
         };

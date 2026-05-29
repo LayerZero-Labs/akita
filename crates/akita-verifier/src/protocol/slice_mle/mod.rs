@@ -12,12 +12,11 @@
 //! the results — each slice is orders of magnitude smaller than `M`.
 
 mod setup_contribution;
-mod setup_inner_product_oracle;
 mod structured_slice;
 #[cfg(feature = "zk")]
 mod zk_blinding;
 
-pub(super) use setup_contribution::compute_setup_contribution;
+pub(super) use setup_contribution::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
 pub(super) use structured_slice::{
     compute_r_contribution, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
     WStructuredSlicesEvaluator, ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
