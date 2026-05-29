@@ -235,14 +235,17 @@ pub struct AkitaPlannedDirectStep {
     pub witness_shape: DirectWitnessShape,
     /// Exact bytes contributed by the packed direct witness.
     pub direct_bytes: usize,
-    /// Commit-layout params for the root-direct case (planned root
-    /// step is `Direct`). See [`DirectStep::commit_params`] for the full
-    /// three-state contract; the same rules apply here.
-    pub commit_params: Option<LevelParams>,
-    /// SIS-secure level params for the terminal `Direct(PackedDigits)`
-    /// step that sits after one or more folds. `None` for root-direct
-    /// (the root direct has no sumcheck-time level after itself).
-    pub level_params: Option<LevelParams>,
+    /// `LevelParams` associated with this Direct step. Position-dependent:
+    ///
+    /// - root-direct (planned root step is this `Direct`, `witness_shape =
+    ///   FieldElements`): the root commit layout. `None` is the
+    ///   uncommittable edge case (singleton root layout exceeds the
+    ///   audited SIS floor — usable for proof-size exploration but
+    ///   rejected by `get_params_for_batched_commitment`).
+    /// - terminal direct after one or more folds (`witness_shape =
+    ///   PackedDigits`): SIS-secure level params for the direct's
+    ///   commitment. Always `Some` in this case.
+    pub params: Option<LevelParams>,
 }
 
 /// Exact current-step execution data recovered from a pinned schedule.
@@ -261,7 +264,8 @@ pub enum AkitaPlannedStep {
     Fold(Box<AkitaPlannedLevel>),
     /// The terminal packed-witness direct handoff. Boxed so the variant
     /// stays small after `AkitaPlannedDirectStep` gained a
-    /// root-direct `commit_params: Option<LevelParams>` field.
+    /// `params: Option<LevelParams>` field carrying the position-
+    /// dependent commit/level layout.
     Direct(Box<AkitaPlannedDirectStep>),
 }
 
@@ -634,30 +638,30 @@ pub struct DirectStep {
     pub witness_shape: DirectWitnessShape,
     /// Direct witness bytes.
     pub direct_bytes: usize,
-    /// Commit-layout params for the root-direct case (the schedule's
-    /// first step is this `Direct`). Three states:
+    /// `LevelParams` associated with this Direct step. The meaning is
+    /// position-dependent (the two cases are mutually exclusive, so a
+    /// single field suffices):
     ///
-    /// - `Some(_)` — root-direct, committable. The verifier replays
-    ///   commitments against these params and the transcript binding
-    ///   hashes them into `SetupSection::level_params_digest`. This is
-    ///   the common case.
-    /// - `None`, schedule starts with this `Direct` — root-direct,
-    ///   *uncommittable* edge entry: a table-recorded large-`num_vars`
-    ///   entry whose singleton root layout exceeds the audited SIS
-    ///   floor. The schedule is intentionally usable for `proof_size`
-    ///   exploration and DP planning, but `get_params_for_batched_commitment`
-    ///   rejects it loudly and `setup_level_params_from_runtime_schedule`
-    ///   returns an empty list. Don't commit through such a schedule.
-    /// - `None`, schedule starts with a fold — terminal direct after
-    ///   one or more folds; the root commit layout lives on the first
-    ///   fold step instead, so this field is unused.
-    pub commit_params: Option<LevelParams>,
-    /// SIS-secure level params for this terminal `Direct(PackedDigits)`
-    /// step (i.e. the params the prover/verifier consume as the
-    /// next-level params at the end of a folded schedule). Always set
-    /// for terminal-direct after a fold; left `None` for root-direct,
-    /// where the run never traverses past the direct step.
-    pub level_params: Option<LevelParams>,
+    /// - **root-direct** (schedule starts with this `Direct`,
+    ///   `witness_shape = FieldElements`). `Some(_)` is the root commit
+    ///   layout — the verifier replays commitments against it and the
+    ///   transcript binding hashes it into
+    ///   `SetupSection::level_params_digest`. `None` is the
+    ///   *uncommittable* edge: a table-recorded large-`num_vars` entry
+    ///   whose singleton root layout exceeds the audited SIS floor.
+    ///   The schedule is intentionally usable for proof-size
+    ///   exploration and DP planning, but
+    ///   `get_params_for_batched_commitment` rejects it loudly and
+    ///   `setup_level_params_from_runtime_schedule` returns an empty
+    ///   list. Don't commit through such a schedule.
+    ///
+    /// - **terminal direct after one or more folds** (`witness_shape =
+    ///   PackedDigits`). `Some(_)` is the SIS-secure level params for
+    ///   this terminal direct's commitment, consumed by the
+    ///   prover/verifier as the next-level params at the end of the
+    ///   folded walk. Always `Some` here; `None` would indicate a
+    ///   planner bug.
+    pub params: Option<LevelParams>,
 }
 
 impl DirectStep {
@@ -760,10 +764,8 @@ pub fn root_direct_schedule(
             current_w_len,
             witness_shape: DirectWitnessShape::FieldElements(current_w_len),
             direct_bytes: 0,
-            commit_params: Some(commit_params),
-            // Root-direct never has a "next level after itself"; the
-            // schedule walks the single direct step and stops.
-            level_params: None,
+            // Root-direct: stores the root commit layout.
+            params: Some(commit_params),
         })],
         total_bytes: 0,
     })
@@ -954,8 +956,7 @@ pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule
                     current_w_len: direct.state.current_w_len,
                     witness_shape: direct.witness_shape.clone(),
                     direct_bytes: direct.direct_bytes,
-                    commit_params: direct.commit_params.clone(),
-                    level_params: direct.level_params.clone(),
+                    params: direct.params.clone(),
                 }));
             }
         }
@@ -1017,7 +1018,7 @@ pub fn schedule_terminal_direct_witness_shape(
 ///
 /// Returns an error when `step_index` is outside the schedule or when a
 /// terminal `Direct(PackedDigits)` step is missing its baked
-/// `level_params`.
+/// level params.
 pub fn scheduled_next_level_params(
     schedule: &Schedule,
     step_index: usize,
@@ -1025,7 +1026,7 @@ pub fn scheduled_next_level_params(
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
         Some(Step::Direct(step)) => match step.witness_shape {
-            DirectWitnessShape::PackedDigits(_) => step.level_params.clone().ok_or_else(|| {
+            DirectWitnessShape::PackedDigits(_) => step.params.clone().ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "terminal direct step is missing baked level params".to_string(),
                 )
@@ -1121,8 +1122,7 @@ mod tests {
         assert_eq!(step.current_w_len, 8);
         assert_eq!(step.witness_shape, DirectWitnessShape::FieldElements(8));
         assert_eq!(step.direct_bytes, 0);
-        assert_eq!(step.commit_params.as_ref(), Some(&dummy_commit_params));
-        assert!(step.level_params.is_none());
+        assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
     }
 
     #[cfg(not(feature = "zk"))]

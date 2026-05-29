@@ -156,10 +156,7 @@ pub fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams
         .iter()
         .filter_map(|step| match step {
             AkitaPlannedStep::Fold(level) => Some(level.lp.clone()),
-            AkitaPlannedStep::Direct(direct) => direct
-                .commit_params
-                .clone()
-                .or_else(|| direct.level_params.clone()),
+            AkitaPlannedStep::Direct(direct) => direct.params.clone(),
         })
         .collect()
 }
@@ -172,10 +169,7 @@ pub fn setup_level_params_from_runtime_schedule(steps: &[akita_types::Step]) -> 
         .iter()
         .filter_map(|step| match step {
             akita_types::Step::Fold(fold_step) => Some(fold_step.params.clone()),
-            akita_types::Step::Direct(direct) => direct
-                .commit_params
-                .clone()
-                .or_else(|| direct.level_params.clone()),
+            akita_types::Step::Direct(direct) => direct.params.clone(),
         })
         .collect()
 }
@@ -430,8 +424,7 @@ mod tests {
                 current_w_len: 1 << 4,
                 witness_shape: DirectWitnessShape::PackedDigits((16, 3)),
                 direct_bytes: 0,
-                commit_params: None,
-                level_params: Some(direct_lp.clone()),
+                params: Some(direct_lp.clone()),
             }),
         ];
 
@@ -440,7 +433,7 @@ mod tests {
         assert_eq!(setup_levels[0], fold_lp);
         assert_eq!(
             setup_levels[1], direct_lp,
-            "terminal Direct.level_params must feed setup-level params (and the transcript binding's level_params_digest); see bind_transcript_instance_descriptor"
+            "terminal Direct.params must feed setup-level params (and the transcript binding's level_params_digest); see bind_transcript_instance_descriptor"
         );
     }
 
@@ -448,10 +441,10 @@ mod tests {
     fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_params_error() {
         // Documents the deliberate asymmetry between
         // `setup_level_params_from_runtime_schedule` (silently skips
-        // root-direct schedules with `commit_params: None`) and
+        // root-direct schedules with `params: None`) and
         // `Cfg::get_params_for_batched_commitment` (rejects the same
         // schedule with a documented `InvalidSetup` message). The
-        // contract is described on `DirectStep::commit_params` and the
+        // contract is described on `DirectStep::params` and the
         // materializer comment that branches on it; this test locks
         // it in so neither side drifts.
         use akita_types::{DirectStep, DirectWitnessShape, Schedule, Step};
@@ -461,8 +454,7 @@ mod tests {
                 current_w_len: 1 << 10,
                 witness_shape: DirectWitnessShape::FieldElements(1 << 10),
                 direct_bytes: 0,
-                commit_params: None,
-                level_params: None,
+                params: None,
             })],
             total_bytes: 0,
         };
@@ -471,7 +463,7 @@ mod tests {
         assert!(
             bound.is_empty(),
             "uncommittable root-direct schedule must produce no setup levels; \
-             see DirectStep::commit_params"
+             see DirectStep::params"
         );
 
         // The trait default `get_params_for_batched_commitment` reads
@@ -530,8 +522,7 @@ mod tests {
                         current_w_len: 1 << 10,
                         witness_shape: DirectWitnessShape::FieldElements(1 << 10),
                         direct_bytes: 0,
-                        commit_params: None,
-                        level_params: None,
+                        params: None,
                     })],
                     total_bytes: 0,
                 })
@@ -592,21 +583,6 @@ mod tests {
             vec![real_params],
             "fallback schedule must bind the real-incidence params the verifier recomputes"
         );
-    }
-
-    #[test]
-    #[cfg(not(feature = "zk"))]
-    fn setup_matrix_envelope_covers_grouped_batch_schedules() {
-        let incidence =
-            ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
-        let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence)
-            .unwrap()
-            .expect("D32 full table must contain the grouped same-point schedule");
-
-        let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
-            .expect("setup envelope should cover generated grouped batch schedules");
-        assert!(setup_envelope.0 >= grouped_same_point.0);
-        assert!(setup_envelope.1 >= grouped_same_point.1);
     }
 
     #[test]

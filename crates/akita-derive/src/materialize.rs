@@ -480,30 +480,48 @@ where
                         "generated direct step must be terminal".to_string(),
                     ));
                 }
-                // Root-direct entries (`fold_level == 0`) carry the root
-                // commit layout — same role as `FoldStep.params` for
-                // Fold-root entries, so the same batched scaling applies
-                // when the entry is for a non-singleton incidence.
+                // Compute the witness shape first so the terminal-
+                // direct branch can read `terminal_field_len` for both
+                // `witness_shape` and the SIS-secure level params.
+                let witness_shape = if fold_level == 0 {
+                    DirectWitnessShape::FieldElements(current_w_len)
+                } else {
+                    let terminal_field_len = terminal_witness_field_len.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal direct step missing precomputed witness length".to_string(),
+                        )
+                    })?;
+                    DirectWitnessShape::PackedDigits((terminal_field_len, current_log_basis))
+                };
+                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
+
+                let direct_current_w_len = match &witness_shape {
+                    DirectWitnessShape::PackedDigits((len, _)) => *len,
+                    DirectWitnessShape::FieldElements(len) => *len,
+                };
+                // `params` is position-dependent:
                 //
-                // Tables also contain large-`num_vars` root-direct edge
-                // entries whose singleton root layout exceeds the audited
-                // SIS floor. We materialize those with `commit_params:
-                // None` *deliberately*: such schedules are valid for
-                // `proof_size` exploration and DP planning but must not
-                // be committed against. The contract is documented on
-                // [`DirectStep::commit_params`]; concretely it means
-                // `Cfg::get_params_for_batched_commitment` rejects the
-                // schedule with `InvalidSetup("root-direct schedule is
-                // missing commit params")` and
-                // `setup_level_params_from_runtime_schedule` returns
-                // an empty list. See `commit_params_uncommittable_root_direct`
-                // tests in `proof_optimized.rs` for the locked-in
-                // behavior.
+                // - Root-direct entries (`fold_level == 0`) carry the
+                //   root commit layout — same role as `FoldStep.params`
+                //   for Fold-root entries, so the same batched scaling
+                //   applies when the entry is for a non-singleton
+                //   incidence. Tables also contain large-`num_vars`
+                //   root-direct edge entries whose singleton root
+                //   layout exceeds the audited SIS floor; those
+                //   materialize with `params: None` *deliberately*.
+                //   See `DirectStep::params` for the contract:
+                //   `Cfg::get_params_for_batched_commitment` rejects
+                //   those schedules, and
+                //   `setup_level_params_from_runtime_schedule` returns
+                //   an empty list (locked in by
+                //   `commit_params_uncommittable_root_direct` tests in
+                //   `proof_optimized.rs`).
                 //
-                // Terminal direct (`fold_level > 0`) leaves `commit_params`
-                // as `None`; the root commit layout lives on the first
-                // fold step instead.
-                let commit_params = if fold_level == 0 {
+                // - Terminal direct (`fold_level > 0`) bakes the
+                //   SIS-secure direct level params onto the step so
+                //   prover/verifier can read the next-level params
+                //   straight from the schedule.
+                let params = if fold_level == 0 {
                     let singleton = crate::root_direct_commit_layout(
                         sis_family,
                         ring_dimension,
@@ -526,7 +544,7 @@ where
                             // ranks. The strict audit may reject when those
                             // ranks no longer cover the batched widths.
                             // That's not an error — the schedule still
-                            // ships with `commit_params: None` (matching
+                            // ships with `params: None` (matching
                             // `find_schedule`'s root-direct baseline) and
                             // downstream consumers re-derive the commit
                             // layout from the runtime schedule shape.
@@ -540,31 +558,6 @@ where
                         other => other,
                     }
                 } else {
-                    None
-                };
-                let witness_shape = if fold_level == 0 {
-                    DirectWitnessShape::FieldElements(current_w_len)
-                } else {
-                    let terminal_field_len = terminal_witness_field_len.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "terminal direct step missing precomputed witness length".to_string(),
-                        )
-                    })?;
-                    DirectWitnessShape::PackedDigits((terminal_field_len, current_log_basis))
-                };
-                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-
-                let direct_current_w_len = match &witness_shape {
-                    DirectWitnessShape::PackedDigits((len, _)) => *len,
-                    DirectWitnessShape::FieldElements(len) => *len,
-                };
-                // Bake terminal-direct level params onto the planned step
-                // for `fold_level > 0` (i.e. terminal `Direct(PackedDigits)`
-                // after at least one fold), so prover/verifier can read
-                // the next-level params straight from the schedule.
-                // Root-direct (`fold_level == 0`) has no next level, so
-                // `level_params` stays `None`.
-                let level_params = if fold_level > 0 {
                     Some(crate::direct_level_params_with_log_basis(
                         sis_family,
                         ring_dimension,
@@ -578,8 +571,6 @@ where
                         },
                         current_log_basis,
                     )?)
-                } else {
-                    None
                 };
                 let state = AkitaPlannedState {
                     level: fold_level,
@@ -590,8 +581,7 @@ where
                     state,
                     witness_shape,
                     direct_bytes,
-                    commit_params,
-                    level_params,
+                    params,
                 })));
             }
         }

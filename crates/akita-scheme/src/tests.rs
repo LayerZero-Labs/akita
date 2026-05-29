@@ -1560,12 +1560,11 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                         3,
                     )),
                     direct_bytes: compact_w_len,
-                    commit_params: None,
                     // Stub fixture: terminal-direct level params equal the
                     // fold's `lp` (matches the deleted
                     // `Cfg::level_params_with_log_basis` override that
                     // returned `Self::root_lp()`).
-                    level_params: Some(lp.clone()),
+                    params: Some(lp.clone()),
                 }),
             ],
             total_bytes: 0,
@@ -1669,12 +1668,11 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                     current_w_len: next_w_len,
                     witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
                     direct_bytes: next_w_len,
-                    commit_params: None,
                     // Stub fixture: terminal-direct level params equal the
                     // fold's `lp` (matches the deleted
                     // `Cfg::level_params_with_log_basis` override that
                     // returned `Self::root_lp()`).
-                    level_params: Some(lp.clone()),
+                    params: Some(lp.clone()),
                 }),
             ],
             total_bytes: 0,

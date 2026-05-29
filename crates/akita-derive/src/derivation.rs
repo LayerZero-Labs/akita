@@ -466,7 +466,8 @@ pub fn derived_root_commitment_layout_from_params(
 /// Derive the root commit layout for a root-direct schedule at `num_vars`.
 ///
 /// Used by both the planner DP and the schedule-table materializer to fill
-/// `DirectStep.commit_params` when the schedule emits a root-direct step.
+/// `DirectStep.params` (the root-commit-layout slot) when the schedule
+/// emits a root-direct step.
 /// Consumers (`Cfg::get_params_for_batched_commitment`, prover/verifier
 /// commit paths) then read commit params straight off the schedule, with
 /// no out-of-band fallback derivation.

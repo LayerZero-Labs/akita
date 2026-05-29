@@ -183,26 +183,24 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Root commit layout the `batched_prove` flow uses for `incidence`,
     /// read straight off the schedule's first step (Fold params or
-    /// root-direct `commit_params`). Same layout per-point commits use,
-    /// so they stay compatible with the batched prove root.
+    /// the root-direct's `params` slot). Same layout per-point commits
+    /// use, so they stay compatible with the batched prove root.
     ///
     /// # Errors
     ///
     /// Propagates `get_params_for_prove`; errors if the root-direct
-    /// schedule lacks `commit_params`.
+    /// schedule lacks `params` (the uncommittable edge case).
     fn get_params_for_batched_commitment(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<LevelParams, AkitaError> {
         let schedule = Self::get_params_for_prove(incidence)?;
         match schedule.steps.first() {
             Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            Some(akita_types::Step::Direct(direct)) => {
-                direct.commit_params.clone().ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "root-direct schedule is missing commit params".to_string(),
-                    )
-                })
-            }
+            Some(akita_types::Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "root-direct schedule is missing commit params".to_string(),
+                )
+            }),
             None => Err(AkitaError::InvalidSetup(
                 "schedule has no steps".to_string(),
             )),
