@@ -11,43 +11,32 @@ pub(super) fn mat_vec_mul_digits_i8_block_parallel<
     const K: usize,
     const D: usize,
     const CHECK_ZERO: bool,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     if ntt_mat.len() == 1 {
-        return mat_vec_mul_digits_i8_single_row_block_parallel::<F, W, K, D, CHECK_ZERO, L>(
-            ntt_mat,
-            blocks,
-            DigitLutLen::<L>,
-            params,
+        return mat_vec_mul_digits_i8_single_row_block_parallel::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat, blocks, params,
         )
         .into_iter()
         .map(|ring| vec![ring])
         .collect();
     }
     if ntt_mat.len() == 2 {
-        return mat_vec_mul_digits_i8_two_row_block_parallel::<F, W, K, D, CHECK_ZERO, L>(
-            ntt_mat,
-            blocks,
-            DigitLutLen::<L>,
-            params,
+        return mat_vec_mul_digits_i8_two_row_block_parallel::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat, blocks, params,
         );
     }
     if ntt_mat.len() == 3 {
-        return mat_vec_mul_digits_i8_three_row_block_parallel::<F, W, K, D, CHECK_ZERO, L>(
-            ntt_mat,
-            blocks,
-            DigitLutLen::<L>,
-            params,
+        return mat_vec_mul_digits_i8_three_row_block_parallel::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat, blocks, params,
         );
     }
 
     let n_a = ntt_mat.len();
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -77,15 +66,13 @@ pub(super) fn mat_vec_mul_digits_i8_single_row_block_parallel<
     const K: usize,
     const D: usize,
     const CHECK_ZERO: bool,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     debug_assert_eq!(ntt_mat.len(), 1);
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let mat_row = &ntt_mat[0];
 
     cfg_into_iter!(blocks)
@@ -117,15 +104,13 @@ pub(super) fn mat_vec_mul_digits_i8_two_row_block_parallel<
     const K: usize,
     const D: usize,
     const CHECK_ZERO: bool,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     debug_assert_eq!(ntt_mat.len(), 2);
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let mat_row0 = &ntt_mat[0];
     let mat_row1 = &ntt_mat[1];
 
@@ -163,15 +148,13 @@ pub(super) fn mat_vec_mul_digits_i8_three_row_block_parallel<
     const K: usize,
     const D: usize,
     const CHECK_ZERO: bool,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     debug_assert_eq!(ntt_mat.len(), 3);
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let mat_row0 = &ntt_mat[0];
     let mat_row1 = &ntt_mat[1];
     let mat_row2 = &ntt_mat[2];
@@ -211,23 +194,16 @@ pub(super) fn mat_vec_mul_digits_i8_strided_block_parallel<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     if ntt_mat.len() == 1 {
         return mat_vec_mul_digits_i8_single_row_strided_block_parallel(
-            ntt_mat,
-            coeffs,
-            num_blocks,
-            block_len,
-            DigitLutLen::<L>,
-            params,
+            ntt_mat, coeffs, num_blocks, block_len, params,
         )
         .into_iter()
         .map(|ring| vec![ring])
@@ -235,27 +211,17 @@ pub(super) fn mat_vec_mul_digits_i8_strided_block_parallel<
     }
     if ntt_mat.len() == 2 {
         return mat_vec_mul_digits_i8_two_row_strided_block_parallel(
-            ntt_mat,
-            coeffs,
-            num_blocks,
-            block_len,
-            DigitLutLen::<L>,
-            params,
+            ntt_mat, coeffs, num_blocks, block_len, params,
         );
     }
     if ntt_mat.len() == 3 {
         return mat_vec_mul_digits_i8_three_row_strided_block_parallel(
-            ntt_mat,
-            coeffs,
-            num_blocks,
-            block_len,
-            DigitLutLen::<L>,
-            params,
+            ntt_mat, coeffs, num_blocks, block_len, params,
         );
     }
 
     let n_a = ntt_mat.len();
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
 
     cfg_into_iter!(0..num_blocks)
         .map(|block_idx| {
@@ -288,17 +254,15 @@ pub(super) fn mat_vec_mul_digits_i8_single_row_strided_block_parallel<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     debug_assert_eq!(ntt_mat.len(), 1);
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let mat_row = &ntt_mat[0];
 
     cfg_into_iter!(0..num_blocks)
@@ -333,17 +297,15 @@ pub(super) fn mat_vec_mul_digits_i8_two_row_strided_block_parallel<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     debug_assert_eq!(ntt_mat.len(), 2);
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let mat_row0 = &ntt_mat[0];
     let mat_row1 = &ntt_mat[1];
 
@@ -389,17 +351,15 @@ pub(super) fn mat_vec_mul_digits_i8_three_row_strided_block_parallel<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     debug_assert_eq!(ntt_mat.len(), 3);
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let mat_row0 = &ntt_mat[0];
     let mat_row1 = &ntt_mat[1];
     let mat_row2 = &ntt_mat[2];
@@ -450,17 +410,15 @@ pub(super) fn mat_vec_mul_i8_block_parallel_with_params_impl<
     const K: usize,
     const D: usize,
     const CHECK_ZERO: bool,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let n_a = ntt_mat.len();
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 
@@ -499,17 +457,15 @@ pub(super) fn mat_vec_mul_i8_block_parallel_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_i8_block_parallel_with_params_impl::<F, W, K, D, true, L>(
-        ntt_mat, blocks, num_digits, log_basis, lut_len, params,
+    mat_vec_mul_i8_block_parallel_with_params_impl::<F, W, K, D, true>(
+        ntt_mat, blocks, num_digits, log_basis, params,
     )
 }
 
@@ -518,18 +474,16 @@ pub(super) fn mat_vec_mul_i8_dense_block_parallel_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     if ntt_mat.len() == 1 {
         return mat_vec_mul_i8_dense_single_row_with_params(
-            ntt_mat, blocks, num_digits, log_basis, lut_len, params,
+            ntt_mat, blocks, num_digits, log_basis, params,
         )
         .into_iter()
         .map(|ring| vec![ring])
@@ -537,17 +491,17 @@ pub(super) fn mat_vec_mul_i8_dense_block_parallel_with_params<
     }
     if ntt_mat.len() == 2 {
         return mat_vec_mul_i8_dense_two_row_fused_with_params(
-            ntt_mat, blocks, num_digits, log_basis, lut_len, params,
+            ntt_mat, blocks, num_digits, log_basis, params,
         );
     }
     if ntt_mat.len() == 3 {
         return mat_vec_mul_i8_dense_three_row_fused_with_params(
-            ntt_mat, blocks, num_digits, log_basis, lut_len, params,
+            ntt_mat, blocks, num_digits, log_basis, params,
         );
     }
 
-    mat_vec_mul_i8_block_parallel_with_params_impl::<F, W, K, D, false, L>(
-        ntt_mat, blocks, num_digits, log_basis, lut_len, params,
+    mat_vec_mul_i8_block_parallel_with_params_impl::<F, W, K, D, false>(
+        ntt_mat, blocks, num_digits, log_basis, params,
     )
 }
 
@@ -556,13 +510,11 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     debug_assert_eq!(ntt_mat.len(), 1);
@@ -584,7 +536,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
         .expect("single i8 CRT term must fit supported parameters");
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let mat_row = &ntt_mat[0];
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
@@ -671,17 +623,15 @@ pub(super) fn mat_vec_mul_i8_dense_two_row_fused_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     debug_assert_eq!(ntt_mat.len(), 2);
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let mat_row0 = &ntt_mat[0];
     let mat_row1 = &ntt_mat[1];
     let q = (-F::one()).to_canonical_u128() + 1;
@@ -724,17 +674,15 @@ pub(super) fn mat_vec_mul_i8_dense_three_row_fused_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     debug_assert_eq!(ntt_mat.len(), 3);
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let mat_row0 = &ntt_mat[0];
     let mat_row1 = &ntt_mat[1];
     let mat_row2 = &ntt_mat[2];
@@ -781,7 +729,6 @@ pub(super) fn mat_vec_mul_i8_strided_block_parallel_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[CyclotomicRing<F, D>],
@@ -789,11 +736,10 @@ pub(super) fn mat_vec_mul_i8_strided_block_parallel_with_params<
     block_len: usize,
     num_digits: usize,
     log_basis: u32,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let n_a = ntt_mat.len();
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
 

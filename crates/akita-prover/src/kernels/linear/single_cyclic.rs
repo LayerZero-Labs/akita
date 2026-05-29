@@ -22,27 +22,25 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
         log_basis,
         "for single predecomposed digit mat-vec",
     )?;
-    dispatch_digit_lut_len!(log_basis, |L| {
-        Ok(match slot {
-            NttSlotCache::Q32 { neg, params: p, .. } => {
-                let rows: Vec<&[_]> = (0..num_rows)
-                    .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
-                    .collect();
-                mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, DigitLutLen::<L>, p)
-            }
-            NttSlotCache::Q64 { neg, params: p, .. } => {
-                let rows: Vec<&[_]> = (0..num_rows)
-                    .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
-                    .collect();
-                mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, DigitLutLen::<L>, p)
-            }
-            NttSlotCache::Q128 { neg, params: p, .. } => {
-                let rows: Vec<&[_]> = (0..num_rows)
-                    .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
-                    .collect();
-                mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, DigitLutLen::<L>, p)
-            }
-        })
+    Ok(match slot {
+        NttSlotCache::Q32 { neg, params: p, .. } => {
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
+        }
+        NttSlotCache::Q64 { neg, params: p, .. } => {
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
+        }
+        NttSlotCache::Q128 { neg, params: p, .. } => {
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
+        }
     })
 }
 
@@ -62,27 +60,25 @@ pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: 
         log_basis,
         "for cyclic single predecomposed digit mat-vec",
     )?;
-    dispatch_digit_lut_len!(log_basis, |L| {
-        Ok(match slot {
-            NttSlotCache::Q32 { cyc, params: p, .. } => {
-                let rows: Vec<&[_]> = (0..num_rows)
-                    .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
-                    .collect();
-                mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, DigitLutLen::<L>, p)
-            }
-            NttSlotCache::Q64 { cyc, params: p, .. } => {
-                let rows: Vec<&[_]> = (0..num_rows)
-                    .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
-                    .collect();
-                mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, DigitLutLen::<L>, p)
-            }
-            NttSlotCache::Q128 { cyc, params: p, .. } => {
-                let rows: Vec<&[_]> = (0..num_rows)
-                    .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
-                    .collect();
-                mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, DigitLutLen::<L>, p)
-            }
-        })
+    Ok(match slot {
+        NttSlotCache::Q32 { cyc, params: p, .. } => {
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, p)
+        }
+        NttSlotCache::Q64 { cyc, params: p, .. } => {
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, p)
+        }
+        NttSlotCache::Q128 { cyc, params: p, .. } => {
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, p)
+        }
     })
 }
 
@@ -91,12 +87,10 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     vec: &[[i8; D]],
     log_basis: u32,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     let n_a = ntt_mat.len();
@@ -105,14 +99,14 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
 
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let vec_len = vec.len().min(inner_width);
     if vec_len == 0 {
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
     let digit_bound = balanced_digit_abs_bound(log_basis);
     debug_assert!(
-        digit_rows_within_lut_range::<D, L>(vec, vec_len),
+        digit_rows_within_digit_bound::<D>(vec, vec_len, digit_bound),
         "single digit vector contains digits outside its log_basis range"
     );
     let chunk_width = safe_crt_chunk_width::<F, W, K, D>(params, vec_len, digit_bound)
@@ -144,12 +138,10 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     vec: &[[i8; D]],
     log_basis: u32,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     let n_a = ntt_mat.len();
@@ -158,14 +150,14 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
 
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let vec_len = vec.len().min(inner_width);
     if vec_len == 0 {
         return vec![CyclotomicRing::<F, D>::zero(); n_a];
     }
     let digit_bound = balanced_digit_abs_bound(log_basis);
     debug_assert!(
-        digit_rows_within_lut_range::<D, L>(vec, vec_len),
+        digit_rows_within_digit_bound::<D>(vec, vec_len, digit_bound),
         "single cyclic digit vector contains digits outside its log_basis range"
     );
     let chunk_width = safe_crt_chunk_width::<F, W, K, D>(params, vec_len, digit_bound)

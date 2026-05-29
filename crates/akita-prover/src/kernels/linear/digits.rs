@@ -5,17 +5,13 @@ pub(super) fn mat_vec_mul_digits_i8_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
     log_basis: u32,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, true, L>(
-        ntt_mat, blocks, log_basis, lut_len, params,
-    )
+    mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, true>(ntt_mat, blocks, log_basis, params)
 }
 
 pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
@@ -23,17 +19,13 @@ pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
     log_basis: u32,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, false, L>(
-        ntt_mat, blocks, log_basis, lut_len, params,
-    )
+    mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, false>(ntt_mat, blocks, log_basis, params)
 }
 
 pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
@@ -42,12 +34,10 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     const K: usize,
     const D: usize,
     const CHECK_ZERO: bool,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
     log_basis: u32,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let num_blocks = blocks.len();
@@ -66,7 +56,11 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     debug_assert!(
         blocks
             .iter()
-            .all(|block| digit_rows_within_lut_range::<D, L>(block, inner_width.min(block.len()))),
+            .all(|block| digit_rows_within_digit_bound::<D>(
+                block,
+                inner_width.min(block.len()),
+                digit_bound
+            )),
         "predecomposed digit block contains digits outside its log_basis range"
     );
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
@@ -76,12 +70,12 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
         && inner_width == max_data_width
         && inner_width <= safe_width
     {
-        return mat_vec_mul_digits_i8_block_parallel::<F, W, K, D, CHECK_ZERO, L>(
-            ntt_mat, blocks, lut_len, params,
+        return mat_vec_mul_digits_i8_block_parallel::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat, blocks, params,
         );
     }
 
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     drive_block_chunked_matvec(
         num_blocks,
         n_a,
@@ -116,14 +110,12 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[[i8; D]],
     num_blocks: usize,
     block_len: usize,
     log_basis: u32,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     if num_blocks == 0 {
@@ -138,7 +130,11 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
 
     let digit_bound = balanced_digit_abs_bound(log_basis);
     debug_assert!(
-        digit_rows_within_lut_range::<D, L>(coeffs, inner_width.saturating_mul(num_blocks)),
+        digit_rows_within_digit_bound::<D>(
+            coeffs,
+            inner_width.saturating_mul(num_blocks),
+            digit_bound
+        ),
         "predecomposed strided digit block contains digits outside its log_basis range"
     );
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
@@ -152,12 +148,11 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
             coeffs,
             num_blocks,
             inner_width,
-            lut_len,
             params,
         );
     }
 
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     drive_block_chunked_matvec(
         num_blocks,
         n_a,

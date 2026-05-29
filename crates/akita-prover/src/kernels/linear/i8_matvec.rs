@@ -6,13 +6,11 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
     const K: usize,
     const D: usize,
     const CHECK_ZERO: bool,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let num_blocks = blocks.len();
@@ -41,16 +39,16 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
     {
         return if CHECK_ZERO {
             mat_vec_mul_i8_block_parallel_with_params(
-                ntt_mat, blocks, num_digits, log_basis, lut_len, params,
+                ntt_mat, blocks, num_digits, log_basis, params,
             )
         } else {
             mat_vec_mul_i8_dense_block_parallel_with_params(
-                ntt_mat, blocks, num_digits, log_basis, lut_len, params,
+                ntt_mat, blocks, num_digits, log_basis, params,
             )
         };
     }
 
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let tile_width = aligned_i8_tile_width(base_tile_width::<W, K, D>(), inner_width, num_digits);
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     drive_block_chunked_matvec(
@@ -100,17 +98,15 @@ pub(super) fn mat_vec_mul_i8_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_i8_with_params_impl::<F, W, K, D, true, L>(
-        ntt_mat, blocks, num_digits, log_basis, lut_len, params,
+    mat_vec_mul_i8_with_params_impl::<F, W, K, D, true>(
+        ntt_mat, blocks, num_digits, log_basis, params,
     )
 }
 
@@ -119,17 +115,15 @@ pub(super) fn mat_vec_mul_i8_dense_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
     log_basis: u32,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_i8_with_params_impl::<F, W, K, D, false, L>(
-        ntt_mat, blocks, num_digits, log_basis, lut_len, params,
+    mat_vec_mul_i8_with_params_impl::<F, W, K, D, false>(
+        ntt_mat, blocks, num_digits, log_basis, params,
     )
 }
 
@@ -139,7 +133,6 @@ pub(super) fn mat_vec_mul_i8_strided_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     coeffs: &[CyclotomicRing<F, D>],
@@ -147,7 +140,6 @@ pub(super) fn mat_vec_mul_i8_strided_with_params<
     block_len: usize,
     num_digits: usize,
     log_basis: u32,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     if num_blocks == 0 {
@@ -169,11 +161,11 @@ pub(super) fn mat_vec_mul_i8_strided_with_params<
         && inner_width <= safe_width
     {
         return mat_vec_mul_i8_strided_block_parallel_with_params(
-            ntt_mat, coeffs, num_blocks, block_len, num_digits, log_basis, lut_len, params,
+            ntt_mat, coeffs, num_blocks, block_len, num_digits, log_basis, params,
         );
     }
 
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
     let tile_width = aligned_i8_tile_width(base_tile_width::<W, K, D>(), inner_width, num_digits);
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     drive_block_chunked_matvec(

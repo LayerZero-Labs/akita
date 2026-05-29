@@ -17,38 +17,6 @@ use crate::kernels::crt_ntt::NttSlotCache;
 #[cfg(all(test, not(feature = "zk")))]
 use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 
-macro_rules! dispatch_digit_lut_len {
-    ($log_basis:expr, |$lut_len:ident| $body:block) => {{
-        match $log_basis {
-            1 => {
-                const $lut_len: usize = 2;
-                $body
-            }
-            2 => {
-                const $lut_len: usize = 4;
-                $body
-            }
-            3 => {
-                const $lut_len: usize = 8;
-                $body
-            }
-            4 => {
-                const $lut_len: usize = 16;
-                $body
-            }
-            5 => {
-                const $lut_len: usize = 32;
-                $body
-            }
-            6 => {
-                const $lut_len: usize = 64;
-                $body
-            }
-            _ => unreachable!("i8 digit log_basis must be validated before dispatch"),
-        }
-    }};
-}
-
 mod block_parallel;
 mod capacity;
 mod chunked_matvec;

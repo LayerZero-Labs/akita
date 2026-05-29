@@ -20,7 +20,6 @@ pub(super) fn fused_split_eq_quotients_with_params<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
@@ -33,7 +32,6 @@ pub(super) fn fused_split_eq_quotients_with_params<
     z_pre_max_abs: u32,
     w_digit_abs_bound: u64,
     t_digit_abs_bound: u64,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Result<
     (
@@ -58,12 +56,12 @@ pub(super) fn fused_split_eq_quotients_with_params<
     }
 
     let z_abs_bound = u64::from(z_pre_max_abs).max(centered_rows_abs_bound(z_pre, z_len));
-    if !digit_rows_within_lut_range::<D, L>(w_hat, w_len) {
+    if !digit_rows_within_digit_bound::<D>(w_hat, w_len, w_digit_abs_bound) {
         return Err(AkitaError::InvalidInput(
             "fused quotient w_hat contains digits outside its log_basis range".to_string(),
         ));
     }
-    if !digit_rows_within_lut_range::<D, L>(t_hat, t_len) {
+    if !digit_rows_within_digit_bound::<D>(t_hat, t_len, t_digit_abs_bound) {
         return Err(AkitaError::InvalidInput(
             "fused quotient t_hat contains digits outside its log_basis range".to_string(),
         ));
@@ -94,29 +92,14 @@ pub(super) fn fused_split_eq_quotients_with_params<
             w_len,
             t_len,
             z_len,
-            lut_len,
             params,
         ));
     }
 
-    let d_result = accumulate_cyclic_i8_rows(
-        cyc_rows,
-        n_d,
-        w_hat,
-        w_len,
-        w_digit_abs_bound,
-        lut_len,
-        params,
-    );
-    let b_result = accumulate_cyclic_i8_rows(
-        cyc_rows,
-        n_b,
-        t_hat,
-        t_len,
-        t_digit_abs_bound,
-        lut_len,
-        params,
-    );
+    let d_result =
+        accumulate_cyclic_i8_rows(cyc_rows, n_d, w_hat, w_len, w_digit_abs_bound, params);
+    let b_result =
+        accumulate_cyclic_i8_rows(cyc_rows, n_b, t_hat, t_len, t_digit_abs_bound, params);
     let a_result = accumulate_centered_quotient_rows(
         neg_rows,
         cyc_rows,
@@ -136,7 +119,6 @@ fn fused_split_eq_quotients_one_shot<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
@@ -151,14 +133,13 @@ fn fused_split_eq_quotients_one_shot<
     w_len: usize,
     t_len: usize,
     z_len: usize,
-    _lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> (
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
 ) {
-    let digit_lut = (w_len != 0 || t_len != 0).then(|| DigitMontLut::<W, K, L>::new(params));
+    let digit_lut = (w_len != 0 || t_len != 0).then(|| DigitMontLut::<W, K>::new(params));
     let centered_lut = (z_len != 0 && z_abs_bound <= u64::from(CENTERED_LUT_MAX_ABS))
         .then(|| CenteredMontLut::<W, K>::new(params, z_abs_bound as i32));
     let base_tw = (FUSED_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
@@ -271,14 +252,12 @@ fn accumulate_cyclic_i8_rows<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
-    const L: usize,
 >(
     cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     num_rows: usize,
     rhs: &[[i8; D]],
     rhs_len: usize,
     rhs_abs_bound: u64,
-    lut_len: DigitLutLen<L>,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     if num_rows == 0 {
@@ -305,14 +284,13 @@ fn accumulate_cyclic_i8_rows<
             rhs_len,
             0,
             0,
-            lut_len,
             params,
         );
         return rows;
     }
 
     let num_chunks = rhs_len.div_ceil(chunk_width);
-    let lut = DigitMontLut::<W, K, L>::new(params);
+    let lut = DigitMontLut::<W, K>::new(params);
 
     cfg_fold_reduce!(
         0..num_chunks,
@@ -411,7 +389,6 @@ fn accumulate_centered_quotient_rows<
             0,
             0,
             z_len,
-            DigitLutLen::<2>,
             params,
         );
         return rows;
@@ -549,7 +526,6 @@ pub(crate) fn fused_split_eq_quotients<
         z_pre_max_abs,
         balanced_digit_abs_bound(6),
         balanced_digit_abs_bound(6),
-        DigitLutLen::<64>,
     )
 }
 
@@ -578,29 +554,25 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
 > {
     validate_i8_log_basis(log_basis)?;
     let digit_bound = balanced_digit_abs_bound(log_basis);
-    dispatch_digit_lut_len!(log_basis, |L| {
-        fused_split_eq_quotients_with_digit_bound(
-            slot,
-            n_d,
-            n_b,
-            n_a,
-            stride,
-            w_hat,
-            t_hat,
-            z_pre,
-            z_pre_max_abs,
-            digit_bound,
-            digit_bound,
-            DigitLutLen::<L>,
-        )
-    })
+    fused_split_eq_quotients_with_digit_bound(
+        slot,
+        n_d,
+        n_b,
+        n_a,
+        stride,
+        w_hat,
+        t_hat,
+        z_pre,
+        z_pre_max_abs,
+        digit_bound,
+        digit_bound,
+    )
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn fused_split_eq_quotients_with_digit_bound<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
-    const L: usize,
 >(
     slot: &NttSlotCache<D>,
     n_d: usize,
@@ -613,7 +585,6 @@ fn fused_split_eq_quotients_with_digit_bound<
     z_pre_max_abs: u32,
     w_digit_abs_bound: u64,
     t_digit_abs_bound: u64,
-    lut_len: DigitLutLen<L>,
 ) -> Result<
     (
         Vec<CyclotomicRing<F, D>>,
@@ -647,7 +618,6 @@ fn fused_split_eq_quotients_with_digit_bound<
                 z_pre_max_abs,
                 w_digit_abs_bound,
                 t_digit_abs_bound,
-                lut_len,
                 p,
             )
         }
@@ -674,7 +644,6 @@ fn fused_split_eq_quotients_with_digit_bound<
                 z_pre_max_abs,
                 w_digit_abs_bound,
                 t_digit_abs_bound,
-                lut_len,
                 p,
             )
         }
@@ -701,7 +670,6 @@ fn fused_split_eq_quotients_with_digit_bound<
                 z_pre_max_abs,
                 w_digit_abs_bound,
                 t_digit_abs_bound,
-                lut_len,
                 p,
             )
         }

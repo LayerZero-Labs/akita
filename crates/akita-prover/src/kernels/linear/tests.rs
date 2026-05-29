@@ -4,7 +4,7 @@ use super::{
     mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
     mat_vec_mul_i8_with_params, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense_single_row,
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
-    precompute_dense_mat_ntt_with_params, DigitLutLen,
+    precompute_dense_mat_ntt_with_params,
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
 use akita_algebra::ntt::{
@@ -51,16 +51,7 @@ fn mat_vec_mul_i8_with_params_for_log_basis<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    dispatch_digit_lut_len!(log_basis, |L| {
-        mat_vec_mul_i8_with_params(
-            ntt_mat,
-            blocks,
-            num_digits,
-            log_basis,
-            DigitLutLen::<L>,
-            params,
-        )
-    })
+    mat_vec_mul_i8_with_params(ntt_mat, blocks, num_digits, log_basis, params)
 }
 
 fn mat_vec_mul_i8_dense_with_params_for_log_basis<
@@ -75,16 +66,7 @@ fn mat_vec_mul_i8_dense_with_params_for_log_basis<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    dispatch_digit_lut_len!(log_basis, |L| {
-        mat_vec_mul_i8_dense_with_params(
-            ntt_mat,
-            blocks,
-            num_digits,
-            log_basis,
-            DigitLutLen::<L>,
-            params,
-        )
-    })
+    mat_vec_mul_i8_dense_with_params(ntt_mat, blocks, num_digits, log_basis, params)
 }
 
 fn mat_vec_mul_i8_strided_with_params_for_log_basis<
@@ -101,18 +83,9 @@ fn mat_vec_mul_i8_strided_with_params_for_log_basis<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    dispatch_digit_lut_len!(log_basis, |L| {
-        mat_vec_mul_i8_strided_with_params(
-            ntt_mat,
-            coeffs,
-            num_blocks,
-            block_len,
-            num_digits,
-            log_basis,
-            DigitLutLen::<L>,
-            params,
-        )
-    })
+    mat_vec_mul_i8_strided_with_params(
+        ntt_mat, coeffs, num_blocks, block_len, num_digits, log_basis, params,
+    )
 }
 
 fn mat_vec_mul_digits_i8_with_params_for_log_basis<
@@ -126,9 +99,7 @@ fn mat_vec_mul_digits_i8_with_params_for_log_basis<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    dispatch_digit_lut_len!(log_basis, |L| {
-        mat_vec_mul_digits_i8_with_params(ntt_mat, blocks, log_basis, DigitLutLen::<L>, params)
-    })
+    mat_vec_mul_digits_i8_with_params(ntt_mat, blocks, log_basis, params)
 }
 
 fn mat_vec_mul_digits_i8_strided_with_params_for_log_basis<
@@ -144,17 +115,9 @@ fn mat_vec_mul_digits_i8_strided_with_params_for_log_basis<
     log_basis: u32,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    dispatch_digit_lut_len!(log_basis, |L| {
-        mat_vec_mul_digits_i8_strided_with_params(
-            ntt_mat,
-            coeffs,
-            num_blocks,
-            block_len,
-            log_basis,
-            DigitLutLen::<L>,
-            params,
-        )
-    })
+    mat_vec_mul_digits_i8_strided_with_params(
+        ntt_mat, coeffs, num_blocks, block_len, log_basis, params,
+    )
 }
 
 fn quotient_from_cyclic_and_negacyclic<
@@ -969,7 +932,6 @@ fn mat_vec_mul_i8_dense_single_row_matches_generic_on_block_parallel_path() {
                 &ring_block_slices,
                 num_digits,
                 log_basis,
-                DigitLutLen::<8>,
                 &params,
             );
             let generic_single: Vec<CyclotomicRing<F, D>> =
@@ -1036,7 +998,6 @@ fn mat_vec_mul_i8_dense_three_row_matches_generic_on_block_parallel_path() {
                 &ring_block_slices,
                 num_digits,
                 log_basis,
-                DigitLutLen::<8>,
                 &params,
             );
             assert_eq!(triple, generic);
@@ -1095,8 +1056,7 @@ fn mat_vec_mul_digits_i8_three_row_matches_generic_on_block_parallel_path() {
                 Q32_NUM_PRIMES,
                 D,
                 true,
-                8,
-            >(&ntt_mat, &digit_block_slices, DigitLutLen::<8>, &params);
+            >(&ntt_mat, &digit_block_slices, &params);
             assert_eq!(fused, generic);
         }
         _ => panic!("unexpected parameter family"),
@@ -1153,7 +1113,6 @@ fn mat_vec_mul_digits_i8_strided_three_row_matches_block_path_on_block_parallel_
                 &strided_digits,
                 digit_blocks.len(),
                 digit_blocks[0].len(),
-                DigitLutLen::<8>,
                 &params,
             );
             assert_eq!(strided_path, block_path);

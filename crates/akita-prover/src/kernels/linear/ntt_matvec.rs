@@ -41,18 +41,15 @@ pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
-    dispatch_digit_lut_len!(log_basis, |L| {
-        Ok(dispatch_slot!(
-            slot,
-            num_rows,
-            num_cols,
-            mat_vec_mul_i8_with_params,
-            blocks,
-            num_digits,
-            log_basis,
-            DigitLutLen::<L>
-        ))
-    })
+    Ok(dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_i8_with_params,
+        blocks,
+        num_digits,
+        log_basis
+    ))
 }
 
 /// Dense-optimized variant of [`mat_vec_mul_ntt_i8`].
@@ -69,18 +66,15 @@ pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
-    dispatch_digit_lut_len!(log_basis, |L| {
-        Ok(dispatch_slot!(
-            slot,
-            num_rows,
-            num_cols,
-            mat_vec_mul_i8_dense_with_params,
-            blocks,
-            num_digits,
-            log_basis,
-            DigitLutLen::<L>
-        ))
-    })
+    Ok(dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_i8_dense_with_params,
+        blocks,
+        num_digits,
+        log_basis
+    ))
 }
 
 /// Single-row dense variant of [`mat_vec_mul_ntt_i8_dense`].
@@ -93,18 +87,15 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const 
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
-    dispatch_digit_lut_len!(log_basis, |L| {
-        Ok(dispatch_slot!(
-            slot,
-            1usize,
-            num_cols,
-            mat_vec_mul_i8_dense_single_row_with_params,
-            blocks,
-            num_digits,
-            log_basis,
-            DigitLutLen::<L>
-        ))
-    })
+    Ok(dispatch_slot!(
+        slot,
+        1usize,
+        num_cols,
+        mat_vec_mul_i8_dense_single_row_with_params,
+        blocks,
+        num_digits,
+        log_basis
+    ))
 }
 
 /// Strided variant of [`mat_vec_mul_ntt_i8`] for recursive witnesses.
@@ -121,20 +112,17 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
-    dispatch_digit_lut_len!(log_basis, |L| {
-        Ok(dispatch_slot!(
-            slot,
-            num_rows,
-            num_cols,
-            mat_vec_mul_i8_strided_with_params,
-            coeffs,
-            num_blocks,
-            block_len,
-            num_digits,
-            log_basis,
-            DigitLutLen::<L>
-        ))
-    })
+    Ok(dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_i8_strided_with_params,
+        coeffs,
+        num_blocks,
+        block_len,
+        num_digits,
+        log_basis
+    ))
 }
 
 /// Column-tiled A*x across multiple blocks of pre-decomposed i8 digit planes.
@@ -160,17 +148,14 @@ pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
             "for predecomposed digit mat-vec",
         )?;
     }
-    dispatch_digit_lut_len!(log_basis, |L| {
-        Ok(dispatch_slot!(
-            slot,
-            num_rows,
-            num_cols,
-            mat_vec_mul_digits_i8_with_params,
-            blocks,
-            log_basis,
-            DigitLutLen::<L>
-        ))
-    })
+    Ok(dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_digits_i8_with_params,
+        blocks,
+        log_basis
+    ))
 }
 
 /// Dense-optimized variant of [`mat_vec_mul_ntt_digits_i8`].
@@ -195,17 +180,14 @@ pub fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: u
             "for dense predecomposed digit mat-vec",
         )?;
     }
-    dispatch_digit_lut_len!(log_basis, |L| {
-        Ok(dispatch_slot!(
-            slot,
-            num_rows,
-            num_cols,
-            mat_vec_mul_dense_digits_i8_with_params,
-            blocks,
-            log_basis,
-            DigitLutLen::<L>
-        ))
-    })
+    Ok(dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_dense_digits_i8_with_params,
+        blocks,
+        log_basis
+    ))
 }
 
 /// Strided variant of [`mat_vec_mul_ntt_digits_i8`] for recursive witnesses.
@@ -227,19 +209,16 @@ pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D:
         log_basis,
         "for strided predecomposed digit mat-vec",
     )?;
-    dispatch_digit_lut_len!(log_basis, |L| {
-        Ok(dispatch_slot!(
-            slot,
-            num_rows,
-            num_cols,
-            mat_vec_mul_digits_i8_strided_with_params,
-            coeffs,
-            num_blocks,
-            block_len,
-            log_basis,
-            DigitLutLen::<L>
-        ))
-    })
+    Ok(dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_digits_i8_strided_with_params,
+        coeffs,
+        num_blocks,
+        block_len,
+        log_basis
+    ))
 }
 
 /// Strided direct-signed-i8 variant for recursive witnesses.

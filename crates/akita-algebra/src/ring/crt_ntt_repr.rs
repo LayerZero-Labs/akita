@@ -50,16 +50,24 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     pub garner: GarnerData<W, K>,
 }
 
-/// Precomputed Montgomery forms for every signed-byte digit value.
+/// Number of balanced-digit slots covered by [`DigitMontLut`].
 ///
-/// Indexed by the 2's-complement byte (`digit as u8`), so a lookup is a single
-/// bounds-free array access and the type carries no decomposition `log_basis`.
-/// The full 256-entry table is built once per mat-vec; storing the Montgomery
-/// representation eliminates one `from_canonical` Montgomery multiply per
-/// coefficient in the hot digit path.
+/// Balanced base-`2^log_basis` decomposition uses `log_basis` in `1..=6`, so
+/// every digit lands in `[-32, 31]`. One fixed 64-entry table therefore covers
+/// all bases, which is what lets the lookup drop the const-generic `L` (and the
+/// per-`log_basis` monomorphization it forced) without widening to the full
+/// signed-byte range.
+const DIGIT_LUT_LEN: usize = 64;
+const DIGIT_LUT_OFFSET: i16 = (DIGIT_LUT_LEN / 2) as i16;
+
+/// Precomputed Montgomery forms for balanced digit values in `[-32, 31]`.
+///
+/// Storing the Montgomery representation eliminates one `from_canonical`
+/// Montgomery multiply per coefficient in the hot digit path. The table is
+/// built once per mat-vec and is independent of the decomposition `log_basis`.
 #[derive(Debug, Clone)]
 pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
-    vals: [[MontCoeff<W>; 256]; K],
+    vals: [[MontCoeff<W>; DIGIT_LUT_LEN]; K],
 }
 
 /// Precomputed Montgomery forms for centered integer coefficients in
@@ -70,19 +78,14 @@ pub struct CenteredMontLut<W: PrimeWidth, const K: usize> {
     offset: i32,
 }
 
-impl<W: PrimeWidth, const K: usize, const L: usize> DigitMontLut<W, K, L> {
-    /// Build the lookup table from CRT primes.
-    ///
-    /// Covers exactly `L` balanced digit values centered at zero:
-    /// `[-L/2, L/2)`.
+impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
+    /// Build the lookup table from CRT primes, covering balanced digits in
+    /// `[-32, 31]`.
     pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>) -> Self {
-        debug_assert!((2..=64).contains(&L));
-        debug_assert!(L.is_power_of_two());
-        let offset = Self::offset();
         let vals = from_fn(|k| {
             let prime = params.primes[k];
             from_fn(|idx| {
-                let v = idx as i64 - i64::from(offset);
+                let v = idx as i64 - i64::from(DIGIT_LUT_OFFSET);
                 prime.from_canonical(W::from_i64(v))
             })
         });
@@ -91,26 +94,21 @@ impl<W: PrimeWidth, const K: usize, const L: usize> DigitMontLut<W, K, L> {
 
     /// Look up the Montgomery form of a balanced digit for CRT prime `k`.
     ///
-    /// Contract: `digit` is a balanced base-`2^log_basis` digit in
-    /// `[-L/2, L/2)` and `k < K`. The i8-NTT kernel boundary upholds this (a
-    /// validated `log_basis` selects `L`, and per-block digit ranges are
-    /// checked there). Because `L` is a power of two, masking the index keeps
-    /// the lookup in-bounds and branch-free without a per-coefficient bounds
-    /// check, so the contract carries the perf rather than runtime indexing.
-    /// The debug assertion surfaces any contract violation in debug builds.
+    /// Contract: `digit` is a balanced base-`2^log_basis` digit in `[-32, 31]`
+    /// and `k < K`. The i8-NTT kernel boundary upholds this (a validated
+    /// `log_basis <= 6` and per-block digit ranges are checked there). Because
+    /// the table length is a power of two, masking the index keeps the lookup
+    /// in-bounds and branch-free without a per-coefficient bounds check, so the
+    /// contract carries the perf rather than runtime indexing. The debug
+    /// assertion surfaces any contract violation in debug builds.
     #[inline(always)]
     pub fn get(&self, k: usize, digit: i8) -> MontCoeff<W> {
-        let idx = (i16::from(digit) + Self::offset()) as usize;
+        let idx = (i16::from(digit) + DIGIT_LUT_OFFSET) as usize;
         debug_assert!(
-            idx < L,
-            "digit LUT only covers balanced digits in [-L/2, L/2)"
+            idx < DIGIT_LUT_LEN,
+            "digit LUT only covers balanced digits in [-32, 31]"
         );
-        self.vals[k][idx & (L - 1)]
-    }
-
-    #[inline]
-    fn offset() -> i16 {
-        (L / 2) as i16
+        self.vals[k][idx & (DIGIT_LUT_LEN - 1)]
     }
 }
 
@@ -324,10 +322,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// [`DigitMontLut`] to replace per-coefficient `from_canonical`
     /// (Montgomery multiply) with a table lookup.
     #[inline]
-    pub fn from_i8_with_lut<const L: usize>(
+    pub fn from_i8_with_lut(
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K, L>,
+        lut: &DigitMontLut<W, K>,
     ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
@@ -342,12 +340,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// Accumulate `lhs * rhs(digits)` into `self` while reusing caller-owned
     /// scratch storage for the digit CRT+NTT conversion.
     #[inline]
-    pub fn add_assign_pointwise_mul_i8_with_lut_scratch<const L: usize>(
+    pub fn add_assign_pointwise_mul_i8_with_lut_scratch(
         &mut self,
         lhs: &Self,
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K, L>,
+        lut: &DigitMontLut<W, K>,
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
         #[cfg(target_arch = "aarch64")]
@@ -404,12 +402,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// Accumulate `lhs0 * rhs(digits)` and `lhs1 * rhs(digits)` into
     /// `(acc0, acc1)` while sharing the digit CRT+NTT conversion scratch.
     #[inline]
-    pub fn add_assign_pointwise_mul_i8_pair_with_lut_scratch<const L: usize>(
+    pub fn add_assign_pointwise_mul_i8_pair_with_lut_scratch(
         accs: [&mut Self; 2],
         lhs: [&Self; 2],
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K, L>,
+        lut: &DigitMontLut<W, K>,
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
         let [acc0, acc1] = accs;
@@ -501,12 +499,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// `lhs2 * rhs(digits)` into `(acc0, acc1, acc2)` while sharing the digit
     /// CRT+NTT conversion scratch.
     #[inline]
-    pub fn add_assign_pointwise_mul_i8_triple_with_lut_scratch<const L: usize>(
+    pub fn add_assign_pointwise_mul_i8_triple_with_lut_scratch(
         accs: [&mut Self; 3],
         lhs: [&Self; 3],
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K, L>,
+        lut: &DigitMontLut<W, K>,
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
         let [acc0, acc1, acc2] = accs;
@@ -615,10 +613,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
     /// Like [`Self::from_i8_cyclic`] but uses a precomputed [`DigitMontLut`].
     #[inline]
-    pub fn from_i8_cyclic_with_lut<const L: usize>(
+    pub fn from_i8_cyclic_with_lut(
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K, L>,
+        lut: &DigitMontLut<W, K>,
     ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
