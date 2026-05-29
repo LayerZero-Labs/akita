@@ -768,7 +768,7 @@ pub fn root_direct_schedule(
 /// The fold-digit count is sized for the tight tensor-aware bound
 /// `challenge_l1_mass · num_claims` — per claim the fold weight has
 /// `L1 ≤ root_lp.challenge_l1_mass()` (which squares `l1_norm` for
-/// [`TensorChallengeShape::Tensor`] since the per-block challenge is
+/// `TensorChallengeShape::Tensor` since the per-block challenge is
 /// the ring product `left · right`), and `num_claims` claims are
 /// summed linearly during batching.
 ///
@@ -791,7 +791,7 @@ pub fn scale_batched_root_layout(
 /// constructions) whose `(family, ring_dimension)` is intentionally
 /// outside the audited SIS-floor tables. Production-facing call sites
 /// must go through [`scale_batched_root_layout`] so the strict
-/// [`AjtaiKeyParams::try_new`] audit fires when the scaled widths
+/// `AjtaiKeyParams::try_new` audit fires when the scaled widths
 /// outgrow the original ranks.
 ///
 /// # Errors

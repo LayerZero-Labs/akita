@@ -148,7 +148,6 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     max_num_batched_polys: usize,
     max_num_points: usize,
 ) -> String {
-    let envelope = Cfg::envelope(max_num_vars);
     let family = std::any::type_name::<Cfg>()
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
@@ -160,8 +159,10 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         max_num_points,
     );
     // Fingerprint the resolved schedule shape so cached setup files get
-    // invalidated when the planner's per-level (log_basis, level_count)
-    // outputs change for the same lookup key.
+    // invalidated when the planner's per-level layout (including the
+    // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
+    // key — the per-level params are captured in
+    // `planned_schedule_key_from_schedule`.
     let raw_schedule = match Cfg::schedule_plan(schedule_lookup_key) {
         Ok(Some(plan)) => planned_schedule_key_from_schedule(schedule_lookup_key, &plan),
         _ => format!(
@@ -179,11 +180,8 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .collect::<String>();
     let modulus = detect_field_modulus::<Cfg::Field>();
     format!(
-        "akita_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
+        "akita_q{modulus:032x}_{family}_sched_{schedule}_d{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
         Cfg::D,
-        envelope.max_n_a,
-        envelope.max_n_b,
-        envelope.max_n_d,
     )
 }
 

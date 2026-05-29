@@ -16,9 +16,9 @@ use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     lagrange_weights, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup,
-    AppendToTranscript, ClaimIncidenceSummary, DecompositionParams, FlatRingVec, MRowLayout,
-    RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup, AppendToTranscript,
+    ClaimIncidenceSummary, DecompositionParams, FlatRingVec, MRowLayout, RingCommitment,
+    RingMultiplierOpeningPoint, SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -62,16 +62,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
 
     fn max_setup_matrix_size(
         max_num_vars: usize,
-        _max_num_batched_polys: usize,
-        _max_num_points: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
     ) -> Result<(usize, usize), akita_field::AkitaError> {
-        let envelope = Cfg::envelope(max_num_vars);
-        let rows = envelope
-            .max_n_a
-            .max(envelope.max_n_b)
-            .max(envelope.max_n_d)
-            .max(4);
-        Ok((rows, 16_384))
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -408,10 +402,11 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
 #[test]
 fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
     // The fp32 D32Full zk schedule transitions from a one-fold (Terminal)
-    // root to a multi-fold root early in the supported range. After
-    // regenerating the schedule tables with an idempotent DP, `nv = 12` is
-    // the largest singleton key that still picks a 1-fold root for this
-    // preset; `nv = 13` already escalates to a 2-fold root and is the
+    // root to a multi-fold root early in the supported range. After the
+    // planner DP refactor that eagerly costs terminal-direct successors and
+    // exposes per-`log_basis` fold options to the parent, `nv = 13` is the
+    // largest singleton key that still picks a 1-fold root for this preset;
+    // `nv = 14` is the first that escalates to a 2-fold root and is the
     // matching `Fold`-root fixture below.
     run_zk_fp32_extension_opening_reduction::<12>(
         b"zk/fp32-extension-root-terminal",
@@ -421,7 +416,7 @@ fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
 
 #[test]
 fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
-    run_zk_fp32_extension_opening_reduction::<13>(
+    run_zk_fp32_extension_opening_reduction::<14>(
         b"zk/fp32-extension-root-fold",
         ExpectedRoot::Fold,
     );

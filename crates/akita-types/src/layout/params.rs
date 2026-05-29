@@ -509,8 +509,8 @@ impl LevelParams {
     /// `collision_inf` from `other` would lose the audited bucket when
     /// the layout argument was constructed via
     /// [`LevelParams::params_only`] (which leaves `collision_inf = 0`)
-    /// or threaded through [`with_decomp`], and would let the SIS audit
-    /// at [`AjtaiKeyParams::try_new`] short-circuit silently.
+    /// or threaded through [`Self::with_decomp`], and would let the SIS
+    /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
     pub fn with_layout(&self, other: &LevelParams) -> Self {
         let d = self.ring_dimension;
         Self {

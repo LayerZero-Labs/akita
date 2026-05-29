@@ -49,11 +49,6 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
-#[cfg(feature = "zk")]
-fn eq_factored_round_mask_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
-    sumcheck_bytes(rounds, degree, elem_bytes)
-}
-
 /// Header-stripped byte size of an extension-opening reduction proof.
 ///
 /// The reduction proof serializes `partials` challenge-field elements followed
