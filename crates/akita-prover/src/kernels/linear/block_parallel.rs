@@ -677,13 +677,23 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
             .collect();
     }
 
-    // Over-capacity fallback: parallelize over blocks (not chunks) and walk
-    // chunks serially per block. The single-row dense entry is the n_a == 1
-    // commit path, whose blocks are the commitment blocks (many), so block
-    // fanout already saturates Rayon; chunk-parallelism would serialize blocks
-    // and regress that common shape.
+    // Over-capacity fallback chooses the available fanout: many commitment
+    // blocks use block-parallel work, while narrow callers with few blocks use
+    // chunk-parallel work so long CRT splits do not serialize.
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     let num_chunks = inner_width.div_ceil(chunk_width);
+    if num_blocks < SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS {
+        return mat_vec_mul_i8_dense_single_row_chunk_parallel_with_params(
+            mat_row,
+            blocks,
+            inner_width,
+            chunk_width,
+            num_digits,
+            log_basis,
+            params,
+            &lut,
+        );
+    }
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -725,6 +735,72 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
             }
 
             out
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mat_vec_mul_i8_dense_single_row_chunk_parallel_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    mat_row: &[CyclotomicCrtNtt<W, K, D>],
+    blocks: &[&[CyclotomicRing<F, D>]],
+    inner_width: usize,
+    chunk_width: usize,
+    num_digits: usize,
+    log_basis: u32,
+    params: &CrtNttParamSet<W, K, D>,
+    lut: &DigitMontLut<W, K>,
+) -> Vec<CyclotomicRing<F, D>> {
+    blocks
+        .iter()
+        .map(|block| {
+            let live_width = inner_width.min(block.len().saturating_mul(num_digits));
+            if live_width == 0 {
+                return CyclotomicRing::<F, D>::zero();
+            }
+            let num_chunks = live_width.div_ceil(chunk_width);
+            cfg_fold_reduce!(
+                0..num_chunks,
+                || CyclotomicRing::<F, D>::zero(),
+                |mut out: CyclotomicRing<F, D>, chunk_idx| {
+                    let tile_start = chunk_idx * chunk_width;
+                    let tile_end = (tile_start + chunk_width).min(live_width);
+                    let ring_start = tile_start / num_digits;
+                    let ring_end = ((tile_end - 1) / num_digits) + 1;
+                    let digit_offset = tile_start - ring_start * num_digits;
+                    let tile_len = tile_end - tile_start;
+                    let partial_coeffs = &block[ring_start..ring_end.min(block.len())];
+                    let all_digits = decompose_block_i8(partial_coeffs, num_digits, log_basis);
+                    let available = all_digits.len().saturating_sub(digit_offset);
+                    let n = tile_len.min(available);
+                    let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
+                    let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+
+                    for (j, digit) in all_digits[digit_offset..digit_offset + n]
+                        .iter()
+                        .enumerate()
+                    {
+                        acc.add_assign_pointwise_mul_i8_with_lut_scratch(
+                            &mat_row[tile_start + j],
+                            digit,
+                            params,
+                            lut,
+                            &mut rhs_scratch,
+                        );
+                    }
+
+                    out += acc.to_ring_with_params(params);
+                    out
+                },
+                |mut a: CyclotomicRing<F, D>, b| {
+                    a += b;
+                    a
+                }
+            )
         })
         .collect()
 }
