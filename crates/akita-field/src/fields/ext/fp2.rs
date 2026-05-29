@@ -414,11 +414,28 @@ impl_fp2_default_optimized_fold!(Fp32<P: u32>);
 impl_fp2_default_optimized_fold!(Fp64<P: u64>);
 impl_fp2_default_optimized_fold!(Fp128<P: u128>);
 
+/// Split `value = lo128 + hi_carry * 2^128` into base-2^64 limbs
+/// `[bits 0..64, bits 64..]` for a `Fp64ProductAccum` slot pair.
+///
+/// The high limb may exceed 64 bits (it carries `hi_carry` in bits 64.., which
+/// is small — at most 2 here), and the accumulator's `reduce` reconstructs
+/// `lo + hi * 2^64` exactly, so the full (>128-bit) coefficient survives without
+/// the wrap-mod-2^128 that a single-`u128` intermediate would incur.
+#[inline(always)]
+fn fp64_accum_limbs(lo128: u128, hi_carry: u128) -> [u128; 2] {
+    [lo128 as u64 as u128, (lo128 >> 64) | (hi_carry << 64)]
+}
+
 /// Widening `Fp2<Fp64<P>, C>` multiplication with delayed reduction.
 ///
-/// Each base-field product is split into (lo64, hi64) halves and stored in
-/// `Fp64ProductAccum` slots. For `IS_NEG_ONE` configs the `P^2` bias keeps
-/// the constant coefficient non-negative.
+/// Each coefficient is a combination of base products that can exceed 128 bits
+/// — `c0` reaches `p00 + p^2` (IS_NEG_ONE) or `p00 + 2*p11` (just under 2^130),
+/// and `c1 = p01 + p10` reaches ~2^129. Forming them in a single `u128` would
+/// drop the carry into bit 128 (wrap mod 2^128), which is *not* congruent mod
+/// `p` and corrupts the delayed sum. We instead track the carry explicitly and
+/// store base-2^64 limbs via [`fp64_accum_limbs`], so summing a batch and
+/// reducing once is exact. For `IS_NEG_ONE` configs the `p^2` bias keeps `c0`
+/// non-negative (and `p^2 == 0 (mod p)`, so it is invisible after reduction).
 #[inline(always)]
 pub(crate) fn fp2_mul_to_accum_fp64<const P: u64, C: Fp2Config<Fp64<P>>>(
     a: [Fp64<P>; 2],
@@ -429,25 +446,37 @@ pub(crate) fn fp2_mul_to_accum_fp64<const P: u64, C: Fp2Config<Fp64<P>>>(
     let p01 = a[0].mul_wide(b[1]);
     let p10 = a[1].mul_wide(b[0]);
 
-    let c0_wide = if C::IS_NEG_ONE {
+    let [c0_lo, c0_hi] = if C::IS_NEG_ONE {
+        // c0 = p00 + p^2 - p11, non-negative and < 2^129.
         let modulus_sq = (P as u128) * (P as u128);
-        p00.wrapping_add(modulus_sq).wrapping_sub(p11)
+        let (sum, carry_add) = p00.overflowing_add(modulus_sq);
+        let (diff, borrow) = sum.overflowing_sub(p11);
+        // c0 >= 0 guarantees carry_add >= borrow, so this stays in {0, 1}.
+        let hi_carry = (carry_add as u128) - (borrow as u128);
+        fp64_accum_limbs(diff, hi_carry)
     } else {
-        p00.wrapping_add(p11).wrapping_add(p11)
+        // c0 = p00 + 2*p11, < 3*p^2 < 2^130 (carry in {0, 1, 2}).
+        let (sum1, carry1) = p00.overflowing_add(p11);
+        let (sum2, carry2) = sum1.overflowing_add(p11);
+        let hi_carry = (carry1 as u128) + (carry2 as u128);
+        fp64_accum_limbs(sum2, hi_carry)
     };
-    let c1_wide = p01.wrapping_add(p10);
+    // c1 = p01 + p10, < 2*p^2 < 2^129 (carry in {0, 1}).
+    let (c1_sum, c1_carry) = p01.overflowing_add(p10);
+    let [c1_lo, c1_hi] = fp64_accum_limbs(c1_sum, c1_carry as u128);
 
-    Fp2Fp64ProductAccum([
-        c0_wide as u64 as u128,
-        (c0_wide >> 64) as u64 as u128,
-        c1_wide as u64 as u128,
-        (c1_wide >> 64) as u64 as u128,
-    ])
+    Fp2Fp64ProductAccum([c0_lo, c0_hi, c1_lo, c1_hi])
 }
 
 impl<const P: u64, C: Fp2Config<Fp64<P>>> HasUnreducedOps for Fp2<Fp64<P>, C> {
     type MulU64Accum = AccumPair<<Fp64<P> as HasUnreducedOps>::MulU64Accum>;
     type ProductAccum = Fp2Fp64ProductAccum;
+
+    // `fp2_mul_to_accum_fp64` keeps the full >128-bit coefficient via carry-aware
+    // base-2^64 limbs, so summing a batch and reducing once equals per-term `Mul`.
+    // Covered by the `Ext2<Prime64Offset59>` rounds in
+    // `sparse_tensor_factor_matches_dense_factor_rounds`.
+    const DELAYED_PRODUCT_SUM_IS_EXACT: bool = true;
 
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {

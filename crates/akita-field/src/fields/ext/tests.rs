@@ -512,3 +512,65 @@ fn ring_subfield_fp4_fp32_accum_summation() {
         "accumulated sum of {n} products mismatched"
     );
 }
+
+// Regression guard for the `Fp2<Fp64>` delayed-reduction accumulator. The earlier
+// bug dropped the carry into bit 128 because each Fp2 coefficient (c0 up to ~2^130,
+// c1 up to ~2^129) was formed in a single `u128`. It only surfaces with near-`p`
+// operands -- products around 2^128 -- which the small-modulus tests never reach,
+// so these use the real 2^64-59 prime and cover both Fp2 configs.
+#[test]
+fn fp2_fp64_product_accum_matches_direct_mul_large_operands() {
+    use crate::Prime64Offset59;
+
+    let mut rng = StdRng::seed_from_u64(0xF64A);
+    for _ in 0..256 {
+        // TwoNr (IS_NEG_ONE = false): c0 = p00 + 2*p11.
+        let a = Ext2::<Prime64Offset59>::random(&mut rng);
+        let b = Ext2::<Prime64Offset59>::random(&mut rng);
+        assert_eq!(
+            a * b,
+            Ext2::<Prime64Offset59>::reduce_product_accum(a.mul_to_product_accum(b)),
+            "TwoNr accum mismatch a={a:?} b={b:?}"
+        );
+
+        // NegOneNr (IS_NEG_ONE = true): c0 = p00 + p^2 - p11.
+        let c = Fp2::<Prime64Offset59, NegOneNr>::random(&mut rng);
+        let d = Fp2::<Prime64Offset59, NegOneNr>::random(&mut rng);
+        assert_eq!(
+            c * d,
+            Fp2::<Prime64Offset59, NegOneNr>::reduce_product_accum(c.mul_to_product_accum(d)),
+            "NegOneNr accum mismatch c={c:?} d={d:?}"
+        );
+    }
+}
+
+#[test]
+fn fp2_fp64_accum_summation_large_operands() {
+    use crate::Prime64Offset59;
+    use num_traits::Zero;
+
+    type E = Ext2<Prime64Offset59>;
+
+    let mut rng = StdRng::seed_from_u64(0xF64C);
+    let n = 1024;
+    let pairs: Vec<(E, E)> = (0..n)
+        .map(|_| (E::random(&mut rng), E::random(&mut rng)))
+        .collect();
+
+    let direct_sum: E = pairs
+        .iter()
+        .map(|(a, b)| *a * *b)
+        .fold(E::zero(), |s, p| s + p);
+
+    let accum_sum = pairs
+        .iter()
+        .fold(<E as HasUnreducedOps>::ProductAccum::zero(), |s, (a, b)| {
+            s + a.mul_to_product_accum(*b)
+        });
+
+    assert_eq!(
+        direct_sum,
+        E::reduce_product_accum(accum_sum),
+        "fp2<fp64> accumulated sum of {n} products mismatched"
+    );
+}

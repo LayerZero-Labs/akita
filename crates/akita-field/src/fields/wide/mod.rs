@@ -631,10 +631,10 @@ pub trait HasUnreducedOps: FieldCore {
     ///
     /// When `true`, `reduce_product_accum(sum_i mul_to_product_accum(a_i, b_i))`
     /// equals `sum_i a_i * b_i` for batch sizes within the accumulator's
-    /// non-wrapping headroom. The conservative default is `false`: callers that
-    /// must stay byte-identical to `Mul` then keep the per-term reduce path. The
-    /// `Fp2<Fp64>` accumulator, for example, folds its schoolbook product mod
-    /// `2^128`, which is not congruent to `Mul` mod `p`.
+    /// non-wrapping headroom. The conservative default is `false`; a field opts
+    /// in only once its accumulator is proven exact (see `RingSubfieldFp4<Fp32>`
+    /// and `Fp2<Fp64>`). Fields that leave it `false` keep the per-term reduce
+    /// path, so callers that must stay byte-identical to `Mul` are unaffected.
     const DELAYED_PRODUCT_SUM_IS_EXACT: bool = false;
 
     /// Widening `self × small` with no reduction.
