@@ -57,7 +57,8 @@ fn setup_oracle_keeps_alpha_on_weight_side() {
         fixture.offset_w,
         fixture.offset_t,
         fixture.offset_z,
-    );
+    )
+    .unwrap();
 
     for (lambda, &bar_weight) in omega.bar_omega.iter().enumerate() {
         if bar_weight.is_zero() {
@@ -66,7 +67,7 @@ fn setup_oracle_keeps_alpha_on_weight_side() {
         for y in 1..TEST_RING_DIM {
             let expected = bar_weight * fixture.alpha_pows[y];
             assert_eq!(
-                omega.coefficient_weight(lambda, y, TEST_RING_DIM),
+                omega.coefficient_weight(lambda, y, TEST_RING_DIM).unwrap(),
                 expected,
                 "omega_S({lambda}, {y}) must equal bar_omega({lambda}) * alpha^{y}"
             );
@@ -83,7 +84,8 @@ fn setup_oracle_keeps_alpha_on_weight_side() {
         fixture.offset_w,
         fixture.offset_t,
         fixture.offset_z,
-    );
+    )
+    .unwrap();
     assert_ne!(
         omega.omega_s, shifted_omega.omega_s,
         "changing alpha must change omega_S while bar_omega stays fixed"

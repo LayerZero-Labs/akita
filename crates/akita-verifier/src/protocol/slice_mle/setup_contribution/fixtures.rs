@@ -283,10 +283,11 @@ impl SetupContributionFixture {
             self.offset_w,
             self.offset_t,
             self.offset_z,
-        );
+        )
+        .unwrap();
         assert_eq!(omega.bar_omega.len(), self.max_setup_len);
         assert_eq!(omega.omega_s.len(), self.max_setup_len * TEST_RING_DIM);
-        omega.inner_product(&self.matrix_entries)
+        omega.inner_product(&self.matrix_entries).unwrap()
     }
 
     pub fn assert_matches_materialized_oracle(&self) {
