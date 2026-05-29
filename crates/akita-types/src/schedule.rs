@@ -235,16 +235,18 @@ pub struct AkitaPlannedDirectStep {
     pub witness_shape: DirectWitnessShape,
     /// Exact bytes contributed by the packed direct witness.
     pub direct_bytes: usize,
-    /// `LevelParams` associated with this Direct step. Position-dependent:
+    /// Root commit layout for root-direct schedules (`witness_shape =
+    /// FieldElements`). `None` is the uncommittable edge case
+    /// (singleton root layout exceeds the audited SIS floor — usable
+    /// for proof-size exploration but rejected by
+    /// `get_params_for_batched_commitment`).
     ///
-    /// - root-direct (planned root step is this `Direct`, `witness_shape =
-    ///   FieldElements`): the root commit layout. `None` is the
-    ///   uncommittable edge case (singleton root layout exceeds the
-    ///   audited SIS floor — usable for proof-size exploration but
-    ///   rejected by `get_params_for_batched_commitment`).
-    /// - terminal direct after one or more folds (`witness_shape =
-    ///   PackedDigits`): SIS-secure level params for the direct's
-    ///   commitment. Always `Some` in this case.
+    /// Terminal-direct steps (`witness_shape = PackedDigits`) ship the
+    /// cleartext witness without committing, so they always carry
+    /// `params = None`. The active `log_basis` lives on
+    /// [`Self::witness_shape`]; `scheduled_next_level_params`
+    /// synthesizes a [`LevelParams::log_basis_stub`] from it for the
+    /// prover's terminal-fold `final_log_basis`.
     pub params: Option<LevelParams>,
 }
 
@@ -632,29 +634,28 @@ pub struct DirectStep {
     pub witness_shape: DirectWitnessShape,
     /// Direct witness bytes.
     pub direct_bytes: usize,
-    /// `LevelParams` associated with this Direct step. The meaning is
-    /// position-dependent (the two cases are mutually exclusive, so a
-    /// single field suffices):
+    /// Root commit layout for root-direct schedules (schedule starts
+    /// with this `Direct`, `witness_shape = FieldElements`).
     ///
-    /// - **root-direct** (schedule starts with this `Direct`,
-    ///   `witness_shape = FieldElements`). `Some(_)` is the root commit
-    ///   layout — the verifier replays commitments against it and the
-    ///   transcript binding hashes it into
-    ///   `SetupSection::level_params_digest`. `None` is the
-    ///   *uncommittable* edge: a table-recorded large-`num_vars` entry
-    ///   whose singleton root layout exceeds the audited SIS floor.
-    ///   The schedule is intentionally usable for proof-size
-    ///   exploration and DP planning, but
-    ///   `get_params_for_batched_commitment` rejects it loudly and
-    ///   `setup_level_params_from_runtime_schedule` returns an empty
-    ///   list. Don't commit through such a schedule.
+    /// `Some(_)` is the root commit layout — the verifier replays
+    /// commitments against it and the transcript binding hashes it
+    /// into `SetupSection::level_params_digest`. `None` is the
+    /// *uncommittable* edge: a table-recorded large-`num_vars` entry
+    /// whose singleton root layout exceeds the audited SIS floor. The
+    /// schedule is intentionally usable for proof-size exploration and
+    /// DP planning, but `get_params_for_batched_commitment` rejects it
+    /// loudly and `setup_level_params_from_runtime_schedule` returns
+    /// an empty list. Don't commit through such a schedule.
     ///
-    /// - **terminal direct after one or more folds** (`witness_shape =
-    ///   PackedDigits`). `Some(_)` is the SIS-secure level params for
-    ///   this terminal direct's commitment, consumed by the
-    ///   prover/verifier as the next-level params at the end of the
-    ///   folded walk. Always `Some` here; `None` would indicate a
-    ///   planner bug.
+    /// Terminal-direct steps (`witness_shape = PackedDigits`, schedule
+    /// is `[Fold, …, Fold, Direct]`) ship the cleartext witness without
+    /// committing — the verifier absorbs the bytes into the transcript
+    /// and re-evaluates the witness directly. They always carry
+    /// `params = None`. The active `log_basis` lives on
+    /// [`Self::witness_shape`]; `scheduled_next_level_params`
+    /// synthesizes a [`LevelParams::log_basis_stub`] from it so the
+    /// prover's terminal-fold path still receives a `LevelParams`-shaped
+    /// successor (only `log_basis` is consulted there).
     pub params: Option<LevelParams>,
 }
 
@@ -990,15 +991,20 @@ pub fn schedule_terminal_direct_witness_shape(
 
 /// Resolve one scheduled level's active Akita params.
 ///
-/// Both `Fold` and `Direct(PackedDigits)` steps now carry their params
-/// inline (set by the planner DP and table materializer), so no
-/// derivation callback is needed at runtime.
+/// `Fold` steps return the baked-in `params` set by the planner DP and
+/// table materializer. A terminal `Direct(PackedDigits)` step has no
+/// commitment of its own (the cleartext witness is absorbed into the
+/// transcript directly), so it ships no `LevelParams`; this function
+/// instead returns a [`LevelParams::log_basis_stub`] carrying only the
+/// active `log_basis` read off `witness_shape`. The only caller that
+/// actually consumes a field of the terminal-Direct successor is the
+/// prover's terminal-fold path, which reads `log_basis`.
 ///
 /// # Errors
 ///
 /// Returns an error when `step_index` is outside the schedule or when a
-/// terminal `Direct(PackedDigits)` step is missing its baked
-/// level params.
+/// recursive schedule transitions into a `Direct(FieldElements)` (only
+/// the *first* step of a root-direct schedule may carry that shape).
 pub fn scheduled_next_level_params(
     schedule: &Schedule,
     step_index: usize,
@@ -1006,11 +1012,9 @@ pub fn scheduled_next_level_params(
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
         Some(Step::Direct(step)) => match step.witness_shape {
-            DirectWitnessShape::PackedDigits(_) => step.params.clone().ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "terminal direct step is missing baked level params".to_string(),
-                )
-            }),
+            DirectWitnessShape::PackedDigits((_, log_basis)) => {
+                Ok(LevelParams::log_basis_stub(log_basis))
+            }
             DirectWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
                 "recursive schedule cannot transition into a field-element direct step".to_string(),
             )),

@@ -255,6 +255,39 @@ pub struct LevelParams {
 }
 
 impl LevelParams {
+    /// Synthetic `LevelParams` carrying only a terminal-direct's `log_basis`.
+    ///
+    /// `scheduled_next_level_params` returns this stub when the next step
+    /// is a terminal `Direct(PackedDigits)`: that step does not commit
+    /// anything, so it has no Ajtai keys, no block geometry, and no
+    /// digit depths. The only field consumers downstream actually read is
+    /// `log_basis` (used by `prove_recursive_suffix_with_policy` as
+    /// `final_log_basis` for the terminal fold's witness packing); every
+    /// other field is left at the zero/empty defaults to make accidental
+    /// use surface as obviously-degenerate output. Do not feed this stub
+    /// into commitment, audit, or descriptor-binding code paths.
+    pub fn log_basis_stub(log_basis: u32) -> Self {
+        Self {
+            ring_dimension: 0,
+            log_basis,
+            a_key: AjtaiKeyParams::default(),
+            b_key: AjtaiKeyParams::default(),
+            d_key: AjtaiKeyParams::default(),
+            num_blocks: 0,
+            block_len: 0,
+            m_vars: 0,
+            r_vars: 0,
+            stage1_config: SparseChallengeConfig::Uniform {
+                weight: 0,
+                nonzero_coeffs: Vec::new(),
+            },
+            fold_challenge_shape: TensorChallengeShape::Flat,
+            num_digits_commit: 0,
+            num_digits_open: 0,
+            num_digits_fold: 0,
+        }
+    }
+
     /// Build a params-only `LevelParams` with zeroed layout fields.
     ///
     /// Only ring dimension, matrix row counts, log_basis, and stage1_config

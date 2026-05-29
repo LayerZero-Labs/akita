@@ -321,79 +321,6 @@ fn extension_opening_reduction_level_bytes<Cfg: CommitmentConfig>(
 }
 
 // -----------------------------------------------------------------------
-// Step construction
-// -----------------------------------------------------------------------
-
-fn to_fold_step(
-    c: &CandidateLevelParams,
-    current_w_len: usize,
-    level_bytes: usize,
-    next_w_len_override: Option<usize>,
-) -> Step {
-    let next_w_len = next_w_len_override.unwrap_or(c.next_w_len);
-    Step::Fold(FoldStep {
-        params: c.lp.clone(),
-        current_w_len,
-        next_w_len,
-        level_bytes,
-    })
-}
-
-/// Build a SIS-secure terminal direct step in one shot.
-///
-/// The DP at level `level` reaches this state with two witness lengths:
-///
-/// - `current_w_len` (Intermediate-layout) — the witness shape if the
-///   next step is another fold; consumed by the fold branch.
-/// - `current_w_len_terminal` (Terminal-layout) — the witness shape if
-///   the next step is *this* direct send. The terminal layout drops the
-///   D-block from the parent's M-matrix (and the D-blinding under ZK),
-///   so `current_w_len_terminal <= current_w_len`.
-///
-/// This constructor uses the Terminal value to (a) cost the direct
-/// bytes correctly and (b) derive SIS-secure `level_params` for the
-/// direct's commitment. Returns `Ok(None)` when SIS is infeasible at
-/// the audited floor; the DP treats this as "no direct option from
-/// this state".
-fn to_direct_step<Cfg: CommitmentConfig>(
-    num_vars: usize,
-    level: usize,
-    current_w_len_terminal: usize,
-    log_basis: u32,
-) -> Result<Option<Step>, AkitaError> {
-    let witness_shape = DirectWitnessShape::PackedDigits((current_w_len_terminal, log_basis));
-    let direct_bytes = direct_witness_bytes(Cfg::decomposition().field_bits(), &witness_shape);
-    let level_params = match akita_derive::direct_level_params_with_log_basis(
-        Cfg::sis_modulus_family(),
-        Cfg::D,
-        Cfg::decomposition(),
-        Cfg::stage1_challenge_config(Cfg::D)?,
-        Cfg::ring_subfield_embedding_norm_bound(),
-        AkitaScheduleInputs {
-            num_vars,
-            level,
-            current_w_len: current_w_len_terminal,
-        },
-        log_basis,
-    ) {
-        Ok(lp) => lp,
-        // SIS-infeasible at the audited floor for this geometry —
-        // matches the prior lazy-finalize behavior of abandoning the
-        // candidate path, only decided one level earlier.
-        Err(_) => return Ok(None),
-    };
-    Ok(Some(Step::Direct(DirectStep {
-        current_w_len: current_w_len_terminal,
-        witness_shape,
-        direct_bytes,
-        // Terminal Direct after one or more folds: stores the SIS-secure
-        // level params for this direct's commitment. (Root commit
-        // layout lives on the first `FoldStep`, not on this step.)
-        params: Some(level_params),
-    })))
-}
-
-// -----------------------------------------------------------------------
 // DP — suffix search
 // -----------------------------------------------------------------------
 
@@ -457,10 +384,10 @@ type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 ///
 /// At each state we evaluate:
 ///
-/// - **`best_direct`**: ship the witness directly at this level. Cost
-///   is the Terminal-shape witness bytes; SIS feasibility is verified
-///   eagerly by [`to_direct_step`]. An SIS-infeasible state has
-///   `best_direct = None`.
+/// - **`best_direct`**: ship the witness directly at this level under
+///   `MRowLayout::Terminal`. Cost is the Terminal-shape witness bytes.
+///   The terminal direct does not commit, so there is no SIS audit
+///   here — `best_direct` is always present.
 /// - **`best_fold`**: one fold candidate per `log_basis` (derived via
 ///   [`derive_candidate_level_params`], which threads
 ///   `optimal_m_r_split` internally to pick `(m_vars, r_vars)` and
@@ -492,20 +419,17 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
         }
     }
 
-    // best_direct: try to build the SIS-secure direct step eagerly. If
-    // SIS is infeasible the direct option simply does not exist at
-    // this state.
-    let best_direct =
-        match to_direct_step::<Cfg>(num_vars, level, current_w_len_terminal, current_lb)? {
-            Some(step) => {
-                let bytes = match &step {
-                    Step::Direct(d) => d.direct_bytes,
-                    Step::Fold(_) => unreachable!("to_direct_step returns Step::Direct"),
-                };
-                Some((bytes, vec![step]))
-            }
-            None => None,
-        };
+    let best_direct = {
+        let witness_shape = DirectWitnessShape::PackedDigits((current_w_len_terminal, current_lb));
+        let direct_bytes = direct_witness_bytes(Cfg::decomposition().field_bits(), &witness_shape);
+        let step = Step::Direct(DirectStep {
+            current_w_len: current_w_len_terminal,
+            witness_shape,
+            direct_bytes,
+            params: None,
+        });
+        Some((direct_bytes, vec![step]))
+    };
 
     if depth > MAX_RECURSION_DEPTH {
         let result = SuffixResult {
@@ -568,12 +492,12 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
             ) + eor_bytes;
             let total = level_proof_size + child_cost;
             let mut steps = Vec::with_capacity(1 + child_sched.len());
-            steps.push(to_fold_step(
-                &candidate,
+            steps.push(Step::Fold(FoldStep {
+                params: candidate.lp.clone(),
                 current_w_len,
-                level_proof_size,
-                Some(candidate.next_w_len_terminal),
-            ));
+                next_w_len: candidate.next_w_len_terminal,
+                level_bytes: level_proof_size,
+            }));
             steps.extend(child_sched.iter().cloned());
             try_update(total, steps, &mut best_for_this_lb);
         }
@@ -594,12 +518,12 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
             ) + eor_bytes;
             let total = level_proof_size + child_cost;
             let mut steps = Vec::with_capacity(1 + child_sched.len());
-            steps.push(to_fold_step(
-                &candidate,
+            steps.push(Step::Fold(FoldStep {
+                params: candidate.lp.clone(),
                 current_w_len,
-                level_proof_size,
-                None,
-            ));
+                next_w_len: candidate.next_w_len,
+                level_bytes: level_proof_size,
+            }));
             steps.extend(child_sched.iter().cloned());
             try_update(total, steps, &mut best_for_this_lb);
         }
@@ -920,12 +844,12 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                 if total < best_cost {
                     best_cost = total;
                     let mut steps = Vec::with_capacity(1 + child_sched.len());
-                    steps.push(to_fold_step(
-                        &candidate,
-                        witness_len,
-                        root_proof_size,
-                        Some(candidate.next_w_len_terminal),
-                    ));
+                    steps.push(Step::Fold(FoldStep {
+                        params: candidate.lp.clone(),
+                        current_w_len: witness_len,
+                        next_w_len: candidate.next_w_len_terminal,
+                        level_bytes: root_proof_size,
+                    }));
                     steps.extend(child_sched.iter().cloned());
                     best_steps = steps;
                 }
@@ -946,7 +870,12 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                 if total < best_cost {
                     best_cost = total;
                     let mut steps = Vec::with_capacity(1 + child_sched.len());
-                    steps.push(to_fold_step(&candidate, witness_len, root_proof_size, None));
+                    steps.push(Step::Fold(FoldStep {
+                        params: candidate.lp.clone(),
+                        current_w_len: witness_len,
+                        next_w_len: candidate.next_w_len,
+                        level_bytes: root_proof_size,
+                    }));
                     steps.extend(child_sched.iter().cloned());
                     best_steps = steps;
                 }

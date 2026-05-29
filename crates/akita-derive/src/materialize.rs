@@ -562,28 +562,27 @@ where
                     DirectWitnessShape::PackedDigits((len, _)) => *len,
                     DirectWitnessShape::FieldElements(len) => *len,
                 };
-                // `params` is position-dependent:
+                // `params` is meaningful only for root-direct entries
+                // (`fold_level == 0`), where it carries the root commit
+                // layout (same role as `FoldStep.params` for Fold-root
+                // entries). Batched root-direct incidences scale the
+                // singleton layout via `scale_batched_root_layout`;
+                // when the strict audit rejects the scaled widths
+                // (large-`num_vars` edge entries), the schedule ships
+                // with `params: None` and
+                // `Cfg::get_params_for_batched_commitment` rejects it
+                // loudly while
+                // `setup_level_params_from_runtime_schedule` returns an
+                // empty list (locked in by
+                // `uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_params_error`
+                // in `proof_optimized.rs`).
                 //
-                // - Root-direct entries (`fold_level == 0`) carry the
-                //   root commit layout — same role as `FoldStep.params`
-                //   for Fold-root entries, so the same batched scaling
-                //   applies when the entry is for a non-singleton
-                //   incidence. Tables also contain large-`num_vars`
-                //   root-direct edge entries whose singleton root
-                //   layout exceeds the audited SIS floor; those
-                //   materialize with `params: None` *deliberately*.
-                //   See `DirectStep::params` for the contract:
-                //   `Cfg::get_params_for_batched_commitment` rejects
-                //   those schedules, and
-                //   `setup_level_params_from_runtime_schedule` returns
-                //   an empty list (locked in by
-                //   `commit_params_uncommittable_root_direct` tests in
-                //   `proof_optimized.rs`).
-                //
-                // - Terminal direct (`fold_level > 0`) bakes the
-                //   SIS-secure direct level params onto the step so
-                //   prover/verifier can read the next-level params
-                //   straight from the schedule.
+                // Terminal-direct entries (`fold_level > 0`) ship the
+                // cleartext witness; they have no commitment of their
+                // own, so they materialize with `params: None`. The
+                // active `log_basis` lives on `witness_shape`, and
+                // `scheduled_next_level_params` synthesizes a stub for
+                // the prover's `final_log_basis`.
                 let params = if fold_level == 0 {
                     let singleton = crate::root_direct_commit_layout(
                         sis_family,
@@ -600,40 +599,16 @@ where
                         || key.num_w_vectors != 1
                         || key.num_z_vectors != 1;
                     match singleton {
-                        Some(lp) if root_is_batched => {
-                            // Scaling the singleton root layout multiplies
-                            // the B/D widths by `num_t_vectors` and re-runs
-                            // `try_new` against the original singleton
-                            // ranks. The strict audit may reject when those
-                            // ranks no longer cover the batched widths.
-                            // That's not an error — the schedule still
-                            // ships with `params: None` (matching
-                            // `find_schedule`'s root-direct baseline) and
-                            // downstream consumers re-derive the commit
-                            // layout from the runtime schedule shape.
-                            akita_types::scale_batched_root_layout(
-                                &lp,
-                                key.num_t_vectors,
-                                root_decomp.field_bits(),
-                            )
-                            .ok()
-                        }
+                        Some(lp) if root_is_batched => akita_types::scale_batched_root_layout(
+                            &lp,
+                            key.num_t_vectors,
+                            root_decomp.field_bits(),
+                        )
+                        .ok(),
                         other => other,
                     }
                 } else {
-                    Some(crate::direct_level_params_with_log_basis(
-                        sis_family,
-                        ring_dimension,
-                        root_decomp,
-                        stage1_challenge_config(ring_dimension)?,
-                        ring_subfield_norm_bound,
-                        AkitaScheduleInputs {
-                            num_vars: key.num_vars,
-                            level: fold_level,
-                            current_w_len: direct_current_w_len,
-                        },
-                        current_log_basis,
-                    )?)
+                    None
                 };
                 let state = AkitaPlannedState {
                     level: fold_level,

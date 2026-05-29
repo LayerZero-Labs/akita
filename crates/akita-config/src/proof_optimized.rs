@@ -399,7 +399,11 @@ mod tests {
     use akita_types::DecompositionParams;
 
     #[test]
-    fn setup_level_params_from_runtime_schedule_includes_terminal_direct_level_params() {
+    fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
+        // Terminal-direct steps ship the cleartext witness without
+        // committing, so they have no `LevelParams` of their own and
+        // must not contribute to the FS-bound `setup_levels`. Only
+        // the preceding Fold steps (which do commit) appear.
         use akita_challenges::SparseChallengeConfig;
         use akita_types::{DirectStep, DirectWitnessShape, FoldStep, SisModulusFamily, Step};
 
@@ -407,9 +411,7 @@ mod tests {
             weight: 1,
             nonzero_coeffs: vec![-1, 1],
         };
-        let fold_lp =
-            LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 1, 1, 1, sparse.clone());
-        let direct_lp = LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 1, 1, 1, sparse);
+        let fold_lp = LevelParams::params_only(SisModulusFamily::Q128, 64, 3, 1, 1, 1, sparse);
 
         let steps = vec![
             Step::Fold(FoldStep {
@@ -422,16 +424,15 @@ mod tests {
                 current_w_len: 1 << 4,
                 witness_shape: DirectWitnessShape::PackedDigits((16, 3)),
                 direct_bytes: 0,
-                params: Some(direct_lp.clone()),
+                params: None,
             }),
         ];
 
         let setup_levels = setup_level_params_from_runtime_schedule(&steps);
-        assert_eq!(setup_levels.len(), 2);
-        assert_eq!(setup_levels[0], fold_lp);
         assert_eq!(
-            setup_levels[1], direct_lp,
-            "terminal Direct.params must feed setup-level params (and the transcript binding's level_params_digest); see bind_transcript_instance_descriptor"
+            setup_levels,
+            vec![fold_lp],
+            "terminal Direct.params is None and must not feed setup_levels; see DirectStep::params"
         );
     }
 
