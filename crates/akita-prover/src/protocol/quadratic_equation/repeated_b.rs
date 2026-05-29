@@ -131,6 +131,7 @@ fn repeated_b_planes_per_claim(
         .ok_or(AkitaError::InvalidProof)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn repeated_b_commitment_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
