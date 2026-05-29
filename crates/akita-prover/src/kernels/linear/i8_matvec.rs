@@ -85,7 +85,9 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
                         if CHECK_ZERO && is_zero_plane(digit) {
                             continue;
                         }
-                        let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                        let ntt_d = unsafe {
+                            CyclotomicCrtNtt::from_i8_with_lut_unchecked(digit, params, &lut)
+                        };
                         for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
                             accumulate_pointwise_product_into(
                                 acc,
@@ -151,7 +153,9 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
                     if CHECK_ZERO && is_zero_plane(digit) {
                         continue;
                     }
-                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                    let ntt_d = unsafe {
+                        CyclotomicCrtNtt::from_i8_with_lut_unchecked(digit, params, &lut)
+                    };
                     for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
                         accumulate_pointwise_product_into(
                             acc,
@@ -301,7 +305,9 @@ pub(super) fn mat_vec_mul_i8_strided_with_params<
                         if is_zero_plane(digit) {
                             continue;
                         }
-                        let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                        let ntt_d = unsafe {
+                            CyclotomicCrtNtt::from_i8_with_lut_unchecked(digit, params, &lut)
+                        };
                         for (acc, mat_row) in block_accs.iter_mut().zip(ntt_mat.iter()) {
                             accumulate_pointwise_product_into(
                                 acc,
@@ -373,7 +379,9 @@ pub(super) fn mat_vec_mul_i8_strided_with_params<
                     if is_zero_plane(digit) {
                         continue;
                     }
-                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                    let ntt_d = unsafe {
+                        CyclotomicCrtNtt::from_i8_with_lut_unchecked(digit, params, &lut)
+                    };
                     for (acc, mat_row) in block_accs.iter_mut().zip(ntt_mat.iter()) {
                         accumulate_pointwise_product_into(
                             acc,

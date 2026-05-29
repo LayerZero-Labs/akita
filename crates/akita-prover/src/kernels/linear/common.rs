@@ -100,6 +100,28 @@ pub(super) fn digit_rows_within_lut_range<const D: usize, const L: usize>(
 }
 
 #[inline]
+pub(super) fn validate_digit_rows_for_log_basis<const D: usize>(
+    rows: &[[i8; D]],
+    len: usize,
+    log_basis: u32,
+    context: &str,
+) -> Result<(), AkitaError> {
+    let bound = 1i16 << (log_basis - 1);
+    if rows
+        .iter()
+        .take(len)
+        .flat_map(|row| row.iter())
+        .all(|&coeff| (-bound..bound).contains(&i16::from(coeff)))
+    {
+        Ok(())
+    } else {
+        Err(AkitaError::InvalidInput(format!(
+            "predecomposed digit row contains a coefficient outside the balanced log_basis range {context}"
+        )))
+    }
+}
+
+#[inline]
 pub(super) fn aligned_i8_tile_width(
     raw_width: usize,
     inner_width: usize,

@@ -152,6 +152,14 @@ pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
+    for block in blocks {
+        validate_digit_rows_for_log_basis(
+            block,
+            num_cols.min(block.len()),
+            log_basis,
+            "for predecomposed digit mat-vec",
+        )?;
+    }
     dispatch_digit_lut_len!(log_basis, |L| {
         Ok(dispatch_slot!(
             slot,
@@ -179,6 +187,14 @@ pub fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: u
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
+    for block in blocks {
+        validate_digit_rows_for_log_basis(
+            block,
+            num_cols.min(block.len()),
+            log_basis,
+            "for dense predecomposed digit mat-vec",
+        )?;
+    }
     dispatch_digit_lut_len!(log_basis, |L| {
         Ok(dispatch_slot!(
             slot,
@@ -204,6 +220,13 @@ pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D:
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
+    let used = num_cols.min(block_len).saturating_mul(num_blocks);
+    validate_digit_rows_for_log_basis(
+        coeffs,
+        used.min(coeffs.len()),
+        log_basis,
+        "for strided predecomposed digit mat-vec",
+    )?;
     dispatch_digit_lut_len!(log_basis, |L| {
         Ok(dispatch_slot!(
             slot,
@@ -217,4 +240,30 @@ pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D:
             DigitLutLen::<L>
         ))
     })
+}
+
+/// Strided direct-signed-i8 variant for recursive witnesses.
+///
+/// Unlike [`mat_vec_mul_ntt_digits_i8_strided`], this path does not assume the
+/// input rows are balanced gadget digits for `log_basis`. It is used for
+/// `num_digits_commit = 1`, where the recursive witness is already the
+/// committed signed-i8 coefficient stream.
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_raw_i8_strided")]
+pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &NttSlotCache<D>,
+    num_rows: usize,
+    num_cols: usize,
+    coeffs: &[[i8; D]],
+    num_blocks: usize,
+    block_len: usize,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    Ok(dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_raw_i8_strided_with_params,
+        coeffs,
+        num_blocks,
+        block_len
+    ))
 }

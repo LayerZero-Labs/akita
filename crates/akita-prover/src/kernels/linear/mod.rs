@@ -80,6 +80,6 @@ use i8_matvec::*;
 pub use ntt_matvec::{
     mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_digits_i8_strided,
     mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
-    mat_vec_mul_ntt_i8_strided,
+    mat_vec_mul_ntt_i8_strided, mat_vec_mul_ntt_raw_i8_strided,
 };
 pub use single_cyclic::{mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic};

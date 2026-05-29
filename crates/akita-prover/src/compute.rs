@@ -15,9 +15,8 @@ use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::kernels::linear::fused_split_eq_quotients;
 use crate::kernels::linear::{
     fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8,
-    mat_vec_mul_ntt_digits_i8_strided, mat_vec_mul_ntt_i8_dense,
-    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided, mat_vec_mul_ntt_single_i8,
-    mat_vec_mul_ntt_single_i8_cyclic,
+    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
+    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
@@ -576,14 +575,13 @@ where
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         let stride = prepared.expanded.seed.max_stride;
         if plan.num_digits_commit == 1 {
-            mat_vec_mul_ntt_digits_i8_strided(
+            mat_vec_mul_ntt_raw_i8_strided(
                 &prepared.ntt_shared,
                 plan.n_rows,
                 stride,
                 plan.coeffs,
                 plan.num_blocks,
                 plan.block_len,
-                plan.log_basis,
             )
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = plan

@@ -16,6 +16,12 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
+    validate_digit_rows_for_log_basis(
+        vec,
+        num_cols.min(vec.len()),
+        log_basis,
+        "for single predecomposed digit mat-vec",
+    )?;
     dispatch_digit_lut_len!(log_basis, |L| {
         Ok(match slot {
             NttSlotCache::Q32 { neg, params: p, .. } => {
@@ -50,6 +56,12 @@ pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: 
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     validate_i8_log_basis(log_basis)?;
+    validate_digit_rows_for_log_basis(
+        vec,
+        num_cols.min(vec.len()),
+        log_basis,
+        "for cyclic single predecomposed digit mat-vec",
+    )?;
     dispatch_digit_lut_len!(log_basis, |L| {
         Ok(match slot {
             NttSlotCache::Q32 { cyc, params: p, .. } => {
@@ -119,7 +131,9 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
                     if is_zero_plane(digit) {
                         continue;
                     }
-                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                    let ntt_d = unsafe {
+                        CyclotomicCrtNtt::from_i8_with_lut_unchecked(digit, params, &lut)
+                    };
                     for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
                         accumulate_pointwise_product_into(
                             acc,
@@ -158,7 +172,8 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
                 if is_zero_plane(digit) {
                     continue;
                 }
-                let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                let ntt_d =
+                    unsafe { CyclotomicCrtNtt::from_i8_with_lut_unchecked(digit, params, &lut) };
                 for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
                     accumulate_pointwise_product_into(
                         acc,
@@ -228,7 +243,9 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
                     if is_zero_plane(digit) {
                         continue;
                     }
-                    let ntt_d = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
+                    let ntt_d = unsafe {
+                        CyclotomicCrtNtt::from_i8_cyclic_with_lut_unchecked(digit, params, &lut)
+                    };
                     for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
                         accumulate_pointwise_product_into(
                             acc,
@@ -267,7 +284,9 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
                 if is_zero_plane(digit) {
                     continue;
                 }
-                let ntt_d = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
+                let ntt_d = unsafe {
+                    CyclotomicCrtNtt::from_i8_cyclic_with_lut_unchecked(digit, params, &lut)
+                };
                 for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
                     accumulate_pointwise_product_into(
                         acc,

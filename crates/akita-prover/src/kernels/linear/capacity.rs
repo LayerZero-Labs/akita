@@ -2,7 +2,7 @@ use super::*;
 
 #[cfg(all(test, not(feature = "zk")))]
 pub(super) const BALANCED_DIGIT_RHS_MAX_ABS: u64 = 32;
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(super) const I8_RHS_MAX_ABS: u64 = 128;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

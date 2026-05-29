@@ -99,16 +99,20 @@ impl<W: PrimeWidth, const K: usize, const L: usize> DigitMontLut<W, K, L> {
         self.vals[k][idx as usize]
     }
 
-    /// Number of balanced digit values covered by this table.
-    #[inline]
-    pub fn len(&self) -> usize {
-        L
-    }
-
-    /// Whether this table covers no digit values.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        L == 0
+    /// Look up the Montgomery form of a caller-validated balanced digit.
+    ///
+    /// # Safety
+    ///
+    /// `k` must be less than `K`, and `digit` must be in this LUT's balanced
+    /// range: `[-L/2, L/2)`.
+    #[inline(always)]
+    pub unsafe fn get_unchecked(&self, k: usize, digit: i8) -> MontCoeff<W> {
+        let idx = i16::from(digit) + Self::offset();
+        debug_assert!(
+            (0..L as i16).contains(&idx),
+            "digit LUT only covers balanced digits in [-L/2, L/2)"
+        );
+        unsafe { *self.vals.get_unchecked(k).get_unchecked(idx as usize) }
     }
 
     #[inline]
@@ -138,6 +142,20 @@ impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
     pub fn get(&self, k: usize, coeff: i32) -> Option<MontCoeff<W>> {
         let idx = coeff.checked_add(self.offset)?;
         self.vals.get(k)?.get(usize::try_from(idx).ok()?).copied()
+    }
+
+    /// Look up the Montgomery form of a caller-validated centered coefficient.
+    ///
+    /// # Safety
+    ///
+    /// `k` must be less than `K`, and `coeff` must be within this LUT's
+    /// covered centered range.
+    #[inline(always)]
+    pub unsafe fn get_unchecked(&self, k: usize, coeff: i32) -> MontCoeff<W> {
+        let idx = coeff + self.offset;
+        debug_assert!(idx >= 0);
+        debug_assert!((idx as usize) < self.vals[k].len());
+        unsafe { *self.vals.get_unchecked(k).get_unchecked(idx as usize) }
     }
 }
 
@@ -318,10 +336,39 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
         lut: &DigitMontLut<W, K, L>,
     ) -> Self {
+        Self::from_i8_with_lut_backend::<L>(digits, params, lut, false)
+    }
+
+    /// Like [`Self::from_i8_with_lut`] for caller-validated balanced digits.
+    ///
+    /// # Safety
+    ///
+    /// Every entry in `digits` must be in this LUT's balanced range:
+    /// `[-L/2, L/2)`.
+    #[inline]
+    pub unsafe fn from_i8_with_lut_unchecked<const L: usize>(
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &DigitMontLut<W, K, L>,
+    ) -> Self {
+        Self::from_i8_with_lut_backend::<L>(digits, params, lut, true)
+    }
+
+    #[inline]
+    fn from_i8_with_lut_backend<const L: usize>(
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &DigitMontLut<W, K, L>,
+        unchecked: bool,
+    ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
-                *dst = lut.get(k, d);
+                *dst = if unchecked {
+                    unsafe { lut.get_unchecked(k, d) }
+                } else {
+                    lut.get(k, d)
+                };
             }
             forward_ntt(limb, params.primes[k], tw);
         }
@@ -609,10 +656,40 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
         lut: &DigitMontLut<W, K, L>,
     ) -> Self {
+        Self::from_i8_cyclic_with_lut_backend::<L>(digits, params, lut, false)
+    }
+
+    /// Like [`Self::from_i8_cyclic_with_lut`] for caller-validated balanced
+    /// digits.
+    ///
+    /// # Safety
+    ///
+    /// Every entry in `digits` must be in this LUT's balanced range:
+    /// `[-L/2, L/2)`.
+    #[inline]
+    pub unsafe fn from_i8_cyclic_with_lut_unchecked<const L: usize>(
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &DigitMontLut<W, K, L>,
+    ) -> Self {
+        Self::from_i8_cyclic_with_lut_backend::<L>(digits, params, lut, true)
+    }
+
+    #[inline]
+    fn from_i8_cyclic_with_lut_backend<const L: usize>(
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &DigitMontLut<W, K, L>,
+        unchecked: bool,
+    ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
-                *dst = lut.get(k, d);
+                *dst = if unchecked {
+                    unsafe { lut.get_unchecked(k, d) }
+                } else {
+                    lut.get(k, d)
+                };
             }
             forward_ntt_cyclic(limb, params.primes[k], tw);
         }
@@ -633,7 +710,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
     ) -> (Self, Self) {
-        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, None)
+        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, None, false)
     }
 
     /// Like [`Self::from_centered_i32_pair_with_params`] but uses a precomputed
@@ -643,7 +720,22 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
         lut: &CenteredMontLut<W, K>,
     ) -> (Self, Self) {
-        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, Some(lut))
+        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, Some(lut), false)
+    }
+
+    /// Like [`Self::from_centered_i32_pair_with_lut`] for caller-validated
+    /// centered coefficients.
+    ///
+    /// # Safety
+    ///
+    /// Every entry in `coeffs` must be within the range covered by `lut`.
+    #[inline]
+    pub unsafe fn from_centered_i32_pair_with_lut_unchecked(
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &CenteredMontLut<W, K>,
+    ) -> (Self, Self) {
+        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, Some(lut), true)
     }
 
     fn from_i8_negacyclic_backend<B: NttPrimeOps<W, D> + NttTransform<W, D>>(
@@ -740,6 +832,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
         lut: Option<&CenteredMontLut<W, K>>,
+        unchecked_lut: bool,
     ) -> (Self, Self) {
         let mut neg_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         let mut cyc_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
@@ -752,15 +845,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         {
             if let Some(lut) = lut {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
-                    *dst = lut.get(k, coeff).unwrap_or_else(|| {
-                        let p = prime.p.to_i64();
-                        let half_p = p / 2;
-                        let mut r = (coeff as i64).rem_euclid(p);
-                        if r >= half_p {
-                            r -= p;
-                        }
-                        B::from_canonical(*prime, W::from_i64(r))
-                    });
+                    *dst = if unchecked_lut {
+                        unsafe { lut.get_unchecked(k, coeff) }
+                    } else {
+                        lut.get(k, coeff).unwrap_or_else(|| {
+                            let p = prime.p.to_i64();
+                            let half_p = p / 2;
+                            let mut r = (coeff as i64).rem_euclid(p);
+                            if r >= half_p {
+                                r -= p;
+                            }
+                            B::from_canonical(*prime, W::from_i64(r))
+                        })
+                    };
                 }
             } else {
                 let p = prime.p.to_i64();

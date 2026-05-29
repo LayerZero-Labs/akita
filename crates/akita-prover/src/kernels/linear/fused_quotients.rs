@@ -57,15 +57,17 @@ pub(super) fn fused_split_eq_quotients_with_params<
         ));
     }
 
-    let z_abs_bound = u64::from(z_pre_max_abs);
-    debug_assert!(
-        digit_rows_within_lut_range::<D, L>(w_hat, w_len),
-        "fused quotient w_hat contains digits outside its log_basis range"
-    );
-    debug_assert!(
-        digit_rows_within_lut_range::<D, L>(t_hat, t_len),
-        "fused quotient t_hat contains digits outside its log_basis range"
-    );
+    let z_abs_bound = u64::from(z_pre_max_abs).max(centered_rows_abs_bound(z_pre, z_len));
+    if !digit_rows_within_lut_range::<D, L>(w_hat, w_len) {
+        return Err(AkitaError::InvalidInput(
+            "fused quotient w_hat contains digits outside its log_basis range".to_string(),
+        ));
+    }
+    if !digit_rows_within_lut_range::<D, L>(t_hat, t_len) {
+        return Err(AkitaError::InvalidInput(
+            "fused quotient t_hat contains digits outside its log_basis range".to_string(),
+        ));
+    }
     debug_assert!(
         centered_rows_within_bound(z_pre, z_len, z_abs_bound),
         "fused quotient centered RHS bound is smaller than the actual max"
@@ -156,8 +158,8 @@ fn fused_split_eq_quotients_one_shot<
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
 ) {
-    let lut = DigitMontLut::<W, K, L>::new(params);
-    let centered_lut = (z_abs_bound <= u64::from(CENTERED_LUT_MAX_ABS))
+    let digit_lut = (w_len != 0 || t_len != 0).then(|| DigitMontLut::<W, K, L>::new(params));
+    let centered_lut = (z_len != 0 && z_abs_bound <= u64::from(CENTERED_LUT_MAX_ABS))
         .then(|| CenteredMontLut::<W, K>::new(params, z_abs_bound as i32));
     let base_tw = (FUSED_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
     let tw = base_tw.min(max_col.div_ceil(MIN_FUSED_TILES).max(1));
@@ -184,14 +186,20 @@ fn fused_split_eq_quotients_one_shot<
 
             for j in tile_start..tile_end {
                 if j < w_len && !is_zero_plane(&w_hat[j]) {
-                    let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&w_hat[j], params, &lut);
+                    let lut = digit_lut.as_ref().expect("digit LUT exists");
+                    let ntt_w = unsafe {
+                        CyclotomicCrtNtt::from_i8_cyclic_with_lut_unchecked(&w_hat[j], params, lut)
+                    };
                     for (acc_d, cyc_row) in accs.0.iter_mut().zip(cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_d, &cyc_row[j], &ntt_w, params);
                     }
                 }
 
                 if j < t_len && !is_zero_plane(&t_hat[j]) {
-                    let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, &lut);
+                    let lut = digit_lut.as_ref().expect("digit LUT exists");
+                    let ntt_t = unsafe {
+                        CyclotomicCrtNtt::from_i8_cyclic_with_lut_unchecked(&t_hat[j], params, lut)
+                    };
                     for (acc_b, cyc_row) in accs.1.iter_mut().zip(cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_b, &cyc_row[j], &ntt_t, params);
                     }
@@ -199,7 +207,11 @@ fn fused_split_eq_quotients_one_shot<
 
                 if j < z_len && !is_zero_centered_row(&z_pre[j]) {
                     let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
-                        CyclotomicCrtNtt::from_centered_i32_pair_with_lut(&z_pre[j], params, lut)
+                        unsafe {
+                            CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
+                                &z_pre[j], params, lut,
+                            )
+                        }
                     } else {
                         CyclotomicCrtNtt::from_centered_i32_pair_with_params(&z_pre[j], params)
                     };
@@ -318,7 +330,9 @@ fn accumulate_cyclic_i8_rows<
                 if is_zero_plane(&rhs[j]) {
                     continue;
                 }
-                let ntt_rhs = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&rhs[j], params, &lut);
+                let ntt_rhs = unsafe {
+                    CyclotomicCrtNtt::from_i8_cyclic_with_lut_unchecked(&rhs[j], params, &lut)
+                };
                 for (acc, row) in accs.iter_mut().zip(cyc_rows.iter()) {
                     accumulate_pointwise_product_into(acc, &row[j], &ntt_rhs, params);
                 }
@@ -343,6 +357,15 @@ fn centered_rows_within_bound<const D: usize>(rows: &[[i32; D]], len: usize, bou
         .take(len)
         .flat_map(|row| row.iter())
         .all(|&coeff| u64::from(coeff.unsigned_abs()) <= bound)
+}
+
+fn centered_rows_abs_bound<const D: usize>(rows: &[[i32; D]], len: usize) -> u64 {
+    rows.iter()
+        .take(len)
+        .flat_map(|row| row.iter())
+        .map(|&coeff| u64::from(coeff.unsigned_abs()))
+        .max()
+        .unwrap_or(0)
 }
 
 fn centered_i32_ring<F: CanonicalField, const D: usize>(coeffs: &[i32; D]) -> CyclotomicRing<F, D> {
@@ -418,7 +441,11 @@ fn accumulate_centered_quotient_rows<
                     continue;
                 }
                 let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
-                    CyclotomicCrtNtt::from_centered_i32_pair_with_lut(&z_pre[j], params, lut)
+                    unsafe {
+                        CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
+                            &z_pre[j], params, lut,
+                        )
+                    }
                 } else {
                     CyclotomicCrtNtt::from_centered_i32_pair_with_params(&z_pre[j], params)
                 };
@@ -526,8 +553,8 @@ pub(crate) fn fused_split_eq_quotients<
         t_hat,
         z_pre,
         z_pre_max_abs,
-        I8_RHS_MAX_ABS,
-        I8_RHS_MAX_ABS,
+        balanced_digit_abs_bound(6),
+        balanced_digit_abs_bound(6),
         DigitLutLen::<64>,
     )
 }

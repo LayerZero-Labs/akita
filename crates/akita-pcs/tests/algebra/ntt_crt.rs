@@ -106,7 +106,6 @@ fn mont_coeff_round_trip() {
 fn digit_lut_covers_log_basis_six_balanced_range() {
     let params = CrtNttParamSet::<i16, Q32_NUM_PRIMES, 64>::new(Q32_PRIMES);
     let lut = DigitMontLut::<_, Q32_NUM_PRIMES, 64>::new(&params);
-    assert_eq!(lut.len(), 64);
 
     for (k, prime) in params.primes.iter().enumerate() {
         for raw in -32i8..=31 {
@@ -119,7 +118,6 @@ fn digit_lut_covers_log_basis_six_balanced_range() {
 fn digit_lut_can_be_sized_to_log_basis_three() {
     let params = CrtNttParamSet::<i16, Q32_NUM_PRIMES, 64>::new(Q32_PRIMES);
     let lut = DigitMontLut::<_, Q32_NUM_PRIMES, 8>::new(&params);
-    assert_eq!(lut.len(), 8);
 
     for (k, prime) in params.primes.iter().enumerate() {
         for raw in -4i8..=3 {

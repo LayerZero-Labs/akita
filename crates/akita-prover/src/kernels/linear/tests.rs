@@ -2,12 +2,15 @@ use super::{
     aligned_i8_tile_width, fused_split_eq_quotients, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many,
     mat_vec_mul_digits_i8_strided_with_params, mat_vec_mul_digits_i8_with_params,
     mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
-    mat_vec_mul_i8_with_params, mat_vec_mul_ntt_i8_dense_single_row,
-    mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked, precompute_dense_mat_ntt_with_params,
-    DigitLutLen,
+    mat_vec_mul_i8_with_params, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense_single_row,
+    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
+    precompute_dense_mat_ntt_with_params, DigitLutLen,
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
-use akita_algebra::ntt::{tables::Q32_NUM_PRIMES, PrimeWidth};
+use akita_algebra::ntt::{
+    tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES},
+    PrimeWidth,
+};
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
 use akita_field::{CanonicalField, FieldCore, Fp64, Prime128Offset275};
 use akita_types::layout::FlatMatrix;
@@ -166,12 +169,107 @@ fn quotient_from_cyclic_and_negacyclic<
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| (cyc[idx] - neg[idx]).half()))
 }
 
+fn schoolbook_digit_mat_vec<F: FieldCore + CanonicalField, const D: usize>(
+    mat: &[Vec<CyclotomicRing<F, D>>],
+    blocks: &[Vec<[i8; D]>],
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    blocks
+        .iter()
+        .map(|block| {
+            mat.iter()
+                .map(|row| {
+                    row.iter().zip(block.iter()).fold(
+                        CyclotomicRing::<F, D>::zero(),
+                        |mut acc, (lhs, digit)| {
+                            let rhs = CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                                F::from_i64(i64::from(digit[k]))
+                            }));
+                            acc += *lhs * rhs;
+                            acc
+                        },
+                    )
+                })
+                .collect()
+        })
+        .collect()
+}
+
 #[test]
 fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {
     assert_eq!(aligned_i8_tile_width(130, 512, 64), 128);
     assert_eq!(aligned_i8_tile_width(63, 512, 64), 64);
     assert_eq!(aligned_i8_tile_width(1024, 65, 64), 64);
     assert_eq!(aligned_i8_tile_width(1024, 48, 64), 48);
+}
+
+#[test]
+fn predecomposed_digit_api_rejects_digits_outside_log_basis_range() {
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+    let row = CyclotomicRing::<F, D>::one();
+    let flat = FlatMatrix::from_ring_slice(&[row]);
+    let slot = build_ntt_slot(flat.ring_view::<D>(1, 1).expect("valid matrix"))
+        .expect("Q32 dispatch should support this field and ring dimension");
+    let bad_digits = vec![[4i8; D]];
+    let blocks: Vec<&[[i8; D]]> = vec![bad_digits.as_slice()];
+
+    assert!(matches!(
+        mat_vec_mul_ntt_digits_i8::<F, D>(&slot, 1, 1, &blocks, 3),
+        Err(akita_field::AkitaError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn raw_i8_strided_accepts_signed_unit_outside_binary_digit_range() {
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+    let num_rows = 2;
+    let block_len = 3;
+    let num_blocks = 2;
+    let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..num_rows)
+        .map(|row| {
+            (0..block_len)
+                .map(|col| {
+                    CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                        F::from_u64((row + col + k + 1) as u64)
+                    }))
+                })
+                .collect()
+        })
+        .collect();
+    let flat_rows: Vec<_> = mat.iter().flatten().copied().collect();
+    let flat = FlatMatrix::from_ring_slice(&flat_rows);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(num_rows, block_len)
+            .expect("valid matrix view"),
+    )
+    .expect("Q32 dispatch should support this field and ring dimension");
+    let coeffs: Vec<[i8; D]> = (0..block_len)
+        .flat_map(|col| {
+            (0..num_blocks).map(move |block| {
+                if (col + block) % 2 == 0 {
+                    [1i8; D]
+                } else {
+                    [-1i8; D]
+                }
+            })
+        })
+        .collect();
+    let blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
+        .map(|block| {
+            (0..block_len)
+                .map(|col| coeffs[col * num_blocks + block])
+                .collect()
+        })
+        .collect();
+
+    let got = mat_vec_mul_ntt_raw_i8_strided::<F, D>(
+        &slot, num_rows, block_len, &coeffs, num_blocks, block_len,
+    )
+    .expect("raw signed-i8 strided mat-vec");
+    let expected = schoolbook_digit_mat_vec(&mat, &blocks);
+
+    assert_eq!(got, expected);
 }
 
 #[test]
@@ -278,6 +376,38 @@ fn fused_split_eq_q128_quotient_falls_back_when_one_term_exceeds_crt() {
 }
 
 #[test]
+fn fused_split_eq_uses_actual_centered_bound_when_hint_is_underreported() {
+    type F = Prime128Offset275;
+    const D: usize = 32;
+    let cols = 4;
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let row = CyclotomicRing::from_coefficients([half; D]);
+    let flat_rows = vec![row; cols];
+    let flat = FlatMatrix::from_ring_slice(&flat_rows);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(1, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("Q128 dispatch should support this field and ring dimension");
+    let z_pre = vec![[32_768i32; D]; cols];
+
+    let (_d_rows, _b_rows, a_rows) =
+        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, cols, &[], &[], &z_pre, 1)
+            .expect("fused split-eq rows");
+
+    let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, j| {
+        let z = centered_i32_ring(&z_pre[j]);
+        let cyclic = cyclic_product(&row, &z);
+        let negacyclic = row * z;
+        acc += quotient_from_cyclic_and_negacyclic(&cyclic, &negacyclic);
+        acc
+    });
+
+    assert_eq!(a_rows, vec![expected]);
+}
+
+#[test]
 fn fused_split_eq_q128_cyclic_i8_chunks_before_crt_wrap() {
     type F = Prime128Offset275;
     const D: usize = 64;
@@ -339,6 +469,48 @@ fn mat_vec_mul_ntt_i8_dense_single_row_chunks_q128() {
     });
 
     assert_eq!(got, vec![expected]);
+}
+
+#[test]
+fn q128_many_blocks_digits_chunk_instead_of_unsafe_block_parallel() {
+    type F = Prime128Offset275;
+    const D: usize = 64;
+    let cols = 2_050;
+    let num_blocks = 16;
+    let log_basis = 6;
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..3)
+        .map(|_| vec![CyclotomicRing::from_coefficients([half; D]); cols])
+        .collect();
+    let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
+        .map(|block_idx| {
+            (0..cols)
+                .map(|col| {
+                    let digit = if (block_idx + col) % 2 == 0 { -32 } else { 31 };
+                    [digit; D]
+                })
+                .collect()
+        })
+        .collect();
+    let digit_block_slices: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
+
+    match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
+        ProtocolCrtNttParams::Q128(params) => {
+            let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+            let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
+            let got = mat_vec_mul_digits_i8_with_params_for_log_basis::<F, i32, Q128_NUM_PRIMES, D>(
+                &ntt_mat,
+                &digit_block_slices,
+                log_basis,
+                &params,
+            );
+            let expected = schoolbook_digit_mat_vec(&mat, &digit_blocks);
+
+            assert_eq!(got, expected);
+        }
+        _ => panic!("unexpected parameter family"),
+    }
 }
 
 #[test]
