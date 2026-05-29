@@ -48,6 +48,7 @@ pub(crate) struct SetupContributionShape {
     pub num_polys_per_point: Vec<usize>,
     pub num_public_rows: usize,
     pub m_row_layout: MRowLayout,
+    pub z_first: bool,
     pub claim_to_point_poly: Vec<(usize, usize)>,
     pub claim_to_point: Vec<usize>,
 }
@@ -68,6 +69,7 @@ impl SetupContributionShape {
             num_polys_per_point: vec![1],
             num_public_rows: 1,
             m_row_layout: MRowLayout::Intermediate,
+            z_first: false,
             claim_to_point_poly: vec![(0, 0)],
             claim_to_point: vec![0],
         }
@@ -88,6 +90,7 @@ impl SetupContributionShape {
             num_polys_per_point: vec![2, 1],
             num_public_rows: 2,
             m_row_layout: MRowLayout::Intermediate,
+            z_first: false,
             claim_to_point_poly: vec![(0, 1), (1, 0), (0, 0)],
             claim_to_point: vec![1, 0, 1],
         }
@@ -114,6 +117,22 @@ impl SetupContributionShape {
         shape.claim_to_point = vec![0, 0, 0, 0];
         shape
     }
+
+    pub fn z_first_w_t_offset_carry() -> Self {
+        let mut shape = Self::root_single_point();
+        shape.num_blocks = 8;
+        shape.block_len = 10;
+        shape.depth_commit = 3;
+        shape.depth_fold = 2;
+        shape.z_first = true;
+        shape
+    }
+
+    pub fn pow2_z_offset_carry() -> Self {
+        let mut shape = Self::root_single_point();
+        shape.block_len = 64;
+        shape
+    }
 }
 
 impl SetupContributionFixture {
@@ -126,10 +145,11 @@ impl SetupContributionFixture {
         let w_len = shape.depth_open * total_blocks;
         let t_len = shape.depth_open * shape.n_a * total_blocks;
         let z_len = shape.depth_fold * shape.depth_commit * num_points * shape.block_len;
-        let offset_w = 0usize;
-        let offset_t = w_len;
-        let offset_z = w_len + t_len;
-        let total_len = offset_z + z_len;
+        let (offset_w, offset_t, offset_z, total_len) = if shape.z_first {
+            (z_len, z_len + w_len, 0usize, z_len + w_len + t_len)
+        } else {
+            (0usize, w_len, w_len + t_len, w_len + t_len + z_len)
+        };
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
         let stride_t = shape.n_a * shape.depth_open;
@@ -199,7 +219,7 @@ impl SetupContributionFixture {
             n_b: shape.n_b,
             num_points,
             rows,
-            z_first: false,
+            z_first: shape.z_first,
             claim_to_point_poly: shape.claim_to_point_poly.clone(),
             num_polys_per_point: shape.num_polys_per_point.clone(),
             num_public_rows: shape.num_public_rows,

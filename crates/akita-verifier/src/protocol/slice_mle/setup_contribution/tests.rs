@@ -33,6 +33,18 @@ fn setup_contribution_matches_oracle_on_batched_root_fixture() {
 }
 
 #[test]
+fn setup_contribution_matches_oracle_with_w_t_offset_carries() {
+    SetupContributionFixture::from_shape(&SetupContributionShape::z_first_w_t_offset_carry())
+        .assert_matches_materialized_oracle();
+}
+
+#[test]
+fn setup_contribution_matches_oracle_with_pow2_z_offset_carry() {
+    SetupContributionFixture::from_shape(&SetupContributionShape::pow2_z_offset_carry())
+        .assert_matches_materialized_oracle();
+}
+
+#[test]
 fn setup_oracle_keeps_alpha_on_weight_side() {
     let fixture =
         SetupContributionFixture::from_shape(&SetupContributionShape::root_single_point());

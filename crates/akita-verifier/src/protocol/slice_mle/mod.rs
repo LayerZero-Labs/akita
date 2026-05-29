@@ -12,6 +12,7 @@
 //! the results — each slice is orders of magnitude smaller than `M`.
 
 mod setup_contribution;
+#[cfg(test)]
 mod setup_inner_product_oracle;
 mod structured_slice;
 #[cfg(feature = "zk")]

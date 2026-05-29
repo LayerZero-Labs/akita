@@ -5,10 +5,8 @@
 //! lives on the weight side rather than in committed setup.
 //!
 //! The direct verifier still evaluates the inner product incrementally in
-//! `compute_setup_contribution`. This module materializes the full weight tensor
-//! for equivalence tests and the upcoming setup product-sumcheck lane.
-
-#![allow(dead_code)] // wired by setup-contribution tests today; 03A/03B evaluators next
+//! `compute_setup_contribution`. This test-only module materializes the full
+//! weight tensor as an equivalence oracle for later setup product-sumcheck work.
 
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::CyclotomicRing;

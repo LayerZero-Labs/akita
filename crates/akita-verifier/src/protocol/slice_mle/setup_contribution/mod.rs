@@ -1,5 +1,6 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
+use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -140,16 +141,16 @@ fn push_role_boundaries(
     Ok(())
 }
 
-/// Sum a contiguous absolute slice of the packed setup prefix into coefficient
-/// buckets `inner[y] = Σ_λ S(λ,y)·bar_omega(λ)`.
+/// Sum a contiguous absolute slice of the packed setup prefix.
 ///
 /// The packed interval split first combines every active D/B/A contribution to
-/// `bar_omega(λ)`, then pairs that total weight with the coefficients of
-/// `S[λ]`. The caller multiplies these buckets by `α^y` only after the setup
-/// scan, making the full shape `Σ_y α^y · inner[y]`.
+/// `bar_omega(λ)`, then contracts the same `<S, omega_S>` value as
+/// `eval_alpha(S[λ]) * bar_omega(λ)`. This keeps the direct verifier scalar in
+/// the hot loop while the test oracle still materializes
+/// `omega_S(λ, y) = bar_omega(λ) * α^y`.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn packed_slice_coefficient_sums<
+fn packed_slice_inner_sum<
     F,
     E,
     const D: usize,
@@ -159,6 +160,7 @@ fn packed_slice_coefficient_sums<
 >(
     range: std::ops::Range<usize>,
     setup_flat: &[CyclotomicRing<F, D>],
+    alpha_pows: &[E],
     d_start: usize,
     d_weight: E,
     w_eq: &[E],
@@ -168,15 +170,15 @@ fn packed_slice_coefficient_sums<
     a_start: usize,
     a_weight: E,
     z_eq: &[E],
-) -> [E; D]
+) -> E
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    jolt_start_cycle_tracking("setup_packed_slice_coefficient_sums");
+    jolt_start_cycle_tracking("setup_packed_slice_inner_sum");
     let result = cfg_fold_reduce!(
         range,
-        || std::array::from_fn(|_| E::zero()),
+        E::zero,
         |mut acc, lambda| {
             let mut weight = E::zero();
             if HAS_D {
@@ -191,35 +193,14 @@ where
                 weight += a_weight * z_eq[lambda - a_start];
             }
             if !weight.is_zero() {
-                add_setup_weighted_coefficients(&mut acc, &setup_flat[lambda], weight);
+                acc += eval_ring_at_pows(&setup_flat[lambda], alpha_pows) * weight;
             }
             acc
         },
-        |mut lhs, rhs| {
-            for (lhs_i, rhs_i) in lhs.iter_mut().zip(rhs) {
-                *lhs_i += rhs_i;
-            }
-            lhs
-        }
+        |lhs, rhs| lhs + rhs
     );
-    jolt_end_cycle_tracking("setup_packed_slice_coefficient_sums");
+    jolt_end_cycle_tracking("setup_packed_slice_inner_sum");
     result
-}
-
-/// Add one ring slot to the coefficient buckets for
-/// `Σ_λ S(λ,y)·bar_omega(λ)`.
-#[inline(always)]
-fn add_setup_weighted_coefficients<F, E, const D: usize>(
-    acc: &mut [E; D],
-    setup_ring: &CyclotomicRing<F, D>,
-    setup_weight: E,
-) where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    for (acc_i, coeff) in acc.iter_mut().zip(setup_ring.coefficients()) {
-        *acc_i += setup_weight.mul_base(*coeff);
-    }
 }
 
 /// Compute the fused setup-matrix contribution `D · ŵ + B · t̂ + A · ẑ`
@@ -590,12 +571,12 @@ where
     endpoints.sort_unstable();
     endpoints.dedup();
 
-    let segment_coeff_sums: Vec<[E; D]> = cfg_into_iter!(0..endpoints.len().saturating_sub(1))
-        .map(|idx| -> Result<[E; D], AkitaError> {
+    let segment_sums: Vec<E> = cfg_into_iter!(0..endpoints.len().saturating_sub(1))
+        .map(|idx| -> Result<E, AkitaError> {
             let lo = endpoints[idx];
             let hi = endpoints[idx + 1];
             if lo == hi {
-                return Ok(std::array::from_fn(|_| E::zero()));
+                return Ok(E::zero());
             }
 
             let has_d = d_stride != 0 && lo < d_required;
@@ -633,9 +614,10 @@ where
 
             macro_rules! segment_sum {
                 ($has_d:literal, $has_b:literal, $has_a:literal) => {
-                    packed_slice_coefficient_sums::<F, E, D, $has_d, $has_b, $has_a>(
+                    packed_slice_inner_sum::<F, E, D, $has_d, $has_b, $has_a>(
                         lo..hi,
                         setup_flat,
+                        alpha_pows,
                         d_start_abs,
                         d_weight,
                         &w_eq_slice,
@@ -657,24 +639,13 @@ where
                 (true, false, false) => segment_sum!(true, false, false),
                 (false, true, false) => segment_sum!(false, true, false),
                 (false, false, true) => segment_sum!(false, false, true),
-                (false, false, false) => std::array::from_fn(|_| E::zero()),
+                (false, false, false) => E::zero(),
             })
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
     jolt_end_cycle_tracking("setup_inner_product_segments");
 
-    let mut coefficient_sums: [E; D] = std::array::from_fn(|_| E::zero());
-    for segment in segment_coeff_sums {
-        for (coeff_sum, segment_sum) in coefficient_sums.iter_mut().zip(segment) {
-            *coeff_sum += segment_sum;
-        }
-    }
-
-    Ok(coefficient_sums
-        .into_iter()
-        .zip(alpha_pows.iter())
-        .map(|(coeff_sum, alpha_pow)| *alpha_pow * coeff_sum)
-        .sum())
+    Ok(segment_sums.into_iter().sum())
 }
 
 #[cfg(test)]
