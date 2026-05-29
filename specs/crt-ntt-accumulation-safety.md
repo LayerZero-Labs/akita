@@ -186,11 +186,12 @@ performance overhead.
       incorrectly treated as balanced binary digit planes.
 - [x] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`,
       and `cargo test` pass.
-- [x] Profile comparison has no unexplained material regression. The earlier
-      CI benchmark matrix for this PR accepted the required chunking cost and
-      proof sizes were unchanged. The final tight-LUT/validation follow-up
-      keeps hot loops allocation-free; final CI benchmark status must be
-      checked after the pushed follow-up commit.
+- [x] Profile comparison has no unexplained material regression. CI benchmark
+      run `26612741059` on head `58187d0e` accepted the required chunking cost
+      after the tight-LUT/validation follow-up, and proof sizes were unchanged.
+      The final code keeps the safe-width one-shot path, allocation-free
+      per-basis digit LUTs, and the raw signed-i8 recursive-witness
+      specialization.
 
 ### Testing Strategy
 
@@ -255,17 +256,19 @@ record that fact and use targeted kernel/profile spans instead of treating one
 failed profile command as a regression. Single-run timing deltas are not enough
 evidence for either approval or rejection.
 
-PR #134 uses the CI benchmark matrix as the review artifact. The latest
-completed benchmark run before the final validation follow-up passed and proof
-sizes were unchanged. The notable accepted deltas were:
+PR #134 uses the CI benchmark matrix as the review artifact. Benchmark run
+`26612741059` completed on head `58187d0e` and passed the repository threshold
+policy with unchanged proof sizes. The largest accepted positive deltas versus
+the merge-base baseline were:
 
-- fp128 one-hot D32 nv32: commit about +13.5%, prove about +5.7%;
-- fp128 one-hot D32 nv30 np4: commit about +10.6%, prove about +5.5%;
-- fp32 dense D32: prove about +8.1%.
+- setup: about +9.85% (`dense_fp16_d32`);
+- prove: about +8.45% (`onehot_fp128_d32`, `nv30`, `np4`);
+- verify: about +10.64% (`onehot_fp64_d32`).
 
-These increases are consistent with chunking work that was previously unsafe.
-The one-shot fast path remains in place when the full effective width fits the
-CRT lift range.
+Commit time improved in every reported case. The accepted increases are
+consistent with the work needed to avoid previously unsafe CRT accumulation and
+single-run benchmark variance; the one-shot fast path remains in place whenever
+the full effective width fits the CRT lift range.
 
 Memory overhead should remain bounded by the existing accumulator shape plus
 the final field result. Do not allocate per-column rings or materialize a full
