@@ -45,24 +45,18 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
     #[inline]
     pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
-        let k = k % (D << 1);
-
-        let global_neg = k >= D;
-        let shift = k % D;
+        debug_assert!(
+            k < D,
+            "fused method shift_accumulate_into: k={k} must be < D={D}"
+        );
 
         for i in 0..D {
-            let target = i + shift;
-            let wrap_neg = target >= D;
-            let coeff = if global_neg ^ wrap_neg {
-                -self.coeffs[i]
-            } else {
-                self.coeffs[i]
-            };
+            let target = i + k;
 
             if target < D {
-                dst.coeffs[target] += coeff;
+                dst.coeffs[target] += self.coeffs[i];
             } else {
-                dst.coeffs[target - D] += coeff;
+                dst.coeffs[target - D] -= self.coeffs[i];
             }
         }
     }
@@ -70,23 +64,14 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
     #[inline]
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
-        let k = k % (D << 1);
-
-        let global_neg = k >= D;
-        let shift = k % D;
+        debug_assert!(k < D, "fused method shift_sub_into: k={k} must be < D={D}");
 
         for i in 0..D {
-            let target = i + shift;
-            let wrap_neg = target >= D;
-            let coeff = if global_neg ^ wrap_neg {
-                -self.coeffs[i]
-            } else {
-                self.coeffs[i]
-            };
+            let target = i + k;
             if target < D {
-                dst.coeffs[target] -= coeff;
+                dst.coeffs[target] -= self.coeffs[i];
             } else {
-                dst.coeffs[target - D] -= coeff;
+                dst.coeffs[target - D] += self.coeffs[i];
             }
         }
     }

@@ -5,7 +5,7 @@ use rand::SeedableRng;
 
 type F64 = Fp64<4294967197>;
 type F128 = Prime128Offset275;
-const D: usize = 8;
+const D: usize = 64;
 
 #[test]
 fn cyclotomic_ring_satisfies_jolt_ring_core() {
@@ -28,7 +28,7 @@ fn shift_accumulate_into_matches_negacyclic_shift() {
     let a = CyclotomicRing::<F64, D>::random(&mut rng);
     let dst = CyclotomicRing::<F64, D>::random(&mut rng);
 
-    for k in 0..32 {
+    for k in 0..D {
         let expected = dst + a.negacyclic_shift(k);
         let mut actual = dst;
         a.shift_accumulate_into(&mut actual, k);
@@ -42,7 +42,7 @@ fn shift_sub_into_matches_negacyclic_shift() {
     let a = CyclotomicRing::<F64, D>::random(&mut rng);
     let dst = CyclotomicRing::<F64, D>::random(&mut rng);
 
-    for k in 0..32 {
+    for k in 0..D {
         let expected = dst - a.negacyclic_shift(k);
         let mut actual = dst;
         a.shift_sub_into(&mut actual, k);
@@ -63,7 +63,7 @@ fn shift_scale_accumulate_into_matches_scaled_negacyclic_shift() {
         F64::from_u64(4294967196),
     ];
 
-    for k in 0..32 {
+    for k in 0..D {
         for &scale in &scales {
             let mut actual = dst;
             a.shift_scale_accumulate_into(&mut actual, k, scale);
@@ -83,7 +83,7 @@ fn wide_shift_accumulate_matches_narrow_fp64() {
     let src = CyclotomicRing::<F64, D>::random(&mut rng);
     let initial = CyclotomicRing::<F64, D>::random(&mut rng);
 
-    for k in [0, 1, 7, 31, 63, 64, 67] {
+    for k in 0..D {
         let mut narrow = initial;
         src.shift_accumulate_into(&mut narrow, k);
 
@@ -102,7 +102,7 @@ fn wide_shift_sub_matches_narrow_fp64() {
     let src = CyclotomicRing::<F64, D>::random(&mut rng);
     let initial = CyclotomicRing::<F64, D>::random(&mut rng);
 
-    for k in [0, 1, 15, 32, 63, 64, 67] {
+    for k in 0..D {
         let mut narrow = initial;
         src.shift_sub_into(&mut narrow, k);
 
