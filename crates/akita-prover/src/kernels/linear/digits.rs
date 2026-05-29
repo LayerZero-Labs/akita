@@ -230,6 +230,29 @@ pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
                     .to_string(),
             )
         })?;
+    // Recursive-witness commit shapes are small-row (n_a <= 4) with many
+    // strided blocks. When the full width fits one CRT lift, fan out over
+    // blocks instead of the handful of column tiles the shared driver would
+    // expose, so the dominant `commit_w` matvec keeps Rayon saturated.
+    // Recursive-witness commit shapes are small-row (n_a <= 4). Fan out over
+    // blocks whenever that exposes at least as much parallelism as the shared
+    // driver's column tiles would: the many-block root gets block fanout, and
+    // the deeper few-block levels still beat the 1-2 column tiles their narrow
+    // widths produce. Only when blocks are scarce but tiles are plentiful do we
+    // fall through to the tiled driver. Requires the full width to fit one CRT
+    // lift; over-capacity widths still chunk in the driver.
+    if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS && inner_width <= safe_width {
+        let num_tiles = inner_width.div_ceil(base_tile_width::<W, K, D>());
+        if num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS || num_blocks >= num_tiles {
+            return Ok(mat_vec_mul_raw_i8_strided_block_parallel(
+                ntt_mat,
+                coeffs,
+                num_blocks,
+                inner_width,
+                params,
+            ));
+        }
+    }
     Ok(drive_block_chunked_matvec(
         num_blocks,
         n_a,
