@@ -10,22 +10,17 @@ use std::collections::{BTreeMap, HashMap};
 use akita_challenges::TensorChallengeShape;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
-use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 use akita_types::generated::GeneratedScheduleTable;
-use akita_types::layout::digit_math::{compute_num_digits_fold_with_claims, num_digits_for_bound};
 use akita_types::{
-    decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
-    root_extension_opening_partials, schedule_from_plan,
-    w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, DecompositionParams, DirectStep, DirectWitnessShape, FoldStep,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, root_extension_opening_partials,
+    schedule_from_plan, w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape, FoldStep,
     LevelParams, MRowLayout, Schedule, Step,
 };
 
 use akita_derive::{schedule_plan_from_table, PlanPolicy};
 
-use crate::ajtai_params::{
-    compute_ajtai_key_params_a, compute_ajtai_key_params_b, compute_ajtai_key_params_d, WitnessType,
-};
+use crate::ajtai_params::{compute_all_ajtai_keys_params, WitnessType};
 use crate::proof_size::level_proof_bytes;
 
 // Suffix-DP depth cap. Schedules in our working parameter range never need
@@ -38,254 +33,124 @@ const MAX_RECURSION_DEPTH: usize = 12;
 /// M-row layouts.
 type CandidateLayout = (LevelParams, usize, usize);
 
-/// Derive the layout for folding at `(level, w_len, log_basis)`.
-/// Returns `None` if the layout is infeasible or doesn't shrink the witness.
+/// Derive the recursive fold layout at `(current_w_len, log_basis)`,
+/// or `None` if no split is SIS-feasible or the witness doesn't shrink.
 ///
-/// Recursive levels (`level > 0`) only — the root candidate path in
-/// `find_schedule` builds its own `LevelParams` directly from the
-/// per-role SIS-floor lookups so it can enumerate `(num_blocks, log_basis)`
-/// explicitly. Recursive levels pick the `(m, r)` split internally by a
-/// cheap local witness-size estimate (the inlined `optimal_m_r_split`
-/// sweep below) rather than enumerating `(num_blocks, log_basis)` and
-/// recursing into the suffix DP per split: explicit enumeration here
-/// would make every parent fold's `next_w_len` a fresh memo key and
-/// expand the suffix-DP state space exponentially in depth, destroying
-/// the dedup that makes the DP tractable.
-///
-/// Single-shot: the sweep derives the per-`r` SIS-secure A-rank `n_a`
-/// from the floor table, scores each split by `|t̂| + |ŵ| + |ẑ|`, and
-/// builds the full candidate (including the `(n_b, n_d)` lookups, both
-/// M-row witness lengths, and the shrink check) for the winning split.
+/// Recursive-only: the root candidate path in `find_schedule` enumerates
+/// `(num_blocks, log_basis)` explicitly, but here we pick the `(m, r)`
+/// split that minimizes the actual next-level (Intermediate) witness
+/// length, building one full candidate per split. We do NOT recurse into
+/// the suffix DP per split — that would make every parent's `next_w_len`
+/// a fresh memo key and blow up the DP state space.
 fn derive_candidate_level_params<Cfg: CommitmentConfig>(
-    level: usize,
     current_w_len: usize,
     log_basis: u32,
 ) -> Result<Option<CandidateLayout>, AkitaError> {
-    debug_assert!(
-        level > 0,
-        "derive_candidate_level_params is recursive-only; root candidates are built directly in find_schedule",
-    );
-
-    let sis_family = Cfg::sis_modulus_family();
-    let d = Cfg::D;
-    let Ok(stage1_config) = Cfg::stage1_challenge_config(d) else {
+    let Ok(stage1_config) = Cfg::stage1_challenge_config(Cfg::D) else {
         return Ok(None);
     };
-    if !current_w_len.is_multiple_of(d) {
+    if !current_w_len.is_multiple_of(Cfg::D) {
         return Ok(None);
     }
-    let num_ring_elems = current_w_len / d;
+    let num_ring_elems = current_w_len / Cfg::D;
     let total = num_ring_elems.next_power_of_two().max(1);
     let reduced_vars = total.trailing_zeros() as usize;
 
-    // Recursive-level decomposition: balanced-digit `w` collapses
-    // `log_commit_bound` to `log_basis`; opening folds inherit the
-    // parent's open bound. Matches `recursive_level_layout_from_params`.
-    let root_decomp = Cfg::decomposition();
-    let recursive_decomp = DecompositionParams {
-        log_basis,
-        log_commit_bound: log_basis,
-        log_open_bound: Some(
-            root_decomp
-                .log_open_bound
-                .unwrap_or(root_decomp.log_commit_bound),
-        ),
-    };
-    let field_bits = recursive_decomp.field_bits();
-    let (num_digits_commit, num_digits_open) = decomp_depths(recursive_decomp);
+    let field_bits = Cfg::decomposition().field_bits();
+    let num_digits_commit = WitnessType::S.decomposed_num_digits::<Cfg>(log_basis, false);
+    let num_digits_open = WitnessType::T.decomposed_num_digits::<Cfg>(log_basis, false);
     let l1_mass = TensorChallengeShape::Flat.effective_l1_mass(&stage1_config);
 
-    // Audited SIS collision buckets for this `(log_basis, family, d)`.
-    let Some(collisions) = (|| -> Option<(u32, u32)> {
-        let bd_collision = 1u32.checked_shl(log_basis)?.checked_sub(1)?;
-        let a_collision_raw = bd_collision
-            .checked_mul(stage1_config.infinity_norm())?
-            .checked_mul(Cfg::ring_subfield_embedding_norm_bound())?;
-        let a_collision = ceil_supported_collision(sis_family, d as u32, a_collision_raw)?;
-        Some((a_collision, bd_collision))
-    })() else {
-        return Ok(None);
-    };
-    let (collision_a, collision_bd) = collisions;
+    if reduced_vars <= 2 || reduced_vars >= 53 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "recursive fold candidate reduced_vars={reduced_vars} is outside \
+             the optimizable range [3, 52]"
+        )));
+    }
 
-    // Build the full candidate layout for one `(m_vars, r_vars, n_a)`
-    // split, where `n_a` is the SIS-secure A-rank already chosen for the
-    // split's `inner_width`. Returns `Ok(None)` when the B/D widths fall
-    // off the audited SIS floor or the Intermediate witness fails to
-    // shrink — the same rejections the post-split code applied before.
-    //
-    // Both M-row layouts are materialized so the suffix DP can cost
-    // "fold then fold" (Intermediate) and "fold then direct" (Terminal)
-    // against the same candidate without ever emitting a placeholder.
-    //
-    // The shrink check runs on the Intermediate shape (the witness
-    // arrives in `log_basis`-bit digits and is re-emitted at the same
-    // basis, so it reduces to "ring-element count strictly decreases",
-    // kept in bit form to mirror the root's check and surface overflow).
-    // We deliberately do NOT gate on the terminal shape: a candidate
-    // whose Intermediate shape shrinks while its Terminal shape does not
-    // is still useful for fold-then-...-then-direct chains.
-    let build_candidate = |m_vars: usize,
-                           r_vars: usize,
-                           n_a: usize|
-     -> Result<Option<CandidateLayout>, AkitaError> {
-        let num_blocks = 1usize
-            .checked_shl(r_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidSetup("2^r_vars does not fit usize".to_string()))?;
+    let mut best: Option<CandidateLayout> = None;
+    for r in 1..reduced_vars {
+        let num_blocks = 1usize << r;
         let block_len = num_ring_elems.div_ceil(num_blocks);
-        let inner_width = block_len
-            .checked_mul(num_digits_commit)
-            .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
-        let outer_width = n_a
-            .checked_mul(num_digits_open)
-            .and_then(|w| w.checked_mul(num_blocks))
-            .ok_or_else(|| AkitaError::InvalidSetup("outer width overflow".to_string()))?;
-        let d_matrix_width = num_digits_open
-            .checked_mul(num_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
 
-        let Some(n_b) =
-            min_rank_for_secure_width(sis_family, d as u32, collision_bd, outer_width as u64)
+        let Some((a_key, b_key, d_key)) =
+            compute_all_ajtai_keys_params::<Cfg>(block_len, num_blocks, 1, log_basis, false)?
         else {
-            return Ok(None);
+            continue;
         };
-        let Some(n_d) =
-            min_rank_for_secure_width(sis_family, d as u32, collision_bd, d_matrix_width as u64)
-        else {
-            return Ok(None);
-        };
-
-        let num_digits_fold =
-            compute_num_digits_fold_with_claims(r_vars, l1_mass, log_basis, 1, field_bits);
 
         let level_lp = LevelParams {
-            ring_dimension: d,
+            ring_dimension: Cfg::D,
             log_basis,
-            a_key: AjtaiKeyParams::new_unchecked(sis_family, n_a, inner_width, collision_a, d),
-            b_key: AjtaiKeyParams::new_unchecked(sis_family, n_b, outer_width, collision_bd, d),
-            d_key: AjtaiKeyParams::new_unchecked(sis_family, n_d, d_matrix_width, collision_bd, d),
+            a_key,
+            b_key,
+            d_key,
             num_blocks,
             block_len,
-            m_vars,
-            r_vars,
+            m_vars: reduced_vars - r,
+            r_vars: r,
             stage1_config: stage1_config.clone(),
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit,
             num_digits_open,
-            num_digits_fold,
+            num_digits_fold: WitnessType::Z
+                .decomposed_fold_num_digits::<Cfg>(log_basis, r, l1_mass, 1),
         };
 
-        let next_w_len =
-            recursive_next_witness_len(&level_lp, field_bits, MRowLayout::Intermediate)?;
-        let next_w_len_terminal =
-            recursive_next_witness_len(&level_lp, field_bits, MRowLayout::Terminal)?;
+        // Recursive folds carry a single witness opened at a single point
+        // (all batching is absorbed into level 0), so the multiplicities
+        // are all 1. Intermediate keeps the D-block (and zk D-blinding);
+        // Terminal drops both.
+        let next_w_len = w_ring_element_count_with_counts_for_layout_bits(
+            field_bits,
+            &level_lp,
+            1,
+            1,
+            1,
+            1,
+            MRowLayout::Intermediate,
+        )?
+        .checked_mul(Cfg::D)
+        .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
+        let next_w_len_terminal = w_ring_element_count_with_counts_for_layout_bits(
+            field_bits,
+            &level_lp,
+            1,
+            1,
+            1,
+            1,
+            MRowLayout::Terminal,
+        )?
+        .checked_mul(Cfg::D)
+        .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
 
-        let next_bits = next_w_len
-            .checked_mul(log_basis as usize)
-            .ok_or_else(|| AkitaError::InvalidSetup("next witness bit length overflow".into()))?;
-        let current_bits = current_w_len
-            .checked_mul(log_basis as usize)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("current witness bit length overflow".into())
-            })?;
-        if next_bits >= current_bits {
-            return Ok(None);
+        if best.as_ref().is_none_or(|(_, c, _)| next_w_len < *c) {
+            best = Some((level_lp, next_w_len, next_w_len_terminal));
         }
+    }
 
-        Ok(Some((level_lp, next_w_len, next_w_len_terminal)))
+    let Some((level_lp, next_w_len, next_w_len_terminal)) = best else {
+        return Ok(None);
     };
 
-    // Inlined `optimal_m_r_split`: brute-force the `(m, r)` split of
-    // `reduced_vars` that minimizes the local next-witness-size estimate
-    // `|t̂| + |ŵ| + |ẑ|`, building the full candidate for the winning
-    // split in the same pass. Unlike `find_schedule`'s root loop we do
-    // NOT recurse into the suffix DP per split — that would explode the
-    // memo state space; the cheap witness-size proxy is the same
-    // heuristic the standalone `optimal_m_r_split` used. `n_a` is the
-    // per-`r` SIS-secure A-rank read straight from the floor table;
-    // splits whose `inner_width` falls off the table are skipped.
-    if reduced_vars <= 2 || reduced_vars >= 53 {
-        // Too few vars to optimize, or `2^r` would overflow `u64`: use
-        // the paper's symmetric split with the fallback rank `n_a = 1`.
-        let r = reduced_vars / 2;
-        return build_candidate(reduced_vars - r, r, 1);
+    // Strict shrink check on the Intermediate shape (the witness arrives
+    // in `log_basis`-bit digits and is re-emitted at the same basis, so it
+    // reduces to "ring-element count strictly decreases", kept in bit form
+    // to mirror the root's check and surface overflow). We deliberately do
+    // NOT gate on the terminal shape: a candidate whose Intermediate shape
+    // shrinks while its Terminal shape does not is still useful for
+    // fold-then-...-then-direct chains.
+    let next_bits = next_w_len
+        .checked_mul(log_basis as usize)
+        .ok_or_else(|| AkitaError::InvalidSetup("next witness bit length overflow".into()))?;
+    let current_bits = current_w_len
+        .checked_mul(log_basis as usize)
+        .ok_or_else(|| AkitaError::InvalidSetup("current witness bit length overflow".into()))?;
+    if next_bits >= current_bits {
+        return Ok(None);
     }
 
-    // Cost-only digit counts (match the standalone optimizer): opening
-    // entries are bounded by `max(log_commit_bound, field_bits)`, so the
-    // cost `δ_open` is the full-field depth and is distinct from the
-    // layout's `num_digits_open` (which tracks the inherited open bound).
-    let cost_open_bound = recursive_decomp.log_commit_bound.max(field_bits);
-    let cost_delta_open = num_digits_for_bound(cost_open_bound, field_bits, log_basis) as u64;
-    let cost_delta_commit = num_digits_commit as u64;
-
-    let mut best: Option<(u64, Option<CandidateLayout>)> = None;
-    for r in 1..reduced_vars {
-        let num_blocks = 1u64 << r;
-        // `reduced_vars >= 3` here, so `num_ring_elems > 0` and the
-        // block length is the tight `⌈num_ring / 2^r⌉`.
-        let block_len = num_ring_elems.div_ceil(1usize << r) as u64;
-        let m_eff = block_len;
-
-        // Per-`r` SIS-secure A-rank for this split's inner width. Skip
-        // the split when the floor table doesn't cover it.
-        let Some(inner_width) = (block_len as usize).checked_mul(cost_delta_commit as usize) else {
-            continue;
-        };
-        let Some(n_a) =
-            min_rank_for_secure_width(sis_family, d as u32, collision_a, inner_width as u64)
-        else {
-            continue;
-        };
-
-        // δ_fold grows with r because β = 2^r · challenge_l1_mass · 2^(lb-1).
-        let delta_fold =
-            compute_num_digits_fold_with_claims(r, l1_mass, log_basis, 1, field_bits) as u64;
-        // |t̂| + |ŵ|: each of the 2^r blocks contributes (1 + n_A) · δ_open.
-        let per_block_cost =
-            cost_delta_open.saturating_add((n_a as u64).saturating_mul(cost_delta_open));
-        let opening_cost = per_block_cost.saturating_mul(num_blocks);
-        // |ẑ|: folded-witness cost.
-        let folding_cost = cost_delta_commit
-            .saturating_mul(delta_fold)
-            .saturating_mul(m_eff);
-        let total = opening_cost.saturating_add(folding_cost);
-
-        if best.as_ref().is_none_or(|(c, _)| total < *c) {
-            let candidate = build_candidate(reduced_vars - r, r, n_a)?;
-            best = Some((total, candidate));
-        }
-    }
-
-    match best {
-        Some((_, candidate)) => Ok(candidate),
-        // No `r` had an audited A-rank: fall back to the paper's
-        // symmetric split with `n_a = 1`, matching `optimal_m_r_split`.
-        None => {
-            let r = reduced_vars / 2;
-            build_candidate(reduced_vars - r, r, 1)
-        }
-    }
-}
-
-/// Recursive next-level witness length under the given M-row layout.
-///
-/// Recursive folds carry a single witness opened at a single prepared
-/// recursive point (all batching is absorbed into level 0), so the
-/// multiplicity arguments to
-/// [`w_ring_element_count_with_counts_for_layout_bits`] are all 1. The
-/// only knob is the layout: `Intermediate` keeps the D-block in the
-/// M-matrix (and the D-blinding under ZK); `Terminal` drops both.
-fn recursive_next_witness_len(
-    level_lp: &LevelParams,
-    field_bits: u32,
-    layout: MRowLayout,
-) -> Result<usize, AkitaError> {
-    let w_ring_elements =
-        w_ring_element_count_with_counts_for_layout_bits(field_bits, level_lp, 1, 1, 1, 1, layout)?;
-    w_ring_elements
-        .checked_mul(level_lp.ring_dimension)
-        .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))
+    Ok(Some((level_lp, next_w_len, next_w_len_terminal)))
 }
 
 /// Unified proof-size formula for one fold level under either M-row
@@ -344,31 +209,18 @@ fn extension_opening_reduction_level_bytes<Cfg: CommitmentConfig>(
     )
 }
 
-// -----------------------------------------------------------------------
-// DP — suffix search
-// -----------------------------------------------------------------------
-
-/// Result of the suffix DP at one state.
+/// Result of the suffix DP at one state. Both shape options are reported
+/// because the parent's proof-size formula depends on the child's first
+/// step:
 ///
-/// The DP reports both shape options because the parent's proof-size
-/// formula depends on the child's first step:
-///
-/// - `best_direct` — optimal schedule whose first step at this level is
-///   a `Step::Direct`. Lets the parent score under
-///   `compute_level_proof_size(..., MRowLayout::Terminal)` (drops the
-///   v-rows and stage-1 sumcheck at the parent level). `None` when SIS
-///   is infeasible at this state.
-/// - `best_fold_per_lb` — for each candidate `log_basis` at this level,
-///   the optimal schedule whose first step is `Step::Fold` with that
-///   `log_basis`. Keyed by first fold's `log_basis` because the
-///   parent's intermediate proof formula uses
-///   `next_lp.b_key.row_len`, which depends on the first fold's
-///   layout. A single "best fold" min would erase that dependence and
-///   force the child into a locally-cheap choice that can balloon the
-///   parent's intermediate proof beyond the savings. Listing one entry
-///   per first-fold `log_basis` lets the parent enumerate child
-///   options against its own proof formula. Empty when no fold
-///   candidate produces a valid continuation.
+/// - `best_direct` — best schedule whose first step is a `Step::Direct`
+///   (parent scores under `MRowLayout::Terminal`). `None` when infeasible.
+/// - `best_fold_per_lb` — best `Step::Fold`-first schedule per first-fold
+///   `log_basis`. Keyed by `log_basis` because the parent's intermediate
+///   proof formula uses `next_lp.b_key.row_len`, which depends on the
+///   first fold's layout; a single "best fold" min would hide that and
+///   force a locally-cheap child that balloons the parent's proof. Empty
+///   when no fold continuation is valid.
 #[derive(Clone)]
 struct SuffixResult {
     best_direct: Option<(usize, Vec<Step>)>,
@@ -383,50 +235,23 @@ impl SuffixResult {
 
 type ScheduleMemo = HashMap<(usize, usize, usize, u32), SuffixResult>;
 
-/// Suffix DP that searches for the optimal recursive schedule starting
-/// at `(level, current_w_len, current_w_len_terminal, current_lb)`.
+/// Suffix DP for the optimal recursive schedule at
+/// `(level, current_w_len, current_w_len_terminal, current_lb)`.
 ///
-/// The DP carries **two** witness lengths through every state because
-/// the witness shape leaving a fold depends on what its successor is:
+/// Two witness lengths are carried because the shape leaving a fold
+/// depends on its successor: `current_w_len` is the `Intermediate` shape
+/// (used if level `L` folds again) and `current_w_len_terminal` is the
+/// `Terminal` shape (used if level `L` sends the witness directly — drops
+/// the D-block and zk D-blinding, so it is `<= current_w_len`).
 ///
-/// - `current_w_len` — `MRowLayout::Intermediate` shape, the witness
-///   length the prover ships into level `L` *if* level `L` is going to
-///   fold further. Consumed by the fold branch.
-/// - `current_w_len_terminal` — `MRowLayout::Terminal` shape, the
-///   witness length the prover ships into level `L` *if* level `L` is
-///   going to send the witness directly. The terminal layout drops the
-///   D-block (and, under ZK, the D-blinding) from the parent's
-///   M-matrix, so this is `<= current_w_len`.
-///
-/// The DP returns both [`SuffixResult::best_direct`] and
-/// [`SuffixResult::best_fold`] separately, because the parent's
-/// proof-size formula depends on which one is selected at this level:
-/// a "fold-here-then-X" suffix is locally cheaper sometimes but forces
-/// the parent into the larger intermediate proof formula, which can
-/// dwarf the local savings. Letting the parent see both options
-/// removes that bias.
-///
-/// At each state we evaluate:
-///
-/// - **`best_direct`**: ship the witness directly at this level under
-///   `MRowLayout::Terminal`. Cost is the Terminal-shape witness bytes.
-///   The terminal direct does not commit, so there is no SIS audit
-///   here — `best_direct` is always present.
-/// - **`best_fold`**: one fold candidate per `log_basis` (derived via
-///   [`derive_candidate_level_params`], which threads
-///   `optimal_m_r_split` internally to pick `(m_vars, r_vars)` and
-///   computes both Intermediate and Terminal successor shapes). For
-///   each candidate, we score both child-shape options (child is
-///   Direct → `compute_level_proof_size(..., MRowLayout::Terminal)`;
-///   child is Fold → `compute_level_proof_size(..., MRowLayout::Intermediate)`)
-///   and keep the cheaper one.
-///
-/// The greedy "one candidate per `log_basis`" pre-selection is
-/// structurally required for memo dedup: explicit `(num_blocks,
-/// log_basis)` enumeration would produce a fresh `next_w_len` per
-/// parent fold candidate and blow up the suffix-DP memo state space
-/// exponentially in depth (the root path can afford explicit
-/// enumeration only because it is entered once, not recursively).
+/// At each state: `best_direct` ships the witness directly (Terminal, no
+/// SIS audit, always present); `best_fold` keeps one fold candidate per
+/// `log_basis` (from [`derive_candidate_level_params`]) and scores both
+/// child-shape options (`compute_level_proof_size` under Terminal if the
+/// child is Direct, Intermediate if it folds), keeping the cheaper. One
+/// candidate per `log_basis` is required for memo dedup — explicit
+/// `(num_blocks, log_basis)` enumeration would give each parent fold a
+/// fresh `next_w_len` memo key and blow up the state space.
 fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
     memo: &mut ScheduleMemo,
     num_vars: usize,
@@ -471,7 +296,7 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
             continue;
         }
         let Some((lp, next_w_len, next_w_len_terminal)) =
-            derive_candidate_level_params::<Cfg>(level, current_w_len, lb)?
+            derive_candidate_level_params::<Cfg>(current_w_len, lb)?
         else {
             continue;
         };
@@ -615,16 +440,15 @@ fn compute_root_direct_level_params<Cfg: CommitmentConfig>(
     let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
         return Ok(None);
     };
-    let Some(a_key) = compute_ajtai_key_params_a::<Cfg>(block_len, log_basis)? else {
-        return Ok(None);
-    };
-    let Some(b_key) = compute_ajtai_key_params_b::<Cfg>(a_key.row_len(), num_blocks, 1, log_basis)?
+    // Only A (witness commit) and B (outer commit) are used at proof time.
+    let Some((a_key, b_key, _d_key)) =
+        compute_all_ajtai_keys_params::<Cfg>(block_len, num_blocks, 1, log_basis, true)?
     else {
         return Ok(None);
     };
-    // D is unused at proof time for root-direct (no relation fold).
-    // Placeholder zero-width key via `new_unchecked` to bypass the
-    // strict SIS audit — never flows through `try_new` from here.
+    // D is unused at proof time for root-direct (no relation fold), so the
+    // real key is dropped for a zero-width placeholder via `new_unchecked`
+    // (bypasses the strict SIS audit; never flows through `try_new` here).
     let d_key = AjtaiKeyParams::new_unchecked(Cfg::sis_modulus_family(), 1, 0, 0, d);
 
     let witness_len = 1usize.checked_shl(num_vars as u32).unwrap_or(0);
@@ -646,8 +470,8 @@ fn compute_root_direct_level_params<Cfg: CommitmentConfig>(
         r_vars,
         stage1_config: stage1.clone(),
         fold_challenge_shape: fold_shape,
-        num_digits_commit: WitnessType::S.decomposed_num_digits::<Cfg>(log_basis),
-        num_digits_open: WitnessType::T.decomposed_num_digits::<Cfg>(log_basis),
+        num_digits_commit: WitnessType::S.decomposed_num_digits::<Cfg>(log_basis, true),
+        num_digits_open: WitnessType::T.decomposed_num_digits::<Cfg>(log_basis, true),
         // TODO: drop this fake fold-digit count once the ring-switch
         // validators are gated on schedule shape. Root-direct never
         // folds, but the verifier's ring-switch path currently rejects
@@ -746,8 +570,10 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
 
     let (min_log_basis, max_log_basis) = Cfg::basis_range();
     for candidate_log_basis in min_log_basis..=max_log_basis {
-        let num_digits_commit = WitnessType::S.decomposed_num_digits::<Cfg>(candidate_log_basis);
-        let num_digits_open = WitnessType::T.decomposed_num_digits::<Cfg>(candidate_log_basis);
+        let num_digits_commit =
+            WitnessType::S.decomposed_num_digits::<Cfg>(candidate_log_basis, true);
+        let num_digits_open =
+            WitnessType::T.decomposed_num_digits::<Cfg>(candidate_log_basis, true);
 
         for r_vars in min_r_vars..=max_r_vars {
             let num_blocks: usize = 1usize << r_vars;
@@ -757,23 +583,13 @@ pub fn find_schedule<Cfg: CommitmentConfig>(
                 continue;
             };
 
-            let Some(a_key) = compute_ajtai_key_params_a::<Cfg>(block_len, candidate_log_basis)?
-            else {
-                continue;
-            };
-
-            let Some(b_key) = compute_ajtai_key_params_b::<Cfg>(
-                a_key.row_len(),
+            let Some((a_key, b_key, d_key)) = compute_all_ajtai_keys_params::<Cfg>(
+                block_len,
                 num_blocks,
                 t_vectors,
                 candidate_log_basis,
+                true,
             )?
-            else {
-                continue;
-            };
-
-            let Some(d_key) =
-                compute_ajtai_key_params_d::<Cfg>(num_blocks, t_vectors, candidate_log_basis)?
             else {
                 continue;
             };

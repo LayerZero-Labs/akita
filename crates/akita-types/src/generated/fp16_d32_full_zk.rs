@@ -85,7 +85,7 @@ pub(crate) static FP16_D32_FULL_ZK_SCHEDULES: &[GeneratedScheduleTableEntry] = &
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 20, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 7, n_a: 9, n_b: 9, n_d: 7 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 9, r_vars: 6, n_a: 8, n_b: 8, n_d: 6 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 10, r_vars: 5, n_a: 8, n_b: 7, n_d: 5 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 5, n_a: 7, n_b: 7, n_d: 5 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 4, n_a: 7, n_b: 7, n_d: 5 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 4, n_a: 7, n_b: 7, n_d: 5 }),
@@ -261,7 +261,7 @@ pub(crate) static FP16_D32_FULL_ZK_SCHEDULES: &[GeneratedScheduleTableEntry] = &
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 18, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 5, n_a: 9, n_b: 9, n_d: 7 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 9, r_vars: 6, n_a: 8, n_b: 8, n_d: 6 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 10, r_vars: 5, n_a: 8, n_b: 7, n_d: 5 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 5, n_a: 7, n_b: 7, n_d: 5 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 4, n_a: 7, n_b: 7, n_d: 5 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 4, n_a: 7, n_b: 7, n_d: 5 }),

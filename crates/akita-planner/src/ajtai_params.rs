@@ -26,15 +26,30 @@ pub(crate) enum WitnessType {
 
 impl WitnessType {
     /// Witness infinity norm to satisfy weak binding (Hachi paper, Lemma 7).
-    fn binding_norm<Cfg: CommitmentConfig>(self, log_basis: u32) -> Result<u32, AkitaError> {
+    ///
+    /// The S (witness `s`) base norm is level-dependent: the root commits
+    /// the balanced-decomposed witness, bounded per coefficient by `2·β`
+    /// with `β = 2^(lb−1) − 1` (or `1` when `log_commit_bound == 1`); a
+    /// recursive level commits the full digit-range witness, bounded by
+    /// `2^lb − 1`.
+    pub(crate) fn binding_norm<Cfg: CommitmentConfig>(
+        self,
+        log_basis: u32,
+        is_root_level: bool,
+    ) -> Result<u32, AkitaError> {
         match self {
             Self::S => {
-                let beta = if Cfg::decomposition().log_commit_bound == 1 {
-                    1
+                let base = if is_root_level {
+                    let beta = if Cfg::decomposition().log_commit_bound == 1 {
+                        1
+                    } else {
+                        (1u32 << (log_basis - 1)) - 1
+                    };
+                    2 * beta
                 } else {
-                    (1u32 << (log_basis - 1)) - 1
+                    (1u32 << log_basis) - 1
                 };
-                Ok(2 * beta
+                Ok(base
                     * Cfg::stage1_challenge_config(Cfg::D)?.infinity_norm()
                     * Cfg::ring_subfield_embedding_norm_bound())
             }
@@ -44,12 +59,27 @@ impl WitnessType {
     }
 
     /// Number of `log_basis`-bit digits per coefficient under this
-    /// witness's decomposition rule. Valid for S / T / W;
-    /// Z goes through [`Self::decomposed_fold_num_digits`].
-    pub(crate) fn decomposed_num_digits<Cfg: CommitmentConfig>(self, log_basis: u32) -> usize {
+    /// witness's decomposition rule. Valid for S / T / W; Z goes through
+    /// [`Self::decomposed_fold_num_digits`].
+    ///
+    /// The S commit bound is level-dependent: the root commits the
+    /// witness against its configured `log_commit_bound`, while a
+    /// recursive level commits the balanced-digit witness, whose commit
+    /// bound collapses to `log_basis`.
+    pub(crate) fn decomposed_num_digits<Cfg: CommitmentConfig>(
+        self,
+        log_basis: u32,
+        is_root_level: bool,
+    ) -> usize {
         let field_bits = Cfg::decomposition().field_bits();
         let bound = match self {
-            Self::S => Cfg::decomposition().log_commit_bound,
+            Self::S => {
+                if is_root_level {
+                    Cfg::decomposition().log_commit_bound
+                } else {
+                    log_basis
+                }
+            }
             Self::T | Self::W => Cfg::decomposition()
                 .log_open_bound
                 .unwrap_or(Cfg::decomposition().log_commit_bound),
@@ -87,9 +117,10 @@ impl WitnessType {
 pub(crate) fn compute_ajtai_key_params_a<Cfg: CommitmentConfig>(
     block_len: usize,
     log_basis: u32,
+    is_root_level: bool,
 ) -> Result<Option<AjtaiKeyParams>, AkitaError> {
-    let inf_norm = WitnessType::S.binding_norm::<Cfg>(log_basis)?;
-    let num_digits = WitnessType::S.decomposed_num_digits::<Cfg>(log_basis);
+    let inf_norm = WitnessType::S.binding_norm::<Cfg>(log_basis, is_root_level)?;
+    let num_digits = WitnessType::S.decomposed_num_digits::<Cfg>(log_basis, is_root_level);
     let Some(width) = block_len.checked_mul(num_digits) else {
         return Ok(None);
     };
@@ -122,8 +153,8 @@ pub(crate) fn compute_ajtai_key_params_b<Cfg: CommitmentConfig>(
     t_vectors: usize,
     log_basis: u32,
 ) -> Result<Option<AjtaiKeyParams>, AkitaError> {
-    let inf_norm = WitnessType::T.binding_norm::<Cfg>(log_basis)?;
-    let num_digits = WitnessType::T.decomposed_num_digits::<Cfg>(log_basis);
+    let inf_norm = WitnessType::T.binding_norm::<Cfg>(log_basis, true)?;
+    let num_digits = WitnessType::T.decomposed_num_digits::<Cfg>(log_basis, true);
     let Some(width) = matrix_a_rank
         .checked_mul(num_digits)
         .and_then(|w| w.checked_mul(num_blocks))
@@ -154,13 +185,39 @@ pub(crate) fn compute_ajtai_key_params_b<Cfg: CommitmentConfig>(
     .map(Some)
 }
 
+/// The A, B, and D Ajtai keys for one fold level.
+pub(crate) type AjtaiKeysParams = (AjtaiKeyParams, AjtaiKeyParams, AjtaiKeyParams);
+
+/// Compute all three Ajtai keys (A, B, D) for one fold level in one shot.
+pub(crate) fn compute_all_ajtai_keys_params<Cfg: CommitmentConfig>(
+    block_len: usize,
+    num_blocks: usize,
+    t_vectors: usize,
+    log_basis: u32,
+    is_root_level: bool,
+) -> Result<Option<AjtaiKeysParams>, AkitaError> {
+    let Some(a_key) = compute_ajtai_key_params_a::<Cfg>(block_len, log_basis, is_root_level)?
+    else {
+        return Ok(None);
+    };
+    let Some(b_key) =
+        compute_ajtai_key_params_b::<Cfg>(a_key.row_len(), num_blocks, t_vectors, log_basis)?
+    else {
+        return Ok(None);
+    };
+    let Some(d_key) = compute_ajtai_key_params_d::<Cfg>(num_blocks, t_vectors, log_basis)? else {
+        return Ok(None);
+    };
+    Ok(Some((a_key, b_key, d_key)))
+}
+
 pub(crate) fn compute_ajtai_key_params_d<Cfg: CommitmentConfig>(
     num_blocks: usize,
     t_vectors: usize,
     log_basis: u32,
 ) -> Result<Option<AjtaiKeyParams>, AkitaError> {
-    let inf_norm = WitnessType::W.binding_norm::<Cfg>(log_basis)?;
-    let num_digits_open = WitnessType::W.decomposed_num_digits::<Cfg>(log_basis);
+    let inf_norm = WitnessType::W.binding_norm::<Cfg>(log_basis, true)?;
+    let num_digits_open = WitnessType::W.decomposed_num_digits::<Cfg>(log_basis, true);
     let Some(width) = num_digits_open
         .checked_mul(num_blocks)
         .and_then(|w| w.checked_mul(t_vectors))

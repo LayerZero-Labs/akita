@@ -49,9 +49,9 @@ pub(crate) static FP64_D32_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 14, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 4, r_vars: 5, n_a: 2, n_b: 2, n_d: 2 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 9, r_vars: 4, n_a: 2, n_b: 2, n_d: 2 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 4, n_a: 2, n_b: 2, n_d: 2 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 4, m_vars: 5, r_vars: 4, n_a: 3, n_b: 3, n_d: 3 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 4, m_vars: 9, r_vars: 3, n_a: 3, n_b: 3, n_d: 2 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 4, m_vars: 8, r_vars: 3, n_a: 3, n_b: 3, n_d: 2 }),
         GeneratedStep::Direct(GeneratedDirectStep),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 15, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
@@ -179,7 +179,7 @@ pub(crate) static FP64_D32_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 30, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 12, r_vars: 13, n_a: 4, n_b: 4, n_d: 4 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 3, n_b: 3, n_d: 3 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 11, r_vars: 6, n_a: 3, n_b: 3, n_d: 2 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 10, r_vars: 7, n_a: 2, n_b: 3, n_d: 2 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 10, r_vars: 5, n_a: 2, n_b: 2, n_d: 2 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 9, r_vars: 4, n_a: 2, n_b: 2, n_d: 2 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 4, n_a: 2, n_b: 2, n_d: 2 }),
@@ -355,7 +355,7 @@ pub(crate) static FP64_D32_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 28, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 12, r_vars: 11, n_a: 4, n_b: 4, n_d: 4 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 14, r_vars: 8, n_a: 3, n_b: 3, n_d: 3 }),
-        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 11, r_vars: 6, n_a: 3, n_b: 3, n_d: 2 }),
+        GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 10, r_vars: 7, n_a: 2, n_b: 3, n_d: 2 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 10, r_vars: 5, n_a: 2, n_b: 2, n_d: 2 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 9, r_vars: 4, n_a: 2, n_b: 2, n_d: 2 }),
         GeneratedStep::Fold(GeneratedFoldStep { ring_d: 32, log_basis: 2, m_vars: 8, r_vars: 4, n_a: 2, n_b: 2, n_d: 2 }),
