@@ -583,9 +583,11 @@ where
                 num_digits_commit,
                 log_basis,
             } => {
-                let row_width = block_slices.first().map_or(0usize, |block| {
-                    block.len().saturating_mul(num_digits_commit)
-                });
+                let row_width = block_slices.first().map_or(Ok(0usize), |block| {
+                    block.len().checked_mul(num_digits_commit).ok_or_else(|| {
+                        AkitaError::InvalidSetup("dense coefficient row width overflow".to_string())
+                    })
+                })?;
                 if plan.n_a == 1 {
                     mat_vec_mul_ntt_i8_dense_single_row(
                         &prepared.ntt_shared,
