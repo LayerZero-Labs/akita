@@ -92,8 +92,7 @@ pub(super) fn max_safe_crt_accumulation_width<
         return Some(usize::MAX);
     }
 
-    let modulus = (-F::one()).to_canonical_u128() + 1;
-    let setup_abs_bound = modulus;
+    let setup_abs_bound = setup_coeff_abs_bound::<F>();
     if setup_abs_bound == 0 || D == 0 {
         return None;
     }
@@ -133,13 +132,28 @@ pub(super) fn max_safe_crt_accumulation_width<
     Some(lo)
 }
 
+/// Maximum absolute value of a setup (LHS matrix) coefficient once lifted to a
+/// signed integer for CRT accumulation.
+///
+/// The cached NTT matrix is built by `CyclotomicCrtNtt::from_ring_with_params`,
+/// which interprets every coefficient in centered form `(-q/2, q/2]` before
+/// reducing into the CRT primes (so the lift matches the negacyclic subtraction
+/// that produces negative values), and `to_ring_with_params` reconstructs with
+/// signed Garner. The integer magnitude of any matrix coefficient is therefore
+/// bounded by `floor(q/2)`, not the full modulus `q`. Basing the capacity bound
+/// on `q` would double the chunking unnecessarily.
+#[inline(always)]
+fn setup_coeff_abs_bound<F: CanonicalField>() -> u128 {
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    modulus / 2
+}
+
 fn crt_width_is_safe<F: CanonicalField, const D: usize>(
     crt_product: &SmallNat,
     width: usize,
     rhs_abs_bound: u64,
 ) -> bool {
-    let modulus = (-F::one()).to_canonical_u128() + 1;
-    let setup_abs_bound = modulus;
+    let setup_abs_bound = setup_coeff_abs_bound::<F>();
 
     let mut lhs = SmallNat::one();
     lhs.mul_u128(2);
@@ -184,7 +198,7 @@ mod tests {
         )
         .expect("one i8 term should fit");
 
-        assert_eq!(width, 1023);
+        assert_eq!(width, 2047);
     }
 
     #[test]
@@ -228,6 +242,6 @@ mod tests {
         )
         .expect("Q32 i8 path should have headroom");
 
-        assert_eq!(width, 245_207_459_281);
+        assert_eq!(width, 490_414_918_676);
     }
 }
