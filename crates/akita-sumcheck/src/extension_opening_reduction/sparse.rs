@@ -718,18 +718,14 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
     /// `Fp2<Fp64>` schoolbook product, which wraps mod 2^128) leave
     /// `DELAYED_PRODUCT_SUM_IS_EXACT` at `false` and take the per-term path, so
     /// the emitted factor — and the proof — stays unchanged.
-    #[inline]
-    fn eval_state_at_suffix_fast(&self, state: &[E], suffix_index: usize) -> E {
-        if !E::DELAYED_PRODUCT_SUM_IS_EXACT {
-            return self.eval_state_at_suffix(state, suffix_index);
-        }
-        let mut accum = E::ProductAccum::zero();
-        for (table, coeff) in self.suffix_tables.iter().zip(state.iter().copied()) {
-            accum += coeff.mul_to_product_accum(table[suffix_index]);
-        }
-        E::reduce_product_accum(accum)
-    }
-
+    ///
+    /// The two factor values `a0` (state `low_zero`) and `a1` (state `low_one`)
+    /// always share the same `suffix_index`, so both inner products read the
+    /// same `suffix_tables[j][suffix_index]` column. They are fused into one
+    /// pass over `j` that loads each column entry once and feeds it into both
+    /// delayed accumulators, halving the column loads and tightening the loop
+    /// without changing the accumulation order, so the result is byte-identical
+    /// to two independent evaluations.
     fn factor_pair(&self, pair: usize) -> (E, E) {
         let low_bits = self.materialize_at - self.round;
         debug_assert!(low_bits > 0);
@@ -739,9 +735,31 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         let suffix_index = pair >> rest_low_bits;
         let low_zero = low_rest << 1;
         let low_one = low_zero | 1;
+        let state_zero = &self.low_states[low_zero];
+        let state_one = &self.low_states[low_one];
+
+        if !E::DELAYED_PRODUCT_SUM_IS_EXACT {
+            return (
+                self.eval_state_at_suffix(state_zero, suffix_index),
+                self.eval_state_at_suffix(state_one, suffix_index),
+            );
+        }
+
+        let mut accum_zero = E::ProductAccum::zero();
+        let mut accum_one = E::ProductAccum::zero();
+        for ((table, &coeff_zero), &coeff_one) in self
+            .suffix_tables
+            .iter()
+            .zip(state_zero.iter())
+            .zip(state_one.iter())
+        {
+            let column = table[suffix_index];
+            accum_zero += coeff_zero.mul_to_product_accum(column);
+            accum_one += coeff_one.mul_to_product_accum(column);
+        }
         (
-            self.eval_state_at_suffix_fast(&self.low_states[low_zero], suffix_index),
-            self.eval_state_at_suffix_fast(&self.low_states[low_one], suffix_index),
+            E::reduce_product_accum(accum_zero),
+            E::reduce_product_accum(accum_one),
         )
     }
 }
