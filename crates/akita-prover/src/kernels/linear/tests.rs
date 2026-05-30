@@ -3,8 +3,8 @@ use super::{
     mat_vec_mul_digits_i8_strided_with_params, mat_vec_mul_digits_i8_with_params,
     mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
     mat_vec_mul_i8_with_params, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense_single_row,
-    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
-    precompute_dense_mat_ntt_with_params,
+    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    mat_vec_mul_unchecked, precompute_dense_mat_ntt_with_params,
 };
 use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
 use akita_algebra::ntt::{
@@ -12,7 +12,10 @@ use akita_algebra::ntt::{
     PrimeWidth,
 };
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
-use akita_field::{CanonicalField, FieldCore, Fp64, Prime128Offset275};
+use akita_field::{
+    CanonicalField, FieldCore, Fp64, HalvingField, Prime128Offset275, Prime16Offset99,
+    Prime32Offset99, Prime64Offset59,
+};
 use akita_types::layout::FlatMatrix;
 
 fn centered_i32_ring<F: akita_field::CanonicalField, const D: usize>(
@@ -37,6 +40,73 @@ fn cyclic_product<F: akita_field::FieldCore, const D: usize>(
         }
     }
     out
+}
+
+fn assert_single_i8_chunk_paths<F: FieldCore + CanonicalField, const D: usize>(cols: usize) {
+    let log_basis = 6;
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let row = CyclotomicRing::from_coefficients([half; D]);
+    let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
+    let flat_rows = vec![row; cols];
+    let flat = FlatMatrix::from_ring_slice(&flat_rows);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(1, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("CRT+NTT dispatch should support this field and ring dimension");
+    let digits = vec![[-32i8; D]; cols];
+
+    let negacyclic = mat_vec_mul_ntt_single_i8::<F, D>(&slot, 1, cols, &digits, log_basis)
+        .expect("single predecomposed digit mat-vec");
+    let cyclic = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, 1, cols, &digits, log_basis)
+        .expect("single cyclic predecomposed digit mat-vec");
+
+    let negacyclic_product = row * digit_ring;
+    let expected_negacyclic = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, _| {
+        acc += negacyclic_product;
+        acc
+    });
+    let cyclic_term = cyclic_product(&row, &digit_ring);
+    let expected_cyclic = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, _| {
+        acc += cyclic_term;
+        acc
+    });
+
+    assert_eq!(negacyclic, vec![expected_negacyclic]);
+    assert_eq!(cyclic, vec![expected_cyclic]);
+}
+
+fn assert_fused_split_eq_zpre_chunks<
+    F: FieldCore + CanonicalField + HalvingField,
+    const D: usize,
+>(
+    cols: usize,
+) {
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let row = CyclotomicRing::from_coefficients([half; D]);
+    let flat_rows = vec![row; cols];
+    let flat = FlatMatrix::from_ring_slice(&flat_rows);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(1, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("CRT+NTT dispatch should support this field and ring dimension");
+    let z_pre = vec![[32_768i32; D]; cols];
+
+    let (_d_rows, _b_rows, a_rows) =
+        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
+            .expect("fused split-eq rows");
+
+    let z = centered_i32_ring(&z_pre[0]);
+    let term = quotient_from_cyclic_and_negacyclic(&cyclic_product(&row, &z), &(row * z));
+    let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, _| {
+        acc += term;
+        acc
+    });
+
+    assert_eq!(a_rows, vec![expected]);
 }
 
 fn mat_vec_mul_i8_with_params_for_log_basis<
@@ -339,6 +409,13 @@ fn fused_split_eq_q128_quotient_falls_back_when_one_term_exceeds_crt() {
 }
 
 #[test]
+fn fused_split_eq_zpre_chunks_reduced_profiles() {
+    assert_fused_split_eq_zpre_chunks::<Prime16Offset99, 256>(5);
+    assert_fused_split_eq_zpre_chunks::<Prime32Offset99, 256>(32);
+    assert_fused_split_eq_zpre_chunks::<Prime64Offset59, 256>(8);
+}
+
+#[test]
 fn fused_split_eq_uses_actual_centered_bound_when_hint_is_underreported() {
     type F = Prime128Offset275;
     const D: usize = 32;
@@ -432,6 +509,75 @@ fn mat_vec_mul_ntt_i8_dense_single_row_chunks_q128() {
     });
 
     assert_eq!(got, vec![expected]);
+}
+
+#[test]
+fn mat_vec_mul_ntt_single_i8_chunks_q128() {
+    type F = Prime128Offset275;
+    const D: usize = 64;
+    let cols = 2_050;
+    let log_basis = 6;
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let row = CyclotomicRing::from_coefficients([half; D]);
+    let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
+    let flat_rows = vec![row; cols];
+    let flat = FlatMatrix::from_ring_slice(&flat_rows);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(1, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("Q128 dispatch should support this field and ring dimension");
+    let digits = vec![[-32i8; D]; cols];
+
+    let got = mat_vec_mul_ntt_single_i8::<F, D>(&slot, 1, cols, &digits, log_basis)
+        .expect("single predecomposed digit mat-vec");
+
+    let product = row * digit_ring;
+    let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, _| {
+        acc += product;
+        acc
+    });
+
+    assert_eq!(got, vec![expected]);
+}
+
+#[test]
+fn mat_vec_mul_ntt_single_i8_cyclic_chunks_q128() {
+    type F = Prime128Offset275;
+    const D: usize = 64;
+    let cols = 2_050;
+    let log_basis = 6;
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let half = F::from_canonical_u128_reduced(modulus / 2);
+    let row = CyclotomicRing::from_coefficients([half; D]);
+    let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
+    let flat_rows = vec![row; cols];
+    let flat = FlatMatrix::from_ring_slice(&flat_rows);
+    let slot = build_ntt_slot(
+        flat.ring_view::<D>(1, cols)
+            .expect("valid ring matrix view"),
+    )
+    .expect("Q128 dispatch should support this field and ring dimension");
+    let digits = vec![[-32i8; D]; cols];
+
+    let got = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, 1, cols, &digits, log_basis)
+        .expect("single cyclic predecomposed digit mat-vec");
+
+    let product = cyclic_product(&row, &digit_ring);
+    let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, _| {
+        acc += product;
+        acc
+    });
+
+    assert_eq!(got, vec![expected]);
+}
+
+#[test]
+fn mat_vec_mul_ntt_single_i8_chunks_reduced_profiles() {
+    assert_single_i8_chunk_paths::<Prime16Offset99, 256>(5_000);
+    assert_single_i8_chunk_paths::<Prime32Offset99, 256>(900);
+    assert_single_i8_chunk_paths::<Prime64Offset59, 256>(8_200);
 }
 
 #[test]
@@ -1117,13 +1263,13 @@ fn mat_vec_mul_digits_i8_three_row_matches_generic_on_block_parallel_path() {
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let generic = mat_vec_mul_digits_i8_with_params_for_log_basis::<
                 F,
-                i16,
+                i32,
                 Q32_NUM_PRIMES,
                 D,
             >(&ntt_mat, &digit_block_slices, log_basis, &params);
             let fused = super::mat_vec_mul_digits_i8_three_row_block_parallel::<
                 F,
-                i16,
+                i32,
                 Q32_NUM_PRIMES,
                 D,
                 true,
@@ -1180,7 +1326,7 @@ fn mat_vec_mul_digits_i8_strided_three_row_matches_block_path_on_block_parallel_
             let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
             let block_path = mat_vec_mul_digits_i8_with_params_for_log_basis::<
                 F,
-                i16,
+                i32,
                 Q32_NUM_PRIMES,
                 D,
             >(&ntt_mat, &digit_block_slices, log_basis, &params);

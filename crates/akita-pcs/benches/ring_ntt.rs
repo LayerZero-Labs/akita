@@ -2,7 +2,7 @@
 
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use akita_algebra::tables::{
-    q128_primes, q32_garner, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES,
+    q128_primes, q32_garner, q32_primes, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES,
 };
 use akita_algebra::{
     CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, MontCoeff, PackedPartialSplitEval16,
@@ -13,7 +13,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;
-type N = CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, 64>;
+type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 type F128 = Prime128Offset159;
 type R128 = CyclotomicRing<F128, 32>;
 type N128 = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 32>;
@@ -74,10 +74,11 @@ fn bench_ring_schoolbook_mul(c: &mut Criterion) {
 }
 
 fn bench_ntt_single_prime_round_trip(c: &mut Criterion) {
-    let prime = Q32_PRIMES[0];
-    let tw = NttTwiddles::<i16, 64>::compute(prime);
-    let base: [MontCoeff<i16>; 64] =
-        std::array::from_fn(|i| prime.from_canonical(((i * 5 + 7) as i16) % prime.p));
+    let primes = q32_primes();
+    let prime = primes[0];
+    let tw = NttTwiddles::<i32, 64>::compute(prime);
+    let base: [MontCoeff<i32>; 64] =
+        std::array::from_fn(|i| prime.from_canonical(((i * 5 + 7) as i32) % prime.p));
 
     c.bench_function("ntt_single_prime_forward_inverse_d64", |b| {
         b.iter(|| {
@@ -91,14 +92,15 @@ fn bench_ntt_single_prime_round_trip(c: &mut Criterion) {
 
 fn bench_crt_round_trip(c: &mut Criterion) {
     let ring = sample_ring(19);
-    let twiddles: [NttTwiddles<i16, 64>; Q32_NUM_PRIMES] =
-        std::array::from_fn(|k| NttTwiddles::compute(Q32_PRIMES[k]));
+    let primes = q32_primes();
+    let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
+        std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
     let garner = q32_garner();
 
-    c.bench_function("ring_ntt_crt_round_trip_d64_k6", |b| {
+    c.bench_function("ring_ntt_crt_round_trip_d64_q32_2xi32", |b| {
         b.iter(|| {
-            let ntt = N::from_ring(black_box(&ring), &Q32_PRIMES, &twiddles);
-            let back: R = ntt.to_ring(&Q32_PRIMES, &twiddles, &garner);
+            let ntt = N::from_ring(black_box(&ring), &primes, &twiddles);
+            let back: R = ntt.to_ring(&primes, &twiddles, &garner);
             black_box(back)
         })
     });
