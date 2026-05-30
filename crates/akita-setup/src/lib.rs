@@ -15,8 +15,8 @@ use akita_types::AkitaExpandedSetup;
 use akita_types::AkitaVerifierSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
-    detect_field_modulus, planned_schedule_key_from_schedule, validate_public_matrix_matches_seed,
-    AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix,
+    detect_field_modulus, planned_schedule_key_from_schedule, AkitaScheduleLookupKey,
+    AkitaSetupSeed, FlatMatrix,
 };
 #[cfg(feature = "disk-persistence")]
 use std::fs;
@@ -60,32 +60,31 @@ where
             "max_num_points must be at least 1".to_string(),
         ));
     }
-    let (max_rows, max_stride) =
+    let setup_envelope =
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
+    #[cfg(feature = "disk-persistence")]
+    let max_setup_len = setup_envelope.max_setup_len;
 
     #[cfg(feature = "disk-persistence")]
     {
-        let max_total = max_rows
-            .checked_mul(max_stride)
-            .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
         match load_expanded_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
         {
             Ok(expanded) => {
-                // A cached setup is acceptable only if its physical
-                // backing is large enough *and* its recorded
-                // `max_stride` matches (or exceeds) what the current
-                // request needs. For configs where `max_rows` can vary
-                // inversely with `max_stride`, a smaller cached stride
-                // would cause `ring_view` to interpret rows/columns with
-                // the wrong stride — the total-elements check alone is
-                // insufficient.
+                // A cached setup is acceptable only if its physical backing
+                // covers the packed setup envelope for the current request.
                 let cached_total = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-                let cached_stride = expanded.seed().max_stride;
                 let cached_points = expanded.seed().max_num_points;
-                if cached_total >= max_total
-                    && cached_stride >= max_stride
-                    && cached_points >= max_num_points
-                {
+                #[cfg(feature = "zk")]
+                let cached_zk_b_total = expanded.zk_b_matrix().total_ring_elements_at::<D>()?;
+                #[cfg(feature = "zk")]
+                let cached_zk_d_total = expanded.zk_d_matrix().total_ring_elements_at::<D>()?;
+                let cached_shape_covers_request =
+                    cached_total >= max_setup_len && cached_points >= max_num_points;
+                #[cfg(feature = "zk")]
+                let cached_shape_covers_request = cached_shape_covers_request
+                    && cached_zk_b_total >= setup_envelope.max_zk_b_len
+                    && cached_zk_d_total >= setup_envelope.max_zk_d_len;
+                if cached_shape_covers_request {
                     tracing::info!("Loaded setup from disk; backend preparation is explicit");
                     return AkitaProverSetup::from_seed_validated_expanded(expanded);
                 }
@@ -94,12 +93,12 @@ where
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
-                            "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating",
+                            "Rejected cached setup from {}: have (total={cached_total}, points={cached_points}), need (total>={max_setup_len}, points>={max_num_points}); regenerating",
                             storage_path.display()
                         );
                 } else {
                     tracing::warn!(
-                            "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating"
+                            "Rejected cached setup: have (total={cached_total}, points={cached_points}), need (total>={max_setup_len}, points>={max_num_points}); regenerating"
                         );
                 }
             }
@@ -123,8 +122,7 @@ where
         max_num_vars,
         max_num_batched_polys,
         max_num_points,
-        max_rows,
-        max_stride,
+        setup_envelope,
     )?;
 
     #[cfg(feature = "disk-persistence")]
@@ -356,7 +354,7 @@ fn deserialize_cached_setup<
             "cached setup seed capacity does not match cache key".to_string(),
         ));
     }
-    let (expected_rows, expected_stride) = Cfg::max_setup_matrix_size(
+    let expected_envelope = Cfg::max_setup_matrix_size(
         expected_max_num_vars,
         expected_max_num_batched_polys,
         expected_max_num_points,
@@ -364,23 +362,55 @@ fn deserialize_cached_setup<
     .map_err(|err| {
         SerializationError::InvalidData(format!("cached setup expected shape failed: {err}"))
     })?;
-    let expected_total = expected_rows.checked_mul(expected_stride).ok_or_else(|| {
-        SerializationError::InvalidData("cached setup expected matrix size overflow".to_string())
-    })?;
-    if seed.max_stride != expected_stride || seed.total_ring_elements != expected_total {
+    if seed.max_setup_len != expected_envelope.max_setup_len {
         return Err(SerializationError::InvalidData(
             "cached setup seed matrix shape does not match cache key".to_string(),
+        ));
+    }
+    #[cfg(feature = "zk")]
+    if seed.max_zk_b_len != expected_envelope.max_zk_b_len
+        || seed.max_zk_d_len != expected_envelope.max_zk_d_len
+    {
+        return Err(SerializationError::InvalidData(
+            "cached setup seed ZK matrix shape does not match cache key".to_string(),
         ));
     }
     let shared_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
         &mut *reader,
         Compress::Yes,
         Validate::Yes,
-        seed.total_ring_elements,
+        seed.max_setup_len,
         seed.gen_ring_dim,
         seed.matrix_field_elements()?,
     )?;
-    Ok(AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix))
+    #[cfg(feature = "zk")]
+    let zk_b_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
+        &mut *reader,
+        Compress::Yes,
+        Validate::Yes,
+        seed.max_zk_b_len,
+        seed.gen_ring_dim,
+        seed.zk_b_matrix_field_elements()?,
+    )?;
+    #[cfg(feature = "zk")]
+    let zk_d_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
+        &mut *reader,
+        Compress::Yes,
+        Validate::Yes,
+        seed.max_zk_d_len,
+        seed.gen_ring_dim,
+        seed.zk_d_matrix_field_elements()?,
+    )?;
+    Ok(
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            seed,
+            shared_matrix,
+            #[cfg(feature = "zk")]
+            zk_b_matrix,
+            #[cfg(feature = "zk")]
+            zk_d_matrix,
+        ),
+    )
 }
 
 #[cfg(feature = "disk-persistence")]
@@ -396,7 +426,8 @@ fn validate_cached_matrix<
             setup.shared_matrix().gen_ring_dim()
         )));
     }
-    validate_public_matrix_matches_seed(setup.shared_matrix(), setup.seed())
+    setup
+        .check()
         .map_err(|e| AkitaError::InvalidSetup(format!("cached setup matrix validation: {e}")))?;
     Ok(())
 }
@@ -533,6 +564,10 @@ mod tests {
                 let corrupt = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     prover_setup.expanded.seed().clone(),
                     FlatMatrix::from_flat_data(vec![TestF::zero(); total * TEST_D], TEST_D),
+                    #[cfg(feature = "zk")]
+                    prover_setup.expanded.zk_b_matrix().clone(),
+                    #[cfg(feature = "zk")]
+                    prover_setup.expanded.zk_d_matrix().clone(),
                 );
                 save_expanded_setup::<TestF, Cfg>(&corrupt, MAX_VARS, 1, 1);
 
@@ -584,6 +619,10 @@ mod tests {
                 let stale = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     stale_seed,
                     prover_setup.expanded.shared_matrix().clone(),
+                    #[cfg(feature = "zk")]
+                    prover_setup.expanded.zk_b_matrix().clone(),
+                    #[cfg(feature = "zk")]
+                    prover_setup.expanded.zk_d_matrix().clone(),
                 );
                 save_expanded_setup::<TestF, Cfg>(&stale, MAX_VARS, MAX_BATCH, 1);
 

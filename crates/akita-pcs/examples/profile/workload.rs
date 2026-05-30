@@ -1,6 +1,6 @@
 use crate::report::{
     emit_planned_schedule_summary, emit_runtime_schedule_summary, print_batched_proof_summary,
-    report_timing,
+    report_setup_sizes, report_timing,
 };
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
@@ -376,6 +376,13 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
+    let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
+    report_setup_sizes(
+        label,
+        setup_ring_elements,
+        setup_ring_elements * D * std::mem::size_of::<FF>(),
+        prepared.shared_ntt_cache_bytes(),
+    );
 
     run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &poly, &original_pt, opening, plan);
 }
@@ -452,6 +459,13 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
+    let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
+    report_setup_sizes(
+        label,
+        setup_ring_elements,
+        setup_ring_elements * D * std::mem::size_of::<FF>(),
+        prepared.shared_ntt_cache_bytes(),
+    );
 
     run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &onehot_poly, &pt, opening, plan);
 }
@@ -547,6 +561,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
+    let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
+    report_setup_sizes(
+        label,
+        setup_ring_elements,
+        setup_ring_elements * D * std::mem::size_of::<FF>(),
+        prepared.shared_ntt_cache_bytes(),
+    );
 
     let t0 = Instant::now();
     let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(

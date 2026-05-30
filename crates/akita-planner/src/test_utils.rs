@@ -18,7 +18,7 @@ use std::marker::PhantomData;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_config::{
-    matrix_envelope_for_levels, setup_level_params_from_runtime_schedule, CommitmentConfig,
+    matrix_envelope_for_schedule, worst_case_grouped_incidence_for_shape, CommitmentConfig,
 };
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
@@ -73,7 +73,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), AkitaError> {
+    ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
         // The inner cfg's table-only sizing is a lower bound — it can miss
         // batched shapes that aren't in the generated table. We must iterate
         // every `(nv, polys, points)` shape ourselves and consult DP on
@@ -89,23 +89,39 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
                  ({max_num_batched_polys})"
             )));
         }
-        let mut max_rows: usize = 1;
-        let mut max_stride: usize = 1;
+        let mut max_setup_len: usize = 1;
+        #[cfg(feature = "zk")]
+        let mut max_zk_b_len: usize = 1;
+        #[cfg(feature = "zk")]
+        let mut max_zk_d_len: usize = 1;
         for num_vars in 1..=max_num_vars {
             for num_polys in 1..=max_num_batched_polys {
                 let upper_pts = num_polys.min(max_num_points);
                 for num_points in 1..=upper_pts {
+                    // Mirror production sizing: skew excess claims into one
+                    // group so the packed B width (`max_group_poly_count`) is
+                    // sized for the worst-case runtime incidence, not an even
+                    // split.
                     let incidence =
-                        ClaimIncidenceSummary::from_counts(num_vars, num_polys, num_points)?;
+                        worst_case_grouped_incidence_for_shape(num_vars, num_polys, num_points)?;
                     let schedule = <Self as CommitmentConfig>::get_params_for_prove(&incidence)?;
-                    let setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
-                    let (rows, stride) = matrix_envelope_for_levels::<Self>(&setup_levels)?;
-                    max_rows = max_rows.max(rows);
-                    max_stride = max_stride.max(stride);
+                    let envelope = matrix_envelope_for_schedule::<Self>(&schedule, &incidence)?;
+                    max_setup_len = max_setup_len.max(envelope.max_setup_len);
+                    #[cfg(feature = "zk")]
+                    {
+                        max_zk_b_len = max_zk_b_len.max(envelope.max_zk_b_len);
+                        max_zk_d_len = max_zk_d_len.max(envelope.max_zk_d_len);
+                    }
                 }
             }
         }
-        Ok((max_rows, max_stride))
+        Ok(akita_types::SetupMatrixEnvelope {
+            max_setup_len,
+            #[cfg(feature = "zk")]
+            max_zk_b_len,
+            #[cfg(feature = "zk")]
+            max_zk_d_len,
+        })
     }
 
     fn basis_range() -> (u32, u32) {

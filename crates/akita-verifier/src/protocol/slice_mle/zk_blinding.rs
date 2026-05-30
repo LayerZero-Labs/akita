@@ -25,52 +25,31 @@ where
     }
     let _span = tracing::info_span!("b_blinding").entered();
 
-    // Layout offsets and SIS-matrix view derived directly from inputs.
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
-    let b_view = setup
-        .shared_matrix()
-        .ring_view::<D>(prepared.n_b, setup.seed().max_stride)?;
-    let b_stride = b_view.num_cols();
-    let b_flat = b_view.as_slice();
     let b_start = 1 + prepared.num_public_rows + prepared.n_d_active();
 
     // Mirror the prover's group-local B input layout:
-    // `[group t_hat || group blinding]` for each commitment group.
+    // `[group t_hat || group blinding]` for each commitment group. The
+    // witness has one blinding segment per point; every segment reuses the
+    // same stored per-commitment zkB row view with fresh digits.
     let b_blinding_segment_len = prepared.b_blinding_segment_len;
-    let t_cols_per_claim = prepared
-        .num_blocks
-        .checked_mul(prepared.n_a)
-        .and_then(|cols| cols.checked_mul(prepared.depth_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("B blinding T width overflow".to_string()))?;
-    let max_group_poly_count = prepared
-        .num_polys_per_point
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0);
-    let max_b_blinding_col = max_group_poly_count
-        .checked_mul(t_cols_per_claim)
-        .and_then(|cols| cols.checked_add(group_stride))
-        .ok_or_else(|| AkitaError::InvalidSetup("B blinding column width overflow".to_string()))?;
-    if max_b_blinding_col > b_stride {
-        return Err(AkitaError::InvalidSetup(
-            "shared matrix stride is too small for B blinding".to_string(),
-        ));
-    }
+    let b_zk_view = setup
+        .zk_b_matrix()
+        .ring_view::<D>(prepared.n_b, group_stride)?;
+    let b_zk = b_zk_view.as_slice();
+    let b_zk_stride = b_zk_view.num_cols();
     let b_blinding_segment: Vec<E> = cfg_into_iter!(0..b_blinding_segment_len)
         .map(|idx| {
             let point_idx = idx / group_stride;
             let local = idx % group_stride;
-            let group_message_planes = prepared.num_polys_per_point[point_idx] * t_cols_per_claim;
-            let local_col = group_message_planes + local;
             let commitment_weights = &prepared.eq_tau1
                 [(b_start + point_idx * prepared.n_b)..(b_start + (point_idx + 1) * prepared.n_b)];
             let mut acc = E::zero();
             for (row_idx, &eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    let row_start = row_idx * b_stride;
-                    acc += eq_i * eval_ring_at_pows(&b_flat[row_start + local_col], &alpha_pows);
+                    acc +=
+                        eq_i * eval_ring_at_pows(&b_zk[row_idx * b_zk_stride + local], &alpha_pows);
                 }
             }
             acc
@@ -101,36 +80,24 @@ where
     }
     let _span = tracing::info_span!("d_blinding").entered();
 
-    // Layout offsets, SIS-matrix view, and D-row weights derived directly
-    // from inputs.
     let layout = prepared.segment_layout()?;
     let alpha_pows = scalar_powers(alpha, D);
-    let d_view = setup
-        .shared_matrix()
-        .ring_view::<D>(prepared.n_d, setup.seed().max_stride)?;
-    let d_stride = d_view.num_cols();
-    let d_flat = d_view.as_slice();
     let d_start = 1 + prepared.num_public_rows;
     let n_d_active = prepared.n_d_active();
     let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
-    let max_d_blinding_col = layout
-        .w_len
-        .checked_add(d_blinding_segment_len)
-        .ok_or_else(|| AkitaError::InvalidSetup("D blinding column width overflow".to_string()))?;
-    if max_d_blinding_col > d_stride {
-        return Err(AkitaError::InvalidSetup(
-            "shared matrix stride is too small for D blinding".to_string(),
-        ));
-    }
+    let d_zk_view = setup
+        .zk_d_matrix()
+        .ring_view::<D>(prepared.n_d, d_blinding_segment_len)?;
+    let d_zk = d_zk_view.as_slice();
+    let d_zk_stride = d_zk_view.num_cols();
 
     let d_blinding_segment: Vec<E> = cfg_into_iter!(0..d_blinding_segment_len)
         .map(|local| {
-            let local_col = layout.w_len + local;
             let mut acc = E::zero();
             for (row_idx, &eq_i) in d_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    let row_start = row_idx * d_stride;
-                    acc += eq_i * eval_ring_at_pows(&d_flat[row_start + local_col], &alpha_pows);
+                    acc +=
+                        eq_i * eval_ring_at_pows(&d_zk[row_idx * d_zk_stride + local], &alpha_pows);
                 }
             }
             acc
@@ -201,21 +168,38 @@ mod tests {
         let d_offset = b_offset + b_blinding_segment_len;
         let total_len = d_offset + d_blinding_segment_len + z_len;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
+        let max_zk_b_len = n_b * b_blinding_digit_planes_per_point;
+        let max_zk_d_len = n_d * d_blinding_segment_len;
 
         let t_cols_per_claim = num_blocks * n_a * depth_open;
         let max_b_local_col = num_polys_per_point
             .iter()
-            .map(|&count| count * t_cols_per_claim + b_blinding_digit_planes_per_point)
+            .map(|&count| count * t_cols_per_claim)
             .max()
             .unwrap_or(0);
-        let max_d_local_col = w_len + d_blinding_segment_len;
-        let max_stride = max_b_local_col.max(max_d_local_col).max(inner_width);
-        let r_max = n_a.max(n_b).max(n_d);
+        let max_d_local_col = w_len;
+        let max_setup_len = (n_b * max_b_local_col)
+            .max(n_d * max_d_local_col)
+            .max(n_a * inner_width);
 
-        let matrix_entries: Vec<CyclotomicRing<F, D>> = (0..(r_max * max_stride))
+        let matrix_entries: Vec<CyclotomicRing<F, D>> = (0..max_setup_len)
             .map(|idx| {
                 CyclotomicRing::from_coefficients(std::array::from_fn(|coeff| {
                     f(1_000 + (idx * D + coeff) as u128)
+                }))
+            })
+            .collect();
+        let zk_b_entries: Vec<CyclotomicRing<F, D>> = (0..max_zk_b_len)
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|coeff| {
+                    f(10_000 + (idx * D + coeff) as u128)
+                }))
+            })
+            .collect();
+        let zk_d_entries: Vec<CyclotomicRing<F, D>> = (0..max_zk_d_len)
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|coeff| {
+                    f(20_000 + (idx * D + coeff) as u128)
                 }))
             })
             .collect();
@@ -224,12 +208,15 @@ mod tests {
                 max_num_vars: 32,
                 max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
-                max_stride,
                 gen_ring_dim: D,
-                total_ring_elements: matrix_entries.len(),
+                max_setup_len,
+                max_zk_b_len,
+                max_zk_d_len,
                 public_matrix_seed: [9u8; 32],
             },
             FlatMatrix::from_ring_slice::<D>(&matrix_entries),
+            FlatMatrix::from_ring_slice::<D>(&zk_b_entries),
+            FlatMatrix::from_ring_slice::<D>(&zk_d_entries),
         );
         let prepared = RingSwitchDeferredRowEval {
             c_alphas: PreparedChallengeEvals::Flat(
@@ -284,15 +271,14 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
-        let b_view = fx
-            .setup
-            .shared_matrix()
-            .ring_view::<D>(p.n_b, fx.setup.seed().max_stride)
-            .unwrap();
-        let b_rows: Vec<_> = b_view.rows().collect();
         let b_start = 1 + p.num_public_rows + p.n_d;
         let b_offset = fx.w_len + fx.t_len;
-        let t_cols_per_claim = p.num_blocks * p.n_a * p.depth_open;
+        let b_zk_view = fx
+            .setup
+            .zk_b_matrix()
+            .ring_view::<D>(p.n_b, p.b_blinding_digit_planes_per_point)
+            .unwrap();
+        let b_zk_rows: Vec<_> = b_zk_view.rows().collect();
 
         let got =
             compute_b_blinding_part::<F, F, D>(p, &fx.full_vec_randomness, &fx.setup, fx.alpha)
@@ -301,12 +287,10 @@ mod tests {
         for idx in 0..p.b_blinding_segment_len {
             let point_idx = idx / p.b_blinding_digit_planes_per_point;
             let local = idx % p.b_blinding_digit_planes_per_point;
-            let group_message_planes = p.num_polys_per_point[point_idx] * t_cols_per_claim;
-            let local_col = group_message_planes + local;
             let mut entry = F::zero();
-            for (row_idx, row) in b_rows.iter().enumerate().take(p.n_b) {
+            for (row_idx, row) in b_zk_rows.iter().enumerate().take(p.n_b) {
                 let weight = p.eq_tau1[b_start + point_idx * p.n_b + row_idx];
-                entry += weight * eval_ring_at_pows(&row[local_col], &alpha_pows);
+                entry += weight * eval_ring_at_pows(&row[local], &alpha_pows);
             }
             expected += entry * eq[b_offset + idx];
         }
@@ -321,25 +305,24 @@ mod tests {
             .map(|idx| eq_eval_at_index(&fx.full_vec_randomness, idx))
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
-        let d_view = fx
-            .setup
-            .shared_matrix()
-            .ring_view::<D>(p.n_d, fx.setup.seed().max_stride)
-            .unwrap();
-        let d_rows: Vec<_> = d_view.rows().collect();
         let d_start = 1 + p.num_public_rows;
         let d_offset = fx.w_len + fx.t_len + p.b_blinding_segment_len;
+        let d_zk_view = fx
+            .setup
+            .zk_d_matrix()
+            .ring_view::<D>(p.n_d, p.d_blinding_segment_len)
+            .unwrap();
+        let d_zk_rows: Vec<_> = d_zk_view.rows().collect();
 
         let got =
             compute_d_blinding_part::<F, F, D>(p, &fx.full_vec_randomness, &fx.setup, fx.alpha)
                 .unwrap();
         let mut expected = F::zero();
         for local in 0..p.d_blinding_segment_len {
-            let local_col = fx.w_len + local;
             let mut entry = F::zero();
-            for (row_idx, row) in d_rows.iter().enumerate().take(p.n_d) {
+            for (row_idx, row) in d_zk_rows.iter().enumerate().take(p.n_d) {
                 let weight = p.eq_tau1[d_start + row_idx];
-                entry += weight * eval_ring_at_pows(&row[local_col], &alpha_pows);
+                entry += weight * eval_ring_at_pows(&row[local], &alpha_pows);
             }
             expected += entry * eq[d_offset + local];
         }

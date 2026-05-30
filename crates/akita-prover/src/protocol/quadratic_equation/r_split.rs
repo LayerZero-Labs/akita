@@ -1,3 +1,6 @@
+use super::repeated_b::repeated_b_commitment_rows;
+#[cfg(feature = "zk")]
+use super::repeated_b::{add_zk_b_blinding_cyclic_rows, add_zk_d_blinding_cyclic_rows};
 use super::*;
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
@@ -233,128 +236,6 @@ where
     Ok((CyclotomicRing::from_coefficients(cyclic), reduced))
 }
 
-#[cfg(feature = "zk")]
-fn add_blinding_cyclic_rows<F, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
-    n_b: usize,
-    message_planes: usize,
-    blinding: &FlatDigitBlocks<D>,
-    rows: &mut [CyclotomicRing<F, D>],
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    B: CyclicRowsComputeBackend<F>,
-{
-    if blinding.is_empty() {
-        return Ok(());
-    }
-    if rows.len() != n_b {
-        return Err(AkitaError::InvalidProof);
-    }
-    let total_planes = message_planes
-        .checked_add(blinding.flat_digits().len())
-        .ok_or(AkitaError::InvalidProof)?;
-    let mut padded = vec![[0i8; D]; message_planes];
-    padded.extend_from_slice(blinding.flat_digits());
-    if padded.len() != total_planes {
-        return Err(AkitaError::InvalidProof);
-    }
-    let b_blinding_rows = backend.cyclic_digit_rows::<D>(prepared, n_b, &padded)?;
-    if b_blinding_rows.len() != n_b {
-        return Err(AkitaError::InvalidProof);
-    }
-    for (row, b_blinding_row) in rows.iter_mut().zip(b_blinding_rows) {
-        *row += b_blinding_row;
-    }
-    Ok(())
-}
-
-fn repeated_b_commitment_rows<F, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup<D>,
-    n_b: usize,
-    t_hat: &FlatDigitBlocks<D>,
-    #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
-    num_polys_per_point: &[usize],
-    blocks_per_claim: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    B: CyclicRowsComputeBackend<F>,
-{
-    if num_polys_per_point.is_empty() || blocks_per_claim == 0 {
-        return Err(AkitaError::InvalidProof);
-    }
-    let num_group_polys =
-        num_polys_per_point
-            .iter()
-            .try_fold(0usize, |acc, &group_poly_count| {
-                if group_poly_count == 0 {
-                    return Err(AkitaError::InvalidProof);
-                }
-                acc.checked_add(group_poly_count)
-                    .ok_or(AkitaError::InvalidProof)
-            })?;
-    if t_hat.block_count() != num_group_polys * blocks_per_claim {
-        return Err(AkitaError::InvalidProof);
-    }
-    #[cfg(not(feature = "zk"))]
-    let b_blinding_digits = vec![FlatDigitBlocks::<D>::empty(); num_polys_per_point.len()];
-    if b_blinding_digits.len() != num_polys_per_point.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let mut rows = Vec::with_capacity(num_polys_per_point.len() * n_b);
-    let mut block_offset = 0usize;
-    let mut plane_offset = 0usize;
-    for (&group_poly_count, blinding) in num_polys_per_point.iter().zip(b_blinding_digits.iter()) {
-        #[cfg(not(feature = "zk"))]
-        let _ = blinding;
-        let group_block_count = group_poly_count
-            .checked_mul(blocks_per_claim)
-            .ok_or(AkitaError::InvalidProof)?;
-        let next_block_offset = block_offset
-            .checked_add(group_block_count)
-            .ok_or(AkitaError::InvalidProof)?;
-        let group_block_sizes = t_hat
-            .block_sizes()
-            .get(block_offset..next_block_offset)
-            .ok_or(AkitaError::InvalidProof)?;
-        let group_planes: usize = group_block_sizes.iter().sum();
-        let next_plane_offset = plane_offset
-            .checked_add(group_planes)
-            .ok_or(AkitaError::InvalidProof)?;
-        let group_digits = t_hat
-            .flat_digits()
-            .get(plane_offset..next_plane_offset)
-            .ok_or(AkitaError::InvalidProof)?;
-        #[cfg(feature = "zk")]
-        let row_start = rows.len();
-        let group_rows = backend.cyclic_digit_rows::<D>(prepared, n_b, group_digits)?;
-        if group_rows.len() != n_b {
-            return Err(AkitaError::InvalidProof);
-        }
-        rows.extend(group_rows);
-        #[cfg(feature = "zk")]
-        {
-            add_blinding_cyclic_rows(
-                backend,
-                prepared,
-                n_b,
-                group_planes,
-                blinding,
-                &mut rows[row_start..row_start + n_b],
-            )?;
-        }
-        block_offset = next_block_offset;
-        plane_offset = next_plane_offset;
-    }
-    if block_offset != t_hat.block_count() || plane_offset != t_hat.flat_digits().len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(rows)
-}
-
 /// Split-eq replacement for `generate_m` + `compute_r_via_poly_division`.
 ///
 /// Computes `r` such that `M·z = y + (X^D+1)·r` without materializing M or z.
@@ -508,20 +389,27 @@ where
     let mut z_segments = z_pre_centered.chunks(inner_width);
     let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
+    let use_relation_b_rows = commitment_row_count == n_b && num_points == 1;
+    let relation_n_b = if use_relation_b_rows { n_b } else { 0 };
+    let relation_t_hat: &[[i8; D]] = if use_relation_b_rows {
+        t_hat.flat_digits()
+    } else {
+        &[]
+    };
     let relation_rows = backend.ring_switch_relation_rows::<D>(
         prepared,
         RingSwitchRelationRowsPlan {
             n_d: n_d_active,
-            n_b,
+            n_b: relation_n_b,
             n_a,
             w_hat: w_hat_flat,
-            t_hat: t_hat.flat_digits(),
+            t_hat: relation_t_hat,
             z_segment: first_z_segment,
             z_pre_centered_inf_norm,
         },
     )?;
     if relation_rows.d_cyclic.len() != n_d_active
-        || relation_rows.b_cyclic.len() != n_b
+        || relation_rows.b_cyclic.len() != relation_n_b
         || relation_rows.a_quotients.len() != n_a
     {
         return Err(AkitaError::InvalidProof);
@@ -533,11 +421,10 @@ where
     #[cfg(not(feature = "zk"))]
     let d_cyclic = relation_rows.d_cyclic;
     #[cfg(feature = "zk")]
-    add_blinding_cyclic_rows(
+    add_zk_d_blinding_cyclic_rows(
         backend,
         prepared,
         n_d_active,
-        w_hat_flat.len(),
         d_blinding_digits,
         &mut d_cyclic,
     )?;
@@ -557,7 +444,7 @@ where
             *dst += src;
         }
     }
-    let commitment_cyclic_rows = if commitment_row_count == n_b && num_points == 1 {
+    let commitment_cyclic_rows = if use_relation_b_rows {
         #[cfg(feature = "zk")]
         let mut rows = b_cyclic;
         #[cfg(not(feature = "zk"))]
@@ -565,11 +452,11 @@ where
         #[cfg(feature = "zk")]
         {
             let blinding = b_blinding_digits.first().ok_or(AkitaError::InvalidProof)?;
-            add_blinding_cyclic_rows(
+            add_zk_b_blinding_cyclic_rows(
                 backend,
                 prepared,
                 n_b,
-                t_hat.flat_digits().len(),
+                blinding.flat_digits().len(),
                 blinding,
                 &mut rows,
             )?;

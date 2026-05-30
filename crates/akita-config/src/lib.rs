@@ -15,7 +15,7 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary,
-    DecompositionParams, LevelParams, Schedule, SisModulusFamily,
+    DecompositionParams, LevelParams, Schedule, SetupMatrixEnvelope, SisModulusFamily,
 };
 use std::marker::PhantomData;
 
@@ -23,8 +23,8 @@ pub mod proof_optimized;
 pub mod tensor_verifier;
 mod transcript_binding;
 pub use proof_optimized::{
-    matrix_envelope_for_levels, setup_level_params_from_plan,
-    setup_level_params_from_runtime_schedule,
+    matrix_envelope_for_schedule, setup_level_params_from_plan,
+    setup_level_params_from_runtime_schedule, worst_case_grouped_incidence_for_shape,
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
@@ -149,7 +149,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         }
     }
 
-    /// `(max_rows, max_stride)` bounds for the shared setup matrix.
+    /// Packed capacity envelope for the shared setup matrix.
     ///
     /// # Errors
     ///
@@ -159,7 +159,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), AkitaError>;
+    ) -> Result<SetupMatrixEnvelope, AkitaError>;
 
     /// Inclusive `(min, max)` log-basis search range.
     #[doc(hidden)]
@@ -259,7 +259,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), AkitaError> {
+    ) -> Result<SetupMatrixEnvelope, AkitaError> {
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
@@ -329,8 +329,14 @@ mod tests {
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
             _max_num_points: usize,
-        ) -> Result<(usize, usize), AkitaError> {
-            Ok((1, 1))
+        ) -> Result<SetupMatrixEnvelope, AkitaError> {
+            Ok(SetupMatrixEnvelope {
+                max_setup_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
+            })
         }
 
         fn basis_range() -> (u32, u32) {

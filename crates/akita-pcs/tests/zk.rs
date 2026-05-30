@@ -5,22 +5,27 @@ use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};
 
 mod common;
 
+use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp32;
 use akita_config::CommitmentConfig;
 use akita_field::{ExtField, LiftBase};
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::protocol::ring_switch::{
+    build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
+};
 use akita_prover::{AkitaProverSetup, CommitmentProver, QuadraticEquation};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+use akita_sumcheck::multilinear_eval;
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
-    lagrange_weights, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup, AppendToTranscript,
-    ClaimIncidenceSummary, DecompositionParams, FlatRingVec, MRowLayout, RingCommitment,
-    RingMultiplierOpeningPoint, SisModulusFamily,
+    lagrange_weights, relation_claim_from_rows_extension, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup,
+    AppendToTranscript, ClaimIncidenceSummary, DecompositionParams, FlatRingVec, MRowLayout,
+    RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
 };
-use akita_verifier::CommitmentVerifier;
+use akita_verifier::{prepare_ring_switch_row_eval, CommitmentVerifier};
 use common::*;
 use std::marker::PhantomData;
 
@@ -64,7 +69,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), akita_field::AkitaError> {
+    ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
@@ -1001,6 +1006,229 @@ fn run_zk_dense_batched_shape_cases() {
             BasisMode::Lagrange,
         )
         .expect("multipoint zk batched verify");
+    });
+}
+
+#[test]
+fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
+    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
+    const D: usize = fp128::D32Full::D;
+    const NV: usize = 14;
+    const NUM_POINTS: usize = 2;
+
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let make_poly = |seed: u64| {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let evals: Vec<F> = (0..1usize << NV)
+                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect();
+            DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly")
+        };
+
+        let num_polys_per_point = vec![1usize; NUM_POINTS];
+        let incidence = ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.clone())
+            .expect("valid multipoint incidence");
+        let lp = Cfg::get_params_for_batched_commitment(&incidence).expect("layout");
+        let polys_per_point: Vec<Vec<DensePoly<F, D>>> = (0..NUM_POINTS)
+            .map(|point_idx| vec![make_poly(0xd3e5_9000 + point_idx as u64)])
+            .collect();
+        let opening_points_owned: Vec<Vec<F>> = (0..NUM_POINTS)
+            .map(|point_idx| random_point(NV, 0xaaaa_9000 + point_idx as u64))
+            .collect();
+        let polys_per_point_refs: Vec<&[DensePoly<F, D>]> =
+            polys_per_point.iter().map(Vec::as_slice).collect();
+        let setup =
+            <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, NUM_POINTS, NUM_POINTS)
+                .expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare");
+        let commit_outputs = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            &polys_per_point_refs,
+        )
+        .expect("commit");
+        let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let mut ring_opening_points = Vec::with_capacity(NUM_POINTS);
+        let mut ring_multiplier_points = Vec::with_capacity(NUM_POINTS);
+        let mut y_rings = Vec::with_capacity(NUM_POINTS);
+        let mut w_folded_by_poly = Vec::with_capacity(NUM_POINTS);
+        for (point, polys) in opening_points_owned.iter().zip(polys_per_point.iter()) {
+            let ring_opening_point = ring_opening_point_from_field(
+                &point[alpha_bits..],
+                lp.r_vars,
+                lp.m_vars,
+                BasisMode::Lagrange,
+                BlockOrder::RowMajor,
+            )
+            .expect("ring point");
+            let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
+            let (y_ring, w_folded) = polys[0].evaluate_and_fold(
+                &ring_opening_point.b,
+                &ring_opening_point.a,
+                lp.block_len,
+            );
+            ring_opening_points.push(ring_opening_point);
+            ring_multiplier_points.push(ring_multiplier_point);
+            y_rings.push(y_ring);
+            w_folded_by_poly.push(w_folded);
+        }
+
+        let mut transcript = AkitaTranscript::<F>::new(b"zk/multipoint-row-regression");
+        for commitment in &commitments {
+            commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        }
+        for point in &opening_points_owned {
+            for coord in point {
+                transcript.append_field(ABSORB_EVALUATION_CLAIMS, coord);
+            }
+        }
+        for y_ring in &y_rings {
+            transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+        }
+        let polys_flat: Vec<&DensePoly<F, D>> = polys_per_point
+            .iter()
+            .flat_map(|polys| polys.iter())
+            .collect();
+        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
+            &CpuBackend,
+            &prepared,
+            ring_opening_points,
+            ring_multiplier_points,
+            incidence.claim_to_point().to_vec(),
+            &polys_flat,
+            w_folded_by_poly,
+            &incidence,
+            lp.clone(),
+            hints,
+            &mut transcript,
+            &commitments,
+            &y_rings,
+            vec![CyclotomicRing::<F, D>::one(); incidence.num_claims()],
+            MRowLayout::Intermediate,
+        )
+        .expect("quadratic equation");
+        let w = ring_switch_build_w::<F, CpuBackend, D>(&mut quad_eq, &CpuBackend, &prepared, &lp)
+            .expect("ring-switch witness");
+        let (w_compact, _col_bits, ring_bits) =
+            build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
+        let live_x_cols = w_compact.len() >> ring_bits;
+
+        let alpha = F::from_u64(71);
+        let alpha_evals_y = scalar_powers(alpha, D);
+        let rows = lp
+            .m_row_count_for(NUM_POINTS, NUM_POINTS, MRowLayout::Intermediate)
+            .expect("row count");
+        let tau1_bits = rows.next_power_of_two().trailing_zeros() as usize;
+        let gamma = vec![F::one(); incidence.num_claims()];
+        let commitment_rows: Vec<CyclotomicRing<F, D>> = commitments
+            .iter()
+            .flat_map(|commitment| commitment.u.iter().copied())
+            .collect();
+        for row in 0..rows {
+            let tau1: Vec<F> = (0..tau1_bits)
+                .map(|bit| {
+                    if (row >> bit) & 1 == 1 {
+                        F::one()
+                    } else {
+                        F::zero()
+                    }
+                })
+                .collect();
+            let m_evals_x = compute_m_evals_x::<F, F, D>(
+                &setup.expanded,
+                quad_eq.opening_points(),
+                quad_eq.ring_multiplier_points(),
+                quad_eq.claim_to_point(),
+                &quad_eq.challenges,
+                alpha,
+                &alpha_evals_y,
+                &lp,
+                &tau1,
+                quad_eq.num_polys_per_point(),
+                quad_eq.claim_to_point_poly(),
+                quad_eq.claim_poly_indices(),
+                &gamma,
+                quad_eq.num_public_rows(),
+                MRowLayout::Intermediate,
+            )
+            .expect("m evals");
+            let got = (0..live_x_cols).fold(F::zero(), |acc_x, x| {
+                let column_start = x * D;
+                let y_eval =
+                    alpha_evals_y
+                        .iter()
+                        .enumerate()
+                        .fold(F::zero(), |acc_y, (y, &alpha)| {
+                            acc_y + F::from_i64(w_compact[column_start + y] as i64) * alpha
+                        });
+                acc_x + y_eval * m_evals_x[x]
+            });
+            let expected = relation_claim_from_rows_extension::<F, F, D>(
+                &tau1,
+                alpha,
+                quad_eq.v(),
+                &commitment_rows,
+                &y_rings,
+            )
+            .expect("relation claim");
+            assert_eq!(got, expected, "row {row}");
+        }
+
+        let mut rng = StdRng::seed_from_u64(0x51de_cafe);
+        let tau1: Vec<F> = (0..tau1_bits)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let m_evals_x = compute_m_evals_x::<F, F, D>(
+            &setup.expanded,
+            quad_eq.opening_points(),
+            quad_eq.ring_multiplier_points(),
+            quad_eq.claim_to_point(),
+            &quad_eq.challenges,
+            alpha,
+            &alpha_evals_y,
+            &lp,
+            &tau1,
+            quad_eq.num_polys_per_point(),
+            quad_eq.claim_to_point_poly(),
+            quad_eq.claim_poly_indices(),
+            &gamma,
+            quad_eq.num_public_rows(),
+            MRowLayout::Intermediate,
+        )
+        .expect("m evals");
+        let x_challenges: Vec<F> = (0..m_evals_x.len().trailing_zeros() as usize)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let expected_eval = multilinear_eval(&m_evals_x, &x_challenges).expect("mle");
+        let prepared_eval = prepare_ring_switch_row_eval::<F, F, D>(
+            &quad_eq.challenges,
+            alpha,
+            &lp,
+            &tau1,
+            quad_eq.num_polys_per_point(),
+            quad_eq.claim_to_point_poly(),
+            quad_eq.claim_poly_indices(),
+            &gamma,
+            quad_eq.num_public_rows(),
+            MRowLayout::Intermediate,
+            quad_eq.opening_points().len(),
+            quad_eq.ring_multiplier_points(),
+            quad_eq.claim_to_point(),
+        )
+        .expect("prepare row eval")
+        .eval_at_point::<F, D>(
+            &x_challenges,
+            &setup.expanded,
+            quad_eq.opening_points(),
+            quad_eq.ring_multiplier_points(),
+            alpha,
+        )
+        .expect("deferred row eval");
+        assert_eq!(prepared_eval, expected_eval);
     });
 }
 
