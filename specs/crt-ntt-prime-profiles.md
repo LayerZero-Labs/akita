@@ -17,9 +17,11 @@ That inflates setup NTT caches and matvec work even though merged PR #134 alread
 makes accumulation exact via capacity-bounded chunking and field-domain partial
 sums.
 
-This spec cuts over internal CRT parameter tables and dispatch only: add a
-first-class three-prime Q16 i16 profile for fp16, reduce Q32 to four i16 primes,
-reduce Q64 to three i32 primes, and leave Q128 at five i32 primes.
+This spec cuts over internal CRT parameter tables and dispatch: add a first-class
+three-prime Q16 i16 profile for fp16, reduce Q32 to four i16 primes, reduce Q64
+to three i32 primes, and leave Q128 at five i32 primes.
+It also requires a backend-prepared layout experiment for the affected
+CRT/NTT-cache paths.
 Proof bytes, transcripts, schedules, serialization, and verifier behavior stay
 unchanged.
 
@@ -32,31 +34,40 @@ machinery are **not** re-specified here; they are implemented on `main` in
 ### Goal
 
 Replace conservative Q32/Q64 CRT prime sets with smaller field-oriented profiles,
-introduce `ProtocolCrtNttParams::Q16` for fp16 `D <= 64`, and route every
-`NttSlotCache` consumer through the reduced profiles with the existing #134
-chunking paths so results match today's schoolbook reference.
+introduce `ProtocolCrtNttParams::Q16` for 16-bit-or-smaller prime fields with
+`D <= 64`, and route every `NttSlotCache` consumer through the reduced profiles
+with the existing #134 chunking paths so results match today's schoolbook
+reference.
+The semantic contract is the named compute operation output, not the current
+row-major `Vec<CyclotomicCrtNtt>` physical cache layout.
 
 Primary surfaces:
 
 - `crates/akita-algebra/src/ntt/tables.rs`: prime tables, `Q16_*` constants,
   reduced `Q32_*` / `Q64_*` counts.
 - `crates/akita-algebra/src/ring/crt_ntt_repr.rs`: `CrtNttParamSet` users keyed
-  by new `K`.
+  by new `K`; current prime-major `limbs[K][D]` CPU reference layout.
 - `crates/akita-prover/src/kernels/crt_ntt.rs`: `ProtocolCrtNttParams`,
   `NttSlotCache`, `select_crt_ntt_params`.
+- `crates/akita-prover/src/compute.rs`: `CpuPreparedSetup`, backend prepared
+  setup boundary, dense/recursive/ring-switch compute operation calls.
+- `crates/akita-prover/src/kernels/linear/ntt_matvec.rs`,
+  `single_cyclic.rs`, `fused_quotients.rs`: explicit `NttSlotCache` match arms
+  that need Q16 and any backend-private layout hooks.
 - `crates/akita-prover/src/kernels/linear/*`: negacyclic i8, cyclic i8, fused
-  split-eq, digit, block-parallel, and CRT matvec drivers (chunk width only;
-  no new chunking algorithm).
+  split-eq, digit, block-parallel, CRT matvec drivers, and chunk width policy.
 - `crates/akita-pcs/tests/algebra/ntt_crt.rs` and prover linear tests: prime
   validity, Garner constants, capacity tables, regression against references.
+- `crates/akita-pcs/benches/ring_ntt.rs` and profile benchmarks: literal prime
+  counts, cache footprint, and layout-performance measurements.
 
 ### Target profiles
 
 | Profile | Current | Target | Dispatch |
 | --- | ---: | ---: | --- |
-| Q16 | (none; fp16 uses Q32) | 3 × i16 | fp16, `D <= 64` |
-| Q32 | 6 × i16 | 4 × i16 | fp32, `D <= 64`; other `q <= 2^32-99` small fields at `D <= 64` |
-| Q64 | 5 × i32 | 3 × i32 | fp64; small fields with `D > 64` and `q <= 2^64-59` |
+| Q16 | (none; 16-bit fields use Q32) | 3 × i16 | `q <= u16::MAX`, `D <= 64` |
+| Q32 | 6 × i16 | 4 × i16 by default; benchmark `2 × i32` | `u16::MAX < q <= 2^32-99`, `D <= 64` |
+| Q64 | 5 × i32 | 3 × i32 | fp16 with `D > 64`; fp64; small fields with `D > 64` and `q <= 2^64-59` |
 | Q128 | 5 × i32 | unchanged | fp128 and listed offset moduli, `D <= 1024` |
 
 **Q16 default primes** (all prime, `< 2^14`, `128 | (p - 1)`):
@@ -68,6 +79,9 @@ Primary surfaces:
 Product ≈ `2^41.77`.
 Montgomery constants are derived with `NttPrime::compute` like existing Q32
 entries.
+Define `Q16_MODULUS = u16::MAX`.
+The name "Q16" means the field modulus fits in 16 bits, not only the current
+`Prime16Offset99` preset.
 
 **Q32 default primes** (do not take the first four legacy primes; their product
 is too small for current fp32 dense one-shot widths):
@@ -77,6 +91,10 @@ is too small for current fp32 dense one-shot widths):
 ```
 
 Product ≈ `2^55.60`.
+The implementation must also benchmark a homogeneous `2 × i32` Q32 candidate
+against the default `4 × i16` profile.
+Keep `2 × i32` only if it satisfies the same capacity table and wins under the
+layout/performance evaluation rules.
 
 **Q64 default primes** (three largest `D1024` i32 primes, same ordering as
 today's `D1024_RAW_PRIMES`):
@@ -86,6 +104,11 @@ today's `D1024_RAW_PRIMES`):
 ```
 
 **Q128**: keep `D1024_RAW_PRIMES` / `q128_primes()` unchanged.
+
+Dispatch must test `q <= Q16_MODULUS` before the generic Q32 branch.
+Small fields with `u16::MAX < q <= Q32_MODULUS` continue to use Q32 at
+`D <= 64`.
+Fields with `q <= Q64_MODULUS` and `D > 64` use Q64.
 
 ### Invariants
 
@@ -106,20 +129,42 @@ today's `D1024_RAW_PRIMES`):
    The fused split-eq `z_pre` leg uses
    `rhs_abs_bound = max(z_pre_max_abs, centered_rows_abs_bound(z_pre))` as
    implemented in `fused_split_eq_quotients_with_params`.
-4. Reduced profiles must be valid for **every** `NttSlotCache` user on that
+4. Reduced profiles must be valid for every compute operation that uses that
    profile: negacyclic i8 matvecs, cyclic i8 matvecs, fused split-eq quotients,
-   digit matvecs, block-parallel paths, and dense commitment B matvecs.
+   digit matvecs, block-parallel paths, dense commitment B matvecs, recursive
+   witness rows, and ZK B/D rows when `zk` is enabled.
    There is no parallel “large prime” cache for quotient-only call sites.
-5. If a profile cannot satisfy invariant (3) for a supported `(field, D,
-   log_basis, width)` tuple even at chunk width 1, `select_crt_ntt_params` or setup
-   expansion must return `AkitaError::InvalidSetup` (no silent fallback to legacy
-   prime counts).
+5. If an i8/digit operation on a supported `(field, D, log_basis, width)` tuple
+   cannot satisfy invariant (3) even at chunk width 1, prepared setup validation
+   must return `AkitaError::InvalidSetup` before hot kernels run.
+   The fused centered-`z_pre` path may keep the exact field-native fallback from
+   PR #134 when a single centered term cannot fit the CRT lift range; that
+   fallback is not a legacy-prime fallback and must stay covered by tests.
 6. Q128 prime count must not decrease (four 30-bit i32 primes are insufficient
    for one-column q128 D32 reconstruction).
-7. Setup serialization stays canonical: caches rebuild deterministically from the
-   same field matrix; only internal CRT tables and cache element width change.
+7. Setup serialization stays canonical: backend-prepared caches rebuild
+   deterministically from the same field matrix and setup seed.
+   Backend-private physical layouts must not enter setup bytes, transcript
+   bytes, proof bytes, or verifier inputs.
 8. Verifier no-panic contract is unchanged (prover-only arithmetic).
 9. Full cutover: no runtime shim for six-prime Q32 or five-prime Q64 after merge.
+10. `NttSlotCache` remains the CPU reference layout, not a public ABI.
+    A backend may prepare a semantically equivalent prime-flat, column-tiled,
+    or structure-of-arrays cache behind `ComputeBackendSetup::PreparedSetup`.
+11. The implementation must run at least one backend-prepared layout experiment
+    for the affected dense/root CRT paths.
+    If a layout wins under the evaluation rules below, keep it as the
+    backend-private implementation rather than discarding it as a benchmark-only
+    spike.
+12. Backend layout changes are allowed only behind named compute operations.
+    Protocol code must continue to request operations such as dense commit rows,
+    digit rows, cyclic rows, and ring-switch relation rows, not inspect
+    backend-specific buffers.
+13. Production CRT profiles are homogeneous in limb width (`i16` or `i32`) unless
+    a later measured experiment proves a mixed-width profile is worth the added
+    representation complexity.
+    The current `CyclotomicCrtNtt<W, K, D>` and `CrtNttParamSet<W, K, D>` model
+    assume one `W` per profile, and SIMD kernels assume homogeneous lanes.
 
 ### Non-Goals
 
@@ -135,6 +180,16 @@ today's `D1024_RAW_PRIMES`):
    `main` via fp16 support; orthogonal to CRT dispatch).
 8. Rewriting #134 chunking or "fixing" merged `single_cyclic` driver args for
    the Bugbot false positive (tests and optional cosmetic clarity only).
+9. Requiring Metal, AVX, or any accelerator backend for this PR.
+   The layout experiment may be CPU/Rayon or AArch64 NEON only.
+10. Changing canonical setup layout, proof layout, transcript binding, or
+    verifier-visible semantics to accommodate a backend cache layout.
+11. Choosing one new physical cache layout without measurements.
+12. Introducing a mixed `i16`/`i32` production CRT profile in this PR.
+    Mixed-width profiles are mathematically possible but fight the current
+    homogeneous `PrimeWidth` abstraction, make SIMD/layout specialization more
+    complex, and should be a follow-up only if homogeneous profiles cannot meet
+    the measured goals.
 
 ## PR #134 Cursor Bugbot audit (merged accumulation safety)
 
@@ -222,15 +277,42 @@ Criteria sections above, with #134 providing the chunking implementation.
 - [ ] `Q32_NUM_PRIMES = 4` with the four-prime table above; tests mirror Q16.
 - [ ] `Q64_NUM_PRIMES = 3` with the three-prime subset above; tests verify
       `2048 | (p - 1)` and Garner data for `D = 32, 64, 1024`.
-- [ ] `select_crt_ntt_params` returns `Q16` for fp16 with `D <= 64`, `Q32` for
-      fp32 with `D <= 64`, `Q64` for fp64 and small-field `D > 64`, `Q128`
-      unchanged.
+- [ ] `tables.rs` defines `Q16_MODULUS = u16::MAX`.
+- [ ] `select_crt_ntt_params` dispatches `q <= Q16_MODULUS`, `D <= 64` to
+      `Q16` before the generic Q32 branch; dispatches 16-bit fields with
+      `D > 64` to `Q64`; dispatches `Q16_MODULUS < q <= Q32_MODULUS` with
+      `D <= 64` to `Q32`; dispatches `q <= Q64_MODULUS` with `D > 64` to
+      `Q64`; leaves Q128 unchanged.
 - [ ] `ProtocolCrtNttParams` and `NttSlotCache` include a `Q16` variant; all
-      match arms updated (full cutover, no `panic!` on fp16).
+      match arms updated in `crt_ntt.rs`, `ntt_matvec.rs`, `single_cyclic.rs`,
+      `fused_quotients.rs`, test helpers, and benches (full cutover, no
+      `panic!` on fp16).
+- [ ] Q32 implementation compares the default `4 × i16` profile against a
+      homogeneous `2 × i32` candidate.
+      The comparison must include correctness, generated schedule capacity, setup
+      cache bytes, and required profile timings.
+      If `2 × i32` wins under the layout/performance rule, keep it and update
+      the Q32 target profile in this spec before implementation review.
 - [ ] `max_safe_crt_accumulation_width` unit tests for Q16, reduced Q32, and
       reduced Q64 cover balanced-i8 and centered-i32 (`z_pre_max_abs`) RHS
-      bounds at representative `D` and `log_basis` values from generated dense
-      schedules.
+      bounds at concrete `D` and `log_basis` values from generated schedule
+      tables.
+      At minimum, walk table entries for `fp16_d32_full`, `fp16_d32_onehot`,
+      `fp16_d64_full`, `fp16_d64_onehot`, `fp32_d32`, `fp32_d32_onehot`,
+      `fp32_d64`, `fp32_d64_onehot`, `fp64_d32`, `fp64_d32_onehot`,
+      `fp64_d64`, and `fp64_d64_onehot`, and assert every i8/digit role has a
+      nonzero single-term safe width under the selected profile.
+- [ ] Capacity tests pin at least one golden
+      `max_safe_crt_accumulation_width` value for Q16, reduced Q32, and reduced
+      Q64 at named `(field, D, log_basis, rhs_abs_bound)` tuples.
+- [ ] Add a capacity-profile artifact, checked into the implementation PR body
+      or a committed generated markdown file, that lists for every candidate
+      profile:
+      `K`, limb width, prime list, `log2(P_crt)`, supported `D` values,
+      representative `rhs_abs_bound` values, and the resulting
+      `max_safe_crt_accumulation_width`.
+      It must include the exact tuples used by generated schedule capacity
+      tests and the Q32 `4 × i16` vs `2 × i32` comparison.
 - [ ] Forced sub-full chunk tests (width above `max_safe_crt_accumulation_width`)
       for:
       - negacyclic `mat_vec_mul_ntt_single_i8`,
@@ -244,6 +326,21 @@ Criteria sections above, with #134 providing the chunking implementation.
       schoolbook reference equality (Q128 first; reduced profiles after cutover).
 - [ ] No change to `single_cyclic.rs` `drive_single_chunked_matvec` arguments
       unless a new test fails (Bugbot Medium on #134 is a false positive).
+- [ ] Prepared setup validation rejects any generated schedule/profile tuple
+      whose i8/digit CRT path cannot fit one term at chunk width 1.
+      This validation must happen before the corresponding hot kernel would
+      reach an internal `.expect`.
+- [ ] A backend-prepared layout experiment compares the current CPU reference
+      layout (`Vec<CyclotomicCrtNtt>` in row-major `NttSlotCache`) against at
+      least one alternative layout for the affected root dense paths:
+      prime-flat, column-tiled, or structure-of-arrays.
+      Keep the alternative if it improves setup, commit, or prove wall-clock by
+      at least 5% on one required profile without regressing another required
+      profile by more than 5%, or if it reduces shared NTT cache bytes by at
+      least 20% without a measured wall-clock regression above 5%.
+- [ ] If the layout experiment does not win, the implementation PR records the
+      attempted layout, benchmark numbers, and reason for keeping the current
+      CPU reference layout.
 - [ ] Existing `akita-pcs` algebra NTT/CRT tests and `cargo test -q -p
       akita-prover kernels::linear` pass.
 - [ ] `cargo test -q` and `cargo clippy --all -- -D warnings` pass.
@@ -254,8 +351,22 @@ Criteria sections above, with #134 providing the chunking implementation.
   Montgomery/Garner constants.
 - Extend `capacity.rs` tests with `Q16_PRIMES`, reduced `Q32_PRIMES`, and
   reduced `q64_primes()`; assert expected safe widths for fp16/fp32/fp64 dense
-  `log_basis` pairs used in generated root schedules (not merely
+  and onehot `log_basis` pairs used in generated root schedules (not merely
   `CommitmentConfig::decomposition()` defaults).
+- Add a small deterministic capacity-table generator or test helper that computes
+  the precise bound:
+
+  ```text
+  max_width = max w such that
+    2 * w * D * floor(q/2) * rhs_abs_bound < P_crt
+  ```
+
+  for every candidate profile and every tested operation role.
+  Do not hand-maintain copied capacity numbers without a recomputation path.
+- Add a schedule-capacity test next to the generated schedule materialization
+  tests in `crates/akita-config/src/proof_optimized/tests.rs`, or a helper with
+  equivalent table coverage, so future generated-table changes cannot silently
+  pick a tuple whose selected CRT profile cannot fit one i8/digit term.
 - Add or extend `akita-pcs/tests/algebra/ntt_crt.rs` for round-trip NTT on Q16
   and reduced Q32/Q64 at `D in {32, 64, 1024}` where applicable.
 - Reuse PR #134 adversarial patterns (large centered setup coeffs, wide matrices,
@@ -267,13 +378,20 @@ Criteria sections above, with #134 providing the chunking implementation.
 - Direction: lower setup NTT cache size and fewer CRT limbs per coefficient for
   fp16/fp32/fp64 dense paths.
 - Record before/after on `crates/akita-pcs/examples/profile/` for at least:
-  - `dense_fp16_d32` (or nearest fp16 dense mode),
+  - `dense_fp16_d32`,
   - `dense_fp32_d32`,
   - `dense_fp64_d32`.
+- Record the commands used, e.g.
+  `AKITA_MODE=dense_fp16_d32 cargo run --release --example profile`, with the
+  corresponding fp32/fp64 modes.
+- Run each required profile enough times to report a median or explain why the
+  local environment cannot provide stable repeated runs.
 - No fixed “must win” threshold: post numbers in the implementation PR.
   Regressions above ~5% wall-clock on any of the three modes require an explicit
   note in the PR body with hypothesis (e.g., more chunks on fp32 outer-B).
 - Proof size and verifier time must be unchanged (prover-only).
+- The layout experiment additionally records shared NTT cache bytes and the
+  chosen physical prepared-cache layout.
 
 ## Design
 
@@ -282,19 +400,67 @@ Criteria sections above, with #134 providing the chunking implementation.
 ```text
 select_crt_ntt_params(F, D)
         │
-        ├─ fp16, D<=64 ──► Q16 (3× i16) ──► NttSlotCache::Q16
-        ├─ q<=Q32, D<=64 ─► Q32 (4× i16) ──► NttSlotCache::Q32
-        ├─ q<=Q64 ────────► Q64 (3× i32) ──► NttSlotCache::Q64
-        └─ fp128 family ──► Q128 (5× i32) ─► NttSlotCache::Q128
+        ├─ q<=u16::MAX, D<=64 ───────► Q16 (3× i16)
+        ├─ q<=Q32, D<=64 ────────────► Q32 (4× i16 default; test 2×i32)
+        ├─ q<=Q64 ───────────────────► Q64 (3× i32)
+        └─ fp128 family ─────────────► Q128 (5× i32)
                                     │
-                    linear kernels (unchanged chunking driver)
+                   backend-prepared CRT/NTT cache
                                     │
-              safe_crt_chunk_width / field partial sum (#134)
+       named compute operations + #134 chunking / field partial sums
 ```
 
 Const-generic `K` changes propagate through `CyclotomicCrtNtt<W, K, D>`,
 `DigitMontLut<W, K>`, and prover `match` arms.
 Prefer a single source of truth in `tables.rs` over duplicating prime arrays.
+
+The current CPU reference cache is:
+
+```text
+NttSlotCache::{Q16,Q32,Q64,Q128}
+  neg: Vec<CyclotomicCrtNtt<W,K,D>>   // row-major cells
+  cyc: Vec<CyclotomicCrtNtt<W,K,D>>   // row-major cells
+
+CyclotomicCrtNtt<W,K,D>
+  limbs[k][d]                         // prime-major, D-contiguous
+```
+
+That layout is good for today's AArch64 NEON kernels, which vectorize across the
+`D` dimension inside one CRT prime.
+It is not necessarily optimal for backend-specific execution because fixed-column
+multi-row access strides by `num_cols * K * D * sizeof(W)`, cyclic and
+negacyclic domains double cache memory, and GPU-style backends generally prefer
+flat structure-of-arrays buffers.
+
+This PR may replace the CPU-prepared physical cache with a backend-private layout
+if measurements justify it.
+Candidate layouts include:
+
+1. **Prime-flat row-major:** one flat buffer per domain and CRT prime, indexed by
+   `(row, column, d)`.
+   This keeps per-prime NTT friendliness while making upload and SIMD prefetching
+   simpler.
+2. **Column-tiled prime-flat:** one flat buffer per `(domain, prime, column
+   tile)`, with rows for the tile contiguous.
+   This targets fused relation rows and small-`n_a` dense paths that repeatedly
+   touch fixed columns across roles.
+3. **Structure-of-arrays prepared cache:** backend-specific buffers arranged for
+   vector lanes or device coalescing, hidden behind `ComputeBackendSetup`.
+
+Do not make `NttSlotCache` the long-term backend ABI.
+The durable API is the compute operation surface in `crates/akita-prover/src/compute.rs`:
+`dense_commit_rows`, `digit_rows`, `cyclic_digit_rows`,
+`recursive_witness_commit_rows`, `ring_switch_relation_rows`, and
+`ring_switch_quotient_rows`.
+The CPU reference may keep `NttSlotCache` if no measured alternative wins.
+
+Mixed-width CRT profiles such as `2 × i16 + 1 × i32` are intentionally not part
+of this PR's production target.
+They can reduce byte footprint for a desired `P_crt`, but they cut against the
+current homogeneous `PrimeWidth` model and make SIMD lanes, twiddle tables,
+Garner reconstruction, and backend-prepared buffers heterogeneous.
+The first implementation should compare homogeneous candidates (`4 × i16` vs
+`2 × i32` for Q32) before considering mixed-width profiles.
 
 ### Alternatives Considered
 
@@ -303,16 +469,34 @@ Prefer a single source of truth in `tables.rs` over duplicating prime arrays.
    one-shot even with chunking; rejected.
 3. **Two i16 primes for Q16.** Too many reconstruction rounds on real widths;
    rejected.
-4. **Separate large-profile cache for quotients only.** Violates global cutover
+4. **Two i32 primes for Q32.** Still under consideration as a required measured
+   candidate.
+   It is not the default because i32 Montgomery arithmetic and cache footprint
+   can lose despite the smaller prime count.
+5. **Mixed i16/i32 profiles.** Deferred.
+   They may be mathematically attractive, but they require a heterogeneous CRT
+   representation instead of the current `CrtNttParamSet<W, K, D>` shape.
+6. **Separate large-profile cache for quotients only.** Violates global cutover
    and duplicates cache memory; rejected (spec review blocking question).
-5. **Combine with range-chunking spec PR #108.** Split for review/merge order:
+7. **Combine with range-chunking spec PR #108.** Split for review/merge order:
    #134 landed chunking; this PR lands primes only.
+8. **Freeze the current row-major `NttSlotCache` layout as the implementation
+   contract.** Rejected.
+   It is a good CPU reference, but it would make backend-specific SIMD and
+   future Metal work inherit an avoidable AoS-shaped cache.
+9. **Land a benchmark-only alternative layout and discard it.** Rejected.
+   If the experiment wins under the acceptance criteria, the implementation
+   should keep the backend-private layout and use CPU parity tests as the guard.
 
 ## Documentation
 
 - This spec file.
 - Update module docs in `ntt/tables.rs` and `crt_ntt.rs` dispatch comment to
   describe Q16 and reduced counts.
+- If a new backend-prepared layout is kept, document it in
+  `crates/akita-prover/src/compute.rs` or the local prepared-cache module:
+  physical ordering, domain coverage (`neg`, `cyc`, or both), alignment
+  expectations, and why it remains backend-private.
 - No paper or verifier doc changes required.
 
 ## Execution
@@ -324,16 +508,30 @@ Suggested implementation slices:
    that #134 Bugbot "wrong arg order" is closed as false positive (see audit
    section and #134 comment).
 1. Add Q16 table + tests; add reduced Q32/Q64 tables + tests.
-2. Extend `ProtocolCrtNttParams` / `NttSlotCache` / `select_crt_ntt_params`.
-3. Fix const-generic `K` throughout prover linear + setup NTT cache build.
-4. Extend capacity and forced-chunk tests for cyclic/fused/`z_pre` on new `K`.
-5. Profile dense fp16/fp32/fp64; fix any unexpected chunk-count regressions.
+2. Generate and review the capacity-profile artifact for Q16, Q32 `4 × i16`,
+   Q32 `2 × i32`, Q64, and Q128.
+3. Extend `ProtocolCrtNttParams` / `NttSlotCache` / `select_crt_ntt_params`.
+4. Fix const-generic `K` throughout prover linear + setup NTT cache build,
+   including `ntt_matvec.rs`, `single_cyclic.rs`, `fused_quotients.rs`,
+   `compute.rs`, algebra tests, and benches.
+5. Add generated-schedule capacity validation and forced-chunk tests for
+   cyclic/fused/`z_pre` on new `K`.
+6. Run the Q32 `4 × i16` vs `2 × i32` experiment.
+   Keep the winner if it satisfies capacity and performance criteria.
+7. Run the backend-prepared layout experiment on the current row-major CPU
+   reference versus at least one prime-flat, column-tiled, or SoA layout.
+   Keep the new layout if it wins under the acceptance criteria.
+8. Profile dense fp16/fp32/fp64; fix any unexpected chunk-count regressions.
 
 Risks to resolve first:
 
 - Confirm fp16 outer-B nv32 widths still chunk correctly under Q16 (may be
   two chunks; acceptable if correct).
 - Update every `Q32_NUM_PRIMES` / `Q64_NUM_PRIMES` literal in tests and benches.
+- Keep the layout experiment scoped to backend-prepared storage and named compute
+  operations.
+  Do not leak physical cache ordering into protocol, setup serialization, or
+  verifier-facing types.
 
 ## References
 
@@ -347,4 +545,6 @@ Risks to resolve first:
 - Closed PR [#133](https://github.com/LayerZero-Labs/akita/pull/133): superseded
   chunking implementation path.
 - `specs/fp16-small-field-support.md`: SIS `Q16` family (orthogonal).
+- `specs/akita-compute-backend-metal.md`: compute backend boundary and
+  backend-prepared setup ownership.
 - `specs/SPEC_REVIEW.md`: review workflow for this spec PR.
