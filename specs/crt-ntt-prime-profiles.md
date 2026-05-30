@@ -21,6 +21,13 @@ This spec has two deliverables.
 The primary deliverable cuts over internal CRT parameter tables and dispatch: add
 a first-class three-prime Q16 i16 profile for fp16, reduce Q32 to four i16 primes,
 reduce Q64 to three i32 primes, and leave Q128 at five i32 primes.
+The i16 profiles (Q16, Q32) are extended to cover `D <= 256` (not just `D <= 64`)
+so that fp16 (security-ladder `D = 256`) and fp32 (`D = 128`) keep 2-byte CRT
+limbs instead of falling back to the 4-byte i32 Q64 profile, roughly halving their
+shared NTT-cache footprint.
+This requires lowering `MAX_CRT_RING_DEGREE` from `1024` to `256` and removing the
+unused `D = 512` and `D = 1024` ring-degree presets, dispatch arms, and generated
+families/tables; `D > 256` is no longer a supported ring degree.
 The secondary deliverable is a backend-prepared layout experiment for the affected
 CRT/NTT-cache paths (Invariant 11, acceptance criteria, Execution slice 7): the
 implementation must run at least one alternative layout and keep it only if it
@@ -41,8 +48,9 @@ machinery are **not** re-specified here; they are implemented on `main` in
 ### Goal
 
 Replace conservative Q32/Q64 CRT prime sets with smaller field-oriented profiles,
-introduce `ProtocolCrtNttParams::Q16` for 16-bit-or-smaller prime fields with
-`D <= 64`, and route every `NttSlotCache` consumer through the reduced profiles
+introduce `ProtocolCrtNttParams::Q16` for 16-bit-or-smaller prime fields, extend
+the i16 Q16/Q32 profiles to `D <= 256`, cap the supported ring degree at
+`D <= 256`, and route every `NttSlotCache` consumer through the reduced profiles
 with the existing #134 chunking paths so results match today's schoolbook
 reference.
 The semantic contract is the named compute operation output, not the current
@@ -70,70 +78,81 @@ Primary surfaces:
 
 ### Target profiles
 
+The supported ring-degree set is `D in {32, 64, 128, 256}`.
+All profiles cover the full `D <= 256` range, so dispatch is purely modulus-based;
+there is no width fallback keyed on `D`.
+
 | Profile | Current | Target | Dispatch |
 | --- | ---: | ---: | --- |
-| Q16 | (none; 16-bit fields use Q32) | 3 × i16 | `q <= u16::MAX`, `D <= 64` |
-| Q32 | 6 × i16 | 4 × i16 by default; benchmark `2 × i32` | `u16::MAX < q <= 2^32-99`, `D <= 64` |
-| Q64 | 5 × i32 | 3 × i32 | fp16 with `D > 64`; fp64; small fields with `D > 64` and `q <= 2^64-59` |
-| Q128 | 5 × i32 | unchanged | fp128 and listed offset moduli, `D <= 1024` |
+| Q16 | (none; 16-bit fields use Q32) | 3 × i16 | `q <= u16::MAX`, `D <= 256` |
+| Q32 | 6 × i16 | 4 × i16 by default; benchmark `2 × i32` | `u16::MAX < q <= 2^32-99`, `D <= 256` |
+| Q64 | 5 × i32 | 3 × i32 | `2^32-99 < q <= 2^64-59`, `D <= 256` |
+| Q128 | 5 × i32 | unchanged | fp128 and listed offset moduli, `D <= 256` |
 
 "Q16" names the dispatch class for field moduli that fit in 16 bits, gated by
 `Q16_MODULUS = u16::MAX = 65535`.
 It is not the fp16 field modulus itself (the current `Prime16Offset99` preset is
-`q = 2^16 - 99 = 65437`); any prime field with `q <= 65535` and `D <= 64` selects
+`q = 2^16 - 99 = 65437`); any prime field with `q <= 65535` and `D <= 256` selects
 this profile.
 
-**Q16 default primes** (all prime, `< 2^14`, `128 | (p - 1)`):
+**Q16 default primes** (all prime, `< 2^14`, `512 | (p - 1)` so they support the
+full negacyclic NTT for `D <= 256`):
 
 ```text
-16001, 15361, 15233
+15361, 13313, 12289
 ```
 
-Product ≈ `2^41.77`.
-Montgomery constants are derived with `NttPrime::compute` like existing Q32
-entries.
+Product ≈ `2^41.19`.
+These are the three largest i16 primes below `2^14` whose order admits `D = 256`;
+restricting Q16 to `D <= 64` would only raise the product to `2^41.77`
+(`16001, 15361, 15233`), a `0.58`-bit difference that does not justify forcing
+fp16 onto the 4-byte i32 fallback at `D in {128, 256}`.
+Montgomery constants are derived with `NttPrime::compute` like existing entries.
 Define `Q16_MODULUS = u16::MAX`.
-The name "Q16" means the field modulus fits in 16 bits, not only the current
-`Prime16Offset99` preset.
 
-**Q32 default primes** (do not take the first four legacy primes; their product
-is too small for current fp32 dense one-shot widths):
+**Q32 default primes** (all prime, `< 2^14`, `512 | (p - 1)` for `D <= 256`):
 
 ```text
-16001, 15361, 15233, 14593
+15361, 13313, 12289, 11777
 ```
 
-Product ≈ `2^55.60`.
+Product ≈ `2^54.72`.
+This is the four-prime extension of the Q16 set; the legacy six-prime Q32 table
+and the `D <= 64`-only candidates are dropped.
 The implementation must also benchmark a homogeneous `2 × i32` Q32 candidate
 against the default `4 × i16` profile.
 
-**Q32 `2 × i32` candidate primes** (the two largest `D1024_RAW_PRIMES`, so the
-candidate reuses existing i32 NTT twiddles and Garner data):
+**Q32 `2 × i32` candidate primes** (the two largest reduced-Q64 i32 primes, so the
+candidate reuses existing i32 NTT twiddles and Garner data and covers `D <= 256`):
 
 ```text
 1073707009, 1073698817
 ```
 
-Product ≈ `2^60.00`, which exceeds the `4 × i16` product (`2^55.60`), so the
+Product ≈ `2^60.00`, which exceeds the `4 × i16` product (`2^54.72`), so the
 candidate trivially satisfies the same capacity table; the open question is
 whether i32 Montgomery arithmetic and the doubled per-coefficient byte footprint
 lose despite needing only two primes.
 Keep `2 × i32` only if it satisfies the same capacity table and wins under the
 layout/performance evaluation rules.
 
-**Q64 default primes** (three largest `D1024` i32 primes, same ordering as
-today's `D1024_RAW_PRIMES`):
+**Q64 default primes** (three largest i32 primes from the existing raw-prime
+table, same ordering; each satisfies `512 | (p - 1)` for `D <= 256`):
 
 ```text
 1073707009, 1073698817, 1073692673
 ```
 
-**Q128**: keep `D1024_RAW_PRIMES` / `q128_primes()` unchanged.
+**Q128**: keep `q128_primes()` values unchanged (five i32 primes).
+
+The `D1024_RAW_PRIMES` constant should be renamed away from the `D1024` label
+(for example `I32_RAW_PRIMES`) since `D = 1024` is removed.
 
 Dispatch must test `q <= Q16_MODULUS` before the generic Q32 branch.
-Small fields with `u16::MAX < q <= Q32_MODULUS` continue to use Q32 at
-`D <= 64`.
-Fields with `q <= Q64_MODULUS` and `D > 64` use Q64.
+Fields with `u16::MAX < q <= Q32_MODULUS` use Q32; fields with
+`Q32_MODULUS < q <= Q64_MODULUS` use Q64; the listed fp128 moduli use Q128.
+Every branch requires `D <= 256` and returns `AkitaError::InvalidSetup` for any
+larger ring degree.
 
 ### Invariants
 
@@ -184,7 +203,9 @@ Fields with `q <= Q64_MODULUS` and `D > 64` use Q64.
    Backend-private physical layouts must not enter setup bytes, transcript
    bytes, proof bytes, or verifier inputs.
 8. Verifier no-panic contract is unchanged (prover-only arithmetic).
-9. Full cutover: no runtime shim for six-prime Q32 or five-prime Q64 after merge.
+9. Full cutover: no runtime shim for six-prime Q32, five-prime Q64, the legacy
+   `D <= 64`-only i16 tables, or the removed `D = 512` / `D = 1024` ring degrees
+   after merge.
 10. `NttSlotCache` remains the CPU reference layout, not a public ABI.
     A backend may prepare a semantically equivalent prime-flat, column-tiled,
     or structure-of-arrays cache behind `ComputeBackendSetup::PreparedSetup`.
@@ -202,6 +223,18 @@ Fields with `q <= Q64_MODULUS` and `D > 64` use Q64.
     representation complexity.
     The current `CyclotomicCrtNtt<W, K, D>` and `CrtNttParamSet<W, K, D>` model
     assume one `W` per profile, and SIMD kernels assume homogeneous lanes.
+14. `MAX_CRT_RING_DEGREE = 256`; `D in {32, 64, 128, 256}` are the only supported
+    ring degrees.
+    Every i16 NTT prime must satisfy `512 | (p - 1)` (a primitive `2 * 256`-th
+    root for the negacyclic NTT at `D = 256`), and every i32 prime must satisfy
+    the same `512 | (p - 1)`; the reused i32 primes already satisfy the stronger
+    `2048 | (p - 1)`.
+    `D = 512` and `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
+    `dispatch_ring_dim` / `dispatch_ring_dim_result` arms, the fp16/fp32
+    `D512Full` / `D512OneHot` presets, and the generated family/table lists; no
+    production path may instantiate them.
+    Dead type aliases that are cheap to leave defined may remain, but nothing may
+    route a profile, schedule, or commitment through `D > 256`.
 
 ### Non-Goals
 
@@ -227,6 +260,15 @@ Fields with `q <= Q64_MODULUS` and `D > 64` use Q64.
     homogeneous `PrimeWidth` abstraction, make SIMD/layout specialization more
     complex, and should be a follow-up only if homogeneous profiles cannot meet
     the measured goals.
+13. Supporting `D > 256`.
+    The `D = 512` / `D = 1024` ring degrees are removed, not merely left on the
+    i32 fallback; no production field uses them and keeping them would force i16
+    primes through a `1024 | (p - 1)` / `2048 | (p - 1)` order with too few
+    candidates below `2^14` to build a four-prime Q32 set.
+14. Maximizing the Q16/Q32 product by capping i16 at `D <= 64`.
+    The larger `D <= 64` triple (`16001, 15361, 15233`, `2^41.77`) is rejected
+    because the `0.58`-bit gain does not justify dropping fp16/fp32 i16 coverage
+    at `D in {128, 256}`.
 
 ## PR #134 Cursor Bugbot audit (merged accumulation safety)
 
@@ -308,38 +350,52 @@ Criteria sections above, with #134 providing the chunking implementation.
 
 ### Acceptance Criteria
 
-- [ ] `tables.rs` defines `Q16_NUM_PRIMES = 3`, `Q16_PRIMES`, `q16_garner()`, and
-      unit tests that each Q16 prime is prime, `< 2^14`, and satisfies
-      `128 | (p - 1)`.
-- [ ] `Q32_NUM_PRIMES = 4` with the four-prime table above; tests mirror Q16.
+- [ ] `tables.rs` defines `Q16_NUM_PRIMES = 3`, `Q16_PRIMES = [15361, 13313,
+      12289]`, `q16_garner()`, and unit tests that each Q16 prime is prime,
+      `< 2^14`, and satisfies `512 | (p - 1)`.
+- [ ] `Q32_NUM_PRIMES = 4` with the four-prime table `[15361, 13313, 12289,
+      11777]`; tests mirror Q16 (`512 | (p - 1)`).
 - [ ] `Q64_NUM_PRIMES = 3` with the three-prime subset above; tests verify
-      `2048 | (p - 1)` and Garner data for `D = 32, 64, 1024`.
+      `512 | (p - 1)` and Garner data for `D = 32, 64, 256`.
+- [ ] `tables.rs` sets `MAX_CRT_RING_DEGREE = 256` and the i32 raw-prime constant
+      is renamed away from `D1024` (e.g. `I32_RAW_PRIMES`).
 - [ ] `tables.rs` defines `Q16_MODULUS = u16::MAX`.
-- [ ] `select_crt_ntt_params` dispatches `q <= Q16_MODULUS`, `D <= 64` to
-      `Q16` before the generic Q32 branch; dispatches 16-bit fields with
-      `D > 64` to `Q64`; dispatches `Q16_MODULUS < q <= Q32_MODULUS` with
-      `D <= 64` to `Q32`; dispatches `q <= Q64_MODULUS` with `D > 64` to
-      `Q64`; leaves Q128 unchanged.
+- [ ] `select_crt_ntt_params` dispatches `q <= Q16_MODULUS` to `Q16` before the
+      generic Q32 branch; `Q16_MODULUS < q <= Q32_MODULUS` to `Q32`;
+      `Q32_MODULUS < q <= Q64_MODULUS` to `Q64`; the listed fp128 moduli to Q128.
+      Every branch requires `D <= 256` (one of `{32, 64, 128, 256}`) and returns
+      `AkitaError::InvalidSetup` for `D > 256`.
+      There is no `D`-keyed width fallback (no "16-bit field with `D > 64` uses
+      Q64").
+- [ ] `D = 512` / `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
+      `dispatch_ring_dim` / `dispatch_ring_dim_result` macro arms, the fp16/fp32
+      `D512Full` / `D512OneHot` presets, `generated_families`, and any generated
+      table/drift-guard list, with `cargo test -q` and the drift guard green.
 - [ ] `ProtocolCrtNttParams` and `NttSlotCache` include a `Q16` variant; all
       match arms updated in `crt_ntt.rs`, `ntt_matvec.rs`, `single_cyclic.rs`,
       `fused_quotients.rs`, test helpers, and benches (full cutover, no
       `panic!` on fp16).
 - [ ] Q32 implementation compares the default `4 × i16` profile against the
       homogeneous `2 × i32` candidate `[1073707009, 1073698817]`
-      (the two largest `D1024_RAW_PRIMES`, product ≈ `2^60.00`).
+      (the two largest i32 raw primes, product ≈ `2^60.00`).
       The comparison must include correctness, generated schedule capacity, setup
       cache bytes, and required profile timings.
       If `2 × i32` wins under the layout/performance rule, keep it and update
       the Q32 target profile in this spec before implementation review.
 - [ ] `max_safe_crt_accumulation_width` unit tests for Q16, reduced Q32, and
       reduced Q64 cover balanced-i8 and centered-i32 (`z_pre_max_abs`) RHS
-      bounds at concrete `D` and `log_basis` values from generated schedule
-      tables.
-      At minimum, walk table entries for `fp16_d32_full`, `fp16_d32_onehot`,
-      `fp16_d64_full`, `fp16_d64_onehot`, `fp32_d32`, `fp32_d32_onehot`,
-      `fp32_d64`, `fp32_d64_onehot`, `fp64_d32`, `fp64_d32_onehot`,
-      `fp64_d64`, and `fp64_d64_onehot`, and assert every i8/digit role has a
-      nonzero single-term safe width under the selected profile.
+      bounds at concrete `D` and `log_basis` values.
+      Walk every committed generated schedule table entry for `fp16_d32_full`,
+      `fp16_d32_onehot`, `fp16_d64_full`, `fp16_d64_onehot`, `fp32_d32`,
+      `fp32_d32_onehot`, `fp32_d64`, `fp32_d64_onehot`, `fp64_d32`,
+      `fp64_d32_onehot`, `fp64_d64`, and `fp64_d64_onehot` (these are the only
+      committed tables; `D in {128, 256}` tables do not exist yet).
+      Additionally add direct capacity unit tests for the i16 Q16/Q32 profiles at
+      `D = 128` and `D = 256` using `Cfg::decomposition()` `log_basis` values, so
+      the extended `D <= 256` coverage is guarded before any `D > 64` schedule
+      table is generated.
+      Assert every i8/digit role has a nonzero single-term safe width under the
+      selected profile.
 - [ ] Capacity tests pin at least one golden
       `max_safe_crt_accumulation_width` value for Q16, reduced Q32, and reduced
       Q64 at named `(field, D, log_basis, rhs_abs_bound)` tuples.
@@ -406,7 +462,9 @@ Criteria sections above, with #134 providing the chunking implementation.
   equivalent table coverage, so future generated-table changes cannot silently
   pick a tuple whose selected CRT profile cannot fit one i8/digit term.
 - Add or extend `akita-pcs/tests/algebra/ntt_crt.rs` for round-trip NTT on Q16
-  and reduced Q32/Q64 at `D in {32, 64, 1024}` where applicable.
+  and reduced Q32/Q64 at `D in {32, 64, 128, 256}` where applicable (the i16
+  Q16/Q32 round trips must pass at `D = 256`, exercising the `512 | (p - 1)`
+  order).
 - Reuse PR #134 adversarial patterns (large centered setup coeffs, wide matrices,
   forced chunk widths) with the **new** prime products.
 - All existing E2E / `single_poly_e2e` tests must remain green (prove + verify).
@@ -436,10 +494,10 @@ Criteria sections above, with #134 providing the chunking implementation.
 ### Architecture
 
 ```text
-select_crt_ntt_params(F, D)
+select_crt_ntt_params(F, D)   // requires D in {32,64,128,256}, else InvalidSetup
         │
-        ├─ q<=u16::MAX, D<=64 ───────► Q16 (3× i16)
-        ├─ q<=Q32, D<=64 ────────────► Q32 (4× i16 default; test 2×i32)
+        ├─ q<=u16::MAX ──────────────► Q16 (3× i16, 512|(p-1))
+        ├─ q<=Q32 ───────────────────► Q32 (4× i16 default, 512|(p-1); test 2×i32)
         ├─ q<=Q64 ───────────────────► Q64 (3× i32)
         └─ fp128 family ─────────────► Q128 (5× i32)
                                     │
@@ -525,6 +583,16 @@ The first implementation should compare homogeneous candidates (`4 × i16` vs
 9. **Land a benchmark-only alternative layout and discard it.** Rejected.
    If the experiment wins under the acceptance criteria, the implementation
    should keep the backend-private layout and use CPU parity tests as the guard.
+10. **Keep i16 capped at `D <= 64` and route fp16/fp32 `D > 64` to i32 Q64.**
+    Rejected.
+    fp16 (security-ladder `D = 256`) and fp32 (`D = 128`) would pay 4-byte i32
+    limbs at their production ring degrees; extending the i16 order to
+    `512 | (p - 1)` keeps them on 2-byte limbs for `< 0.6` bits of product.
+11. **Keep `MAX_CRT_RING_DEGREE = 1024` and the `D = 512` / `D = 1024` presets.**
+    Rejected.
+    No production field instantiates `D > 256`, the i16 pool below `2^14` cannot
+    supply a four-prime Q32 set at `D = 512` (`1024 | (p - 1)` leaves only three
+    such primes), and carrying the unused arms blocks the i16 extension.
 
 ## Documentation
 
@@ -545,24 +613,37 @@ Suggested implementation slices:
    `mat_vec_mul_ntt_single_i8` / `_cyclic` forced-chunk tests on Q128; document
    that #134 Bugbot "wrong arg order" is closed as false positive (see audit
    section and #134 comment).
-1. Add Q16 table + tests; add reduced Q32/Q64 tables + tests.
-2. Generate and review the capacity-profile artifact for Q16, Q32 `4 × i16`,
-   Q32 `2 × i32`, Q64, and Q128.
-3. Extend `ProtocolCrtNttParams` / `NttSlotCache` / `select_crt_ntt_params`.
-4. Fix const-generic `K` throughout prover linear + setup NTT cache build,
+1. Lower `MAX_CRT_RING_DEGREE` to `256`; remove `D = 512` / `D = 1024` from
+   `SUPPORTED_RING_DIMS`, the dispatch macros, the fp16/fp32 `D512*` presets, and
+   `generated_families`; confirm the drift guard and `cargo test -q` stay green.
+2. Add Q16 table + tests (`512 | (p - 1)`); add reduced Q32/Q64 tables + tests;
+   rename the i32 raw-prime constant off the `D1024` label.
+3. Generate and review the capacity-profile artifact for Q16, Q32 `4 × i16`,
+   Q32 `2 × i32`, Q64, and Q128 at `D in {32, 64, 128, 256}`.
+4. Extend `ProtocolCrtNttParams` / `NttSlotCache` / `select_crt_ntt_params`
+   (D-aware, `D <= 256`, no width fallback on `D`).
+5. Fix const-generic `K` throughout prover linear + setup NTT cache build,
    including `ntt_matvec.rs`, `single_cyclic.rs`, `fused_quotients.rs`,
    `compute.rs`, algebra tests, and benches.
-5. Add generated-schedule capacity validation and forced-chunk tests for
-   cyclic/fused/`z_pre` on new `K`.
-6. Run the Q32 `4 × i16` vs `2 × i32` experiment.
+6. Add capacity validation in `CpuBackend::prepare_expanded`, direct `D = 128`
+   / `D = 256` capacity unit tests, and forced-chunk tests for cyclic/fused/
+   `z_pre` on new `K`.
+7. Run the Q32 `4 × i16` vs `2 × i32` experiment.
    Keep the winner if it satisfies capacity and performance criteria.
-7. Run the backend-prepared layout experiment on the current row-major CPU
+8. Run the backend-prepared layout experiment on the current row-major CPU
    reference versus at least one prime-flat, column-tiled, or SoA layout.
    Keep the new layout if it wins under the acceptance criteria.
-8. Profile dense fp16/fp32/fp64; fix any unexpected chunk-count regressions.
+9. Profile dense fp16/fp32/fp64; fix any unexpected chunk-count regressions.
 
 Risks to resolve first:
 
+- Confirm removing the `D = 512` presets does not break `generated_families`, the
+  drift-guard test, or any committed generated table (none should reference
+  `D > 64` today, but verify).
+- Generated schedule tables for `D in {128, 256}` are **out of scope**; this PR
+  only makes the profiles/dispatch ready for them. Today's table-only `Cfg`
+  production stays at `D <= 64`, so the i16 cache win at `D in {128, 256}` is
+  realized only when those tables land in a follow-up.
 - Confirm fp16 outer-B nv32 widths still chunk correctly under Q16 (may be
   two chunks; acceptable if correct).
 - Update every `Q32_NUM_PRIMES` / `Q64_NUM_PRIMES` literal in tests and benches.
