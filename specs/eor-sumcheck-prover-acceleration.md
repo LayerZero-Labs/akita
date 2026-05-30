@@ -209,22 +209,22 @@ new field's fast path is a self-contained `akita-field` change.
 
 ## Execution
 
-Implemented across these commits on `taghi/perf/eor-sc`:
+Implemented as a sequence of byte-identical commits on `taghi/perf/eor-sc`
+(see the branch git log for exact revisions):
 
-- `7afee0a0` skip `c1` in EOR accumulation, recover from claim.
-- `2063d707` remove redundant `w1 == 0` branch in sparse EOR accumulation.
-- `56efa89e` delayed-reduction accumulators for EOR.
-- `f66e8fe5` precomputed dense fold (`FoldMatrixFp32`) + fused fold/accumulate.
-- `7634308b` parallel fold, wider block-parallel NTT threshold, lazy tensor
-  factor (`TensorEqualityFactor`).
-- `78ac82c9` preserve carry in `Fp2<Fp64>` delayed-reduction accumulator
-  (enables fp64's delayed path).
-- `044e7fab` one-hot sparse root-extension column partials.
-- `91eabcf8` parallelize recursive EOR prep.
-- `9f26be69` fuse `a0`/`a1` tensor-factor evals in EOR accumulate.
-- `2ba8cc37` fp16 EOR delayed-reduction + 8×8 specialized fold
-  (`RingSubfieldFp8<Fp16>`).
-- `2be35d18` fp64 specialized 2×2 fold (`Fp2<Fp64>`) + doc-link fix follow-up.
+- Skip `c1` in EOR accumulation and recover it from the claim.
+- Remove the redundant `w1 == 0` branch in sparse EOR accumulation.
+- Delayed-reduction accumulators for EOR.
+- Precomputed dense fold (`FoldMatrixFp32`) + fused fold/accumulate.
+- Parallel fold, wider block-parallel NTT threshold, lazy tensor factor
+  (`TensorEqualityFactor`).
+- Preserve carry in the `Fp2<Fp64>` delayed-reduction accumulator (enables
+  fp64's delayed path).
+- One-hot sparse root-extension column partials.
+- Parallelize recursive EOR prep.
+- Fuse `a0`/`a1` tensor-factor evals in EOR accumulate.
+- fp16 EOR delayed-reduction + 8×8 specialized fold (`RingSubfieldFp8<Fp16>`).
+- fp64 specialized 2×2 fold (`Fp2<Fp64>`).
 
 Risk notes: the only correctness-sensitive surface is the wide accumulators
 (`DELAYED_PRODUCT_SUM_IS_EXACT`) and the fold matrices; each is guarded by a
