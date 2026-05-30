@@ -145,21 +145,37 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     }
 
     /// Multiply by `X^k` in `Z_q[X]/(X^D + 1)` via O(D) coefficient rotation.
+    /// It supports general exponents `k >= D` by reducing modulo `2D`.
     ///
     /// Since `X^D = -1`, coefficients that wrap past index `D` get negated.
     #[inline]
     pub fn negacyclic_shift(&self, k: usize) -> Self {
-        let k = k % D;
+        let k = k % (D << 1);
         if k == 0 {
             return *self;
         }
+
+        let global_neg = k >= D;
+        let shift = k % D;
+
+        if shift == 0 {
+            return self.neg();
+        }
+
         let mut out = [F::zero(); D];
         for i in 0..D {
-            let target = i + k;
-            if target < D {
-                out[target] = self.coeffs[i];
+            let target = i + shift;
+            let wrap_neg = target >= D;
+            let coeff = if global_neg ^ wrap_neg {
+                -self.coeffs[i]
             } else {
-                out[target - D] = -self.coeffs[i];
+                self.coeffs[i]
+            };
+
+            if target < D {
+                out[target] = coeff;
+            } else {
+                out[target - D] = coeff;
             }
         }
         Self { coeffs: out }
@@ -169,92 +185,90 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     ///
     /// Each term is a negacyclic shift, so the total cost is
     /// `O(positions.len() * D)` field additions with zero multiplications.
+    #[inline]
     pub fn mul_by_monomial_sum(&self, nonzero_positions: &[usize]) -> Self {
         let mut result = Self::zero();
-        for &k in nonzero_positions {
-            self.shift_accumulate_into(&mut result, k);
-        }
+        self.mul_by_monomial_sum_into(&mut result, nonzero_positions);
         result
     }
 
     /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
     ///
-    /// Equivalent to `*dst += self.negacyclic_shift(k)` but avoids
-    /// allocating a temporary ring element.
+    /// Requires `k < D`.
+    /// Equivalent to `*dst += self.negacyclic_shift(k)` within the contract domain of `k < D`,
+    /// but avoids allocating a temporary ring element.
+    ///
+    /// For arbitrary exponents (including `k >= D`), use [`Self::negacyclic_shift`].
     #[inline]
     pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] += self.coeffs[i];
-            }
-            return;
+        debug_assert!(
+            k < D,
+            "fused method shift_accumulate_into: k={k} must be < D={D}"
+        );
+
+        let (lo, hi) = dst.coeffs.split_at_mut(k);
+        let (self_lo, self_hi) = self.coeffs.split_at(D - k);
+        for (d, s) in hi.iter_mut().zip(self_lo) {
+            *d += *s; // i + k < D
         }
-        for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] += self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] -= self.coeffs[i];
-            }
+        for (d, s) in lo.iter_mut().zip(self_hi) {
+            *d -= *s; // i + k >= D
         }
     }
 
     /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
     ///
-    /// Equivalent to `*dst -= self.negacyclic_shift(k)` but avoids
-    /// allocating a temporary ring element.
+    /// Requires `k < D`.
+    /// Equivalent to `*dst -= self.negacyclic_shift(k)` within the
+    /// contract domain of `k < D`, but avoids allocating a temporary ring element.
+    ///
+    /// For arbitrary exponents (including `k >= D`), use [`Self::negacyclic_shift`].
     #[inline]
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] -= self.coeffs[i];
-            }
-            return;
+        debug_assert!(k < D, "fused method shift_sub_into: k={k} must be < D={D}");
+
+        let (lo, hi) = dst.coeffs.split_at_mut(k);
+        let (self_lo, self_hi) = self.coeffs.split_at(D - k);
+        for (d, s) in hi.iter_mut().zip(self_lo) {
+            *d -= *s; // i + k < D
         }
-        for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] -= self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] += self.coeffs[i];
-            }
+        for (d, s) in lo.iter_mut().zip(self_hi) {
+            *d += *s; // i + k >= D
         }
     }
 
     /// Fused negacyclic shift + scaled accumulate: `dst += scale * self * X^k`.
+    ///
+    /// Requires `k < D`.
+    /// Equivalent to `*dst += self.scale(&scale).negacyclic_shift(k)` within the
+    /// contract domain of `k < D`, but avoids allocating a temporary ring element.
+    ///
+    /// For arbitrary exponents (including `k >= D`), use [`Self::negacyclic_shift`].
     #[inline]
     pub fn shift_scale_accumulate_into(&self, dst: &mut Self, k: usize, scale: F) {
-        if scale.is_zero() {
-            return;
+        debug_assert!(
+            k < D,
+            "fused method shift_scale_accumulate_into: k={k} must be < D={D}"
+        );
+
+        let (lo, hi) = dst.coeffs.split_at_mut(k);
+        let (self_lo, self_hi) = self.coeffs.split_at(D - k);
+        for (d, s) in hi.iter_mut().zip(self_lo) {
+            *d += *s * scale; // i + k < D
         }
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] += self.coeffs[i] * scale;
-            }
-            return;
-        }
-        for i in 0..D {
-            let target = i + k;
-            let product = self.coeffs[i] * scale;
-            if target < D {
-                dst.coeffs[target] += product;
-            } else {
-                dst.coeffs[target - D] -= product;
-            }
+        for (d, s) in lo.iter_mut().zip(self_hi) {
+            *d -= *s * scale; // i + k >= D
         }
     }
 
     /// Fused multiply-by-monomial-sum + accumulate:
     /// `dst += self * (X^{k_1} + X^{k_2} + ...)`.
     ///
-    /// Equivalent to `*dst += self.mul_by_monomial_sum(positions)` but avoids
-    /// all intermediate temporaries.
+    /// Each term is a negacyclic shift, so the total cost is
+    /// `O(positions.len() * D)` field additions with zero multiplications.
     pub fn mul_by_monomial_sum_into(&self, dst: &mut Self, nonzero_positions: &[usize]) {
         for &k in nonzero_positions {
-            self.shift_accumulate_into(dst, k);
+            *dst += self.negacyclic_shift(k);
         }
     }
 
