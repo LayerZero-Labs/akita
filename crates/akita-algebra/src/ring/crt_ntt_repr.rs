@@ -232,32 +232,48 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[inline]
-    fn avx2_pointwise_enabled() -> bool {
+    fn x86_pointwise_mode() -> Option<AvxNttMode> {
         // Slice 2 enables only the i32 path by default. Q16/i16 routing stays
         // scalar until it clears the leopard benchmark gate.
-        matches!(avx::avx_ntt_mode(), Some(AvxNttMode::Avx2)) && size_of::<W>() == size_of::<i32>()
+        if size_of::<W>() == size_of::<i32>() {
+            avx::avx_ntt_mode()
+        } else {
+            None
+        }
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[inline]
-    unsafe fn add_assign_pointwise_mul_limb_avx2(
+    unsafe fn add_assign_pointwise_mul_limb_x86(
         acc_limb: &mut [MontCoeff<W>; D],
         lhs_limb: &[MontCoeff<W>; D],
         rhs_limb: &[MontCoeff<W>; D],
         prime: NttPrime<W>,
+        mode: AvxNttMode,
     ) {
-        // SAFETY: caller checked AVX2 dispatch. `MontCoeff<W>` is transparent
-        // over the sealed `i16`/`i32` widths and the arrays are valid for `D`.
+        // SAFETY: caller checked x86 SIMD dispatch. `MontCoeff<W>` is
+        // transparent over the sealed `i16`/`i32` widths and the arrays are
+        // valid for `D`.
         unsafe {
             if size_of::<W>() == size_of::<i32>() {
-                avx::pointwise_mul_acc_i32(
-                    acc_limb.as_mut_ptr() as *mut i32,
-                    lhs_limb.as_ptr() as *const i32,
-                    rhs_limb.as_ptr() as *const i32,
-                    D,
-                    prime.p.to_i64() as i32,
-                    prime.pinv.to_i64() as i32,
-                );
+                match mode {
+                    AvxNttMode::Avx2 => avx::pointwise_mul_acc_i32(
+                        acc_limb.as_mut_ptr() as *mut i32,
+                        lhs_limb.as_ptr() as *const i32,
+                        rhs_limb.as_ptr() as *const i32,
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    ),
+                    AvxNttMode::Avx512 => avx::pointwise_mul_acc_i32_avx512(
+                        acc_limb.as_mut_ptr() as *mut i32,
+                        lhs_limb.as_ptr() as *const i32,
+                        rhs_limb.as_ptr() as *const i32,
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    ),
+                }
             }
         }
     }
@@ -459,14 +475,15 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let acc_limb = &mut self.limbs[k];
             let lhs_limb = &lhs.limbs[k];
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if Self::avx2_pointwise_enabled() {
-                // SAFETY: guarded by AVX2 runtime dispatch.
+            if let Some(mode) = Self::x86_pointwise_mode() {
+                // SAFETY: guarded by x86 runtime dispatch.
                 unsafe {
-                    Self::add_assign_pointwise_mul_limb_avx2(
+                    Self::add_assign_pointwise_mul_limb_x86(
                         acc_limb,
                         lhs_limb,
                         scratch_limb,
                         prime,
+                        mode,
                     );
                 }
                 continue;
@@ -555,20 +572,22 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let lhs0_limb = &lhs0.limbs[k];
             let lhs1_limb = &lhs1.limbs[k];
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if Self::avx2_pointwise_enabled() {
-                // SAFETY: guarded by AVX2 runtime dispatch.
+            if let Some(mode) = Self::x86_pointwise_mode() {
+                // SAFETY: guarded by x86 runtime dispatch.
                 unsafe {
-                    Self::add_assign_pointwise_mul_limb_avx2(
+                    Self::add_assign_pointwise_mul_limb_x86(
                         acc0_limb,
                         lhs0_limb,
                         scratch_limb,
                         prime,
+                        mode,
                     );
-                    Self::add_assign_pointwise_mul_limb_avx2(
+                    Self::add_assign_pointwise_mul_limb_x86(
                         acc1_limb,
                         lhs1_limb,
                         scratch_limb,
                         prime,
+                        mode,
                     );
                 }
                 continue;
@@ -689,26 +708,29 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let lhs1_limb = &lhs1.limbs[k];
             let lhs2_limb = &lhs2.limbs[k];
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if Self::avx2_pointwise_enabled() {
-                // SAFETY: guarded by AVX2 runtime dispatch.
+            if let Some(mode) = Self::x86_pointwise_mode() {
+                // SAFETY: guarded by x86 runtime dispatch.
                 unsafe {
-                    Self::add_assign_pointwise_mul_limb_avx2(
+                    Self::add_assign_pointwise_mul_limb_x86(
                         acc0_limb,
                         lhs0_limb,
                         scratch_limb,
                         prime,
+                        mode,
                     );
-                    Self::add_assign_pointwise_mul_limb_avx2(
+                    Self::add_assign_pointwise_mul_limb_x86(
                         acc1_limb,
                         lhs1_limb,
                         scratch_limb,
                         prime,
+                        mode,
                     );
-                    Self::add_assign_pointwise_mul_limb_avx2(
+                    Self::add_assign_pointwise_mul_limb_x86(
                         acc2_limb,
                         lhs2_limb,
                         scratch_limb,
                         prime,
+                        mode,
                     );
                 }
                 continue;
@@ -1209,10 +1231,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let lhs_limb = &lhs.limbs[k];
             let rhs_limb = &rhs.limbs[k];
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if Self::avx2_pointwise_enabled() {
-                // SAFETY: guarded by AVX2 runtime dispatch.
+            if let Some(mode) = Self::x86_pointwise_mode() {
+                // SAFETY: guarded by x86 runtime dispatch.
                 unsafe {
-                    Self::add_assign_pointwise_mul_limb_avx2(acc_limb, lhs_limb, rhs_limb, prime);
+                    Self::add_assign_pointwise_mul_limb_x86(
+                        acc_limb, lhs_limb, rhs_limb, prime, mode,
+                    );
                 }
                 continue;
             }

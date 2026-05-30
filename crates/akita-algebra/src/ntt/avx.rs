@@ -115,6 +115,38 @@ unsafe fn reduce_range_8x_i32_avx2(a: __m256i, p: __m256i) -> __m256i {
     _mm256_add_epi32(after_sub, _mm256_and_si256(p, lt_mask))
 }
 
+#[target_feature(enable = "avx512f,avx512dq,avx512bw")]
+unsafe fn mont_mul_16x_i32_avx512(a: __m512i, b: __m512i, p: __m512i, pinv: __m512i) -> __m512i {
+    let even_products = _mm512_mul_epi32(a, b);
+    let a_odd = _mm512_srli_epi64::<32>(a);
+    let b_odd = _mm512_srli_epi64::<32>(b);
+    let odd_products = _mm512_mul_epi32(a_odd, b_odd);
+
+    let even = mont_reduce_i32_products_avx512(even_products, p, pinv);
+    let odd = mont_reduce_i32_products_avx512(odd_products, p, pinv);
+    _mm512_or_si512(even, _mm512_slli_epi64::<32>(odd))
+}
+
+#[target_feature(enable = "avx512f,avx512dq,avx512bw")]
+unsafe fn mont_reduce_i32_products_avx512(c: __m512i, p: __m512i, pinv: __m512i) -> __m512i {
+    let t = _mm512_mullo_epi32(c, pinv);
+    let tp = _mm512_mul_epi32(t, p);
+    let diff = _mm512_sub_epi64(c, tp);
+    _mm512_srli_epi64::<32>(diff)
+}
+
+#[target_feature(enable = "avx512f,avx512dq,avx512bw")]
+unsafe fn reduce_range_16x_i32_avx512(a: __m512i, p: __m512i) -> __m512i {
+    let one = _mm512_set1_epi32(1);
+    let p_minus_one = _mm512_sub_epi32(p, one);
+    let ge_mask = _mm512_cmpgt_epi32_mask(a, p_minus_one);
+    let after_sub = _mm512_mask_sub_epi32(a, ge_mask, a, p);
+
+    let zero = _mm512_setzero_si512();
+    let lt_mask = _mm512_cmplt_epi32_mask(after_sub, zero);
+    _mm512_mask_add_epi32(after_sub, lt_mask, after_sub, p)
+}
+
 #[cfg(test)]
 #[target_feature(enable = "avx2")]
 unsafe fn mont_mul_16x_i16_avx2(a: __m256i, b: __m256i, p: __m256i, pinv: __m256i) -> __m256i {
@@ -208,6 +240,57 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
     }
 }
 
+/// AVX-512 pointwise multiply-accumulate for one `i32` CRT limb.
+///
+/// Computes `acc[i] = reduce_range(acc[i] + mont_mul(lhs[i], rhs[i]))`.
+///
+/// # Safety
+///
+/// The caller must ensure AVX-512F/DQ/BW are available. `acc`, `lhs`, and
+/// `rhs` must be valid for `d` `i32` elements. `acc` must be writable and must
+/// not alias in a way that violates Rust's mutable-reference rules.
+#[target_feature(enable = "avx512f,avx512dq,avx512bw")]
+pub(crate) unsafe fn pointwise_mul_acc_i32_avx512(
+    acc: *mut i32,
+    lhs: *const i32,
+    rhs: *const i32,
+    d: usize,
+    p: i32,
+    pinv: i32,
+) {
+    let p_v = _mm512_set1_epi32(p);
+    let pinv_v = _mm512_set1_epi32(pinv);
+    let prime = NttPrime::compute(p);
+    let mut i = 0;
+    while i + 16 <= d {
+        // SAFETY: guaranteed by this function's safety contract and loop bound.
+        unsafe {
+            let a = _mm512_loadu_si512(acc.add(i) as *const __m512i);
+            let l = _mm512_loadu_si512(lhs.add(i) as *const __m512i);
+            let r = _mm512_loadu_si512(rhs.add(i) as *const __m512i);
+            let prod = mont_mul_16x_i32_avx512(l, r, p_v, pinv_v);
+            let sum = _mm512_add_epi32(a, prod);
+            _mm512_storeu_si512(
+                acc.add(i) as *mut __m512i,
+                reduce_range_16x_i32_avx512(sum, p_v),
+            );
+        }
+        i += 16;
+    }
+    while i < d {
+        // SAFETY: guaranteed by this function's safety contract and loop bound.
+        unsafe {
+            let prod = prime.mul(
+                MontCoeff::from_raw(*lhs.add(i)),
+                MontCoeff::from_raw(*rhs.add(i)),
+            );
+            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
+            *acc.add(i) = prime.reduce_range(sum).raw();
+        }
+        i += 1;
+    }
+}
+
 /// AVX2 add-and-reduce for one `i32` CRT limb.
 ///
 /// Computes `acc[i] = reduce_range(acc[i] + other[i])`.
@@ -233,6 +316,42 @@ pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32)
             );
         }
         i += 8;
+    }
+    while i < d {
+        // SAFETY: guaranteed by this function's safety contract and loop bound.
+        unsafe {
+            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
+            *acc.add(i) = prime.reduce_range(sum).raw();
+        }
+        i += 1;
+    }
+}
+
+/// AVX-512 add-and-reduce for one `i32` CRT limb.
+///
+/// Computes `acc[i] = reduce_range(acc[i] + other[i])`.
+///
+/// # Safety
+///
+/// The caller must ensure AVX-512F/DQ/BW are available. `acc` and `other` must
+/// be valid for `d` `i32` elements. `acc` must be writable and must not alias in
+/// a way that violates Rust's mutable-reference rules.
+#[target_feature(enable = "avx512f,avx512dq,avx512bw")]
+pub unsafe fn add_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, p: i32) {
+    let p_v = _mm512_set1_epi32(p);
+    let prime = NttPrime::compute(p);
+    let mut i = 0;
+    while i + 16 <= d {
+        // SAFETY: guaranteed by this function's safety contract and loop bound.
+        unsafe {
+            let a = _mm512_loadu_si512(acc.add(i) as *const __m512i);
+            let b = _mm512_loadu_si512(other.add(i) as *const __m512i);
+            _mm512_storeu_si512(
+                acc.add(i) as *mut __m512i,
+                reduce_range_16x_i32_avx512(_mm512_add_epi32(a, b), p_v),
+            );
+        }
+        i += 16;
     }
     while i < d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
@@ -549,6 +668,67 @@ mod tests {
         // SAFETY: guarded by the runtime AVX2 detection above.
         unsafe {
             add_reduce_i32(
+                avx_acc.as_mut_ptr() as *mut i32,
+                other.as_ptr() as *const i32,
+                D,
+                prime.p,
+            );
+        }
+
+        let mut scalar_acc = acc_init;
+        scalar_add_reduce_i32(&mut scalar_acc, &other, prime);
+        assert_eq!(avx_acc, scalar_acc);
+    }
+
+    #[test]
+    fn avx512_pointwise_mul_acc_i32_matches_scalar_with_tail() {
+        if !(std::is_x86_feature_detected!("avx512f")
+            && std::is_x86_feature_detected!("avx512dq")
+            && std::is_x86_feature_detected!("avx512bw"))
+        {
+            return;
+        }
+        let prime = NttPrime::compute(1073707009_i32);
+        const D: usize = 29;
+        let acc_init = random_mont_array_i32::<D>(prime, 0x5151);
+        let lhs = edge_mont_array_i32::<D>(prime);
+        let rhs = random_mont_array_i32::<D>(prime, 0x7171);
+
+        let mut avx_acc = acc_init;
+        // SAFETY: guarded by runtime AVX-512 feature detection above.
+        unsafe {
+            pointwise_mul_acc_i32_avx512(
+                avx_acc.as_mut_ptr() as *mut i32,
+                lhs.as_ptr() as *const i32,
+                rhs.as_ptr() as *const i32,
+                D,
+                prime.p,
+                prime.pinv,
+            );
+        }
+
+        let mut scalar_acc = acc_init;
+        scalar_pointwise_i32(&mut scalar_acc, &lhs, &rhs, prime);
+        assert_eq!(avx_acc, scalar_acc);
+    }
+
+    #[test]
+    fn avx512_add_reduce_i32_matches_scalar_with_tail() {
+        if !(std::is_x86_feature_detected!("avx512f")
+            && std::is_x86_feature_detected!("avx512dq")
+            && std::is_x86_feature_detected!("avx512bw"))
+        {
+            return;
+        }
+        let prime = NttPrime::compute(1073707009_i32);
+        const D: usize = 29;
+        let acc_init = random_mont_array_i32::<D>(prime, 0x8181);
+        let other = edge_mont_array_i32::<D>(prime);
+
+        let mut avx_acc = acc_init;
+        // SAFETY: guarded by runtime AVX-512 feature detection above.
+        unsafe {
+            add_reduce_i32_avx512(
                 avx_acc.as_mut_ptr() as *mut i32,
                 other.as_ptr() as *const i32,
                 D,
