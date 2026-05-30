@@ -71,8 +71,9 @@ Primary surfaces:
   that need Q16 and any backend-private layout hooks.
 - `crates/akita-prover/src/kernels/linear/*`: negacyclic i8, cyclic i8, fused
   split-eq, digit, block-parallel, CRT matvec drivers, and chunk width policy.
-- `crates/akita-pcs/tests/algebra/ntt_crt.rs` and prover linear tests: prime
-  validity, Garner constants, capacity tables, regression against references.
+- `crates/akita-pcs/tests/algebra/ntt_crt.rs` and prover linear tests under
+  `crates/akita-prover/src/kernels/linear/tests/`: prime validity, Garner
+  constants, capacity tables, regression against references.
 - `crates/akita-pcs/benches/ring_ntt.rs` and profile benchmarks: literal prime
   counts, cache footprint, and layout-performance measurements.
 
@@ -327,8 +328,8 @@ Smaller `P_crt` lowers `max_safe` and increases chunking frequency; that is
 expected and must stay correct under the same #134 driver.
 This spec therefore requires **regression tests**, not a driver rewrite:
 
-- Mirror `mat_vec_mul_ntt_i8_dense_single_row_chunks_q128` in
-  `kernels/linear/tests.rs` for `mat_vec_mul_ntt_single_i8` and
+- Mirror `mat_vec_mul_ntt_i8_dense_single_row_chunks_q128` in the focused
+  prover linear test modules for `mat_vec_mul_ntt_single_i8` and
   `mat_vec_mul_ntt_single_i8_cyclic` at a width with `vec_len > max_safe`.
 - Run on Q128 before prime cutover; repeat on reduced Q16/Q32/Q64 after.
 
@@ -470,6 +471,11 @@ Criteria sections above, with #134 providing the chunking implementation.
   order).
 - Reuse PR #134 adversarial patterns (large centered setup coeffs, wide matrices,
   forced chunk widths) with the **new** prime products.
+- Keep prover linear-kernel tests split by topic under
+  `crates/akita-prover/src/kernels/linear/tests/` rather than growing a single
+  large `tests.rs` file. Suggested modules are API validation, fused quotient
+  rows, CRT dense matvec, i8/digit matvec, chunking, and reduced-profile
+  regressions.
 - All existing E2E / `single_poly_e2e` tests must remain green (prove + verify).
 
 ### Performance
@@ -669,7 +675,8 @@ Suggested implementation slices:
    `compute.rs`, algebra tests, and benches.
 6. Add capacity validation in `CpuBackend::prepare_expanded`, direct `D = 128`
    / `D = 256` capacity unit tests, and forced-chunk tests for cyclic/fused/
-   `z_pre` on new `K`.
+   `z_pre` on new `K`; keep the linear-kernel tests split into focused files
+   under `crates/akita-prover/src/kernels/linear/tests/`.
 7. Run the Q32 reference `4 × i16` vs production-candidate `2 × i32`
    experiment. Keep the winner if it satisfies capacity and performance
    criteria.
