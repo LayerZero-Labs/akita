@@ -15,7 +15,8 @@ use crate::{
         Fp2Fp64ProductAccum, Fp32, Fp32ProductAccum, Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32,
         PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
         RingSubfieldFp4Fp32ProductAccum, RingSubfieldFp4MulBackend, RingSubfieldFp8,
-        RingSubfieldFp8MulBackend, TowerBasisFp4, TowerBasisFp4Config,
+        RingSubfieldFp8Fp16ProductAccum, RingSubfieldFp8MulBackend, TowerBasisFp4,
+        TowerBasisFp4Config,
     },
     CanonicalField, FieldCore,
 };
@@ -577,6 +578,10 @@ impl_wide_additive!(Fp128ProductAccum, Fp128ProductAccum([0; 4]));
 impl_wide_additive!(
     RingSubfieldFp4Fp32ProductAccum,
     RingSubfieldFp4Fp32ProductAccum([0; 4])
+);
+impl_wide_additive!(
+    RingSubfieldFp8Fp16ProductAccum,
+    RingSubfieldFp8Fp16ProductAccum([0; 8])
 );
 impl_wide_additive!(Fp2Fp64ProductAccum, Fp2Fp64ProductAccum([0; 4]));
 

@@ -53,6 +53,104 @@ impl<const P: u32> RingSubfieldFp8MulBackend for Fp32<P> {}
 impl<const P: u64> RingSubfieldFp8MulBackend for Fp64<P> {}
 impl<const P: u128> RingSubfieldFp8MulBackend for Fp128<P> {}
 
+/// Widening `RingSubfieldFp8<Fp16<P>>` multiplication that defers the
+/// per-coefficient Solinas reduction, returning a
+/// [`RingSubfieldFp8Fp16ProductAccum`] instead of canonical coefficients.
+///
+/// This expands `ring_subfield_fp8_mul_coeffs` term-for-term in basis
+/// `[1, e1, ..., e7]` (using `e_i·e_j = e_{i+j} + e_{|i-j|}`, `e_0 = 2`,
+/// `e_8 = 0`, `e_{8+t} = -e_{8-t}`), but keeps each base product
+/// `a_i·b_j < P² < 2^32` in a `u64` slot. Where the ring formula subtracts `k`
+/// base products, an offset `k · P²` is added first so the slot stays
+/// non-negative; since `P² ≡ 0 (mod P)` the offsets do not change the reduced
+/// value. The φ(X) ring reduction is fully fused into the formulas — only the
+/// base-field modular reduction is deferred to
+/// [`RingSubfieldFp8Fp16ProductAccum::reduce`].
+#[inline(always)]
+pub(crate) fn ring_subfield_fp8_mul_to_accum_fp16<const P: u32>(
+    a: [Fp16<P>; 8],
+    b: [Fp16<P>; 8],
+) -> RingSubfieldFp8Fp16ProductAccum {
+    let p = |i: usize, j: usize| -> u64 { a[i].mul_wide(b[j]) as u64 };
+    let ms = (P as u64) * (P as u64);
+    RingSubfieldFp8Fp16ProductAccum([
+        // out[0] = p00 + 2·(p11 + p22 + ... + p77)
+        p(0, 0) + 2 * (p(1, 1) + p(2, 2) + p(3, 3) + p(4, 4) + p(5, 5) + p(6, 6) + p(7, 7)),
+        // out[1] = (p01+p10) + m12 + m23 + m34 + m45 + m56 + m67
+        p(0, 1)
+            + p(1, 0)
+            + (p(1, 2) + p(2, 1))
+            + (p(2, 3) + p(3, 2))
+            + (p(3, 4) + p(4, 3))
+            + (p(4, 5) + p(5, 4))
+            + (p(5, 6) + p(6, 5))
+            + (p(6, 7) + p(7, 6)),
+        // out[2] = (p02+p20) + p11 + m13 + m24 + m35 + m46 + m57 + P² − p77
+        p(0, 2)
+            + p(2, 0)
+            + p(1, 1)
+            + (p(1, 3) + p(3, 1))
+            + (p(2, 4) + p(4, 2))
+            + (p(3, 5) + p(5, 3))
+            + (p(4, 6) + p(6, 4))
+            + (p(5, 7) + p(7, 5))
+            + ms
+            - p(7, 7),
+        // out[3] = (p03+p30) + m12 + m14 + m25 + m36 + m47 + 2·P² − m67
+        p(0, 3)
+            + p(3, 0)
+            + (p(1, 2) + p(2, 1))
+            + (p(1, 4) + p(4, 1))
+            + (p(2, 5) + p(5, 2))
+            + (p(3, 6) + p(6, 3))
+            + (p(4, 7) + p(7, 4))
+            + 2 * ms
+            - (p(6, 7) + p(7, 6)),
+        // out[4] = (p04+p40) + p22 + m13 + m15 + m26 + m37 + 3·P² − p66 − m57
+        p(0, 4)
+            + p(4, 0)
+            + p(2, 2)
+            + (p(1, 3) + p(3, 1))
+            + (p(1, 5) + p(5, 1))
+            + (p(2, 6) + p(6, 2))
+            + (p(3, 7) + p(7, 3))
+            + 3 * ms
+            - p(6, 6)
+            - (p(5, 7) + p(7, 5)),
+        // out[5] = (p05+p50) + m14 + m23 + m16 + m27 + 4·P² − m47 − m56
+        p(0, 5)
+            + p(5, 0)
+            + (p(1, 4) + p(4, 1))
+            + (p(2, 3) + p(3, 2))
+            + (p(1, 6) + p(6, 1))
+            + (p(2, 7) + p(7, 2))
+            + 4 * ms
+            - (p(4, 7) + p(7, 4))
+            - (p(5, 6) + p(6, 5)),
+        // out[6] = (p06+p60) + p33 + m15 + m24 + m17 + 5·P² − p55 − m37 − m46
+        p(0, 6)
+            + p(6, 0)
+            + p(3, 3)
+            + (p(1, 5) + p(5, 1))
+            + (p(2, 4) + p(4, 2))
+            + (p(1, 7) + p(7, 1))
+            + 5 * ms
+            - p(5, 5)
+            - (p(3, 7) + p(7, 3))
+            - (p(4, 6) + p(6, 4)),
+        // out[7] = (p07+p70) + m16 + m25 + m34 + 6·P² − m27 − m36 − m45
+        p(0, 7)
+            + p(7, 0)
+            + (p(1, 6) + p(6, 1))
+            + (p(2, 5) + p(5, 2))
+            + (p(3, 4) + p(4, 3))
+            + 6 * ms
+            - (p(2, 7) + p(7, 2))
+            - (p(3, 6) + p(6, 3))
+            - (p(4, 5) + p(5, 4)),
+    ])
+}
+
 /// Degree-8 ring subfield element in canonical basis `[1, e1, ..., e7]`.
 #[repr(transparent)]
 pub struct RingSubfieldFp8<F: FieldCore> {
@@ -395,22 +493,25 @@ impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for RingSubfieldF
 
 impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for RingSubfieldFp8<F> {}
 
-impl<F> HasUnreducedOps for RingSubfieldFp8<F>
-where
-    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp8MulBackend,
-{
+impl<const P: u32> HasUnreducedOps for RingSubfieldFp8<Fp16<P>> {
     type MulU64Accum = Self;
-    type ProductAccum = Self;
+    type ProductAccum = RingSubfieldFp8Fp16ProductAccum;
+
+    // `ring_subfield_fp8_mul_to_accum_fp16` widens each Fp16 limb product
+    // (< P² < 2^32) into a u64 slot with no `mod 2^64` wrap, so summing a small
+    // batch and reducing once matches per-limb reduce-then-add exactly. Covered
+    // by `ring_subfield_fp8_fp16_accum_summation`.
+    const DELAYED_PRODUCT_SUM_IS_EXACT: bool = true;
 
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
-        let small = F::from_u64(small);
+        let small = Fp16::<P>::from_u64(small);
         Self::new(self.coeffs.map(|coeff| coeff * small))
     }
 
     #[inline]
     fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum {
-        self * other
+        ring_subfield_fp8_mul_to_accum_fp16(self.coeffs, other.coeffs)
     }
 
     #[inline]
@@ -420,21 +521,175 @@ where
 
     #[inline]
     fn reduce_product_accum(accum: Self::ProductAccum) -> Self {
-        accum
+        Self::new(accum.reduce::<P>())
     }
 }
 
-impl<F> HasOptimizedFold for RingSubfieldFp8<F>
-where
-    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp8MulBackend,
-{
-    type FoldCtx = Self;
+impl<const P: u32> HasOptimizedFold for RingSubfieldFp8<Fp16<P>> {
+    type FoldCtx = FoldMatrixFp16;
+
     #[inline]
-    fn precompute_fold(r: Self) -> Self {
-        r
+    fn precompute_fold(r: Self) -> FoldMatrixFp16 {
+        let [r0, r1, r2, r3, r4, r5, r6, r7] = r.coeffs;
+        let two = Fp16::<P>::from_u64(2);
+        // Column c is the canonical coordinates of `r · e_c` (e_0 = 1) in the
+        // `[1, e1, ..., e7]` basis; row 0 of column c is the "1"-coefficient.
+        // Equivalently, entry [t][c] is the coefficient of input limb `c` in
+        // output coefficient `t` of the degree-8 ring multiply.
+        let lt = |x: Fp16<P>| x.to_limbs() as u32;
+        FoldMatrixFp16([
+            [
+                lt(r0),
+                lt(two * r1),
+                lt(two * r2),
+                lt(two * r3),
+                lt(two * r4),
+                lt(two * r5),
+                lt(two * r6),
+                lt(two * r7),
+            ],
+            [
+                lt(r1),
+                lt(r0 + r2),
+                lt(r1 + r3),
+                lt(r2 + r4),
+                lt(r3 + r5),
+                lt(r4 + r6),
+                lt(r5 + r7),
+                lt(r6),
+            ],
+            [
+                lt(r2),
+                lt(r1 + r3),
+                lt(r0 + r4),
+                lt(r1 + r5),
+                lt(r2 + r6),
+                lt(r3 + r7),
+                lt(r4),
+                lt(r5 - r7),
+            ],
+            [
+                lt(r3),
+                lt(r2 + r4),
+                lt(r1 + r5),
+                lt(r0 + r6),
+                lt(r1 + r7),
+                lt(r2),
+                lt(r3 - r7),
+                lt(r4 - r6),
+            ],
+            [
+                lt(r4),
+                lt(r3 + r5),
+                lt(r2 + r6),
+                lt(r1 + r7),
+                lt(r0),
+                lt(r1 - r7),
+                lt(r2 - r6),
+                lt(r3 - r5),
+            ],
+            [
+                lt(r5),
+                lt(r4 + r6),
+                lt(r3 + r7),
+                lt(r2),
+                lt(r1 - r7),
+                lt(r0 - r6),
+                lt(r1 - r5),
+                lt(r2 - r4),
+            ],
+            [
+                lt(r6),
+                lt(r5 + r7),
+                lt(r4),
+                lt(r3 - r7),
+                lt(r2 - r6),
+                lt(r1 - r5),
+                lt(r0 - r4),
+                lt(r1 - r3),
+            ],
+            [
+                lt(r7),
+                lt(r6),
+                lt(r5 - r7),
+                lt(r4 - r6),
+                lt(r3 - r5),
+                lt(r2 - r4),
+                lt(r1 - r3),
+                lt(r0 - r2),
+            ],
+        ])
     }
+
     #[inline]
-    fn fold_one(r: &Self, even: Self, odd: Self) -> Self {
-        even + *r * (odd - even)
+    fn fold_one(ctx: &FoldMatrixFp16, even: Self, odd: Self) -> Self {
+        let m = &ctx.0;
+        // d = odd − even, each limb canonical in [0, P) < 2^16.
+        let d: [u32; 8] =
+            std::array::from_fn(|j| (odd.coeffs[j] - even.coeffs[j]).to_limbs() as u32);
+        // Each product < 2^16·2^16 = 2^32, sum of 8 < 2^35 — exact in u64.
+        let folded: [Fp16<P>; 8] = std::array::from_fn(|row| {
+            let acc: u64 = (m[row][0] as u64) * (d[0] as u64)
+                + (m[row][1] as u64) * (d[1] as u64)
+                + (m[row][2] as u64) * (d[2] as u64)
+                + (m[row][3] as u64) * (d[3] as u64)
+                + (m[row][4] as u64) * (d[4] as u64)
+                + (m[row][5] as u64) * (d[5] as u64)
+                + (m[row][6] as u64) * (d[6] as u64)
+                + (m[row][7] as u64) * (d[7] as u64);
+            Fp16::<P>::from_u64(acc) + even.coeffs[row]
+        });
+        RingSubfieldFp8::new(folded)
     }
 }
+
+macro_rules! impl_ring_subfield_fp8_unreduced_identity {
+    ($base:ident<$p:ident: $pty:ty>) => {
+        impl<const $p: $pty> HasUnreducedOps for RingSubfieldFp8<$base<$p>> {
+            type MulU64Accum = Self;
+            type ProductAccum = Self;
+
+            #[inline]
+            fn mul_u64_unreduced(self, small: u64) -> Self {
+                let small = $base::<$p>::from_u64(small);
+                Self::new(self.coeffs.map(|coeff| coeff * small))
+            }
+            #[inline]
+            fn mul_to_product_accum(self, other: Self) -> Self {
+                self * other
+            }
+            #[inline]
+            fn reduce_mul_u64_accum(accum: Self) -> Self {
+                accum
+            }
+            #[inline]
+            fn reduce_product_accum(accum: Self) -> Self {
+                accum
+            }
+        }
+    };
+}
+
+impl_ring_subfield_fp8_unreduced_identity!(Fp32<P: u32>);
+impl_ring_subfield_fp8_unreduced_identity!(Fp64<P: u64>);
+impl_ring_subfield_fp8_unreduced_identity!(Fp128<P: u128>);
+
+macro_rules! impl_ring_subfield_fp8_default_optimized_fold {
+    ($base:ident<$p:ident: $pty:ty>) => {
+        impl<const $p: $pty> HasOptimizedFold for RingSubfieldFp8<$base<$p>> {
+            type FoldCtx = Self;
+            #[inline]
+            fn precompute_fold(r: Self) -> Self {
+                r
+            }
+            #[inline]
+            fn fold_one(r: &Self, even: Self, odd: Self) -> Self {
+                even + *r * (odd - even)
+            }
+        }
+    };
+}
+
+impl_ring_subfield_fp8_default_optimized_fold!(Fp32<P: u32>);
+impl_ring_subfield_fp8_default_optimized_fold!(Fp64<P: u64>);
+impl_ring_subfield_fp8_default_optimized_fold!(Fp128<P: u128>);

@@ -599,6 +599,15 @@ impl<const P: u128> ReduceTo<Fp128<P>> for Fp128x8i32 {
 #[derive(Debug, Clone, Copy)]
 pub struct FoldMatrixFp32(pub(crate) [[u32; 4]; 4]);
 
+/// Precomputed fold context for `RingSubfieldFp8<Fp16<P>>`.
+///
+/// Stores the 8×8 "multiply by `r`" matrix in the canonical
+/// `[1, e1, ..., e7]` basis (each entry a canonical `Fp16` limb widened to
+/// `u32`), enabling fold via 8 scalar multiply-accumulates per coefficient
+/// instead of the general degree-8 ring multiplication.
+#[derive(Debug, Clone, Copy)]
+pub struct FoldMatrixFp16(pub(crate) [[u32; 8]; 8]);
+
 /// Per-element fold optimization trait.
 ///
 /// Allows field types to precompute a fold context from challenge `r`

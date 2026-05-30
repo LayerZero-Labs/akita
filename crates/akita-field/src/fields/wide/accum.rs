@@ -169,6 +169,74 @@ impl Neg for RingSubfieldFp4Fp32ProductAccum {
     }
 }
 
+/// Accumulator for `RingSubfieldFp8<Fp16>` products with delayed reduction.
+///
+/// Each slot holds the unreduced `u64` sum for one of the 8 ring-subfield
+/// coefficients in basis `[1, e1, ..., e7]`. The φ(X) ring reduction is fused
+/// into the per-coefficient formulas; only the base-field Solinas reduction
+/// (`reduce_u128`) is deferred to [`reduce`](Self::reduce).
+///
+/// Headroom: every `Fp16` base product is `< P² < 2^32` (`P = 2^16 − 99`). The
+/// busiest coefficient (slot 0) sums `1 + 2·7 = 15` of them, and the others add
+/// `≤ 6·P²` non-negativity offsets, so a single product's worst slot stays
+/// `< 15·P² < 2^36`. A `u64` slot therefore stays exact while the running
+/// product count `N` satisfies `N·15·P² < 2^64`, i.e. `N < 2^28` — far above the
+/// `EXT_DEGREE = 8` per-suffix inner products and the pair-aligned sparse chunk
+/// batches used by the extension-opening reduction. Covered by
+/// `ring_subfield_fp8_fp16_accum_summation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingSubfieldFp8Fp16ProductAccum(pub [u64; 8]);
+
+impl RingSubfieldFp8Fp16ProductAccum {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 8]);
+
+    /// Reduce accumulated unreduced coefficients to a canonical
+    /// `RingSubfieldFp8<Fp16<P>>`.
+    #[inline]
+    pub fn reduce<const P: u32>(self) -> [Fp16<P>; 8] {
+        std::array::from_fn(|i| Fp16::<P>::from_canonical_u128_reduced(self.0[i] as u128))
+    }
+}
+
+impl Add for RingSubfieldFp8Fp16ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self(std::array::from_fn(|i| self.0[i].wrapping_add(rhs.0[i])))
+    }
+}
+impl AddAssign for RingSubfieldFp8Fp16ProductAccum {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        for i in 0..8 {
+            self.0[i] = self.0[i].wrapping_add(rhs.0[i]);
+        }
+    }
+}
+impl Sub for RingSubfieldFp8Fp16ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self(std::array::from_fn(|i| self.0[i].wrapping_sub(rhs.0[i])))
+    }
+}
+impl SubAssign for RingSubfieldFp8Fp16ProductAccum {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        for i in 0..8 {
+            self.0[i] = self.0[i].wrapping_sub(rhs.0[i]);
+        }
+    }
+}
+impl Neg for RingSubfieldFp8Fp16ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self(std::array::from_fn(|i| self.0[i].wrapping_neg()))
+    }
+}
+
 /// Accumulator for `Fp64 × u64` products (also used for `Fp64 × Fp64`).
 ///
 /// Each product is ≤ 128 bits, split into two u64 halves stored as u128 slots.

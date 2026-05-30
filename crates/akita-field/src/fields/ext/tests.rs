@@ -574,3 +574,74 @@ fn fp2_fp64_accum_summation_large_operands() {
         "fp2<fp64> accumulated sum of {n} products mismatched"
     );
 }
+
+#[test]
+fn ring_subfield_fp8_fp16_product_accum_matches_direct_mul() {
+    use super::ring_subfield_fp8::ring_subfield_fp8_mul_to_accum_fp16;
+    use crate::fields::wide::RingSubfieldFp8Fp16ProductAccum;
+    use num_traits::Zero;
+
+    // Prime16Offset99 = Fp16<65_437> (2^16 - 99).
+    const P: u32 = 65_437;
+
+    let mut rng = StdRng::seed_from_u64(0x8ACC0);
+    for _ in 0..400 {
+        let a = R8Fp16::random(&mut rng);
+        let b = R8Fp16::random(&mut rng);
+        let direct = a * b;
+        let accum = ring_subfield_fp8_mul_to_accum_fp16(a.coeffs, b.coeffs);
+        let reduced = R8Fp16::new(accum.reduce::<P>());
+        assert_eq!(direct, reduced, "accum mismatch for a={a:?} b={b:?}");
+    }
+
+    let zero_accum = RingSubfieldFp8Fp16ProductAccum::ZERO;
+    assert!(zero_accum.is_zero());
+    let reduced_zero = R8Fp16::new(zero_accum.reduce::<P>());
+    assert_eq!(reduced_zero, R8Fp16::zero());
+}
+
+#[test]
+fn ring_subfield_fp8_fp16_accum_summation() {
+    use num_traits::Zero;
+
+    let mut rng = StdRng::seed_from_u64(0x8ACC1);
+    let n = 4096;
+    let pairs: Vec<(R8Fp16, R8Fp16)> = (0..n)
+        .map(|_| (R8Fp16::random(&mut rng), R8Fp16::random(&mut rng)))
+        .collect();
+
+    let direct_sum: R8Fp16 = pairs
+        .iter()
+        .map(|(a, b)| *a * *b)
+        .fold(R8Fp16::zero(), |s, p| s + p);
+
+    let accum_sum = pairs.iter().fold(
+        <R8Fp16 as HasUnreducedOps>::ProductAccum::zero(),
+        |s, (a, b)| s + a.mul_to_product_accum(*b),
+    );
+    let reduced = R8Fp16::reduce_product_accum(accum_sum);
+
+    assert_eq!(
+        direct_sum, reduced,
+        "accumulated sum of {n} products mismatched"
+    );
+}
+
+#[test]
+fn ring_subfield_fp8_fp16_fold_matrix_matches_generic() {
+    // The 8×8 fold matrix must reproduce the generic ring-multiply fold
+    // `even + r·(odd - even)` byte-for-byte, otherwise the EOR fold diverges.
+    let mut rng = StdRng::seed_from_u64(0x8F01D);
+    for _ in 0..400 {
+        let r = R8Fp16::random(&mut rng);
+        let even = R8Fp16::random(&mut rng);
+        let odd = R8Fp16::random(&mut rng);
+        let ctx = <R8Fp16 as HasOptimizedFold>::precompute_fold(r);
+        let matrix = <R8Fp16 as HasOptimizedFold>::fold_one(&ctx, even, odd);
+        let generic = even + r * (odd - even);
+        assert_eq!(
+            matrix, generic,
+            "fold mismatch r={r:?} even={even:?} odd={odd:?}"
+        );
+    }
+}
