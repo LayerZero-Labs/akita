@@ -1,10 +1,12 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
 use std::array::from_fn;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
 
 use crate::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::ntt::avx::{self, AvxNttMode};
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt_cyclic, NttTwiddles};
 use crate::ntt::crt::GarnerData;
 #[cfg(target_arch = "aarch64")]
@@ -228,6 +230,38 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
     }
 
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[inline]
+    fn avx2_pointwise_enabled() -> bool {
+        // Slice 2 enables only the i32 path by default. Q16/i16 routing stays
+        // scalar until it clears the leopard benchmark gate.
+        matches!(avx::avx_ntt_mode(), Some(AvxNttMode::Avx2)) && size_of::<W>() == size_of::<i32>()
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[inline]
+    unsafe fn add_assign_pointwise_mul_limb_avx2(
+        acc_limb: &mut [MontCoeff<W>; D],
+        lhs_limb: &[MontCoeff<W>; D],
+        rhs_limb: &[MontCoeff<W>; D],
+        prime: NttPrime<W>,
+    ) {
+        // SAFETY: caller checked AVX2 dispatch. `MontCoeff<W>` is transparent
+        // over the sealed `i16`/`i32` widths and the arrays are valid for `D`.
+        unsafe {
+            if size_of::<W>() == size_of::<i32>() {
+                avx::pointwise_mul_acc_i32(
+                    acc_limb.as_mut_ptr() as *mut i32,
+                    lhs_limb.as_ptr() as *const i32,
+                    rhs_limb.as_ptr() as *const i32,
+                    D,
+                    prime.p.to_i64() as i32,
+                    prime.pinv.to_i64() as i32,
+                );
+            }
+        }
+    }
+
     /// Convert a coefficient-form ring element into CRT+NTT domain
     /// using the default scalar backend.
     pub fn from_ring<F: CrtNttConvertibleField>(
@@ -424,6 +458,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let prime = params.primes[k];
             let acc_limb = &mut self.limbs[k];
             let lhs_limb = &lhs.limbs[k];
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            if Self::avx2_pointwise_enabled() {
+                // SAFETY: guarded by AVX2 runtime dispatch.
+                unsafe {
+                    Self::add_assign_pointwise_mul_limb_avx2(
+                        acc_limb,
+                        lhs_limb,
+                        scratch_limb,
+                        prime,
+                    );
+                }
+                continue;
+            }
             Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, scratch_limb, prime);
         }
     }
@@ -507,6 +554,25 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let acc1_limb = &mut acc1.limbs[k];
             let lhs0_limb = &lhs0.limbs[k];
             let lhs1_limb = &lhs1.limbs[k];
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            if Self::avx2_pointwise_enabled() {
+                // SAFETY: guarded by AVX2 runtime dispatch.
+                unsafe {
+                    Self::add_assign_pointwise_mul_limb_avx2(
+                        acc0_limb,
+                        lhs0_limb,
+                        scratch_limb,
+                        prime,
+                    );
+                    Self::add_assign_pointwise_mul_limb_avx2(
+                        acc1_limb,
+                        lhs1_limb,
+                        scratch_limb,
+                        prime,
+                    );
+                }
+                continue;
+            }
             for (((acc0_coeff, lhs0_coeff), acc1_coeff), (lhs1_coeff, rhs_coeff)) in acc0_limb
                 .iter_mut()
                 .zip(lhs0_limb.iter())
@@ -622,6 +688,31 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let lhs0_limb = &lhs0.limbs[k];
             let lhs1_limb = &lhs1.limbs[k];
             let lhs2_limb = &lhs2.limbs[k];
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            if Self::avx2_pointwise_enabled() {
+                // SAFETY: guarded by AVX2 runtime dispatch.
+                unsafe {
+                    Self::add_assign_pointwise_mul_limb_avx2(
+                        acc0_limb,
+                        lhs0_limb,
+                        scratch_limb,
+                        prime,
+                    );
+                    Self::add_assign_pointwise_mul_limb_avx2(
+                        acc1_limb,
+                        lhs1_limb,
+                        scratch_limb,
+                        prime,
+                    );
+                    Self::add_assign_pointwise_mul_limb_avx2(
+                        acc2_limb,
+                        lhs2_limb,
+                        scratch_limb,
+                        prime,
+                    );
+                }
+                continue;
+            }
             for idx in 0..D {
                 let rhs_coeff = scratch_limb[idx];
 
@@ -1117,6 +1208,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let acc_limb = &mut self.limbs[k];
             let lhs_limb = &lhs.limbs[k];
             let rhs_limb = &rhs.limbs[k];
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            if Self::avx2_pointwise_enabled() {
+                // SAFETY: guarded by AVX2 runtime dispatch.
+                unsafe {
+                    Self::add_assign_pointwise_mul_limb_avx2(acc_limb, lhs_limb, rhs_limb, prime);
+                }
+                continue;
+            }
             Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, rhs_limb, prime);
         }
     }
