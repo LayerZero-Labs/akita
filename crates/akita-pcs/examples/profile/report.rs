@@ -42,8 +42,6 @@ pub(crate) fn report_crt_profile(label: &str, profile: PreparedCrtNttProfile) {
         max_i8_log_basis = profile.max_i8_log_basis,
         balanced_digit_safe_width = profile.balanced_digit_safe_width,
         raw_i8_safe_width = profile.raw_i8_safe_width,
-        balanced_digit_chunk_width = profile.balanced_digit_safe_width,
-        raw_i8_chunk_width = profile.raw_i8_safe_width,
         "CRT NTT profile"
     );
     eprintln!(

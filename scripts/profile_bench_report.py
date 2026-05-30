@@ -364,8 +364,6 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             summary["max_i8_log_basis"] = int(kvs["max_i8_log_basis"])
             summary["balanced_digit_safe_width"] = int(kvs["balanced_digit_safe_width"])
             summary["raw_i8_safe_width"] = int(kvs["raw_i8_safe_width"])
-            summary["balanced_digit_chunk_width"] = int(kvs["balanced_digit_chunk_width"])
-            summary["raw_i8_chunk_width"] = int(kvs["raw_i8_chunk_width"])
         elif " INFO setup" in line and kvs.get("label") == mode:
             summary["setup_s"] = float(kvs["elapsed_s"])
         elif " INFO commit" in line and kvs.get("label") == mode:
