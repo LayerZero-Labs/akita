@@ -6,7 +6,7 @@
 | Created     | 2026-05-30                                 |
 | Status      | proposed                                   |
 | Branch      | `quang/crt-ntt-prime-profiles`             |
-| PR          |                                            |
+| PR          | #140                                       |
 
 ## Summary
 
@@ -133,41 +133,77 @@ today's `D1024_RAW_PRIMES`):
 6. Q32 two-i32 default profile (optional spike only).
 7. Planner / SIS table / `SisModulusFamily::Q16` floor generation (already on
    `main` via fp16 support; orthogonal to CRT dispatch).
+8. Rewriting #134 chunking or "fixing" merged `single_cyclic` driver args for
+   the Bugbot false positive (tests and optional cosmetic clarity only).
 
 ## PR #134 Cursor Bugbot audit (merged accumulation safety)
 
 Range chunking landed in [#134](https://github.com/LayerZero-Labs/akita/pull/134)
 (`specs/crt-ntt-accumulation-safety.md`).
-Cursor Bugbot left **nine** inline findings across the PR; the final summary on
-`87e3474` flagged **one** remaining Medium item.
+Cursor Bugbot left **nine** inline findings; the final summary on `87e3474`
+flagged one remaining **Medium** item on `single_cyclic.rs`.
+A disposition comment for future readers is on
+[#134#issuecomment-4582547527](https://github.com/LayerZero-Labs/akita/pull/134#issuecomment-4582547527).
+
 This section records whether each finding is still valid on current `main`
-(`0a360113`) and whether this follow-up PR must address it.
+(`0a360113`) and what the **prime-profiles** follow-up must do (if anything).
 
-| Bugbot finding | Severity | Valid on `main`? | Fold into this PR? |
+| Bugbot finding | Severity | Valid on `main`? | Required for prime profiles? |
 | --- | --- | --- | --- |
-| Wrong `safe_width` / `tile_width` args in `drive_single_chunked_matvec` (`single_cyclic.rs`) | Medium | **No** (see note below) | **Test only:** forced multi-chunk test for `mat_vec_mul_ntt_single_i8` and cyclic variant at width above `max_safe_crt_accumulation_width` |
-| `fused_split_eq_quotients_prover_bounds` lacks `w_hat` magnitude check | Medium | **Partially outdated** | **Optional:** add `debug_assert!` on `w_hat`/`t_hat` in `fused_split_eq_quotients_with_params` (runtime `digit_rows_within_digit_bound` already returns `InvalidInput`) |
-| CRT capacity uses field modulus `q` instead of centered `floor(q/2)` | Medium | **No** (fixed before merge) | None |
-| Panic via `.expect` in `mat_vec_mul_raw_i8_strided_with_params` | Medium | **No** (uses `ok_or_else` → `InvalidInput`) | None |
-| Hardcoded `BALANCED_DIGIT_RHS_MAX_ABS` ignoring `log_basis` in digit paths | Low | **No** (paths take `log_basis` / `digit_bound`) | None |
-| Redundant `i32::MIN` branch in `centered_rows_within_bound` | Low | **No** (uses `unsigned_abs()` only) | None |
-| Duplicate comment block in `digits.rs` | Low | **No** | None |
-| Redundant `validate_i8_log_basis` in three modules | Low | **Yes** (hygiene) | **Out of scope** unless touched for other reasons |
-| Chunked single-row path lacks Rayon over chunks | Low | **Yes** (perf) | **Out of scope** |
-| Digit paths pessimistic without `log_basis` at API | Low | **No** on current call sites | None |
+| `single_cyclic` "wrong" `safe_width` / `tile_width` args | Medium | **No** (false positive; see below) | **Regression tests only** |
+| `fused_split_eq_quotients_prover_bounds` lacks `w_hat` check | Medium | **No** (`with_params` returns `InvalidInput`) | None (optional `debug_assert!`) |
+| CRT capacity uses `q` not `floor(q/2)` | Medium | **No** (fixed before merge) | None |
+| `.expect` in raw-i8 strided `Result` path | Medium | **No** (`ok_or_else`) | None |
+| Hardcoded digit bound 32 | Low | **No** | None |
+| Redundant `i32::MIN` branch | Low | **No** | None |
+| Duplicate comment in `digits.rs` | Low | **No** | None |
+| Duplicate `validate_i8_log_basis` | Low | Yes (hygiene) | Out of scope |
+| Single-row chunked path lacks Rayon | Low | Yes (perf) | Out of scope |
 
-**Note on the Medium `single_cyclic` claim:** Bugbot argued that passing
-`safe_crt_chunk_width(..., vec_len, ...)` as both `safe_width` and `chunk_width`
-makes `inner_width <= safe_width` tautological.
-That simplification is `vec_len <= min(max_safe, vec_len)`, which is **false**
-when `vec_len > max_safe`, so the chunked branch still runs.
-Verified against `drive_single_chunked_matvec` in `chunked_matvec.rs` and the
-call sites in `single_cyclic.rs` on `main`.
+### False positive: `single_cyclic` one-shot vs chunked gate
 
-**Carryover slice (before or with prime tables):** implement only the **test**
-row for single-row i8/cyclic forced chunking so the disputed Bugbot scenario
-stays locked under reduced `K` later.
-Do not change `drive_single_chunked_matvec` call pattern unless a new test fails.
+**What Bugbot claimed.** In `mat_vec_mul_single_i8_with_params` and
+`mat_vec_mul_single_i8_cyclic_with_params`, both the 3rd argument (`safe_width`)
+and 5th argument (`chunk_width`) to `drive_single_chunked_matvec` are set to
+`safe_crt_chunk_width(params, vec_len, digit_bound)`.
+Bugbot concluded the gate `inner_width <= safe_width` is always true, so the
+chunked fallback never runs and CRT overflow protection is defeated.
+
+**Why that is wrong.** `safe_crt_chunk_width` returns `min(max_safe, vec_len)`,
+where `max_safe` is `max_safe_crt_accumulation_width` (columns safe in one CRT
+accumulator before Garner reconstruction).
+With `inner_width = vec_len`, the gate is:
+
+```text
+vec_len <= min(max_safe, vec_len)   ⟺   vec_len <= max_safe
+```
+
+| Case | `min(max_safe, vec_len)` | Gate | `drive_single_chunked_matvec` path |
+| --- | ---: | --- | --- |
+| `vec_len <= max_safe` | `vec_len` | true | One-shot: accumulate all columns, one reconstruct (safe) |
+| `vec_len > max_safe` | `max_safe` | **false** | Chunked: reconstruct per chunk of `max_safe` columns, sum in field |
+
+Example: `max_safe = 1023`, `vec_len = 2050` → gate `2050 <= 1023` is false →
+chunked path runs (three chunks), matching the intent of #134.
+
+Passing the clamped value as the 3rd argument is **not** unsound: it cannot
+approve a one-shot wider than `max_safe`.
+An optional cosmetic change is to pass raw `max_safe` as the 3rd arg (matching
+`i8_matvec.rs`) while keeping `chunk_width = min(max_safe, vec_len)`; behavior
+is unchanged.
+
+**Implication for this spec.** Prime-profile work does **not** depend on fixing
+`single_cyclic.rs` call sites.
+Smaller `P_crt` lowers `max_safe` and increases chunking frequency; that is
+expected and must stay correct under the same #134 driver.
+This spec therefore requires **regression tests**, not a driver rewrite:
+
+- Mirror `mat_vec_mul_ntt_i8_dense_single_row_chunks_q128` in
+  `kernels/linear/tests.rs` for `mat_vec_mul_ntt_single_i8` and
+  `mat_vec_mul_ntt_single_i8_cyclic` at a width with `vec_len > max_safe`.
+- Run on Q128 before prime cutover; repeat on reduced Q16/Q32/Q64 after.
+
+Do not change `drive_single_chunked_matvec` arguments unless a new test fails.
 
 Closed spec PR [#108](https://github.com/LayerZero-Labs/akita/pull/108) is the
 design predecessor for prime tables only; its Cursor Bugbot run reported no
@@ -202,8 +238,12 @@ Criteria sections above, with #134 providing the chunking implementation.
       - `fused_split_eq_quotients` including the `z_pre` leg,
       each compared against a scalar or wide-reference path (Q128 profile on
       `main`; repeat on reduced Q16/Q32/Q64 after prime cutover).
-- [ ] PR #134 Bugbot carryover: single-row i8/cyclic forced-chunk tests land on
-      `main` before or in the same PR as prime-table cutover (see audit table).
+- [ ] Single-row forced-chunk tests (`vec_len > max_safe_crt_accumulation_width`)
+      for `mat_vec_mul_ntt_single_i8` and `mat_vec_mul_ntt_single_i8_cyclic`,
+      modeled on `mat_vec_mul_ntt_i8_dense_single_row_chunks_q128`, with
+      schoolbook reference equality (Q128 first; reduced profiles after cutover).
+- [ ] No change to `single_cyclic.rs` `drive_single_chunked_matvec` arguments
+      unless a new test fails (Bugbot Medium on #134 is a false positive).
 - [ ] Existing `akita-pcs` algebra NTT/CRT tests and `cargo test -q -p
       akita-prover kernels::linear` pass.
 - [ ] `cargo test -q` and `cargo clippy --all -- -D warnings` pass.
@@ -279,9 +319,10 @@ Prefer a single source of truth in `tables.rs` over duplicating prime arrays.
 
 Suggested implementation slices:
 
-0. **Bugbot carryover (optional slice 0):** add forced-chunk tests for
-   `mat_vec_mul_ntt_single_i8` / `_cyclic` on current Q128 (closes PR #134
-   Bugbot dispute without changing driver args).
+0. **Slice 0 (recommended before prime tables):** add
+   `mat_vec_mul_ntt_single_i8` / `_cyclic` forced-chunk tests on Q128; document
+   that #134 Bugbot "wrong arg order" is closed as false positive (see audit
+   section and #134 comment).
 1. Add Q16 table + tests; add reduced Q32/Q64 tables + tests.
 2. Extend `ProtocolCrtNttParams` / `NttSlotCache` / `select_crt_ntt_params`.
 3. Fix const-generic `K` throughout prover linear + setup NTT cache build.
@@ -297,8 +338,9 @@ Risks to resolve first:
 ## References
 
 - `specs/crt-ntt-accumulation-safety.md` (implemented, PR #134): chunking and
-  capacity contract on `main`; Cursor Bugbot thread on that PR (nine findings,
-  final summary one Medium).
+  capacity contract on `main`.
+- [#134#issuecomment-4582547527](https://github.com/LayerZero-Labs/akita/pull/134#issuecomment-4582547527):
+  disposition of the final Bugbot Medium (`single_cyclic` false positive).
 - Closed `specs/crt-ntt-range-chunking.md` on branch
   `quang/crt-ntt-range-chunking-spec` (PR #108): combined design predecessor;
   prime tables copied from its profile section.
