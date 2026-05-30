@@ -419,7 +419,7 @@ impl_fp2_default_optimized_fold!(Fp128<P: u128>);
 /// once per round, then fold each pair as `even + r·(odd − even)` using
 /// base-field (`u64`) products with a single delayed reduction per output
 /// coordinate. Only `Fp64` bases are specialized; other bases keep the generic
-/// `Fp2` fold via [`impl_fp2_default_optimized_fold`].
+/// `Fp2` fold via `impl_fp2_default_optimized_fold`.
 impl<const P: u64, C: Fp2Config<Fp64<P>>> HasOptimizedFold for Fp2<Fp64<P>, C> {
     type FoldCtx = FoldMatrixFp64;
 
@@ -443,7 +443,7 @@ impl<const P: u64, C: Fp2Config<Fp64<P>>> HasOptimizedFold for Fp2<Fp64<P>, C> {
     /// Fold one pair: `even + r·(odd − even)`.
     ///
     /// Each output coordinate is the sum of two `u64×u64 → u128` base products,
-    /// reduced once by [`Fp64::reduce_sum_of_two_products`]. This is the
+    /// reduced once by `Fp64::reduce_sum_of_two_products`. This is the
     /// schoolbook product (4 base multiplies, 2 reductions) with delayed
     /// reduction, versus the generic Karatsuba multiply (3 multiplies, 3
     /// reductions). The reduced coordinates are canonical, so the result is
