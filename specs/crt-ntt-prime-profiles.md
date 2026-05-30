@@ -385,7 +385,9 @@ Criteria sections above, with #134 providing the chunking implementation.
       homogeneous `2 × i32` candidate `[1073707009, 1073698817]`
       (the two largest i32 raw primes, product ≈ `2^60.00`).
       The comparison must include correctness, generated schedule capacity, setup
-      cache bytes, and required profile timings.
+      cache bytes, selected profile metadata (`K`, limb width, prime list,
+      `log2(P_crt)`), safe-width/chunk-count summaries, and the required profile
+      timings from the performance protocol below.
       If `2 × i32` wins under the layout/performance rule, keep it and update
       the Q32 target profile in this spec before implementation review.
 - [ ] `max_safe_crt_accumulation_width` unit tests for Q16, reduced Q32, and
@@ -438,6 +440,8 @@ Criteria sections above, with #134 providing the chunking implementation.
       at least 5% on one required profile without regressing another required
       profile by more than 5%, or if it reduces shared NTT cache bytes by at
       least 20% without a measured wall-clock regression above 5%.
+      Apply the same benchmark protocol and PR-description result table used for
+      the prime-profile comparison.
 - [ ] If the layout experiment does not win, the implementation PR records the
       attempted layout, benchmark numbers, and reason for keeping the current
       CPU reference layout.
@@ -479,19 +483,43 @@ Criteria sections above, with #134 providing the chunking implementation.
 
 - Direction: lower setup NTT cache size and fewer CRT limbs per coefficient for
   fp16/fp32/fp64 dense paths.
-- Record before/after on `crates/akita-pcs/examples/profile/` for at least:
+- The implementation PR description is the central performance record.
+  It must include a single before/after table for the required modes and metrics.
+  If a generated markdown artifact is also committed or uploaded, link it from
+  the PR description rather than scattering numbers across comments.
+- Measure a `main`/merge-base baseline and the implementation head on the same
+  machine, with the same release profile, feature flags, `RAYON_NUM_THREADS`,
+  benchmark script, and profile arguments.
+  Record the baseline/head commit SHAs, hardware/OS, Rust version, feature flags,
+  thread count, and relevant environment variables.
+- Record before/after on `crates/akita-pcs/examples/profile/` for at least the
+  D32 dense and one-hot small-field matrix:
   - `dense_fp16_d32`,
+  - `onehot_fp16_d32`,
   - `dense_fp32_d32`,
-  - `dense_fp64_d32`.
+  - `onehot_fp32_d32`,
+  - `dense_fp64_d32`,
+  - `onehot_fp64_d32`.
 - Record the commands used, e.g.
   `AKITA_MODE=dense_fp16_d32 cargo run --release --example profile`, with the
-  corresponding fp32/fp64 modes.
-- Run each required profile enough times to report a median or explain why the
-  local environment cannot provide stable repeated runs.
+  corresponding modes above.
+- Run each required profile at least five times and report median wall-clock
+  timings plus a simple spread measure (`min`/`max` or median absolute
+  deviation).
+  If local conditions make five stable runs impractical, the PR description must
+  say why and still report at least three runs.
+- For every required mode, record setup, commit, prove, and verify wall-clock;
+  setup vector bytes; shared setup NTT cache bytes; maximum RSS; proof bytes;
+  selected CRT profile; `K`; limb width; and the relevant
+  `max_safe_crt_accumulation_width` / observed chunk-count summary for changed
+  kernels.
 - No fixed “must win” threshold: post numbers in the implementation PR.
-  Regressions above ~5% wall-clock on any of the three modes require an explicit
-  note in the PR body with hypothesis (e.g., more chunks on fp32 outer-B).
-- Proof size and verifier time must be unchanged (prover-only).
+  Regressions above ~5% wall-clock on any required mode require an explicit note
+  in the PR body with a hypothesis (e.g., more chunks on fp32 outer-B).
+- Proof bytes must be exactly unchanged for matching benchmark shapes.
+  Verifier wall-clock is expected to be unchanged within benchmark noise; any
+  >5% verifier movement needs an explicit note because this is intended to be
+  prover-only.
 - The layout experiment additionally records shared NTT cache bytes and the
   chosen physical prepared-cache layout.
 
