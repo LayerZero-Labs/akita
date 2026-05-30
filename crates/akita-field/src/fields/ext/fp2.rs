@@ -411,8 +411,55 @@ macro_rules! impl_fp2_default_optimized_fold {
 
 impl_fp2_default_optimized_fold!(Fp16<P: u32>);
 impl_fp2_default_optimized_fold!(Fp32<P: u32>);
-impl_fp2_default_optimized_fold!(Fp64<P: u64>);
 impl_fp2_default_optimized_fold!(Fp128<P: u128>);
+
+/// Specialized EOR fold for `Fp2<Fp64<P>, C>`.
+///
+/// Mirrors `RingSubfieldFp4<Fp32>`: precompute the "multiply by `r`" matrix
+/// once per round, then fold each pair as `even + r·(odd − even)` using
+/// base-field (`u64`) products with a single delayed reduction per output
+/// coordinate. Only `Fp64` bases are specialized; other bases keep the generic
+/// `Fp2` fold via [`impl_fp2_default_optimized_fold`].
+impl<const P: u64, C: Fp2Config<Fp64<P>>> HasOptimizedFold for Fp2<Fp64<P>, C> {
+    type FoldCtx = FoldMatrixFp64;
+
+    /// Build the 2×2 "multiply by `r`" matrix in the `[1, u]` basis.
+    ///
+    /// For `r = r0 + r1·u` and `u² = NR`, multiplying `(a0, a1)` by `r` yields
+    /// `(r0·a0 + NR·r1·a1, r1·a0 + r0·a1)`, i.e. the matrix
+    /// `[[r0, NR·r1], [r1, r0]]`. `NR·r1` is materialized once via `mul_nr`
+    /// (a free negation for `IS_NEG_ONE`, a doubling for the `NR = 2` preset).
+    #[inline]
+    fn precompute_fold(r: Self) -> FoldMatrixFp64 {
+        let r0 = r.coeffs[0];
+        let r1 = r.coeffs[1];
+        let nr_r1 = Self::mul_nr(r1);
+        FoldMatrixFp64([
+            [r0.to_limbs(), nr_r1.to_limbs()],
+            [r1.to_limbs(), r0.to_limbs()],
+        ])
+    }
+
+    /// Fold one pair: `even + r·(odd − even)`.
+    ///
+    /// Each output coordinate is the sum of two `u64×u64 → u128` base products,
+    /// reduced once by [`Fp64::reduce_sum_of_two_products`]. This is the
+    /// schoolbook product (4 base multiplies, 2 reductions) with delayed
+    /// reduction, versus the generic Karatsuba multiply (3 multiplies, 3
+    /// reductions). The reduced coordinates are canonical, so the result is
+    /// byte-identical to the generic fold.
+    #[inline]
+    fn fold_one(ctx: &FoldMatrixFp64, even: Self, odd: Self) -> Self {
+        let m = &ctx.0;
+        let d0 = (odd.coeffs[0] - even.coeffs[0]).to_limbs() as u128;
+        let d1 = (odd.coeffs[1] - even.coeffs[1]).to_limbs() as u128;
+        let c0 =
+            Fp64::<P>::reduce_sum_of_two_products((m[0][0] as u128) * d0, (m[0][1] as u128) * d1);
+        let c1 =
+            Fp64::<P>::reduce_sum_of_two_products((m[1][0] as u128) * d0, (m[1][1] as u128) * d1);
+        Self::new(even.coeffs[0] + c0, even.coeffs[1] + c1)
+    }
+}
 
 /// Split `value = lo128 + hi_carry * 2^128` into base-2^64 limbs
 /// `[bits 0..64, bits 64..]` for a `Fp64ProductAccum` slot pair.

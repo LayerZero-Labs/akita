@@ -645,3 +645,75 @@ fn ring_subfield_fp8_fp16_fold_matrix_matches_generic() {
         );
     }
 }
+
+// The specialized `Fp2<Fp64>` EOR fold must be byte-identical to the generic
+// `even + r·(odd − even)`. Full-word `Prime64Offset59` exercises the
+// carry-folding reduction path (products near 2^128, sum near 2^129);
+// sub-word `Prime40Offset195` exercises the no-overflow path. Random operands
+// reach carry=1 roughly half the time; the explicit max-coordinate cases pin
+// the worst case. Covers both `Fp2Config`s (TwoNr and NegOneNr).
+#[test]
+fn fp2_fp64_optimized_fold_matches_generic() {
+    use crate::{Prime40Offset195, Prime64Offset59};
+
+    macro_rules! check_fold {
+        ($E:ty, $r:expr, $even:expr, $odd:expr) => {{
+            let r: $E = $r;
+            let even: $E = $even;
+            let odd: $E = $odd;
+            let generic = even + r * (odd - even);
+            let ctx = <$E as HasOptimizedFold>::precompute_fold(r);
+            let optimized = <$E as HasOptimizedFold>::fold_one(&ctx, even, odd);
+            assert_eq!(
+                generic,
+                optimized,
+                "{} fold mismatch r={r:?} even={even:?} odd={odd:?}",
+                stringify!($E)
+            );
+        }};
+    }
+
+    let mut rng = StdRng::seed_from_u64(0xF01D);
+    for _ in 0..512 {
+        check_fold!(
+            Ext2<Prime64Offset59>,
+            Ext2::random(&mut rng),
+            Ext2::random(&mut rng),
+            Ext2::random(&mut rng)
+        );
+        check_fold!(
+            Fp2<Prime64Offset59, NegOneNr>,
+            Fp2::random(&mut rng),
+            Fp2::random(&mut rng),
+            Fp2::random(&mut rng)
+        );
+        check_fold!(
+            Ext2<Prime40Offset195>,
+            Ext2::random(&mut rng),
+            Ext2::random(&mut rng),
+            Ext2::random(&mut rng)
+        );
+        check_fold!(
+            Fp2<Prime40Offset195, NegOneNr>,
+            Fp2::random(&mut rng),
+            Fp2::random(&mut rng),
+            Fp2::random(&mut rng)
+        );
+    }
+
+    // Worst case for the full-word carry fold: all coordinates at p-1, so each
+    // base product is ≈ p² ≈ 2^128 and the per-coordinate sum is ≈ 2^129.
+    let max64 = Prime64Offset59::zero() - Prime64Offset59::one();
+    check_fold!(
+        Ext2<Prime64Offset59>,
+        Ext2::new(max64, max64),
+        Ext2::zero(),
+        Ext2::new(max64, max64)
+    );
+    check_fold!(
+        Fp2<Prime64Offset59, NegOneNr>,
+        Fp2::new(max64, max64),
+        Fp2::zero(),
+        Fp2::new(max64, max64)
+    );
+}

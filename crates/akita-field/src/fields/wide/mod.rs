@@ -608,6 +608,16 @@ pub struct FoldMatrixFp32(pub(crate) [[u32; 4]; 4]);
 #[derive(Debug, Clone, Copy)]
 pub struct FoldMatrixFp16(pub(crate) [[u32; 8]; 8]);
 
+/// Precomputed fold context for `Fp2<Fp64<P>, C>`.
+///
+/// Stores the 2×2 "multiply by the challenge `r`" matrix in the `[1, u]`
+/// basis (`u² = NR`) as canonical `u64` limbs. Folding then uses two
+/// base-field products per output coordinate with a single delayed
+/// reduction, instead of the generic per-element Karatsuba multiply that
+/// reduces three times.
+#[derive(Debug, Clone, Copy)]
+pub struct FoldMatrixFp64(pub(crate) [[u64; 2]; 2]);
+
 /// Per-element fold optimization trait.
 ///
 /// Allows field types to precompute a fold context from challenge `r`
