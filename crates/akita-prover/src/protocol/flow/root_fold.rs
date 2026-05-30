@@ -10,6 +10,7 @@ where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
 {
+    let _span = tracing::info_span!("root_evaluate_claims", num_claims = polys.len()).entered();
     let mut per_claim_y_rings = Vec::with_capacity(polys.len());
     let mut w_folded_by_poly = Vec::with_capacity(polys.len());
     for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
@@ -1081,16 +1082,19 @@ where
     } = next_commitment;
     let w_commitment_proof = committed_commitment.clone();
 
-    let rs = ring_switch_finalize_with_gamma::<F, C, T, { D }>(
-        &quad_eq,
-        expanded,
-        transcript,
-        &logical_w,
-        &w_commitment_proof,
-        lp,
-        &row_coefficients,
-        MRowLayout::Intermediate,
-    )?;
+    let rs = {
+        let _span = tracing::info_span!("root_ring_switch_finalize").entered();
+        ring_switch_finalize_with_gamma::<F, C, T, { D }>(
+            &quad_eq,
+            expanded,
+            transcript,
+            &logical_w,
+            &w_commitment_proof,
+            lp,
+            &row_coefficients,
+            MRowLayout::Intermediate,
+        )?
+    };
 
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
         &rs.tau1,

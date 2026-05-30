@@ -110,11 +110,32 @@ where
     }
 
     let tail_len = 1usize << (original_num_vars - split_bits);
-    let mut packed = Vec::with_capacity(tail_len);
-    for tail in 0..tail_len {
-        let base = tail * width;
-        packed.push(E::from_base_slice(&base_evals[base..base + width]));
-    }
+    // Pure order-preserving map; the indexed parallel collect yields the same
+    // ordering as the serial loop, so the packed table is byte-identical.
+    #[cfg(feature = "parallel")]
+    let packed: Vec<E> = {
+        const PARALLEL_PACK_THRESHOLD: usize = 1 << 14;
+        if tail_len >= PARALLEL_PACK_THRESHOLD {
+            base_evals[..tail_len * width]
+                .par_chunks_exact(width)
+                .map(E::from_base_slice)
+                .collect()
+        } else {
+            (0..tail_len)
+                .map(|tail| {
+                    let base = tail * width;
+                    E::from_base_slice(&base_evals[base..base + width])
+                })
+                .collect()
+        }
+    };
+    #[cfg(not(feature = "parallel"))]
+    let packed: Vec<E> = (0..tail_len)
+        .map(|tail| {
+            let base = tail * width;
+            E::from_base_slice(&base_evals[base..base + width])
+        })
+        .collect();
     Ok(packed)
 }
 
@@ -157,6 +178,58 @@ where
     let tail_point = &logical_point[split_bits..];
     let tail_len = 1usize << tail_point.len();
     let tail_eq = EqPolynomial::evals(tail_point)?;
+
+    // `partials[head] = sum_tail eq(tail_point, tail) * base_evals[tail*width + head]`.
+    // Field addition is exact and associative, so a parallel chunk/reduce yields
+    // the identical canonical value as the serial fold below.
+    #[cfg(feature = "parallel")]
+    let partials = {
+        const PARALLEL_PARTIALS_THRESHOLD: usize = 1 << 14;
+        if tail_len >= PARALLEL_PARTIALS_THRESHOLD {
+            tail_eq[..tail_len]
+                .par_iter()
+                .zip(base_evals[..tail_len * width].par_chunks_exact(width))
+                .fold(
+                    || vec![E::zero(); width],
+                    |mut acc, (&weight, chunk)| {
+                        for (slot, &coeff) in acc.iter_mut().zip(chunk.iter()) {
+                            *slot += weight.mul_base(coeff);
+                        }
+                        acc
+                    },
+                )
+                .reduce(
+                    || vec![E::zero(); width],
+                    |mut acc, other| {
+                        for (slot, value) in acc.iter_mut().zip(other) {
+                            *slot += value;
+                        }
+                        acc
+                    },
+                )
+        } else {
+            tensor_column_partials_fold_serial::<F, E>(&tail_eq, base_evals, tail_len, width)
+        }
+    };
+    #[cfg(not(feature = "parallel"))]
+    let partials =
+        tensor_column_partials_fold_serial::<F, E>(&tail_eq, base_evals, tail_len, width);
+    Ok(partials)
+}
+
+/// Serial fold helper shared by the parallel and non-parallel
+/// [`tensor_column_partials_from_base_evals`] paths.
+#[inline]
+fn tensor_column_partials_fold_serial<F, E>(
+    tail_eq: &[E],
+    base_evals: &[F],
+    tail_len: usize,
+    width: usize,
+) -> Vec<E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
     let mut partials = vec![E::zero(); width];
     for (tail, &weight) in tail_eq.iter().enumerate().take(tail_len) {
         let base = tail * width;
@@ -164,7 +237,7 @@ where
             partials[head] += weight.mul_base(base_evals[base + head]);
         }
     }
-    Ok(partials)
+    partials
 }
 
 /// Transpose the tensor partial object from column view to row view.
@@ -607,6 +680,20 @@ pub fn extension_opening_reduction_claim<E: FieldCore>(
     factor_evals: &[E],
 ) -> Result<E, AkitaError> {
     validate_reduction_tables(witness_evals, factor_evals)?;
+    // `sum_x witness(x) * factor(x)`. Field addition is exact and associative,
+    // so the parallel reduction yields the identical canonical value as the
+    // serial fold.
+    #[cfg(feature = "parallel")]
+    {
+        const PARALLEL_CLAIM_THRESHOLD: usize = 1 << 14;
+        if witness_evals.len() >= PARALLEL_CLAIM_THRESHOLD {
+            return Ok(witness_evals
+                .par_iter()
+                .zip(factor_evals.par_iter())
+                .map(|(&w, &a)| w * a)
+                .reduce(E::zero, |acc, term| acc + term));
+        }
+    }
     Ok(witness_evals
         .iter()
         .zip(factor_evals.iter())

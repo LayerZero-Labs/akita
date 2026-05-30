@@ -558,9 +558,9 @@ pub(in crate::protocol::flow) fn recursive_witness_base_evals<F>(
 where
     F: FieldCore + FromPrimitiveInt,
 {
-    logical_w
-        .as_i8_digits()
-        .iter()
+    // Pure order-preserving map; the indexed parallel collect yields the same
+    // ordering as the serial map, so the base-field witness table is identical.
+    cfg_iter!(logical_w.as_i8_digits())
         .copied()
         .map(F::from_i8)
         .collect()
@@ -595,9 +595,17 @@ where
             actual: logical_w.len(),
         });
     }
-    let mut base_evals = recursive_witness_base_evals::<F>(logical_w);
-    base_evals.resize(padded_len, F::zero());
-    let tensor = tensor_partials_from_base_evals::<F, L>(num_vars, &base_evals, opening_point)?;
+    let _eor_prep_span = tracing::info_span!("recursive_eor_prepare", num_vars).entered();
+    let base_evals = {
+        let _s = tracing::info_span!("eor_base_evals").entered();
+        let mut base_evals = recursive_witness_base_evals::<F>(logical_w);
+        base_evals.resize(padded_len, F::zero());
+        base_evals
+    };
+    let tensor = {
+        let _s = tracing::info_span!("eor_tensor_partials").entered();
+        tensor_partials_from_base_evals::<F, L>(num_vars, &base_evals, opening_point)?
+    };
     check_tensor_extension_opening_claim::<F, L>(
         opening_point,
         expected_opening,
@@ -631,8 +639,14 @@ where
     #[cfg(not(feature = "zk"))]
     debug_assert_eq!(input_claim, true_input_claim);
     let tail_point = &opening_point[split_bits..];
-    let packed_witness = tensor_packed_witness_evals::<F, L>(num_vars, &base_evals)?;
-    let factor_evals = tensor_equality_factor_evals::<F, L>(tail_point, &eta)?;
+    let packed_witness = {
+        let _s = tracing::info_span!("eor_packed_witness").entered();
+        tensor_packed_witness_evals::<F, L>(num_vars, &base_evals)?
+    };
+    let factor_evals = {
+        let _s = tracing::info_span!("eor_factor_evals").entered();
+        tensor_equality_factor_evals::<F, L>(tail_point, &eta)?
+    };
     let prover = ExtensionOpeningReductionProver::new(packed_witness, factor_evals)?;
     if prover.input_claim() != true_input_claim {
         return Err(AkitaError::InvalidInput(
@@ -640,6 +654,7 @@ where
         ));
     }
     let mut prover = prover;
+    drop(_eor_prep_span);
     #[cfg(feature = "zk")]
     let reduction_sumcheck =
         ExtensionOpeningReductionSumcheck::new(input_claim, prover.num_rounds());
