@@ -145,6 +145,7 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     }
 
     /// Multiply by `X^k` in `Z_q[X]/(X^D + 1)` via O(D) coefficient rotation.
+    /// It supports general exponents `k >= D` by reducing modulo `2D`.
     ///
     /// Since `X^D = -1`, coefficients that wrap past index `D` get negated.
     #[inline]
@@ -184,22 +185,20 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     ///
     /// Each term is a negacyclic shift, so the total cost is
     /// `O(positions.len() * D)` field additions with zero multiplications.
-    /// All positions must be less than `D`.
     #[inline]
     pub fn mul_by_monomial_sum(&self, nonzero_positions: &[usize]) -> Self {
         let mut result = Self::zero();
-        for &k in nonzero_positions {
-            self.shift_accumulate_into(&mut result, k);
-        }
+        self.mul_by_monomial_sum_into(&mut result, nonzero_positions);
         result
     }
 
     /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
     ///
     /// Requires `k < D`.
-    /// Equivalent to `*dst += self.negacyclic_shift(k)` within the
-    /// contract domain of `k < D`, but avoids allocating a temporary
-    /// ring element.
+    /// Equivalent to `*dst += self.negacyclic_shift(k)` within the contract domain of `k < D`,
+    /// but avoids allocating a temporary ring element.
+    ///
+    /// For arbitrary exponents (including `k >= D`), use [`Self::negacyclic_shift`].
     #[inline]
     pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
         debug_assert!(
@@ -221,7 +220,9 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     ///
     /// Requires `k < D`.
     /// Equivalent to `*dst -= self.negacyclic_shift(k)` within the
-    /// contract domain of `k < D`, but avoids allocating a temporary
+    /// contract domain of `k < D`, but avoids allocating a temporary ring element.
+    ///
+    /// For arbitrary exponents (including `k >= D`), use [`Self::negacyclic_shift`].
     #[inline]
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
         debug_assert!(k < D, "fused method shift_sub_into: k={k} must be < D={D}");
@@ -240,8 +241,9 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     ///
     /// Requires `k < D`.
     /// Equivalent to `*dst += self.scale(&scale).negacyclic_shift(k)` within the
-    /// contract domain of `k < D`, but avoids allocating a temporary
-    /// ring element.
+    /// contract domain of `k < D`, but avoids allocating a temporary ring element.
+    ///
+    /// For arbitrary exponents (including `k >= D`), use [`Self::negacyclic_shift`].
     #[inline]
     pub fn shift_scale_accumulate_into(&self, dst: &mut Self, k: usize, scale: F) {
         debug_assert!(
@@ -262,11 +264,11 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// Fused multiply-by-monomial-sum + accumulate:
     /// `dst += self * (X^{k_1} + X^{k_2} + ...)`.
     ///
-    /// Equivalent to `*dst += self.mul_by_monomial_sum(positions)` but avoids
-    /// all intermediate temporaries.
+    /// Each term is a negacyclic shift, so the total cost is
+    /// `O(positions.len() * D)` field additions with zero multiplications.
     pub fn mul_by_monomial_sum_into(&self, dst: &mut Self, nonzero_positions: &[usize]) {
         for &k in nonzero_positions {
-            self.shift_accumulate_into(dst, k);
+            *dst += self.negacyclic_shift(k);
         }
     }
 

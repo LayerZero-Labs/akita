@@ -45,9 +45,9 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
     ///
     /// Requires `k < D`.
-    /// Equivalent to `*dst += self.negacyclic_shift(k)` within the
-    /// contract domain of `k < D`, but avoids allocating a temporary
-    /// ring element.
+    /// Wide version of [`CyclotomicRing::shift_accumulate_into`].
+    /// `WideCyclotomicRing` has no support for general negacyclic shifts (`k >= D`).
+    /// For `k >= D`, reduce to `CyclotomicRing` and use [`CyclotomicRing::negacyclic_shift`].
     #[inline]
     pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
         debug_assert!(
@@ -68,9 +68,9 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
     ///
     /// Requires `k < D`.
-    /// Equivalent to `*dst -= self.negacyclic_shift(k)` within the
-    /// contract domain of `k < D`, but avoids allocating a temporary
-    /// ring element.
+    /// Wide version of [`CyclotomicRing::shift_sub_into`].
+    /// `WideCyclotomicRing` has no support for general negacyclic shifts (`k >= D`).
+    /// For `k >= D`, reduce to `CyclotomicRing` and use [`CyclotomicRing::negacyclic_shift`].
     #[inline]
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
         debug_assert!(k < D, "fused method shift_sub_into: k={k} must be < D={D}");
@@ -82,14 +82,6 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
         }
         for (d, s) in lo.iter_mut().zip(self_hi) {
             *d += *s; // i + k >= D
-        }
-    }
-
-    /// Fused multiply-by-monomial-sum + accumulate:
-    /// `dst += self * (X^{k_1} + X^{k_2} + ...)`.
-    pub fn mul_by_monomial_sum_into(&self, dst: &mut Self, nonzero_positions: &[usize]) {
-        for &k in nonzero_positions {
-            self.shift_accumulate_into(dst, k);
         }
     }
 }

@@ -126,7 +126,9 @@ fn wide_mul_by_monomial_sum_matches_narrow_fp64() {
 
     let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
     let mut wide_dst = WideCyclotomicRing::<Fp64x4i32, D>::zero();
-    wide_src.mul_by_monomial_sum_into(&mut wide_dst, &positions);
+    for &k in &positions {
+        wide_src.shift_accumulate_into(&mut wide_dst, k);
+    }
     let wide_reduced: CyclotomicRing<F64, D> = wide_dst.reduce();
 
     assert_eq!(narrow, wide_reduced);
