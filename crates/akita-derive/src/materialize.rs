@@ -120,7 +120,7 @@ pub struct PlanPolicy<Stage1Config> {
     /// Per-level fold-round challenge shape. Mirrors
     /// `CommitmentConfig::fold_challenge_shape_at_level`. The materializer
     /// stamps the returned shape onto each fold step's `LevelParams`
-    /// **before** sizing `num_digits_fold` and the `(m_vars, r_vars)` split,
+    /// **before** deriving the `(m_vars, r_vars)` split and fold digit count,
     /// so a tensor preset gets `LevelParams::challenge_l1_mass()` resolved
     /// against `omega^2` instead of `omega`.
     pub fold_challenge_shape: fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -351,10 +351,10 @@ where
                     }
                 };
                 // Stamp the per-level fold shape onto `params` *before*
-                // `level_layout_from_params` derives `num_digits_fold` and the
-                // (m_vars, r_vars) split. `LevelParams::challenge_l1_mass()`
-                // resolves against this field, so a tensor preset gets
-                // sized for `omega^2` here rather than `omega`.
+                // `level_layout_from_params` derives the (m_vars, r_vars)
+                // split. `LevelParams::challenge_l1_mass()` resolves against
+                // this field, so a tensor preset gets sized for `omega^2`
+                // here rather than `omega`.
                 let params = generated_level_params(
                     sis_family,
                     *level,

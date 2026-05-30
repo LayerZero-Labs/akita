@@ -41,7 +41,7 @@ fn run_dense_mode<
     let layout = resolve_layout::<F, Cfg>(nv);
     let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
     tracing::info!("{}", title);
-    print_layout(&layout);
+    print_layout(&layout, 1, Cfg::decomposition().field_bits());
     run_dense_for::<F, D, Cfg>(label, nv, &layout, plan.as_ref());
 }
 
@@ -105,7 +105,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     );
     let plan = Cfg::schedule_plan(schedule_key).expect("schedule plan");
     tracing::info!("{}", title);
-    print_layout(&layout);
+    print_layout(&layout, num_t_vectors, Cfg::decomposition().field_bits());
     run_dense_for::<FF, D, Cfg>(label, nv, &layout, plan.as_ref());
 }
 
@@ -161,7 +161,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         }
         let plan =
             Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
-        print_layout(&layout);
+        print_layout(&layout, 1, Cfg::decomposition().field_bits());
         run_onehot::<FF, D, Cfg>(label, nv, &layout, plan.as_ref());
     } else {
         let schedule_key = AkitaScheduleLookupKey::new(nv, num_polys, num_polys, 1);
@@ -182,7 +182,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                 "[{label}] fixed batched onehot profile requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
             );
         }
-        print_layout(&layout);
+        print_layout(&layout, num_polys, Cfg::decomposition().field_bits());
         run_batched_onehot::<FF, D, Cfg>(label, nv, num_polys, &layout, Some(&plan));
     }
 }

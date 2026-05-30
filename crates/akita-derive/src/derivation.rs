@@ -14,7 +14,7 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
-use akita_types::layout::digit_math::{compute_num_digits_fold_with_claims, optimal_m_r_split};
+use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::{
     decomp_depths, exact_planned_level_execution, level_layout_from_params,
     recursive_level_layout_from_params, AjtaiKeyParams, AkitaScheduleInputs, AkitaSchedulePlan,
@@ -441,13 +441,6 @@ pub fn derived_root_commitment_layout_from_params(
         decomp.field_bits(),
     );
     let (depth_commit, depth_open) = decomp_depths(decomp);
-    let depth_fold = compute_num_digits_fold_with_claims(
-        r_vars,
-        params.challenge_l1_mass(),
-        decomp.log_basis,
-        1,
-        decomp.field_bits(),
-    );
     // Sync `a_key.row_len` with the per-`r` SIS-secure rank from
     // `optimal_m_r_split` so `with_decomp`'s derived widths match the
     // cost the optimizer scored. No rank floor — SIS gives the tight
@@ -460,7 +453,7 @@ pub fn derived_root_commitment_layout_from_params(
         params.a_key.collision_inf(),
         params.ring_dimension,
     );
-    layout_seed.with_decomp(m_vars, r_vars, depth_commit, depth_open, depth_fold, 0)
+    layout_seed.with_decomp(m_vars, r_vars, depth_commit, depth_open, 0)
 }
 
 /// Derive the root commit layout for a root-direct schedule at `num_vars`.

@@ -559,9 +559,10 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
+    let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits);
     let z_pre_count = num_public_rows
         .checked_mul(lp.inner_width())
-        .and_then(|n| n.checked_mul(lp.num_digits_fold))
+        .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
     // One public y-row per packaged public opening row.
     let r_rows = lp.m_row_count_for(num_points, num_public_rows, layout)?;
@@ -766,7 +767,7 @@ pub fn root_direct_schedule(
 
 /// Scale a per-polynomial root layout to a batched root layout.
 ///
-/// The fold-digit count is sized for the tight tensor-aware bound
+/// Fold-digit counts are sized on demand for the tight tensor-aware bound
 /// `challenge_l1_mass · num_claims` — per claim the fold weight has
 /// `L1 ≤ root_lp.challenge_l1_mass()` (which squares `l1_norm` for
 /// `TensorChallengeShape::Tensor` since the per-block challenge is
@@ -877,30 +878,14 @@ fn scale_batched_root_layout_inner(
             );
         }
     }
-    scaled.num_digits_fold = root_lp.num_digits_fold.max(
-        crate::layout::digit_math::compute_num_digits_fold_with_claims(
-            root_lp.r_vars,
-            root_lp.challenge_l1_mass(),
-            root_lp.log_basis,
-            num_claims,
-            field_bits,
-        ),
-    );
+    let _ = root_lp.num_digits_fold(num_claims, field_bits);
     Ok(scaled)
 }
 
 /// Extract the per-polynomial layout from a batched root layout.
 pub fn split_batched_root_params(root_lp: &LevelParams, field_bits: u32) -> LevelParams {
-    let per_poly_fold = crate::layout::digit_math::compute_num_digits_fold_with_claims(
-        root_lp.r_vars,
-        root_lp.challenge_l1_mass(),
-        root_lp.log_basis,
-        1,
-        field_bits,
-    );
-    let mut lp = root_lp.clone();
-    lp.num_digits_fold = per_poly_fold;
-    lp
+    let _ = root_lp.num_digits_fold(1, field_bits);
+    root_lp.clone()
 }
 
 /// Extract a per-polynomial batched root layout from the first fold level in a

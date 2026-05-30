@@ -10,7 +10,12 @@ pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
 }
 
-pub(crate) fn emit_planned_schedule_summary(label: &str, plan: &AkitaSchedulePlan) {
+pub(crate) fn emit_planned_schedule_summary(
+    label: &str,
+    plan: &AkitaSchedulePlan,
+    root_num_claims: usize,
+    field_bits: u32,
+) {
     tracing::info!(
         label,
         levels = plan.num_fold_levels(),
@@ -21,6 +26,11 @@ pub(crate) fn emit_planned_schedule_summary(label: &str, plan: &AkitaSchedulePla
 
     for level in plan.fold_levels() {
         let next_w_len = level.next_inputs.current_w_len;
+        let num_claims = if level.inputs.level == 0 {
+            root_num_claims
+        } else {
+            1
+        };
         tracing::info!(
             label,
             level = level.inputs.level,
@@ -36,7 +46,7 @@ pub(crate) fn emit_planned_schedule_summary(label: &str, plan: &AkitaSchedulePla
             block_len = level.lp.block_len,
             delta_commit = level.lp.num_digits_commit,
             delta_open = level.lp.num_digits_open,
-            delta_fold = level.lp.num_digits_fold,
+            delta_fold = level.lp.num_digits_fold(num_claims, field_bits),
             current_w_len = level.inputs.current_w_len,
             next_w_ring = next_w_len / level.lp.ring_dimension,
             next_w_len,
@@ -54,7 +64,12 @@ pub(crate) fn emit_planned_schedule_summary(label: &str, plan: &AkitaSchedulePla
     );
 }
 
-pub(crate) fn emit_runtime_schedule_summary(label: &str, schedule: &Schedule, field_bits: u32) {
+pub(crate) fn emit_runtime_schedule_summary(
+    label: &str,
+    schedule: &Schedule,
+    root_num_claims: usize,
+    field_bits: u32,
+) {
     let levels = schedule
         .steps
         .iter()
@@ -77,6 +92,7 @@ pub(crate) fn emit_runtime_schedule_summary(label: &str, schedule: &Schedule, fi
         .enumerate()
     {
         let lp = &level.params;
+        let num_claims = if level_idx == 0 { root_num_claims } else { 1 };
         tracing::info!(
             label,
             level = level_idx,
@@ -92,7 +108,7 @@ pub(crate) fn emit_runtime_schedule_summary(label: &str, schedule: &Schedule, fi
             block_len = lp.block_len,
             delta_commit = lp.num_digits_commit,
             delta_open = lp.num_digits_open,
-            delta_fold = lp.num_digits_fold,
+            delta_fold = lp.num_digits_fold(num_claims, field_bits),
             current_w_len = level.current_w_len,
             next_w_ring = level.next_w_len / lp.ring_dimension,
             next_w_len = level.next_w_len,
@@ -552,7 +568,7 @@ fn emit_observed_tail_summary<FF: FieldCore + AkitaSerialize>(
     }
 }
 
-pub(crate) fn print_layout(layout: &LevelParams) {
+pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: u32) {
     tracing::debug!(
         m_vars = layout.m_vars,
         r_vars = layout.r_vars,
@@ -560,7 +576,7 @@ pub(crate) fn print_layout(layout: &LevelParams) {
         block_len = layout.block_len,
         delta_commit = layout.num_digits_commit,
         delta_open = layout.num_digits_open,
-        delta_fold = layout.num_digits_fold,
+        delta_fold = layout.num_digits_fold(num_claims, field_bits),
         log_basis = layout.log_basis,
         "layout"
     );

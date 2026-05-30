@@ -162,7 +162,11 @@ pub fn compute_num_digits_fold_with_claims(
     if beta == 0 {
         return 1;
     }
-    let log_beta = 128 - beta.leading_zeros();
+    // `beta` bounds `|v|`, so `+beta` itself must be representable.
+    // `compute_num_digits` interprets its `log_bound` as a signed bit width
+    // (range `[-2^(L-1), 2^(L-1) - 1]`), so add one bit so the positive end
+    // covers `+beta` instead of just `+beta - 1`.
+    let log_beta = (128 - beta.leading_zeros()).saturating_add(1);
     num_digits_for_bound(log_beta, field_bits, log_basis)
 }
 

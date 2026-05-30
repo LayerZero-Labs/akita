@@ -533,7 +533,6 @@ where
         0,
         root_params.num_digits_commit,
         root_params.num_digits_open,
-        root_params.num_digits_fold,
         num_ring,
     )?;
     let inner = poly.commit_inner_witness(

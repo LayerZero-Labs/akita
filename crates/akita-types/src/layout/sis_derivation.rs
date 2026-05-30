@@ -5,9 +5,7 @@
 //! `decomp_depths`) live here.
 //! Search and SIS-derivation loops moved to `akita_planner::derivation`.
 
-use crate::layout::digit_math::{
-    compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
-};
+use crate::layout::digit_math::{num_digits_for_bound, optimal_m_r_split};
 use crate::layout::params::AjtaiKeyParams;
 use crate::{DecompositionParams, LevelParams};
 use akita_field::AkitaError;
@@ -34,21 +32,7 @@ pub fn level_layout_from_params(
     num_ring: usize,
 ) -> Result<LevelParams, AkitaError> {
     let (depth_commit, depth_open) = decomp_depths(decomp);
-    let depth_fold = compute_num_digits_fold_with_claims(
-        r_vars,
-        lp.challenge_l1_mass(),
-        decomp.log_basis,
-        1,
-        decomp.field_bits(),
-    );
-    lp.with_decomp(
-        m_vars,
-        r_vars,
-        depth_commit,
-        depth_open,
-        depth_fold,
-        num_ring,
-    )
+    lp.with_decomp(m_vars, r_vars, depth_commit, depth_open, num_ring)
 }
 
 /// Derive a recursive `w`-opening layout from the active level params.

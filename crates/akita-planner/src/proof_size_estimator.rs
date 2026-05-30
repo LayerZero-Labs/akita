@@ -1,10 +1,5 @@
 //! Header-stripped byte-size formula for one folded proof level.
 //!
-//! Lives here (rather than in `akita-types`) because the planner DP is
-//! the only consumer that drives schedule selection on these byte
-//! counts. `akita-derive::materialize` carries its own private copy
-//! while the layout/audit story is being unified (TODO: share one
-//! source of truth between the planner and the materializer).
 //!
 //! Both layouts ship `y` (public-claim ring vector) and the stage-2
 //! sumcheck. `Intermediate` additionally ships the `v` D-block rows,
@@ -56,14 +51,20 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 /// serialize over the challenge field, which may be a non-trivial
 /// extension of the base field for small-prime configurations.
 ///
-/// `next_lp` is only consulted on the `Intermediate` arm; terminal
-/// callers may pass any `&LevelParams` (typically `lp`) as a
-/// placeholder.
+/// `next_lp` is required on the `Intermediate` arm (it sizes the
+/// next-level witness commitment shipped on the wire) and unused on
+/// the `Terminal` arm; terminal callers pass `None`.
+///
+/// # Panics
+///
+/// Panics if `layout == Intermediate` and `next_lp` is `None`. This
+/// helper is planner-internal and not on the verifier path, so the
+/// no-panic boundary does not apply.
 pub(crate) fn level_proof_bytes(
     base_field_bits: u32,
     challenge_field_bits: u32,
     lp: &LevelParams,
-    next_lp: &LevelParams,
+    next_lp: Option<&LevelParams>,
     next_w_len: usize,
     num_claims: usize,
     layout: MRowLayout,
@@ -76,6 +77,8 @@ pub(crate) fn level_proof_bytes(
     match layout {
         MRowLayout::Terminal => y_bytes + sumcheck,
         MRowLayout::Intermediate => {
+            let next_lp = next_lp
+                .expect("level_proof_bytes(Intermediate) requires next_lp; caller must pass Some");
             let v_bytes =
                 proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
             let next_commit_bytes = proof_ring_vec_bytes(
@@ -266,14 +269,14 @@ mod tests {
                 2,
                 stage1_config.clone(),
             )
-            .with_decomp(0, 0, 1, 1, 1, 0)
+            .with_decomp(0, 0, 1, 1, 0)
             .unwrap();
             assert_eq!(
                 level_proof_bytes(
                     128,
                     128,
                     &lp,
-                    &next_lp,
+                    Some(&next_lp),
                     next_w_len,
                     1,
                     MRowLayout::Intermediate,
@@ -306,7 +309,7 @@ mod tests {
                 2,
                 stage1_config.clone(),
             )
-            .with_decomp(0, 0, 1, 1, 1, 0)
+            .with_decomp(0, 0, 1, 1, 0)
             .unwrap();
             let rounds = sumcheck_rounds(D, next_w_len);
 
@@ -337,7 +340,7 @@ mod tests {
                     128,
                     128,
                     &lp,
-                    &lp,
+                    None,
                     next_w_len,
                     num_claims,
                     MRowLayout::Terminal,

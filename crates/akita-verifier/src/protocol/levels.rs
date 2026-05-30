@@ -171,7 +171,6 @@ where
         0,
         root_params.num_digits_commit,
         root_params.num_digits_open,
-        root_params.num_digits_fold,
         num_ring,
     )?;
     let witness_rings = field_evals_to_rings::<F, D>(&evals)?;
@@ -782,6 +781,7 @@ where
             batched_lp,
             num_claims,
             incidence_summary.num_public_rows(),
+            F::modulus_bits(),
         )?;
         Some(prepare_terminal_witness_replay::<F, T>(
             transcript,

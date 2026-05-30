@@ -250,8 +250,6 @@ pub struct LevelParams {
     pub num_digits_commit: usize,
     /// Gadget decomposition depth for opening evaluations (δ_open).
     pub num_digits_open: usize,
-    /// Gadget decomposition depth for the folded witness (δ_fold / τ).
-    pub num_digits_fold: usize,
 }
 
 impl LevelParams {
@@ -284,7 +282,6 @@ impl LevelParams {
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
-            num_digits_fold: 0,
         }
     }
 
@@ -328,7 +325,6 @@ impl LevelParams {
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
-            num_digits_fold: 0,
         }
     }
 
@@ -337,6 +333,18 @@ impl LevelParams {
     pub fn challenge_l1_mass(&self) -> usize {
         self.fold_challenge_shape
             .effective_l1_mass(&self.stage1_config)
+    }
+
+    /// Gadget decomposition depth for the folded witness (δ_fold / τ).
+    #[inline]
+    pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> usize {
+        crate::layout::digit_math::compute_num_digits_fold_with_claims(
+            self.r_vars,
+            self.challenge_l1_mass(),
+            self.log_basis,
+            num_claims,
+            field_bits,
+        )
     }
 
     /// Replace the fold-round challenge shape, returning the updated params.
@@ -380,9 +388,9 @@ impl LevelParams {
         push_usize(bytes, self.m_vars);
         push_usize(bytes, self.r_vars);
         append_sparse_challenge_descriptor_bytes(bytes, &self.stage1_config);
+        append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         push_usize(bytes, self.num_digits_commit);
         push_usize(bytes, self.num_digits_open);
-        push_usize(bytes, self.num_digits_fold);
     }
 
     /// Width of outer matrix B (column count of the B-key).
@@ -453,7 +461,8 @@ impl LevelParams {
     /// Fill in the layout-derived fields from explicit decomposition parameters.
     ///
     /// Takes a params-only `LevelParams` (with zeroed layout fields) and
-    /// computes block geometry, matrix column counts, and digit depths.
+    /// computes block geometry, matrix column counts, and commit/open digit
+    /// depths.
     ///
     /// When `num_ring > 0` (recursive levels), `block_len` is set to
     /// `ceil(num_ring / num_blocks)` instead of `2^m_vars`, giving tight
@@ -468,7 +477,6 @@ impl LevelParams {
         r_vars: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
-        num_digits_fold: usize,
         num_ring: usize,
     ) -> Result<Self, AkitaError> {
         let num_blocks = 1usize
@@ -526,7 +534,6 @@ impl LevelParams {
             fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
             num_digits_open,
-            num_digits_fold,
         })
     }
 
@@ -535,7 +542,7 @@ impl LevelParams {
     /// from `other`.
     ///
     /// "Layout-derived fields" are `col_len`, `num_blocks`, `block_len`,
-    /// `m_vars`, `r_vars`, and the three digit counts. **`collision_inf`
+    /// `m_vars`, `r_vars`, and the commit/open digit counts. **`collision_inf`
     /// is not a layout field** — it is the SIS-floor bucket the rank
     /// (`row_len`) was sized against — so it is preserved from `self`,
     /// matching the placement of `row_len` and `sis_family`. Pulling
@@ -578,7 +585,6 @@ impl LevelParams {
             fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
-            num_digits_fold: other.num_digits_fold,
         }
     }
 }
@@ -610,6 +616,16 @@ fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &Sparse
     }
 }
 
+fn append_tensor_challenge_shape_descriptor_bytes(
+    bytes: &mut Vec<u8>,
+    shape: TensorChallengeShape,
+) {
+    match shape {
+        TensorChallengeShape::Flat => bytes.push(0),
+        TensorChallengeShape::Tensor => bytes.push(1),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,7 +646,7 @@ mod tests {
     }
 
     fn sample_layout_lp() -> LevelParams {
-        sample_params_only().with_decomp(4, 2, 2, 2, 3, 0).unwrap()
+        sample_params_only().with_decomp(4, 2, 2, 2, 0).unwrap()
     }
 
     #[test]
@@ -650,7 +666,6 @@ mod tests {
         assert_eq!(lp.challenge_l1_mass(), 3);
         assert_eq!(lp.num_digits_commit, layout_lp.num_digits_commit);
         assert_eq!(lp.num_digits_open, layout_lp.num_digits_open);
-        assert_eq!(lp.num_digits_fold, layout_lp.num_digits_fold);
     }
 
     #[test]

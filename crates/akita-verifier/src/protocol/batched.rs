@@ -720,7 +720,7 @@ mod tests {
     fn root_direct_recommitment_rejects_undersized_setup_stride() {
         let params =
             LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
-                .with_decomp(1, 0, 2, 1, 1, 0)
+                .with_decomp(1, 0, 2, 1, 0)
                 .expect("valid direct layout");
         let setup_seed = AkitaSetupSeed {
             max_num_vars: 6,
@@ -748,7 +748,7 @@ mod tests {
     fn root_direct_recommitment_rejects_wrong_witness_dimension() {
         let mut params =
             LevelParams::params_only(SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
-                .with_decomp(1, 0, 2, 1, 1, 0)
+                .with_decomp(1, 0, 2, 1, 0)
                 .expect("valid direct layout");
         params.b_key = AjtaiKeyParams::new_unchecked(SisModulusFamily::Q32, 1, 128, 0, D);
         let setup_seed = AkitaSetupSeed {

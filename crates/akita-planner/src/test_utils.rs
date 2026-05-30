@@ -132,9 +132,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
 ///
 /// First checks the pre-computed generated tables. When no table entry exists
 /// (or the entry is root-direct), it falls back to the singleton-derived root
-/// split. The returned layout has per-polynomial `B`/`D` widths and
-/// per-polynomial `num_digits_fold`; callers that want the batched (scaled)
-/// root layout scale it themselves via
+/// split. The returned layout has per-polynomial `B`/`D` widths; callers that
+/// want the batched (scaled) root layout scale it themselves via
 /// [`akita_types::scale_batched_root_layout`].
 ///
 /// This helper is only useful for tests, benches, and the `profile` example

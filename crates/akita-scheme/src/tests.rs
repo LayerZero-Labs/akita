@@ -1430,7 +1430,7 @@ fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
     params.a_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, a_bucket, d);
     params.b_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, bd_bucket, d);
     params.d_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, bd_bucket, d);
-    params.with_decomp(m_vars, 0, 12, 12, 12, 0).unwrap()
+    params.with_decomp(m_vars, 0, 12, 12, 0).unwrap()
 }
 
 impl Fp32RingSubfieldRootFoldCfg {

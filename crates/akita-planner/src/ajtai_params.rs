@@ -9,7 +9,7 @@
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
-use akita_types::layout::digit_math::{compute_num_digits_fold_with_claims, num_digits_for_bound};
+use akita_types::layout::digit_math::num_digits_for_bound;
 use akita_types::AjtaiKeyParams;
 
 /// Per-witness decomposition / binding-norm rule.
@@ -20,8 +20,6 @@ pub(crate) enum WitnessType {
     T,
     /// Decomposed `w_i = a · s_i`. Committed via the D matrix.
     W,
-    /// Decomposed z = \sum_i c_i . s_i
-    Z,
 }
 
 impl WitnessType {
@@ -54,13 +52,11 @@ impl WitnessType {
                     * Cfg::ring_subfield_embedding_norm_bound())
             }
             Self::T | Self::W => Ok((1u32 << log_basis) - 1),
-            Self::Z => unreachable!("Z has no SIS binding norm: not committed via A/B/D"),
         }
     }
 
     /// Number of `log_basis`-bit digits per coefficient under this
-    /// witness's decomposition rule. Valid for S / T / W; Z goes through
-    /// [`Self::decomposed_fold_num_digits`].
+    /// witness's decomposition rule.
     ///
     /// The S commit bound is level-dependent: the root commits the
     /// witness against its configured `log_commit_bound`, while a
@@ -83,34 +79,8 @@ impl WitnessType {
             Self::T | Self::W => Cfg::decomposition()
                 .log_open_bound
                 .unwrap_or(Cfg::decomposition().log_commit_bound),
-            Self::Z => {
-                unreachable!("Z digit count is computed via decomposed_fold_num_digits")
-            }
         };
         num_digits_for_bound(bound, field_bits, log_basis)
-    }
-
-    /// Number of `log_basis`-bit digits per Z-row coefficient after folding.
-    /// Only valid for `Z`; S / T / W go through [`Self::decomposed_num_digits`].
-    pub(crate) fn decomposed_fold_num_digits<Cfg: CommitmentConfig>(
-        self,
-        log_basis: u32,
-        r_vars: usize,
-        challenge_l1_mass: usize,
-        num_claims: usize,
-    ) -> usize {
-        match self {
-            Self::S | Self::T | Self::W => {
-                unreachable!("decomposed_fold_num_digits is only valid for Z (z-pre rows)")
-            }
-            Self::Z => compute_num_digits_fold_with_claims(
-                r_vars,
-                challenge_l1_mass,
-                log_basis,
-                num_claims,
-                Cfg::decomposition().field_bits(),
-            ),
-        }
     }
 }
 

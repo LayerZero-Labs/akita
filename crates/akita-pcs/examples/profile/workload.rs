@@ -263,7 +263,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             plan.exact_proof_bytes,
             "runtime proof bytes should match the planned proof size"
         );
-        emit_planned_schedule_summary(label, plan);
+        emit_planned_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
     } else {
         let incidence =
             ClaimIncidenceSummary::same_point(pt.len(), 1).expect("same-point incidence summary");
@@ -273,7 +273,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             schedule.total_bytes,
             "runtime proof bytes should match the runtime schedule proof size"
         );
-        emit_runtime_schedule_summary(label, &schedule, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(label, &schedule, 1, Cfg::decomposition().field_bits());
     }
 
     let t0 = Instant::now();
@@ -590,14 +590,19 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             plan.exact_proof_bytes,
             "runtime proof bytes should match the planned proof size"
         );
-        emit_planned_schedule_summary(label, plan);
+        emit_planned_schedule_summary(label, plan, num_polys, Cfg::decomposition().field_bits());
     } else {
         assert_eq!(
             proof.size(),
             schedule.total_bytes,
             "runtime proof bytes should match the runtime schedule proof size"
         );
-        emit_runtime_schedule_summary(label, &schedule, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(
+            label,
+            &schedule,
+            num_polys,
+            Cfg::decomposition().field_bits(),
+        );
     }
     tracing::info!(
         label,
