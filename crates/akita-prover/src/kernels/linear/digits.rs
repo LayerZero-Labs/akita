@@ -230,10 +230,6 @@ pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
                     .to_string(),
             )
         })?;
-    // Recursive-witness commit shapes are small-row (n_a <= 4) with many
-    // strided blocks. When the full width fits one CRT lift, fan out over
-    // blocks instead of the handful of column tiles the shared driver would
-    // expose, so the dominant `commit_w` matvec keeps Rayon saturated.
     // Recursive-witness commit shapes are small-row (n_a <= 4). Fan out over
     // blocks whenever that exposes at least as much parallelism as the shared
     // driver's column tiles would: the many-block root gets block fanout, and
