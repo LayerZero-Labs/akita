@@ -139,8 +139,16 @@ impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
         let max_abs = max_abs.max(0);
         let vals = from_fn(|k| {
             let prime = params.primes[k];
+            let p = prime.p.to_i64();
+            let half_p = p / 2;
             (-max_abs..=max_abs)
-                .map(|v| prime.from_canonical(W::from_i64(v as i64)))
+                .map(|v| {
+                    let mut r = i64::from(v).rem_euclid(p);
+                    if r >= half_p {
+                        r -= p;
+                    }
+                    prime.from_canonical(W::from_i64(r))
+                })
                 .collect()
         });
         Self {

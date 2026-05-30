@@ -2,8 +2,9 @@
 
 use akita_algebra::ntt::prime::PrimeWidth;
 use akita_algebra::ntt::tables::{
-    q128_primes, q64_primes, MAX_CRT_RING_DEGREE, Q128_MODULUS, Q128_NUM_PRIMES, Q32_MODULUS,
-    Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, RING_DEGREE,
+    q128_primes, q32_primes, q64_primes, MAX_CRT_RING_DEGREE, Q128_MODULUS, Q128_NUM_PRIMES,
+    Q16_MODULUS, Q16_NUM_PRIMES, Q16_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q64_MODULUS,
+    Q64_NUM_PRIMES,
 };
 use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 #[allow(unused_imports)]
@@ -17,7 +18,8 @@ use akita_types::RingMatrixView;
 #[derive(Clone)]
 #[allow(missing_docs, clippy::large_enum_variant)]
 pub enum ProtocolCrtNttParams<const D: usize> {
-    Q32(CrtNttParamSet<i16, Q32_NUM_PRIMES, D>),
+    Q16(CrtNttParamSet<i16, Q16_NUM_PRIMES, D>),
+    Q32(CrtNttParamSet<i32, Q32_NUM_PRIMES, D>),
     Q64(CrtNttParamSet<i32, Q64_NUM_PRIMES, D>),
     Q128(CrtNttParamSet<i32, Q128_NUM_PRIMES, D>),
 }
@@ -25,10 +27,11 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 /// Select a CRT+NTT parameter set from field modulus and ring degree.
 ///
 /// Dispatch policy:
-/// - `q <= 2^32-99` and `D <= 64`: Q32 (`i16`)
-/// - `q <= 2^64-59` and `D <= 1024`: Q64 (`i32`, conservative K=5)
+/// - `q <= u16::MAX` and `D <= 256`: Q16 (`i16`, K=3)
+/// - `q <= 2^32-99` and `D <= 256`: Q32 (`i32`, K=2)
+/// - `q <= 2^64-59` and `D <= 256`: Q64 (`i32`, K=3)
 /// - `q ∈ { 2^128-275, 2^128-159, 2^128-2355, 2^128-2^32+22537 }` and
-///   `D <= 1024`: Q128 (`i32`, K=5)
+///   `D <= 256`: Q128 (`i32`, K=5)
 /// - otherwise: explicit setup error
 ///
 /// # Errors
@@ -37,9 +40,9 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 /// matches the field modulus.
 pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
-    if !D.is_power_of_two() {
+    if !matches!(D, 32 | 64 | 128 | 256) {
         return Err(AkitaError::InvalidSetup(format!(
-            "CRT+NTT requires power-of-two ring degree, got D={D}"
+            "CRT+NTT supports ring degree in {{32, 64, 128, 256}}, got D={D}"
         )));
     }
     if D > MAX_CRT_RING_DEGREE {
@@ -56,6 +59,18 @@ pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     let a7f7_q128_modulus =
         u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenneField>::MODULUS_OFFSET - 1);
 
+    if modulus <= Q16_MODULUS as u128 {
+        return Ok(ProtocolCrtNttParams::Q16(CrtNttParamSet::new(Q16_PRIMES)));
+    }
+
+    if modulus <= Q32_MODULUS as u128 {
+        return Ok(ProtocolCrtNttParams::Q32(CrtNttParamSet::new(q32_primes())));
+    }
+
+    if modulus <= Q64_MODULUS as u128 {
+        return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(q64_primes())));
+    }
+
     if modulus == Q128_MODULUS
         || modulus == split_only_q128_modulus
         || modulus == ntt_q128_modulus
@@ -66,19 +81,8 @@ pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
         )));
     }
 
-    if modulus <= Q32_MODULUS as u128 {
-        if D <= RING_DEGREE {
-            return Ok(ProtocolCrtNttParams::Q32(CrtNttParamSet::new(Q32_PRIMES)));
-        }
-        return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(q64_primes())));
-    }
-
-    if modulus <= Q64_MODULUS as u128 {
-        return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(q64_primes())));
-    }
-
     Err(AkitaError::InvalidSetup(format!(
-        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}, {ntt_q128_modulus}, {a7f7_q128_modulus}}}"
+        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q16/Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}, {ntt_q128_modulus}, {a7f7_q128_modulus}}}"
     )))
 }
 
@@ -95,11 +99,17 @@ fn detect_field_modulus<F: CanonicalField>() -> u128 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(missing_docs, clippy::large_enum_variant)]
 pub enum NttSlotCache<const D: usize> {
+    /// 16-bit-or-smaller CRT primes.
+    Q16 {
+        neg: Vec<CyclotomicCrtNtt<i16, Q16_NUM_PRIMES, D>>,
+        cyc: Vec<CyclotomicCrtNtt<i16, Q16_NUM_PRIMES, D>>,
+        params: CrtNttParamSet<i16, Q16_NUM_PRIMES, D>,
+    },
     /// 32-bit CRT primes.
     Q32 {
-        neg: Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>,
-        cyc: Vec<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>,
-        params: CrtNttParamSet<i16, Q32_NUM_PRIMES, D>,
+        neg: Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>,
+        cyc: Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>,
+        params: CrtNttParamSet<i32, Q32_NUM_PRIMES, D>,
     },
     /// 64-bit CRT primes.
     Q64 {
@@ -159,6 +169,14 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
     params: ProtocolCrtNttParams<D>,
 ) -> NttSlotCache<D> {
     match params {
+        ProtocolCrtNttParams::Q16(p) => {
+            let (neg, cyc) = cfg_join!(|| convert_flat(mat, &p), || convert_flat_cyclic(mat, &p));
+            NttSlotCache::Q16 {
+                neg,
+                cyc,
+                params: p,
+            }
+        }
         ProtocolCrtNttParams::Q32(p) => {
             let (neg, cyc) = cfg_join!(|| convert_flat(mat, &p), || convert_flat_cyclic(mat, &p));
             NttSlotCache::Q32 {
@@ -190,6 +208,7 @@ impl<const D: usize> NttSlotCache<D> {
     /// Total number of NTT elements stored in this cache.
     pub fn total_elements(&self) -> usize {
         match self {
+            NttSlotCache::Q16 { neg, .. } => neg.len(),
             NttSlotCache::Q32 { neg, .. } => neg.len(),
             NttSlotCache::Q64 { neg, .. } => neg.len(),
             NttSlotCache::Q128 { neg, .. } => neg.len(),
@@ -202,9 +221,13 @@ impl<const D: usize> NttSlotCache<D> {
     /// plain setup vector it is built from.
     pub fn cache_bytes(&self) -> usize {
         match self {
+            NttSlotCache::Q16 { neg, cyc, .. } => {
+                (neg.len() + cyc.len())
+                    * core::mem::size_of::<CyclotomicCrtNtt<i16, Q16_NUM_PRIMES, D>>()
+            }
             NttSlotCache::Q32 { neg, cyc, .. } => {
                 (neg.len() + cyc.len())
-                    * core::mem::size_of::<CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, D>>()
+                    * core::mem::size_of::<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>()
             }
             NttSlotCache::Q64 { neg, cyc, .. } => {
                 (neg.len() + cyc.len())
@@ -223,7 +246,29 @@ mod tests {
     use super::*;
     use akita_field::{
         Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
+        Prime16Offset99, Prime32Offset99, Prime64Offset59,
     };
+
+    fn assert_selects_q16_params<F: CanonicalField, const D: usize>() {
+        assert!(matches!(
+            select_crt_ntt_params::<F, D>(),
+            Ok(ProtocolCrtNttParams::Q16(_))
+        ));
+    }
+
+    fn assert_selects_q32_params<F: CanonicalField, const D: usize>() {
+        assert!(matches!(
+            select_crt_ntt_params::<F, D>(),
+            Ok(ProtocolCrtNttParams::Q32(_))
+        ));
+    }
+
+    fn assert_selects_q64_params<F: CanonicalField, const D: usize>() {
+        assert!(matches!(
+            select_crt_ntt_params::<F, D>(),
+            Ok(ProtocolCrtNttParams::Q64(_))
+        ));
+    }
 
     fn assert_selects_q128_params<F: CanonicalField, const D: usize>() {
         assert!(matches!(
@@ -233,10 +278,43 @@ mod tests {
     }
 
     #[test]
+    fn selects_q16_params_across_supported_ring_dims() {
+        assert_selects_q16_params::<Prime16Offset99, 32>();
+        assert_selects_q16_params::<Prime16Offset99, 64>();
+        assert_selects_q16_params::<Prime16Offset99, 128>();
+        assert_selects_q16_params::<Prime16Offset99, 256>();
+    }
+
+    #[test]
+    fn selects_q32_params_across_supported_ring_dims() {
+        assert_selects_q32_params::<Prime32Offset99, 32>();
+        assert_selects_q32_params::<Prime32Offset99, 64>();
+        assert_selects_q32_params::<Prime32Offset99, 128>();
+        assert_selects_q32_params::<Prime32Offset99, 256>();
+    }
+
+    #[test]
+    fn selects_q64_params_across_supported_ring_dims() {
+        assert_selects_q64_params::<Prime64Offset59, 32>();
+        assert_selects_q64_params::<Prime64Offset59, 64>();
+        assert_selects_q64_params::<Prime64Offset59, 128>();
+        assert_selects_q64_params::<Prime64Offset59, 256>();
+    }
+
+    #[test]
+    fn rejects_ring_degrees_above_256() {
+        assert!(matches!(
+            select_crt_ntt_params::<Prime16Offset99, 512>(),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+
+    #[test]
     fn selects_q128_params_for_prime275_across_small_protocol_ring_dims() {
         assert_selects_q128_params::<Prime128Offset275, 32>();
         assert_selects_q128_params::<Prime128Offset275, 64>();
         assert_selects_q128_params::<Prime128Offset275, 128>();
+        assert_selects_q128_params::<Prime128Offset275, 256>();
     }
 
     #[test]

@@ -613,6 +613,40 @@ fn fused_split_eq_quotients_with_digit_bound<
     let b_width = t_hat.len();
     let a_width = z_pre.len();
     match slot {
+        NttSlotCache::Q16 {
+            neg,
+            cyc,
+            params: p,
+        } => {
+            let neg_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &neg[i * a_width..(i + 1) * a_width])
+                .collect();
+            let d_rows: Vec<&[_]> = (0..n_d)
+                .map(|i| &cyc[i * d_width..(i + 1) * d_width])
+                .collect();
+            let b_rows: Vec<&[_]> = (0..n_b)
+                .map(|i| &cyc[i * b_width..(i + 1) * b_width])
+                .collect();
+            let a_rows: Vec<&[_]> = (0..n_a)
+                .map(|i| &cyc[i * a_width..(i + 1) * a_width])
+                .collect();
+            fused_split_eq_quotients_with_params(
+                &d_rows,
+                &b_rows,
+                &a_rows,
+                &neg_rows,
+                n_d,
+                n_b,
+                n_a,
+                w_hat,
+                t_hat,
+                z_pre,
+                z_pre_max_abs,
+                w_digit_abs_bound,
+                t_digit_abs_bound,
+                p,
+            )
+        }
         NttSlotCache::Q32 {
             neg,
             cyc,

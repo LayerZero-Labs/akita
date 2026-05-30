@@ -1,9 +1,20 @@
 use super::*;
+use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
+use crate::validation::MAX_I8_LOG_BASIS;
+use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q16_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES};
 
-#[cfg(all(test, not(feature = "zk")))]
-pub(super) const BALANCED_DIGIT_RHS_MAX_ABS: u64 = 32;
-#[cfg(all(test, not(feature = "zk")))]
+pub(super) const BALANCED_DIGIT_RHS_MAX_ABS: u64 = 1 << (MAX_I8_LOG_BASIS - 1);
 pub(super) const I8_RHS_MAX_ABS: u64 = 128;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CrtI8CapacityProfile {
+    pub profile_id: &'static str,
+    pub num_primes: usize,
+    pub limb_bits: u32,
+    pub max_i8_log_basis: u32,
+    pub balanced_digit_safe_width: usize,
+    pub raw_i8_safe_width: usize,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SmallNat {
@@ -132,6 +143,78 @@ pub(super) fn max_safe_crt_accumulation_width<
     Some(lo)
 }
 
+fn require_safe_width<F, W, const K: usize, const D: usize>(
+    params: &CrtNttParamSet<W, K, D>,
+    rhs_abs_bound: u64,
+    profile_id: &str,
+    role: &str,
+) -> Result<usize, AkitaError>
+where
+    F: CanonicalField,
+    W: PrimeWidth,
+{
+    max_safe_crt_accumulation_width::<F, W, K, D>(params, rhs_abs_bound).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "{profile_id} CRT capacity cannot fit a single {role} term for D={D} with rhs_abs_bound={rhs_abs_bound}"
+        ))
+    })
+}
+
+fn capacity_profile_from_params<F, W, const K: usize, const D: usize>(
+    params: &CrtNttParamSet<W, K, D>,
+    profile_id: &'static str,
+    limb_bits: u32,
+) -> Result<CrtI8CapacityProfile, AkitaError>
+where
+    F: CanonicalField,
+    W: PrimeWidth,
+{
+    Ok(CrtI8CapacityProfile {
+        profile_id,
+        num_primes: K,
+        limb_bits,
+        max_i8_log_basis: MAX_I8_LOG_BASIS,
+        balanced_digit_safe_width: require_safe_width::<F, W, K, D>(
+            params,
+            BALANCED_DIGIT_RHS_MAX_ABS,
+            profile_id,
+            "balanced i8 digit",
+        )?,
+        raw_i8_safe_width: require_safe_width::<F, W, K, D>(
+            params,
+            I8_RHS_MAX_ABS,
+            profile_id,
+            "raw signed-i8",
+        )?,
+    })
+}
+
+/// Validate and describe the universal i8 CRT capacity for the protocol
+/// profile selected by `F,D`.
+///
+/// The setup artifact stores only an envelope, not the schedule levels that
+/// originally produced it. This boundary therefore checks the worst supported
+/// balanced digit (`log_basis = 6`) and raw signed-i8 roles for the selected
+/// profile. Generated-table tests separately prove committed schedules stay
+/// within these universal bounds.
+pub(crate) fn selected_crt_i8_capacity_profile<F: CanonicalField, const D: usize>(
+) -> Result<CrtI8CapacityProfile, AkitaError> {
+    match select_crt_ntt_params::<F, D>()? {
+        ProtocolCrtNttParams::Q16(params) => {
+            capacity_profile_from_params::<F, _, Q16_NUM_PRIMES, D>(&params, "Q16/3xi16", 16)
+        }
+        ProtocolCrtNttParams::Q32(params) => {
+            capacity_profile_from_params::<F, _, Q32_NUM_PRIMES, D>(&params, "Q32/2xi32", 32)
+        }
+        ProtocolCrtNttParams::Q64(params) => {
+            capacity_profile_from_params::<F, _, Q64_NUM_PRIMES, D>(&params, "Q64/3xi32", 32)
+        }
+        ProtocolCrtNttParams::Q128(params) => {
+            capacity_profile_from_params::<F, _, Q128_NUM_PRIMES, D>(&params, "Q128/5xi32", 32)
+        }
+    }
+}
+
 /// Maximum absolute value of a setup (LHS matrix) coefficient once lifted to a
 /// signed integer for CRT accumulation.
 ///
@@ -185,8 +268,11 @@ pub(super) fn safe_crt_chunk_width<
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
-    use akita_algebra::ntt::tables::{q128_primes, Q128_NUM_PRIMES, Q32_PRIMES};
-    use akita_field::{Fp64, Prime128Offset275};
+    use akita_algebra::ntt::tables::{
+        q128_primes, q32_primes, q64_primes, Q128_NUM_PRIMES, Q16_NUM_PRIMES, Q16_PRIMES,
+        Q32_NUM_PRIMES, Q64_NUM_PRIMES,
+    };
+    use akita_field::{Fp64, Prime128Offset275, Prime16Offset99, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn q128_digit_capacity_matches_expected_scale() {
@@ -235,13 +321,77 @@ mod tests {
     #[test]
     fn q32_digit_capacity_is_not_artificially_small() {
         const D: usize = 64;
-        let params = CrtNttParamSet::<i16, 6, D>::new(Q32_PRIMES);
-        let width = max_safe_crt_accumulation_width::<Fp64<4294967197>, i16, 6, D>(
+        let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(q32_primes());
+        let width = max_safe_crt_accumulation_width::<Fp64<4294967197>, i32, Q32_NUM_PRIMES, D>(
             &params,
             BALANCED_DIGIT_RHS_MAX_ABS,
         )
         .expect("Q32 i8 path should have headroom");
 
-        assert_eq!(width, 490_414_918_676);
+        assert_eq!(width, 131_062);
+    }
+
+    #[test]
+    fn reduced_profiles_fit_single_i8_terms_at_direct_ring_dims() {
+        for profile in [
+            selected_crt_i8_capacity_profile::<Prime16Offset99, 128>().unwrap(),
+            selected_crt_i8_capacity_profile::<Prime16Offset99, 256>().unwrap(),
+            selected_crt_i8_capacity_profile::<Prime32Offset99, 128>().unwrap(),
+            selected_crt_i8_capacity_profile::<Prime32Offset99, 256>().unwrap(),
+            selected_crt_i8_capacity_profile::<Prime64Offset59, 128>().unwrap(),
+            selected_crt_i8_capacity_profile::<Prime64Offset59, 256>().unwrap(),
+        ] {
+            assert!(profile.balanced_digit_safe_width > 0, "{profile:?}");
+            assert!(profile.raw_i8_safe_width > 0, "{profile:?}");
+        }
+    }
+
+    #[test]
+    fn selected_capacity_profile_matches_expected_dispatch_metadata() {
+        let q16 = selected_crt_i8_capacity_profile::<Prime16Offset99, 64>().unwrap();
+        assert_eq!(q16.profile_id, "Q16/3xi16");
+        assert_eq!(q16.num_primes, Q16_NUM_PRIMES);
+        assert_eq!(q16.limb_bits, 16);
+
+        let q32 = selected_crt_i8_capacity_profile::<Prime32Offset99, 64>().unwrap();
+        assert_eq!(q32.profile_id, "Q32/2xi32");
+        assert_eq!(q32.num_primes, Q32_NUM_PRIMES);
+        assert_eq!(q32.limb_bits, 32);
+
+        let q64 = selected_crt_i8_capacity_profile::<Prime64Offset59, 64>().unwrap();
+        assert_eq!(q64.profile_id, "Q64/3xi32");
+        assert_eq!(q64.num_primes, Q64_NUM_PRIMES);
+        assert_eq!(q64.limb_bits, 32);
+
+        let q128 = selected_crt_i8_capacity_profile::<Prime128Offset275, 64>().unwrap();
+        assert_eq!(q128.profile_id, "Q128/5xi32");
+        assert_eq!(q128.num_primes, Q128_NUM_PRIMES);
+        assert_eq!(q128.limb_bits, 32);
+    }
+
+    #[test]
+    fn profile_safe_widths_match_manual_params() {
+        const D: usize = 256;
+        let q16_params = CrtNttParamSet::<i16, Q16_NUM_PRIMES, D>::new(Q16_PRIMES);
+        let q16 = selected_crt_i8_capacity_profile::<Prime16Offset99, D>().unwrap();
+        assert_eq!(
+            q16.raw_i8_safe_width,
+            max_safe_crt_accumulation_width::<Prime16Offset99, i16, Q16_NUM_PRIMES, D>(
+                &q16_params,
+                I8_RHS_MAX_ABS
+            )
+            .unwrap()
+        );
+
+        let q64_params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(q64_primes());
+        let q64 = selected_crt_i8_capacity_profile::<Prime64Offset59, D>().unwrap();
+        assert_eq!(
+            q64.balanced_digit_safe_width,
+            max_safe_crt_accumulation_width::<Prime64Offset59, i32, Q64_NUM_PRIMES, D>(
+                &q64_params,
+                BALANCED_DIGIT_RHS_MAX_ABS
+            )
+            .unwrap()
+        );
     }
 }

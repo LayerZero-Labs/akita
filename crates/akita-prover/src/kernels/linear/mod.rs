@@ -33,6 +33,7 @@ mod tests;
 
 use block_parallel::*;
 use capacity::*;
+pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use chunked_matvec::*;
 use common::*;
 #[cfg(all(test, not(feature = "zk")))]
