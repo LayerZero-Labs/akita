@@ -231,15 +231,19 @@ larger ring degree.
     `2048 | (p - 1)`.
     `D = 512` and `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
     `dispatch_ring_dim` / `dispatch_ring_dim_result` arms, the fp16/fp32
-    `D512Full` / `D512OneHot` presets, and the generated family/table lists; no
-    production path may instantiate them.
-    Dead type aliases that are cheap to leave defined may remain, but nothing may
-    route a profile, schedule, or commitment through `D > 256`.
+    `D512Full` / `D512OneHot` public config presets, and the generated
+    family/table lists; no production path may instantiate them.
+    The `D512*` config preset names are removed rather than left as dead public
+    aliases, so downstream attempts to use them fail at compile time instead of
+    routing to an unsupported setup.
 
 ### Non-Goals
 
 1. Re-litigating range chunking design (merged PR #134).
-2. Changing proof format, Fiat-Shamir, or public APIs.
+2. Changing proof format, Fiat-Shamir, verifier behavior, or the public
+   commitment/proof API.
+   Removing the unused fp16/fp32 `D512*` config presets is intentionally in
+   scope as part of the full `D <= 256` cutover.
 3. Q128 prime-count reduction.
 4. Runtime selection of legacy prime counts.
 5. fp16 two-i16 or single-i32 default profiles (benchmark-only spikes may be
@@ -369,8 +373,10 @@ Criteria sections above, with #134 providing the chunking implementation.
       Q64").
 - [ ] `D = 512` / `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
       `dispatch_ring_dim` / `dispatch_ring_dim_result` macro arms, the fp16/fp32
-      `D512Full` / `D512OneHot` presets, `generated_families`, and any generated
-      table/drift-guard list, with `cargo test -q` and the drift guard green.
+      `D512Full` / `D512OneHot` public config presets, `generated_families`, and
+      any generated table/drift-guard list, with `cargo test -q` and the drift
+      guard green.
+      The `D512*` preset names are not kept as deprecated aliases.
 - [ ] `ProtocolCrtNttParams` and `NttSlotCache` include a `Q16` variant; all
       match arms updated in `crt_ntt.rs`, `ntt_matvec.rs`, `single_cyclic.rs`,
       `fused_quotients.rs`, test helpers, and benches (full cutover, no
