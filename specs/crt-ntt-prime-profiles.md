@@ -17,13 +17,20 @@ That inflates setup NTT caches and matvec work even though merged PR #134 alread
 makes accumulation exact via capacity-bounded chunking and field-domain partial
 sums.
 
-This spec cuts over internal CRT parameter tables and dispatch: add a first-class
-three-prime Q16 i16 profile for fp16, reduce Q32 to four i16 primes, reduce Q64
-to three i32 primes, and leave Q128 at five i32 primes.
-It also requires a backend-prepared layout experiment for the affected
-CRT/NTT-cache paths.
+This spec has two deliverables.
+The primary deliverable cuts over internal CRT parameter tables and dispatch: add
+a first-class three-prime Q16 i16 profile for fp16, reduce Q32 to four i16 primes,
+reduce Q64 to three i32 primes, and leave Q128 at five i32 primes.
+The secondary deliverable is a backend-prepared layout experiment for the affected
+CRT/NTT-cache paths (Invariant 11, acceptance criteria, Execution slice 7): the
+implementation must run at least one alternative layout and keep it only if it
+wins the measured thresholds, otherwise record why the current CPU reference is
+retained.
+The layout experiment is mandatory to run but bounded; if it grows beyond a
+backend-private storage swap it should be split into its own follow-up PR rather
+than expanding this one.
 Proof bytes, transcripts, schedules, serialization, and verifier behavior stay
-unchanged.
+unchanged for both deliverables.
 
 Range chunking and the `safe_crt_chunk_width` / `max_safe_crt_accumulation_width`
 machinery are **not** re-specified here; they are implemented on `main` in
@@ -70,6 +77,12 @@ Primary surfaces:
 | Q64 | 5 × i32 | 3 × i32 | fp16 with `D > 64`; fp64; small fields with `D > 64` and `q <= 2^64-59` |
 | Q128 | 5 × i32 | unchanged | fp128 and listed offset moduli, `D <= 1024` |
 
+"Q16" names the dispatch class for field moduli that fit in 16 bits, gated by
+`Q16_MODULUS = u16::MAX = 65535`.
+It is not the fp16 field modulus itself (the current `Prime16Offset99` preset is
+`q = 2^16 - 99 = 65437`); any prime field with `q <= 65535` and `D <= 64` selects
+this profile.
+
 **Q16 default primes** (all prime, `< 2^14`, `128 | (p - 1)`):
 
 ```text
@@ -93,6 +106,18 @@ is too small for current fp32 dense one-shot widths):
 Product ≈ `2^55.60`.
 The implementation must also benchmark a homogeneous `2 × i32` Q32 candidate
 against the default `4 × i16` profile.
+
+**Q32 `2 × i32` candidate primes** (the two largest `D1024_RAW_PRIMES`, so the
+candidate reuses existing i32 NTT twiddles and Garner data):
+
+```text
+1073707009, 1073698817
+```
+
+Product ≈ `2^60.00`, which exceeds the `4 × i16` product (`2^55.60`), so the
+candidate trivially satisfies the same capacity table; the open question is
+whether i32 Montgomery arithmetic and the doubled per-coefficient byte footprint
+lose despite needing only two primes.
 Keep `2 × i32` only if it satisfies the same capacity table and wins under the
 layout/performance evaluation rules.
 
@@ -137,11 +162,23 @@ Fields with `q <= Q64_MODULUS` and `D > 64` use Q64.
 5. If an i8/digit operation on a supported `(field, D, log_basis, width)` tuple
    cannot satisfy invariant (3) even at chunk width 1, prepared setup validation
    must return `AkitaError::InvalidSetup` before hot kernels run.
+   The validating boundary is `CpuBackend::prepare_expanded` (the
+   `ComputeBackendSetup::prepare_expanded` impl in
+   `crates/akita-prover/src/compute.rs`), which already selects the profile via
+   `build_ntt_slot` and runs before any matvec/quotient kernel.
+   It must walk every i8/digit role implied by the prepared schedule and reject
+   the setup there, so no hot kernel reaches the
+   `single i8 CRT term must fit supported parameters` `.expect` in
+   `kernels/linear/single_cyclic.rs` (or its `i8_matvec.rs` sibling).
    The fused centered-`z_pre` path may keep the exact field-native fallback from
    PR #134 when a single centered term cannot fit the CRT lift range; that
    fallback is not a legacy-prime fallback and must stay covered by tests.
-6. Q128 prime count must not decrease (four 30-bit i32 primes are insufficient
-   for one-column q128 D32 reconstruction).
+6. Q128 prime count must not decrease.
+   Four 30-bit i32 primes give `P_crt ≈ 2^120`, so the signed CRT range is only
+   `≈ ±2^119`, but a single centered q128 coefficient already has magnitude up to
+   `floor(q/2) ≈ 2^127`.
+   One coefficient does not fit four primes (`2^127 > 2^119`), independent of
+   chunking, so q128 D32 reconstruction needs all five primes.
 7. Setup serialization stays canonical: backend-prepared caches rebuild
    deterministically from the same field matrix and setup seed.
    Backend-private physical layouts must not enter setup bytes, transcript
@@ -287,8 +324,9 @@ Criteria sections above, with #134 providing the chunking implementation.
       match arms updated in `crt_ntt.rs`, `ntt_matvec.rs`, `single_cyclic.rs`,
       `fused_quotients.rs`, test helpers, and benches (full cutover, no
       `panic!` on fp16).
-- [ ] Q32 implementation compares the default `4 × i16` profile against a
-      homogeneous `2 × i32` candidate.
+- [ ] Q32 implementation compares the default `4 × i16` profile against the
+      homogeneous `2 × i32` candidate `[1073707009, 1073698817]`
+      (the two largest `D1024_RAW_PRIMES`, product ≈ `2^60.00`).
       The comparison must include correctness, generated schedule capacity, setup
       cache bytes, and required profile timings.
       If `2 × i32` wins under the layout/performance rule, keep it and update
