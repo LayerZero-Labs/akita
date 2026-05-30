@@ -2,7 +2,7 @@ use super::*;
 #[cfg(not(feature = "zk"))]
 use akita_algebra::ntt::{
     prime::PrimeWidth,
-    tables::{q32_primes, q64_primes, Q16_PRIMES},
+    tables::{Q16_PRIMES, Q32_PRIMES, Q64_PRIMES},
 };
 #[cfg(not(feature = "zk"))]
 use akita_field::{CanonicalField, One};
@@ -517,13 +517,13 @@ fn crt_product_for_small_field_cfg<Cfg: CommitmentConfig>() -> (&'static str, u1
         ),
         SisModulusFamily::Q32 => (
             "Q32/2xi32",
-            q32_primes()
+            Q32_PRIMES
                 .iter()
                 .map(|prime| prime.p.to_i64() as u128)
                 .product(),
         ),
         SisModulusFamily::Q64 => {
-            let product = q64_primes()
+            let product = Q64_PRIMES
                 .iter()
                 .map(|prime| prime.p.to_i64() as u128)
                 .product();

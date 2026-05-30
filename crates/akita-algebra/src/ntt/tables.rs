@@ -72,35 +72,55 @@ pub const Q128_MODULUS: u128 = u128::MAX - 274;
 pub const I32_RAW_PRIMES: [i32; Q128_NUM_PRIMES] =
     [1073707009, 1073698817, 1073692673, 1073682433, 1073668097];
 
-/// Raw 30-bit primes for Q32 measured `2xi32` profile.
-pub const Q32_RAW_PRIMES: [i32; Q32_NUM_PRIMES] = [1073707009, 1073698817];
-
-/// Raw 30-bit primes for Q64 reduced profile.
-pub const Q64_RAW_PRIMES: [i32; Q64_NUM_PRIMES] = [1073707009, 1073698817, 1073692673];
-
 /// CRT primes and per-prime Montgomery constants for Q32 measured `2xi32` profile.
-pub fn q32_primes() -> [NttPrime<i32>; Q32_NUM_PRIMES] {
-    std::array::from_fn(|k| NttPrime::compute(Q32_RAW_PRIMES[k]))
-}
+pub const Q32_PRIMES: [NttPrime<i32>; Q32_NUM_PRIMES] = [
+    NttPrime {
+        p: 1073707009,
+        pinv: 138446849,
+        mont: 139260,
+        montsq: 66621438,
+    },
+    NttPrime {
+        p: 1073698817,
+        pinv: 775989249,
+        mont: 172028,
+        montsq: -469934092,
+    },
+];
 
 /// Garner CRT reconstruction constants for Q32 measured `2xi32` profile.
 pub fn q32_garner() -> GarnerData<i32, Q32_NUM_PRIMES> {
-    let primes = q32_primes();
-    GarnerData::compute(&primes)
+    GarnerData::compute(&Q32_PRIMES)
 }
 
 /// Raw 30-bit primes for Q128.
 pub const Q128_RAW_PRIMES: [i32; Q128_NUM_PRIMES] = I32_RAW_PRIMES;
 
 /// CRT primes and per-prime Montgomery constants for `logq = 64` reduced profile.
-pub fn q64_primes() -> [NttPrime<i32>; Q64_NUM_PRIMES] {
-    std::array::from_fn(|k| NttPrime::compute(Q64_RAW_PRIMES[k]))
-}
+pub const Q64_PRIMES: [NttPrime<i32>; Q64_NUM_PRIMES] = [
+    NttPrime {
+        p: 1073707009,
+        pinv: 138446849,
+        mont: 139260,
+        montsq: 66621438,
+    },
+    NttPrime {
+        p: 1073698817,
+        pinv: 775989249,
+        mont: 172028,
+        montsq: -469934092,
+    },
+    NttPrime {
+        p: 1073692673,
+        pinv: 1342226433,
+        mont: 196604,
+        montsq: 196588,
+    },
+];
 
 /// Garner CRT reconstruction constants for Q64 reduced profile.
 pub fn q64_garner() -> GarnerData<i32, Q64_NUM_PRIMES> {
-    let primes = q64_primes();
-    GarnerData::compute(&primes)
+    GarnerData::compute(&Q64_PRIMES)
 }
 
 /// CRT primes and per-prime Montgomery constants for `logq = 128`.
@@ -185,7 +205,7 @@ mod tests {
 
     #[test]
     fn verify_q32_prime_derived_constants() {
-        assert_i32_prime_profile(&q32_primes());
+        assert_i32_prime_profile(&Q32_PRIMES);
     }
 
     #[test]
@@ -195,7 +215,7 @@ mod tests {
 
     #[test]
     fn verify_q64_primes_are_valid() {
-        assert_i32_prime_profile(&q64_primes());
+        assert_i32_prime_profile(&Q64_PRIMES);
     }
 
     #[test]
@@ -214,11 +234,10 @@ mod tests {
             }
         }
 
-        let q32_profile = q32_primes();
         let garner = q32_garner();
-        for (i, &prime_i) in q32_profile.iter().enumerate().skip(1) {
+        for (i, &prime_i) in Q32_PRIMES.iter().enumerate().skip(1) {
             let pi = prime_i.p as i64;
-            for (j, &prime_j) in q32_profile[..i].iter().enumerate() {
+            for (j, &prime_j) in Q32_PRIMES[..i].iter().enumerate() {
                 let pj = prime_j.p as i64;
                 let g = garner.gamma[i][j] as i64;
                 assert_eq!(

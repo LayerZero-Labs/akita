@@ -269,8 +269,8 @@ pub(super) fn safe_crt_chunk_width<
 mod tests {
     use super::*;
     use akita_algebra::ntt::tables::{
-        q128_primes, q32_primes, q64_primes, Q128_NUM_PRIMES, Q16_NUM_PRIMES, Q16_PRIMES,
-        Q32_NUM_PRIMES, Q64_NUM_PRIMES,
+        q128_primes, Q128_NUM_PRIMES, Q16_NUM_PRIMES, Q16_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES,
+        Q64_NUM_PRIMES, Q64_PRIMES,
     };
     use akita_field::{Fp64, Prime128Offset275, Prime16Offset99, Prime32Offset99, Prime64Offset59};
 
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn q32_digit_capacity_is_not_artificially_small() {
         const D: usize = 64;
-        let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(q32_primes());
+        let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
         let width = max_safe_crt_accumulation_width::<Fp64<4294967197>, i32, Q32_NUM_PRIMES, D>(
             &params,
             BALANCED_DIGIT_RHS_MAX_ABS,
@@ -383,7 +383,7 @@ mod tests {
             .unwrap()
         );
 
-        let q64_params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(q64_primes());
+        let q64_params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
         let q64 = selected_crt_i8_capacity_profile::<Prime64Offset59, D>().unwrap();
         assert_eq!(
             q64.balanced_digit_safe_width,

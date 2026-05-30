@@ -2,9 +2,8 @@
 
 use akita_algebra::ntt::prime::PrimeWidth;
 use akita_algebra::ntt::tables::{
-    q128_primes, q32_primes, q64_primes, MAX_CRT_RING_DEGREE, Q128_MODULUS, Q128_NUM_PRIMES,
-    Q16_MODULUS, Q16_NUM_PRIMES, Q16_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q64_MODULUS,
-    Q64_NUM_PRIMES,
+    q128_primes, MAX_CRT_RING_DEGREE, Q128_MODULUS, Q128_NUM_PRIMES, Q16_MODULUS, Q16_NUM_PRIMES,
+    Q16_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 #[allow(unused_imports)]
@@ -64,11 +63,11 @@ pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     }
 
     if modulus <= Q32_MODULUS as u128 {
-        return Ok(ProtocolCrtNttParams::Q32(CrtNttParamSet::new(q32_primes())));
+        return Ok(ProtocolCrtNttParams::Q32(CrtNttParamSet::new(Q32_PRIMES)));
     }
 
     if modulus <= Q64_MODULUS as u128 {
-        return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(q64_primes())));
+        return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(Q64_PRIMES)));
     }
 
     if modulus == Q128_MODULUS

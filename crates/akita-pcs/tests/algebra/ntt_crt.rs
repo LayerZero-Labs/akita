@@ -2,9 +2,9 @@ use akita_algebra::backend::{CrtReconstruct, NttPrimeOps};
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use akita_algebra::poly::Poly;
 use akita_algebra::tables::{
-    q128_garner, q128_primes, q32_garner, q32_primes, q64_garner, q64_primes, Q128_MODULUS,
-    Q128_NUM_PRIMES, Q16_NUM_PRIMES, Q16_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q64_MODULUS,
-    Q64_NUM_PRIMES,
+    q128_garner, q128_primes, q32_garner, q64_garner, Q128_MODULUS, Q128_NUM_PRIMES,
+    Q16_NUM_PRIMES, Q16_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS,
+    Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, LimbQ,
@@ -46,7 +46,7 @@ fn limbq_ordering() {
 
 #[test]
 fn ntt_normalize_in_range() {
-    for prime in &q32_primes() {
+    for prime in &Q32_PRIMES {
         for &a in &[0i32, 1, -1, 100, -100, prime.p - 1, -(prime.p - 1)] {
             let n = prime.normalize(MontCoeff::from_raw(a));
             assert!(
@@ -88,7 +88,7 @@ fn csubp_widened_handles_large_negative_i16() {
 
 #[test]
 fn ntt_mul_commutative() {
-    let prime = q32_primes()[0];
+    let prime = Q32_PRIMES[0];
     let a = MontCoeff::from_raw(1234);
     let b = MontCoeff::from_raw(5678);
     assert_eq!(prime.mul(a, b), prime.mul(b, a));
@@ -96,7 +96,7 @@ fn ntt_mul_commutative() {
 
 #[test]
 fn mont_coeff_round_trip() {
-    for prime in &q32_primes() {
+    for prime in &Q32_PRIMES {
         for &val in &[0i32, 1, 2, 100, prime.p - 1] {
             let mont = prime.from_canonical(val);
             let back = prime.to_canonical(mont);
@@ -107,7 +107,7 @@ fn mont_coeff_round_trip() {
 
 #[test]
 fn digit_lut_covers_log_basis_six_balanced_range() {
-    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, 64>::new(q32_primes());
+    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, 64>::new(Q32_PRIMES);
     let lut = DigitMontLut::<_, Q32_NUM_PRIMES>::new(&params);
 
     for (k, prime) in params.primes.iter().enumerate() {
@@ -119,7 +119,7 @@ fn digit_lut_covers_log_basis_six_balanced_range() {
 
 #[test]
 fn digit_lut_can_cover_active_small_balanced_range() {
-    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, 64>::new(q32_primes());
+    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, 64>::new(Q32_PRIMES);
     let lut = DigitMontLut::<_, Q32_NUM_PRIMES>::new_with_digit_bound(&params, 2);
 
     for (k, prime) in params.primes.iter().enumerate() {
@@ -132,7 +132,7 @@ fn digit_lut_can_cover_active_small_balanced_range() {
 #[test]
 fn centered_lut_understated_bound_falls_back_exactly() {
     const D: usize = 64;
-    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(q32_primes());
+    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
     let lut = CenteredMontLut::new(&params, 1);
     let coeffs = std::array::from_fn(|i| {
         if i % 2 == 0 {
@@ -170,7 +170,7 @@ fn poly_add_sub_neg() {
 
 #[test]
 fn ntt_forward_inverse_round_trip() {
-    let prime = q32_primes()[0];
+    let prime = Q32_PRIMES[0];
     let tw = NttTwiddles::<i32, 64>::compute(prime);
 
     let original: [MontCoeff<i32>; 64] =
@@ -192,7 +192,7 @@ fn ntt_forward_inverse_round_trip() {
 
 #[test]
 fn ntt_forward_inverse_all_primes() {
-    for (pi, prime) in q32_primes().iter().enumerate() {
+    for (pi, prime) in Q32_PRIMES.iter().enumerate() {
         let tw = NttTwiddles::<i32, 64>::compute(*prime);
 
         let original: [_; 64] =
@@ -217,7 +217,7 @@ fn ntt_forward_inverse_all_primes() {
 #[test]
 fn negacyclic_ntt_mul_matches_schoolbook_single_prime_d8() {
     const D: usize = 8;
-    let prime = q32_primes()[0];
+    let prime = Q32_PRIMES[0];
     let tw = NttTwiddles::<i32, D>::compute(prime);
 
     let a_canon: [i32; D] = std::array::from_fn(|i| ((i as i32 * 7) + 3) % prime.p);
@@ -258,7 +258,7 @@ fn negacyclic_ntt_mul_matches_schoolbook_single_prime_d8() {
 #[test]
 fn negacyclic_ntt_forward_matches_manual_evals_d8() {
     const D: usize = 8;
-    let prime = q32_primes()[0];
+    let prime = Q32_PRIMES[0];
     let tw = NttTwiddles::<i32, D>::compute(prime);
     let p = prime.p as i64;
 
@@ -318,7 +318,7 @@ fn negacyclic_ntt_forward_matches_manual_evals_d8() {
 #[test]
 fn negacyclic_ntt_mul_matches_schoolbook_single_prime_d64() {
     const D: usize = 64;
-    let prime = q32_primes()[0];
+    let prime = Q32_PRIMES[0];
     let tw = NttTwiddles::<i32, D>::compute(prime);
     let p = prime.p as i64;
 
@@ -362,7 +362,7 @@ fn negacyclic_ntt_mul_matches_schoolbook_all_q32_primes_d64() {
     let a_canon: [i32; D] = std::array::from_fn(|i| i as i32 * 7 + 3);
     let b_canon: [i32; D] = std::array::from_fn(|i| i as i32 * 5 + 11);
 
-    for (pi, &prime) in q32_primes().iter().enumerate() {
+    for (pi, &prime) in Q32_PRIMES.iter().enumerate() {
         let tw = NttTwiddles::<i32, D>::compute(prime);
         let p = prime.p as i64;
 
@@ -410,7 +410,7 @@ fn cyclotomic_ntt_crt_round_trip_q32() {
     type R = CyclotomicRing<F, 64>;
     type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 
-    let primes = q32_primes();
+    let primes = Q32_PRIMES;
     let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
         std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
 
@@ -442,7 +442,7 @@ fn assert_q32_ntt_round_trip<const D: usize>() {
     type R<const D: usize> = CyclotomicRing<F, D>;
     type N<const D: usize> = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>;
 
-    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(q32_primes());
+    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
     let coeffs: [F; D] = std::array::from_fn(|i| F::from_u64(((i as u64 * 17) + 5) % Q32_MODULUS));
     let ring = R::<D>::from_coefficients(coeffs);
     let ntt = N::<D>::from_ring_with_params(&ring, &params);
@@ -456,7 +456,7 @@ fn assert_q64_ntt_round_trip<const D: usize>() {
     type R<const D: usize> = CyclotomicRing<F, D>;
     type N<const D: usize> = CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>;
 
-    let params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(q64_primes());
+    let params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
     let coeffs: [F; D] = std::array::from_fn(|i| F::from_u64(((i as u64 * 19) + 3) % Q64_MODULUS));
     let ring = R::<D>::from_coefficients(coeffs);
     let ntt = N::<D>::from_ring_with_params(&ring, &params);
@@ -495,7 +495,7 @@ fn cyclotomic_ntt_reduced_ops_are_stable() {
     type R = CyclotomicRing<F, 64>;
     type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 
-    let primes = q32_primes();
+    let primes = Q32_PRIMES;
     let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
         std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
 
@@ -525,7 +525,7 @@ fn backend_path_matches_default_scalar_path() {
     type R = CyclotomicRing<F, 64>;
     type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 
-    let primes = q32_primes();
+    let primes = Q32_PRIMES;
     let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
         std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
     let ring = R::from_coefficients(std::array::from_fn(|i| {
@@ -549,7 +549,7 @@ fn crt_ntt_mul_matches_schoolbook_q32() {
     type R = CyclotomicRing<F, 64>;
     type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 
-    let primes = q32_primes();
+    let primes = Q32_PRIMES;
     let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
         std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
     let garner = q32_garner();
@@ -1089,7 +1089,7 @@ fn q64_ntt_round_trip() {
     type R = CyclotomicRing<F, 64>;
     type N = CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, 64>;
 
-    let primes = q64_primes();
+    let primes = Q64_PRIMES;
     let twiddles: [NttTwiddles<i32, 64>; Q64_NUM_PRIMES] =
         std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
     let garner = q64_garner();
@@ -1108,7 +1108,7 @@ fn crt_ntt_mul_matches_schoolbook_q64() {
     type R = CyclotomicRing<F, 64>;
     type N = CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, 64>;
 
-    let primes = q64_primes();
+    let primes = Q64_PRIMES;
     let twiddles: [NttTwiddles<i32, 64>; Q64_NUM_PRIMES] =
         std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
     let garner = q64_garner();

@@ -446,8 +446,8 @@ Criteria sections above, with #134 providing the chunking implementation.
 
 - Extend `crates/akita-algebra/src/ntt/tables.rs` tests for new prime-derived
   Montgomery/Garner constants.
-- Extend `capacity.rs` tests with `Q16_PRIMES`, production `q32_primes()`, and
-  reduced `q64_primes()`; assert expected safe widths for fp16/fp32/fp64 dense
+- Extend `capacity.rs` tests with `Q16_PRIMES`, production `Q32_PRIMES`, and
+  reduced `Q64_PRIMES`; assert expected safe widths for fp16/fp32/fp64 dense
   and onehot `log_basis` pairs used in generated root schedules (not merely
   `CommitmentConfig::decomposition()` defaults).
 - Add a small deterministic capacity-table generator or test helper that computes

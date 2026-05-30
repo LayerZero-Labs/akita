@@ -2,7 +2,7 @@
 
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use akita_algebra::tables::{
-    q128_primes, q32_garner, q32_primes, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES,
+    q128_primes, q32_garner, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES,
 };
 use akita_algebra::{
     CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, MontCoeff, PackedPartialSplitEval16,
@@ -74,7 +74,7 @@ fn bench_ring_schoolbook_mul(c: &mut Criterion) {
 }
 
 fn bench_ntt_single_prime_round_trip(c: &mut Criterion) {
-    let primes = q32_primes();
+    let primes = Q32_PRIMES;
     let prime = primes[0];
     let tw = NttTwiddles::<i32, 64>::compute(prime);
     let base: [MontCoeff<i32>; 64] =
@@ -92,7 +92,7 @@ fn bench_ntt_single_prime_round_trip(c: &mut Criterion) {
 
 fn bench_crt_round_trip(c: &mut Criterion) {
     let ring = sample_ring(19);
-    let primes = q32_primes();
+    let primes = Q32_PRIMES;
     let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
         std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
     let garner = q32_garner();
