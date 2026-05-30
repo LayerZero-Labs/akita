@@ -349,7 +349,11 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
     for line in log_text.splitlines():
         line = ANSI_RE.sub("", line)
         kvs = parse_kvs(line)
-        if " INFO setup" in line and kvs.get("label") == mode:
+        if " INFO setup sizes" in line and kvs.get("label") == mode:
+            summary["setup_ring_elements"] = int(kvs["setup_ring_elements"])
+            summary["setup_vector_bytes"] = int(kvs["setup_vector_bytes"])
+            summary["setup_ntt_cache_bytes"] = int(kvs["setup_ntt_cache_bytes"])
+        elif " INFO setup" in line and kvs.get("label") == mode:
             summary["setup_s"] = float(kvs["elapsed_s"])
         elif " INFO commit" in line and kvs.get("label") == mode:
             summary["commit_s"] = float(kvs["elapsed_s"])
@@ -557,6 +561,9 @@ SUMMARY_CSV_COLUMNS = (
     "num_polys",
     "runs",
     "setup_s",
+    "setup_ring_elements",
+    "setup_vector_bytes",
+    "setup_ntt_cache_bytes",
     "commit_s",
     "prove_total_s",
     "verify_total_s",
@@ -874,6 +881,13 @@ def fmt_optional_bytes(summary: dict[str, object], key: str) -> str:
     return fmt_bytes(float(value))
 
 
+def fmt_optional_mib_from_bytes(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "n/a"
+    return f"{float(value) / (1024.0 * 1024.0):.1f}"
+
+
 def numeric_delta(
     current: dict[str, object],
     baseline: dict[str, object] | None,
@@ -930,6 +944,8 @@ def render_matrix_summary(
         "Case",
         "Mode",
         "Setup s",
+        "Setup vec MiB",
+        "Setup NTT MiB",
         "Commit s",
         "Prove s",
         "Verify s",
@@ -953,6 +969,8 @@ def render_matrix_summary(
             md_text(case_label),
             code_text(current["mode"]),
             fmt_optional_seconds(current, "setup_s"),
+            fmt_optional_mib_from_bytes(current, "setup_vector_bytes"),
+            fmt_optional_mib_from_bytes(current, "setup_ntt_cache_bytes"),
             fmt_optional_seconds(current, "commit_s"),
             fmt_optional_seconds(current, "prove_total_s"),
             fmt_optional_seconds(current, "verify_total_s"),
@@ -1236,6 +1254,18 @@ def render_report(args: argparse.Namespace) -> int:
                 print(f"- Sample ranges: {', '.join(ranges)}.")
 
         print()
+        if current.get("setup_ring_elements") is not None:
+            print(f"- Setup ring elements: `{current['setup_ring_elements']}`")
+        if current.get("setup_vector_bytes") is not None:
+            print(
+                f"- Setup vector: `{fmt_bytes(float(current['setup_vector_bytes']))} B` "
+                f"({fmt_optional_mib_from_bytes(current, 'setup_vector_bytes')} MiB)"
+            )
+        if current.get("setup_ntt_cache_bytes") is not None:
+            print(
+                f"- Setup NTT cache: `{fmt_bytes(float(current['setup_ntt_cache_bytes']))} B` "
+                f"({fmt_optional_mib_from_bytes(current, 'setup_ntt_cache_bytes')} MiB)"
+            )
         if current.get("proof_size_bytes") is not None:
             print(f"- Proof size: `{fmt_bytes(float(current['proof_size_bytes']))} B`")
         if current.get("akita_fold_bytes") is not None:

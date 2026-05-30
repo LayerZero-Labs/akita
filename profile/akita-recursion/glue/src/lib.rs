@@ -316,7 +316,7 @@ where
             &mut *rest,
             BLOB_COMPRESS,
             BLOB_VALIDATE,
-            seed.total_ring_elements,
+            seed.max_setup_len,
             seed.gen_ring_dim,
             MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         )?;

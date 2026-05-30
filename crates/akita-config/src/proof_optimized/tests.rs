@@ -133,8 +133,14 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
             _max_num_points: usize,
-        ) -> Result<(usize, usize), AkitaError> {
-            Ok((1, 1))
+        ) -> Result<SetupMatrixEnvelope, AkitaError> {
+            Ok(SetupMatrixEnvelope {
+                max_setup_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
+            })
         }
         fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
             (3, 3)
@@ -212,7 +218,6 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
 }
 
 #[test]
-#[cfg(not(feature = "zk"))]
 fn setup_matrix_envelope_covers_grouped_batch_schedules() {
     let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
     let envelope = <fp128::D32Full as CommitmentConfig>::envelope(incidence.num_vars());
@@ -223,8 +228,142 @@ fn setup_matrix_envelope_covers_grouped_batch_schedules() {
 
     let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
         .expect("setup envelope should cover generated grouped batch schedules");
-    assert!(setup_envelope.0 >= grouped_same_point.0);
-    assert!(setup_envelope.1 >= grouped_same_point.1);
+    assert!(setup_envelope.max_setup_len >= grouped_same_point.max_setup_len);
+}
+
+fn expected_runtime_root_setup_len(lp: &LevelParams, incidence: &ClaimIncidenceSummary) -> usize {
+    let max_group_poly_count = incidence
+        .num_polys_per_point()
+        .iter()
+        .copied()
+        .max()
+        .expect("nonempty incidence");
+    let d_width = lp.num_blocks * incidence.num_claims() * lp.num_digits_open;
+    let t_cols_per_vector = lp.a_key.row_len() * lp.num_digits_open * lp.num_blocks;
+    let b_width = max_group_poly_count * t_cols_per_vector;
+    (lp.d_key.row_len() * d_width).max(lp.b_key.row_len() * b_width)
+}
+
+#[test]
+fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
+    type Cfg = fp128::D32Full;
+    let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
+    let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
+    let root_params = root_commit_params_from_schedule(&schedule)
+        .unwrap()
+        .expect("folded or direct root params");
+    let required = expected_runtime_root_setup_len(&root_params, &incidence);
+
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    assert!(runtime_envelope.max_setup_len >= required);
+
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(30, 4, 1)
+        .expect("setup envelope should cover generated batched root widths");
+    assert!(setup_envelope.max_setup_len >= required);
+}
+
+#[test]
+fn setup_matrix_envelope_covers_skewed_multipoint_root_widths() {
+    use akita_types::root_direct_schedule;
+
+    type Cfg = fp128::D32Full;
+    let incidence =
+        ClaimIncidenceSummary::from_point_polys(30, vec![3, 1]).expect("skewed incidence");
+    let commit_incidence =
+        ClaimIncidenceSummary::same_point(30, 4).expect("supported batched incidence");
+    let root_params = Cfg::get_params_for_batched_commitment(&commit_incidence)
+        .expect("supported batched commit params");
+    let schedule = root_direct_schedule(incidence.num_vars(), root_params.clone())
+        .expect("synthetic direct schedule");
+    let required = expected_runtime_root_setup_len(&root_params, &incidence);
+
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    assert!(runtime_envelope.max_setup_len >= required);
+}
+
+#[test]
+fn setup_matrix_scan_uses_worst_case_grouping_for_aggregate_shape() {
+    let incidence =
+        worst_case_grouped_incidence_for_shape(30, 4, 2).expect("valid aggregate incidence");
+    assert_eq!(incidence.num_polys_per_point(), &[3, 1]);
+}
+
+#[test]
+#[cfg(feature = "zk")]
+fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
+    use akita_challenges::SparseChallengeConfig;
+    use akita_types::SisModulusFamily;
+
+    type Cfg = fp128::D32Full;
+    let sparse = SparseChallengeConfig::Uniform {
+        weight: 1,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    let lp = LevelParams::params_only(SisModulusFamily::Q128, Cfg::D, 5, 2, 3, 5, sparse)
+        .with_decomp(4, 3, 2, 6, 3, 0)
+        .unwrap();
+
+    let mut got = 1usize;
+    accumulate_matrix_envelope_for_level::<Cfg>(&lp, &mut got).unwrap();
+
+    let expected = (lp.a_key.row_len() * lp.inner_width())
+        .max(lp.b_key.row_len() * lp.outer_width())
+        .max(lp.d_key.row_len() * lp.d_matrix_width());
+    assert_eq!(got, expected);
+
+    let b_tail = akita_types::zk::blinding_column_count::<<Cfg as CommitmentConfig>::Field>(
+        lp.b_key.row_len(),
+        lp.ring_dimension,
+        lp.log_basis,
+    );
+    let d_tail = akita_types::zk::blinding_column_count::<<Cfg as CommitmentConfig>::Field>(
+        lp.d_key.row_len(),
+        lp.ring_dimension,
+        lp.log_basis,
+    );
+    let old_tail_inflated = (lp.a_key.row_len() * lp.inner_width())
+        .max(lp.b_key.row_len() * (lp.outer_width() + b_tail))
+        .max(lp.d_key.row_len() * (lp.d_matrix_width() + d_tail));
+    assert!(
+        old_tail_inflated > expected,
+        "test fixture must catch accidental ZK tail columns in setup envelope"
+    );
+}
+
+#[test]
+#[cfg(feature = "zk")]
+fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
+    type Cfg = fp32::D32Full;
+    let incidence = ClaimIncidenceSummary::same_point(26, 1).expect("singleton incidence");
+    let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
+    let root_params = root_commit_params_from_schedule(&schedule)
+        .unwrap()
+        .expect("folded or direct root params");
+    let hiding_len = zk_hiding_witness_len::<Cfg>(&schedule, &incidence).unwrap();
+    let num_ring = hiding_len.div_ceil(Cfg::D).max(1).next_power_of_two();
+    let hiding_params = root_params
+        .with_decomp(
+            num_ring.trailing_zeros() as usize,
+            0,
+            root_params.num_digits_commit,
+            root_params.num_digits_open,
+            root_params.num_digits_fold,
+            num_ring,
+        )
+        .unwrap();
+    let blinding_cols =
+        akita_types::zk::blinding_digit_plane_count::<<Cfg as CommitmentConfig>::Field>(
+            hiding_params.b_key.row_len(),
+            hiding_params.ring_dimension,
+            hiding_params.log_basis,
+        );
+    let required = hiding_params.b_key.row_len() * blinding_cols;
+
+    let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
+    assert!(runtime_envelope.max_zk_b_len >= required);
+
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(26, 1, 1).unwrap();
+    assert!(setup_envelope.max_zk_b_len >= required);
 }
 
 #[test]

@@ -19,17 +19,19 @@
 //! - `2` — verifier rejected the proof.
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
+use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
-use akita_types::BasisMode;
-use akita_verifier::verify_batched;
+use akita_types::{scheduled_next_level_params, BasisMode};
+use akita_verifier::{verify_batched_with_policy, verify_root_direct_commitments_with_params};
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
 type F = fp128::Field;
 const D: usize = 32;
 type Cfg = fp128::D32OneHot;
+type Claim = <Cfg as CommitmentConfig>::ClaimField;
+type Challenge = <Cfg as CommitmentConfig>::ChallengeField;
 
 const _: () = {
     // Hard-fail at compile time if the guest monomorphization drifts away from
@@ -95,7 +97,6 @@ fn akita_verify(input: &[u8]) -> u32 {
 
     let openings = [decoded.opening];
 
-    start_cycle_tracking("akita_verify");
     // We call `verify_batched` directly (rather than the public
     // `AkitaCommitmentScheme::<D, Cfg>::batched_verify` wrapper) to skip
     // its `Instant::now()` + final `tracing::info!` wall-clock log. The
@@ -105,12 +106,45 @@ fn akita_verify(input: &[u8]) -> u32 {
     // surface is `<Cfg>`-generic and routes every policy through `Cfg`
     // internally — no closures to thread through.
     start_cycle_tracking("akita_verify");
-    let result = verify_batched::<F, Cfg, _, D>(
+    let result = verify_batched_with_policy::<
+        F,
+        Claim,
+        Challenge,
+        _,
+        D,
+        _,
+        _,
+        _,
+        _,
+        _,
+    >(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
         decoded.verifier_claims(&openings),
         BasisMode::Lagrange,
+        |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
+        |schedule, _next_inputs| scheduled_next_level_params(schedule, 1),
+        Cfg::get_params_for_batched_commitment,
+        |transcript, incidence_summary, schedule, basis| {
+            bind_transcript_instance_descriptor::<F, _, D, Cfg>(
+                &decoded.verifier_setup.expanded,
+                incidence_summary,
+                schedule,
+                basis,
+                transcript,
+            )
+        },
+        |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
+            verify_root_direct_commitments_with_params::<F, D>(
+                witnesses,
+                setup,
+                commitments,
+                incidence_summary,
+                params,
+                direct_commitment_payload,
+            )
+        },
     );
     end_cycle_tracking("akita_verify");
 

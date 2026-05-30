@@ -1,4 +1,5 @@
 use super::*;
+use crate::validation::{is_i8_log_basis, validate_i8_input_log_basis};
 
 #[inline]
 pub(super) fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usize>(
@@ -20,11 +21,35 @@ pub(super) fn is_zero_centered_row<const D: usize>(row: &[i32; D]) -> bool {
     row.iter().all(|&d| d == 0)
 }
 
+pub(super) fn quotient_from_cyclic_and_negacyclic<F: FieldCore + HalvingField, const D: usize>(
+    cyclic: &CyclotomicRing<F, D>,
+    negacyclic: &CyclotomicRing<F, D>,
+) -> CyclotomicRing<F, D> {
+    let cyc = cyclic.coefficients();
+    let neg = negacyclic.coefficients();
+    CyclotomicRing::from_coefficients(from_fn(|k| (cyc[k] - neg[k]).half()))
+}
+
+pub(super) fn add_cyclic_product_into<F: FieldCore, const D: usize>(
+    acc: &mut CyclotomicRing<F, D>,
+    lhs: &CyclotomicRing<F, D>,
+    rhs: &CyclotomicRing<F, D>,
+) {
+    for (i, &a) in lhs.coefficients().iter().enumerate() {
+        if a.is_zero() {
+            continue;
+        }
+        for (j, &b) in rhs.coefficients().iter().enumerate() {
+            if !b.is_zero() {
+                acc.coefficients_mut()[(i + j) % D] += a * b;
+            }
+        }
+    }
+}
+
 #[cfg(target_arch = "aarch64")]
 pub(super) const TARGET_L2_CACHE_BYTES: usize = 4 * 1024 * 1024;
-#[cfg(target_arch = "x86_64")]
-pub(super) const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(not(target_arch = "aarch64"))]
 pub(super) const TARGET_L2_CACHE_BYTES: usize = 1024 * 1024;
 pub(super) const CENTERED_LUT_MAX_ABS: u32 = (1 << 16) - 1;
 // Row-count ceiling for the block-parallel matvec. Commitments up to `n_a == 7`
@@ -35,6 +60,70 @@ pub(super) const CENTERED_LUT_MAX_ABS: u32 = (1 << 16) - 1;
 // raising the cap is a pure performance change.
 pub(super) const SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS: usize = 7;
 pub(super) const SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS: usize = 16;
+
+#[inline]
+pub(super) fn validate_i8_log_basis(log_basis: u32) -> Result<(), AkitaError> {
+    validate_i8_input_log_basis(log_basis, "for i8 NTT kernels")
+}
+
+#[cfg(not(feature = "parallel"))]
+#[allow(dead_code)]
+#[inline]
+pub(super) fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
+    acc: &mut CyclotomicCrtNtt<W, K, D>,
+    other: &CyclotomicCrtNtt<W, K, D>,
+    params: &CrtNttParamSet<W, K, D>,
+) {
+    for k in 0..K {
+        let prime = params.primes[k];
+        for d in 0..D {
+            let sum =
+                MontCoeff::from_raw(acc.limbs[k][d].raw().wrapping_add(other.limbs[k][d].raw()));
+            acc.limbs[k][d] = prime.reduce_range(sum);
+        }
+    }
+}
+
+#[inline]
+pub(super) fn balanced_digit_abs_bound(log_basis: u32) -> u64 {
+    debug_assert!(is_i8_log_basis(log_basis));
+    1u64 << (log_basis - 1)
+}
+
+#[inline]
+pub(super) fn digit_rows_within_digit_bound<const D: usize>(
+    rows: &[[i8; D]],
+    len: usize,
+    digit_bound: u64,
+) -> bool {
+    let bound = i16::try_from(digit_bound).unwrap_or(i16::MAX);
+    rows.iter()
+        .take(len)
+        .flat_map(|row| row.iter())
+        .all(|&coeff| (-bound..bound).contains(&i16::from(coeff)))
+}
+
+#[inline]
+pub(super) fn validate_digit_rows_for_log_basis<const D: usize>(
+    rows: &[[i8; D]],
+    len: usize,
+    log_basis: u32,
+    context: &str,
+) -> Result<(), AkitaError> {
+    let bound = 1i16 << (log_basis - 1);
+    if rows
+        .iter()
+        .take(len)
+        .flat_map(|row| row.iter())
+        .all(|&coeff| (-bound..bound).contains(&i16::from(coeff)))
+    {
+        Ok(())
+    } else {
+        Err(AkitaError::InvalidInput(format!(
+            "predecomposed digit row contains a coefficient outside the balanced log_basis range {context}"
+        )))
+    }
+}
 
 #[inline]
 pub(super) fn aligned_i8_tile_width(
@@ -51,6 +140,23 @@ pub(super) fn aligned_i8_tile_width(
 
     let clamped = raw_width.min(inner_width).max(num_digits);
     ((clamped / num_digits).max(1)) * num_digits
+}
+
+#[inline]
+pub(super) fn capacity_safe_i8_chunk_width(
+    safe_width: usize,
+    inner_width: usize,
+    num_digits: usize,
+) -> usize {
+    debug_assert!(safe_width > 0);
+    debug_assert!(inner_width > 0);
+    debug_assert!(num_digits > 0);
+
+    if safe_width < num_digits {
+        safe_width.min(inner_width)
+    } else {
+        aligned_i8_tile_width(safe_width, inner_width, num_digits).min(safe_width)
+    }
 }
 
 #[cfg(feature = "parallel")]

@@ -29,9 +29,9 @@ pub(crate) struct SparseRingCoeff {
 
 impl SparseRingCoeff {
     pub(crate) fn new(ring_idx: usize, coeff_idx: usize, value: i8) -> Result<Self, AkitaError> {
-        if value == 0 {
+        if !matches!(value, -1 | 1) {
             return Err(AkitaError::InvalidInput(
-                "invalid sparse ring coefficient".to_string(),
+                "sparse ring coefficients must be signed units".to_string(),
             ));
         }
         Ok(Self {
@@ -151,7 +151,7 @@ impl SparseRingBlocks {
     }
 }
 
-/// Sparse polynomial whose ring coefficients are small signed monomials.
+/// Sparse polynomial whose ring coefficients are signed monomials.
 #[derive(Debug, Clone)]
 pub struct SparseRingPoly<F: FieldCore, const D: usize> {
     num_vars: usize,
@@ -168,7 +168,8 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
     ///
     /// Returns an error when `D` cannot be represented by the sparse block
     /// format, the expected ring-element count does not match `num_vars`, or a
-    /// supplied coefficient triple is out of range.
+    /// supplied coefficient triple is out of range or has value other than
+    /// `-1` or `1`.
     pub fn from_signed_coeffs(
         num_vars: usize,
         total_ring_elems: usize,
@@ -261,7 +262,7 @@ impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
         for entry in &packed {
             if entry.ring_idx as usize >= total_ring_elems
                 || entry.coeff_idx as usize >= D
-                || entry.value == 0
+                || !matches!(entry.value, -1 | 1)
             {
                 return Err(AkitaError::InvalidInput(
                     "invalid sparse ring coefficient".to_string(),
@@ -814,6 +815,17 @@ mod tests {
             vec![(2, 3, -1), (0, 1, 1)],
         )
         .is_err());
+    }
+
+    #[test]
+    fn sparse_ring_constructor_rejects_non_signed_unit_coefficients() {
+        const D: usize = 8;
+        for value in [-2, 0, 2] {
+            assert!(matches!(
+                SparseRingPoly::<F, D>::from_signed_coeffs(5, 4, vec![(0, 1, value)]),
+                Err(AkitaError::InvalidInput(_))
+            ));
+        }
     }
 
     #[test]

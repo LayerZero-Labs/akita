@@ -2,9 +2,9 @@
 //!
 //! This module encapsulates the stage-1 prover logic and the generation of
 //! the quadratic equation components M, y, z, and v.
-
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
+use crate::validation::validate_i8_setup_log_basis;
 use crate::{
     AkitaPolyOps, CyclicRowsComputeBackend, DecomposeFoldWitness, DigitRowsComputeBackend,
     RecursiveWitnessView, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
@@ -31,6 +31,7 @@ use std::iter::repeat_n;
 use std::time::Instant;
 
 mod r_split;
+mod repeated_b;
 
 pub use r_split::{compute_r_split_eq, generate_y};
 
@@ -45,18 +46,15 @@ fn beta_linf_fold_bound(
     if r >= 128 {
         return Err(AkitaError::InvalidSetup("r_vars must be < 128".to_string()));
     }
-
     let blocks = 1u128 << r;
     let b = 1u128 << log_basis;
     let half_b = b / 2;
-
     let term = blocks
         .checked_mul(challenge_l1_mass as u128)
         .ok_or_else(|| AkitaError::InvalidSetup("beta bound overflow".to_string()))?;
     term.checked_mul(half_b)
         .ok_or_else(|| AkitaError::InvalidSetup("beta bound overflow".to_string()))
 }
-
 fn beta_linf_fold_bound_with_num_claims(
     r: usize,
     challenge_l1_mass: usize,
@@ -300,6 +298,7 @@ fn compute_v_rows<F, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     row_len: usize,
     w_hat: &FlatDigitBlocks<D>,
+    log_basis: u32,
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
@@ -308,9 +307,17 @@ where
 {
     #[cfg(feature = "zk")]
     {
-        let mut d_input_digits = w_hat.flat_digits().to_vec();
-        d_input_digits.extend_from_slice(d_blinding_digits.flat_digits());
-        let rows = backend.digit_rows::<D>(prepared, row_len, &d_input_digits)?;
+        let mut rows =
+            backend.digit_rows::<D>(prepared, row_len, w_hat.flat_digits(), log_basis)?;
+        let blinding_rows = backend.zk_d_digit_rows::<D>(
+            prepared,
+            row_len,
+            d_blinding_digits.flat_digits().len(),
+            d_blinding_digits.flat_digits(),
+        )?;
+        for (row, blinding) in rows.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
         if rows.len() != row_len {
             return Err(AkitaError::InvalidProof);
         }
@@ -318,7 +325,7 @@ where
     }
     #[cfg(not(feature = "zk"))]
     {
-        let rows = backend.digit_rows::<D>(prepared, row_len, w_hat.flat_digits())?;
+        let rows = backend.digit_rows::<D>(prepared, row_len, w_hat.flat_digits(), log_basis)?;
         if rows.len() != row_len {
             return Err(AkitaError::InvalidProof);
         }
@@ -387,6 +394,7 @@ where
                 "QuadraticEquation::new_prover"
             );
         }
+        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         if opening_points.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one opening point".to_string(),
@@ -570,6 +578,7 @@ where
                     prepared,
                     lp.d_key.row_len(),
                     &w_hat,
+                    lp.log_basis,
                     #[cfg(feature = "zk")]
                     &d_blinding_digits,
                 )?;
@@ -709,6 +718,7 @@ where
         T: Transcript<F>,
         B: DigitRowsComputeBackend<F>,
     {
+        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         let num_claims = ring_opening_points.len();
         if num_claims == 0
             || ring_multiplier_points.len() != num_claims
@@ -779,6 +789,7 @@ where
                     prepared,
                     lp.d_key.row_len(),
                     &w_hat,
+                    lp.log_basis,
                     #[cfg(feature = "zk")]
                     &d_blinding_digits,
                 )?;

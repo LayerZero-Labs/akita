@@ -10,6 +10,28 @@ pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
 }
 
+/// Surface the prepared-setup memory footprint: the plain shared setup vector
+/// (`Vec<F>`) versus the NTT slot cache built from it. The cache stores both
+/// negacyclic and cyclic CRT-NTT forms, so it is several times larger than the
+/// vector; reporting both makes that expansion visible in the bench report.
+pub(crate) fn report_setup_sizes(
+    label: &str,
+    setup_ring_elements: usize,
+    setup_vector_bytes: usize,
+    setup_ntt_cache_bytes: usize,
+) {
+    tracing::info!(
+        label,
+        setup_ring_elements,
+        setup_vector_bytes,
+        setup_ntt_cache_bytes,
+        "setup sizes"
+    );
+    eprintln!(
+        "[{label}] setup sizes: ring_elems={setup_ring_elements}, vector={setup_vector_bytes} bytes, ntt_cache={setup_ntt_cache_bytes} bytes"
+    );
+}
+
 pub(crate) fn emit_planned_schedule_summary(label: &str, plan: &AkitaSchedulePlan) {
     tracing::info!(
         label,
