@@ -207,9 +207,10 @@ fn negacyclic_shift_equals_mul_by_monomial() {
 
     let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((3 * i + 1) as u64)));
 
-    for k in 0..8 {
+    for k in 0..32 {
+        let k = k % 16;
         let mut monomial_coeffs = [F::zero(); 8];
-        monomial_coeffs[k] = F::one();
+        monomial_coeffs[k % 8] = if k >= 8 { -F::one() } else { F::one() };
         let monomial = R::from_coefficients(monomial_coeffs);
         assert_eq!(
             a.negacyclic_shift(k),
@@ -221,8 +222,8 @@ fn negacyclic_shift_equals_mul_by_monomial() {
     assert_eq!(a.negacyclic_shift(0), a);
     assert_eq!(
         a.negacyclic_shift(8),
-        a,
-        "shift by D should be identity mod D"
+        -a,
+        "shift by D should negate (X^D = -1)"
     );
 }
 
@@ -234,7 +235,7 @@ fn negacyclic_shift_degree_64() {
     let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((7 * i + 3) as u64)));
     let x = R::x();
     let mut x_pow = R::one();
-    for k in 0..64 {
+    for k in 0..128 {
         assert_eq!(
             a.negacyclic_shift(k),
             a * x_pow,
@@ -272,7 +273,7 @@ fn mul_by_monomial_sum_single_position_equals_shift() {
     type R = CyclotomicRing<F, 8>;
 
     let a = R::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64)));
-    for k in 0..8 {
+    for k in 0..32 {
         assert_eq!(
             a.mul_by_monomial_sum(&[k]),
             a.negacyclic_shift(k),
