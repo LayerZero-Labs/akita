@@ -86,15 +86,26 @@ where
     #[cfg(feature = "zk")]
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(commit_layout.b_key.row_len(), commit_layout.log_basis)?;
-    #[cfg(feature = "zk")]
-    let mut outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
-    #[cfg(not(feature = "zk"))]
     let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
-    #[cfg(feature = "zk")]
-    outer_input.extend_from_slice(b_blinding_digits.flat_digits());
     validate_commit_outer_input_nonempty(outer_input.len())?;
+    #[cfg(feature = "zk")]
+    let mut u: Vec<CyclotomicRing<F, D>> =
+        backend.digit_rows::<D>(prepared, commit_layout.b_key.row_len(), &outer_input)?;
+    #[cfg(not(feature = "zk"))]
     let u: Vec<CyclotomicRing<F, D>> =
         backend.digit_rows::<D>(prepared, commit_layout.b_key.row_len(), &outer_input)?;
+    #[cfg(feature = "zk")]
+    {
+        let blinding_rows = backend.zk_b_digit_rows::<D>(
+            prepared,
+            commit_layout.b_key.row_len(),
+            b_blinding_digits.flat_digits().len(),
+            b_blinding_digits.flat_digits(),
+        )?;
+        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
+    }
     if u.len() != commit_layout.b_key.row_len() {
         return Err(AkitaError::InvalidProof);
     }

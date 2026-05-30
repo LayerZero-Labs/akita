@@ -1,6 +1,7 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
 use crate::FlatMatrix;
+#[cfg(test)]
 use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
@@ -27,6 +28,29 @@ pub const MAX_SETUP_MATRIX_FIELD_ELEMENTS: usize = 1 << 26;
 
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-matrix-1d";
 const SHARED_MATRIX_LABEL: &[u8] = b"shared";
+#[cfg(feature = "zk")]
+const ZK_B_MATRIX_LABEL: &[u8] = b"zkB";
+#[cfg(feature = "zk")]
+const ZK_D_MATRIX_LABEL: &[u8] = b"zkD";
+
+/// Packed capacity envelope for the shared public setup vector.
+///
+/// The setup stores one flat vector of ring elements. A/B/D matrices are
+/// role-local prefix views of this vector, so capacity is the maximum required
+/// role footprint, not `max_rows * max_stride`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetupMatrixEnvelope {
+    /// Number of generated ring elements at the setup generation dimension.
+    pub max_setup_len: usize,
+    /// Number of generated `zkB` ring elements at the setup generation
+    /// dimension.
+    #[cfg(feature = "zk")]
+    pub max_zk_b_len: usize,
+    /// Number of generated `zkD` ring elements at the setup generation
+    /// dimension.
+    #[cfg(feature = "zk")]
+    pub max_zk_d_len: usize,
+}
 
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,12 +65,16 @@ pub struct AkitaSetupSeed {
     /// widths the setup can serve; a multi-point batched opening that exceeds
     /// this bound would otherwise silently read past the shared matrix prefix.
     pub max_num_points: usize,
-    /// Global row stride for the flat NTT cache.
-    pub max_stride: usize,
     /// Ring dimension used to generate `shared_matrix`.
     pub gen_ring_dim: usize,
     /// Number of generated ring elements at `gen_ring_dim`.
-    pub total_ring_elements: usize,
+    pub max_setup_len: usize,
+    /// Number of generated `zkB` ring elements at `gen_ring_dim`.
+    #[cfg(feature = "zk")]
+    pub max_zk_b_len: usize,
+    /// Number of generated `zkD` ring elements at `gen_ring_dim`.
+    #[cfg(feature = "zk")]
+    pub max_zk_d_len: usize,
     /// Public seed used to derive commitment matrices.
     pub public_matrix_seed: PublicMatrixSeed,
 }
@@ -58,7 +86,7 @@ impl AkitaSetupSeed {
     ///
     /// Returns an error if the seed shape overflows `usize`.
     pub fn matrix_field_elements(&self) -> Result<usize, SerializationError> {
-        self.total_ring_elements
+        self.max_setup_len
             .checked_mul(self.gen_ring_dim)
             .ok_or_else(|| {
                 SerializationError::InvalidData(
@@ -66,17 +94,49 @@ impl AkitaSetupSeed {
                 )
             })
     }
+
+    /// Number of field elements in the serialized `zkB` matrix.
+    #[cfg(feature = "zk")]
+    pub fn zk_b_matrix_field_elements(&self) -> Result<usize, SerializationError> {
+        self.max_zk_b_len
+            .checked_mul(self.gen_ring_dim)
+            .ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "setup seed zkB matrix field count overflow".to_string(),
+                )
+            })
+    }
+
+    /// Number of field elements in the serialized `zkD` matrix.
+    #[cfg(feature = "zk")]
+    pub fn zk_d_matrix_field_elements(&self) -> Result<usize, SerializationError> {
+        self.max_zk_d_len
+            .checked_mul(self.gen_ring_dim)
+            .ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "setup seed zkD matrix field count overflow".to_string(),
+                )
+            })
+    }
 }
 
-/// Expanded setup stage containing a single shared coefficient-form matrix.
+/// Expanded setup stage containing materialized public matrices.
 ///
-/// All role matrices (A, B, D) are row/column prefixes of this shared vector.
+/// Base role matrices (A, B, D) are packed row/column prefix views of
+/// `shared_matrix`. Under `feature = "zk"`, blinding roles use separate stored
+/// `zk_b_matrix` and `zk_d_matrix` domains.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaExpandedSetup<F: FieldCore> {
     /// Setup seed and runtime layout metadata.
     pub seed: AkitaSetupSeed,
     /// Shared 1D flat backing vector.
     pub shared_matrix: FlatMatrix<F>,
+    /// Stored ZK B-blinding public matrix.
+    #[cfg(feature = "zk")]
+    pub zk_b_matrix: FlatMatrix<F>,
+    /// Stored ZK D-blinding public matrix.
+    #[cfg(feature = "zk")]
+    pub zk_d_matrix: FlatMatrix<F>,
 }
 
 /// Verifier setup artifact derived from prover setup.
@@ -96,10 +156,16 @@ impl<F: FieldCore> AkitaExpandedSetup<F> {
     pub fn from_trusted_seed_derived_parts_unchecked(
         seed: AkitaSetupSeed,
         shared_matrix: FlatMatrix<F>,
+        #[cfg(feature = "zk")] zk_b_matrix: FlatMatrix<F>,
+        #[cfg(feature = "zk")] zk_d_matrix: FlatMatrix<F>,
     ) -> Self {
         Self {
             seed,
             shared_matrix,
+            #[cfg(feature = "zk")]
+            zk_b_matrix,
+            #[cfg(feature = "zk")]
+            zk_d_matrix,
         }
     }
 
@@ -113,6 +179,20 @@ impl<F: FieldCore> AkitaExpandedSetup<F> {
     #[must_use]
     pub fn shared_matrix(&self) -> &FlatMatrix<F> {
         &self.shared_matrix
+    }
+
+    /// Stored ZK B-blinding public matrix.
+    #[cfg(feature = "zk")]
+    #[must_use]
+    pub fn zk_b_matrix(&self) -> &FlatMatrix<F> {
+        &self.zk_b_matrix
+    }
+
+    /// Stored ZK D-blinding public matrix.
+    #[cfg(feature = "zk")]
+    #[must_use]
+    pub fn zk_d_matrix(&self) -> &FlatMatrix<F> {
+        &self.zk_d_matrix
     }
 }
 
@@ -130,10 +210,16 @@ where
     pub fn from_verified_parts(
         seed: AkitaSetupSeed,
         shared_matrix: FlatMatrix<F>,
+        #[cfg(feature = "zk")] zk_b_matrix: FlatMatrix<F>,
+        #[cfg(feature = "zk")] zk_d_matrix: FlatMatrix<F>,
     ) -> Result<Self, SerializationError> {
         let out = Self {
             seed,
             shared_matrix,
+            #[cfg(feature = "zk")]
+            zk_b_matrix,
+            #[cfg(feature = "zk")]
+            zk_d_matrix,
         };
         out.check()?;
         Ok(out)
@@ -162,30 +248,45 @@ pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {
-    let ring_elements: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..total_ring_elements)
-        .map(|idx| {
-            let mut entry_rng = ShakeXofRng::new(seed, idx);
-            CyclotomicRing::random(&mut entry_rng)
-        })
-        .collect();
+    derive_public_matrix_flat_labeled::<F, D>(total_ring_elements, seed, SHARED_MATRIX_LABEL)
+}
 
-    let mut data = Vec::with_capacity(total_ring_elements * D);
-    for ring in ring_elements {
-        data.extend(ring.coeffs);
-    }
+#[tracing::instrument(skip_all, name = "derive_public_matrix_flat_labeled")]
+fn derive_public_matrix_flat_labeled<F: FieldCore + RandomSampling, const D: usize>(
+    total_ring_elements: usize,
+    seed: &PublicMatrixSeed,
+    matrix_label: &[u8],
+) -> FlatMatrix<F> {
+    let xof = LabeledMatrixXof::new(seed, matrix_label);
+    let mut data = vec![F::zero(); total_ring_elements * D];
+    cfg_chunks_mut!(data, D)
+        .enumerate()
+        .for_each(|(idx, coeffs)| {
+            let mut entry_rng = xof.entry_rng(idx);
+            for coeff in coeffs.iter_mut() {
+                *coeff = F::random(&mut entry_rng);
+            }
+        });
 
     FlatMatrix::from_flat_data(data, D)
 }
 
-fn fill_public_matrix_coefficients<F: FieldCore + RandomSampling>(
+#[cfg(feature = "zk")]
+#[must_use]
+pub fn derive_zk_b_matrix<F: FieldCore + RandomSampling, const D: usize>(
+    total_ring_elements: usize,
     seed: &PublicMatrixSeed,
-    flat_index: usize,
-    coeffs: &mut [F],
-) {
-    let mut entry_rng = ShakeXofRng::new(seed, flat_index);
-    for coeff in coeffs {
-        *coeff = F::random(&mut entry_rng);
-    }
+) -> FlatMatrix<F> {
+    derive_public_matrix_flat_labeled::<F, D>(total_ring_elements, seed, ZK_B_MATRIX_LABEL)
+}
+
+#[cfg(feature = "zk")]
+#[must_use]
+pub fn derive_zk_d_matrix<F: FieldCore + RandomSampling, const D: usize>(
+    total_ring_elements: usize,
+    seed: &PublicMatrixSeed,
+) -> FlatMatrix<F> {
+    derive_public_matrix_flat_labeled::<F, D>(total_ring_elements, seed, ZK_D_MATRIX_LABEL)
 }
 
 /// Check that a materialized public matrix has exactly the shape declared by
@@ -207,10 +308,32 @@ pub fn validate_public_matrix_shape_matches_seed<F: FieldCore + Valid>(
             "setup shared_matrix generation dimension does not match setup seed".to_string(),
         ));
     }
-    if shared_matrix.total_ring_elements() != seed.total_ring_elements {
+    if shared_matrix.total_ring_elements() != seed.max_setup_len {
         return Err(SerializationError::InvalidData(
             "setup shared_matrix length does not match setup seed".to_string(),
         ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "zk")]
+fn validate_zk_public_matrix_shape_matches_seed<F: FieldCore + Valid>(
+    matrix: &FlatMatrix<F>,
+    expected_len: usize,
+    seed: &AkitaSetupSeed,
+    name: &str,
+) -> Result<(), SerializationError> {
+    matrix.check()?;
+    let gen_ring_dim = matrix.gen_ring_dim();
+    if gen_ring_dim != seed.gen_ring_dim {
+        return Err(SerializationError::InvalidData(format!(
+            "setup {name} generation dimension does not match setup seed"
+        )));
+    }
+    if matrix.total_ring_elements() != expected_len {
+        return Err(SerializationError::InvalidData(format!(
+            "setup {name} length does not match setup seed"
+        )));
     }
     Ok(())
 }
@@ -228,13 +351,17 @@ pub fn validate_public_matrix_matches_seed<F: FieldCore + RandomSampling + Valid
 ) -> Result<(), SerializationError> {
     validate_public_matrix_shape_matches_seed(shared_matrix, seed)?;
     let gen_ring_dim = shared_matrix.gen_ring_dim();
+    let xof = LabeledMatrixXof::new(&seed.public_matrix_seed, SHARED_MATRIX_LABEL);
+    let mut expected = vec![F::zero(); gen_ring_dim];
     for (idx, coeffs) in shared_matrix
         .as_field_slice()
         .chunks_exact(gen_ring_dim)
         .enumerate()
     {
-        let mut expected = vec![F::zero(); gen_ring_dim];
-        fill_public_matrix_coefficients(&seed.public_matrix_seed, idx, &mut expected);
+        let mut entry_rng = xof.entry_rng(idx);
+        for value in expected.iter_mut() {
+            *value = F::random(&mut entry_rng);
+        }
         if coeffs != expected.as_slice() {
             return Err(SerializationError::InvalidData(
                 "setup shared_matrix does not match public matrix seed".to_string(),
@@ -244,19 +371,86 @@ pub fn validate_public_matrix_matches_seed<F: FieldCore + RandomSampling + Valid
     Ok(())
 }
 
+#[cfg(feature = "zk")]
+fn validate_labeled_public_matrix_matches_seed<F: FieldCore + RandomSampling + Valid>(
+    matrix: &FlatMatrix<F>,
+    expected_len: usize,
+    seed: &AkitaSetupSeed,
+    matrix_label: &[u8],
+    name: &str,
+) -> Result<(), SerializationError> {
+    validate_zk_public_matrix_shape_matches_seed(matrix, expected_len, seed, name)?;
+    let gen_ring_dim = matrix.gen_ring_dim();
+    let xof = LabeledMatrixXof::new(&seed.public_matrix_seed, matrix_label);
+    let mut expected = vec![F::zero(); gen_ring_dim];
+    for (idx, coeffs) in matrix
+        .as_field_slice()
+        .chunks_exact(gen_ring_dim)
+        .enumerate()
+    {
+        let mut entry_rng = xof.entry_rng(idx);
+        for value in expected.iter_mut() {
+            *value = F::random(&mut entry_rng);
+        }
+        if coeffs != expected.as_slice() {
+            return Err(SerializationError::InvalidData(format!(
+                "setup {name} does not match public matrix seed"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Concrete SHAKE256 XOF reader for public-matrix derivation. Naming it via the
+/// `ExtendableOutput` associated type lets each per-element RNG hold the reader
+/// inline instead of behind a `Box<dyn XofReader>`, removing one heap
+/// allocation per derived ring element.
+type PublicMatrixXofReader = <Shake256 as ExtendableOutput>::Reader;
+
 struct ShakeXofRng {
-    reader: Box<dyn XofReader>,
+    reader: PublicMatrixXofReader,
 }
 
 impl ShakeXofRng {
-    fn new(seed: &PublicMatrixSeed, flat_index: usize) -> Self {
+    /// Independent full-prefix constructor retained for tests that cross-check
+    /// the prefix-reuse derivation against a from-scratch absorb.
+    #[cfg(test)]
+    fn new_labeled(seed: &PublicMatrixSeed, matrix_label: &[u8], indices: &[u64]) -> Self {
         let mut xof = Shake256::default();
         absorb_len_prefixed(&mut xof, b"domain", PUBLIC_MATRIX_DOMAIN);
         absorb_len_prefixed(&mut xof, b"seed", seed);
-        absorb_len_prefixed(&mut xof, b"matrix", SHARED_MATRIX_LABEL);
-        absorb_len_prefixed(&mut xof, b"index", &(flat_index as u64).to_le_bytes());
+        absorb_len_prefixed(&mut xof, b"matrix", matrix_label);
+        for index in indices {
+            absorb_len_prefixed(&mut xof, b"index", &index.to_le_bytes());
+        }
         Self {
-            reader: Box::new(xof.finalize_xof()),
+            reader: xof.finalize_xof(),
+        }
+    }
+}
+
+/// Pre-absorbs the fixed `domain‖seed‖matrix` prefix of the public-matrix XOF
+/// once. Each per-element RNG then clones the sponge state and absorbs only the
+/// element index, so the absorbed byte stream (and therefore every derived ring
+/// element) is bit-for-bit identical to absorbing the full prefix per element.
+struct LabeledMatrixXof {
+    base: Shake256,
+}
+
+impl LabeledMatrixXof {
+    fn new(seed: &PublicMatrixSeed, matrix_label: &[u8]) -> Self {
+        let mut base = Shake256::default();
+        absorb_len_prefixed(&mut base, b"domain", PUBLIC_MATRIX_DOMAIN);
+        absorb_len_prefixed(&mut base, b"seed", seed);
+        absorb_len_prefixed(&mut base, b"matrix", matrix_label);
+        Self { base }
+    }
+
+    fn entry_rng(&self, flat_index: usize) -> ShakeXofRng {
+        let mut xof = self.base.clone();
+        absorb_len_prefixed(&mut xof, b"index", &(flat_index as u64).to_le_bytes());
+        ShakeXofRng {
+            reader: xof.finalize_xof(),
         }
     }
 }
@@ -275,7 +469,7 @@ impl RngCore for ShakeXofRng {
     }
 
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.reader.read(dest);
+        XofReader::read(&mut self.reader, dest);
     }
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
@@ -295,11 +489,6 @@ fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
 
 impl Valid for AkitaSetupSeed {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.max_stride == 0 {
-            return Err(SerializationError::InvalidData(
-                "setup seed max_stride must be non-zero".to_string(),
-            ));
-        }
         if self.max_num_batched_polys == 0 {
             return Err(SerializationError::InvalidData(
                 "setup seed max_num_batched_polys must be at least 1".to_string(),
@@ -315,17 +504,29 @@ impl Valid for AkitaSetupSeed {
                 "setup seed gen_ring_dim must be non-zero".to_string(),
             ));
         }
-        if self.total_ring_elements == 0 {
+        if self.max_setup_len == 0 {
             return Err(SerializationError::InvalidData(
-                "setup seed total_ring_elements must be non-zero".to_string(),
+                "setup seed max_setup_len must be non-zero".to_string(),
             ));
         }
-        if !self.total_ring_elements.is_multiple_of(self.max_stride) {
+        #[cfg(feature = "zk")]
+        if self.max_zk_b_len == 0 {
             return Err(SerializationError::InvalidData(
-                "setup seed total_ring_elements must be a multiple of max_stride".to_string(),
+                "setup seed max_zk_b_len must be non-zero".to_string(),
+            ));
+        }
+        #[cfg(feature = "zk")]
+        if self.max_zk_d_len == 0 {
+            return Err(SerializationError::InvalidData(
+                "setup seed max_zk_d_len must be non-zero".to_string(),
             ));
         }
         self.matrix_field_elements()?;
+        #[cfg(feature = "zk")]
+        {
+            self.zk_b_matrix_field_elements()?;
+            self.zk_d_matrix_field_elements()?;
+        }
         Ok(())
     }
 }
@@ -342,23 +543,36 @@ impl AkitaSerialize for AkitaSetupSeed {
             .serialize_with_mode(&mut writer, compress)?;
         self.max_num_points
             .serialize_with_mode(&mut writer, compress)?;
-        self.max_stride.serialize_with_mode(&mut writer, compress)?;
         self.gen_ring_dim
             .serialize_with_mode(&mut writer, compress)?;
-        self.total_ring_elements
+        self.max_setup_len
+            .serialize_with_mode(&mut writer, compress)?;
+        #[cfg(feature = "zk")]
+        self.max_zk_b_len
+            .serialize_with_mode(&mut writer, compress)?;
+        #[cfg(feature = "zk")]
+        self.max_zk_d_len
             .serialize_with_mode(&mut writer, compress)?;
         writer.write_all(&self.public_matrix_seed)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.max_num_vars.serialized_size(compress)
+        let base = self.max_num_vars.serialized_size(compress)
             + self.max_num_batched_polys.serialized_size(compress)
             + self.max_num_points.serialized_size(compress)
-            + self.max_stride.serialized_size(compress)
             + self.gen_ring_dim.serialized_size(compress)
-            + self.total_ring_elements.serialized_size(compress)
-            + 32
+            + self.max_setup_len.serialized_size(compress)
+            + 32;
+        #[cfg(feature = "zk")]
+        {
+            base + self.max_zk_b_len.serialized_size(compress)
+                + self.max_zk_d_len.serialized_size(compress)
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            base
+        }
     }
 }
 
@@ -374,19 +588,24 @@ impl AkitaDeserialize for AkitaSetupSeed {
         let max_num_batched_polys =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let max_num_points = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let max_stride = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let total_ring_elements =
-            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let max_setup_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        #[cfg(feature = "zk")]
+        let max_zk_b_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        #[cfg(feature = "zk")]
+        let max_zk_d_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let mut public_matrix_seed = [0u8; 32];
         reader.read_exact(&mut public_matrix_seed)?;
         let out = Self {
             max_num_vars,
             max_num_batched_polys,
             max_num_points,
-            max_stride,
             gen_ring_dim,
-            total_ring_elements,
+            max_setup_len,
+            #[cfg(feature = "zk")]
+            max_zk_b_len,
+            #[cfg(feature = "zk")]
+            max_zk_d_len,
             public_matrix_seed,
         };
         if matches!(validate, Validate::Yes) {
@@ -401,6 +620,23 @@ impl<F: FieldCore + RandomSampling + Valid> Valid for AkitaExpandedSetup<F> {
         self.seed.check()?;
         self.shared_matrix.check()?;
         validate_public_matrix_matches_seed(&self.shared_matrix, &self.seed)?;
+        #[cfg(feature = "zk")]
+        {
+            validate_labeled_public_matrix_matches_seed(
+                &self.zk_b_matrix,
+                self.seed.max_zk_b_len,
+                &self.seed,
+                ZK_B_MATRIX_LABEL,
+                "zkB matrix",
+            )?;
+            validate_labeled_public_matrix_matches_seed(
+                &self.zk_d_matrix,
+                self.seed.max_zk_d_len,
+                &self.seed,
+                ZK_D_MATRIX_LABEL,
+                "zkD matrix",
+            )?;
+        }
         Ok(())
     }
 }
@@ -414,11 +650,27 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
         self.seed.serialize_with_mode(&mut writer, compress)?;
         self.shared_matrix
             .serialize_with_mode(&mut writer, compress)?;
+        #[cfg(feature = "zk")]
+        self.zk_b_matrix
+            .serialize_with_mode(&mut writer, compress)?;
+        #[cfg(feature = "zk")]
+        self.zk_d_matrix
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.seed.serialized_size(compress) + self.shared_matrix.serialized_size(compress)
+        let base =
+            self.seed.serialized_size(compress) + self.shared_matrix.serialized_size(compress);
+        #[cfg(feature = "zk")]
+        {
+            base + self.zk_b_matrix.serialized_size(compress)
+                + self.zk_d_matrix.serialized_size(compress)
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            base
+        }
     }
 }
 
@@ -438,16 +690,45 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
             &mut reader,
             compress,
             validate,
-            seed.total_ring_elements,
+            seed.max_setup_len,
+            seed.gen_ring_dim,
+            MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        )?;
+        #[cfg(feature = "zk")]
+        let zk_b_matrix = FlatMatrix::deserialize_with_expected_shape(
+            &mut reader,
+            compress,
+            validate,
+            seed.max_zk_b_len,
+            seed.gen_ring_dim,
+            MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        )?;
+        #[cfg(feature = "zk")]
+        let zk_d_matrix = FlatMatrix::deserialize_with_expected_shape(
+            &mut reader,
+            compress,
+            validate,
+            seed.max_zk_d_len,
             seed.gen_ring_dim,
             MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         )?;
         if matches!(validate, Validate::Yes) {
-            Self::from_verified_parts(seed, shared_matrix)
+            Self::from_verified_parts(
+                seed,
+                shared_matrix,
+                #[cfg(feature = "zk")]
+                zk_b_matrix,
+                #[cfg(feature = "zk")]
+                zk_d_matrix,
+            )
         } else {
             Ok(Self::from_trusted_seed_derived_parts_unchecked(
                 seed,
                 shared_matrix,
+                #[cfg(feature = "zk")]
+                zk_b_matrix,
+                #[cfg(feature = "zk")]
+                zk_d_matrix,
             ))
         }
     }
@@ -509,11 +790,22 @@ mod tests {
             max_num_vars: 8,
             max_num_batched_polys: 1,
             max_num_points: 1,
-            max_stride: 2,
             gen_ring_dim: D,
-            total_ring_elements: 2,
+            max_setup_len: 2,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 2,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 2,
             public_matrix_seed,
         }
+    }
+
+    #[cfg(feature = "zk")]
+    fn zk_matrices(seed: &PublicMatrixSeed) -> (FlatMatrix<F>, FlatMatrix<F>) {
+        (
+            derive_zk_b_matrix::<F, D>(2, seed),
+            derive_zk_d_matrix::<F, D>(2, seed),
+        )
     }
 
     #[test]
@@ -521,11 +813,17 @@ mod tests {
         let setup_seed = seed([7u8; 32]);
         let wrong_seed = [9u8; 32];
         let wrong_matrix = derive_public_matrix_flat::<F, D>(2, &wrong_seed);
+        #[cfg(feature = "zk")]
+        let (zk_b_matrix, zk_d_matrix) = zk_matrices(&setup_seed.public_matrix_seed);
         let setup = AkitaVerifierSetup {
             expanded: Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     setup_seed,
                     wrong_matrix,
+                    #[cfg(feature = "zk")]
+                    zk_b_matrix,
+                    #[cfg(feature = "zk")]
+                    zk_d_matrix,
                 ),
             ),
         };
@@ -543,11 +841,17 @@ mod tests {
     fn strict_verifier_setup_decode_rejects_truncated_seed_prefix_matrix() {
         let setup_seed = seed([7u8; 32]);
         let short_matrix = derive_public_matrix_flat::<F, D>(1, &setup_seed.public_matrix_seed);
+        #[cfg(feature = "zk")]
+        let (zk_b_matrix, zk_d_matrix) = zk_matrices(&setup_seed.public_matrix_seed);
         let setup = AkitaVerifierSetup {
             expanded: Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     setup_seed,
                     short_matrix,
+                    #[cfg(feature = "zk")]
+                    zk_b_matrix,
+                    #[cfg(feature = "zk")]
+                    zk_d_matrix,
                 ),
             ),
         };
@@ -581,9 +885,12 @@ mod tests {
             max_num_vars: 32,
             max_num_batched_polys: 1,
             max_num_points: 1,
-            max_stride: 1,
             gen_ring_dim: D,
-            total_ring_elements: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
+            max_setup_len: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
             public_matrix_seed: [7u8; 32],
         };
 
@@ -597,9 +904,12 @@ mod tests {
             max_num_vars: 32,
             max_num_batched_polys: 1,
             max_num_points: 1,
-            max_stride: 1,
             gen_ring_dim: D,
-            total_ring_elements: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
+            max_setup_len: MAX_SETUP_MATRIX_FIELD_ELEMENTS / D + 1,
+            #[cfg(feature = "zk")]
+            max_zk_b_len: 1,
+            #[cfg(feature = "zk")]
+            max_zk_d_len: 1,
             public_matrix_seed: [7u8; 32],
         };
         let mut bytes = Vec::new();
@@ -640,12 +950,33 @@ mod tests {
         let got = derive_public_matrix_flat::<SmallF, SMALL_D>(6, &seed);
         let expected = (0..6)
             .flat_map(|idx| {
-                let mut rng = ShakeXofRng::new(&seed, idx);
+                let mut rng = ShakeXofRng::new_labeled(&seed, SHARED_MATRIX_LABEL, &[idx as u64]);
                 CyclotomicRing::<SmallF, SMALL_D>::random(&mut rng).coeffs
             })
             .collect::<Vec<_>>();
 
         assert_eq!(got.as_field_slice(), expected.as_slice());
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn zk_blinding_matrices_use_short_separate_labels() {
+        let seed = [5u8; 32];
+        let b = derive_zk_b_matrix::<SmallF, SMALL_D>(4, &seed);
+        let b_again = derive_zk_b_matrix::<SmallF, SMALL_D>(4, &seed);
+        let d = derive_zk_d_matrix::<SmallF, SMALL_D>(4, &seed);
+
+        let mut expected_b_rng = ShakeXofRng::new_labeled(&seed, ZK_B_MATRIX_LABEL, &[3]);
+        let expected_b = CyclotomicRing::<SmallF, SMALL_D>::random(&mut expected_b_rng);
+        assert_eq!(b, b_again);
+        let b_view = b.ring_view::<SMALL_D>(1, 4).unwrap();
+        assert_eq!(b_view.row(0).unwrap()[3], expected_b);
+        assert_ne!(b, d);
+
+        let shared = derive_public_matrix_flat::<SmallF, SMALL_D>(1, &seed);
+        let shared_view = shared.ring_view::<SMALL_D>(1, 1).unwrap();
+        let shared_entry = shared_view.row(0).unwrap()[0];
+        assert_ne!(b_view.row(0).unwrap()[0], shared_entry);
     }
 
     #[test]

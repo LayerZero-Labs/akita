@@ -18,11 +18,11 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
+use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_recursion_glue::{AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
 use akita_transcript::AkitaTranscript;
-use akita_types::BasisMode;
-use akita_verifier::verify_batched;
+use akita_types::{scheduled_next_level_params, BasisMode};
+use akita_verifier::{verify_batched_with_policy, verify_root_direct_commitments_with_params};
 use clap::Parser;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -31,6 +31,8 @@ const TRUSTED_BENCHMARK_ARTIFACT_ENV: &str = "AKITA_RECURSION_TRUSTED_BENCHMARK_
 type F = fp128::Field;
 const D: usize = 32;
 type Cfg = fp128::D32OneHot;
+type Claim = <Cfg as CommitmentConfig>::ClaimField;
+type Challenge = <Cfg as CommitmentConfig>::ChallengeField;
 
 const _: () = {
     assert!(D == <Cfg as CommitmentConfig>::D);
@@ -146,12 +148,45 @@ fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
         .map_err(|err| format!("strict input decode failed: {err}"))?;
     let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     let openings = [decoded.opening];
-    verify_batched::<F, Cfg, _, D>(
+    verify_batched_with_policy::<
+        F,
+        Claim,
+        Challenge,
+        _,
+        D,
+        _,
+        _,
+        _,
+        _,
+        _,
+    >(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
         decoded.verifier_claims(&openings),
         BasisMode::Lagrange,
+        |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
+        |schedule, _next_inputs| scheduled_next_level_params(schedule, 1),
+        Cfg::get_params_for_batched_commitment,
+        |transcript, incidence_summary, schedule, basis| {
+            bind_transcript_instance_descriptor::<F, _, D, Cfg>(
+                &decoded.verifier_setup.expanded,
+                incidence_summary,
+                schedule,
+                basis,
+                transcript,
+            )
+        },
+        |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
+            verify_root_direct_commitments_with_params::<F, D>(
+                witnesses,
+                setup,
+                commitments,
+                incidence_summary,
+                params,
+                direct_commitment_payload,
+            )
+        },
     )
     .map_err(|err| format!("strict host verifier rejected input blob: {err}"))?;
     info!("strict host preflight OK");
