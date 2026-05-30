@@ -2,8 +2,8 @@
 
 use akita_algebra::ntt::prime::PrimeWidth;
 use akita_algebra::ntt::tables::{
-    q128_primes, MAX_CRT_RING_DEGREE, Q128_MODULUS, Q128_NUM_PRIMES, Q16_MODULUS, Q16_NUM_PRIMES,
-    Q16_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
+    q128_primes, Q128_MODULUS, Q128_NUM_PRIMES, Q16_MODULUS, Q16_NUM_PRIMES, Q16_PRIMES,
+    Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
 };
 use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 #[allow(unused_imports)]
@@ -42,11 +42,6 @@ pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     if !matches!(D, 32 | 64 | 128 | 256) {
         return Err(AkitaError::InvalidSetup(format!(
             "CRT+NTT supports ring degree in {{32, 64, 128, 256}}, got D={D}"
-        )));
-    }
-    if D > MAX_CRT_RING_DEGREE {
-        return Err(AkitaError::InvalidSetup(format!(
-            "CRT+NTT supports D <= {MAX_CRT_RING_DEGREE}, got D={D}"
         )));
     }
 
