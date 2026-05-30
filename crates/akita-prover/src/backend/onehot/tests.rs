@@ -285,6 +285,75 @@ fn batched_tensor_column_partials_match_individual() {
     assert_eq!(got, expected);
 }
 
+/// Exercises the factorized sparse fast path across *multiple outer blocks*
+/// (`num_vars - low_vars` exceeds the inner-bit cap, so the high weights are
+/// genuinely split into more than one outer block) and on a power-of-two
+/// `onehot_k`. The batched sparse partials must be byte-identical both to the
+/// dense reference and to the per-poly path.
+#[test]
+fn batched_tensor_column_partials_multi_block_match_dense() {
+    type F = Prime24Offset3;
+    type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+    const D: usize = 16;
+    const ONEHOT_K: usize = 8;
+    // hi_vars = NUM_VARS - log2(ONEHOT_K) = 18 - 3 = 15 > inner-bit cap, so the
+    // factorization produces several outer blocks.
+    const NUM_VARS: usize = 18;
+
+    let num_chunks = (1usize << NUM_VARS) / ONEHOT_K;
+    let make_indices = |seed: usize| {
+        (0..num_chunks)
+            .map(|c| {
+                let h = c
+                    .wrapping_mul(2_654_435_761)
+                    .wrapping_add(seed.wrapping_mul(40_503));
+                if h % 7 == 0 {
+                    None
+                } else {
+                    Some(h % ONEHOT_K)
+                }
+            })
+            .collect::<Vec<Option<usize>>>()
+    };
+    let polys = [
+        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(1)).unwrap(),
+        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(2)).unwrap(),
+        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(3)).unwrap(),
+    ];
+    let point = (0..NUM_VARS)
+        .map(|idx| {
+            E::from_base_slice(&[
+                F::from_canonical_u128_reduced(7 * idx as u128 + 1),
+                F::from_canonical_u128_reduced(7 * idx as u128 + 2),
+                F::from_canonical_u128_reduced(7 * idx as u128 + 4),
+                F::from_canonical_u128_reduced(7 * idx as u128 + 6),
+            ])
+        })
+        .collect::<Vec<_>>();
+
+    let dense_expected = polys
+        .iter()
+        .map(|poly| {
+            materialize_onehot_as_dense(poly)
+                .tensor_extension_column_partials::<E>(&point)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let individual = polys
+        .iter()
+        .map(|poly| poly.tensor_extension_column_partials::<E>(&point).unwrap())
+        .collect::<Vec<_>>();
+    let poly_refs = polys.iter().collect::<Vec<_>>();
+    let batched =
+        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
+            &poly_refs, &point,
+        )
+        .unwrap();
+
+    assert_eq!(batched, dense_expected);
+    assert_eq!(batched, individual);
+}
+
 #[test]
 fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
     type F = Prime24Offset3;

@@ -4,6 +4,13 @@ use super::fold::{
 };
 use super::*;
 
+/// Inner (low) coordinate count for the factorized one-hot column-partials
+/// fast path. The high opening coordinates split into `inner_bits` low bits
+/// (a small, reusable, cache-resident `low_eq` table) and the remaining high
+/// bits (the parallelizable outer blocks). This is a pure performance knob:
+/// the computed partials are independent of its value.
+const ONEHOT_TENSOR_PARTIALS_INNER_BITS: usize = 12;
+
 impl<F, const D: usize, I: OneHotIndex> AkitaPolyOps<F, D> for OneHotPoly<F, D, I>
 where
     F: FieldCore + CanonicalField + HasWide,
@@ -177,28 +184,46 @@ where
                 .collect();
         }
 
-        let head_mask = width - 1;
+        // Non-power-of-two `onehot_k` would let `raw >> split_bits` escape
+        // `low_tail_weights`; the sparse fast path only covers the (production)
+        // power-of-two case, so fall back to the per-poly reference otherwise.
+        if !first.onehot_k.is_power_of_two() {
+            return polys
+                .iter()
+                .map(|poly| poly.tensor_extension_column_partials(logical_point))
+                .collect();
+        }
+
+        // Factor the high `hi_vars = num_vars - low_vars` opening coordinates
+        // into an inner/outer tensor split so the chunk weight
+        // `high_weights[(j << inner_bits) | i] == high_eq[j] * low_eq[i]`. This
+        // avoids materializing the full `2^hi_vars` weight table and lets the
+        // sparse kernel turn the per-chunk multiply into a per-chunk add.
+        let hi_vars = first.num_vars - low_vars;
+        let inner_bits = hi_vars.min(ONEHOT_TENSOR_PARTIALS_INNER_BITS);
         let low_tail_weights = akita_types::basis_weights(
             &logical_point[split_bits..low_vars],
             akita_types::BasisMode::Lagrange,
         )?;
-        let high_weights = akita_types::basis_weights(
-            &logical_point[low_vars..],
+        let low_eq = akita_types::basis_weights(
+            &logical_point[low_vars..low_vars + inner_bits],
             akita_types::BasisMode::Lagrange,
         )?;
-        let out = cfg_iter!(polys)
+        let high_eq = akita_types::basis_weights(
+            &logical_point[low_vars + inner_bits..],
+            akita_types::BasisMode::Lagrange,
+        )?;
+        let out = polys
+            .iter()
             .map(|poly| {
-                let mut partials = vec![E::zero(); width];
-                for (chunk_idx, hot_idx) in poly.indices.iter().copied().enumerate() {
-                    let Some(raw) = hot_idx else {
-                        continue;
-                    };
-                    let raw = raw.as_usize();
-                    let head = raw & head_mask;
-                    let low_tail = raw >> split_bits;
-                    partials[head] += high_weights[chunk_idx] * low_tail_weights[low_tail];
-                }
-                partials
+                poly.tensor_column_partials_from_shared_eq::<E>(
+                    split_bits,
+                    width,
+                    inner_bits,
+                    &low_eq,
+                    &high_eq,
+                    &low_tail_weights,
+                )
             })
             .collect::<Vec<_>>();
         Ok(out)

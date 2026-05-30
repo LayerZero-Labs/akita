@@ -150,6 +150,108 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         Ok(blocks)
     }
 
+    /// Sparse fast path for [`AkitaPolyOps::tensor_extension_column_partials_batch`]
+    /// (the `split_bits <= low_vars`, power-of-two `onehot_k`, shared-shape
+    /// case). Byte-identical to the dense column partials but exploits the
+    /// one-hot structure to replace the per-chunk extension *multiply* of the
+    /// dense path with a per-chunk extension *add*.
+    ///
+    /// The caller supplies the opening point already split into Lagrange
+    /// factor tables:
+    /// * `low_tail_weights = eq(point[split_bits..low_vars])`
+    /// * the high `hi_vars = num_vars - low_vars` coordinates factored as
+    ///   `low_eq = eq(point[low_vars..low_vars + inner_bits])` and
+    ///   `high_eq = eq(point[low_vars + inner_bits..])`, so that the high
+    ///   Lagrange weight of chunk `c = (j << inner_bits) | i` is exactly
+    ///   `high_eq[j] * low_eq[i]` (the standard little-endian tensor split of
+    ///   the `eq` table). We therefore never materialize the full
+    ///   `2^hi_vars`-entry weight table.
+    ///
+    /// Each chunk carries a single hot position `raw in 0..onehot_k`. We:
+    /// 1. scatter `low_eq[i]` into a `raw`-indexed scratch table using *adds
+    ///    only* (one add per nonzero chunk),
+    /// 2. fold the scratch into a running per-`raw` bucket with one multiply by
+    ///    `high_eq[j]` per touched `raw` (cheap: at most `onehot_k` per outer
+    ///    block), and
+    /// 3. collapse the `onehot_k` buckets into the `width` column partials via
+    ///    `partials[raw & (width - 1)] += bucket[raw] * low_tail_weights[raw >> split_bits]`.
+    ///
+    /// Field addition/multiplication are exactly associative, commutative, and
+    /// distributive, so the bucket regrouping and the parallel block split both
+    /// yield the identical field element the dense path produces.
+    pub(super) fn tensor_column_partials_from_shared_eq<E>(
+        &self,
+        split_bits: usize,
+        width: usize,
+        inner_bits: usize,
+        low_eq: &[E],
+        high_eq: &[E],
+        low_tail_weights: &[E],
+    ) -> Vec<E>
+    where
+        E: ExtField<F>,
+    {
+        let onehot_k = self.onehot_k;
+        let head_mask = width - 1;
+        let inner_len = low_eq.len();
+        let num_blocks = high_eq.len();
+        let zero = E::zero();
+        debug_assert_eq!(inner_len, 1usize << inner_bits);
+        debug_assert_eq!(self.indices.len(), num_blocks * inner_len);
+
+        // Partition the outer blocks into contiguous ranges so the heavy
+        // scatter is parallel; each range accumulates an independent per-`raw`
+        // bucket which we then reduce (addition is associative, so the result
+        // is independent of the range split).
+        #[cfg(feature = "parallel")]
+        let target_ranges = rayon::current_num_threads().max(1) * 4;
+        #[cfg(not(feature = "parallel"))]
+        let target_ranges = 1usize;
+        let range_len = num_blocks.div_ceil(target_ranges.max(1)).max(1);
+        let ranges = (0..num_blocks)
+            .step_by(range_len)
+            .map(|start| (start, (start + range_len).min(num_blocks)))
+            .collect::<Vec<_>>();
+
+        let partial_buckets = cfg_into_iter!(ranges)
+            .map(|(jstart, jend)| {
+                let mut bucket = vec![zero; onehot_k];
+                let mut scratch = vec![zero; onehot_k];
+                for (jrel, &hj) in high_eq[jstart..jend].iter().enumerate() {
+                    let base = (jstart + jrel) << inner_bits;
+                    let block = &self.indices[base..base + inner_len];
+                    for (hot, &le) in block.iter().copied().zip(low_eq.iter()) {
+                        if let Some(raw) = hot {
+                            scratch[raw.as_usize()] += le;
+                        }
+                    }
+                    for (slot, acc) in scratch.iter_mut().zip(bucket.iter_mut()) {
+                        if *slot != zero {
+                            *acc += hj * *slot;
+                            *slot = zero;
+                        }
+                    }
+                }
+                bucket
+            })
+            .collect::<Vec<_>>();
+
+        let mut bucket = vec![zero; onehot_k];
+        for partial in &partial_buckets {
+            for (acc, part) in bucket.iter_mut().zip(partial.iter()) {
+                *acc += *part;
+            }
+        }
+
+        let mut partials = vec![zero; width];
+        for (raw, &value) in bucket.iter().enumerate() {
+            if value != zero {
+                partials[raw & head_mask] += value * low_tail_weights[raw >> split_bits];
+            }
+        }
+        partials
+    }
+
     pub(super) fn tensor_packed_sparse_witness<E>(
         &self,
     ) -> Result<SparseExtensionOpeningWitness<E>, AkitaError>
