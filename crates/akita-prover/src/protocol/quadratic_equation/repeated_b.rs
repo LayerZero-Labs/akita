@@ -131,6 +131,7 @@ fn repeated_b_planes_per_claim(
         .ok_or(AkitaError::InvalidProof)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn repeated_b_commitment_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -139,6 +140,7 @@ pub(super) fn repeated_b_commitment_rows<F, B, const D: usize>(
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     num_polys_per_point: &[usize],
     blocks_per_claim: usize,
+    log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -219,11 +221,11 @@ where
             .get(start..end)
             .ok_or(AkitaError::InvalidProof)?;
         let group_rows = if group_digits.len() == row_width {
-            backend.cyclic_digit_rows::<D>(prepared, n_b, group_digits)?
+            backend.cyclic_digit_rows::<D>(prepared, n_b, group_digits, log_basis)?
         } else {
             let mut padded = vec![[0i8; D]; row_width];
             padded[..group_digits.len()].copy_from_slice(group_digits);
-            backend.cyclic_digit_rows::<D>(prepared, n_b, &padded)?
+            backend.cyclic_digit_rows::<D>(prepared, n_b, &padded, log_basis)?
         };
         if group_rows.len() != n_b {
             return Err(AkitaError::InvalidProof);
@@ -263,6 +265,7 @@ mod tests {
         let num_polys_per_point = [2usize, 1usize];
         let blocks_per_claim = 1;
         let block_width = 3;
+        let log_basis = 3;
         let row_width = num_polys_per_point.iter().copied().max().unwrap() * block_width;
         let setup_rows: Vec<CyclotomicRing<F, D>> = (0..(n_b * row_width))
             .map(|idx| {
@@ -311,6 +314,7 @@ mod tests {
             &b_blinding,
             &num_polys_per_point,
             blocks_per_claim,
+            log_basis,
         )
         .expect("commitment rows");
 
@@ -327,11 +331,19 @@ mod tests {
             n_b,
             row_width,
             &t_hat.flat_digits()[..row_width],
-        );
+            log_basis,
+        )
+        .expect("first expected rows");
         let mut second_digits = vec![[0i8; D]; row_width];
         second_digits[..block_width].copy_from_slice(&t_hat.flat_digits()[row_width..]);
-        let second =
-            mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_b, row_width, &second_digits);
+        let second = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(
+            &slot,
+            n_b,
+            row_width,
+            &second_digits,
+            log_basis,
+        )
+        .expect("second expected rows");
         let expected = first.into_iter().chain(second).collect::<Vec<_>>();
         assert_eq!(got, expected);
 
@@ -354,6 +366,7 @@ mod tests {
             &b_blinding,
             &num_polys_per_point,
             blocks_per_claim,
+            log_basis,
         )
         .is_err());
 
@@ -380,6 +393,7 @@ mod tests {
             &b_blinding,
             &[1usize, 1usize],
             2,
+            log_basis,
         )
         .is_err());
     }
@@ -394,6 +408,7 @@ mod tests {
         let blocks_per_claim = 1;
         let block_width = 3;
         let blinding_width = 2;
+        let log_basis = 3;
         let row_width = num_polys_per_point
             .iter()
             .map(|&count| count * block_width)
@@ -463,6 +478,7 @@ mod tests {
             &b_blinding,
             &num_polys_per_point,
             blocks_per_claim,
+            log_basis,
         )
         .expect("commitment rows");
 
@@ -477,8 +493,14 @@ mod tests {
         let mut first_digits = vec![[0i8; D]; row_width];
         first_digits[..(2 * block_width)]
             .copy_from_slice(&t_hat.flat_digits()[..(2 * block_width)]);
-        let mut first =
-            mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_b, row_width, &first_digits);
+        let mut first = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(
+            &slot,
+            n_b,
+            row_width,
+            &first_digits,
+            log_basis,
+        )
+        .expect("first expected rows");
         let first_blinding = zk_matrix_cyclic_digit_rows(
             setup.expanded.zk_b_matrix(),
             n_b,
@@ -494,8 +516,14 @@ mod tests {
         let mut second_digits = vec![[0i8; D]; row_width];
         second_digits[..block_width]
             .copy_from_slice(&t_hat.flat_digits()[(2 * block_width)..(3 * block_width)]);
-        let mut second =
-            mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, n_b, row_width, &second_digits);
+        let mut second = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(
+            &slot,
+            n_b,
+            row_width,
+            &second_digits,
+            log_basis,
+        )
+        .expect("second expected rows");
         let second_blinding = zk_matrix_cyclic_digit_rows(
             setup.expanded.zk_b_matrix(),
             n_b,

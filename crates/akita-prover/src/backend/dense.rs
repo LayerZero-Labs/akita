@@ -547,7 +547,10 @@ where
                 prepared,
                 DenseCommitRowsPlan {
                     n_a,
-                    input: DenseCommitInput::CachedDigits { digit_block_slices },
+                    input: DenseCommitInput::CachedDigits {
+                        digit_block_slices,
+                        log_basis,
+                    },
                 },
             );
         }

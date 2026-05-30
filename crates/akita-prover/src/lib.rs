@@ -9,6 +9,7 @@ pub mod backend;
 pub mod compute;
 pub mod kernels;
 pub mod protocol;
+mod validation;
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
