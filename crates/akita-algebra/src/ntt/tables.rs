@@ -184,16 +184,27 @@ mod tests {
     fn assert_i32_prime_profile(primes: &[NttPrime<i32>]) {
         for prime in primes {
             let p = prime.p as i64;
-            assert!(p > 1 && p % 2 == 1, "prime must be odd and > 1");
+            assert!(is_prime(p), "p={p} must be prime");
             assert_eq!(
                 (p - 1) % 512,
                 0,
                 "512 must divide p-1 for D=256 NTT (p={p})"
             );
+            let recomputed = NttPrime::compute(prime.p);
             assert_eq!(
-                prime.p.wrapping_mul(prime.pinv),
-                1,
-                "pinv verification failed for p={p}"
+                prime.pinv, recomputed.pinv,
+                "pinv mismatch for p={}",
+                prime.p
+            );
+            assert_eq!(
+                prime.mont, recomputed.mont,
+                "mont mismatch for p={}",
+                prime.p
+            );
+            assert_eq!(
+                prime.montsq, recomputed.montsq,
+                "montsq mismatch for p={}",
+                prime.p
             );
         }
     }
