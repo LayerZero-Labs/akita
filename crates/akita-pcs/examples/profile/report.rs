@@ -1,4 +1,5 @@
 use akita_field::FieldCore;
+use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, AkitaSchedulePlan,
@@ -29,6 +30,30 @@ pub(crate) fn report_setup_sizes(
     );
     eprintln!(
         "[{label}] setup sizes: ring_elems={setup_ring_elements}, vector={setup_vector_bytes} bytes, ntt_cache={setup_ntt_cache_bytes} bytes"
+    );
+}
+
+pub(crate) fn report_crt_profile(label: &str, profile: PreparedCrtNttProfile) {
+    tracing::info!(
+        label,
+        crt_profile = profile.profile_id,
+        crt_num_primes = profile.num_primes,
+        crt_limb_bits = profile.limb_bits,
+        max_i8_log_basis = profile.max_i8_log_basis,
+        balanced_digit_safe_width = profile.balanced_digit_safe_width,
+        raw_i8_safe_width = profile.raw_i8_safe_width,
+        balanced_digit_chunk_width = profile.balanced_digit_safe_width,
+        raw_i8_chunk_width = profile.raw_i8_safe_width,
+        "CRT NTT profile"
+    );
+    eprintln!(
+        "[{label}] CRT NTT profile: profile={}, K={}, limb_bits={}, max_i8_log_basis={}, balanced_digit_safe_width={}, raw_i8_safe_width={}",
+        profile.profile_id,
+        profile.num_primes,
+        profile.limb_bits,
+        profile.max_i8_log_basis,
+        profile.balanced_digit_safe_width,
+        profile.raw_i8_safe_width
     );
 }
 

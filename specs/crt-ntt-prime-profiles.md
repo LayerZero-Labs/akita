@@ -85,7 +85,7 @@ there is no width fallback keyed on `D`.
 | Profile | Current | Target | Dispatch |
 | --- | ---: | ---: | --- |
 | Q16 | (none; 16-bit fields use Q32) | 3 × i16 | `q <= u16::MAX`, `D <= 256` |
-| Q32 | 6 × i16 | 4 × i16 by default; benchmark `2 × i32` | `u16::MAX < q <= 2^32-99`, `D <= 256` |
+| Q32 | 6 × i16 | 2 × i32 (measured winner over reference 4 × i16) | `u16::MAX < q <= 2^32-99`, `D <= 256` |
 | Q64 | 5 × i32 | 3 × i32 | `2^32-99 < q <= 2^64-59`, `D <= 256` |
 | Q128 | 5 × i32 | unchanged | fp128 and listed offset moduli, `D <= 256` |
 
@@ -110,31 +110,20 @@ fp16 onto the 4-byte i32 fallback at `D in {128, 256}`.
 Montgomery constants are derived with `NttPrime::compute` like existing entries.
 Define `Q16_MODULUS = u16::MAX`.
 
-**Q32 default primes** (all prime, `< 2^14`, `512 | (p - 1)` for `D <= 256`):
-
-```text
-15361, 13313, 12289, 11777
-```
-
-Product ≈ `2^54.72`.
-This is the four-prime extension of the Q16 set; the legacy six-prime Q32 table
-and the `D <= 64`-only candidates are dropped.
-The implementation must also benchmark a homogeneous `2 × i32` Q32 candidate
-against the default `4 × i16` profile.
-
-**Q32 `2 × i32` candidate primes** (the two largest reduced-Q64 i32 primes, so the
-candidate reuses existing i32 NTT twiddles and Garner data and covers `D <= 256`):
+**Q32 default primes** (the two largest reduced-Q64 i32 primes, so the profile
+reuses existing i32 NTT twiddles and Garner data and covers `D <= 256`):
 
 ```text
 1073707009, 1073698817
 ```
 
-Product ≈ `2^60.00`, which exceeds the `4 × i16` product (`2^54.72`), so the
-candidate trivially satisfies the same capacity table; the open question is
-whether i32 Montgomery arithmetic and the doubled per-coefficient byte footprint
-lose despite needing only two primes.
-Keep `2 × i32` only if it satisfies the same capacity table and wins under the
-layout/performance evaluation rules.
+Product ≈ `2^60.00`.
+The original design default was the four-prime i16 reference profile
+`[15361, 13313, 12289, 11777]` with product ≈ `2^54.72`.
+The local release microbenchmark measured `2 × i32` faster on both the CRT round
+trip and i8 multiply-lift loops, with the same per-coefficient CRT limb footprint
+(8 bytes), so Q32 production is `2 × i32`. The `4 × i16` row remains only in the
+capacity artifact as comparison evidence.
 
 **Q64 default primes** (three largest i32 primes from the existing raw-prime
 table, same ordering; each satisfies `512 | (p - 1)` for `D <= 256`):
@@ -254,8 +243,10 @@ larger ring degree.
    `main` via fp16 support; orthogonal to CRT dispatch).
 8. Rewriting #134 chunking or "fixing" merged `single_cyclic` driver args for
    the Bugbot false positive (tests and optional cosmetic clarity only).
-9. Requiring Metal, AVX, or any accelerator backend for this PR.
-   The layout experiment may be CPU/Rayon or AArch64 NEON only.
+9. Requiring Metal, AVX, or any accelerator backend for the baseline cutover.
+   The layout experiment may be CPU/Rayon or AArch64 NEON only. x86 CRT/NTT
+   SIMD is tracked below as a high-priority deferred follow-up that may still
+   be implemented in this PR after the main cutover is verified.
 10. Changing canonical setup layout, proof layout, transcript binding, or
     verifier-visible semantics to accommodate a backend cache layout.
 11. Choosing one new physical cache layout without measurements.
@@ -357,8 +348,9 @@ Criteria sections above, with #134 providing the chunking implementation.
 - [ ] `tables.rs` defines `Q16_NUM_PRIMES = 3`, `Q16_PRIMES = [15361, 13313,
       12289]`, `q16_garner()`, and unit tests that each Q16 prime is prime,
       `< 2^14`, and satisfies `512 | (p - 1)`.
-- [ ] `Q32_NUM_PRIMES = 4` with the four-prime table `[15361, 13313, 12289,
-      11777]`; tests mirror Q16 (`512 | (p - 1)`).
+- [ ] `Q32_NUM_PRIMES = 2` with the measured-winner table
+      `[1073707009, 1073698817]`; tests mirror Q64 (`512 | (p - 1)` and i32
+      Montgomery constants).
 - [ ] `Q64_NUM_PRIMES = 3` with the three-prime subset above; tests verify
       `512 | (p - 1)` and Garner data for `D = 32, 64, 256`.
 - [ ] `tables.rs` sets `MAX_CRT_RING_DEGREE = 256` and the i32 raw-prime constant
@@ -381,15 +373,16 @@ Criteria sections above, with #134 providing the chunking implementation.
       match arms updated in `crt_ntt.rs`, `ntt_matvec.rs`, `single_cyclic.rs`,
       `fused_quotients.rs`, test helpers, and benches (full cutover, no
       `panic!` on fp16).
-- [ ] Q32 implementation compares the default `4 × i16` profile against the
-      homogeneous `2 × i32` candidate `[1073707009, 1073698817]`
+- [ ] Q32 implementation compares the reference `4 × i16` profile against the
+      production `2 × i32` profile `[1073707009, 1073698817]`
       (the two largest i32 raw primes, product ≈ `2^60.00`).
       The comparison must include correctness, generated schedule capacity, setup
       cache bytes, selected profile metadata (`K`, limb width, prime list,
       `log2(P_crt)`), safe-width/chunk-count summaries, and the required profile
       timings from the performance protocol below.
-      If `2 × i32` wins under the layout/performance rule, keep it and update
-      the Q32 target profile in this spec before implementation review.
+      The local release microbenchmark selected `2 × i32`; keep it as the only
+      production Q32 path unless later required-profile medians contradict the
+      same-machine result.
 - [ ] `max_safe_crt_accumulation_width` unit tests for Q16, reduced Q32, and
       reduced Q64 cover balanced-i8 and centered-i32 (`z_pre_max_abs`) RHS
       bounds at concrete `D` and `log_basis` values.
@@ -414,7 +407,7 @@ Criteria sections above, with #134 providing the chunking implementation.
       representative `rhs_abs_bound` values, and the resulting
       `max_safe_crt_accumulation_width`.
       It must include the exact tuples used by generated schedule capacity
-      tests and the Q32 `4 × i16` vs `2 × i32` comparison.
+      tests and the Q32 reference `4 × i16` vs production `2 × i32` comparison.
 - [ ] Forced sub-full chunk tests (width above `max_safe_crt_accumulation_width`)
       for:
       - negacyclic `mat_vec_mul_ntt_single_i8`,
@@ -453,7 +446,7 @@ Criteria sections above, with #134 providing the chunking implementation.
 
 - Extend `crates/akita-algebra/src/ntt/tables.rs` tests for new prime-derived
   Montgomery/Garner constants.
-- Extend `capacity.rs` tests with `Q16_PRIMES`, reduced `Q32_PRIMES`, and
+- Extend `capacity.rs` tests with `Q16_PRIMES`, production `q32_primes()`, and
   reduced `q64_primes()`; assert expected safe widths for fp16/fp32/fp64 dense
   and onehot `log_basis` pairs used in generated root schedules (not merely
   `CommitmentConfig::decomposition()` defaults).
@@ -589,8 +582,23 @@ of this PR's production target.
 They can reduce byte footprint for a desired `P_crt`, but they cut against the
 current homogeneous `PrimeWidth` model and make SIMD lanes, twiddle tables,
 Garner reconstruction, and backend-prepared buffers heterogeneous.
-The first implementation should compare homogeneous candidates (`4 × i16` vs
-`2 × i32` for Q32) before considering mixed-width profiles.
+The first implementation compared homogeneous candidates (`4 × i16` reference
+vs `2 × i32` production for Q32) before considering mixed-width profiles.
+
+### Deferred Follow-Ups
+
+1. **x86 CRT/NTT SIMD for `i16` and `i32` primes.** High priority.
+   Today x86 SIMD support exists for packed field arithmetic (`Fp32`, `Fp64`,
+   `Fp128`) and for the prover decompose-fold AVX2 kernel, but the small-prime
+   CRT/NTT path only has AArch64 NEON kernels.
+   Add AVX2 and/or AVX-512 equivalents for negacyclic and cyclic
+   `forward_ntt` / `inverse_ntt` plus fused pointwise multiply-accumulate for
+   both `i16` and `i32` profiles.
+   The current prime-major, `D`-contiguous `limbs[K][D]` layout is a plausible
+   SIMD starting point on x86; any alternative layout should stay
+   backend-private and be justified by the same layout-performance rules above.
+   If this remains deferred at merge time, record the absence and expected
+   performance impact in the implementation notes.
 
 ### Alternatives Considered
 
@@ -599,10 +607,9 @@ The first implementation should compare homogeneous candidates (`4 × i16` vs
    one-shot even with chunking; rejected.
 3. **Two i16 primes for Q16.** Too many reconstruction rounds on real widths;
    rejected.
-4. **Two i32 primes for Q32.** Still under consideration as a required measured
-   candidate.
-   It is not the default because i32 Montgomery arithmetic and cache footprint
-   can lose despite the smaller prime count.
+4. **Two i32 primes for Q32.** Selected.
+   The measured release microbenchmark beat the four-prime i16 reference while
+   keeping the same 8-byte per-coefficient CRT limb footprint.
 5. **Mixed i16/i32 profiles.** Deferred.
    They may be mathematically attractive, but they require a heterogeneous CRT
    representation instead of the current `CrtNttParamSet<W, K, D>` shape.
@@ -652,8 +659,9 @@ Suggested implementation slices:
    `generated_families`; confirm the drift guard and `cargo test -q` stay green.
 2. Add Q16 table + tests (`512 | (p - 1)`); add reduced Q32/Q64 tables + tests;
    rename the i32 raw-prime constant off the `D1024` label.
-3. Generate and review the capacity-profile artifact for Q16, Q32 `4 × i16`,
-   Q32 `2 × i32`, Q64, and Q128 at `D in {32, 64, 128, 256}`.
+3. Generate and review the capacity-profile artifact for Q16, Q32 reference
+   `4 × i16`, Q32 production `2 × i32`, Q64, and Q128 at
+   `D in {32, 64, 128, 256}`.
 4. Extend `ProtocolCrtNttParams` / `NttSlotCache` / `select_crt_ntt_params`
    (D-aware, `D <= 256`, no width fallback on `D`).
 5. Fix const-generic `K` throughout prover linear + setup NTT cache build,
@@ -662,8 +670,9 @@ Suggested implementation slices:
 6. Add capacity validation in `CpuBackend::prepare_expanded`, direct `D = 128`
    / `D = 256` capacity unit tests, and forced-chunk tests for cyclic/fused/
    `z_pre` on new `K`.
-7. Run the Q32 `4 × i16` vs `2 × i32` experiment.
-   Keep the winner if it satisfies capacity and performance criteria.
+7. Run the Q32 reference `4 × i16` vs production-candidate `2 × i32`
+   experiment. Keep the winner if it satisfies capacity and performance
+   criteria.
 8. Run the backend-prepared layout experiment on the current row-major CPU
    reference versus at least one prime-flat, column-tiled, or SoA layout.
    Keep the new layout if it wins under the acceptance criteria.

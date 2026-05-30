@@ -32,6 +32,11 @@ REQUIRED_RUN_METRICS = (
     "proof_size_bytes",
     "accounted_bytes",
     "max_rss_kib",
+    "crt_profile",
+    "crt_num_primes",
+    "crt_limb_bits",
+    "balanced_digit_safe_width",
+    "raw_i8_safe_width",
     "claim_ext_degree",
     "challenge_ext_degree",
     "akita_levels",
@@ -152,7 +157,6 @@ def parse_args() -> argparse.Namespace:
             "and they do not contribute to the reported median."
         ),
     )
-
     render_parser = subparsers.add_parser(
         "render", help="Render a markdown report from summary.json files."
     )
@@ -353,6 +357,15 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             summary["setup_ring_elements"] = int(kvs["setup_ring_elements"])
             summary["setup_vector_bytes"] = int(kvs["setup_vector_bytes"])
             summary["setup_ntt_cache_bytes"] = int(kvs["setup_ntt_cache_bytes"])
+        elif "CRT NTT profile" in line and kvs.get("label") == mode:
+            summary["crt_profile"] = kvs["crt_profile"]
+            summary["crt_num_primes"] = int(kvs["crt_num_primes"])
+            summary["crt_limb_bits"] = int(kvs["crt_limb_bits"])
+            summary["max_i8_log_basis"] = int(kvs["max_i8_log_basis"])
+            summary["balanced_digit_safe_width"] = int(kvs["balanced_digit_safe_width"])
+            summary["raw_i8_safe_width"] = int(kvs["raw_i8_safe_width"])
+            summary["balanced_digit_chunk_width"] = int(kvs["balanced_digit_chunk_width"])
+            summary["raw_i8_chunk_width"] = int(kvs["raw_i8_chunk_width"])
         elif " INFO setup" in line and kvs.get("label") == mode:
             summary["setup_s"] = float(kvs["elapsed_s"])
         elif " INFO commit" in line and kvs.get("label") == mode:
@@ -454,7 +467,9 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
 
 
 def run_benchmark_case(
-    binary: str, output_dir: pathlib.Path, case: BenchmarkCaseSpec
+    binary: str,
+    output_dir: pathlib.Path,
+    case: BenchmarkCaseSpec,
 ) -> tuple[dict[str, object], int]:
     env = os.environ.copy()
     env["AKITA_MODE"] = case.mode
@@ -520,6 +535,11 @@ def infer_failure_phase(summary: dict[str, object], first_missing: str | None = 
         "accounted_bytes": "proof accounting",
         "consistent_proof_accounting": "proof accounting",
         "max_rss_kib": "memory",
+        "crt_profile": "CRT profile",
+        "crt_num_primes": "CRT profile",
+        "crt_limb_bits": "CRT profile",
+        "balanced_digit_safe_width": "CRT capacity",
+        "raw_i8_safe_width": "CRT capacity",
         "claim_ext_degree": "field roles",
         "challenge_ext_degree": "field roles",
         "akita_levels": "proof levels",
@@ -564,6 +584,11 @@ SUMMARY_CSV_COLUMNS = (
     "setup_ring_elements",
     "setup_vector_bytes",
     "setup_ntt_cache_bytes",
+    "crt_profile",
+    "crt_num_primes",
+    "crt_limb_bits",
+    "balanced_digit_safe_width",
+    "raw_i8_safe_width",
     "commit_s",
     "prove_total_s",
     "verify_total_s",
@@ -645,7 +670,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
         warmup_failure_summary: dict[str, object] | None = None
         for warmup_index in range(1, args.warmups + 1):
             warmup_dir = case_dir / f"warmup-{warmup_index}"
-            summary, return_code = run_benchmark_case(args.binary, warmup_dir, case)
+            summary, return_code = run_benchmark_case(
+                args.binary,
+                warmup_dir,
+                case,
+            )
             if return_code != 0:
                 summary["run_index"] = 0
                 warmup_failure_summary = summary
@@ -657,7 +686,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
         else:
             for run_index in range(1, args.runs + 1):
                 run_dir = case_dir if args.runs == 1 else case_dir / f"run-{run_index}"
-                summary, return_code = run_benchmark_case(args.binary, run_dir, case)
+                summary, return_code = run_benchmark_case(
+                    args.binary,
+                    run_dir,
+                    case,
+                )
                 summary["run_index"] = run_index
                 run_summaries.append(summary)
                 if return_code != 0:
@@ -951,6 +984,7 @@ def render_matrix_summary(
         "Verify s",
         "RSS MiB",
         "Proof B",
+        "CRT",
     ]
     if matrix_baseline is not None:
         label = matrix_baseline[0]
@@ -976,6 +1010,7 @@ def render_matrix_summary(
             fmt_optional_seconds(current, "verify_total_s"),
             fmt_optional_mib(current, "max_rss_kib"),
             fmt_optional_bytes(current, "proof_size_bytes"),
+            code_text(current.get("crt_profile", "n/a")),
         ]
         if matrix_baseline is not None:
             baseline_case = matrix_baseline[1].get(str(current["case_id"]))
@@ -1265,6 +1300,18 @@ def render_report(args: argparse.Namespace) -> int:
             print(
                 f"- Setup NTT cache: `{fmt_bytes(float(current['setup_ntt_cache_bytes']))} B` "
                 f"({fmt_optional_mib_from_bytes(current, 'setup_ntt_cache_bytes')} MiB)"
+            )
+        if current.get("crt_profile") is not None:
+            print(
+                f"- CRT profile: `{current['crt_profile']}` "
+                f"(K={current.get('crt_num_primes', 'n/a')}, "
+                f"limb_bits={current.get('crt_limb_bits', 'n/a')})"
+            )
+        if current.get("balanced_digit_safe_width") is not None or current.get("raw_i8_safe_width") is not None:
+            print(
+                "- CRT safe widths: "
+                f"`balanced_digit={current.get('balanced_digit_safe_width', 'n/a')}`, "
+                f"`raw_i8={current.get('raw_i8_safe_width', 'n/a')}`"
             )
         if current.get("proof_size_bytes") is not None:
             print(f"- Proof size: `{fmt_bytes(float(current['proof_size_bytes']))} B`")
