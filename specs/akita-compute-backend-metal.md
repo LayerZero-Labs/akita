@@ -518,6 +518,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         row_len: usize,
         digits: &[[i8; D]],
+        log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 
@@ -530,6 +531,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         row_len: usize,
         digits: &[[i8; D]],
+        log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 

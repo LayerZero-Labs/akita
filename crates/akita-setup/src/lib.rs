@@ -685,6 +685,7 @@ mod tests {
                             &prepared,
                             lp.b_key.row_len(),
                             inner.decomposed_inner_rows.flat_digits(),
+                            lp.log_basis,
                         )
                         .unwrap()
                 };
