@@ -331,6 +331,87 @@ mod tests {
         assert_eq!(width, 131_062);
     }
 
+    fn assert_profile_widths(
+        profile: CrtI8CapacityProfile,
+        expected_balanced: usize,
+        expected_raw: usize,
+    ) {
+        assert_eq!(
+            profile.balanced_digit_safe_width, expected_balanced,
+            "{} balanced safe width drifted",
+            profile.profile_id
+        );
+        assert_eq!(
+            profile.raw_i8_safe_width, expected_raw,
+            "{} raw-i8 safe width drifted",
+            profile.profile_id
+        );
+    }
+
+    #[test]
+    fn selected_capacity_profiles_match_golden_safe_widths() {
+        assert_profile_widths(
+            selected_crt_i8_capacity_profile::<Prime16Offset99, 256>().unwrap(),
+            4_688,
+            1_172,
+        );
+        assert_profile_widths(
+            selected_crt_i8_capacity_profile::<Prime32Offset99, 256>().unwrap(),
+            32_765,
+            8_191,
+        );
+        assert_profile_widths(
+            selected_crt_i8_capacity_profile::<Prime64Offset59, 256>().unwrap(),
+            8_191,
+            2_047,
+        );
+        assert_profile_widths(
+            selected_crt_i8_capacity_profile::<Prime128Offset275, 256>().unwrap(),
+            511,
+            127,
+        );
+    }
+
+    #[test]
+    fn centered_zpre_capacity_matches_golden_widths() {
+        const D: usize = 256;
+        let q16_params = CrtNttParamSet::<i16, Q16_NUM_PRIMES, D>::new(Q16_PRIMES);
+        assert_eq!(
+            max_safe_crt_accumulation_width::<Prime16Offset99, i16, Q16_NUM_PRIMES, D>(
+                &q16_params,
+                32_768
+            ),
+            Some(4)
+        );
+
+        let q32_params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
+        assert_eq!(
+            max_safe_crt_accumulation_width::<Prime32Offset99, i32, Q32_NUM_PRIMES, D>(
+                &q32_params,
+                32_768
+            ),
+            Some(31)
+        );
+
+        let q64_params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
+        assert_eq!(
+            max_safe_crt_accumulation_width::<Prime64Offset59, i32, Q64_NUM_PRIMES, D>(
+                &q64_params,
+                32_768
+            ),
+            Some(7)
+        );
+
+        let q128_params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
+        assert_eq!(
+            max_safe_crt_accumulation_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(
+                &q128_params,
+                32_768
+            ),
+            None
+        );
+    }
+
     #[test]
     fn reduced_profiles_fit_single_i8_terms_at_direct_ring_dims() {
         for profile in [

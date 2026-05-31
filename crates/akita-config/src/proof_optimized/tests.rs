@@ -1,14 +1,14 @@
 use super::*;
-#[cfg(not(feature = "zk"))]
 use akita_algebra::ntt::{
     prime::PrimeWidth,
     tables::{Q16_PRIMES, Q32_PRIMES, Q64_PRIMES},
 };
-#[cfg(not(feature = "zk"))]
 use akita_field::{CanonicalField, One};
 #[cfg(not(feature = "zk"))]
 use akita_types::generated::{
     fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
+};
+use akita_types::generated::{
     fp16_d32_full_table, fp16_d32_onehot_table, fp16_d64_full_table, fp16_d64_onehot_table,
     fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table, fp32_d64_table,
     fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
@@ -18,12 +18,9 @@ use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::level_layout_from_params;
 use akita_types::planned_w_ring_element_count;
 use akita_types::DecompositionParams;
-#[cfg(not(feature = "zk"))]
 use akita_types::SisModulusFamily;
 
-#[cfg(not(feature = "zk"))]
 const MAX_I8_LOG_BASIS: u32 = 6;
-#[cfg(not(feature = "zk"))]
 const RAW_I8_RHS_MAX_ABS: u64 = 128;
 
 #[test]
@@ -505,7 +502,6 @@ fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: Generated
     }
 }
 
-#[cfg(not(feature = "zk"))]
 fn crt_product_for_small_field_cfg<Cfg: CommitmentConfig>() -> (&'static str, u128) {
     match Cfg::sis_modulus_family() {
         SisModulusFamily::Q16 => (
@@ -533,7 +529,6 @@ fn crt_product_for_small_field_cfg<Cfg: CommitmentConfig>() -> (&'static str, u1
     }
 }
 
-#[cfg(not(feature = "zk"))]
 fn small_field_single_term_safe_width<Cfg: CommitmentConfig>(
     ring_dimension: usize,
     rhs_abs_bound: u64,
@@ -555,7 +550,6 @@ fn small_field_single_term_safe_width<Cfg: CommitmentConfig>(
     usize::try_from(width).ok()
 }
 
-#[cfg(not(feature = "zk"))]
 fn assert_level_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
     level: &LevelParams,
@@ -585,7 +579,6 @@ fn assert_level_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     }
 }
 
-#[cfg(not(feature = "zk"))]
 fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     table: GeneratedScheduleTable,
 ) {
@@ -728,6 +721,23 @@ fn generated_small_field_schedule_tables_match_cfg_schedule() {
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32Full>(fp16_d32_full_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32OneHot>(fp16_d32_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64Full>(fp16_d64_full_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64OneHot>(fp16_d64_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D32Full>(fp32_d32_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D32OneHot>(fp32_d32_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64Full>(fp32_d64_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64OneHot>(fp32_d64_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32Full>(fp64_d32_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32OneHot>(fp64_d32_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64Full>(fp64_d64_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64OneHot>(fp64_d64_onehot_table());
+}
+
+#[test]
+#[cfg(feature = "zk")]
+fn generated_zk_small_field_schedule_tables_have_crt_i8_capacity() {
     assert_every_table_entry_has_crt_i8_capacity::<fp16::D32Full>(fp16_d32_full_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp16::D32OneHot>(fp16_d32_onehot_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp16::D64Full>(fp16_d64_full_table());

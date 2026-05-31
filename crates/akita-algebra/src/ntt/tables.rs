@@ -138,6 +138,27 @@ pub fn q128_garner() -> GarnerData<i32, Q128_NUM_PRIMES> {
 mod tests {
     use super::*;
 
+    fn assert_garner_profile<W, const K: usize>(
+        label: &str,
+        primes: &[NttPrime<W>; K],
+        garner: GarnerData<W, K>,
+    ) where
+        W: super::super::prime::PrimeWidth,
+    {
+        for (i, prime_i) in primes.iter().enumerate().skip(1) {
+            let pi = prime_i.p.to_i64();
+            for (j, prime_j) in primes[..i].iter().enumerate() {
+                let pj = prime_j.p.to_i64();
+                let g = garner.gamma[i][j].to_i64();
+                assert_eq!(
+                    (pj * g) % pi,
+                    1,
+                    "{label} garner gamma[{i}][{j}] not inverse of p_{j} mod p_{i}"
+                );
+            }
+        }
+    }
+
     fn is_prime(n: i64) -> bool {
         if n <= 1 {
             return false;
@@ -231,32 +252,10 @@ mod tests {
 
     #[test]
     fn garner_data_is_consistent() {
-        let garner = q16_garner();
-        for (i, &prime_i) in Q16_PRIMES.iter().enumerate().skip(1) {
-            let pi = prime_i.p as i64;
-            for (j, &prime_j) in Q16_PRIMES[..i].iter().enumerate() {
-                let pj = prime_j.p as i64;
-                let g = garner.gamma[i][j] as i64;
-                assert_eq!(
-                    (pj * g) % pi,
-                    1,
-                    "garner gamma[{i}][{j}] not inverse of p_{j} mod p_{i}"
-                );
-            }
-        }
-
-        let garner = q32_garner();
-        for (i, &prime_i) in Q32_PRIMES.iter().enumerate().skip(1) {
-            let pi = prime_i.p as i64;
-            for (j, &prime_j) in Q32_PRIMES[..i].iter().enumerate() {
-                let pj = prime_j.p as i64;
-                let g = garner.gamma[i][j] as i64;
-                assert_eq!(
-                    (pj * g) % pi,
-                    1,
-                    "garner gamma[{i}][{j}] not inverse of p_{j} mod p_{i}"
-                );
-            }
-        }
+        assert_garner_profile("Q16", &Q16_PRIMES, q16_garner());
+        assert_garner_profile("Q32", &Q32_PRIMES, q32_garner());
+        assert_garner_profile("Q64", &Q64_PRIMES, q64_garner());
+        let q128_primes = q128_primes();
+        assert_garner_profile("Q128", &q128_primes, q128_garner());
     }
 }

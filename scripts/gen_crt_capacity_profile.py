@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import math
+import pathlib
+import re
+import sys
 
 PROFILES = [
     {
@@ -53,6 +56,13 @@ ROLES = [
     ("zpre32768", 32768),
 ]
 
+RUST_PRIME_CONST_BY_PROFILE = {
+    "Q16/3xi16": "Q16_PRIMES",
+    "Q32/2xi32": "Q32_PRIMES",
+    "Q64/3xi32": "Q64_PRIMES",
+    "Q128/5xi32": "I32_RAW_PRIMES",
+}
+
 
 def product(values: list[int]) -> int:
     out = 1
@@ -76,7 +86,45 @@ def fmt_primes(values: list[int]) -> str:
     return ", ".join(str(value) for value in values)
 
 
+def rust_tables_path() -> pathlib.Path:
+    return (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "crates/akita-algebra/src/ntt/tables.rs"
+    )
+
+
+def extract_rust_prime_const(name: str) -> list[int]:
+    text = rust_tables_path().read_text()
+    match = re.search(rf"pub const {name}:[^=]*=\s*\[(.*?)\];", text, re.DOTALL)
+    if match is None:
+        raise RuntimeError(f"could not find Rust prime constant {name}")
+    body = match.group(1)
+    p_fields = re.findall(r"p:\s*(-?\d+)", body)
+    if p_fields:
+        return [int(value) for value in p_fields]
+    return [int(value) for value in re.findall(r"-?\d+", body)]
+
+
+def validate_profile_primes_against_rust() -> None:
+    for profile in PROFILES:
+        const_name = RUST_PRIME_CONST_BY_PROFILE.get(profile["name"])
+        if const_name is None:
+            continue
+        rust_primes = extract_rust_prime_const(const_name)
+        if rust_primes != profile["primes"]:
+            raise RuntimeError(
+                f"{profile['name']} primes drifted from {const_name}: "
+                f"script={profile['primes']} rust={rust_primes}"
+            )
+
+
 def main() -> int:
+    try:
+        validate_profile_primes_against_rust()
+    except RuntimeError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+
     print("# CRT/NTT Capacity Profile")
     print()
     print(
