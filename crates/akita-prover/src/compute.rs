@@ -14,7 +14,7 @@ use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
 #[cfg(test)]
 use crate::kernels::linear::fused_split_eq_quotients;
 use crate::kernels::linear::{
-    fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8,
+    fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
     mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
     selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
@@ -631,7 +631,7 @@ where
                 log_basis,
             } => {
                 let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
-                mat_vec_mul_ntt_dense_digits_i8(
+                mat_vec_mul_ntt_dense_digits_i8_trusted(
                     &prepared.ntt_shared,
                     plan.n_a,
                     row_width,

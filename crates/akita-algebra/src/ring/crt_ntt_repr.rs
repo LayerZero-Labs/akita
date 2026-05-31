@@ -17,20 +17,14 @@ use crate::{CanonicalField, FieldCore};
 
 use super::cyclotomic::CyclotomicRing;
 
-/// Polynomial rows processed per AVX-512 batched-row NTT call (one per `i32`
-/// lane). The batched-row kernel only exists on x86.
+/// Polynomial rows processed per AVX-512 batched-row NTT call.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const NTT_BATCH_LANES: usize = avx::batch::BATCH_LANES;
 
 /// CRT+NTT-domain representation of a cyclotomic ring element.
 ///
 /// Stores `K` arrays of `D` [`MontCoeff<W>`] values, one per CRT prime.
-/// Multiplication is pointwise per prime — O(K*D) vs O(D^2) for coefficient form.
-///
-/// Generic over:
-/// - `W: PrimeWidth` — integer width (`i16` or `i32`)
-/// - `K` — number of CRT primes
-/// - `D` — polynomial degree
+/// Multiplication is pointwise per prime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CyclotomicCrtNtt<W: PrimeWidth, const K: usize, const D: usize> {
     /// Per-prime NTT-domain Montgomery limbs.
@@ -295,7 +289,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    #[inline]
+    #[inline(always)]
     fn x86_pointwise_mode() -> Option<AvxNttMode> {
         let mode = avx::avx_ntt_mode()?;
         if size_of::<W>() == size_of::<i16>() {
@@ -305,7 +299,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    #[inline]
+    #[inline(always)]
     unsafe fn add_assign_pointwise_mul_limb_x86(
         acc_limb: &mut [MontCoeff<W>; D],
         lhs_limb: &[MontCoeff<W>; D],
@@ -663,6 +657,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return;
         }
 
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        let x86_mode = Self::x86_pointwise_mode();
         for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
                 *dst = lut.get(k, digit);
@@ -673,7 +669,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let acc_limb = &mut self.limbs[k];
             let lhs_limb = &lhs.limbs[k];
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if let Some(mode) = Self::x86_pointwise_mode() {
+            if let Some(mode) = x86_mode {
                 // SAFETY: guarded by x86 runtime dispatch.
                 unsafe {
                     Self::add_assign_pointwise_mul_limb_x86(
@@ -758,6 +754,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return;
         }
 
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        let x86_mode = Self::x86_pointwise_mode();
         for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
                 *dst = lut.get(k, digit);
@@ -770,7 +768,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let lhs0_limb = &lhs0.limbs[k];
             let lhs1_limb = &lhs1.limbs[k];
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if let Some(mode) = Self::x86_pointwise_mode() {
+            if let Some(mode) = x86_mode {
                 // SAFETY: guarded by x86 runtime dispatch.
                 unsafe {
                     Self::add_assign_pointwise_mul_limb_x86(
@@ -892,6 +890,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return;
         }
 
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        let x86_mode = Self::x86_pointwise_mode();
         for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
                 *dst = lut.get(k, digit);
@@ -906,7 +906,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let lhs1_limb = &lhs1.limbs[k];
             let lhs2_limb = &lhs2.limbs[k];
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if let Some(mode) = Self::x86_pointwise_mode() {
+            if let Some(mode) = x86_mode {
                 // SAFETY: guarded by x86 runtime dispatch.
                 unsafe {
                     Self::add_assign_pointwise_mul_limb_x86(
@@ -1392,13 +1392,15 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return;
         }
 
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        let x86_mode = Self::x86_pointwise_mode();
         for k in 0..K {
             let prime = params.primes[k];
             let acc_limb = &mut self.limbs[k];
             let lhs_limb = &lhs.limbs[k];
             let rhs_limb = &rhs.limbs[k];
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if let Some(mode) = Self::x86_pointwise_mode() {
+            if let Some(mode) = x86_mode {
                 // SAFETY: guarded by x86 runtime dispatch.
                 unsafe {
                     Self::add_assign_pointwise_mul_limb_x86(

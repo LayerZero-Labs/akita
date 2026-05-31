@@ -86,6 +86,40 @@ pub(super) fn mat_vec_mul_digits_i8_block_parallel_chunked<
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     debug_assert!(chunk_width > 0);
     let n_a = ntt_mat.len();
+    if n_a == 1 {
+        return mat_vec_mul_digits_i8_single_row_block_parallel_chunked::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat,
+            blocks,
+            inner_width,
+            chunk_width,
+            digit_bound,
+            params,
+        )
+        .into_iter()
+        .map(|ring| vec![ring])
+        .collect();
+    }
+    if n_a == 2 {
+        return mat_vec_mul_digits_i8_two_row_block_parallel_chunked::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat,
+            blocks,
+            inner_width,
+            chunk_width,
+            digit_bound,
+            params,
+        );
+    }
+    if n_a == 3 {
+        return mat_vec_mul_digits_i8_three_row_block_parallel_chunked::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat,
+            blocks,
+            inner_width,
+            chunk_width,
+            digit_bound,
+            params,
+        );
+    }
+
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
 
     cfg_into_iter!(blocks)
@@ -110,6 +144,161 @@ pub(super) fn mat_vec_mul_digits_i8_block_parallel_chunked<
                 }
             }
             out
+        })
+        .collect()
+}
+
+fn mat_vec_mul_digits_i8_single_row_block_parallel_chunked<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+    const CHECK_ZERO: bool,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[[i8; D]]],
+    inner_width: usize,
+    chunk_width: usize,
+    digit_bound: u64,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<CyclotomicRing<F, D>> {
+    debug_assert_eq!(ntt_mat.len(), 1);
+    debug_assert!(chunk_width > 0);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
+    let mat_row = &ntt_mat[0];
+
+    cfg_into_iter!(blocks)
+        .map(|block| {
+            let live_width = block.len().min(inner_width);
+            let mut out = CyclotomicRing::<F, D>::zero();
+            let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+            for chunk_start in (0..live_width).step_by(chunk_width) {
+                let chunk_end = (chunk_start + chunk_width).min(live_width);
+                let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
+                for (j, digit) in block[chunk_start..chunk_end].iter().enumerate() {
+                    if CHECK_ZERO && is_zero_plane(digit) {
+                        continue;
+                    }
+                    let mat_col = chunk_start + j;
+                    acc.add_assign_pointwise_mul_i8_with_lut_scratch(
+                        &mat_row[mat_col],
+                        digit,
+                        params,
+                        &lut,
+                        &mut rhs_scratch,
+                    );
+                }
+                out += acc.to_ring_with_params(params);
+            }
+            out
+        })
+        .collect()
+}
+
+fn mat_vec_mul_digits_i8_two_row_block_parallel_chunked<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+    const CHECK_ZERO: bool,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[[i8; D]]],
+    inner_width: usize,
+    chunk_width: usize,
+    digit_bound: u64,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    debug_assert_eq!(ntt_mat.len(), 2);
+    debug_assert!(chunk_width > 0);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
+    let mat_row0 = &ntt_mat[0];
+    let mat_row1 = &ntt_mat[1];
+
+    cfg_into_iter!(blocks)
+        .map(|block| {
+            let live_width = block.len().min(inner_width);
+            let mut out0 = CyclotomicRing::<F, D>::zero();
+            let mut out1 = CyclotomicRing::<F, D>::zero();
+            let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+            for chunk_start in (0..live_width).step_by(chunk_width) {
+                let chunk_end = (chunk_start + chunk_width).min(live_width);
+                let mut acc0 = CyclotomicCrtNtt::<W, K, D>::zero();
+                let mut acc1 = CyclotomicCrtNtt::<W, K, D>::zero();
+                for (j, digit) in block[chunk_start..chunk_end].iter().enumerate() {
+                    if CHECK_ZERO && is_zero_plane(digit) {
+                        continue;
+                    }
+                    let mat_col = chunk_start + j;
+                    CyclotomicCrtNtt::add_assign_pointwise_mul_i8_pair_with_lut_scratch(
+                        [&mut acc0, &mut acc1],
+                        [&mat_row0[mat_col], &mat_row1[mat_col]],
+                        digit,
+                        params,
+                        &lut,
+                        &mut rhs_scratch,
+                    );
+                }
+                out0 += acc0.to_ring_with_params(params);
+                out1 += acc1.to_ring_with_params(params);
+            }
+            vec![out0, out1]
+        })
+        .collect()
+}
+
+fn mat_vec_mul_digits_i8_three_row_block_parallel_chunked<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+    const CHECK_ZERO: bool,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[[i8; D]]],
+    inner_width: usize,
+    chunk_width: usize,
+    digit_bound: u64,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    debug_assert_eq!(ntt_mat.len(), 3);
+    debug_assert!(chunk_width > 0);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
+    let mat_row0 = &ntt_mat[0];
+    let mat_row1 = &ntt_mat[1];
+    let mat_row2 = &ntt_mat[2];
+
+    cfg_into_iter!(blocks)
+        .map(|block| {
+            let live_width = block.len().min(inner_width);
+            let mut out0 = CyclotomicRing::<F, D>::zero();
+            let mut out1 = CyclotomicRing::<F, D>::zero();
+            let mut out2 = CyclotomicRing::<F, D>::zero();
+            let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+            for chunk_start in (0..live_width).step_by(chunk_width) {
+                let chunk_end = (chunk_start + chunk_width).min(live_width);
+                let mut acc0 = CyclotomicCrtNtt::<W, K, D>::zero();
+                let mut acc1 = CyclotomicCrtNtt::<W, K, D>::zero();
+                let mut acc2 = CyclotomicCrtNtt::<W, K, D>::zero();
+                for (j, digit) in block[chunk_start..chunk_end].iter().enumerate() {
+                    if CHECK_ZERO && is_zero_plane(digit) {
+                        continue;
+                    }
+                    let mat_col = chunk_start + j;
+                    CyclotomicCrtNtt::add_assign_pointwise_mul_i8_triple_with_lut_scratch(
+                        [&mut acc0, &mut acc1, &mut acc2],
+                        [&mat_row0[mat_col], &mat_row1[mat_col], &mat_row2[mat_col]],
+                        digit,
+                        params,
+                        &lut,
+                        &mut rhs_scratch,
+                    );
+                }
+                out0 += acc0.to_ring_with_params(params);
+                out1 += acc1.to_ring_with_params(params);
+                out2 += acc2.to_ring_with_params(params);
+            }
+            vec![out0, out1, out2]
         })
         .collect()
 }
