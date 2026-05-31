@@ -12,6 +12,7 @@ use std::arch::x86::*;
 use std::arch::x86_64::*;
 use std::sync::OnceLock;
 
+pub mod batch;
 mod d32;
 
 use super::butterfly::NttTwiddles;

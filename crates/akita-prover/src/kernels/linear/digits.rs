@@ -1,5 +1,9 @@
 use super::*;
 
+/// Digits transformed per batched forward-NTT call (one row per AVX-512 `i32`
+/// lane). Matches the batched-row kernel's lane count.
+const NTT_DIGIT_BATCH: usize = 16;
+
 pub(super) fn mat_vec_mul_digits_i8_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -97,20 +101,33 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
         safe_width,
         params,
         |accs, start, end| {
+            let mut ntt_batch = vec![CyclotomicCrtNtt::<W, K, D>::zero(); NTT_DIGIT_BATCH];
             for block_idx in 0..num_blocks {
                 let block = blocks[block_idx];
                 if start >= block.len() {
                     continue;
                 }
                 let block_tile_end = end.min(block.len());
-                for (j, digit) in block[start..block_tile_end].iter().enumerate() {
-                    if CHECK_ZERO && is_zero_plane(digit) {
-                        continue;
+                let tile = &block[start..block_tile_end];
+                let mut off = 0usize;
+                while off < tile.len() {
+                    let n = NTT_DIGIT_BATCH.min(tile.len() - off);
+                    CyclotomicCrtNtt::batch_from_i8_with_lut_into(
+                        &tile[off..off + n],
+                        params,
+                        &lut,
+                        &mut ntt_batch[..n],
+                    );
+                    for (i, ntt_d) in ntt_batch[..n].iter().enumerate() {
+                        if CHECK_ZERO && is_zero_plane(&tile[off + i]) {
+                            continue;
+                        }
+                        let col = start + off + i;
+                        for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
+                            accumulate_pointwise_product_into(acc, &mat_row[col], ntt_d, params);
+                        }
                     }
-                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                    for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
-                        accumulate_pointwise_product_into(acc, &mat_row[start + j], &ntt_d, params);
-                    }
+                    off += n;
                 }
             }
         },
@@ -175,6 +192,7 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
         safe_width,
         params,
         |accs, start, end| {
+            let mut ntt_batch = vec![CyclotomicCrtNtt::<W, K, D>::zero(); NTT_DIGIT_BATCH];
             for col in start..end {
                 let seq_start = col * num_blocks;
                 if seq_start >= coeffs.len() {
@@ -182,14 +200,24 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
                 }
                 let live_blocks = num_blocks.min(coeffs.len() - seq_start);
                 let coeffs_for_col = &coeffs[seq_start..seq_start + live_blocks];
-                for (block_idx, digit) in coeffs_for_col.iter().enumerate() {
-                    if is_zero_plane(digit) {
-                        continue;
+                let mut off = 0usize;
+                while off < coeffs_for_col.len() {
+                    let n = NTT_DIGIT_BATCH.min(coeffs_for_col.len() - off);
+                    CyclotomicCrtNtt::batch_from_i8_with_lut_into(
+                        &coeffs_for_col[off..off + n],
+                        params,
+                        &lut,
+                        &mut ntt_batch[..n],
+                    );
+                    for (i, ntt_d) in ntt_batch[..n].iter().enumerate() {
+                        if is_zero_plane(&coeffs_for_col[off + i]) {
+                            continue;
+                        }
+                        for (acc, mat_row) in accs[off + i].iter_mut().zip(ntt_mat.iter()) {
+                            accumulate_pointwise_product_into(acc, &mat_row[col], ntt_d, params);
+                        }
                     }
-                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                    for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
-                        accumulate_pointwise_product_into(acc, &mat_row[col], &ntt_d, params);
-                    }
+                    off += n;
                 }
             }
         },

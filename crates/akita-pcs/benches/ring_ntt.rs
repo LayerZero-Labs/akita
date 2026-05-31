@@ -629,6 +629,74 @@ fn bench_partial_split_packed_cached_matvec_i8_rhs_q128m159(c: &mut Criterion) {
     );
 }
 
+fn bench_batched_forward_ntt_d32(c: &mut Criterion) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use akita_algebra::ntt::avx::batch::{batched_forward_ntt_16rows, BATCH_LANES};
+        if !(std::is_x86_feature_detected!("avx512f")
+            && std::is_x86_feature_detected!("avx512dq")
+            && std::is_x86_feature_detected!("avx512bw"))
+        {
+            return;
+        }
+        let prime = q128_primes()[0];
+        let tw = NttTwiddles::<i32, 32>::compute(prime);
+        // Identical Vec-clone harness for all cases; the ONLY variable across the
+        // batched cases is `row_stride`. Tight stride = 32 (rows packed), realistic
+        // setup/commit stride = K*32 (limb[k] of 16 consecutive CrtNtt elements,
+        // K=5 here). Per-poly uses the same buffer at stride 32.
+        const K: usize = 5;
+        let make_buf = |stride: usize| {
+            let mut buf = vec![0i32; BATCH_LANES * stride];
+            for r in 0..BATCH_LANES {
+                for i in 0..32 {
+                    buf[r * stride + i] = prime
+                        .from_canonical(((r * 32 + i * 5 + 7) as i32) % prime.p)
+                        .raw();
+                }
+            }
+            buf
+        };
+        let buf32 = make_buf(32);
+        let buf_kd = make_buf(K * 32);
+
+        let mut group = c.benchmark_group("batched_forward_ntt_d32_16rows_q128");
+        group.bench_function("per_poly_stride32", |b| {
+            b.iter(|| {
+                let mut buf = black_box(buf32.clone());
+                for r in 0..BATCH_LANES {
+                    // SAFETY: MontCoeff<i32> is a transparent i32; each row is 32
+                    // contiguous i32 at offset r*32.
+                    let row = unsafe {
+                        &mut *(buf.as_mut_ptr().add(r * 32) as *mut [MontCoeff<i32>; 32])
+                    };
+                    forward_ntt::<i32, 32>(row, prime, &tw);
+                }
+                black_box(buf)
+            })
+        });
+        group.bench_function("batched_tight_stride32", |b| {
+            b.iter(|| {
+                let mut buf = black_box(buf32.clone());
+                // SAFETY: guarded by the AVX-512 feature detection above.
+                unsafe { batched_forward_ntt_16rows::<32>(buf.as_mut_ptr(), 32, prime, &tw) };
+                black_box(buf)
+            })
+        });
+        group.bench_function("batched_interleaved_strideKD", |b| {
+            b.iter(|| {
+                let mut buf = black_box(buf_kd.clone());
+                // SAFETY: guarded by AVX-512 detection; buf holds 16 rows at K*32.
+                unsafe { batched_forward_ntt_16rows::<32>(buf.as_mut_ptr(), K * 32, prime, &tw) };
+                black_box(buf)
+            })
+        });
+        group.finish();
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = c;
+}
+
 fn bench_crt_simd_cached_matvec_i8_rhs_q128m159(c: &mut Criterion) {
     let params = CrtNttParamSet::new(q128_primes());
     let matrix: Vec<Vec<N128>> = (0..CACHE_MAT_ROWS)
@@ -692,6 +760,7 @@ criterion_group!(
     bench_crt_simd_cached_matvec_q128m159,
     bench_partial_split_cached_matvec_i8_rhs_q128m159,
     bench_partial_split_packed_cached_matvec_i8_rhs_q128m159,
-    bench_crt_simd_cached_matvec_i8_rhs_q128m159
+    bench_crt_simd_cached_matvec_i8_rhs_q128m159,
+    bench_batched_forward_ntt_d32
 );
 criterion_main!(ring_ntt);
