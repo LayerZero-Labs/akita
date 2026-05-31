@@ -2,16 +2,10 @@
 
 use std::array::from_fn;
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use crate::ntt::avx;
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
 use crate::{CanonicalField, FieldCore};
-
-/// Polynomial rows processed per AVX-512 batched-row NTT call.
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-const NTT_BATCH_LANES: usize = avx::batch::BATCH_LANES;
 
 /// CRT+NTT-domain representation of a cyclotomic ring element.
 ///

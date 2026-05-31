@@ -1,18 +1,12 @@
 use std::array::from_fn;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use std::mem::size_of;
 
 use crate::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use crate::ntt::avx::{self, AvxNttMode};
 use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt_cyclic, NttTwiddles};
 use crate::ntt::crt::GarnerData;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
 use crate::ring::cyclotomic::CyclotomicRing;
 
 use super::lut::{CenteredPrimeReducer, CenteredPrimeWideReducer};
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use super::NTT_BATCH_LANES;
 use super::{
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut,
 };
@@ -81,58 +75,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             forward_ntt_cyclic(cyc_limb, *prime, tw);
         }
         (Self { limbs: neg_limbs }, Self { limbs: cyc_limbs })
-    }
-
-    /// Apply a forward NTT to up to [`NTT_BATCH_LANES`] CRT+NTT elements whose
-    /// limbs are already filled in coefficient form.
-    ///
-    /// When the group is exactly [`NTT_BATCH_LANES`] `i32` rows and AVX-512 is
-    /// active, this uses the batched-row kernel (transforming lane = row); the
-    /// per-element fallback is bit-identical. `chunk` must be one contiguous run
-    /// of elements so the batched kernel can stride by `K*D` across rows.
-    fn transform_chunk(chunk: &mut [Self], params: &CrtNttParamSet<W, K, D>, cyclic: bool) {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        if chunk.len() == NTT_BATCH_LANES
-            && size_of::<W>() == size_of::<i32>()
-            && avx::avx_ntt_mode() == Some(AvxNttMode::Avx512)
-        {
-            let row_stride = K * D;
-            let chunk_base = chunk.as_mut_ptr().cast::<MontCoeff<W>>();
-            for k in 0..K {
-                let base = chunk_base.wrapping_add(k * D) as *mut i32;
-                // SAFETY: `W == i32`, `Self` is transparent over its limbs, and
-                // `base` derives from the whole mutable chunk. Row strides stay
-                // within that allocation; AVX-512 is proven by the mode check.
-                unsafe {
-                    let prime = *(&params.primes[k] as *const NttPrime<W> as *const NttPrime<i32>);
-                    let tw = &*(&params.twiddles[k] as *const NttTwiddles<W, D>
-                        as *const NttTwiddles<i32, D>);
-                    if cyclic {
-                        avx::batch::batched_forward_ntt_cyclic_16rows::<D>(
-                            base, row_stride, prime, tw,
-                        );
-                    } else {
-                        avx::batch::batched_forward_ntt_16rows::<D>(base, row_stride, prime, tw);
-                    }
-                }
-            }
-            return;
-        }
-
-        for el in chunk.iter_mut() {
-            for ((limb, prime), tw) in el
-                .limbs
-                .iter_mut()
-                .zip(params.primes.iter())
-                .zip(params.twiddles.iter())
-            {
-                if cyclic {
-                    forward_ntt_cyclic(limb, *prime, tw);
-                } else {
-                    forward_ntt(limb, *prime, tw);
-                }
-            }
-        }
     }
 
     /// Convert a field scalar (constant polynomial) into CRT+NTT domain.
@@ -228,58 +170,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             forward_ntt(limb, params.primes[k], tw);
         }
         Self { limbs }
-    }
-
-    /// Batched form of [`Self::from_i8_with_lut`]: build the CRT+NTT element for
-    /// each digit plane in `digits` into the matching slot of `out`.
-    ///
-    /// Fills every slot's limbs from the LUT, then applies one batched forward
-    /// negacyclic NTT across the whole group (bit-identical to mapping
-    /// [`Self::from_i8_with_lut`]). `out.len()` must equal `digits.len()`; the
-    /// AVX-512 batched-row kernel engages when the group is exactly 16 `i32`
-    /// rows, otherwise each row transforms per-element.
-    pub fn batch_from_i8_with_lut_into(
-        digits: &[[i8; D]],
-        params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K>,
-        out: &mut [Self],
-    ) {
-        assert_eq!(
-            digits.len(),
-            out.len(),
-            "digit and output batches must have the same length"
-        );
-        for (slot, digit) in out.iter_mut().zip(digits.iter()) {
-            for (k, limb) in slot.limbs.iter_mut().enumerate() {
-                for (dst, &d) in limb.iter_mut().zip(digit.iter()) {
-                    *dst = lut.get(k, d);
-                }
-            }
-        }
-        Self::transform_chunk(out, params, false);
-    }
-
-    /// Like [`Self::batch_from_i8_with_lut_into`], but accepts borrowed digit
-    /// planes so callers can pack sparse nonzero rows without copying them.
-    pub fn batch_from_i8_refs_with_lut_into(
-        digits: &[&[i8; D]],
-        params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K>,
-        out: &mut [Self],
-    ) {
-        assert_eq!(
-            digits.len(),
-            out.len(),
-            "digit and output batches must have the same length"
-        );
-        for (slot, digit) in out.iter_mut().zip(digits.iter()) {
-            for (k, limb) in slot.limbs.iter_mut().enumerate() {
-                for (dst, &d) in limb.iter_mut().zip(digit.iter()) {
-                    *dst = lut.get(k, d);
-                }
-            }
-        }
-        Self::transform_chunk(out, params, false);
     }
 
     /// Like [`Self::from_i8_cyclic`] but uses a precomputed [`DigitMontLut`].
