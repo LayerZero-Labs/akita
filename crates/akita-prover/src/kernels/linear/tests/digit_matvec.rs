@@ -622,6 +622,153 @@ fn mat_vec_mul_digits_i8_strided_matches_block_path_across_batch_boundary() {
 }
 
 #[test]
+fn mat_vec_mul_digits_i8_sparse_batches_match_schoolbook() {
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+    let log_basis = 3;
+    let num_blocks = 7;
+    let digits_per_block = 5;
+    let total_planes = num_blocks * digits_per_block;
+
+    let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..5)
+        .map(|i| {
+            (0..digits_per_block)
+                .map(|j| {
+                    let coeffs = std::array::from_fn(|k| {
+                        let raw = ((13 * i as i64 + 17 * j as i64 + k as i64) % 9) - 4;
+                        F::from_i64(raw)
+                    });
+                    CyclotomicRing::from_coefficients(coeffs)
+                })
+                .collect()
+        })
+        .collect();
+
+    let positions: Vec<(usize, usize)> = (0..total_planes)
+        .map(|idx| {
+            let permuted = (idx * 11) % total_planes;
+            (permuted % num_blocks, permuted / num_blocks)
+        })
+        .collect();
+
+    for live_count in [0usize, 15, 16, 17, 31] {
+        let mut digit_blocks = vec![vec![[0i8; D]; digits_per_block]; num_blocks];
+        for (live_idx, &(block_idx, col)) in positions.iter().take(live_count).enumerate() {
+            digit_blocks[block_idx][col] = std::array::from_fn(|k| {
+                let raw = ((live_idx as i16 * 5 + col as i16 * 3 + k as i16) % 7) - 3;
+                if raw == 0 {
+                    1
+                } else {
+                    raw as i8
+                }
+            });
+        }
+
+        let digit_block_slices: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
+        let mut strided_digits = Vec::with_capacity(total_planes);
+        for col in 0..digits_per_block {
+            for block in &digit_blocks {
+                strided_digits.push(block[col]);
+            }
+        }
+
+        match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
+            ProtocolCrtNttParams::Q32(params) => {
+                let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+                let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
+                let expected = schoolbook_digit_mat_vec(&mat, &digit_blocks);
+                let block_path =
+                    mat_vec_mul_digits_i8_with_params_for_log_basis::<F, i32, Q32_NUM_PRIMES, D>(
+                        &ntt_mat,
+                        &digit_block_slices,
+                        log_basis,
+                        &params,
+                    );
+                let strided_path = mat_vec_mul_digits_i8_strided_with_params_for_log_basis(
+                    &ntt_mat,
+                    &strided_digits,
+                    num_blocks,
+                    digits_per_block,
+                    log_basis,
+                    &params,
+                );
+                assert_eq!(block_path, expected, "block path mismatch at {live_count}");
+                assert_eq!(
+                    strided_path, expected,
+                    "strided path mismatch at {live_count}"
+                );
+            }
+            _ => panic!("unexpected parameter family"),
+        }
+    }
+}
+
+#[test]
+fn mat_vec_mul_digits_i8_sparse_strided_ragged_tail_matches_schoolbook() {
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+    let log_basis = 3;
+    let num_blocks = 7;
+    let digits_per_block = 5;
+
+    let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..5)
+        .map(|i| {
+            (0..digits_per_block)
+                .map(|j| {
+                    let coeffs = std::array::from_fn(|k| {
+                        let raw = ((19 * i as i64 + 7 * j as i64 + 3 * k as i64) % 9) - 4;
+                        F::from_i64(raw)
+                    });
+                    CyclotomicRing::from_coefficients(coeffs)
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut digit_blocks = vec![vec![[0i8; D]; digits_per_block]; num_blocks];
+    for col in 0..(digits_per_block - 1) {
+        for (block_idx, block) in digit_blocks.iter_mut().enumerate() {
+            if (block_idx + 2 * col) % 3 == 0 {
+                block[col] = std::array::from_fn(|k| {
+                    let raw = ((block_idx as i16 + col as i16 * 5 + k as i16) % 7) - 3;
+                    if raw == 0 {
+                        -1
+                    } else {
+                        raw as i8
+                    }
+                });
+            }
+        }
+    }
+
+    let mut strided_digits = Vec::with_capacity(num_blocks * digits_per_block);
+    for col in 0..digits_per_block {
+        for block in &digit_blocks {
+            strided_digits.push(block[col]);
+        }
+    }
+    strided_digits.truncate(strided_digits.len() - 3);
+
+    match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
+        ProtocolCrtNttParams::Q32(params) => {
+            let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+            let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
+            let expected = schoolbook_digit_mat_vec(&mat, &digit_blocks);
+            let strided_path = mat_vec_mul_digits_i8_strided_with_params_for_log_basis(
+                &ntt_mat,
+                &strided_digits,
+                num_blocks,
+                digits_per_block,
+                log_basis,
+                &params,
+            );
+            assert_eq!(strided_path, expected);
+        }
+        _ => panic!("unexpected parameter family"),
+    }
+}
+
+#[test]
 fn mat_vec_mul_i8_strided_matches_block_path_on_block_parallel_path() {
     type F = Fp64<4294967197>;
     const D: usize = 64;

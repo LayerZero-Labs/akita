@@ -4,6 +4,45 @@ use super::*;
 /// lane). Matches the batched-row kernel's lane count.
 const NTT_DIGIT_BATCH: usize = 16;
 
+#[allow(clippy::too_many_arguments)]
+fn flush_sparse_digit_batch<W: PrimeWidth, const K: usize, const D: usize>(
+    batch_digits: &mut Vec<&[i8; D]>,
+    batch_blocks: &mut Vec<usize>,
+    batch_cols: &mut Vec<usize>,
+    ntt_batch: &mut [CyclotomicCrtNtt<W, K, D>],
+    accs: &mut [Vec<CyclotomicCrtNtt<W, K, D>>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    params: &CrtNttParamSet<W, K, D>,
+    lut: &DigitMontLut<W, K>,
+) {
+    let n = batch_digits.len();
+    if n == 0 {
+        return;
+    }
+    debug_assert_eq!(n, batch_blocks.len());
+    debug_assert_eq!(n, batch_cols.len());
+    debug_assert!(n <= ntt_batch.len());
+
+    CyclotomicCrtNtt::batch_from_i8_refs_with_lut_into(
+        batch_digits,
+        params,
+        lut,
+        &mut ntt_batch[..n],
+    );
+
+    for i in 0..n {
+        let block_idx = batch_blocks[i];
+        let col = batch_cols[i];
+        for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
+            accumulate_pointwise_product_into(acc, &mat_row[col], &ntt_batch[i], params);
+        }
+    }
+
+    batch_digits.clear();
+    batch_blocks.clear();
+    batch_cols.clear();
+}
+
 pub(super) fn mat_vec_mul_digits_i8_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -102,32 +141,77 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
         params,
         |accs, start, end| {
             let mut ntt_batch = vec![CyclotomicCrtNtt::<W, K, D>::zero(); NTT_DIGIT_BATCH];
-            for block_idx in 0..num_blocks {
-                let block = blocks[block_idx];
-                if start >= block.len() {
-                    continue;
-                }
-                let block_tile_end = end.min(block.len());
-                let tile = &block[start..block_tile_end];
-                let mut off = 0usize;
-                while off < tile.len() {
-                    let n = NTT_DIGIT_BATCH.min(tile.len() - off);
-                    CyclotomicCrtNtt::batch_from_i8_with_lut_into(
-                        &tile[off..off + n],
-                        params,
-                        &lut,
-                        &mut ntt_batch[..n],
-                    );
-                    for (i, ntt_d) in ntt_batch[..n].iter().enumerate() {
-                        if CHECK_ZERO && is_zero_plane(&tile[off + i]) {
+            if CHECK_ZERO {
+                let mut batch_digits = Vec::with_capacity(NTT_DIGIT_BATCH);
+                let mut batch_blocks = Vec::with_capacity(NTT_DIGIT_BATCH);
+                let mut batch_cols = Vec::with_capacity(NTT_DIGIT_BATCH);
+                for (block_idx, block) in blocks.iter().enumerate() {
+                    if start >= block.len() {
+                        continue;
+                    }
+                    let block_tile_end = end.min(block.len());
+                    let tile = &block[start..block_tile_end];
+                    for (i, digit) in tile.iter().enumerate() {
+                        if is_zero_plane(digit) {
                             continue;
                         }
-                        let col = start + off + i;
-                        for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
-                            accumulate_pointwise_product_into(acc, &mat_row[col], ntt_d, params);
+                        batch_digits.push(digit);
+                        batch_blocks.push(block_idx);
+                        batch_cols.push(start + i);
+                        if batch_digits.len() == NTT_DIGIT_BATCH {
+                            flush_sparse_digit_batch(
+                                &mut batch_digits,
+                                &mut batch_blocks,
+                                &mut batch_cols,
+                                &mut ntt_batch,
+                                accs,
+                                ntt_mat,
+                                params,
+                                &lut,
+                            );
                         }
                     }
-                    off += n;
+                }
+                flush_sparse_digit_batch(
+                    &mut batch_digits,
+                    &mut batch_blocks,
+                    &mut batch_cols,
+                    &mut ntt_batch,
+                    accs,
+                    ntt_mat,
+                    params,
+                    &lut,
+                );
+            } else {
+                for block_idx in 0..num_blocks {
+                    let block = blocks[block_idx];
+                    if start >= block.len() {
+                        continue;
+                    }
+                    let block_tile_end = end.min(block.len());
+                    let tile = &block[start..block_tile_end];
+                    let mut off = 0usize;
+                    while off < tile.len() {
+                        let n = NTT_DIGIT_BATCH.min(tile.len() - off);
+                        CyclotomicCrtNtt::batch_from_i8_with_lut_into(
+                            &tile[off..off + n],
+                            params,
+                            &lut,
+                            &mut ntt_batch[..n],
+                        );
+                        for (i, ntt_d) in ntt_batch[..n].iter().enumerate() {
+                            let col = start + off + i;
+                            for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
+                                accumulate_pointwise_product_into(
+                                    acc,
+                                    &mat_row[col],
+                                    ntt_d,
+                                    params,
+                                );
+                            }
+                        }
+                        off += n;
+                    }
                 }
             }
         },
@@ -193,6 +277,9 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
         params,
         |accs, start, end| {
             let mut ntt_batch = vec![CyclotomicCrtNtt::<W, K, D>::zero(); NTT_DIGIT_BATCH];
+            let mut batch_digits = Vec::with_capacity(NTT_DIGIT_BATCH);
+            let mut batch_blocks = Vec::with_capacity(NTT_DIGIT_BATCH);
+            let mut batch_cols = Vec::with_capacity(NTT_DIGIT_BATCH);
             for col in start..end {
                 let seq_start = col * num_blocks;
                 if seq_start >= coeffs.len() {
@@ -200,30 +287,40 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
                 }
                 let live_blocks = num_blocks.min(coeffs.len() - seq_start);
                 let coeffs_for_col = &coeffs[seq_start..seq_start + live_blocks];
-                let mut off = 0usize;
-                while off < coeffs_for_col.len() {
-                    let n = NTT_DIGIT_BATCH.min(coeffs_for_col.len() - off);
-                    CyclotomicCrtNtt::batch_from_i8_with_lut_into(
-                        &coeffs_for_col[off..off + n],
-                        params,
-                        &lut,
-                        &mut ntt_batch[..n],
-                    );
-                    for (i, ntt_d) in ntt_batch[..n].iter().enumerate() {
-                        if is_zero_plane(&coeffs_for_col[off + i]) {
-                            continue;
-                        }
-                        for (acc, mat_row) in accs[off + i].iter_mut().zip(ntt_mat.iter()) {
-                            accumulate_pointwise_product_into(acc, &mat_row[col], ntt_d, params);
-                        }
+                for (block_idx, digit) in coeffs_for_col.iter().enumerate() {
+                    if is_zero_plane(digit) {
+                        continue;
                     }
-                    off += n;
+                    batch_digits.push(digit);
+                    batch_blocks.push(block_idx);
+                    batch_cols.push(col);
+                    if batch_digits.len() == NTT_DIGIT_BATCH {
+                        flush_sparse_digit_batch(
+                            &mut batch_digits,
+                            &mut batch_blocks,
+                            &mut batch_cols,
+                            &mut ntt_batch,
+                            accs,
+                            ntt_mat,
+                            params,
+                            &lut,
+                        );
+                    }
                 }
             }
+            flush_sparse_digit_batch(
+                &mut batch_digits,
+                &mut batch_blocks,
+                &mut batch_cols,
+                &mut ntt_batch,
+                accs,
+                ntt_mat,
+                params,
+                &lut,
+            );
         },
     )
 }
-
 pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,

@@ -8,7 +8,7 @@ use akita_algebra::ntt::tables::{
 use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{cfg_iter, cfg_join, AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
+use akita_field::{cfg_iter, AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
 use akita_field::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
 
 use akita_types::RingMatrixView;
@@ -119,30 +119,20 @@ pub enum NttSlotCache<const D: usize> {
     },
 }
 
-fn convert_flat<F, W, const K: usize, const D: usize>(
+fn convert_flat_pair<F, W, const K: usize, const D: usize>(
     mat: RingMatrixView<'_, F, D>,
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<CyclotomicCrtNtt<W, K, D>>
+) -> (
+    Vec<CyclotomicCrtNtt<W, K, D>>,
+    Vec<CyclotomicCrtNtt<W, K, D>>,
+)
 where
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
 {
     cfg_iter!(mat.as_slice())
-        .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, params))
-        .collect()
-}
-
-fn convert_flat_cyclic<F, W, const K: usize, const D: usize>(
-    mat: RingMatrixView<'_, F, D>,
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<CyclotomicCrtNtt<W, K, D>>
-where
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-{
-    cfg_iter!(mat.as_slice())
-        .map(|ring| CyclotomicCrtNtt::from_ring_cyclic(ring, params))
-        .collect()
+        .map(|ring| CyclotomicCrtNtt::from_ring_pair_with_params(ring, params))
+        .unzip()
 }
 
 /// Build an NTT slot cache for a matrix view (flat 1D storage).
@@ -164,7 +154,7 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
 ) -> NttSlotCache<D> {
     match params {
         ProtocolCrtNttParams::Q16(p) => {
-            let (neg, cyc) = cfg_join!(|| convert_flat(mat, &p), || convert_flat_cyclic(mat, &p));
+            let (neg, cyc) = convert_flat_pair(mat, &p);
             NttSlotCache::Q16 {
                 neg,
                 cyc,
@@ -172,7 +162,7 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
             }
         }
         ProtocolCrtNttParams::Q32(p) => {
-            let (neg, cyc) = cfg_join!(|| convert_flat(mat, &p), || convert_flat_cyclic(mat, &p));
+            let (neg, cyc) = convert_flat_pair(mat, &p);
             NttSlotCache::Q32 {
                 neg,
                 cyc,
@@ -180,7 +170,7 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
             }
         }
         ProtocolCrtNttParams::Q64(p) => {
-            let (neg, cyc) = cfg_join!(|| convert_flat(mat, &p), || convert_flat_cyclic(mat, &p));
+            let (neg, cyc) = convert_flat_pair(mat, &p);
             NttSlotCache::Q64 {
                 neg,
                 cyc,
@@ -188,7 +178,7 @@ fn build_ntt_slot_from_params<F: FieldCore + CanonicalField, const D: usize>(
             }
         }
         ProtocolCrtNttParams::Q128(p) => {
-            let (neg, cyc) = cfg_join!(|| convert_flat(mat, &p), || convert_flat_cyclic(mat, &p));
+            let (neg, cyc) = convert_flat_pair(mat, &p);
             NttSlotCache::Q128 {
                 neg,
                 cyc,

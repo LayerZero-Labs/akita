@@ -368,6 +368,52 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self::from_ring(ring, &params.primes, &params.twiddles)
     }
 
+    /// Convert a coefficient-form ring element into both negacyclic and cyclic
+    /// CRT+NTT domains, sharing coefficient centering and CRT reduction.
+    pub fn from_ring_pair_with_params<F: CrtNttConvertibleField>(
+        ring: &CyclotomicRing<F, D>,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> (Self, Self) {
+        Self::from_ring_pair_with_backend::<F, ScalarBackend>(ring, params)
+    }
+
+    fn from_ring_pair_with_backend<
+        F: CrtNttConvertibleField,
+        B: NttPrimeOps<W, D> + NttTransform<W, D>,
+    >(
+        ring: &CyclotomicRing<F, D>,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> (Self, Self) {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        let centered_coeffs: [i128; D] = from_fn(|i| {
+            let canonical = ring.coeffs[i].to_canonical_u128();
+            if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            }
+        });
+
+        let mut neg_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        let mut cyc_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for (((neg_limb, cyc_limb), prime), tw) in neg_limbs
+            .iter_mut()
+            .zip(cyc_limbs.iter_mut())
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            let reducer = CenteredPrimeWideReducer::new(*prime);
+            for (dst, centered) in neg_limb.iter_mut().zip(centered_coeffs.iter()) {
+                *dst = B::from_canonical(*prime, reducer.reduce_i128(*centered));
+            }
+            *cyc_limb = *neg_limb;
+            B::forward_ntt(neg_limb, *prime, tw);
+            forward_ntt_cyclic(cyc_limb, *prime, tw);
+        }
+        (Self { limbs: neg_limbs }, Self { limbs: cyc_limbs })
+    }
+
     /// Apply a forward NTT to up to [`NTT_BATCH_LANES`] CRT+NTT elements whose
     /// limbs are already filled in coefficient form.
     ///
@@ -526,6 +572,29 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// rows, otherwise each row transforms per-element.
     pub fn batch_from_i8_with_lut_into(
         digits: &[[i8; D]],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &DigitMontLut<W, K>,
+        out: &mut [Self],
+    ) {
+        assert_eq!(
+            digits.len(),
+            out.len(),
+            "digit and output batches must have the same length"
+        );
+        for (slot, digit) in out.iter_mut().zip(digits.iter()) {
+            for (k, limb) in slot.limbs.iter_mut().enumerate() {
+                for (dst, &d) in limb.iter_mut().zip(digit.iter()) {
+                    *dst = lut.get(k, d);
+                }
+            }
+        }
+        Self::transform_chunk(out, params, false);
+    }
+
+    /// Like [`Self::batch_from_i8_with_lut_into`], but accepts borrowed digit
+    /// planes so callers can pack sparse nonzero rows without copying them.
+    pub fn batch_from_i8_refs_with_lut_into(
+        digits: &[&[i8; D]],
         params: &CrtNttParamSet<W, K, D>,
         lut: &DigitMontLut<W, K>,
         out: &mut [Self],
