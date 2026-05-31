@@ -9,10 +9,7 @@ pub mod fp128 {
     use akita_challenges::TensorChallengeShape;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::generated::GeneratedScheduleTable;
-    use akita_types::{
-        AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DecompositionParams,
-        SisModulusFamily,
-    };
+    use akita_types::{AkitaScheduleInputs, DecompositionParams, SisModulusFamily};
 
     /// Base field for the fp128 tensor-verifier presets.
     pub type Field = Prime128OffsetA7F7;
@@ -69,12 +66,6 @@ pub mod fp128 {
 
         fn schedule_table() -> Option<GeneratedScheduleTable> {
             Some(akita_types::generated::fp128_d64_onehot_tensor_table())
-        }
-
-        fn schedule_plan(
-            key: AkitaScheduleLookupKey,
-        ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-            crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
         }
 
         fn max_setup_matrix_size(

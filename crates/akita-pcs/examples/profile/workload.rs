@@ -1,6 +1,5 @@
 use crate::report::{
-    emit_planned_schedule_summary, emit_runtime_schedule_summary, print_batched_proof_summary,
-    report_setup_sizes, report_timing,
+    emit_runtime_schedule_summary, print_batched_proof_summary, report_setup_sizes, report_timing,
 };
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
@@ -18,8 +17,8 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaSchedulePlan, AkitaVerifierSetup, BasisMode,
-    BlockOrder, ClaimIncidenceSummary, LevelParams, RingCommitment, RingSubfieldEncoding, Step,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
+    ClaimIncidenceSummary, LevelParams, RingCommitment, RingSubfieldEncoding, Schedule, Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -169,7 +168,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
     poly: &P,
     pt: &[Cfg::ClaimField],
     opening: Cfg::ClaimField,
-    plan: Option<&AkitaSchedulePlan>,
+    plan: Option<&Schedule>,
 ) where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             FF,
@@ -260,10 +259,10 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
     if let Some(plan) = plan {
         assert_eq!(
             proof.size(),
-            plan.exact_proof_bytes,
+            plan.total_bytes,
             "runtime proof bytes should match the planned proof size"
         );
-        emit_planned_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
     } else {
         let incidence =
             ClaimIncidenceSummary::same_point(pt.len(), 1).expect("same-point incidence summary");
@@ -306,7 +305,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     label: &str,
     nv: usize,
     layout: &LevelParams,
-    plan: Option<&AkitaSchedulePlan>,
+    plan: Option<&Schedule>,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -391,7 +390,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     nv: usize,
     layout: &LevelParams,
-    plan: Option<&AkitaSchedulePlan>,
+    plan: Option<&Schedule>,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -475,7 +474,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     nv: usize,
     num_polys: usize,
     layout: &LevelParams,
-    plan: Option<&AkitaSchedulePlan>,
+    plan: Option<&Schedule>,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -608,10 +607,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     if let Some(plan) = plan {
         assert_eq!(
             proof.size(),
-            plan.exact_proof_bytes,
+            plan.total_bytes,
             "runtime proof bytes should match the planned proof size"
         );
-        emit_planned_schedule_summary(label, plan, num_polys, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(label, plan, num_polys, Cfg::decomposition().field_bits());
     } else {
         assert_eq!(
             proof.size(),

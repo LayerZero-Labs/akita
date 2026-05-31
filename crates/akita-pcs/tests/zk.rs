@@ -21,9 +21,9 @@ use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     lagrange_weights, relation_claim_from_rows_extension, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup,
-    AppendToTranscript, ClaimIncidenceSummary, DecompositionParams, FlatRingVec, MRowLayout,
-    RingCommitment, RingMultiplierOpeningPoint, SisModulusFamily,
+    AkitaCommitmentHint, AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary,
+    DecompositionParams, FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
+    SisModulusFamily,
 };
 use akita_verifier::{prepare_ring_switch_row_eval, CommitmentVerifier};
 use common::*;
@@ -57,12 +57,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
 
     fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
         None
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-        Ok(None)
     }
 
     fn max_setup_matrix_size(

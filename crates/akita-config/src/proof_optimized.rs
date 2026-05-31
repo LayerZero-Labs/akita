@@ -10,10 +10,7 @@ use akita_field::{
     RingSubfieldFp8,
 };
 use akita_types::ClaimIncidenceSummary;
-use akita_types::{
-    AkitaPlannedStep, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams, Schedule,
-    SetupMatrixEnvelope, Step,
-};
+use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
 
 /// Minimum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 2;
@@ -27,57 +24,6 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 // ---------------------------------------------------------------------------
 // Trait-shaped wrappers consumed by the macros below.
 // ---------------------------------------------------------------------------
-
-/// Proof-optimized `schedule_plan` impl.
-pub(crate) fn proof_optimized_schedule_plan<Cfg>(
-    key: AkitaScheduleLookupKey,
-) -> Result<Option<AkitaSchedulePlan>, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    let Some(table) = Cfg::schedule_table() else {
-        return Ok(None);
-    };
-    akita_types::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _>(
-        key,
-        table,
-        akita_types::PlanPolicy {
-            sis_family: Cfg::sis_modulus_family(),
-            ring_dimension: Cfg::D,
-            root_decomp: Cfg::decomposition(),
-            challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
-            recursive_public_rows: 1,
-            extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
-            stage1_challenge_config: Cfg::stage1_challenge_config,
-            ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
-            fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
-        },
-    )
-}
-
-/// Lookup level params from the table, or derive SIS-secure fallback params.
-///
-/// # Errors
-///
-/// Returns plan-materialization or inner-derivation errors. A table error is
-/// hard: falling back would silently disagree with the encoded schedule.
-pub fn level_params_with_log_basis<Cfg: CommitmentConfig>(
-    inputs: akita_types::AkitaScheduleInputs,
-    log_basis: u32,
-) -> Result<LevelParams, AkitaError> {
-    let plan =
-        proof_optimized_schedule_plan::<Cfg>(AkitaScheduleLookupKey::singleton(inputs.num_vars))?;
-    akita_types::level_params_with_log_basis(
-        Cfg::sis_modulus_family(),
-        Cfg::D,
-        Cfg::decomposition(),
-        Cfg::ring_subfield_embedding_norm_bound(),
-        plan.as_ref(),
-        Cfg::stage1_challenge_config,
-        inputs,
-        log_basis,
-    )
-}
 
 /// Size the shared setup matrix from the planned schedule.
 ///
@@ -176,33 +122,19 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
 
     // Table-only: configs that want a runtime DP fallback override the
     // `max_setup_matrix_size` trait method directly (see `PlannerCfg`).
-    let Some(plan) = proof_optimized_schedule_plan::<Cfg>(cached_key)? else {
+    let Some(schedule) = Cfg::runtime_schedule(cached_key)? else {
         return Ok(None);
     };
-    let schedule = akita_types::schedule_from_plan(&plan);
 
     Ok(Some(matrix_envelope_for_schedule::<Cfg>(
         &schedule, incidence,
     )?))
 }
 
-/// Extract setup-level params from a materialized plan.
+/// Extract setup-level params from a runtime `Schedule`.
 ///
 /// Uncommittable root-direct entries carry no setup params and are skipped
 /// here; `Cfg::get_params_for_batched_commitment` rejects them loudly.
-pub fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
-    plan.steps
-        .iter()
-        .filter_map(|step| match step {
-            AkitaPlannedStep::Fold(level) => Some(level.lp.clone()),
-            AkitaPlannedStep::Direct(direct) => direct.params.clone(),
-        })
-        .collect()
-}
-
-/// Extract setup-level params from a runtime `Schedule`.
-///
-/// Mirrors [`setup_level_params_from_plan`] for fallback schedules.
 pub fn setup_level_params_from_runtime_schedule(steps: &[akita_types::Step]) -> Vec<LevelParams> {
     steps
         .iter()
@@ -628,12 +560,6 @@ macro_rules! impl_fp128_preset {
                 $table
             }
 
-            fn schedule_plan(
-                key: akita_types::AkitaScheduleLookupKey,
-            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
-            }
-
             fn max_setup_matrix_size(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
@@ -698,12 +624,6 @@ macro_rules! impl_small_field_preset {
 
             fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
                 $table
-            }
-
-            fn schedule_plan(
-                key: akita_types::AkitaScheduleLookupKey,
-            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
             }
 
             fn max_setup_matrix_size(

@@ -95,20 +95,20 @@ impl Fp128Preset {
     }
 }
 
-/// Best generated-schedule plan for one fp128 preset family.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Best generated schedule for one fp128 preset family.
+#[derive(Clone, Debug)]
 pub struct Fp128ScheduleSelection {
     /// Selected concrete preset.
     pub preset: Fp128Preset,
-    /// Generated schedule plan selected for the supplied lookup key.
-    pub plan: AkitaSchedulePlan,
+    /// Runtime schedule selected for the supplied lookup key.
+    pub schedule: Schedule,
 }
 
 fn candidate<Cfg: CommitmentConfig>(
     preset: Fp128Preset,
     key: AkitaScheduleLookupKey,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    Ok(Cfg::schedule_plan(key)?.map(|plan| Fp128ScheduleSelection { preset, plan }))
+    Ok(Cfg::runtime_schedule(key)?.map(|schedule| Fp128ScheduleSelection { preset, schedule }))
 }
 
 fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>
@@ -117,7 +117,7 @@ where
 {
     candidates.into_iter().flatten().min_by_key(|selection| {
         (
-            selection.plan.exact_proof_bytes,
+            selection.schedule.total_bytes,
             selection.preset.ring_dimension(),
         )
     })

@@ -251,35 +251,31 @@ pub struct SetupSection {
     /// included because they do not change verifier transcript behavior.
     pub protocol_features: ProtocolFeatureSet,
 
-    /// Blake2b of canonical bytes of the full `Vec<LevelParams>` envelope.
-    /// This is the complete `LevelParams`, including ring dimension, log_basis,
-    /// `{a,b,d}_key` row/column dimensions and collision bounds,
-    /// `stage1_config`, `m_vars`, `r_vars`, `num_blocks`, `block_len`, and all
-    /// digit depths. The verifier branches on these fields; the parenthetical
-    /// subset above is not sufficient.
-    ///
-    /// The expanded shared matrix and prover NTT views are not bound as
-    /// transcript bytes. They are deterministic caches derived from the setup
-    /// seed plus this layout/schedule metadata. Strict setup-loading paths may
-    /// validate cached matrices against the seed, but Fiat-Shamir binds only
-    /// the compact derivation identity.
-    ///
-    /// TODO (transcript-hardening-v2): if Akita ever adds a per-deployment
-    /// salt for the transparent setup PRG (so different deployments have
-    /// different Ajtai matrices for the same params), add it to
-    /// `AkitaSetupSeed` or another canonical setup-identity field and bind it
-    /// through this section.
-    pub level_params_digest: [u8; 32],
+    // NOTE (planner-runtime-flow-cleanup): the former `level_params_digest`
+    // field has been dropped. The full per-level `LevelParams` are now bound
+    // by `PlanSection::effective_schedule_digest` (which digests each step's
+    // `LevelParams`, including the root-direct commit layout), so a separate
+    // setup-level digest was redundant. `setup_seed_digest` still pins the
+    // shared-matrix capacity, and `decomposition` / `sis_modulus_family` are
+    // bound above.
+    //
+    // TODO (transcript-hardening-v2): if Akita ever adds a per-deployment
+    // salt for the transparent setup PRG (so different deployments have
+    // different Ajtai matrices for the same params), add it to
+    // `AkitaSetupSeed` or another canonical setup-identity field and bind it
+    // through this section.
 }
 
 pub struct PlanSection {
     /// Blake2b of canonical bytes of the final effective verifier schedule for
     /// this proof, after any root-fold-to-root-direct fallback caused by the
     /// actual opening-point shape and extension-packing support predicates.
-    /// Covers the ordered list of steps (fold | direct | terminal), ring
-    /// dimension per level, log_basis ladder, terminal direct witness shape,
-    /// and every per-level choice the verifier will replay. This is a digest of
-    /// behavior, not just the planner lookup key or `schedule_key` string.
+    /// Covers the ordered list of steps (fold | direct | terminal), the full
+    /// per-level `LevelParams` (ring dimension, log_basis ladder, `{a,b,d}_key`
+    /// dimensions/collision bounds, `stage1_config`, block geometry, digit
+    /// depths), the root-direct commit layout, and the terminal direct witness
+    /// shape. This is a digest of behavior, not just the planner lookup key or
+    /// `schedule_key` string.
     pub effective_schedule_digest: [u8; 32],
 }
 

@@ -160,12 +160,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         None
     }
 
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
-        Ok(None)
-    }
-
     fn max_setup_matrix_size(
         _max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -213,9 +207,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                     )),
                     direct_bytes: compact_w_len,
                     // Stub fixture: terminal-direct level params equal the
-                    // fold's `lp` (matches the deleted
-                    // `Cfg::level_params_with_log_basis` override that
-                    // returned `Self::root_lp()`).
+                    // fold's `lp`.
                     params: Some(lp.clone()),
                 }),
             ],
@@ -260,12 +252,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
 
     fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
         None
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
-        Ok(None)
     }
 
     fn max_setup_matrix_size(
@@ -317,9 +303,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                     witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
                     direct_bytes: next_w_len,
                     // Stub fixture: terminal-direct level params equal the
-                    // fold's `lp` (matches the deleted
-                    // `Cfg::level_params_with_log_basis` override that
-                    // returned `Self::root_lp()`).
+                    // fold's `lp`.
                     params: Some(lp.clone()),
                 }),
             ],

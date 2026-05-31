@@ -23,8 +23,8 @@ use akita_config::{
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
-    AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary, DecompositionParams,
-    LevelParams, Schedule, SisModulusFamily,
+    AkitaScheduleLookupKey, ClaimIncidenceSummary, DecompositionParams, LevelParams, Schedule,
+    SisModulusFamily,
 };
 
 use crate::find_schedule;
@@ -63,10 +63,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
 
     fn schedule_table() -> Option<GeneratedScheduleTable> {
         Cfg::schedule_table()
-    }
-
-    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-        Cfg::schedule_plan(key)
     }
 
     fn max_setup_matrix_size(
@@ -173,15 +169,16 @@ where
     Cfg: CommitmentConfig,
 {
     let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_claims, num_claims, 1);
-    if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
-        if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(
-            &plan,
-            Cfg::decomposition().field_bits(),
-        ) {
+    if let Some(schedule) = Cfg::runtime_schedule(lookup_key)? {
+        if let Some(root) = akita_types::schedule_root_fold_step(&schedule) {
+            let split = akita_types::split_batched_root_params(
+                &root.params,
+                Cfg::decomposition().field_bits(),
+            );
             tracing::info!(
                 num_vars,
                 num_claims,
-                total_bytes = plan.exact_proof_bytes,
+                total_bytes = schedule.total_bytes,
                 root_m = split.log_block_len(),
                 root_r = split.log_num_blocks(),
                 root_lb = split.log_basis,

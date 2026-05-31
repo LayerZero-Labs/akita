@@ -3,9 +3,7 @@
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::generated::GeneratedScheduleKey;
 use crate::{ClaimIncidenceSummary, DirectWitnessShape, LevelParams, RingOpeningPoint};
-use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use std::fmt::Write;
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -176,281 +174,6 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
         num_w_vectors: key.num_w_vectors,
         num_z_vectors: key.num_z_vectors,
     }
-}
-
-/// Fully planned public data for one Akita fold level.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaPlannedLevel {
-    /// Public inputs that selected this level.
-    pub inputs: AkitaScheduleInputs,
-    /// Active unified level params chosen for this level.
-    pub lp: LevelParams,
-    /// Public inputs for the next level after folding.
-    pub next_inputs: AkitaScheduleInputs,
-    /// Planned log-basis of the next level.
-    pub next_level_log_basis: u32,
-    /// `n_b * d` of the next level, used for next_w_commitment shape.
-    pub next_commit_coeffs: usize,
-    /// Exact bytes contributed by this level to the proof.
-    pub level_bytes: usize,
-}
-
-impl AkitaPlannedLevel {
-    /// Public state at the start of this fold level.
-    pub fn input_state(&self) -> AkitaPlannedState {
-        AkitaPlannedState {
-            level: self.inputs.level,
-            current_w_len: self.inputs.current_w_len,
-            log_basis: self.lp.log_basis,
-        }
-    }
-
-    /// Public state reached after this fold level.
-    pub fn output_state(&self) -> AkitaPlannedState {
-        AkitaPlannedState {
-            level: self.next_inputs.level,
-            current_w_len: self.next_inputs.current_w_len,
-            log_basis: self.next_level_log_basis,
-        }
-    }
-}
-
-/// Public state after a planned prefix of Akita fold levels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AkitaPlannedState {
-    /// Next level index reached by the plan.
-    pub level: usize,
-    /// Witness length in field elements at this state.
-    pub current_w_len: usize,
-    /// Active log-basis for the witness at this state.
-    pub log_basis: u32,
-}
-
-/// Terminal direct packed-witness handoff in a planned opening proof.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaPlannedDirectStep {
-    /// Public witness state carried by the direct handoff.
-    pub state: AkitaPlannedState,
-    /// Serialized witness shape carried by the direct handoff.
-    pub witness_shape: DirectWitnessShape,
-    /// Exact bytes contributed by the packed direct witness.
-    pub direct_bytes: usize,
-    /// Root commit layout for root-direct schedules (`witness_shape =
-    /// FieldElements`). `None` is the uncommittable edge case
-    /// (singleton root layout exceeds the audited SIS floor — usable
-    /// for proof-size exploration but rejected by
-    /// `get_params_for_batched_commitment`).
-    ///
-    /// Terminal-direct steps (`witness_shape = PackedDigits`) ship the
-    /// cleartext witness without committing, so they always carry
-    /// `params = None`. The active `log_basis` lives on
-    /// [`Self::witness_shape`]; `scheduled_next_level_params`
-    /// synthesizes a [`LevelParams::log_basis_stub`] from it for the
-    /// prover's terminal-fold `final_log_basis`.
-    pub params: Option<LevelParams>,
-}
-
-/// Exact current-step execution data recovered from a pinned schedule.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaPlannedLevelExecution {
-    /// Planned fold level that matches the current public state.
-    pub level: AkitaPlannedLevel,
-    /// Planned next-level params implied by the following schedule step.
-    pub next_level_params: LevelParams,
-}
-
-/// One step in a planned opening proof.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AkitaPlannedStep {
-    /// An Akita fold level with an explicit next-state handoff.
-    Fold(Box<AkitaPlannedLevel>),
-    /// The terminal packed-witness direct handoff. Boxed so the variant
-    /// stays small after `AkitaPlannedDirectStep` gained a
-    /// `params: Option<LevelParams>` field carrying the position-
-    /// dependent commit/level layout.
-    Direct(Box<AkitaPlannedDirectStep>),
-}
-
-/// Deterministic level-by-level schedule selected from public inputs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaSchedulePlan {
-    /// Planned opening-proof steps in execution order.
-    ///
-    /// The final step is always [`AkitaPlannedStep::Direct`].
-    pub steps: Vec<AkitaPlannedStep>,
-    /// Total proof bytes excluding the outer proof wrapper.
-    pub no_wrapper_bytes: usize,
-    /// Total proof bytes in the serialized singleton `AkitaBatchedProof`
-    /// wire format.
-    ///
-    /// The singleton batched proof is currently headerless, so this equals
-    /// [`Self::no_wrapper_bytes`].
-    pub exact_proof_bytes: usize,
-}
-
-impl AkitaSchedulePlan {
-    /// Iterate over all planned fold levels in execution order.
-    pub fn fold_levels(&self) -> impl Iterator<Item = &AkitaPlannedLevel> + '_ {
-        self.steps.iter().filter_map(|step| match step {
-            AkitaPlannedStep::Fold(level) => Some(level.as_ref()),
-            AkitaPlannedStep::Direct(_) => None,
-        })
-    }
-
-    /// Number of planned fold levels before the terminal direct step.
-    pub fn num_fold_levels(&self) -> usize {
-        self.fold_levels().count()
-    }
-
-    /// Return the terminal direct packed-witness handoff.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the schedule was constructed without a trailing direct step.
-    pub fn direct_step(&self) -> &AkitaPlannedDirectStep {
-        match self
-            .steps
-            .last()
-            .expect("planned schedule always contains at least one step")
-        {
-            AkitaPlannedStep::Direct(step) => step,
-            AkitaPlannedStep::Fold(_) => {
-                panic!("planned schedule must end in a direct packed-witness step")
-            }
-        }
-    }
-
-    /// Return the initial public witness state before any proof steps run.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the schedule was constructed without any steps.
-    pub fn initial_state(&self) -> AkitaPlannedState {
-        match self
-            .steps
-            .first()
-            .expect("planned schedule always contains at least one step")
-        {
-            AkitaPlannedStep::Fold(level) => level.input_state(),
-            AkitaPlannedStep::Direct(step) => step.state,
-        }
-    }
-
-    /// Iterate over the planned witness states after each executed fold prefix.
-    pub fn states(&self) -> impl Iterator<Item = AkitaPlannedState> + '_ {
-        std::iter::once(self.initial_state())
-            .chain(self.fold_levels().map(|level| level.output_state()))
-    }
-
-    /// Return the public witness state after `prefix_len` fold levels.
-    pub fn state_after_prefix(&self, prefix_len: usize) -> Option<AkitaPlannedState> {
-        if prefix_len == 0 {
-            return Some(self.initial_state());
-        }
-        self.fold_levels()
-            .nth(prefix_len - 1)
-            .map(AkitaPlannedLevel::output_state)
-    }
-
-    /// Return the final witness state after all planned Akita levels.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the schedule was constructed without a trailing direct step.
-    pub fn terminal_state(&self) -> AkitaPlannedState {
-        self.direct_step().state
-    }
-
-    /// Return the exact planned-state index matching public inputs and,
-    /// optionally, an expected log-basis.
-    pub fn exact_state_index(
-        &self,
-        inputs: AkitaScheduleInputs,
-        log_basis: Option<u32>,
-    ) -> Option<usize> {
-        self.states().position(|state| {
-            state.level == inputs.level
-                && state.current_w_len == inputs.current_w_len
-                && log_basis.is_none_or(|basis| state.log_basis == basis)
-        })
-    }
-}
-
-/// Render a stable identity for a planned schedule selected by public inputs.
-pub fn planned_schedule_key_from_schedule(
-    lookup_key: AkitaScheduleLookupKey,
-    schedule: &AkitaSchedulePlan,
-) -> String {
-    let mut key = format!(
-        "planner_v5_nv{}_g{}_t{}_w{}_z{}",
-        lookup_key.num_vars,
-        lookup_key.num_points,
-        lookup_key.num_t_vectors,
-        lookup_key.num_w_vectors,
-        lookup_key.num_z_vectors
-    );
-    for state in schedule.states() {
-        let _ = write!(key, "_l{}b{}", state.level, state.log_basis);
-    }
-    key
-}
-
-/// Resolve the exact planned fold execution matching a runtime public state.
-///
-/// # Errors
-///
-/// Returns an error if the matching fold is not followed by another planned
-/// step. Returns `Ok(None)` when the requested state is absent or is not a fold
-/// step.
-pub fn exact_planned_level_execution<Stage1Config>(
-    schedule: &AkitaSchedulePlan,
-    inputs: AkitaScheduleInputs,
-    log_basis: u32,
-    stage1_challenge_config: Stage1Config,
-) -> Result<Option<AkitaPlannedLevelExecution>, AkitaError>
-where
-    Stage1Config: Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-{
-    let Some(state_index) = schedule.exact_state_index(inputs, Some(log_basis)) else {
-        return Ok(None);
-    };
-    let Some(current_step) = schedule.steps.get(state_index) else {
-        return Ok(None);
-    };
-    let AkitaPlannedStep::Fold(current_level) = current_step else {
-        return Ok(None);
-    };
-    let Some(next_step) = schedule.steps.get(state_index + 1) else {
-        return Err(AkitaError::InvalidSetup(
-            "planned fold step must be followed by another schedule step".to_string(),
-        ));
-    };
-    let next_level_params = match next_step {
-        AkitaPlannedStep::Fold(next_level) => next_level.lp.clone(),
-        AkitaPlannedStep::Direct(direct) => {
-            let (d, n_b) = match direct.witness_shape {
-                DirectWitnessShape::PackedDigits(_) => {
-                    let entry_d = current_level.lp.ring_dimension;
-                    let entry_nb = current_level.next_commit_coeffs / entry_d;
-                    (entry_d, entry_nb)
-                }
-                DirectWitnessShape::FieldElements(_) => (current_level.lp.ring_dimension, 0),
-            };
-            LevelParams::params_only(
-                current_level.lp.a_key.sis_family(),
-                d,
-                direct.state.log_basis,
-                0,
-                n_b,
-                0,
-                stage1_challenge_config(d)?,
-            )
-        }
-    };
-    Ok(Some(AkitaPlannedLevelExecution {
-        level: current_level.as_ref().clone(),
-        next_level_params,
-    }))
 }
 
 /// Number of gadget decomposition levels needed for `r` over field `F`.
@@ -639,8 +362,8 @@ pub struct DirectStep {
     /// with this `Direct`, `witness_shape = FieldElements`).
     ///
     /// `Some(_)` is the root commit layout — the verifier replays
-    /// commitments against it and the transcript binding hashes it
-    /// into `SetupSection::level_params_digest`. `None` is the
+    /// commitments against it and the transcript binds it through the
+    /// per-proof effective-schedule digest (`PlanSection`). `None` is the
     /// *uncommittable* edge: a table-recorded large-`num_vars` entry
     /// whose singleton root layout exceeds the audited SIS floor. The
     /// schedule is intentionally usable for proof-size exploration and
@@ -689,6 +412,28 @@ pub struct Schedule {
 }
 
 impl Schedule {
+    /// Iterate over the fold steps in execution order.
+    pub fn fold_steps(&self) -> impl Iterator<Item = &FoldStep> + '_ {
+        self.steps.iter().filter_map(|step| match step {
+            Step::Fold(fold) => Some(fold),
+            Step::Direct(_) => None,
+        })
+    }
+
+    /// Number of fold levels before the terminal direct step.
+    pub fn num_fold_levels(&self) -> usize {
+        self.fold_steps().count()
+    }
+
+    /// Witness length (field elements) entering the first step, or `None`
+    /// when the schedule has no steps.
+    pub fn initial_w_len(&self) -> Option<usize> {
+        self.steps.first().map(|step| match step {
+            Step::Fold(fold) => fold.current_w_len,
+            Step::Direct(direct) => direct.current_w_len,
+        })
+    }
+
     /// Append the descriptor digest encoding for this effective schedule.
     ///
     /// Kept next to [`Schedule`] so protocol-affecting step field changes are
@@ -709,6 +454,18 @@ impl Schedule {
                     push_usize(bytes, direct.current_w_len);
                     append_direct_witness_shape_descriptor_bytes(bytes, &direct.witness_shape);
                     push_usize(bytes, direct.direct_bytes);
+                    // Root-direct commit layout (`Some` for committable root
+                    // entries, `None` for terminal-direct handoffs). Binding it
+                    // here is what lets the transcript drop the redundant
+                    // setup-level `level_params_digest`: the per-proof schedule
+                    // digest now pins the root-direct commit params directly.
+                    match &direct.params {
+                        Some(params) => {
+                            bytes.push(1);
+                            params.append_descriptor_bytes(bytes);
+                        }
+                        None => bytes.push(0),
+                    }
                 }
             }
         }
@@ -886,51 +643,6 @@ fn scale_batched_root_layout_inner(
 pub fn split_batched_root_params(root_lp: &LevelParams, field_bits: u32) -> LevelParams {
     let _ = root_lp.num_digits_fold(1, field_bits);
     root_lp.clone()
-}
-
-/// Extract a per-polynomial batched root layout from the first fold level in a
-/// pre-computed schedule plan.
-pub fn split_batched_root_params_from_schedule_plan(
-    plan: &AkitaSchedulePlan,
-    field_bits: u32,
-) -> Option<LevelParams> {
-    let root_level = plan.fold_levels().next()?;
-    Some(split_batched_root_params(&root_level.lp, field_bits))
-}
-
-/// Translate an offline [`AkitaSchedulePlan`] into the runtime [`Schedule`]
-/// format.
-///
-/// `field_bits` is used only for terminal direct witnesses encoded as field
-/// elements; packed-digit direct witnesses carry their own bit width.
-pub fn schedule_from_plan(plan: &AkitaSchedulePlan) -> Schedule {
-    let mut steps = Vec::with_capacity(plan.steps.len());
-    for step in &plan.steps {
-        match step {
-            AkitaPlannedStep::Fold(level) => {
-                let lp = level.lp.clone();
-                let next_w_len = level.next_inputs.current_w_len;
-                steps.push(Step::Fold(FoldStep {
-                    params: lp,
-                    current_w_len: level.inputs.current_w_len,
-                    next_w_len,
-                    level_bytes: level.level_bytes,
-                }));
-            }
-            AkitaPlannedStep::Direct(direct) => {
-                steps.push(Step::Direct(DirectStep {
-                    current_w_len: direct.state.current_w_len,
-                    witness_shape: direct.witness_shape.clone(),
-                    direct_bytes: direct.direct_bytes,
-                    params: direct.params.clone(),
-                }));
-            }
-        }
-    }
-    Schedule {
-        steps,
-        total_bytes: plan.exact_proof_bytes,
-    }
 }
 
 /// Return the number of fold levels in a runtime schedule.

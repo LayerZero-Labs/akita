@@ -128,11 +128,6 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
             None
         }
-        fn schedule_plan(
-            _key: AkitaScheduleLookupKey,
-        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-            Ok(None)
-        }
         fn max_setup_matrix_size(
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
@@ -173,17 +168,16 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
     // `akita_prover::protocol::flow` and
     // `akita_verifier::protocol::batched`: when the planner-selected
     // folded root cannot handle the opening shape, both sides build
-    // a fallback root-direct schedule. That schedule's
-    // `params` get hashed into
-    // `SetupSection::level_params_digest` via
-    // `setup_level_params_from_runtime_schedule`, while the
-    // root-direct verification closure recomputes commitments using
-    // `Cfg::get_params_for_batched_commitment(real_incidence)`. If
+    // a fallback root-direct schedule. That schedule's `params` are
+    // hashed into the per-proof effective-schedule digest
+    // (`PlanSection::from_schedule` -> `digest_effective_schedule`),
+    // while the root-direct verification closure recomputes commitments
+    // using `Cfg::get_params_for_batched_commitment(real_incidence)`. If
     // the fallback used a synthetic `same_point(num_vars, 1)`
     // singleton incidence (the pre-fix behavior), the descriptor
     // would bind singleton-sized params while verification ran
     // against batched ones.
-    use akita_types::root_direct_schedule;
+    use akita_types::{digest_effective_schedule, root_direct_schedule};
     type Cfg = fp128::D32Full;
     let real_incidence =
         ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
@@ -202,13 +196,24 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
         "test fixture: pick an incidence where batched and singleton params differ"
     );
 
-    let schedule = root_direct_schedule(real_incidence.num_vars(), real_params.clone())
+    let real_schedule = root_direct_schedule(real_incidence.num_vars(), real_params.clone())
         .expect("fallback root-direct schedule");
-    let bound_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
+    let bound_levels = setup_level_params_from_runtime_schedule(&real_schedule.steps);
     assert_eq!(
         bound_levels,
         vec![real_params],
-        "fallback schedule must bind the real-incidence params the verifier recomputes"
+        "fallback schedule must carry the real-incidence params the verifier recomputes"
+    );
+
+    // The descriptor binds those params through the schedule digest: a
+    // singleton-params fallback at the same `num_vars` must produce a
+    // different preamble than the real batched-params fallback.
+    let singleton_schedule = root_direct_schedule(real_incidence.num_vars(), singleton_params)
+        .expect("singleton fallback root-direct schedule");
+    assert_ne!(
+        digest_effective_schedule(&real_schedule),
+        digest_effective_schedule(&singleton_schedule),
+        "schedule digest must distinguish batched vs singleton root-direct commit params"
     );
 }
 
@@ -383,32 +388,34 @@ fn presets_select_expected_sis_modulus_family() {
 #[cfg(not(feature = "zk"))]
 fn fp16_generated_schedule_tables_are_wired() {
     let onehot_key = AkitaScheduleLookupKey::singleton(32);
-    let onehot_plan = <fp16::D32OneHot as crate::CommitmentConfig>::schedule_plan(onehot_key)
-        .unwrap()
-        .expect("fp16 D32 onehot nv32 schedule should be generated");
-    assert!(!onehot_plan.steps.is_empty());
+    let onehot_schedule =
+        <fp16::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key)
+            .unwrap()
+            .expect("fp16 D32 onehot nv32 schedule should be generated");
+    assert!(!onehot_schedule.steps.is_empty());
 
     let dense_key = AkitaScheduleLookupKey::singleton(27);
-    let dense_plan = <fp16::D32Full as crate::CommitmentConfig>::schedule_plan(dense_key)
+    let dense_schedule = <fp16::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key)
         .unwrap()
         .expect("fp16 D32 full nv27 schedule should be generated");
-    assert!(!dense_plan.steps.is_empty());
+    assert!(!dense_schedule.steps.is_empty());
 }
 
 #[test]
 #[cfg(not(feature = "zk"))]
 fn fp32_d32_generated_schedule_tables_are_wired() {
     let onehot_key = AkitaScheduleLookupKey::singleton(32);
-    let onehot_plan = <fp32::D32OneHot as crate::CommitmentConfig>::schedule_plan(onehot_key)
-        .unwrap()
-        .expect("fp32 D32 onehot nv32 schedule should be generated");
-    assert!(!onehot_plan.steps.is_empty());
+    let onehot_schedule =
+        <fp32::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key)
+            .unwrap()
+            .expect("fp32 D32 onehot nv32 schedule should be generated");
+    assert!(!onehot_schedule.steps.is_empty());
 
     let dense_key = AkitaScheduleLookupKey::singleton(26);
-    let dense_plan = <fp32::D32Full as crate::CommitmentConfig>::schedule_plan(dense_key)
+    let dense_schedule = <fp32::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key)
         .unwrap()
         .expect("fp32 D32 full nv26 schedule should be generated");
-    assert!(!dense_plan.steps.is_empty());
+    assert!(!dense_schedule.steps.is_empty());
 }
 
 // ----- migrated from former `schedule_policy::tests` -------------------
@@ -420,11 +427,11 @@ fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
 
 #[cfg(not(feature = "zk"))]
 fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) {
-    let plan = Cfg::schedule_plan(key)
+    let schedule = Cfg::runtime_schedule(key)
         .expect("planner should succeed")
         .expect("config should provide a planner");
-    let num_fold_levels = plan.num_fold_levels();
-    for (idx, level) in plan.fold_levels().enumerate() {
+    let num_fold_levels = schedule.num_fold_levels();
+    for (idx, fold) in schedule.fold_steps().enumerate() {
         // The last fold in a fold-then-direct schedule is the terminal
         // recursive fold and ships its W in cleartext under
         // MRowLayout::Terminal (drops the D-block from the per-row `r`
@@ -450,7 +457,7 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
         };
         let runtime_next_w_len =
             akita_types::w_ring_element_count_with_counts_for_layout::<Cfg::Field>(
-                &level.lp,
+                &fold.params,
                 num_points,
                 num_t_vectors,
                 num_w_vectors,
@@ -458,11 +465,10 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
                 layout,
             )
             .expect("valid planned witness")
-                * level.lp.ring_dimension;
+                * fold.params.ring_dimension;
         assert_eq!(
-            runtime_next_w_len, level.next_inputs.current_w_len,
-            "planner/runtime next_w_len mismatch at level {} for key={key:?}",
-            level.inputs.level
+            runtime_next_w_len, fold.next_w_len,
+            "planner/runtime next_w_len mismatch at level {idx} for key={key:?}",
         );
     }
 }
@@ -477,7 +483,7 @@ fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: Generated
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
         );
-        Cfg::schedule_plan(key)
+        Cfg::runtime_schedule(key)
             .expect("config schedule should succeed")
             .expect("config should provide a generated schedule");
     }
@@ -498,23 +504,24 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
         );
-        let generated = Cfg::schedule_plan(key)
+        let generated = Cfg::runtime_schedule(key)
             .expect("config schedule should succeed")
             .expect("config should provide a generated schedule");
-        let Some(root) = generated.fold_levels().next() else {
+        let Some(root) = generated.fold_steps().next() else {
             continue;
         };
         checked_folded_entry = true;
+        let root_lp = &root.params;
         let singleton_outer_width =
-            root.lp.a_key.row_len() * root.lp.num_digits_open * root.lp.num_blocks;
-        let singleton_d_width = root.lp.num_digits_open * root.lp.num_blocks;
+            root_lp.a_key.row_len() * root_lp.num_digits_open * root_lp.num_blocks;
+        let singleton_d_width = root_lp.num_digits_open * root_lp.num_blocks;
         assert_eq!(
-            root.lp.outer_width(),
+            root_lp.outer_width(),
             singleton_outer_width * entry.key.num_t_vectors,
             "generated batched root B width should be claim-scaled for key={key:?}"
         );
         assert_eq!(
-            root.lp.d_matrix_width(),
+            root_lp.d_matrix_width(),
             singleton_d_width * entry.key.num_t_vectors,
             "generated batched root D width should be claim-scaled for key={key:?}"
         );
@@ -523,179 +530,6 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         checked_folded_entry,
         "generated table should include at least one folded batched entry"
     );
-}
-
-#[cfg(not(feature = "zk"))]
-fn assert_exact_root_fold_matches_runtime_root_plan<Cfg: CommitmentConfig, const D: usize>(
-    num_vars: usize,
-) {
-    let key = AkitaScheduleLookupKey::singleton(num_vars);
-    let plan = Cfg::schedule_plan(key)
-        .expect("config schedule should succeed")
-        .expect("config should provide an exact schedule");
-    let planned_root = akita_types::exact_planned_level_execution(
-        &plan,
-        AkitaScheduleInputs {
-            num_vars,
-            level: 0,
-            current_w_len: 1usize.checked_shl(num_vars as u32).unwrap_or(0),
-        },
-        plan.fold_levels()
-            .next()
-            .expect("exact schedule should begin with a fold")
-            .lp
-            .log_basis,
-        Cfg::stage1_challenge_config,
-    )
-    .expect("exact plan should resolve the root fold")
-    .expect("exact plan should contain a matching root fold");
-    let incidence = ClaimIncidenceSummary::same_point(num_vars, 1).expect("singleton incidence");
-    let runtime_root =
-        Cfg::get_params_for_prove(&incidence).expect("runtime root plan should succeed");
-    let Some(akita_types::Step::Fold(runtime_root_step)) = runtime_root.steps.first() else {
-        panic!("runtime root schedule should start with a fold");
-    };
-    assert_eq!(
-        planned_root.level.inputs.current_w_len,
-        runtime_root_step.current_w_len,
-        "planned/runtime root current_w_len mismatch for {} at num_vars={num_vars}",
-        std::any::type_name::<Cfg>()
-    );
-    assert_eq!(
-        planned_root.level.lp,
-        runtime_root_step.params,
-        "planned/runtime root lp mismatch for {} at num_vars={num_vars}",
-        std::any::type_name::<Cfg>()
-    );
-    assert_eq!(
-        planned_root.level.next_inputs.current_w_len,
-        runtime_root_step.next_w_len,
-        "planned/runtime next_w_len mismatch for {} at num_vars={num_vars}",
-        std::any::type_name::<Cfg>()
-    );
-}
-
-/// Parity guard: the new compact-entry expansion path
-/// (`resolve_schedule` + `expand_fold_level` / `root_commit_params`)
-/// reproduces the old `akita-derive` materializer's per-level
-/// `LevelParams` and root commit exactly. Locks the refactor before the
-/// materializer is deleted and consumers are switched over.
-#[cfg(not(feature = "zk"))]
-fn assert_new_expand_matches_old_plan<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) {
-    use akita_types::generated::GeneratedStep;
-
-    let plan = Cfg::schedule_plan(key)
-        .expect("old materializer should succeed")
-        .expect("config should provide a plan");
-    let entry = Cfg::resolve_schedule(key)
-        .expect("resolve_schedule should succeed")
-        .expect("config should resolve an entry");
-
-    let fold_steps: Vec<_> = entry
-        .steps
-        .iter()
-        .filter_map(|step| match step {
-            GeneratedStep::Fold(fold) => Some(*fold),
-            GeneratedStep::Direct(_) => None,
-        })
-        .collect();
-    let old_levels: Vec<_> = plan.fold_levels().collect();
-    assert_eq!(
-        fold_steps.len(),
-        old_levels.len(),
-        "fold-level count mismatch for {} key={key:?}",
-        std::any::type_name::<Cfg>()
-    );
-
-    let field_bits = Cfg::decomposition().field_bits();
-    let batched = crate::root_batched_dims(key, field_bits);
-    for (idx, level) in old_levels.iter().enumerate() {
-        let batched_root = if idx == 0 { batched } else { None };
-        let new_lp = Cfg::expand_fold_level(
-            &fold_steps[idx],
-            key.num_vars,
-            idx,
-            level.inputs.current_w_len,
-            batched_root,
-        )
-        .expect("new expansion should succeed");
-        assert_eq!(
-            new_lp,
-            level.lp,
-            "new-vs-old level lp mismatch for {} key={key:?} level={idx}",
-            std::any::type_name::<Cfg>()
-        );
-    }
-
-    // Root-direct entries have no fold levels; compare the new root
-    // commit against the old materializer's commit params. The B/D
-    // matrices are vestigial for a root-direct commit (the witness ships
-    // in the clear, no relation fold runs), and the old materializer
-    // sized the B width against the per-`r` intermediate A-rank rather
-    // than the committed A-rank — a latent inconsistency. The new
-    // self-consistent expansion fixes that, so we compare the functional
-    // fields (ranks, A column width, block split, digit counts) and
-    // tolerate the corrected B/D column widths.
-    if old_levels.is_empty() && key.num_t_vectors == 1 && key.num_w_vectors == 1 {
-        let incidence =
-            ClaimIncidenceSummary::same_point(key.num_vars, 1).expect("singleton incidence");
-        if let Ok(old_commit) = Cfg::get_params_for_batched_commitment(&incidence) {
-            let new_commit = Cfg::root_commit_params(key).expect("new root commit");
-            assert_eq!(
-                new_commit.a_key,
-                old_commit.a_key,
-                "root-direct A-key mismatch for {} key={key:?}",
-                std::any::type_name::<Cfg>()
-            );
-            assert_eq!(
-                (
-                    new_commit.ring_dimension,
-                    new_commit.log_basis,
-                    new_commit.b_key.row_len(),
-                    new_commit.d_key.row_len(),
-                    new_commit.num_blocks,
-                    new_commit.block_len,
-                    new_commit.m_vars,
-                    new_commit.r_vars,
-                    new_commit.num_digits_commit,
-                    new_commit.num_digits_open,
-                ),
-                (
-                    old_commit.ring_dimension,
-                    old_commit.log_basis,
-                    old_commit.b_key.row_len(),
-                    old_commit.d_key.row_len(),
-                    old_commit.num_blocks,
-                    old_commit.block_len,
-                    old_commit.m_vars,
-                    old_commit.r_vars,
-                    old_commit.num_digits_commit,
-                    old_commit.num_digits_open,
-                ),
-                "root-direct commit functional fields mismatch for {} key={key:?}",
-                std::any::type_name::<Cfg>()
-            );
-        }
-    }
-}
-
-#[test]
-#[cfg(not(feature = "zk"))]
-fn new_expand_matches_old_plan_across_fp128_presets() {
-    for num_vars in 6..=30 {
-        let key = AkitaScheduleLookupKey::singleton(num_vars);
-        assert_new_expand_matches_old_plan::<fp128::D32Full>(key);
-        assert_new_expand_matches_old_plan::<fp128::D32OneHot>(key);
-        assert_new_expand_matches_old_plan::<fp128::D64Full>(key);
-        assert_new_expand_matches_old_plan::<fp128::D64OneHot>(key);
-    }
-}
-
-#[test]
-#[cfg(not(feature = "zk"))]
-fn new_expand_matches_old_plan_for_batched_root() {
-    let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
-    assert_new_expand_matches_old_plan::<fp128::D64OneHot>(key);
 }
 
 #[test]
@@ -739,12 +573,6 @@ fn generated_batched_roots_restore_scaled_widths() {
 
 #[test]
 #[cfg(not(feature = "zk"))]
-fn generated_d32_full_root_fold_matches_runtime_root_plan() {
-    assert_exact_root_fold_matches_runtime_root_plan::<fp128::D32Full, 32>(26);
-}
-
-#[test]
-#[cfg(not(feature = "zk"))]
 fn generated_d64_full_table_materializes_valid_plans() {
     let table = fp128_d64_full_table();
     for entry in table.entries {
@@ -754,56 +582,10 @@ fn generated_d64_full_table_materializes_valid_plans() {
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
         );
-        <fp128::D64Full as CommitmentConfig>::schedule_plan(key)
+        <fp128::D64Full as CommitmentConfig>::runtime_schedule(key)
             .expect("config schedule should succeed")
             .expect("entry should exist in generated table");
     }
-}
-
-#[test]
-#[cfg(not(feature = "zk"))]
-fn generated_table_rejects_sis_family_mismatch() {
-    type Cfg = fp128::D64Full;
-    let table = fp128_d64_full_table();
-    let mismatched = GeneratedScheduleTable {
-        sis_family: akita_types::SisModulusFamily::Q32,
-        entries: table.entries,
-    };
-    let entry = mismatched
-        .entries
-        .iter()
-        .find(|entry| entry.key.num_t_vectors == 1)
-        .expect("fp128 table should contain singleton rows");
-    let key = AkitaScheduleLookupKey::new_with_points(
-        entry.key.num_vars,
-        entry.key.num_commitment_groups,
-        entry.key.num_t_vectors,
-        entry.key.num_w_vectors,
-        entry.key.num_z_vectors,
-    );
-    // Drive the planner materializer directly with the mismatched table:
-    // `Cfg::schedule_plan` would use the unmodified `Cfg::schedule_table()`,
-    // so we bypass it to test the SIS-family mismatch rejection path.
-    let err = akita_types::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _>(
-        key,
-        mismatched,
-        akita_types::PlanPolicy {
-            sis_family: Cfg::sis_modulus_family(),
-            ring_dimension: Cfg::D,
-            root_decomp: Cfg::decomposition(),
-            challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
-            recursive_public_rows: 1,
-            extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
-            stage1_challenge_config: Cfg::stage1_challenge_config,
-            ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
-            fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
-        },
-    )
-    .expect_err("mismatched SIS family must be rejected");
-    assert!(
-        err.to_string().contains("SIS family mismatch"),
-        "unexpected error: {err}"
-    );
 }
 
 #[test]
@@ -851,18 +633,19 @@ fn batched_root_plan_matches_runtime_next_w_len() {
 #[cfg(not(feature = "zk"))]
 fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
     let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
-    let plan = <fp128::D64OneHot as CommitmentConfig>::schedule_plan(key)
+    let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
         .expect("config schedule should succeed")
         .expect("fp128 D64 onehot 4x30 schedule should be generated");
 
     assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
     assert!(
-        plan.num_fold_levels() > 2,
+        schedule.num_fold_levels() > 2,
         "4x30 onehot schedule should keep a recursive suffix after the root fold"
     );
 
     let akita_types::DirectWitnessShape::PackedDigits((num_elems, _bits)) =
-        plan.direct_step().witness_shape
+        *akita_types::schedule_terminal_direct_witness_shape(&schedule)
+            .expect("4x30 onehot schedule should end in a direct step")
     else {
         panic!("4x30 onehot schedule should end in packed digits");
     };
@@ -885,8 +668,16 @@ fn recursive_onehot_split_matches_open_digit_witness_count() {
         level: 1,
         current_w_len: 25_974_272,
     };
-    let params =
-        crate::proof_optimized::level_params_with_log_basis::<Cfg>(inputs, log_basis).unwrap();
+    let params = akita_types::direct_level_params_with_log_basis(
+        Cfg::sis_modulus_family(),
+        Cfg::D,
+        Cfg::decomposition(),
+        Cfg::stage1_challenge_config(Cfg::D).unwrap(),
+        Cfg::ring_subfield_embedding_norm_bound(),
+        inputs,
+        log_basis,
+    )
+    .unwrap();
     let root = Cfg::decomposition();
     let decomp = DecompositionParams {
         log_basis: params.log_basis,
@@ -929,26 +720,26 @@ fn recursive_onehot_split_matches_open_digit_witness_count() {
 #[cfg(not(feature = "zk"))]
 fn tight_block_len_is_no_larger_than_pow2() {
     for num_vars in [14, 20, 30] {
-        let plan = fp128::D64Full::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars))
-            .expect("planner should succeed")
-            .expect("config should provide a planner");
-        for level in plan.fold_levels() {
-            let pow2_block = 1usize << level.lp.m_vars;
+        let schedule =
+            fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars))
+                .expect("planner should succeed")
+                .expect("config should provide a planner");
+        for (level_idx, fold) in schedule.fold_steps().enumerate() {
+            let lp = &fold.params;
+            let pow2_block = 1usize << lp.m_vars;
             assert!(
-                level.lp.block_len <= pow2_block,
-                "block_len {} should be <= 2^m_vars {} at level {} (num_vars={})",
-                level.lp.block_len,
+                lp.block_len <= pow2_block,
+                "block_len {} should be <= 2^m_vars {} at level {level_idx} (num_vars={num_vars})",
+                lp.block_len,
                 pow2_block,
-                level.inputs.level,
-                num_vars
             );
-            if level.inputs.level > 0 {
-                let num_ring = level.inputs.current_w_len / level.lp.ring_dimension;
-                let expected_tight = num_ring.div_ceil(level.lp.num_blocks);
+            if level_idx > 0 {
+                let num_ring = fold.current_w_len / lp.ring_dimension;
+                let expected_tight = num_ring.div_ceil(lp.num_blocks);
                 assert_eq!(
-                    level.lp.block_len, expected_tight,
-                    "recursive level {} should use tight block_len = ceil({num_ring} / {})",
-                    level.inputs.level, level.lp.num_blocks
+                    lp.block_len, expected_tight,
+                    "recursive level {level_idx} should use tight block_len = ceil({num_ring} / {})",
+                    lp.num_blocks
                 );
             }
         }

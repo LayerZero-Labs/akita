@@ -1,11 +1,11 @@
 //! SIS-secure level-parameter derivation.
 //!
 //! These functions invoke `optimal_m_r_split` and the generated SIS-floor
-//! tables to derive secure level parameters for the planner and config-policy
-//! adapters. They are verifier-reachable transitively through the
-//! [`crate::schedule_table`] materializer (`Cfg::schedule_plan` on a table
-//! hit), so every public function returns `Result<_, AkitaError>` on
-//! malformed inputs and never panics on the verifier replay path.
+//! tables to derive secure level parameters for the planner DP search and the
+//! Cfg-driven runtime schedule expansion ([`crate::schedule_from_entry_bits`]).
+//! They are verifier-reachable transitively through that expansion, so every
+//! public function returns `Result<_, AkitaError>` on malformed inputs and
+//! never panics on the verifier replay path.
 //!
 //! Pure layout helpers (`level_layout_from_params`,
 //! `recursive_level_layout_from_params`, `recursive_level_decomposition_from_root`,
@@ -14,9 +14,8 @@
 use crate::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 use crate::layout::digit_math::optimal_m_r_split;
 use crate::{
-    decomp_depths, exact_planned_level_execution, level_layout_from_params,
-    recursive_level_layout_from_params, AjtaiKeyParams, AkitaScheduleInputs, AkitaSchedulePlan,
-    DecompositionParams, LevelParams, SisModulusFamily,
+    decomp_depths, level_layout_from_params, recursive_level_layout_from_params, AjtaiKeyParams,
+    AkitaScheduleInputs, DecompositionParams, LevelParams, SisModulusFamily,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
@@ -103,90 +102,17 @@ pub fn sis_secure_level_params(
     Ok(result)
 }
 
-/// Pick level-params for one level + log-basis.
-///
-/// Prefers the exact entry from a pre-materialized
-/// [`AkitaSchedulePlan`] (`schedule_plan = Cfg::schedule_plan(singleton_key(num_vars))?`
-/// — fixed throughout a search). Otherwise derives SIS-secure recursive
-/// params (level > 0) and returns a params-only fallback (level 0) when
-/// no SIS-secure derivation is available.
-///
-/// `stage1_chooser` resolves the sparse-challenge config for a ring
-/// dimension; it's the same hook `Cfg::stage1_challenge_config` plays at
-/// runtime, threaded through as a value to keep this function free of
-/// `<Cfg>` plumbing.
-///
-/// # Errors
-///
-/// Returns an error if `stage1_chooser` rejects `d`, if exact-plan
-/// resolution fails, or if SIS-driven recursive derivation over/underflows.
-#[allow(clippy::too_many_arguments)]
-pub fn level_params_with_log_basis(
-    sis_family: SisModulusFamily,
-    d: usize,
-    decomp: DecompositionParams,
-    ring_subfield_norm_bound: u32,
-    schedule_plan: Option<&AkitaSchedulePlan>,
-    stage1_chooser: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    inputs: AkitaScheduleInputs,
-    log_basis: u32,
-) -> Result<LevelParams, AkitaError> {
-    if let Some(plan) = schedule_plan {
-        if let Some(planned_level) =
-            exact_planned_level_execution(plan, inputs, log_basis, stage1_chooser)?
-        {
-            return Ok(planned_level.level.lp.clone());
-        }
-    }
-    let stage1_config = stage1_chooser(d)?;
-
-    if inputs.level > 0 {
-        if let Some(params) = sis_derived_recursive_params(
-            sis_family,
-            d,
-            decomp,
-            log_basis,
-            inputs.current_w_len,
-            &stage1_config,
-            ring_subfield_norm_bound,
-        ) {
-            if let Ok(lp) =
-                recursive_level_layout_from_params(&params, inputs.current_w_len, decomp)
-            {
-                return Ok(lp);
-            }
-            return Ok(params);
-        }
-    }
-
-    // Final fallback: bare params-only seed with all ranks at 1. The
-    // schedule planner has its own root path (`find_schedule`) and
-    // doesn't take this branch in practice for level > 0; for level == 0
-    // the caller (`root_level_layout_with_log_basis`) handles the
-    // strict root SIS derivation.
-    Ok(LevelParams::params_only(
-        sis_family,
-        d,
-        log_basis,
-        1,
-        1,
-        1,
-        stage1_config,
-    ))
-}
-
-/// Direct-step level-params hook used by the planner DP and the schedule
-/// materializer.
+/// Direct-step level-params hook used by the planner DP and the Cfg-driven
+/// runtime schedule expansion.
 ///
 /// Level 0 delegates to [`root_level_layout_with_log_basis`]. Level > 0
-/// derives recursive params straight from the envelope (no
-/// `Cfg::schedule_plan` consultation) and applies the recursive layout —
-/// this is the "ship the witness directly at level N" hypothesis that
-/// the planner evaluates as one alternative.
+/// derives recursive params straight from the envelope and applies the
+/// recursive layout — this is the "ship the witness directly at level N"
+/// hypothesis that the planner evaluates as one alternative.
 ///
 /// `envelope` is fixed throughout a search (it only depends on
 /// `inputs.num_vars`, which is the polynomial size); callers compute it
-/// once at `SearchOptions` / `PlanPolicy` construction time.
+/// once when expanding a schedule.
 ///
 /// # Errors
 ///
@@ -297,7 +223,7 @@ pub fn sis_derived_recursive_params_for_layout(
     layout: &LevelParams,
 ) -> Option<LevelParams> {
     // Checked: malformed inputs (e.g. `log_basis >= 32`) reach this
-    // function transitively from `schedule_plan_from_table_entry` on the
+    // function transitively from `schedule_from_entry_bits` on the
     // verifier replay path, so the shift must not panic.
     let bd_collision = 1u32.checked_shl(log_basis).and_then(|b| b.checked_sub(1))?;
     let a_raw = bd_collision;
@@ -458,7 +384,7 @@ pub fn derived_root_commitment_layout_from_params(
 
 /// Derive the root commit layout for a root-direct schedule at `num_vars`.
 ///
-/// Used by both the planner DP and the schedule-table materializer to fill
+/// Used by both the planner DP and the runtime schedule expansion to fill
 /// `DirectStep.params` (the root-commit-layout slot) when the schedule
 /// emits a root-direct step.
 /// Consumers (`Cfg::get_params_for_batched_commitment`, prover/verifier
@@ -574,8 +500,8 @@ pub fn root_direct_commit_layout(
 /// [`sis_derived_root_params_for_layout`] derives the matching
 /// `(n_a, n_b, n_d)` triple. No fixed point.
 ///
-/// Used by the planner DP, the table materializer, and the config's
-/// `level_params_with_log_basis` fast-path. For root-direct (tiny-root)
+/// Used by the planner DP and the Cfg-driven runtime schedule expansion
+/// ([`crate::schedule_from_entry_bits`]). For root-direct (tiny-root)
 /// layouts use [`root_direct_commit_layout`] instead.
 ///
 /// # Errors

@@ -1,8 +1,8 @@
 use akita_field::FieldCore;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, AkitaSchedulePlan,
-    DirectWitnessProof, LevelParams, Schedule, Step, TerminalLevelProof,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, DirectWitnessProof,
+    LevelParams, Schedule, Step, TerminalLevelProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -29,60 +29,6 @@ pub(crate) fn report_setup_sizes(
     );
     eprintln!(
         "[{label}] setup sizes: ring_elems={setup_ring_elements}, vector={setup_vector_bytes} bytes, ntt_cache={setup_ntt_cache_bytes} bytes"
-    );
-}
-
-pub(crate) fn emit_planned_schedule_summary(
-    label: &str,
-    plan: &AkitaSchedulePlan,
-    root_num_claims: usize,
-    field_bits: u32,
-) {
-    tracing::info!(
-        label,
-        levels = plan.num_fold_levels(),
-        exact_proof_bytes = plan.exact_proof_bytes,
-        no_wrapper_bytes = plan.no_wrapper_bytes,
-        "planned schedule"
-    );
-
-    for level in plan.fold_levels() {
-        let next_w_len = level.next_inputs.current_w_len;
-        let num_claims = if level.inputs.level == 0 {
-            root_num_claims
-        } else {
-            1
-        };
-        tracing::info!(
-            label,
-            level = level.inputs.level,
-            d = level.lp.ring_dimension,
-            n_a = level.lp.a_key.row_len(),
-            n_b = level.lp.b_key.row_len(),
-            n_d = level.lp.d_key.row_len(),
-            challenge_l1_mass = level.lp.challenge_l1_mass(),
-            log_basis = level.lp.log_basis,
-            m_vars = level.lp.m_vars,
-            r_vars = level.lp.r_vars,
-            num_blocks = level.lp.num_blocks,
-            block_len = level.lp.block_len,
-            delta_commit = level.lp.num_digits_commit,
-            delta_open = level.lp.num_digits_open,
-            delta_fold = level.lp.num_digits_fold(num_claims, field_bits),
-            current_w_len = level.inputs.current_w_len,
-            next_w_ring = next_w_len / level.lp.ring_dimension,
-            next_w_len,
-            level_bytes = level.level_bytes,
-            "planned fold level"
-        );
-    }
-
-    let terminal = plan.terminal_state();
-    tracing::info!(
-        label,
-        final_w_len = terminal.current_w_len,
-        final_log_basis = terminal.log_basis,
-        "planned terminal state"
     );
 }
 

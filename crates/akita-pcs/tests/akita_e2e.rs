@@ -143,6 +143,16 @@ type DenseFixture<FField, E, L, const D: usize> = (
     LevelParams,
 );
 
+/// Active log-basis of a runtime schedule's terminal direct step.
+#[cfg(not(feature = "zk"))]
+fn schedule_terminal_log_basis<Cfg: CommitmentConfig>(schedule: &akita_types::Schedule) -> u32 {
+    let field_bits = Cfg::decomposition().field_bits();
+    match schedule.steps.last() {
+        Some(akita_types::Step::Direct(direct)) => direct.log_basis(field_bits),
+        _ => panic!("schedule must end in a terminal direct step"),
+    }
+}
+
 /// Count the total number of fold levels (including the batched root and the
 /// terminal step) in a singleton-shaped batched proof, matching the planner's
 /// `num_fold_levels` convention.
@@ -393,7 +403,7 @@ fn full_d64_prove_verify() {
         assert!(total_fold_levels > 0, "proof must have at least one level");
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(FULL_TEST_NV))
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(FULL_TEST_NV))
                 .expect("schedule plan")
                 .expect("adaptive full config should expose a schedule plan");
             assert_eq!(total_fold_levels, plan.num_fold_levels());
@@ -443,7 +453,7 @@ fn full_d32_prove_verify() {
 
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(D32_TEST_NV))
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(D32_TEST_NV))
                 .expect("schedule plan")
                 .expect("adaptive D32 config should expose a schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
@@ -577,7 +587,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let nv = TINY_DIRECT_TEST_NV;
         #[cfg(not(feature = "zk"))]
         let plan = {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan")
                 .expect("adaptive D32 config should expose a schedule plan");
             assert_eq!(
@@ -636,7 +646,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         assert_eq!(batched_total_fold_levels(&proof), 0);
         assert!(proof.is_root_direct());
         #[cfg(not(feature = "zk"))]
-        assert_eq!(proof.size(), plan.exact_proof_bytes);
+        assert_eq!(proof.size(), plan.total_bytes);
         let direct_witnesses = proof
             .root
             .as_direct()
@@ -710,7 +720,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
 
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan")
                 .expect("adaptive full config should expose a schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
@@ -721,7 +731,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
                     .as_packed_digits()
                     .expect("current terminal witness should be packed digits")
                     .bits_per_elem,
-                plan.terminal_state().log_basis
+                schedule_terminal_log_basis::<Cfg>(&plan)
             );
         }
 
@@ -828,16 +838,16 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                 .expect("deserialize adaptive onehot proof");
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan")
                 .expect("adaptive onehot config should expose a schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
             assert_eq!(
                 proof.size(),
-                plan.exact_proof_bytes,
+                plan.total_bytes,
                 "actual proof size {} does not match planner estimate {}",
                 proof.size(),
-                plan.exact_proof_bytes
+                plan.total_bytes
             );
             assert_eq!(
                 decoded
@@ -845,7 +855,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                     .as_packed_digits()
                     .expect("current terminal witness should be packed digits")
                     .bits_per_elem,
-                plan.terminal_state().log_basis
+                schedule_terminal_log_basis::<Cfg>(&plan)
             );
         }
 
@@ -877,13 +887,18 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     // with stale singleton plans); the assertion exists only to catch any
     // future planner change that escapes the configured envelope.
     for nv in 10..=120 {
-        let plan = match Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)) {
-            Ok(Some(plan)) => plan,
+        let schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)) {
+            Ok(Some(schedule)) => schedule,
             _ => continue,
         };
+        let field_bits = <Cfg as CommitmentConfig>::decomposition().field_bits();
+        let within_window = schedule.steps.iter().all(|step| match step {
+            akita_types::Step::Fold(fold) => fold.params.log_basis <= 6,
+            akita_types::Step::Direct(direct) => direct.log_basis(field_bits) <= 6,
+        });
         assert!(
-            plan.states().all(|state| state.log_basis <= 6),
-            "adaptive onehot schedule selected log_basis > 6 at nv={nv}: {plan:?}"
+            within_window,
+            "adaptive onehot schedule selected log_basis > 6 at nv={nv}: {schedule:?}"
         );
     }
 }

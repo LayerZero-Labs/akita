@@ -6,8 +6,8 @@
 //! live in [`crate::sis_offline`]; the digit-math search loop
 //! (`optimal_m_r_split` callers, the (m, r) sweep) lives in
 //! `akita_planner::schedule_params`. This module retains the layout glue
-//! the verifier replay path reaches through `CommitmentConfig`
-//! materializers and [`crate::schedule_plan_from_table`].
+//! the verifier replay path reaches through `CommitmentConfig` and
+//! [`crate::schedule_from_entry_bits`].
 
 pub mod digit_math;
 pub mod flat_matrix;

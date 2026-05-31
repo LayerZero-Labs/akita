@@ -15,9 +15,11 @@ use akita_types::AkitaExpandedSetup;
 use akita_types::AkitaVerifierSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
-    detect_field_modulus, planned_schedule_key_from_schedule, AkitaScheduleLookupKey,
-    AkitaSetupSeed, FlatMatrix,
+    detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
+    FlatMatrix,
 };
+#[cfg(feature = "disk-persistence")]
+use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
@@ -159,10 +161,24 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     // Fingerprint the resolved schedule shape so cached setup files get
     // invalidated when the planner's per-level layout (including the
     // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
-    // key — the per-level params are captured in
-    // `planned_schedule_key_from_schedule`.
-    let raw_schedule = match Cfg::schedule_plan(schedule_lookup_key) {
-        Ok(Some(plan)) => planned_schedule_key_from_schedule(schedule_lookup_key, &plan),
+    // key — the full per-level params are hashed by
+    // `digest_effective_schedule`.
+    let raw_schedule = match Cfg::runtime_schedule(schedule_lookup_key) {
+        Ok(Some(schedule)) => {
+            let digest = digest_effective_schedule(&schedule);
+            let mut hex = String::with_capacity(digest.len() * 2);
+            for byte in digest {
+                let _ = write!(hex, "{byte:02x}");
+            }
+            format!(
+                "planner_v6_nv{}_g{}_t{}_w{}_z{}_{hex}",
+                schedule_lookup_key.num_vars,
+                schedule_lookup_key.num_points,
+                schedule_lookup_key.num_t_vectors,
+                schedule_lookup_key.num_w_vectors,
+                schedule_lookup_key.num_z_vectors,
+            )
+        }
         _ => format!(
             "miss_nv{}_g{}_t{}_w{}_z{}",
             schedule_lookup_key.num_vars,

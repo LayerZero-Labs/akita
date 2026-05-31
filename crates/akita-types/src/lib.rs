@@ -13,7 +13,6 @@ pub mod layout;
 pub mod proof;
 pub mod proof_size;
 pub mod schedule;
-pub mod schedule_table;
 pub mod sis_offline;
 pub mod transcript;
 #[cfg(feature = "zk")]
@@ -27,9 +26,9 @@ pub use field_reduction::{
     RingSubfieldEncoding, SubfieldParams,
 };
 pub use instance_descriptor::{
-    digest_effective_schedule, digest_incidence, digest_level_params, digest_serializable,
-    setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
-    ProtocolFeatureSet, SetupSection,
+    digest_effective_schedule, digest_incidence, digest_serializable, setup_seed_digest,
+    AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet,
+    SetupSection,
 };
 pub use layout::{
     basis_weights, decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
@@ -78,22 +77,18 @@ pub use proof::{
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use proof_size::{estimate_proof_bytes, level_proof_bytes, schedule_from_entry_bits};
 pub use schedule::{
-    detect_field_modulus, exact_planned_level_execution, generated_schedule_lookup_key,
-    planned_schedule_key_from_schedule, r_decomp_levels, root_current_w_len, root_direct_schedule,
-    scale_batched_root_layout, scale_batched_root_layout_unchecked, schedule_from_plan,
+    detect_field_modulus, generated_schedule_lookup_key, r_decomp_levels, root_current_w_len,
+    root_direct_schedule, scale_batched_root_layout, scale_batched_root_layout_unchecked,
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
     schedule_terminal_direct_witness_shape, scheduled_fold_execution, scheduled_next_level_params,
-    split_batched_root_params, split_batched_root_params_from_schedule_plan,
-    validate_opening_points_for_claims, w_ring_element_count, w_ring_element_count_with_counts,
-    w_ring_element_count_with_counts_bits, w_ring_element_count_with_counts_for_layout,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaPlannedDirectStep, AkitaPlannedLevel,
-    AkitaPlannedLevelExecution, AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep, FoldStep, Schedule, Step,
+    split_batched_root_params, validate_opening_points_for_claims, w_ring_element_count,
+    w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
+    w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step,
 };
-pub use schedule_table::{schedule_plan_from_table, schedule_plan_from_table_entry, PlanPolicy};
 pub use sis_offline::{
     derived_root_commitment_layout_from_params, direct_level_params_with_log_basis,
-    level_params_with_log_basis, root_direct_commit_layout, root_level_layout_with_log_basis,
+    root_direct_commit_layout, root_level_layout_with_log_basis,
     root_level_params_for_layout_with_log_basis, sis_derived_recursive_params,
     sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
     sis_secure_level_params, SisCollisionBounds, SisRoleWidths,

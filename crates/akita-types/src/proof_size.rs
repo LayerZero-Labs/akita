@@ -140,11 +140,10 @@ fn extension_opening_reduction_level_bytes(
 /// [`crate::generated::GeneratedFoldStep::expand_to_level_params`] and
 /// computing each step's witness lengths and proof bytes.
 ///
-/// This is the single canonical entry walker: it replaces the former
-/// `akita-derive` materializer (`schedule_plan_from_table` +
-/// `schedule_from_plan`). [`estimate_proof_bytes`] is a thin reader of the
-/// resulting `total_bytes`, and `akita-config` wraps this with the
-/// per-config policy values to drive prove/verify.
+/// This is the single canonical entry walker that replaced the former
+/// `akita-derive` schedule materializer. [`estimate_proof_bytes`] is a thin
+/// reader of the resulting `total_bytes`, and `akita-config` wraps this with
+/// the per-config policy values to drive prove/verify.
 ///
 /// The policy hooks are threaded as values/closures so this stays free of a
 /// `<Cfg>` parameter:

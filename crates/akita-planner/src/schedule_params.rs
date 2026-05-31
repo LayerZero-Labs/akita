@@ -13,10 +13,9 @@ use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_direct_commit_layout, root_extension_opening_partials, schedule_from_plan,
-    schedule_plan_from_table, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape, FoldStep,
-    LevelParams, MRowLayout, PlanPolicy, Schedule, Step,
+    root_direct_commit_layout, root_extension_opening_partials,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    DirectStep, DirectWitnessShape, FoldStep, LevelParams, MRowLayout, Schedule, Step,
 };
 
 use crate::ajtai_params::{compute_all_ajtai_keys_params, WitnessType};
@@ -338,23 +337,24 @@ fn offline_schedule_for_key<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
 ) -> Result<Option<Schedule>, AkitaError> {
-    use akita_field::Prime128OffsetA7F7 as PhantomField;
-    let plan = schedule_plan_from_table::<PhantomField, _>(
+    let Some(entry) =
+        akita_types::generated::table_entry(table, akita_types::generated_schedule_lookup_key(key))
+    else {
+        return Ok(None);
+    };
+    let challenge_field_bits = Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32;
+    let schedule = akita_types::schedule_from_entry_bits(
+        entry,
         key,
-        table,
-        PlanPolicy {
-            sis_family: Cfg::sis_modulus_family(),
-            ring_dimension: Cfg::D,
-            root_decomp: Cfg::decomposition(),
-            challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
-            recursive_public_rows: 1,
-            extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
-            stage1_challenge_config: Cfg::stage1_challenge_config,
-            ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
-            fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
-        },
+        Cfg::sis_modulus_family(),
+        Cfg::decomposition(),
+        challenge_field_bits,
+        Cfg::CLAIM_EXT_DEGREE,
+        Cfg::ring_subfield_embedding_norm_bound(),
+        Cfg::stage1_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
     )?;
-    Ok(plan.map(|plan| schedule_from_plan(&plan)))
+    Ok(Some(schedule))
 }
 
 /// Brute-forced root-direct commit `LevelParams` (optimal `(m, r)` split).

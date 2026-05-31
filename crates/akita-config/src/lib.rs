@@ -2,9 +2,9 @@
 //! `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`.
 //!
 //! `get_params_for_prove` / `get_params_for_batched_commitment` are
-//! table-only by default: schedule-table hit ⇒ materialize via
-//! [`akita_types::schedule_plan_from_table`]; miss ⇒
-//! [`AkitaError::InvalidSetup`].
+//! table-only by default: schedule-table hit ⇒ expand the compact entry
+//! via [`akita_types::schedule_from_entry_bits`] (see
+//! [`CommitmentConfig::runtime_schedule`]); miss ⇒ [`AkitaError::InvalidSetup`].
 //!
 //! [`WCommitmentConfig`] is the derived recursive-w config used by
 //! `<Cfg>`-generic ring-degree dispatch helpers.
@@ -16,7 +16,7 @@ use akita_types::generated::{
     table_entry, GeneratedFoldStep, GeneratedScheduleTable, GeneratedScheduleTableEntry,
 };
 use akita_types::{
-    generated_schedule_lookup_key, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
+    generated_schedule_lookup_key, AkitaScheduleInputs, AkitaScheduleLookupKey,
     ClaimIncidenceSummary, DecompositionParams, LevelParams, Schedule, SetupMatrixEnvelope,
     SisModulusFamily, Step,
 };
@@ -37,8 +37,8 @@ pub mod proof_optimized;
 pub mod tensor_verifier;
 mod transcript_binding;
 pub use proof_optimized::{
-    matrix_envelope_for_schedule, setup_level_params_from_plan,
-    setup_level_params_from_runtime_schedule, worst_case_grouped_incidence_for_shape,
+    matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
+    worst_case_grouped_incidence_for_shape,
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
@@ -140,13 +140,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Offline schedule table backing this config (preset only).
     fn schedule_table() -> Option<GeneratedScheduleTable>;
-
-    /// Materialized plan for `key`, or `None` on table miss.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidSetup` if the table entry fails materialization.
-    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError>;
 
     /// Resolve the compact generated schedule entry for `key`, or `None`
     /// on table miss.
@@ -380,10 +373,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::schedule_table()
     }
 
-    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-        Cfg::schedule_plan(key)
-    }
-
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -446,12 +435,6 @@ mod tests {
 
         fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
             None
-        }
-
-        fn schedule_plan(
-            _key: AkitaScheduleLookupKey,
-        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-            Ok(None)
         }
 
         fn max_setup_matrix_size(
@@ -559,111 +542,103 @@ mod fp128_policy_tests {
     ) {
         let d = Cfg::D as u32;
         for num_vars in min_num_vars..=max_num_vars {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars))
+            let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars))
                 .unwrap()
                 .expect("audited config should have a schedule");
 
-            for level in plan.fold_levels() {
+            for (level_idx, fold) in schedule.fold_steps().enumerate() {
+                let lp = &fold.params;
                 let a_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.a_key.collision_inf())
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.a_key.collision_inf())
                         .unwrap_or_else(|| {
                             panic!(
-                                "missing audited A-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
-                                level.inputs.level,
-                                level.lp.log_basis,
-                                level.lp.a_key.collision_inf(),
+                                "missing audited A-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
+                                lp.log_basis,
+                                lp.a_key.collision_inf(),
                             )
                         });
                 let a_rank = min_rank_for_secure_width(
                     Cfg::sis_modulus_family(),
                     d,
                     a_collision,
-                    u64::try_from(level.lp.inner_width())
+                    u64::try_from(lp.inner_width())
                         .expect("inner width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
                     panic!(
-                        "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={}, lb={}, width={}",
-                        level.inputs.level,
-                        level.lp.log_basis,
-                        level.lp.inner_width()
+                        "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
+                        lp.log_basis,
+                        lp.inner_width()
                     )
                 });
                 assert!(
-                    a_rank <= level.lp.a_key.row_len(),
-                    "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
-                    level.inputs.level,
-                    level.lp.log_basis,
-                    level.lp.inner_width(),
-                    level.lp.a_key.row_len(),
+                    a_rank <= lp.a_key.row_len(),
+                    "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
+                    lp.log_basis,
+                    lp.inner_width(),
+                    lp.a_key.row_len(),
                 );
 
                 let b_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.b_key.collision_inf())
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.b_key.collision_inf())
                         .unwrap_or_else(|| {
                             panic!(
-                                "missing audited B-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
-                                level.inputs.level,
-                                level.lp.log_basis,
-                                level.lp.b_key.collision_inf(),
+                                "missing audited B-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
+                                lp.log_basis,
+                                lp.b_key.collision_inf(),
                             )
                         });
                 let b_rank = min_rank_for_secure_width(
                     Cfg::sis_modulus_family(),
                     d,
                     b_collision,
-                    u64::try_from(level.lp.outer_width())
+                    u64::try_from(lp.outer_width())
                         .expect("outer width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
                     panic!(
-                        "missing audited B-row SIS width for D={d}, num_vars={num_vars}, level={}, lb={}, width={}",
-                        level.inputs.level,
-                        level.lp.log_basis,
-                        level.lp.outer_width()
+                        "missing audited B-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
+                        lp.log_basis,
+                        lp.outer_width()
                     )
                 });
                 assert!(
-                    b_rank <= level.lp.b_key.row_len(),
-                    "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
-                    level.inputs.level,
-                    level.lp.log_basis,
-                    level.lp.outer_width(),
-                    level.lp.b_key.row_len(),
+                    b_rank <= lp.b_key.row_len(),
+                    "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
+                    lp.log_basis,
+                    lp.outer_width(),
+                    lp.b_key.row_len(),
                 );
 
                 let d_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.d_key.collision_inf())
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.d_key.collision_inf())
                         .unwrap_or_else(|| {
                             panic!(
-                                "missing audited D-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
-                                level.inputs.level,
-                                level.lp.log_basis,
-                                level.lp.d_key.collision_inf(),
+                                "missing audited D-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
+                                lp.log_basis,
+                                lp.d_key.collision_inf(),
                             )
                         });
                 let d_rank = min_rank_for_secure_width(
                     Cfg::sis_modulus_family(),
                     d,
                     d_collision,
-                    u64::try_from(level.lp.d_matrix_width())
+                    u64::try_from(lp.d_matrix_width())
                         .expect("d-matrix width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
                     panic!(
-                        "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={}, lb={}, width={}",
-                        level.inputs.level,
-                        level.lp.log_basis,
-                        level.lp.d_matrix_width()
+                        "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
+                        lp.log_basis,
+                        lp.d_matrix_width()
                     )
                 });
                 assert!(
-                    d_rank <= level.lp.d_key.row_len(),
-                    "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
-                    level.inputs.level,
-                    level.lp.log_basis,
-                    level.lp.d_matrix_width(),
-                    level.lp.d_key.row_len(),
+                    d_rank <= lp.d_key.row_len(),
+                    "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
+                    lp.log_basis,
+                    lp.d_matrix_width(),
+                    lp.d_key.row_len(),
                 );
             }
         }
@@ -734,7 +709,7 @@ mod fp128_policy_tests {
             .expect("selector should find a generated onehot schedule");
 
         for selection in [&full, &onehot] {
-            assert_eq!(selection.plan.initial_state().current_w_len, 1usize << 32);
+            assert_eq!(selection.schedule.initial_w_len(), Some(1usize << 32));
         }
         assert!(!full.preset.is_onehot());
         assert!(onehot.preset.is_onehot());
@@ -750,6 +725,6 @@ mod fp128_policy_tests {
             .expect("selector should find a generated batched onehot schedule");
 
         assert!(selection.preset.is_onehot());
-        assert_eq!(selection.plan.initial_state().current_w_len, 1usize << 30);
+        assert_eq!(selection.schedule.initial_w_len(), Some(1usize << 30));
     }
 }
