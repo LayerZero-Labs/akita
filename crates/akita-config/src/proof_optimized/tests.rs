@@ -80,11 +80,26 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
          see DirectStep::params"
     );
 
-    // The trait default `get_params_for_batched_commitment` reads
-    // the first step's `params`. Construct a tiny stub Cfg whose
-    // `get_params_for_prove` returns the uncommittable schedule
-    // directly, bypassing the table path, so we exercise the
-    // loud-rejection branch.
+    // The trait default `get_params_for_batched_commitment` resolves
+    // the compact entry and expands its root-commit step. Construct a
+    // tiny stub Cfg that resolves to a root-direct entry whose terminal
+    // `Direct` carries `commit: None` (the uncommittable edge), so we
+    // exercise the loud-rejection branch in `root_commit_params`.
+    use akita_types::generated::{
+        GeneratedDirectStep, GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep,
+    };
+    static UNCOMMITTABLE_STEPS: [GeneratedStep; 1] =
+        [GeneratedStep::Direct(GeneratedDirectStep { commit: None })];
+    static UNCOMMITTABLE_ENTRY: GeneratedScheduleTableEntry = GeneratedScheduleTableEntry {
+        key: GeneratedScheduleKey {
+            num_vars: 10,
+            num_commitment_groups: 1,
+            num_t_vectors: 1,
+            num_w_vectors: 1,
+            num_z_vectors: 1,
+        },
+        steps: &UNCOMMITTABLE_STEPS,
+    };
     #[derive(Clone)]
     struct UncommittableRootDirectCfg;
     impl CommitmentConfig for UncommittableRootDirectCfg {
@@ -134,18 +149,10 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
         fn basis_range() -> (u32, u32) {
             (3, 3)
         }
-        fn get_params_for_prove(
-            _incidence: &ClaimIncidenceSummary,
-        ) -> Result<akita_types::Schedule, AkitaError> {
-            Ok(akita_types::Schedule {
-                steps: vec![Step::Direct(DirectStep {
-                    current_w_len: 1 << 10,
-                    witness_shape: DirectWitnessShape::FieldElements(1 << 10),
-                    direct_bytes: 0,
-                    params: None,
-                })],
-                total_bytes: 0,
-            })
+        fn resolve_schedule(
+            _key: AkitaScheduleLookupKey,
+        ) -> Result<Option<&'static GeneratedScheduleTableEntry>, AkitaError> {
+            Ok(Some(&UNCOMMITTABLE_ENTRY))
         }
     }
 
@@ -568,6 +575,129 @@ fn assert_exact_root_fold_matches_runtime_root_plan<Cfg: CommitmentConfig, const
     );
 }
 
+/// Parity guard: the new compact-entry expansion path
+/// (`resolve_schedule` + `expand_fold_level` / `root_commit_params`)
+/// reproduces the old `akita-derive` materializer's per-level
+/// `LevelParams` and root commit exactly. Locks the refactor before the
+/// materializer is deleted and consumers are switched over.
+#[cfg(not(feature = "zk"))]
+fn assert_new_expand_matches_old_plan<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) {
+    use akita_types::generated::GeneratedStep;
+
+    let plan = Cfg::schedule_plan(key)
+        .expect("old materializer should succeed")
+        .expect("config should provide a plan");
+    let entry = Cfg::resolve_schedule(key)
+        .expect("resolve_schedule should succeed")
+        .expect("config should resolve an entry");
+
+    let fold_steps: Vec<_> = entry
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            GeneratedStep::Fold(fold) => Some(*fold),
+            GeneratedStep::Direct(_) => None,
+        })
+        .collect();
+    let old_levels: Vec<_> = plan.fold_levels().collect();
+    assert_eq!(
+        fold_steps.len(),
+        old_levels.len(),
+        "fold-level count mismatch for {} key={key:?}",
+        std::any::type_name::<Cfg>()
+    );
+
+    let field_bits = Cfg::decomposition().field_bits();
+    let batched = crate::root_batched_dims(key, field_bits);
+    for (idx, level) in old_levels.iter().enumerate() {
+        let batched_root = if idx == 0 { batched } else { None };
+        let new_lp = Cfg::expand_fold_level(
+            &fold_steps[idx],
+            key.num_vars,
+            idx,
+            level.inputs.current_w_len,
+            batched_root,
+        )
+        .expect("new expansion should succeed");
+        assert_eq!(
+            new_lp,
+            level.lp,
+            "new-vs-old level lp mismatch for {} key={key:?} level={idx}",
+            std::any::type_name::<Cfg>()
+        );
+    }
+
+    // Root-direct entries have no fold levels; compare the new root
+    // commit against the old materializer's commit params. The B/D
+    // matrices are vestigial for a root-direct commit (the witness ships
+    // in the clear, no relation fold runs), and the old materializer
+    // sized the B width against the per-`r` intermediate A-rank rather
+    // than the committed A-rank — a latent inconsistency. The new
+    // self-consistent expansion fixes that, so we compare the functional
+    // fields (ranks, A column width, block split, digit counts) and
+    // tolerate the corrected B/D column widths.
+    if old_levels.is_empty() && key.num_t_vectors == 1 && key.num_w_vectors == 1 {
+        let incidence =
+            ClaimIncidenceSummary::same_point(key.num_vars, 1).expect("singleton incidence");
+        if let Ok(old_commit) = Cfg::get_params_for_batched_commitment(&incidence) {
+            let new_commit = Cfg::root_commit_params(key).expect("new root commit");
+            assert_eq!(
+                new_commit.a_key,
+                old_commit.a_key,
+                "root-direct A-key mismatch for {} key={key:?}",
+                std::any::type_name::<Cfg>()
+            );
+            assert_eq!(
+                (
+                    new_commit.ring_dimension,
+                    new_commit.log_basis,
+                    new_commit.b_key.row_len(),
+                    new_commit.d_key.row_len(),
+                    new_commit.num_blocks,
+                    new_commit.block_len,
+                    new_commit.m_vars,
+                    new_commit.r_vars,
+                    new_commit.num_digits_commit,
+                    new_commit.num_digits_open,
+                ),
+                (
+                    old_commit.ring_dimension,
+                    old_commit.log_basis,
+                    old_commit.b_key.row_len(),
+                    old_commit.d_key.row_len(),
+                    old_commit.num_blocks,
+                    old_commit.block_len,
+                    old_commit.m_vars,
+                    old_commit.r_vars,
+                    old_commit.num_digits_commit,
+                    old_commit.num_digits_open,
+                ),
+                "root-direct commit functional fields mismatch for {} key={key:?}",
+                std::any::type_name::<Cfg>()
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(not(feature = "zk"))]
+fn new_expand_matches_old_plan_across_fp128_presets() {
+    for num_vars in 6..=30 {
+        let key = AkitaScheduleLookupKey::singleton(num_vars);
+        assert_new_expand_matches_old_plan::<fp128::D32Full>(key);
+        assert_new_expand_matches_old_plan::<fp128::D32OneHot>(key);
+        assert_new_expand_matches_old_plan::<fp128::D64Full>(key);
+        assert_new_expand_matches_old_plan::<fp128::D64OneHot>(key);
+    }
+}
+
+#[test]
+#[cfg(not(feature = "zk"))]
+fn new_expand_matches_old_plan_for_batched_root() {
+    let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
+    assert_new_expand_matches_old_plan::<fp128::D64OneHot>(key);
+}
+
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_fp128_schedule_tables_match_cfg_schedule() {
@@ -654,10 +784,10 @@ fn generated_table_rejects_sis_family_mismatch() {
     // Drive the planner materializer directly with the mismatched table:
     // `Cfg::schedule_plan` would use the unmodified `Cfg::schedule_table()`,
     // so we bypass it to test the SIS-family mismatch rejection path.
-    let err = akita_derive::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _>(
+    let err = akita_types::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _>(
         key,
         mismatched,
-        akita_derive::PlanPolicy {
+        akita_types::PlanPolicy {
             sis_family: Cfg::sis_modulus_family(),
             ring_dimension: Cfg::D,
             root_decomp: Cfg::decomposition(),

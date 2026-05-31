@@ -6,14 +6,12 @@
 //! single `CommitmentConfig::schedule_plan` entry point; planner DP only runs
 //! on table miss when the `planner` feature is enabled.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, CanonicalField};
-use akita_types::generated::sis_floor::ceil_supported_collision;
-use akita_types::generated::{
+use crate::generated::sis_floor::ceil_supported_collision;
+use crate::generated::{
     table_entry, GeneratedFoldStep, GeneratedScheduleTable, GeneratedScheduleTableEntry,
     GeneratedStep,
 };
-use akita_types::{
+use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     generated_schedule_lookup_key, level_layout_from_params, proof_ring_vec_bytes,
     root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
@@ -22,6 +20,8 @@ use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DecompositionParams,
     DirectWitnessShape, LevelParams, MRowLayout, SisModulusFamily,
 };
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_field::{AkitaError, CanonicalField};
 
 // Local duplicate of `akita-planner::proof_size::level_proof_bytes`.
 //
@@ -382,7 +382,7 @@ where
                     // (tensor-aware), so we only need to forward the
                     // batched claim count and the root decomposition
                     // field width here.
-                    lp = akita_types::scale_batched_root_layout(
+                    lp = crate::scale_batched_root_layout(
                         &lp,
                         key.num_t_vectors,
                         root_decomp.field_bits(),
@@ -599,7 +599,7 @@ where
                         || key.num_w_vectors != 1
                         || key.num_z_vectors != 1;
                     match singleton {
-                        Some(lp) if root_is_batched => akita_types::scale_batched_root_layout(
+                        Some(lp) if root_is_batched => crate::scale_batched_root_layout(
                             &lp,
                             key.num_t_vectors,
                             root_decomp.field_bits(),
@@ -677,9 +677,9 @@ mod tests {
     //! unit tests on `schedule_plan_from_table_entry` (and `_from_table`
     //! for the SIS-family check) and don't go through any preset Cfg.
     use super::*;
+    use crate::generated::{GeneratedScheduleKey, GeneratedScheduleTable};
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
-    use akita_types::generated::{GeneratedScheduleKey, GeneratedScheduleTable};
 
     type Field = Fp32<251>;
     const RING_DIMENSION: usize = 8;
@@ -778,7 +778,7 @@ mod tests {
         let entry = entry_from_steps(
             key,
             Box::leak(Box::new([
-                GeneratedStep::Direct(akita_types::generated::GeneratedDirectStep),
+                GeneratedStep::Direct(crate::generated::GeneratedDirectStep { commit: None }),
                 fold_step(RING_DIMENSION as u32, 3),
             ])),
         );
@@ -798,7 +798,7 @@ mod tests {
             key,
             Box::leak(Box::new([
                 fold_step(16, 3), // ring_d=16, but supported_stage1 only accepts 8
-                GeneratedStep::Direct(akita_types::generated::GeneratedDirectStep),
+                GeneratedStep::Direct(crate::generated::GeneratedDirectStep { commit: None }),
             ])),
         );
         let err = schedule_plan_from_table_entry::<Field, _>(key, &entry, default_policy())
@@ -815,7 +815,7 @@ mod tests {
         let entry = entry_from_steps(
             key,
             Box::leak(Box::new([GeneratedStep::Direct(
-                akita_types::generated::GeneratedDirectStep,
+                crate::generated::GeneratedDirectStep { commit: None },
             )])),
         );
         let err = schedule_plan_from_table_entry::<Field, _>(key, &entry, default_policy())
@@ -831,7 +831,7 @@ mod tests {
         let entry = entry_from_steps(
             key,
             Box::leak(Box::new([GeneratedStep::Direct(
-                akita_types::generated::GeneratedDirectStep,
+                crate::generated::GeneratedDirectStep { commit: None },
             )])),
         );
         let table = GeneratedScheduleTable {
@@ -853,7 +853,7 @@ mod tests {
         let entry = entry_from_steps(
             key,
             Box::leak(Box::new([GeneratedStep::Direct(
-                akita_types::generated::GeneratedDirectStep,
+                crate::generated::GeneratedDirectStep { commit: None },
             )])),
         );
         let mut policy = default_policy();

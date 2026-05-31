@@ -3,7 +3,7 @@
 //! The verifier-reachable layout helpers
 //! (`level_layout_from_params`, `recursive_level_layout_from_params`,
 //! `decomp_depths`) live here.
-//! Search and SIS-derivation loops moved to `akita_planner::derivation`.
+//! Search and SIS-derivation loops live in [`crate::sis_offline`].
 
 use crate::layout::digit_math::{num_digits_for_bound, optimal_m_r_split};
 use crate::layout::params::AjtaiKeyParams;

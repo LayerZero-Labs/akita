@@ -23,8 +23,8 @@ use akita_config::{
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
-    schedule_from_plan, AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary,
-    DecompositionParams, LevelParams, Schedule, SisModulusFamily,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary, DecompositionParams,
+    LevelParams, Schedule, SisModulusFamily,
 };
 
 use crate::find_schedule;
@@ -134,12 +134,16 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
 
     // ---- DP-aware parameter accessors ----------------------------------
 
-    fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
-        let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
-        if let Some(plan) = Cfg::schedule_plan(key)? {
-            return Ok(schedule_from_plan(&plan));
+    /// Build the runtime schedule from the inner config's generated table,
+    /// falling back to the offline DP search on table miss. The default
+    /// `get_params_for_prove` / `get_params_for_batched_commitment` both
+    /// route through this, so overriding it here is enough to restore DP
+    /// fallback for every consumer.
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Option<Schedule>, AkitaError> {
+        if let Some(schedule) = <Cfg as CommitmentConfig>::runtime_schedule(key)? {
+            return Ok(Some(schedule));
         }
-        find_schedule::<Self>(key, true)
+        Ok(Some(find_schedule::<Self>(key, true)?))
     }
 }
 

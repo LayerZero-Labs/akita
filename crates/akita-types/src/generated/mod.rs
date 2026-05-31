@@ -11,8 +11,21 @@ pub struct GeneratedFoldStep {
     pub n_d: u32,
 }
 
+/// Terminal direct-send step in a generated schedule.
+///
+/// `commit` is `Some` only for a **root-direct** entry (a schedule whose
+/// single step is this `Direct`): it carries the brute-forced root commit
+/// layout — the same 7-field shape as a fold step — so the runtime can
+/// expand it into the committed `LevelParams` via
+/// [`GeneratedFoldStep::expand_to_level_params`] without re-running the
+/// offline SIS derivation.
+///
+/// Terminal-direct steps that follow one or more folds ship the cleartext
+/// witness without committing, so they carry `commit: None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedDirectStep;
+pub struct GeneratedDirectStep {
+    pub commit: Option<GeneratedFoldStep>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedStep {
@@ -41,6 +54,7 @@ pub struct GeneratedScheduleTable {
     pub entries: &'static [GeneratedScheduleTableEntry],
 }
 
+pub mod expand;
 #[cfg(not(feature = "zk"))]
 pub mod fp128_d32_full;
 #[cfg(feature = "zk")]
@@ -111,7 +125,7 @@ pub mod fp64_d64_onehot_zk;
 pub mod fp64_d64_zk;
 pub mod sis_floor;
 
-use sis_floor::SisModulusFamily;
+pub use sis_floor::SisModulusFamily;
 
 pub fn table_entry(
     table: GeneratedScheduleTable,

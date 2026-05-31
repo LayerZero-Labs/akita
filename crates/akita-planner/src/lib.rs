@@ -20,9 +20,9 @@
 
 mod ajtai_params;
 pub mod generated_families;
-mod proof_size_estimator;
 pub mod schedule_params;
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
 
+pub use akita_types::root_level_params_for_layout_with_log_basis;
 pub use schedule_params::find_schedule;

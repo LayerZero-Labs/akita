@@ -1,25 +1,25 @@
-//! SIS-derivation search loops moved out of `akita-types`.
+//! SIS-secure level-parameter derivation.
 //!
 //! These functions invoke `optimal_m_r_split` and the generated SIS-floor
 //! tables to derive secure level parameters for the planner and config-policy
-//! adapters. They are intentionally not on the verifier replay path: the
-//! verifier consumes already-derived `LevelParams` from materialized plans.
+//! adapters. They are verifier-reachable transitively through the
+//! [`crate::schedule_table`] materializer (`Cfg::schedule_plan` on a table
+//! hit), so every public function returns `Result<_, AkitaError>` on
+//! malformed inputs and never panics on the verifier replay path.
 //!
 //! Pure layout helpers (`level_layout_from_params`,
 //! `recursive_level_layout_from_params`, `recursive_level_decomposition_from_root`,
-//! `decomp_depths`) stay in `akita-types::layout::sis_derivation` since the
-//! verifier reaches them via plan-from-table materialization and recursive
-//! suffix wiring.
+//! `decomp_depths`) live in [`crate::layout::sis_derivation`].
 
-use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
-use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
-use akita_types::layout::digit_math::optimal_m_r_split;
-use akita_types::{
+use crate::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+use crate::layout::digit_math::optimal_m_r_split;
+use crate::{
     decomp_depths, exact_planned_level_execution, level_layout_from_params,
     recursive_level_layout_from_params, AjtaiKeyParams, AkitaScheduleInputs, AkitaSchedulePlan,
     DecompositionParams, LevelParams, SisModulusFamily,
 };
+use akita_challenges::SparseChallengeConfig;
+use akita_field::AkitaError;
 
 /// SIS-secure rank derivation inputs, bundled to keep
 /// [`sis_secure_level_params`] under clippy's argument-count cap.
@@ -228,7 +228,7 @@ pub fn direct_level_params_with_log_basis(
             inputs.level, inputs.num_vars
         ))
     })?;
-    akita_types::recursive_level_layout_from_params(&params, inputs.current_w_len, root_decomp)
+    crate::recursive_level_layout_from_params(&params, inputs.current_w_len, root_decomp)
 }
 
 /// Derive SIS-secure recursive (level > 0) params at this state.

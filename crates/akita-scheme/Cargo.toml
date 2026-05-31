@@ -45,7 +45,6 @@ akita-verifier = { version = "0.1.0", path = "../akita-verifier" }
 tracing = "0.1"
 
 [dev-dependencies]
-akita-derive = { version = "0.1.0", path = "../akita-derive" }
 akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
   "test-utils",
 ] }

@@ -22,7 +22,6 @@ ignored = ["akita-algebra"]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-config = { version = "0.1.0", path = "../akita-config" }
-akita-derive = { version = "0.1.0", path = "../akita-derive" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
@@ -37,7 +36,7 @@ akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 [features]
 default = []
 parallel = ["akita-algebra/parallel", "akita-field/parallel"]
-zk = ["akita-config/zk", "akita-derive/zk", "akita-types/zk"]
+zk = ["akita-config/zk", "akita-types/zk"]
 # Test-only utilities. Gates `PlannerCfg<Cfg>` (the DP-routing `Cfg` wrapper
 # used by cross-crate test fixtures). Off by default so production callers
 # never include it.

@@ -12,16 +12,14 @@ use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, root_extension_opening_partials,
-    schedule_from_plan, w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+    root_direct_commit_layout, root_extension_opening_partials, schedule_from_plan,
+    schedule_plan_from_table, w_ring_element_count_with_counts_for_layout_bits,
     AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape, FoldStep,
-    LevelParams, MRowLayout, Schedule, Step,
+    LevelParams, MRowLayout, PlanPolicy, Schedule, Step,
 };
 
-use akita_derive::{schedule_plan_from_table, PlanPolicy};
-
 use crate::ajtai_params::{compute_all_ajtai_keys_params, WitnessType};
-use crate::proof_size_estimator::level_proof_bytes;
 
 // Suffix-DP depth cap. Schedules in our working parameter range never need
 // more than this many recursive fold levels; deeper search only blows up
@@ -359,54 +357,28 @@ fn offline_schedule_for_key<Cfg: CommitmentConfig>(
     Ok(plan.map(|plan| schedule_from_plan(&plan)))
 }
 
-/// Root-direct commitment `LevelParams` with a symmetric `(m, r)` split.
+/// Brute-forced root-direct commit `LevelParams` (optimal `(m, r)` split).
 ///
-/// Root-direct schedules ship the cleartext witness on the wire, so
-/// they don't run the relation fold (D unused).
+/// Root-direct schedules ship the cleartext witness on the wire, so they
+/// don't run the relation fold (D unused). The planner brute-forces the
+/// committed `(m, r, n_a, n_b, n_d)` here via the SIS-floor search and
+/// stores it in `GeneratedDirectStep.commit`; the runtime reconstructs the
+/// identical `LevelParams` with `GeneratedFoldStep::expand_to_level_params`.
 fn compute_root_direct_level_params<Cfg: CommitmentConfig>(
     num_vars: usize,
     log_basis: u32,
 ) -> Result<Option<LevelParams>, AkitaError> {
-    let alpha = (Cfg::D as u32).trailing_zeros() as usize;
-    let reduced_vars = num_vars.saturating_sub(alpha);
-    // Symmetric split. `r_vars = log_num_blocks`, `m_vars = log_block_len`.
-    let r_vars = reduced_vars / 2;
-    let m_vars = reduced_vars - r_vars;
-    let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
-        return Ok(None);
-    };
-    let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
-        return Ok(None);
-    };
-    let Some((a_key, b_key, _d_key)) =
-        compute_all_ajtai_keys_params::<Cfg>(block_len, num_blocks, 1, log_basis, true)?
-    else {
-        return Ok(None);
-    };
-    let d_key = AjtaiKeyParams::new_unchecked(Cfg::sis_modulus_family(), 1, 0, 0, Cfg::D);
-
-    let witness_len = 1usize.checked_shl(num_vars as u32).unwrap_or(0);
     let stage1 = Cfg::stage1_challenge_config(Cfg::D)?;
-    let fold_shape = Cfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
+    Ok(root_direct_commit_layout(
+        Cfg::sis_modulus_family(),
+        Cfg::D,
+        Cfg::decomposition(),
+        stage1,
+        Cfg::ring_subfield_embedding_norm_bound(),
         num_vars,
-        level: 0,
-        current_w_len: witness_len,
-    });
-    Ok(Some(LevelParams {
-        ring_dimension: Cfg::D,
         log_basis,
-        a_key,
-        b_key,
-        d_key,
-        num_blocks,
-        block_len,
-        m_vars,
-        r_vars,
-        stage1_config: stage1.clone(),
-        fold_challenge_shape: fold_shape,
-        num_digits_commit: WitnessType::S.decomposed_num_digits::<Cfg>(log_basis, true),
-        num_digits_open: WitnessType::T.decomposed_num_digits::<Cfg>(log_basis, true),
-    }))
+    )
+    .ok())
 }
 
 /// Find the optimal schedule for a root schedule lookup key under `Cfg`.

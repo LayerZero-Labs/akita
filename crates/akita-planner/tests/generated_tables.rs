@@ -125,24 +125,27 @@ impl Mismatch {
     }
 }
 
+fn generated_fold_from_params(p: &akita_types::LevelParams) -> GeneratedFoldStep {
+    GeneratedFoldStep {
+        ring_d: p.ring_dimension as u32,
+        log_basis: p.log_basis,
+        m_vars: p.log_block_len() as u32,
+        r_vars: p.log_num_blocks() as u32,
+        n_a: p.a_key.row_len() as u32,
+        n_b: p.b_key.row_len() as u32,
+        n_d: p.d_key.row_len() as u32,
+    }
+}
+
 fn schedule_to_generated_steps(schedule: &Schedule) -> Vec<GeneratedStep> {
     schedule
         .steps
         .iter()
         .map(|step| match step {
-            Step::Fold(fold) => {
-                let p = &fold.params;
-                GeneratedStep::Fold(GeneratedFoldStep {
-                    ring_d: p.ring_dimension as u32,
-                    log_basis: p.log_basis,
-                    m_vars: p.log_block_len() as u32,
-                    r_vars: p.log_num_blocks() as u32,
-                    n_a: p.a_key.row_len() as u32,
-                    n_b: p.b_key.row_len() as u32,
-                    n_d: p.d_key.row_len() as u32,
-                })
-            }
-            Step::Direct(_) => GeneratedStep::Direct(GeneratedDirectStep),
+            Step::Fold(fold) => GeneratedStep::Fold(generated_fold_from_params(&fold.params)),
+            Step::Direct(direct) => GeneratedStep::Direct(GeneratedDirectStep {
+                commit: direct.params.as_ref().map(generated_fold_from_params),
+            }),
         })
         .collect()
 }

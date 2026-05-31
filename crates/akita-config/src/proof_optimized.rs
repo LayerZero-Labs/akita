@@ -1,7 +1,7 @@
 //! Proof-optimized commitment config presets.
 //!
 //! Presets are unit structs that bind [`CommitmentConfig`] hooks to
-//! [`akita_derive`] SIS primitives and generated schedule tables.
+//! [`akita_types`] SIS primitives and generated schedule tables.
 
 use super::CommitmentConfig;
 use akita_field::AkitaError;
@@ -38,10 +38,10 @@ where
     let Some(table) = Cfg::schedule_table() else {
         return Ok(None);
     };
-    akita_derive::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _>(
+    akita_types::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _>(
         key,
         table,
-        akita_derive::PlanPolicy {
+        akita_types::PlanPolicy {
             sis_family: Cfg::sis_modulus_family(),
             ring_dimension: Cfg::D,
             root_decomp: Cfg::decomposition(),
@@ -67,7 +67,7 @@ pub fn level_params_with_log_basis<Cfg: CommitmentConfig>(
 ) -> Result<LevelParams, AkitaError> {
     let plan =
         proof_optimized_schedule_plan::<Cfg>(AkitaScheduleLookupKey::singleton(inputs.num_vars))?;
-    akita_derive::level_params_with_log_basis(
+    akita_types::level_params_with_log_basis(
         Cfg::sis_modulus_family(),
         Cfg::D,
         Cfg::decomposition(),

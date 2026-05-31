@@ -28,9 +28,6 @@ else
     akita-scheme)
       forbidden=(akita-pcs akita-planner)
       ;;
-    akita-derive)
-      forbidden=(akita-prover akita-verifier akita-config akita-setup akita-scheme akita-pcs akita-planner)
-      ;;
     *)
       echo "no default forbidden dependency set for ${pkg}; pass forbidden packages explicitly" >&2
       exit 2

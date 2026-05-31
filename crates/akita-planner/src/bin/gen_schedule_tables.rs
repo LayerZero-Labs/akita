@@ -19,7 +19,8 @@ use std::path::PathBuf;
 use akita_planner::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
 use akita_types::generated::GeneratedScheduleKey;
 use akita_types::{
-    generated_schedule_lookup_key, AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step,
+    generated_schedule_lookup_key, AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams,
+    Schedule, Step,
 };
 
 fn emit_key(key: GeneratedScheduleKey) -> String {
@@ -34,11 +35,10 @@ fn emit_key(key: GeneratedScheduleKey) -> String {
     )
 }
 
-fn emit_fold(step: &FoldStep) -> String {
-    let p = &step.params;
+fn emit_fold_struct(p: &LevelParams) -> String {
     format!(
-        "        GeneratedStep::Fold(GeneratedFoldStep {{ \
-         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {} }}),",
+        "GeneratedFoldStep {{ \
+         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {} }}",
         p.ring_dimension,
         p.log_basis,
         p.log_block_len(),
@@ -49,8 +49,24 @@ fn emit_fold(step: &FoldStep) -> String {
     )
 }
 
-fn emit_direct(_direct: &DirectStep) -> String {
-    "        GeneratedStep::Direct(GeneratedDirectStep),".to_string()
+fn emit_fold(step: &FoldStep) -> String {
+    format!(
+        "        GeneratedStep::Fold({}),",
+        emit_fold_struct(&step.params)
+    )
+}
+
+fn emit_direct(direct: &DirectStep) -> String {
+    // A root-direct schedule carries its brute-forced root commit layout in
+    // `DirectStep.params`; a terminal-direct step ships the cleartext
+    // witness without committing and carries no commit payload.
+    match &direct.params {
+        Some(commit) => format!(
+            "        GeneratedStep::Direct(GeneratedDirectStep {{ commit: Some({}) }}),",
+            emit_fold_struct(commit)
+        ),
+        None => "        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),".to_string(),
+    }
 }
 
 fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> Result<(), String> {
