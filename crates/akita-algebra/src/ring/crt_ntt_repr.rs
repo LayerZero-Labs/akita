@@ -233,13 +233,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[inline]
     fn x86_pointwise_mode() -> Option<AvxNttMode> {
-        // Slice 2 enables only the i32 path by default. Q16/i16 routing stays
-        // scalar until it clears the leopard benchmark gate.
-        if size_of::<W>() == size_of::<i32>() {
-            avx::avx_ntt_mode()
-        } else {
-            None
+        let mode = avx::avx_ntt_mode()?;
+        if size_of::<W>() == size_of::<i16>() {
+            return avx::use_avx2_transform_ntt().then_some(AvxNttMode::Avx2);
         }
+        (size_of::<W>() == size_of::<i32>()).then_some(mode)
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -255,7 +253,16 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         // transparent over the sealed `i16`/`i32` widths and the arrays are
         // valid for `D`.
         unsafe {
-            if size_of::<W>() == size_of::<i32>() {
+            if size_of::<W>() == size_of::<i16>() {
+                avx::pointwise_mul_acc_i16(
+                    acc_limb.as_mut_ptr() as *mut i16,
+                    lhs_limb.as_ptr() as *const i16,
+                    rhs_limb.as_ptr() as *const i16,
+                    D,
+                    prime.p.to_i64() as i16,
+                    prime.pinv.to_i64() as i16,
+                );
+            } else if size_of::<W>() == size_of::<i32>() {
                 match mode {
                     AvxNttMode::Avx2 => avx::pointwise_mul_acc_i32(
                         acc_limb.as_mut_ptr() as *mut i32,

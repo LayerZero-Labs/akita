@@ -186,8 +186,22 @@ pub(super) fn add_ntt_into<W: PrimeWidth, const K: usize, const D: usize>(
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if size_of::<W>() == size_of::<i32>() {
-        if let Some(mode) = avx::avx_ntt_mode() {
+    if let Some(mode) = avx::avx_ntt_mode() {
+        if size_of::<W>() == size_of::<i16>() && avx::use_avx2_transform_ntt() {
+            for k in 0..K {
+                let prime = params.primes[k];
+                unsafe {
+                    avx::add_reduce_i16(
+                        acc.limbs[k].as_mut_ptr() as *mut i16,
+                        other.limbs[k].as_ptr() as *const i16,
+                        D,
+                        prime.p.to_i64() as i16,
+                    );
+                }
+            }
+            return;
+        }
+        if size_of::<W>() == size_of::<i32>() {
             for k in 0..K {
                 let prime = params.primes[k];
                 unsafe {

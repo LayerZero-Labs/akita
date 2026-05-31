@@ -59,7 +59,7 @@ pub fn avx_ntt_mode() -> Option<AvxNttMode> {
 /// AVX-512 opt-in currently selects AVX-512 pointwise kernels, but the
 /// transform kernels are AVX2-shaped because the supported CRT degrees spend
 /// most stages at four or fewer useful `i32` lanes.
-pub(crate) fn use_avx2_transform_ntt() -> bool {
+pub fn use_avx2_transform_ntt() -> bool {
     avx_ntt_mode().is_some() && std::is_x86_feature_detected!("avx2")
 }
 
@@ -552,7 +552,6 @@ unsafe fn reduce_range_in_place_i32<const D: usize>(
     }
 }
 
-#[cfg(test)]
 #[target_feature(enable = "avx2")]
 unsafe fn mont_mul_16x_i16_avx2(a: __m256i, b: __m256i, p: __m256i, pinv: __m256i) -> __m256i {
     let a_lo = _mm256_cvtepi16_epi32(_mm256_castsi256_si128(a));
@@ -566,7 +565,6 @@ unsafe fn mont_mul_16x_i16_avx2(a: __m256i, b: __m256i, p: __m256i, pinv: __m256
     _mm256_permute4x64_epi64::<0xd8>(packed)
 }
 
-#[cfg(test)]
 #[target_feature(enable = "avx2")]
 unsafe fn mont_mul_8x_i16_as_i32_avx2(
     a: __m256i,
@@ -581,7 +579,6 @@ unsafe fn mont_mul_8x_i16_as_i32_avx2(
     _mm256_srai_epi32::<16>(_mm256_sub_epi32(c, tp))
 }
 
-#[cfg(test)]
 #[target_feature(enable = "avx2")]
 unsafe fn reduce_range_16x_i16_avx2(a: __m256i, p: __m256i) -> __m256i {
     let one = _mm256_set1_epi16(1);
@@ -777,7 +774,6 @@ pub unsafe fn add_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, 
 /// The caller must ensure AVX2 is available. `acc`, `lhs`, and `rhs` must be
 /// valid for `d` `i16` elements. `acc` must be writable and must not alias in
 /// a way that violates Rust's mutable-reference rules.
-#[cfg(test)]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn pointwise_mul_acc_i16(
     acc: *mut i16,
@@ -830,7 +826,6 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
 /// The caller must ensure AVX2 is available. `acc` and `other` must be valid
 /// for `d` `i16` elements. `acc` must be writable and must not alias in a way
 /// that violates Rust's mutable-reference rules.
-#[cfg(test)]
 #[target_feature(enable = "avx2")]
 pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16) {
     let p_v = _mm256_set1_epi16(p);
