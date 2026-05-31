@@ -1,8 +1,10 @@
 //! x86 runtime dispatch helpers for CRT NTT SIMD kernels.
 //!
 //! `AKITA_SCALAR_NTT=1` forces the scalar fallback for all CRT NTT SIMD.
-//! `AKITA_AVX_NTT=0` disables only x86 CRT NTT SIMD. `AKITA_AVX512_NTT=1`
-//! opts into AVX-512 kernels when the host supports the required features.
+//! `AKITA_AVX_NTT=0` disables only x86 CRT NTT SIMD. AVX-512 kernels are the
+//! default when the host advertises the required features; `AKITA_AVX512_NTT=0`
+//! forces the AVX2 path for A/B testing or hosts with AVX-512 frequency
+//! penalties.
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::*;
@@ -56,9 +58,9 @@ pub fn avx_ntt_mode() -> Option<AvxNttMode> {
 
 /// Whether the host may use AVX2 transform kernels.
 ///
-/// AVX-512 opt-in currently selects AVX-512 pointwise kernels, but the
-/// transform kernels are AVX2-shaped because the supported CRT degrees spend
-/// most stages at four or fewer useful `i32` lanes.
+/// AVX-512 mode currently selects AVX-512 pointwise kernels, but the transform
+/// kernels are AVX2-shaped because the supported CRT degrees spend most stages
+/// at four or fewer useful `i32` lanes.
 pub fn use_avx2_transform_ntt() -> bool {
     avx_ntt_mode().is_some() && std::is_x86_feature_detected!("avx2")
 }
@@ -73,7 +75,9 @@ fn select_avx_ntt_mode(
     if scalar_ntt == Some("1") || avx_ntt == Some("0") {
         return None;
     }
-    if avx512_ntt == Some("1") && cpu.has_avx512_ntt() {
+    // AVX-512 is the default when available. `AKITA_AVX512_NTT=0` opts back out
+    // to AVX2 for A/B comparison or hosts that downclock under AVX-512.
+    if avx512_ntt != Some("0") && cpu.has_avx512_ntt() {
         return Some(AvxNttMode::Avx512);
     }
     if cpu.avx2 {
@@ -611,7 +615,6 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
 ) {
     let p_v = _mm256_set1_epi32(p);
     let pinv_v = _mm256_set1_epi32(pinv);
-    let prime = NttPrime::compute(p);
     let mut i = 0;
     while i + 8 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
@@ -628,17 +631,20 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
         }
         i += 8;
     }
-    while i < d {
-        // SAFETY: guaranteed by this function's safety contract and loop bound.
-        unsafe {
-            let prod = prime.mul(
-                MontCoeff::from_raw(*lhs.add(i)),
-                MontCoeff::from_raw(*rhs.add(i)),
-            );
-            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
-            *acc.add(i) = prime.reduce_range(sum).raw();
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            // SAFETY: guaranteed by this function's safety contract and loop bound.
+            unsafe {
+                let prod = prime.mul(
+                    MontCoeff::from_raw(*lhs.add(i)),
+                    MontCoeff::from_raw(*rhs.add(i)),
+                );
+                let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
+                *acc.add(i) = prime.reduce_range(sum).raw();
+            }
+            i += 1;
         }
-        i += 1;
     }
 }
 
@@ -662,7 +668,6 @@ pub(crate) unsafe fn pointwise_mul_acc_i32_avx512(
 ) {
     let p_v = _mm512_set1_epi32(p);
     let pinv_v = _mm512_set1_epi32(pinv);
-    let prime = NttPrime::compute(p);
     let mut i = 0;
     while i + 16 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
@@ -679,17 +684,20 @@ pub(crate) unsafe fn pointwise_mul_acc_i32_avx512(
         }
         i += 16;
     }
-    while i < d {
-        // SAFETY: guaranteed by this function's safety contract and loop bound.
-        unsafe {
-            let prod = prime.mul(
-                MontCoeff::from_raw(*lhs.add(i)),
-                MontCoeff::from_raw(*rhs.add(i)),
-            );
-            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
-            *acc.add(i) = prime.reduce_range(sum).raw();
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            // SAFETY: guaranteed by this function's safety contract and loop bound.
+            unsafe {
+                let prod = prime.mul(
+                    MontCoeff::from_raw(*lhs.add(i)),
+                    MontCoeff::from_raw(*rhs.add(i)),
+                );
+                let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
+                *acc.add(i) = prime.reduce_range(sum).raw();
+            }
+            i += 1;
         }
-        i += 1;
     }
 }
 
@@ -705,7 +713,6 @@ pub(crate) unsafe fn pointwise_mul_acc_i32_avx512(
 #[target_feature(enable = "avx2")]
 pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32) {
     let p_v = _mm256_set1_epi32(p);
-    let prime = NttPrime::compute(p);
     let mut i = 0;
     while i + 8 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
@@ -719,13 +726,16 @@ pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32)
         }
         i += 8;
     }
-    while i < d {
-        // SAFETY: guaranteed by this function's safety contract and loop bound.
-        unsafe {
-            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
-            *acc.add(i) = prime.reduce_range(sum).raw();
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            // SAFETY: guaranteed by this function's safety contract and loop bound.
+            unsafe {
+                let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
+                *acc.add(i) = prime.reduce_range(sum).raw();
+            }
+            i += 1;
         }
-        i += 1;
     }
 }
 
@@ -741,7 +751,6 @@ pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32)
 #[target_feature(enable = "avx512f,avx512dq,avx512bw")]
 pub unsafe fn add_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, p: i32) {
     let p_v = _mm512_set1_epi32(p);
-    let prime = NttPrime::compute(p);
     let mut i = 0;
     while i + 16 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
@@ -755,13 +764,16 @@ pub unsafe fn add_reduce_i32_avx512(acc: *mut i32, other: *const i32, d: usize, 
         }
         i += 16;
     }
-    while i < d {
-        // SAFETY: guaranteed by this function's safety contract and loop bound.
-        unsafe {
-            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
-            *acc.add(i) = prime.reduce_range(sum).raw();
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            // SAFETY: guaranteed by this function's safety contract and loop bound.
+            unsafe {
+                let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
+                *acc.add(i) = prime.reduce_range(sum).raw();
+            }
+            i += 1;
         }
-        i += 1;
     }
 }
 
@@ -786,7 +798,6 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
     let p_v = _mm256_set1_epi32(p as i32);
     let pinv_v = _mm256_set1_epi32(pinv as i32);
     let p_i16 = _mm256_set1_epi16(p);
-    let prime = NttPrime::compute(p);
     let mut i = 0;
     while i + 16 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
@@ -803,17 +814,20 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
         }
         i += 16;
     }
-    while i < d {
-        // SAFETY: guaranteed by this function's safety contract and loop bound.
-        unsafe {
-            let prod = prime.mul(
-                MontCoeff::from_raw(*lhs.add(i)),
-                MontCoeff::from_raw(*rhs.add(i)),
-            );
-            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
-            *acc.add(i) = prime.reduce_range(sum).raw();
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            // SAFETY: guaranteed by this function's safety contract and loop bound.
+            unsafe {
+                let prod = prime.mul(
+                    MontCoeff::from_raw(*lhs.add(i)),
+                    MontCoeff::from_raw(*rhs.add(i)),
+                );
+                let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
+                *acc.add(i) = prime.reduce_range(sum).raw();
+            }
+            i += 1;
         }
-        i += 1;
     }
 }
 
@@ -829,7 +843,6 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
 #[target_feature(enable = "avx2")]
 pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16) {
     let p_v = _mm256_set1_epi16(p);
-    let prime = NttPrime::compute(p);
     let mut i = 0;
     while i + 16 <= d {
         // SAFETY: guaranteed by this function's safety contract and loop bound.
@@ -843,13 +856,16 @@ pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16)
         }
         i += 16;
     }
-    while i < d {
-        // SAFETY: guaranteed by this function's safety contract and loop bound.
-        unsafe {
-            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
-            *acc.add(i) = prime.reduce_range(sum).raw();
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            // SAFETY: guaranteed by this function's safety contract and loop bound.
+            unsafe {
+                let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
+                *acc.add(i) = prime.reduce_range(sum).raw();
+            }
+            i += 1;
         }
-        i += 1;
     }
 }
 
@@ -880,14 +896,22 @@ mod tests {
     }
 
     #[test]
-    fn avx512_is_opt_in() {
+    fn avx512_is_default_when_available() {
         assert_eq!(
             select_avx_ntt_mode(None, None, None, AVX512_CAPABLE),
-            Some(AvxNttMode::Avx2)
+            Some(AvxNttMode::Avx512)
         );
         assert_eq!(
             select_avx_ntt_mode(None, None, Some("1"), AVX512_CAPABLE),
             Some(AvxNttMode::Avx512)
+        );
+    }
+
+    #[test]
+    fn avx512_can_be_opted_out_to_avx2() {
+        assert_eq!(
+            select_avx_ntt_mode(None, None, Some("0"), AVX512_CAPABLE),
+            Some(AvxNttMode::Avx2)
         );
     }
 
