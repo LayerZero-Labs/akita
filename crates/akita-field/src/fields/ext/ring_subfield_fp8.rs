@@ -73,7 +73,10 @@ pub(crate) fn ring_subfield_fp8_mul_to_accum_fp16<const P: u32>(
 ) -> RingSubfieldFp8Fp16ProductAccum {
     let p = |i: usize, j: usize| -> u64 { a[i].mul_wide(b[j]) as u64 };
     let ms = (P as u64) * (P as u64);
-    RingSubfieldFp8Fp16ProductAccum([
+    // Each slot stays `< 15·P² < 2^36`, so it is computed exactly in `u64`; it is
+    // then widened to the accumulator's `u128` slots, whose batch-summation
+    // headroom must cover the dense EOR round's `half`-sized accumulation.
+    let slots: [u64; 8] = [
         // out[0] = p00 + 2·(p11 + p22 + ... + p77)
         p(0, 0) + 2 * (p(1, 1) + p(2, 2) + p(3, 3) + p(4, 4) + p(5, 5) + p(6, 6) + p(7, 7)),
         // out[1] = (p01+p10) + m12 + m23 + m34 + m45 + m56 + m67
@@ -148,7 +151,8 @@ pub(crate) fn ring_subfield_fp8_mul_to_accum_fp16<const P: u32>(
             - (p(2, 7) + p(7, 2))
             - (p(3, 6) + p(6, 3))
             - (p(4, 5) + p(5, 4)),
-    ])
+    ];
+    RingSubfieldFp8Fp16ProductAccum(slots.map(u128::from))
 }
 
 /// Degree-8 ring subfield element in canonical basis `[1, e1, ..., e7]`.

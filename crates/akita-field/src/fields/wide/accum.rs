@@ -178,14 +178,16 @@ impl Neg for RingSubfieldFp4Fp32ProductAccum {
 ///
 /// Headroom: every `Fp16` base product is `< P² < 2^32` (`P = 2^16 − 99`). The
 /// busiest coefficient (slot 0) sums `1 + 2·7 = 15` of them, and the others add
-/// `≤ 6·P²` non-negativity offsets, so a single product's worst slot stays
-/// `< 15·P² < 2^36`. A `u64` slot therefore stays exact while the running
-/// product count `N` satisfies `N·15·P² < 2^64`, i.e. `N < 2^28` — far above the
-/// `EXT_DEGREE = 8` per-suffix inner products and the pair-aligned sparse chunk
-/// batches used by the extension-opening reduction. Covered by
-/// `ring_subfield_fp8_fp16_accum_summation`.
+/// `≤ 6·P²` non-negativity offsets, so a single product's worst slot is computed
+/// exactly in `u64` (`< 15·P² < 2^36`) and widened to `u128` here. The `u128`
+/// slot keeps the running batch sum exact for any prover-reachable product count
+/// `N` (`N·15·P² < 2^128` ⟺ `N < 2^92`). This matters because the dense EOR
+/// round (`accumulate_dense_round` / `fused_fold_and_accumulate`) sums
+/// `half = table_len/2` products into one slot before reducing — a `u64` slot
+/// would overflow near `half ≈ 2^28` (reached around `num_vars` 32–33), whereas
+/// `u128` cannot. Covered by `ring_subfield_fp8_fp16_accum_summation`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingSubfieldFp8Fp16ProductAccum(pub [u64; 8]);
+pub struct RingSubfieldFp8Fp16ProductAccum(pub [u128; 8]);
 
 impl RingSubfieldFp8Fp16ProductAccum {
     /// Additive identity accumulator.
@@ -195,7 +197,7 @@ impl RingSubfieldFp8Fp16ProductAccum {
     /// `RingSubfieldFp8<Fp16<P>>`.
     #[inline]
     pub fn reduce<const P: u32>(self) -> [Fp16<P>; 8] {
-        std::array::from_fn(|i| Fp16::<P>::from_canonical_u128_reduced(self.0[i] as u128))
+        std::array::from_fn(|i| Fp16::<P>::from_canonical_u128_reduced(self.0[i]))
     }
 }
 

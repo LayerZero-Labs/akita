@@ -627,6 +627,32 @@ fn ring_subfield_fp8_fp16_accum_summation() {
     );
 }
 
+// Regression for the dense-EOR-round overflow: `accumulate_dense_round` /
+// `fused_fold_and_accumulate` sum `half = table_len/2` products into a single
+// accumulator slot before reducing once. Each Fp16 ring-product slot is
+// `< 15·P² < 2^36`, so a `u64` slot wrapped once `half · 15·P²` crossed `2^64`
+// (`half ≈ 2^28`, reached around `num_vars` 32-33), silently corrupting proofs.
+// The `u128` slot must reduce values well past `2^64` exactly (this value cannot
+// even be represented in the old `[u64; 8]`).
+#[test]
+fn ring_subfield_fp8_fp16_accum_reduces_past_u64() {
+    use crate::fields::wide::RingSubfieldFp8Fp16ProductAccum;
+
+    const P: u32 = 65_437; // 2^16 - 99
+    let vals: [u128; 8] = std::array::from_fn(|i| {
+        // Distinct per slot and far above u64::MAX (~1.8e19).
+        (5u128 << 64) + (i as u128).wrapping_mul(0x9E37_79B9_7F4A_7C15) + 1
+    });
+    let reduced = RingSubfieldFp8Fp16ProductAccum(vals).reduce::<P>();
+    for (i, r) in reduced.iter().enumerate() {
+        assert_eq!(
+            u32::from(r.to_limbs()),
+            (vals[i] % P as u128) as u32,
+            "slot {i} reduced incorrectly past 2^64"
+        );
+    }
+}
+
 #[test]
 fn ring_subfield_fp8_fp16_fold_matrix_matches_generic() {
     // The 8×8 fold matrix must reproduce the generic ring-multiply fold
