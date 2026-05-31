@@ -1,6 +1,7 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
 use std::array::from_fn;
+use std::marker::PhantomData;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
 
@@ -87,6 +88,71 @@ pub struct CenteredMontLut<W: PrimeWidth, const K: usize> {
     offset: i32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CenteredPrimeReducer<W: PrimeWidth> {
+    p: i64,
+    _width: PhantomData<W>,
+}
+
+impl<W: PrimeWidth> CenteredPrimeReducer<W> {
+    #[inline(always)]
+    fn new(prime: NttPrime<W>) -> Self {
+        let p = prime.p.to_i64();
+        Self {
+            p,
+            _width: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    fn reduce_i64(self, value: i64) -> W {
+        let mut r = value.rem_euclid(self.p);
+        if r > self.p / 2 {
+            r -= self.p;
+        }
+        W::from_i64(r)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CenteredPrimeWideReducer<W: PrimeWidth> {
+    narrow: CenteredPrimeReducer<W>,
+    p_u64: u64,
+    r64: i64,
+}
+
+impl<W: PrimeWidth> CenteredPrimeWideReducer<W> {
+    #[inline(always)]
+    fn new(prime: NttPrime<W>) -> Self {
+        let narrow = CenteredPrimeReducer::new(prime);
+        let p_u64 = narrow.p as u64;
+        let r64 = ((1u128 << 64) % p_u64 as u128) as i64;
+        Self { narrow, p_u64, r64 }
+    }
+
+    #[inline(always)]
+    fn reduce_i128(self, value: i128) -> W {
+        // Split the signed value into a low 64-bit limb and a sign-extended high
+        // word, then reduce `hi * 2^64 + lo` modulo the small CRT prime.
+        let lo = (value as u64 % self.p_u64) as i64;
+        let hi = ((value >> 64) as i64).rem_euclid(self.narrow.p);
+        let r = (lo + hi * self.r64) % self.narrow.p;
+        self.narrow.reduce_i64(r)
+    }
+}
+
+#[cfg(test)]
+#[inline(always)]
+fn centered_prime_residue_i64<W: PrimeWidth>(prime: NttPrime<W>, value: i64) -> W {
+    CenteredPrimeReducer::new(prime).reduce_i64(value)
+}
+
+#[cfg(test)]
+#[inline(always)]
+fn centered_prime_residue_i128<W: PrimeWidth>(prime: NttPrime<W>, value: i128) -> W {
+    CenteredPrimeWideReducer::new(prime).reduce_i128(value)
+}
+
 impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
     /// Build the lookup table from CRT primes, covering balanced digits in
     /// `[-32, 31]`.
@@ -146,16 +212,9 @@ impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
         let max_abs = max_abs.max(0);
         let vals = from_fn(|k| {
             let prime = params.primes[k];
-            let p = prime.p.to_i64();
-            let half_p = p / 2;
+            let reducer = CenteredPrimeReducer::new(prime);
             (-max_abs..=max_abs)
-                .map(|v| {
-                    let mut r = i64::from(v).rem_euclid(p);
-                    if r >= half_p {
-                        r -= p;
-                    }
-                    prime.from_canonical(W::from_i64(r))
-                })
+                .map(|v| prime.from_canonical(reducer.reduce_i64(i64::from(v))))
                 .collect()
         });
         Self {
@@ -382,22 +441,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (limb, prime) in limbs.iter_mut().zip(params.primes.iter()) {
-            let p = prime.p.to_i64();
-            let p_u64 = p as u64;
-            let r64 = ((1u128 << 64) % p_u64 as u128) as i64;
-            let half_p = p / 2;
-            // `centered as u64` reinterprets via 2's complement. For negative
-            // `centered`, the result is a large u64 whose `% p_u64` still
-            // yields the correct unsigned residue because
-            // `(-x) as u64 == 2^64 - x` and `(2^64 - x) mod p == (-x) mod p`
-            // when `p` divides into 2^64 evenly in residue terms.
-            let lo = (centered as u64 % p_u64) as i64;
-            let hi = ((centered >> 64) as i64).rem_euclid(p);
-            let mut r = (lo + hi * r64) % p;
-            if r >= half_p {
-                r -= p;
-            }
-            let mont_val = prime.from_canonical(W::from_i64(r));
+            let reducer = CenteredPrimeWideReducer::new(*prime);
+            let mont_val = prime.from_canonical(reducer.reduce_i128(centered));
             limb.fill(mont_val);
         }
         Self { limbs }
@@ -426,22 +471,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for ((limb, prime), tw) in limbs.iter_mut().zip(primes.iter()).zip(twiddles.iter()) {
+            let reducer = CenteredPrimeWideReducer::new(*prime);
             // Interpret coefficients in centered form (-q/2, q/2] before reducing
             // into the CRT primes. This makes the reduction map consistent with
             // negacyclic subtraction (which naturally produces negative values).
-            let p = prime.p.to_i64();
-            let p_u64 = p as u64;
-            let r64 = ((1u128 << 64) % p_u64 as u128) as i64;
-            let half_p = p / 2;
             for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                let c = *centered;
-                let lo = (c as u64 % p_u64) as i64;
-                let hi = ((c >> 64) as i64).rem_euclid(p);
-                let mut r = (lo + hi * r64) % p;
-                if r >= half_p {
-                    r -= p;
-                }
-                *dst = B::from_canonical(*prime, W::from_i64(r));
+                *dst = B::from_canonical(*prime, reducer.reduce_i128(*centered));
             }
             B::forward_ntt(limb, *prime, tw);
         }
@@ -934,14 +969,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let p = prime.p.to_i64();
-            let half_p = p / 2;
+            let reducer = CenteredPrimeReducer::new(*prime);
             for (dst, &coeff) in limb.iter_mut().zip(coeffs.iter()) {
-                let mut r = (coeff as i64).rem_euclid(p);
-                if r >= half_p {
-                    r -= p;
-                }
-                *dst = B::from_canonical(*prime, W::from_i64(r));
+                *dst = B::from_canonical(*prime, reducer.reduce_i64(i64::from(coeff)));
             }
             B::forward_ntt(limb, *prime, tw);
         }
@@ -982,14 +1012,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let p = prime.p.to_i64();
-            let half_p = p / 2;
+            let reducer = CenteredPrimeReducer::new(*prime);
             for (dst, &coeff) in limb.iter_mut().zip(coeffs.iter()) {
-                let mut r = (coeff as i64).rem_euclid(p);
-                if r >= half_p {
-                    r -= p;
-                }
-                *dst = B::from_canonical(*prime, W::from_i64(r));
+                *dst = B::from_canonical(*prime, reducer.reduce_i64(i64::from(coeff)));
             }
             forward_ntt_cyclic(limb, *prime, tw);
         }
@@ -1011,31 +1036,20 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.twiddles.iter())
             .enumerate()
         {
+            let reducer = CenteredPrimeReducer::new(*prime);
             if let Some(lut) = lut {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
                     *dst = if unchecked_lut {
                         unsafe { lut.get_unchecked(k, coeff) }
                     } else {
                         lut.get(k, coeff).unwrap_or_else(|| {
-                            let p = prime.p.to_i64();
-                            let half_p = p / 2;
-                            let mut r = (coeff as i64).rem_euclid(p);
-                            if r >= half_p {
-                                r -= p;
-                            }
-                            B::from_canonical(*prime, W::from_i64(r))
+                            B::from_canonical(*prime, reducer.reduce_i64(i64::from(coeff)))
                         })
                     };
                 }
             } else {
-                let p = prime.p.to_i64();
-                let half_p = p / 2;
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
-                    let mut r = (coeff as i64).rem_euclid(p);
-                    if r >= half_p {
-                        r -= p;
-                    }
-                    *dst = B::from_canonical(*prime, W::from_i64(r));
+                    *dst = B::from_canonical(*prime, reducer.reduce_i64(i64::from(coeff)));
                 }
             }
             *cyc_limb = *neg_limb;
@@ -1212,19 +1226,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             .zip(params.primes.iter())
             .zip(params.twiddles.iter())
         {
-            let p = prime.p.to_i64();
-            let p_u64 = p as u64;
-            let r64 = ((1u128 << 64) % p_u64 as u128) as i64;
-            let half_p = p / 2;
+            let reducer = CenteredPrimeWideReducer::new(*prime);
             for (dst, centered) in limb.iter_mut().zip(centered_coeffs.iter()) {
-                let c = *centered;
-                let lo = (c as u64 % p_u64) as i64;
-                let hi = ((c >> 64) as i64).rem_euclid(p);
-                let mut r = (lo + hi * r64) % p;
-                if r >= half_p {
-                    r -= p;
-                }
-                *dst = B::from_canonical(*prime, W::from_i64(r));
+                *dst = B::from_canonical(*prime, reducer.reduce_i128(*centered));
             }
             forward_ntt_cyclic(limb, *prime, tw);
         }
@@ -1369,5 +1373,57 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             std::array::from_fn(|j| self.limbs[k][D.saturating_sub(1) - j])
         });
         Self { limbs }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ntt::tables::{Q16_NUM_PRIMES, Q16_PRIMES, Q32_PRIMES};
+
+    #[test]
+    fn centered_prime_residue_keeps_positive_half_boundary() {
+        let prime16 = Q16_PRIMES[0];
+        let half16 = i64::from(prime16.p) / 2;
+        assert_eq!(centered_prime_residue_i64(prime16, half16), half16 as i16);
+        assert_eq!(
+            centered_prime_residue_i64(prime16, half16 + 1),
+            (half16 + 1 - i64::from(prime16.p)) as i16
+        );
+
+        let prime32 = Q32_PRIMES[0];
+        let half32 = i64::from(prime32.p) / 2;
+        assert_eq!(centered_prime_residue_i64(prime32, half32), half32 as i32);
+        assert_eq!(
+            centered_prime_residue_i64(prime32, half32 + 1),
+            (half32 + 1 - i64::from(prime32.p)) as i32
+        );
+        assert_eq!(
+            centered_prime_residue_i128(prime32, i128::from(half32)),
+            half32 as i32
+        );
+        assert_eq!(
+            centered_prime_residue_i128(prime32, i128::from(half32 + 1)),
+            (half32 + 1 - i64::from(prime32.p)) as i32
+        );
+    }
+
+    #[test]
+    fn centered_mont_lut_matches_centered_residue_boundary() {
+        const D: usize = 64;
+        let params = CrtNttParamSet::<i16, Q16_NUM_PRIMES, D>::new(Q16_PRIMES);
+        let prime = params.primes[0];
+        let half = i32::from(prime.p) / 2;
+        let lut = CenteredMontLut::<i16, Q16_NUM_PRIMES>::new(&params, half + 1);
+
+        let boundary = centered_prime_residue_i64(prime, i64::from(half));
+        let past_boundary = centered_prime_residue_i64(prime, i64::from(half + 1));
+        assert_eq!(boundary, half as i16);
+        assert_eq!(past_boundary, (half + 1 - i32::from(prime.p)) as i16);
+        assert_eq!(lut.get(0, half), Some(prime.from_canonical(boundary)));
+        assert_eq!(
+            lut.get(0, half + 1),
+            Some(prime.from_canonical(past_boundary))
+        );
     }
 }
