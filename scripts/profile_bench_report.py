@@ -157,6 +157,7 @@ def parse_args() -> argparse.Namespace:
             "and they do not contribute to the reported median."
         ),
     )
+
     render_parser = subparsers.add_parser(
         "render", help="Render a markdown report from summary.json files."
     )
@@ -465,9 +466,7 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
 
 
 def run_benchmark_case(
-    binary: str,
-    output_dir: pathlib.Path,
-    case: BenchmarkCaseSpec,
+    binary: str, output_dir: pathlib.Path, case: BenchmarkCaseSpec
 ) -> tuple[dict[str, object], int]:
     env = os.environ.copy()
     env["AKITA_MODE"] = case.mode
@@ -668,11 +667,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         warmup_failure_summary: dict[str, object] | None = None
         for warmup_index in range(1, args.warmups + 1):
             warmup_dir = case_dir / f"warmup-{warmup_index}"
-            summary, return_code = run_benchmark_case(
-                args.binary,
-                warmup_dir,
-                case,
-            )
+            summary, return_code = run_benchmark_case(args.binary, warmup_dir, case)
             if return_code != 0:
                 summary["run_index"] = 0
                 warmup_failure_summary = summary
@@ -684,11 +679,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         else:
             for run_index in range(1, args.runs + 1):
                 run_dir = case_dir if args.runs == 1 else case_dir / f"run-{run_index}"
-                summary, return_code = run_benchmark_case(
-                    args.binary,
-                    run_dir,
-                    case,
-                )
+                summary, return_code = run_benchmark_case(args.binary, run_dir, case)
                 summary["run_index"] = run_index
                 run_summaries.append(summary)
                 if return_code != 0:

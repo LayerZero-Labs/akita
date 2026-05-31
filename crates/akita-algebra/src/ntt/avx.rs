@@ -6,7 +6,7 @@
 //! forces the AVX2 path for A/B testing or hosts with AVX-512 frequency
 //! penalties.
 
-pub mod batch;
+pub(crate) mod batch;
 mod d32;
 mod montgomery;
 mod pointwise;

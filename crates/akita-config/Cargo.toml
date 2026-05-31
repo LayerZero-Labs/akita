@@ -26,8 +26,5 @@ akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 
-[dev-dependencies]
-akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
-
 [lints]
 workspace = true

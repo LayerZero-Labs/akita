@@ -1,8 +1,4 @@
 use super::*;
-use akita_algebra::ntt::{
-    prime::PrimeWidth,
-    tables::{Q16_PRIMES, Q32_PRIMES, Q64_PRIMES},
-};
 use akita_field::{CanonicalField, One};
 #[cfg(not(feature = "zk"))]
 use akita_types::generated::{
@@ -504,27 +500,9 @@ fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: Generated
 
 fn crt_product_for_small_field_cfg<Cfg: CommitmentConfig>() -> (&'static str, u128) {
     match Cfg::sis_modulus_family() {
-        SisModulusFamily::Q16 => (
-            "Q16/3xi16",
-            Q16_PRIMES
-                .iter()
-                .map(|prime| prime.p.to_i64() as u128)
-                .product(),
-        ),
-        SisModulusFamily::Q32 => (
-            "Q32/2xi32",
-            Q32_PRIMES
-                .iter()
-                .map(|prime| prime.p.to_i64() as u128)
-                .product(),
-        ),
-        SisModulusFamily::Q64 => {
-            let product = Q64_PRIMES
-                .iter()
-                .map(|prime| prime.p.to_i64() as u128)
-                .product();
-            ("Q64/3xi32", product)
-        }
+        SisModulusFamily::Q16 => ("Q16/3xi16", 2_513_112_702_977),
+        SisModulusFamily::Q32 => ("Q32/2xi32", 1_152_837_945_367_908_353),
+        SisModulusFamily::Q64 => ("Q64/3xi32", 1_237_793_655_097_897_487_951_597_569),
         family => panic!("small-field capacity test does not cover {family:?}"),
     }
 }

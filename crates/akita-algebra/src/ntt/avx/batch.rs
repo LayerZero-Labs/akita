@@ -23,7 +23,7 @@ use super::super::prime::NttPrime;
 use super::{mont_mul_16x_i32_avx512, reduce_range_16x_i32_avx512};
 
 /// Number of polynomial rows processed per batch (one per AVX-512 `i32` lane).
-pub const BATCH_LANES: usize = 16;
+pub(crate) const BATCH_LANES: usize = 16;
 
 /// Lane index vector for gather/scatter: lane `r` is at `r * row_stride` i32.
 #[target_feature(enable = "avx512f,avx512dq,avx512bw")]
@@ -107,7 +107,7 @@ unsafe fn scatter_transposed<const D: usize>(base: *mut i32, row_stride: usize, 
 /// AVX-512F/DQ/BW must be available. `base` must be valid for reads and writes
 /// of `BATCH_LANES` rows at `row_stride` spacing, each holding `D` `i32`.
 #[target_feature(enable = "avx512f,avx512dq,avx512bw")]
-pub unsafe fn batched_forward_ntt_16rows<const D: usize>(
+pub(crate) unsafe fn batched_forward_ntt_16rows<const D: usize>(
     base: *mut i32,
     row_stride: usize,
     prime: NttPrime<i32>,
@@ -141,7 +141,7 @@ pub unsafe fn batched_forward_ntt_16rows<const D: usize>(
 ///
 /// Same contract as [`batched_forward_ntt_16rows`].
 #[target_feature(enable = "avx512f,avx512dq,avx512bw")]
-pub unsafe fn batched_forward_ntt_cyclic_16rows<const D: usize>(
+pub(crate) unsafe fn batched_forward_ntt_cyclic_16rows<const D: usize>(
     base: *mut i32,
     row_stride: usize,
     prime: NttPrime<i32>,
