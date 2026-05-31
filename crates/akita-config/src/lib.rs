@@ -13,7 +13,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::generated::{
-    table_entry, GeneratedFoldStep, GeneratedScheduleTable, GeneratedScheduleTableEntry,
+    table_entry, GeneratedScheduleTable, GeneratedScheduleTableEntry,
 };
 use akita_types::{
     generated_schedule_lookup_key, AkitaScheduleInputs, AkitaScheduleLookupKey,
@@ -21,17 +21,6 @@ use akita_types::{
     SisModulusFamily, Step,
 };
 use std::marker::PhantomData;
-
-/// Batched-root scaling dims `(num_t_vectors, field_bits)` for a lookup
-/// key, or `None` when the key is a plain singleton (no batched root
-/// scaling). Threaded into [`GeneratedFoldStep::expand_to_level_params`].
-fn root_batched_dims(key: AkitaScheduleLookupKey, field_bits: u32) -> Option<(usize, u32)> {
-    let batched = key.num_points != 1
-        || key.num_t_vectors != 1
-        || key.num_w_vectors != 1
-        || key.num_z_vectors != 1;
-    batched.then_some((key.num_t_vectors, field_bits))
-}
 
 pub mod proof_optimized;
 pub mod tensor_verifier;
@@ -146,7 +135,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// This is the single lookup the prover/verifier use to drive the
     /// recursion: each fold level is reconstructed on demand from the
-    /// entry's compact steps via [`Self::expand_fold_level`], rather than
+    /// entry's compact steps via [`Self::runtime_schedule`], rather than
     /// materializing a full plan up front.
     ///
     /// # Errors
@@ -163,63 +152,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             entry.validate()?;
         }
         Ok(entry)
-    }
-
-    /// Expand one compact fold step into full [`LevelParams`], threading
-    /// this config's policy (decomposition, stage-1 challenge, fold shape,
-    /// ring-subfield norm bound) into
-    /// [`GeneratedFoldStep::expand_to_level_params`].
-    ///
-    /// `fold_level` is `0` at the root and `>0` at recursive levels.
-    /// `current_w_len` is the witness length (in field elements) entering
-    /// the level. `batched_root` is `Some` only at a batched root.
-    ///
-    /// # Errors
-    ///
-    /// Propagates expansion / SIS-bucket failures.
-    fn expand_fold_level(
-        step: &GeneratedFoldStep,
-        num_vars: usize,
-        fold_level: usize,
-        current_w_len: usize,
-        batched_root: Option<(usize, u32)>,
-    ) -> Result<LevelParams, AkitaError> {
-        let inputs = AkitaScheduleInputs {
-            num_vars,
-            level: fold_level,
-            current_w_len,
-        };
-        step.expand_to_level_params(
-            Self::sis_modulus_family(),
-            fold_level,
-            current_w_len,
-            Self::decomposition(),
-            Self::stage1_challenge_config(step.ring_d as usize)?,
-            Self::fold_challenge_shape_at_level(inputs),
-            Self::ring_subfield_embedding_norm_bound(),
-            batched_root,
-        )
-    }
-
-    /// Root commit `LevelParams` for `key`, expanded from the resolved
-    /// entry's root commit step (the root fold step, or a root-direct
-    /// entry's stored commit). Same layout per-point commits use.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidSetup` on table miss, an uncommittable root-direct edge,
-    /// or witness-length overflow.
-    fn root_commit_params(key: AkitaScheduleLookupKey) -> Result<LevelParams, AkitaError> {
-        let entry = Self::resolve_schedule(key)?
-            .ok_or_else(|| missing_generated_schedule("root commit", key))?;
-        let commit = entry.root_commit_step().ok_or_else(|| {
-            AkitaError::InvalidSetup("root-direct schedule is missing commit params".to_string())
-        })?;
-        let current_w_len = 1usize
-            .checked_shl(key.num_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
-        let batched_root = root_batched_dims(key, Self::decomposition().field_bits());
-        Self::expand_fold_level(commit, key.num_vars, 0, current_w_len, batched_root)
     }
 
     /// Infinity-norm expansion introduced when claim-field coordinates are
@@ -302,8 +234,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// the root-direct's commit slot). Same layout per-point commits use,
     /// so they stay compatible with the batched prove root.
     ///
-    /// Reading the schedule's first step (rather than re-resolving the entry
-    /// via [`Self::root_commit_params`]) keeps this coupled to whatever
+    /// Reading the schedule's first step (rather than re-resolving the compact
+    /// entry directly) keeps this coupled to whatever
     /// [`Self::get_params_for_prove`] / [`Self::runtime_schedule`] produce,
     /// so config overrides (synthetic fixtures, DP fallback) stay honored.
     ///

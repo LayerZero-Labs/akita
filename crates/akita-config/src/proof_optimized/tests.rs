@@ -80,11 +80,12 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
          see DirectStep::params"
     );
 
-    // The trait default `get_params_for_batched_commitment` resolves
-    // the compact entry and expands its root-commit step. Construct a
+    // The trait default `get_params_for_batched_commitment` reads the
+    // root commit off the runtime schedule's first step. Construct a
     // tiny stub Cfg that resolves to a root-direct entry whose terminal
     // `Direct` carries `commit: None` (the uncommittable edge), so we
-    // exercise the loud-rejection branch in `root_commit_params`.
+    // exercise the loud-rejection branch in
+    // `get_params_for_batched_commitment`.
     use akita_types::generated::{
         GeneratedDirectStep, GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep,
     };
