@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 
 pub mod batch;
 mod d32;
+mod wide512;
 
 use super::butterfly::NttTwiddles;
 use super::prime::{MontCoeff, NttPrime};
@@ -57,11 +58,12 @@ pub fn avx_ntt_mode() -> Option<AvxNttMode> {
     })
 }
 
-/// Whether the host may use AVX2 transform kernels.
+/// Whether the host may use x86 `i32` transform kernels at all.
 ///
-/// AVX-512 mode currently selects AVX-512 pointwise kernels, but the transform
-/// kernels are AVX2-shaped because the supported CRT degrees spend most stages
-/// at four or fewer useful `i32` lanes.
+/// Both x86 modes gate on this; the chosen mode then selects the kernel shape.
+/// `D = 32` always uses the dedicated small-degree AVX2 kernel. Wider degrees
+/// use the width-aware `wide512` transform in `Avx512` mode, and the 128-bit
+/// transform loop in this module in `Avx2` mode.
 pub fn use_avx2_transform_ntt() -> bool {
     avx_ntt_mode().is_some() && std::is_x86_feature_detected!("avx2")
 }
@@ -217,6 +219,12 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
             );
         }
     }
+    if matches!(avx_ntt_mode(), Some(AvxNttMode::Avx512)) {
+        // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
+        unsafe {
+            return wide512::forward_ntt_i32(a, prime, tw);
+        }
+    }
 
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
@@ -307,6 +315,12 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
             );
         }
     }
+    if matches!(avx_ntt_mode(), Some(AvxNttMode::Avx512)) {
+        // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
+        unsafe {
+            return wide512::inverse_ntt_i32(a, prime, tw);
+        }
+    }
 
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
@@ -395,6 +409,12 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
             );
         }
     }
+    if matches!(avx_ntt_mode(), Some(AvxNttMode::Avx512)) {
+        // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
+        unsafe {
+            return wide512::forward_ntt_cyclic_i32(a, prime, tw);
+        }
+    }
 
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
@@ -464,6 +484,12 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
                 prime,
                 &*(tw as *const _ as *const NttTwiddles<i32, 32>),
             );
+        }
+    }
+    if matches!(avx_ntt_mode(), Some(AvxNttMode::Avx512)) {
+        // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
+        unsafe {
+            return wide512::inverse_ntt_cyclic_i32(a, prime, tw);
         }
     }
 
