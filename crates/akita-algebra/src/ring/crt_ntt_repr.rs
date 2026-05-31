@@ -25,6 +25,7 @@ const NTT_BATCH_LANES: usize = avx::batch::BATCH_LANES;
 ///
 /// Stores `K` arrays of `D` [`MontCoeff<W>`] values, one per CRT prime.
 /// Multiplication is pointwise per prime.
+#[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CyclotomicCrtNtt<W: PrimeWidth, const K: usize, const D: usize> {
     /// Per-prime NTT-domain Montgomery limbs.
@@ -422,13 +423,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             && avx::avx_ntt_mode() == Some(AvxNttMode::Avx512)
         {
             let row_stride = K * D;
+            let chunk_base = chunk.as_mut_ptr().cast::<MontCoeff<W>>();
             for k in 0..K {
-                let base = chunk[0].limbs[k].as_mut_ptr() as *mut i32;
-                // SAFETY: the width check proves `W == i32`, so the limb arrays
-                // and prime/twiddle tables share the `i32` layout. The chunk is
-                // exactly `NTT_BATCH_LANES` contiguous elements, so element `r`'s
-                // `limb[k]` sits at `r * K * D` i32 from element 0. AVX-512 is
-                // proven by the cached mode selector.
+                let base = chunk_base.wrapping_add(k * D) as *mut i32;
+                // SAFETY: `W == i32`, `Self` is transparent over its limbs, and
+                // `base` derives from the whole mutable chunk. Row strides stay
+                // within that allocation; AVX-512 is proven by the mode check.
                 unsafe {
                     let prime = *(&params.primes[k] as *const NttPrime<W> as *const NttPrime<i32>);
                     let tw = &*(&params.twiddles[k] as *const NttTwiddles<W, D>
