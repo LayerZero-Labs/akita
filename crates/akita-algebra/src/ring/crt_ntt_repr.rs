@@ -19,7 +19,7 @@ use super::cyclotomic::CyclotomicRing;
 /// Polynomial rows processed per AVX-512 batched-row NTT call (one per `i32`
 /// lane). The batched-row kernel only exists on x86.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-const NTT_BATCH_LANES: usize = 16;
+const NTT_BATCH_LANES: usize = avx::batch::BATCH_LANES;
 
 /// CRT+NTT-domain representation of a cyclotomic ring element.
 ///
@@ -487,15 +487,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// Fills every slot's limbs from the LUT, then applies one batched forward
     /// negacyclic NTT across the whole group (bit-identical to mapping
     /// [`Self::from_i8_with_lut`]). `out.len()` must equal `digits.len()`; the
-    /// AVX-512 batched-row kernel engages when the group is exactly
-    /// [`NTT_BATCH_LANES`] `i32` rows, otherwise each row transforms per-element.
+    /// AVX-512 batched-row kernel engages when the group is exactly 16 `i32`
+    /// rows, otherwise each row transforms per-element.
     pub fn batch_from_i8_with_lut_into(
         digits: &[[i8; D]],
         params: &CrtNttParamSet<W, K, D>,
         lut: &DigitMontLut<W, K>,
         out: &mut [Self],
     ) {
-        debug_assert_eq!(digits.len(), out.len());
+        assert_eq!(
+            digits.len(),
+            out.len(),
+            "digit and output batches must have the same length"
+        );
         for (slot, digit) in out.iter_mut().zip(digits.iter()) {
             for (k, limb) in slot.limbs.iter_mut().enumerate() {
                 for (dst, &d) in limb.iter_mut().zip(digit.iter()) {

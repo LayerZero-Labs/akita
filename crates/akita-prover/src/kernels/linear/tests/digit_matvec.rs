@@ -555,6 +555,73 @@ fn mat_vec_mul_digits_i8_strided_three_row_matches_block_path_on_block_parallel_
 }
 
 #[test]
+fn mat_vec_mul_digits_i8_strided_matches_block_path_across_batch_boundary() {
+    type F = Fp64<4294967197>;
+    const D: usize = 64;
+    let log_basis = 3;
+    let num_blocks = 20;
+    let digits_per_block = 9;
+
+    let mat: Vec<Vec<CyclotomicRing<F, D>>> = (0..5)
+        .map(|i| {
+            (0..digits_per_block)
+                .map(|j| {
+                    let coeffs = std::array::from_fn(|k| {
+                        let raw = ((17 * i as i64 + 11 * j as i64 + k as i64) % 9) - 4;
+                        F::from_i64(raw)
+                    });
+                    CyclotomicRing::from_coefficients(coeffs)
+                })
+                .collect()
+        })
+        .collect();
+
+    let digit_blocks: Vec<Vec<[i8; D]>> = (0..num_blocks)
+        .map(|block_idx| {
+            (0..digits_per_block)
+                .map(|digit_idx| {
+                    std::array::from_fn(|k| {
+                        (((block_idx as i16 * 7 + digit_idx as i16 * 3 + 2 * k as i16) % 7) - 3)
+                            as i8
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    let digit_block_slices: Vec<&[[i8; D]]> = digit_blocks.iter().map(Vec::as_slice).collect();
+
+    let mut strided_digits = Vec::with_capacity(num_blocks * digits_per_block);
+    for col in 0..digits_per_block {
+        for block in &digit_blocks {
+            strided_digits.push(block[col]);
+        }
+    }
+
+    match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
+        ProtocolCrtNttParams::Q32(params) => {
+            let ntt_mat_vecs = precompute_dense_mat_ntt_with_params(&mat, &params);
+            let ntt_mat: Vec<&[_]> = ntt_mat_vecs.iter().map(Vec::as_slice).collect();
+            let block_path = mat_vec_mul_digits_i8_with_params_for_log_basis::<
+                F,
+                i32,
+                Q32_NUM_PRIMES,
+                D,
+            >(&ntt_mat, &digit_block_slices, log_basis, &params);
+            let strided_path = mat_vec_mul_digits_i8_strided_with_params_for_log_basis(
+                &ntt_mat,
+                &strided_digits,
+                num_blocks,
+                digits_per_block,
+                log_basis,
+                &params,
+            );
+            assert_eq!(block_path, strided_path);
+        }
+        _ => panic!("unexpected parameter family"),
+    }
+}
+
+#[test]
 fn mat_vec_mul_i8_strided_matches_block_path_on_block_parallel_path() {
     type F = Fp64<4294967197>;
     const D: usize = 64;
