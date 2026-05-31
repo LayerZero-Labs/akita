@@ -1,6 +1,10 @@
 //! Prover-side sampling for commitment masking.
 
+#[cfg(test)]
+use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField};
+#[cfg(test)]
+use akita_types::FlatMatrix;
 use akita_types::{zk, FlatDigitBlocks};
 use rand_core::{OsRng, RngCore};
 
@@ -45,4 +49,67 @@ where
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+fn digit_ring<F: CanonicalField, const D: usize>(digits: &[i8; D]) -> CyclotomicRing<F, D> {
+    CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(digits[idx] as i64)))
+}
+
+/// Multiply stored ZK setup rows by cyclic digit planes.
+#[cfg(test)]
+pub(crate) fn zk_matrix_cyclic_digit_rows<F: CanonicalField, const D: usize>(
+    matrix: &FlatMatrix<F>,
+    row_len: usize,
+    col_offset: usize,
+    row_width: usize,
+    digits: &[[i8; D]],
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+    if digits.is_empty() {
+        return Ok(vec![CyclotomicRing::zero(); row_len]);
+    }
+    let col_end = col_offset
+        .checked_add(digits.len())
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK matrix digit column overflow".to_string()))?;
+    if col_end > row_width {
+        return Err(AkitaError::InvalidSetup(
+            "ZK matrix digit columns exceed row width".to_string(),
+        ));
+    }
+    let view = matrix.ring_view::<D>(row_len, row_width)?;
+    let matrix_rows = view.as_slice();
+    let stride = view.num_cols();
+    let digit_rings = digits.iter().map(digit_ring::<F, D>).collect::<Vec<_>>();
+    let rows = (0..row_len)
+        .map(|row_idx| {
+            let row_start = row_idx * stride + col_offset;
+            let mut acc = [F::zero(); D];
+            for (entry, digit) in matrix_rows[row_start..row_start + digit_rings.len()]
+                .iter()
+                .zip(digit_rings.iter())
+            {
+                add_cyclic_product(&mut acc, entry, digit);
+            }
+            CyclotomicRing::from_coefficients(acc)
+        })
+        .collect();
+    Ok(rows)
+}
+
+#[cfg(test)]
+fn add_cyclic_product<F: CanonicalField, const D: usize>(
+    acc: &mut [F; D],
+    lhs: &CyclotomicRing<F, D>,
+    rhs: &CyclotomicRing<F, D>,
+) {
+    for (i, &a) in lhs.coefficients().iter().enumerate() {
+        if a.is_zero() {
+            continue;
+        }
+        for (j, &b) in rhs.coefficients().iter().enumerate() {
+            if !b.is_zero() {
+                acc[(i + j) % D] += a * b;
+            }
+        }
+    }
 }

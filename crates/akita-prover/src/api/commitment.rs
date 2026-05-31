@@ -2,6 +2,7 @@
 
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
+use crate::validation::validate_i8_setup_log_basis;
 use crate::{AkitaPolyOps, CommitInnerWitness, CommitmentComputeBackend};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
@@ -53,11 +54,7 @@ where
 {
     let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
     let expected_flat_digits = commit_inner_flat_digit_count(num_blocks, n_a, num_digits_open)?;
-    if !(1..=128).contains(&log_basis) {
-        return Err(AkitaError::InvalidSetup(
-            "log_basis must be in 1..=128 when recomposing inner commitment digits".to_string(),
-        ));
-    }
+    validate_i8_setup_log_basis(log_basis, "when recomposing i8 inner commitment digits")?;
 
     if inner.recomposed_inner_rows.len() != num_blocks {
         return Err(AkitaError::InvalidSetup(format!(
@@ -137,16 +134,7 @@ where
             "commit params require nonzero digit depths".to_string(),
         ));
     }
-    if setup.seed.max_stride == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "setup max_stride must be nonzero".to_string(),
-        ));
-    }
-    if !(1..=128).contains(&params.log_basis) {
-        return Err(AkitaError::InvalidSetup(
-            "commit params log_basis must be in 1..=128".to_string(),
-        ));
-    }
+    validate_i8_setup_log_basis(params.log_basis, "for i8 commitment decomposition")?;
     let expected_a_width = params
         .block_len
         .checked_mul(params.num_digits_commit)
@@ -164,28 +152,26 @@ where
             params.d_key.col_len()
         )));
     }
-    if params.a_key.col_len() > setup.seed.max_stride
-        || params.b_key.col_len() > setup.seed.max_stride
-        || params.d_key.col_len() > setup.seed.max_stride
-    {
+    let setup_len = setup.shared_matrix.total_ring_elements_at::<D>()?;
+    let a_required = params
+        .a_key
+        .row_len()
+        .checked_mul(params.a_key.col_len())
+        .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
+    let b_required = params
+        .b_key
+        .row_len()
+        .checked_mul(params.b_key.col_len())
+        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
+    let d_required = params
+        .d_key
+        .row_len()
+        .checked_mul(params.d_key.col_len())
+        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
+    let required = a_required.max(b_required).max(d_required);
+    if required > setup_len {
         return Err(AkitaError::InvalidSetup(format!(
-            "commit params column widths A={} B={} D={} exceed setup max_stride {}",
-            params.a_key.col_len(),
-            params.b_key.col_len(),
-            params.d_key.col_len(),
-            setup.seed.max_stride
-        )));
-    }
-    let max_rows = setup.shared_matrix.total_ring_elements_at::<D>()? / setup.seed.max_stride;
-    if params.a_key.row_len() > max_rows
-        || params.b_key.row_len() > max_rows
-        || params.d_key.row_len() > max_rows
-    {
-        return Err(AkitaError::InvalidSetup(format!(
-            "commit params row counts A={} B={} D={} exceed setup max_rows {max_rows}",
-            params.a_key.row_len(),
-            params.b_key.row_len(),
-            params.d_key.row_len()
+            "commit params require {required} setup ring elements but setup has {setup_len}",
         )));
     }
     Ok(())
@@ -302,15 +288,35 @@ where
             },
         )?;
     #[cfg(feature = "zk")]
-    let b_blinding_digits = {
-        let b_blinding_digits =
-            sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
-        b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
-        b_blinding_digits
-    };
+    let b_blinding_digits =
+        sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
     validate_commit_outer_input_nonempty(b_input_digits.len())?;
-    let u: Vec<CyclotomicRing<F, D>> =
-        backend.digit_rows::<D>(prepared, params.b_key.row_len(), &b_input_digits)?;
+    #[cfg(feature = "zk")]
+    let mut u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
+        prepared,
+        params.b_key.row_len(),
+        &b_input_digits,
+        params.log_basis,
+    )?;
+    #[cfg(not(feature = "zk"))]
+    let u: Vec<CyclotomicRing<F, D>> = backend.digit_rows::<D>(
+        prepared,
+        params.b_key.row_len(),
+        &b_input_digits,
+        params.log_basis,
+    )?;
+    #[cfg(feature = "zk")]
+    {
+        let blinding_rows = backend.zk_b_digit_rows::<D>(
+            prepared,
+            params.b_key.row_len(),
+            b_blinding_digits.flat_digits().len(),
+            b_blinding_digits.flat_digits(),
+        )?;
+        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
+    }
     if u.len() != params.b_key.row_len() {
         return Err(AkitaError::InvalidSetup(format!(
             "backend returned {} B commitment rows, expected {}",
@@ -546,7 +552,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AkitaProverSetup;
+    use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
+    use akita_types::{SetupMatrixEnvelope, SisModulusFamily};
 
     type F = Fp64<4294967197>;
     const D: usize = 32;
@@ -590,6 +599,52 @@ mod tests {
         let mut inner = inner_witness(1, 1, vec![2]);
         inner.decomposed_inner_rows.flat_digits_mut()[0][0] = 1;
         assert!(validate_commit_inner_witness_shape(&inner, 1, 1, 2, 4).is_err());
+    }
+
+    #[test]
+    fn commit_inner_witness_shape_rejects_log_basis_above_i8_range() {
+        let inner = inner_witness(1, 1, vec![2]);
+        assert!(matches!(
+            validate_commit_inner_witness_shape(&inner, 1, 1, 2, 7),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+
+    #[test]
+    fn commit_level_params_reject_log_basis_above_i8_range() {
+        let expanded = AkitaProverSetup::<F, D>::generate_with_capacity(
+            5,
+            1,
+            1,
+            SetupMatrixEnvelope {
+                max_setup_len: 8,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
+            },
+        )
+        .unwrap()
+        .expanded;
+        let params = LevelParams::params_only(
+            SisModulusFamily::Q32,
+            D,
+            7,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_decomp(1, 1, 2, 2, 2, 0)
+        .unwrap();
+
+        assert!(matches!(
+            validate_commit_level_params::<F, D>(&params, &expanded),
+            Err(AkitaError::InvalidSetup(_))
+        ));
     }
 
     #[test]

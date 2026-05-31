@@ -50,15 +50,26 @@ pub struct CrtNttParamSet<W: PrimeWidth, const K: usize, const D: usize> {
     pub garner: GarnerData<W, K>,
 }
 
-/// Precomputed Montgomery forms for small balanced digit values.
+/// Number of balanced-digit slots covered by [`DigitMontLut`].
 ///
-/// Covers the full `{-32, ..., 31}` range (64 entries per CRT prime),
-/// which is sufficient for any `log_basis <= 6`. Storing the Montgomery
-/// representation eliminates one `from_canonical` (a Montgomery multiply)
-/// per coefficient in the `from_i8` hot path.
+/// Balanced base-`2^log_basis` decomposition uses `log_basis` in `1..=6`, so
+/// every digit lands in `[-32, 31]`. One fixed 64-entry table therefore covers
+/// all bases, which is what lets the lookup drop the const-generic `L` (and the
+/// per-`log_basis` monomorphization it forced) without widening to the full
+/// signed-byte range.
+const DIGIT_LUT_LEN: usize = 64;
+const DIGIT_LUT_OFFSET: i16 = (DIGIT_LUT_LEN / 2) as i16;
+
+/// Precomputed Montgomery forms for balanced digit values in `[-32, 31]`.
+///
+/// Storing the Montgomery representation eliminates one `from_canonical`
+/// Montgomery multiply per coefficient in the hot digit path. The table is
+/// built once per mat-vec and is independent of the decomposition `log_basis`.
 #[derive(Debug, Clone)]
 pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
-    vals: [[MontCoeff<W>; 64]; K],
+    vals: [[MontCoeff<W>; DIGIT_LUT_LEN]; K],
+    len: usize,
+    offset: i16,
 }
 
 /// Precomputed Montgomery forms for centered integer coefficients in
@@ -69,39 +80,63 @@ pub struct CenteredMontLut<W: PrimeWidth, const K: usize> {
     offset: i32,
 }
 
-const DIGIT_LUT_HALF_B: i16 = 32;
-
 impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
-    /// Build the lookup table from CRT primes.
-    ///
-    /// Covers digit values in `{-32, ..., 31}` (balanced representation for
-    /// `log_basis <= 6`).
+    /// Build the lookup table from CRT primes, covering balanced digits in
+    /// `[-32, 31]`.
     pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>) -> Self {
-        let mut vals = [[MontCoeff::from_raw(W::default()); 64]; K];
-        for (k, prime) in params.primes.iter().enumerate() {
-            for v_idx in 0..64u8 {
-                let v = v_idx as i64 - DIGIT_LUT_HALF_B as i64;
-                vals[k][v_idx as usize] = prime.from_canonical(W::from_i64(v));
+        Self::new_with_digit_bound(params, DIGIT_LUT_OFFSET as u64)
+    }
+
+    /// Build a lookup table for the active balanced range `[-bound, bound)`.
+    ///
+    /// This keeps the fixed non-monomorphized LUT type while avoiding needless
+    /// Montgomery conversions for common small bases (`log_basis` 2, 3, or 4).
+    pub fn new_with_digit_bound<const D: usize>(
+        params: &CrtNttParamSet<W, K, D>,
+        digit_abs_bound: u64,
+    ) -> Self {
+        debug_assert!(digit_abs_bound.is_power_of_two());
+        debug_assert!((1..=DIGIT_LUT_OFFSET as u64).contains(&digit_abs_bound));
+        let digit_abs_bound = digit_abs_bound
+            .max(1)
+            .next_power_of_two()
+            .min(DIGIT_LUT_OFFSET as u64);
+        let len = (digit_abs_bound as usize) * 2;
+        let offset = digit_abs_bound as i16;
+        let mut vals = [[MontCoeff::from_raw(W::default()); DIGIT_LUT_LEN]; K];
+        for (k, limb) in vals.iter_mut().enumerate() {
+            let prime = params.primes[k];
+            for (idx, dst) in limb.iter_mut().enumerate().take(len) {
+                let v = idx as i64 - i64::from(offset);
+                *dst = prime.from_canonical(W::from_i64(v));
             }
         }
-        Self { vals }
+        Self { vals, len, offset }
     }
 
     /// Look up the Montgomery form of a balanced digit for CRT prime `k`.
+    ///
+    /// Contract: `digit` is in this LUT's active balanced range and `k < K`.
+    /// The i8-NTT kernel boundary upholds this with validated `log_basis` and
+    /// per-block digit range checks. Because the active table length is a power
+    /// of two, masking keeps the lookup in-bounds and branch-free without a
+    /// per-coefficient bounds check. The debug assertion surfaces any contract
+    /// violation in debug builds.
     #[inline(always)]
     pub fn get(&self, k: usize, digit: i8) -> MontCoeff<W> {
-        unsafe {
-            *self
-                .vals
-                .get_unchecked(k)
-                .get_unchecked((digit as i16 + DIGIT_LUT_HALF_B) as usize)
-        }
+        let idx = (i16::from(digit) + self.offset) as usize;
+        debug_assert!(
+            idx < self.len,
+            "digit LUT lookup outside active balanced range"
+        );
+        self.vals[k][idx & (self.len - 1)]
     }
 }
 
 impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
     /// Build a lookup table for all centered coefficients in `[-max_abs, max_abs]`.
     pub fn new<const D: usize>(params: &CrtNttParamSet<W, K, D>, max_abs: i32) -> Self {
+        let max_abs = max_abs.max(0);
         let vals = from_fn(|k| {
             let prime = params.primes[k];
             (-max_abs..=max_abs)
@@ -116,13 +151,23 @@ impl<W: PrimeWidth, const K: usize> CenteredMontLut<W, K> {
 
     /// Look up the Montgomery form of a centered coefficient for CRT prime `k`.
     #[inline(always)]
-    pub fn get(&self, k: usize, coeff: i32) -> MontCoeff<W> {
-        unsafe {
-            *self
-                .vals
-                .get_unchecked(k)
-                .get_unchecked((coeff + self.offset) as usize)
-        }
+    pub fn get(&self, k: usize, coeff: i32) -> Option<MontCoeff<W>> {
+        let idx = coeff.checked_add(self.offset)?;
+        self.vals.get(k)?.get(usize::try_from(idx).ok()?).copied()
+    }
+
+    /// Look up the Montgomery form of a caller-validated centered coefficient.
+    ///
+    /// # Safety
+    ///
+    /// `k` must be less than `K`, and `coeff` must be within this LUT's
+    /// covered centered range.
+    #[inline(always)]
+    pub unsafe fn get_unchecked(&self, k: usize, coeff: i32) -> MontCoeff<W> {
+        let idx = coeff + self.offset;
+        debug_assert!(idx >= 0);
+        debug_assert!((idx as usize) < self.vals[k].len());
+        unsafe { *self.vals.get_unchecked(k).get_unchecked(idx as usize) }
     }
 }
 
@@ -618,7 +663,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
     ) -> (Self, Self) {
-        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, None)
+        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, None, false)
     }
 
     /// Like [`Self::from_centered_i32_pair_with_params`] but uses a precomputed
@@ -628,7 +673,22 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         params: &CrtNttParamSet<W, K, D>,
         lut: &CenteredMontLut<W, K>,
     ) -> (Self, Self) {
-        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, Some(lut))
+        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, Some(lut), false)
+    }
+
+    /// Like [`Self::from_centered_i32_pair_with_lut`] for caller-validated
+    /// centered coefficients.
+    ///
+    /// # Safety
+    ///
+    /// Every entry in `coeffs` must be within the range covered by `lut`.
+    #[inline]
+    pub unsafe fn from_centered_i32_pair_with_lut_unchecked(
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &CenteredMontLut<W, K>,
+    ) -> (Self, Self) {
+        Self::from_centered_i32_pair_backend::<ScalarBackend>(coeffs, params, Some(lut), true)
     }
 
     fn from_i8_negacyclic_backend<B: NttPrimeOps<W, D> + NttTransform<W, D>>(
@@ -725,6 +785,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         coeffs: &[i32; D],
         params: &CrtNttParamSet<W, K, D>,
         lut: Option<&CenteredMontLut<W, K>>,
+        unchecked_lut: bool,
     ) -> (Self, Self) {
         let mut neg_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         let mut cyc_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
@@ -737,7 +798,19 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         {
             if let Some(lut) = lut {
                 for (dst, &coeff) in neg_limb.iter_mut().zip(coeffs.iter()) {
-                    *dst = lut.get(k, coeff);
+                    *dst = if unchecked_lut {
+                        unsafe { lut.get_unchecked(k, coeff) }
+                    } else {
+                        lut.get(k, coeff).unwrap_or_else(|| {
+                            let p = prime.p.to_i64();
+                            let half_p = p / 2;
+                            let mut r = (coeff as i64).rem_euclid(p);
+                            if r >= half_p {
+                                r -= p;
+                            }
+                            B::from_canonical(*prime, W::from_i64(r))
+                        })
+                    };
                 }
             } else {
                 let p = prime.p.to_i64();
