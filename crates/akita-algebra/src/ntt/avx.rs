@@ -10,6 +10,8 @@ use std::arch::x86::*;
 use std::arch::x86_64::*;
 use std::sync::OnceLock;
 
+mod d32;
+
 use super::butterfly::NttTwiddles;
 use super::prime::{MontCoeff, NttPrime};
 
@@ -200,6 +202,17 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
+    if D == 32 {
+        // SAFETY: the branch proves the concrete array and twiddle degree.
+        unsafe {
+            return d32::forward_ntt_i32(
+                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
+                prime,
+                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
+            );
+        }
+    }
+
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
@@ -279,6 +292,17 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
+    if D == 32 {
+        // SAFETY: the branch proves the concrete array and twiddle degree.
+        unsafe {
+            return d32::inverse_ntt_i32(
+                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
+                prime,
+                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
+            );
+        }
+    }
+
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
@@ -356,6 +380,17 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
+    if D == 32 {
+        // SAFETY: the branch proves the concrete array and twiddle degree.
+        unsafe {
+            return d32::forward_ntt_cyclic_i32(
+                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
+                prime,
+                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
+            );
+        }
+    }
+
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
@@ -416,6 +451,17 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
     prime: NttPrime<i32>,
     tw: &NttTwiddles<i32, D>,
 ) {
+    if D == 32 {
+        // SAFETY: the branch proves the concrete array and twiddle degree.
+        unsafe {
+            return d32::inverse_ntt_cyclic_i32(
+                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
+                prime,
+                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
+            );
+        }
+    }
+
     let p_d = _mm_set1_epi32(prime.p);
     let pinv_d = _mm_set1_epi32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;

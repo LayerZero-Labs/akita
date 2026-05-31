@@ -15,10 +15,9 @@ use super::prime::{MontCoeff, NttPrime, PrimeWidth};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline]
 fn use_x86_i32_transform_ntt<W: PrimeWidth, const D: usize>() -> bool {
-    // The current AVX2 transform shape is a win for D64+ but did not clear the
-    // D32 cached-matvec gate on leopard. Keep D32 scalar until it has a
-    // dedicated small-degree kernel.
-    D >= 64
+    // D32 uses a dedicated small-degree kernel. D64+ uses the generic AVX2
+    // transform loop.
+    D >= 32
         && std::mem::size_of::<W>() == std::mem::size_of::<i32>()
         && super::avx::use_avx2_transform_ntt()
 }
