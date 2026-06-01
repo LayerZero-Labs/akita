@@ -11,44 +11,6 @@ use akita_types::AkitaExpandedSetup;
 use super::super::structured_slice::POSSIBLE_CARRIES;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-#[inline(always)]
-fn jolt_cycle_marker(marker_id_str: &str, event_type: u32) {
-    const JOLT_CYCLE_TRACK_CALL_ID: u32 = 0xC7C1E;
-    let marker_id = marker_id_str.as_ptr() as usize as u32;
-    let marker_len = marker_id_str.len() as u32;
-    unsafe {
-        core::arch::asm!(
-            ".insn i 0x5B, 2, x0, x0, 0",
-            in("x10") JOLT_CYCLE_TRACK_CALL_ID,
-            in("x11") marker_id,
-            in("x12") marker_len,
-            in("x13") event_type,
-            options(nostack, preserves_flags)
-        );
-    }
-}
-
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-#[inline(always)]
-fn jolt_start_cycle_tracking(marker_id: &str) {
-    jolt_cycle_marker(marker_id, 1);
-}
-
-#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-#[inline(always)]
-fn jolt_start_cycle_tracking(_marker_id: &str) {}
-
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-#[inline(always)]
-fn jolt_end_cycle_tracking(marker_id: &str) {
-    jolt_cycle_marker(marker_id, 2);
-}
-
-#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-#[inline(always)]
-fn jolt_end_cycle_tracking(_marker_id: &str) {}
-
 /// Flat coefficient weights for `<S_{<=N}, omega_S>`.
 #[cfg(test)]
 struct MaterializedSetupOmega<E> {
@@ -320,13 +282,12 @@ where
         let w_eq_slice: Vec<E> = if n_d_active == 0 {
             Vec::new()
         } else {
-            jolt_start_cycle_tracking("setup_w_eq_slice");
             let w_hi_len =
                 checked_mul(prepared.num_claims, prepared.depth_open, "W high-eq width")?;
             let eq_hi_w_table: Vec<E> = (0..=w_hi_len)
                 .map(|k| eq_eval_at_index(high_challenges, w_offset_high + k))
                 .collect();
-            let slice = cfg_into_iter!(0..n_cols_w)
+            cfg_into_iter!(0..n_cols_w)
                 .map(|current_index| {
                     let (low_eq_idx, high_eq_idx) = get_eq_indices_for_d(
                         current_index,
@@ -340,12 +301,9 @@ where
                     );
                     eq_low[low_eq_idx] * eq_hi_w_table[high_eq_idx]
                 })
-                .collect();
-            jolt_end_cycle_tracking("setup_w_eq_slice");
-            slice
+                .collect()
         };
 
-        jolt_start_cycle_tracking("setup_t_eq_slices");
         let t_hi_len = checked_mul(
             checked_mul(
                 prepared.num_t_vectors,
@@ -385,9 +343,7 @@ where
                     .collect()
             })
             .collect();
-        jolt_end_cycle_tracking("setup_t_eq_slices");
 
-        jolt_start_cycle_tracking("setup_z_eq_slice");
         let z_eq_slice = if z_dims_pow2 {
             let z_block_low_storage;
             let z_block_low_eq = if let Some(z_block_low_eq) = self.z_block_low_eq {
@@ -521,9 +477,7 @@ where
                 })
                 .collect()
         };
-        jolt_end_cycle_tracking("setup_z_eq_slice");
 
-        jolt_start_cycle_tracking("setup_b_weights");
         let b_weights_by_row: Vec<Vec<E>> = (0..prepared.n_b)
             .map(|row| {
                 (0..prepared.num_points)
@@ -531,7 +485,6 @@ where
                     .collect()
             })
             .collect();
-        jolt_end_cycle_tracking("setup_b_weights");
 
         let mut endpoints = Vec::with_capacity(n_d_active + prepared.n_b + prepared.n_a + 2);
         endpoints.push(0);
@@ -584,11 +537,8 @@ impl<E: FieldCore> SetupEvalPlan<E> {
         &self,
         alpha_pows: &[E],
     ) -> Result<MaterializedSetupOmega<E>, AkitaError> {
-        jolt_start_cycle_tracking("setup_bar_omega");
         let bar_omega = self.materialize_bar_omega();
-        jolt_end_cycle_tracking("setup_bar_omega");
 
-        jolt_start_cycle_tracking("setup_omega_s");
         let omega_len = checked_mul(bar_omega.len(), D, "omega_S length")?;
         let mut omega_s = Vec::with_capacity(omega_len);
         for &weight in &bar_omega {
@@ -596,7 +546,6 @@ impl<E: FieldCore> SetupEvalPlan<E> {
                 omega_s.push(weight * alpha_pow);
             }
         }
-        jolt_end_cycle_tracking("setup_omega_s");
 
         Ok(MaterializedSetupOmega { bar_omega, omega_s })
     }
@@ -706,7 +655,6 @@ where
         let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
         let setup_flat = setup_view.as_slice();
 
-        jolt_start_cycle_tracking("setup_inner_product_segments");
         let segments = self.segments();
         let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
             .map(|idx| -> Result<E, AkitaError> {
@@ -742,7 +690,6 @@ where
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
-        jolt_end_cycle_tracking("setup_inner_product_segments");
 
         Ok(segment_sums.into_iter().sum())
     }
