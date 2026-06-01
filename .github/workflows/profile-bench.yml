@@ -29,8 +29,8 @@ env:
   AKITA_BENCH_WARMUPS: "1"
   AKITA_BENCH_CASES: |
     dense_fp16_d32:26:1
-    onehot_fp32_d32:32:1
     dense_fp32_d32:26:1
+    onehot_fp32_d32:32:1
     onehot_fp64_d32:32:1
     dense_fp128_d32:24:1
     onehot_fp128_d32:32:1

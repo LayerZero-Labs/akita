@@ -973,7 +973,6 @@ def render_matrix_summary(
         "Verify s",
         "RSS MiB",
         "Proof B",
-        "CRT",
     ]
     if matrix_baseline is not None:
         label = matrix_baseline[0]
@@ -999,7 +998,6 @@ def render_matrix_summary(
             fmt_optional_seconds(current, "verify_total_s"),
             fmt_optional_mib(current, "max_rss_kib"),
             fmt_optional_bytes(current, "proof_size_bytes"),
-            code_text(current.get("crt_profile", "n/a")),
         ]
         if matrix_baseline is not None:
             baseline_case = matrix_baseline[1].get(str(current["case_id"]))
