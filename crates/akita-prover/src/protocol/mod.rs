@@ -20,8 +20,9 @@ pub use flow::{
     prove_root_fold_with_params, prove_terminal_fold_level_from_quadratic,
     prove_terminal_recursive_fold_with_params, prove_terminal_recursive_level_with_policy,
     prove_terminal_root_fold_from_quadratic, prove_terminal_root_fold_with_params,
-    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveCarriedOpening, RecursiveProverState,
-    RecursiveSuffixOutcome, RootLevelRawOutput, SuffixLevelOutput, SuffixLevelRequest,
+    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveCarriedOpening, RecursiveCarriedSource,
+    RecursiveProverState, RecursiveSuffixOutcome, RootLevelRawOutput, SuffixLevelOutput,
+    SuffixLevelRequest,
 };
 pub use quadratic_equation::{QuadraticEquation, RecursiveQuadraticSource};
 pub use ring_switch::{commit_next_w_with_policy, RingSwitchOutput};

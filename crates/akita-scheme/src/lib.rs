@@ -563,6 +563,7 @@ where
                         D,
                         _,
                         _,
+                        _,
                     >(
                         expanded,
                         backend,
@@ -607,6 +608,7 @@ where
                                 schedule,
                             )
                         },
+                        |_| Ok(()),
                     )
                     .map(|(proof, _total_levels)| proof)
             },
