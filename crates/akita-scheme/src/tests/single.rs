@@ -290,36 +290,37 @@ fn recursive_suffix_verifies_witness_plus_dummy_setup_carried_batch() {
     let commitments = [commitment.clone()];
     let expanded_arc = setup.expanded.clone();
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = akita_prover::prove_batched_with_policy::<F, F, F, _, _, D, _, _, _, _, _>(
-        setup.expanded.as_ref(),
-        vec![(
-            &opening_point[..],
-            CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
+    let proof =
+        akita_prover::prove_batched_with_policy::<F, F, F, _, _, D, _, _, _, _, _>(
+            setup.expanded.as_ref(),
+            vec![(
+                &opening_point[..],
+                CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint,
+                },
+            )],
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            |incidence_summary| {
+                let schedule = Cfg::get_params_for_prove(incidence_summary)?;
+                schedule_with_setup_prefix_carried_suffix(schedule, incidence_summary.num_vars())
             },
-        )],
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-        |incidence_summary| {
-            let schedule = Cfg::get_params_for_prove(incidence_summary)?;
-            schedule_with_setup_prefix_carried_suffix(schedule, incidence_summary.num_vars())
-        },
-        Cfg::get_params_for_batched_commitment,
-        |schedule, _next_inputs| akita_types::scheduled_next_level_params(schedule, 1),
-        |transcript, incidence_summary, schedule, basis| {
-            akita_config::bind_transcript_instance_descriptor::<F, _, D, Cfg>(
-                setup.expanded.as_ref(),
-                incidence_summary,
-                schedule,
-                basis,
-                transcript,
-            )
-        },
-        |prepared_claims, schedule, next_params, transcript, basis| {
-            let num_vars = prepared_claims.incidence_summary.num_vars();
-            akita_prover::prove_folded_batched_with_policy::<F, F, F, _, _, _, D, _, _, _>(
+            Cfg::get_params_for_batched_commitment,
+            |schedule, _next_inputs| akita_types::scheduled_next_level_params(schedule, 1),
+            |transcript, incidence_summary, schedule, basis| {
+                akita_config::bind_transcript_instance_descriptor::<F, _, D, Cfg>(
+                    setup.expanded.as_ref(),
+                    incidence_summary,
+                    schedule,
+                    basis,
+                    transcript,
+                )
+            },
+            |prepared_claims, schedule, next_params, transcript, basis| {
+                let num_vars = prepared_claims.incidence_summary.num_vars();
+                akita_prover::prove_folded_batched_with_policy::<F, F, F, _, _, _, D, _, _, _>(
                 setup.expanded.as_ref(),
                 &CpuBackend,
                 &prepared,
@@ -357,30 +358,52 @@ fn recursive_suffix_verifies_witness_plus_dummy_setup_carried_batch() {
                     )
                 },
                 |raw| {
-                    let committed_w = raw.next_state.w.clone();
                     let carried_claim = raw.next_state.carried_openings[0].clone();
                     let point = carried_claim.opening_point.clone();
-                    let opening = carried_claim.opening;
+                    let dummy_logical_w = akita_prover::RecursiveWitnessFlat::from_i8_digits(
+                        vec![0; carried_claim.natural_len],
+                    );
+                    let dummy_next = akita_prover::commit_next_w_with_policy::<F, F, _, _, _, D>(
+                        &next_params,
+                        &expanded_arc,
+                        &CpuBackend,
+                        &prepared,
+                        &dummy_logical_w,
+                        |params, current_w_len| {
+                            akita_types::recursive_level_layout_from_params(
+                                params,
+                                current_w_len,
+                                Cfg::decomposition(),
+                            )
+                        },
+                        recursive_w_commit_layout_for_d::<Cfg>,
+                    )?;
+                    let dummy_commitment = dummy_next.commitment;
+                    assert_ne!(dummy_commitment, raw.next_state.commitment);
+                    let (dummy_w, dummy_logical_w) = match dummy_next.witness {
+                        Some(committed_w) => (committed_w, Some(dummy_logical_w)),
+                        None => (dummy_logical_w, None),
+                    };
                     raw.extra_carried_sources
                         .push(akita_types::CarriedOpeningSourceProof {
-                            commitment: raw.next_state.commitment.clone(),
+                            commitment: dummy_commitment.clone(),
                         });
                     raw.extra_carried_openings
                         .push(akita_types::CarriedOpeningProof {
                             source_idx: 1,
                             point: point.clone(),
-                            value: opening,
+                            value: F::zero(),
                             basis: BasisMode::Lagrange,
-                            natural_len: carried_claim.natural_len,
+                            natural_len: dummy_w.len(),
                             padded_len: carried_claim.padded_len,
                             kind: akita_types::CarriedOpeningKind::SetupPrefix,
                         });
                     raw.next_state.extra_carried_sources.push(
                         akita_prover::RecursiveCarriedSource {
-                            w: committed_w.clone(),
-                            logical_w: raw.next_state.logical_w.clone(),
-                            commitment: raw.next_state.commitment.clone(),
-                            hint: raw.next_state.hint.clone(),
+                            w: dummy_w.clone(),
+                            logical_w: dummy_logical_w,
+                            commitment: dummy_commitment,
+                            hint: dummy_next.hint,
                         },
                     );
                     raw.next_state
@@ -388,9 +411,9 @@ fn recursive_suffix_verifies_witness_plus_dummy_setup_carried_batch() {
                         .push(akita_prover::RecursiveCarriedOpening {
                             source_idx: 1,
                             opening_point: point,
-                            opening,
+                            opening: F::zero(),
                             basis: BasisMode::Lagrange,
-                            natural_len: carried_claim.natural_len,
+                            natural_len: dummy_w.len(),
                             padded_len: carried_claim.padded_len,
                             kind: akita_types::CarriedOpeningKind::SetupPrefix,
                         });
@@ -398,9 +421,9 @@ fn recursive_suffix_verifies_witness_plus_dummy_setup_carried_batch() {
                 },
             )
             .map(|(proof, _)| proof)
-        },
-    )
-    .unwrap();
+            },
+        )
+        .unwrap();
 
     let root = proof
         .root
