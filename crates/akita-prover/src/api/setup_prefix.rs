@@ -246,9 +246,6 @@ where
         if n_prefix < padded_setup_prefix_len(natural_len) {
             continue;
         }
-        if natural_len > n_prefix {
-            continue;
-        }
         if n_prefix > available_field_len {
             continue;
         }
