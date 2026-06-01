@@ -71,6 +71,8 @@ pub(crate) use recursive::verify_fold_batched_proof;
 
 /// One opening claim carried into the next recursive verifier level.
 pub(crate) struct RecursiveVerifierCarriedOpening<'a, F: FieldCore, L: FieldCore> {
+    /// Source index in the recursive carried-source table.
+    pub source_idx: usize,
     /// Evaluation point in this claim's basis.
     pub opening_point: Vec<L>,
     /// Claimed opening value.
@@ -90,10 +92,19 @@ pub(crate) struct RecursiveVerifierCarriedOpening<'a, F: FieldCore, L: FieldCore
     pub kind: CarriedOpeningKind,
 }
 
+/// Verifier-visible carried source commitment.
+pub(crate) struct RecursiveVerifierCarriedSource<'a, F: FieldCore> {
+    /// Commitment opened by claims that reference this source.
+    pub commitment: &'a FlatRingVec<F>,
+}
+
 /// Verifier state carried between recursive fold levels.
 pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     /// Opening claims carried into this recursive level.
     pub carried_openings: Vec<RecursiveVerifierCarriedOpening<'a, F, L>>,
+    /// Extra carried source commitments. Source index 0 is the ordinary
+    /// recursive witness source referenced by the witness claim.
+    pub extra_carried_sources: Vec<RecursiveVerifierCarriedSource<'a, F>>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
 }
@@ -127,26 +138,23 @@ impl<'a, F: FieldCore, L: FieldCore> RecursiveVerifierState<'a, F, L> {
             })
     }
 
-    pub(crate) fn common_commitment(&self) -> Result<&'a FlatRingVec<F>, AkitaError> {
-        let first = self
-            .carried_openings
-            .first()
-            .ok_or_else(|| AkitaError::InvalidInput("empty carried-opening batch".to_string()))?;
-        for claim in &self.carried_openings {
-            match claim.kind {
-                CarriedOpeningKind::RecursiveWitness | CarriedOpeningKind::SetupPrefix => {}
-            }
-        }
-        if self
+    pub(crate) fn source_commitments(&self) -> Result<Vec<&'a FlatRingVec<F>>, AkitaError> {
+        let witness_source = self
             .carried_openings
             .iter()
-            .any(|claim| claim.commitment != first.commitment)
-        {
-            return Err(AkitaError::InvalidInput(
-                "carried openings with different commitments are not wired yet".to_string(),
-            ));
-        }
-        Ok(first.commitment)
+            .find(|claim| claim.source_idx == 0)
+            .map(|claim| claim.commitment)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("missing recursive witness carried source".to_string())
+            })?;
+        let mut sources = Vec::with_capacity(self.extra_carried_sources.len() + 1);
+        sources.push(witness_source);
+        sources.extend(
+            self.extra_carried_sources
+                .iter()
+                .map(|source| source.commitment),
+        );
+        Ok(sources)
     }
 }
 

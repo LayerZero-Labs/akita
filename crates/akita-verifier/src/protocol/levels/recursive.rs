@@ -9,6 +9,7 @@ where
     L: FieldCore,
 {
     RecursiveVerifierCarriedOpening {
+        source_idx: claim.source_idx,
         opening_point: claim.point.clone(),
         opening: claim.value,
         #[cfg(feature = "zk")]
@@ -171,17 +172,15 @@ where
     };
     let carried_openings = current_state.carried_openings.as_slice();
     let _common_padded_len = current_state.common_padded_len()?;
-    let carried_sources = carried_openings
+    let source_commitments = current_state.source_commitments()?;
+    let carried_sources = source_commitments
         .iter()
-        .map(|claim| CarriedOpeningSource {
-            commitment: claim.commitment,
-        })
+        .map(|&commitment| CarriedOpeningSource { commitment })
         .collect::<Vec<_>>();
     let carried_claims = carried_openings
         .iter()
-        .enumerate()
-        .map(|(source_idx, claim)| CarriedOpeningClaim {
-            source_idx,
+        .map(|claim| CarriedOpeningClaim {
+            source_idx: claim.source_idx,
             point: &claim.opening_point,
             value: claim.opening,
             basis: claim.basis,
@@ -203,8 +202,6 @@ where
     if carried_openings.len() != 1 {
         return Err(AkitaError::InvalidProof);
     }
-    let commitment = current_state.common_commitment()?;
-    let commitment_u = commitment.as_ring_slice::<D>()?;
     if y_rings.len() != carried_incidence.num_claims() {
         return Err(AkitaError::InvalidProof);
     }
@@ -469,11 +466,22 @@ where
             )?
         }
     };
+    let mut commitment_rows = Vec::new();
+    for claim in carried_openings {
+        let source = source_commitments
+            .get(claim.source_idx)
+            .ok_or(AkitaError::InvalidProof)?;
+        let source_rows = source.as_ring_slice::<D>()?;
+        if source_rows.len() != lp.b_key.row_len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        commitment_rows.extend_from_slice(source_rows);
+    }
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
         v_typed,
-        commitment_u,
+        &commitment_rows,
         &y_rings,
     )?;
     #[cfg(feature = "zk")]
@@ -536,7 +544,7 @@ where
             &ring_multiplier_points,
             &rs.tau1,
             v_typed,
-            commitment_u,
+            &commitment_rows,
             &y_rings,
             Some(relation_claim),
             rs.alpha,
@@ -561,7 +569,7 @@ where
             &ring_multiplier_points,
             &rs.tau1,
             v_typed,
-            commitment_u,
+            &commitment_rows,
             &y_rings,
             Some(relation_claim),
             rs.alpha,
@@ -792,7 +800,10 @@ where
                     // The terminal slot must be a Terminal variant.
                     return Err(AkitaError::InvalidProof);
                 }
-                if !current_state.common_commitment()?.can_decode_vec(level_d)
+                if current_state
+                    .source_commitments()?
+                    .iter()
+                    .any(|commitment| !commitment.can_decode_vec(level_d))
                     || !level_proof.y_ring.can_decode_vec(level_d)
                     || !level_proof.v.can_decode_vec(level_d)
                 {
@@ -852,6 +863,7 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 let mut carried_openings = vec![RecursiveVerifierCarriedOpening {
+                    source_idx: 0,
                     opening_point: challenges,
                     opening: level_proof.next_w_eval(),
                     #[cfg(feature = "zk")]
@@ -881,6 +893,14 @@ where
                 );
                 current_state = RecursiveVerifierState {
                     carried_openings,
+                    extra_carried_sources: level_proof
+                        .stage2
+                        .extra_carried_sources
+                        .iter()
+                        .map(|source| RecursiveVerifierCarriedSource {
+                            commitment: &source.commitment,
+                        })
+                        .collect(),
                     log_basis: scheduled_next_params.log_basis,
                 };
             }
@@ -888,7 +908,10 @@ where
                 if !is_last {
                     return Err(AkitaError::InvalidProof);
                 }
-                if !current_state.common_commitment()?.can_decode_vec(level_d)
+                if current_state
+                    .source_commitments()?
+                    .iter()
+                    .any(|commitment| !commitment.can_decode_vec(level_d))
                     || !terminal_proof.y_rings.can_decode_vec(level_d)
                 {
                     return Err(AkitaError::InvalidProof);
@@ -1104,6 +1127,7 @@ where
             }
 
             let mut carried_openings = vec![RecursiveVerifierCarriedOpening {
+                source_idx: 0,
                 opening_point: root_challenges,
                 opening: fold_root.stage2.next_w_eval(),
                 #[cfg(feature = "zk")]
@@ -1133,6 +1157,14 @@ where
             );
             let current_state = RecursiveVerifierState {
                 carried_openings,
+                extra_carried_sources: fold_root
+                    .stage2
+                    .extra_carried_sources
+                    .iter()
+                    .map(|source| RecursiveVerifierCarriedSource {
+                        commitment: &source.commitment,
+                    })
+                    .collect(),
                 log_basis: next_level_params.log_basis,
             };
             verify_batched_recursive_suffix::<F, C, T, D>(
