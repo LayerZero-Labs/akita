@@ -470,6 +470,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         z_pre_centered,
         lp,
     );
+    out.reserve(r_hat_count * D);
 
     let mut r_planes = vec![[0i8; D]; levels];
     let q = (-F::one()).to_canonical_u128() + 1;
