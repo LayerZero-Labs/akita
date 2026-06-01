@@ -603,9 +603,11 @@ mod fp128_policy_tests {
     fn fp128_family_selector_uses_generated_singleton_plans() {
         let key = AkitaScheduleLookupKey::singleton(32);
 
-        let full =
-            fp128::best_full_schedule(key).expect("selector should find a generated full schedule");
+        let full = fp128::best_full_schedule(key)
+            .expect("selector should resolve full schedules")
+            .expect("selector should find a generated full schedule");
         let onehot = fp128::best_onehot_schedule(key)
+            .expect("selector should resolve onehot schedules")
             .expect("selector should find a generated onehot schedule");
 
         for selection in [&full, &onehot] {
@@ -621,6 +623,7 @@ mod fp128_policy_tests {
         let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
 
         let selection = fp128::best_onehot_schedule(key)
+            .expect("selector should resolve batched onehot schedules")
             .expect("selector should find a generated batched onehot schedule");
 
         assert!(selection.preset.is_onehot());

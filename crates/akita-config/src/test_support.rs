@@ -19,8 +19,10 @@ use crate::CommitmentConfig;
 ///
 /// First reads the runtime schedule (table hit or DP fallback). When the
 /// schedule is a root fold it returns that root layout; for a direct-only
-/// schedule (or a declined key) it falls back to the singleton-derived root
-/// split.
+/// schedule it falls back to the batched root commit layout
+/// `Cfg::get_params_for_batched_commitment` derives for the same
+/// `num_claims` (so the fallback layout is sized for the requested batch,
+/// not a singleton).
 ///
 /// Tests, benches, and the `profile` example use this to pre-size per-poly
 /// inputs (e.g. `OneHotPoly`) so the `block_len` / `num_blocks` line up with
@@ -58,5 +60,10 @@ where
         num_claims,
         "batched root split: schedule is direct-only, falling back to config root layout"
     );
-    Cfg::get_params_for_batched_commitment(&ClaimIncidenceSummary::same_point(num_vars, 1)?)
+    // Size the fallback for the requested batch (`num_claims`), not a
+    // singleton — otherwise the per-poly inputs would be smaller than the
+    // batched commit layout `Scheme::commit` actually uses.
+    Cfg::get_params_for_batched_commitment(&ClaimIncidenceSummary::same_point(
+        num_vars, num_claims,
+    )?)
 }
