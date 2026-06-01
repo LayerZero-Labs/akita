@@ -26,10 +26,10 @@ pub use crate::generated::sis_floor::SisModulusFamily;
 pub enum MRowLayout {
     /// Full layout including the D-block (`v = D * w_hat` rows). Used at every
     /// intermediate fold level and at the root when stage-1 runs.
-    Intermediate,
+    WithDBlock,
     /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
     /// the terminal fold level where `final_witness` ships on the wire.
-    Terminal,
+    WithoutDBlock,
 }
 
 /// Parameters for a single Ajtai commitment matrix.
@@ -382,11 +382,7 @@ impl LevelParams {
         num_commitments: usize,
         num_public_outputs: usize,
     ) -> Result<usize, AkitaError> {
-        self.m_row_count_for(
-            num_commitments,
-            num_public_outputs,
-            MRowLayout::Intermediate,
-        )
+        self.m_row_count_for(num_commitments, num_public_outputs, MRowLayout::WithDBlock)
     }
 
     /// Row count for an explicit M-row layout.
@@ -401,8 +397,8 @@ impl LevelParams {
         layout: MRowLayout,
     ) -> Result<usize, AkitaError> {
         let n_d_active = match layout {
-            MRowLayout::Intermediate => self.d_key.row_len(),
-            MRowLayout::Terminal => 0,
+            MRowLayout::WithDBlock => self.d_key.row_len(),
+            MRowLayout::WithoutDBlock => 0,
         };
         n_d_active
             .checked_add(
@@ -424,7 +420,7 @@ impl LevelParams {
     ///
     /// When `num_ring > 0` (recursive levels), `block_len` is set to
     /// `ceil(num_ring / num_blocks)` instead of `2^m_vars`, giving tight
-    /// z_pre sizing. Pass `0` for root-level layouts.
+    /// z_folded_rings sizing. Pass `0` for root-level layouts.
     ///
     /// # Errors
     ///
@@ -635,7 +631,7 @@ mod tests {
         assert_eq!(lp.m_row_count(2, 5).unwrap(), 3 + 4 * 2 + 5 + 1 + 2);
         assert_eq!(lp.m_row_count(4, 4).unwrap(), 3 + 4 * 4 + 4 + 1 + 2);
         assert_eq!(
-            lp.m_row_count_for(2, 5, MRowLayout::Terminal).unwrap(),
+            lp.m_row_count_for(2, 5, MRowLayout::WithoutDBlock).unwrap(),
             4 * 2 + 5 + 1 + 2
         );
     }

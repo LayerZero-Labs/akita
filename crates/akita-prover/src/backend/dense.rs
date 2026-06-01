@@ -20,7 +20,7 @@ use crate::backend::poly_helpers::{
 };
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
 use crate::kernels::linear::{decompose_rows_i8_into, try_centered_i8};
-use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
+use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
@@ -501,7 +501,7 @@ where
         })
     }
 
-    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         let live_len = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
             AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
         })?;
@@ -515,9 +515,9 @@ where
                 break;
             }
         }
-        Ok(DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
-            coeffs,
-        )))
+        Ok(CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(coeffs),
+        ))
     }
 }
 

@@ -89,6 +89,83 @@ impl PublicOpeningRow {
     }
 }
 
+/// Commitment-side routing: which committed-polynomial bundle holds each claim's
+/// witness columns in the ring-switch `t`-segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitmentRouting {
+    claim_to_group: Vec<usize>,
+    claim_poly_in_group: Vec<usize>,
+    num_polys_per_group: Vec<usize>,
+}
+
+impl CommitmentRouting {
+    /// Build routing for the root path where each opening point has its own
+    /// commitment group (point index equals group index).
+    pub fn from_root_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
+        let num_claims = incidence.num_claims();
+        Self {
+            claim_to_group: incidence.claim_to_point().to_vec(),
+            claim_poly_in_group: incidence.claim_poly_indices().to_vec(),
+            num_polys_per_group: incidence.num_polys_per_point().to_vec(),
+        }
+        .check(num_claims)
+    }
+
+    /// Build routing for recursive multipoint: one shared commitment opened at
+    /// many points (all claims map to group 0).
+    pub fn from_recursive_multipoint(num_claims: usize) -> Result<Self, AkitaError> {
+        Self {
+            claim_to_group: vec![0; num_claims],
+            claim_poly_in_group: vec![0; num_claims],
+            num_polys_per_group: vec![1],
+        }
+        .check(num_claims)
+    }
+
+    /// Validate commitment routing tables.
+    pub fn check(self, num_claims: usize) -> Result<Self, AkitaError> {
+        if self.claim_to_group.len() != num_claims || self.claim_poly_in_group.len() != num_claims {
+            return Err(AkitaError::InvalidInput(
+                "commitment routing lengths do not match claim count".to_string(),
+            ));
+        }
+        if self.num_polys_per_group.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "commitment routing requires at least one group".to_string(),
+            ));
+        }
+        for (claim_idx, &group_idx) in self.claim_to_group.iter().enumerate() {
+            if group_idx >= self.num_polys_per_group.len() {
+                return Err(AkitaError::InvalidInput(format!(
+                    "commitment routing group index {group_idx} out of range for claim {claim_idx}"
+                )));
+            }
+            let poly_idx = self.claim_poly_in_group[claim_idx];
+            if poly_idx >= self.num_polys_per_group[group_idx] {
+                return Err(AkitaError::InvalidInput(format!(
+                    "commitment routing poly index {poly_idx} out of range for claim {claim_idx}"
+                )));
+            }
+        }
+        Ok(self)
+    }
+
+    /// Flattened claim index to committed-bundle index.
+    pub fn claim_to_group(&self) -> &[usize] {
+        &self.claim_to_group
+    }
+
+    /// Polynomial index within the claim's committed bundle.
+    pub fn claim_poly_in_group(&self) -> &[usize] {
+        &self.claim_poly_in_group
+    }
+
+    /// Number of polynomials bundled in each commitment group.
+    pub fn num_polys_per_group(&self) -> &[usize] {
+        &self.num_polys_per_group
+    }
+}
+
 /// Derived routing and count data for a normalized incidence graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimIncidenceSummary {

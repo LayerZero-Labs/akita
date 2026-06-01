@@ -16,7 +16,7 @@ use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
-    embed_ring_subfield_vector, DirectWitnessProof, FlatDigitBlocks, OpeningPoints,
+    embed_ring_subfield_vector, CleartextWitnessProof, FlatDigitBlocks, OpeningPoints,
     RingSubfieldEncoding,
 };
 
@@ -37,7 +37,6 @@ pub use compute::{
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
-pub use protocol::QuadraticEquation;
 pub use protocol::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix,
     build_terminal_root_batched_proof, commit_next_w_with_policy, prepare_batched_prove_inputs,
@@ -49,6 +48,10 @@ pub use protocol::{
     prove_terminal_root_fold_from_quadratic, prove_terminal_root_fold_with_params,
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
     RingSwitchOutput, RootLevelRawOutput, SuffixLevelOutput, SuffixLevelRequest,
+};
+pub use protocol::{
+    new_ring_relation_prover, new_ring_relation_recursive_multipoint_prover, RingRelationInstance,
+    RingRelationWitness,
 };
 /// One commitment plus the polynomials it bundles, opened at one point.
 ///
@@ -80,8 +83,8 @@ pub type ProverClaims<'a, F, P, C, H> =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
     /// Folded witness rows in ring form.
-    pub z_pre: Vec<CyclotomicRing<F, D>>,
-    /// Centered integer coefficients for each `z_pre` row.
+    pub z_folded_rings: Vec<CyclotomicRing<F, D>>,
+    /// Centered integer coefficients for each `z_folded_rings` row.
     pub centered_coeffs: Vec<[i32; D]>,
     /// Infinity norm of `centered_coeffs`.
     pub centered_inf_norm: u32,
@@ -540,7 +543,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     ///
     /// Returns an error when this root representation cannot produce a direct
     /// witness payload.
-    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "root-direct witness is not supported for this polynomial type".to_string(),
         ))
@@ -752,7 +755,7 @@ where
         )
     }
 
-    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         <P as AkitaPolyOps<F, D>>::direct_root_witness(*self)
     }
 }

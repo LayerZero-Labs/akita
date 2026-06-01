@@ -162,7 +162,8 @@ pub fn prove_fold_level_from_quadratic<F, L, T, B, const D: usize, CommitW>(
     level: usize,
     lp: &LevelParams,
     next_log_basis: u32,
-    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
+    instance: RingRelationInstance<F, { D }>,
+    witness: RingRelationWitness<F, { D }>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] proof_y_rings: Vec<CyclotomicRing<F, D>>,
@@ -183,7 +184,7 @@ where
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
-    let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
+    let logical_w = ring_switch_build_w::<F, B, { D }>(&instance, witness, backend, prepared, lp)?;
     let next_commitment = {
         let _span = tracing::info_span!("commit_w_level", level).entered();
         commit_w_for_next(&logical_w)?
@@ -195,19 +196,19 @@ where
     } = next_commitment;
     let w_commitment_proof = committed_commitment.clone();
     let rs = ring_switch_finalize::<F, L, T, { D }>(
-        &quad_eq,
+        &instance,
         expanded,
         transcript,
         &logical_w,
         &w_commitment_proof,
         lp,
-        MRowLayout::Intermediate,
+        MRowLayout::WithDBlock,
     )?;
 
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
-        &quad_eq.v,
+        &instance.v,
         commitment_u,
         &y_rings,
     )?;
@@ -215,7 +216,7 @@ where
     let relation_claim_public = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
-        &quad_eq.v,
+        &instance.v,
         commitment_u,
         &proof_y_rings,
     )?;
@@ -235,7 +236,7 @@ where
     #[cfg(feature = "zk")]
     let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
         zk_hiding.take_current_level_pads::<L>(col_bits + ring_bits, b)?;
-    let (stage1_proof, r_stage1, s_claim) = {
+    let (stage1_proof, stage1_point, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = AkitaStage1Prover::new(
             &w_evals_compact,
@@ -251,9 +252,9 @@ where
         }
         #[cfg(not(feature = "zk"))]
         {
-            let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+            let (stage1_proof, stage1_point) = stage1_prover.prove(transcript)?;
             let s_claim = stage1_proof.s_claim;
-            (stage1_proof, r_stage1, s_claim)
+            (stage1_proof, stage1_point, s_claim)
         }
     };
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
@@ -264,7 +265,7 @@ where
         let stage2_prover_result = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             s_claim,
             b,
             alpha_evals_y,
@@ -302,7 +303,7 @@ where
         let mut stage2_prover = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             s_claim,
             b,
             alpha_evals_y,
@@ -334,7 +335,7 @@ where
         AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
             proof_y_rings,
             extension_opening_reduction,
-            quad_eq.v,
+            instance.v,
             stage1_proof,
             #[cfg(not(feature = "zk"))]
             stage2_sumcheck_proof,
@@ -374,7 +375,7 @@ where
 /// [`PackedDigits`], so this function:
 ///
 /// * builds `logical_w` via ring switching,
-/// * packs it into the terminal [`DirectWitnessProof`] using
+/// * packs it into the terminal [`CleartextWitnessProof`] using
 ///   `final_log_basis` as the planner-mandated minimum bits per element,
 /// * absorbs logical `w_hat` before fold challenge sampling when the
 ///   quadratic equation is built, then absorbs the remaining final-witness
@@ -382,7 +383,7 @@ where
 /// * skips the stage-1 sumcheck entirely (packed-digit range is structurally
 ///   enforced by the packing), and
 /// * runs stage-2 in relation-only mode with `batching_coeff = 0`,
-///   `s_claim = 0`, and dummy `r_stage1` zeros — these zero the virtual
+///   `s_claim = 0`, and dummy `stage1_point` zeros — these zero the virtual
 ///   sumcheck contribution leaving only the relation oracle.
 ///
 /// # Errors
@@ -399,7 +400,8 @@ pub fn prove_terminal_fold_level_from_quadratic<F, L, T, B, const D: usize>(
     _level: usize,
     lp: &LevelParams,
     final_log_basis: u32,
-    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
+    instance: RingRelationInstance<F, { D }>,
+    witness: RingRelationWitness<F, { D }>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
@@ -420,15 +422,15 @@ where
 {
     let terminal_layout = terminal_witness_segment_layout(
         lp,
-        quad_eq.claim_to_point().len(),
-        quad_eq.num_public_rows(),
+        instance.claim_to_point().len(),
+        instance.num_public_rows(),
     )?;
-    let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
-    let final_witness = DirectWitnessProof::PackedDigits(
+    let logical_w = ring_switch_build_w::<F, B, { D }>(&instance, witness, backend, prepared, lp)?;
+    let final_witness = CleartextWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
     let rs = ring_switch_finalize_terminal::<F, L, T, { D }>(
-        &quad_eq,
+        &instance,
         expanded,
         transcript,
         &logical_w,
@@ -468,9 +470,9 @@ where
     } = rs;
 
     // Relation-only stage-2: batching_coeff = 0 zeros the virtual-claim
-    // contribution to every round polynomial regardless of `r_stage1`, so
-    // dummy zeros for `r_stage1` and `s_claim` are safe.
-    let r_stage1 = vec![L::zero(); col_bits + ring_bits];
+    // contribution to every round polynomial regardless of `stage1_point`, so
+    // dummy zeros for `stage1_point` and `s_claim` are safe.
+    let stage1_point = vec![L::zero(); col_bits + ring_bits];
     #[cfg(feature = "zk")]
     let stage2_round_pads = zk_hiding.take_compressed_rounds::<L>(col_bits + ring_bits, 3)?;
     #[cfg(feature = "zk")]
@@ -479,7 +481,7 @@ where
         let mut stage2_prover = AkitaStage2Prover::new(
             L::zero(),
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             L::zero(),
             b,
             alpha_evals_y,
@@ -504,7 +506,7 @@ where
         let mut stage2_prover = AkitaStage2Prover::new(
             L::zero(),
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             L::zero(),
             b,
             alpha_evals_y,
@@ -846,22 +848,20 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
-    let quad_eq = Box::new(
-        QuadraticEquation::<F, { D }>::new_recursive_multipoint_prover(
-            backend,
-            prepared,
-            ring_opening_points,
-            ring_multiplier_points,
-            witness,
-            w_folded_by_claim,
-            level_params.clone(),
-            hint,
-            transcript,
-            commitment_u,
-            &y_rings,
-            MRowLayout::Intermediate,
-        )?,
-    );
+    let (instance, witness) = new_ring_relation_recursive_multipoint_prover::<F, { D }, _, _>(
+        backend,
+        prepared,
+        ring_opening_points,
+        ring_multiplier_points,
+        witness,
+        w_folded_by_claim,
+        level_params.clone(),
+        hint,
+        transcript,
+        commitment_u,
+        &y_rings,
+        MRowLayout::WithDBlock,
+    )?;
 
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     prove_fold_level_from_quadratic::<F, L, T, B, D, _>(
@@ -873,7 +873,8 @@ where
         level,
         level_params,
         next_log_basis,
-        quad_eq,
+        instance,
+        witness,
         extension_opening_reduction,
         y_rings,
         #[cfg(feature = "zk")]
@@ -1050,22 +1051,20 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
-    let quad_eq = Box::new(
-        QuadraticEquation::<F, { D }>::new_recursive_multipoint_prover(
-            backend,
-            prepared,
-            ring_opening_points,
-            ring_multiplier_points,
-            witness,
-            w_folded_by_claim,
-            level_params.clone(),
-            hint,
-            transcript,
-            commitment_u,
-            &y_rings,
-            MRowLayout::Terminal,
-        )?,
-    );
+    let (instance, witness) = new_ring_relation_recursive_multipoint_prover::<F, { D }, _, _>(
+        backend,
+        prepared,
+        ring_opening_points,
+        ring_multiplier_points,
+        witness,
+        w_folded_by_claim,
+        level_params.clone(),
+        hint,
+        transcript,
+        commitment_u,
+        &y_rings,
+        MRowLayout::WithoutDBlock,
+    )?;
 
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     prove_terminal_fold_level_from_quadratic::<F, L, T, B, D>(
@@ -1077,7 +1076,8 @@ where
         level,
         level_params,
         final_log_basis,
-        quad_eq,
+        instance,
+        witness,
         extension_opening_reduction,
         y_rings,
         #[cfg(feature = "zk")]

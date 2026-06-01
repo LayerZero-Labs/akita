@@ -247,8 +247,8 @@ where
 /// Returns an error if the claim grouping, row layout, or split-eq witness
 /// dimensions are inconsistent.
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
-#[tracing::instrument(skip_all, name = "compute_r_split_eq")]
-pub fn compute_r_split_eq<F, B, const D: usize>(
+#[tracing::instrument(skip_all, name = "compute_relation_quotient")]
+pub fn compute_relation_quotient<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     lp: &LevelParams,
@@ -363,8 +363,8 @@ where
     // Terminal layout drops the D-rows from M (and from `y`). All structural
     // offsets must use `n_d_active`, not `n_d`, to match the verifier.
     let n_d_active = match m_row_layout {
-        MRowLayout::Intermediate => n_d,
-        MRowLayout::Terminal => 0,
+        MRowLayout::WithDBlock => n_d,
+        MRowLayout::WithoutDBlock => 0,
     };
     let commitment_row_count = n_b
         .checked_mul(num_points)

@@ -427,7 +427,7 @@ impl<
             validate,
             &ctx.stage2_sumcheck,
         )?;
-        let final_witness = DirectWitnessProof::deserialize_with_mode(
+        let final_witness = CleartextWitnessProof::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
@@ -743,7 +743,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         match self {
             Self::Fold(fold) => fold.serialize_with_mode(&mut writer, compress),
             Self::Terminal(terminal) => terminal.serialize_with_mode(&mut writer, compress),
-            Self::Direct {
+            Self::ZeroFold {
                 witnesses,
                 #[cfg(feature = "zk")]
                 b_blinding_digits,
@@ -762,7 +762,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         match self {
             Self::Fold(fold) => fold.serialized_size(compress),
             Self::Terminal(terminal) => terminal.serialized_size(compress),
-            Self::Direct {
+            Self::ZeroFold {
                 witnesses,
                 #[cfg(feature = "zk")]
                 b_blinding_digits,
@@ -789,7 +789,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedRootProof
         match self {
             Self::Fold(fold) => fold.check(),
             Self::Terminal(terminal) => terminal.check(),
-            Self::Direct {
+            Self::ZeroFold {
                 witnesses,
                 #[cfg(feature = "zk")]
                 b_blinding_digits,
@@ -875,7 +875,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
                     ));
                 }
             }
-            AkitaBatchedRootProof::Direct { .. } => {
+            AkitaBatchedRootProof::ZeroFold { .. } => {
                 #[cfg(feature = "zk")]
                 if !self.zk_hiding.is_empty() {
                     return Err(SerializationError::InvalidData(
@@ -952,11 +952,11 @@ impl<
                     steps: Vec::new(),
                 }
             }
-            AkitaBatchedProofShape::Direct { witness_shapes } => {
+            AkitaBatchedProofShape::ZeroFold { witness_shapes } => {
                 let mut witnesses = Vec::new();
                 reserve_shape_len(&mut witnesses, witness_shapes.len())?;
                 for shape in witness_shapes {
-                    witnesses.push(DirectWitnessProof::deserialize_with_mode(
+                    witnesses.push(CleartextWitnessProof::deserialize_with_mode(
                         &mut reader,
                         compress,
                         validate,
@@ -969,7 +969,7 @@ impl<
                 Self {
                     #[cfg(feature = "zk")]
                     zk_hiding,
-                    root: AkitaBatchedRootProof::Direct {
+                    root: AkitaBatchedRootProof::ZeroFold {
                         witnesses,
                         #[cfg(feature = "zk")]
                         b_blinding_digits,

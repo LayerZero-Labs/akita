@@ -39,7 +39,7 @@ use akita_field::{
 };
 use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
-    DirectWitnessProof, FlatDigitBlocks, FlatRingVec, RingMatrixView, RingSubfieldEncoding,
+    CleartextWitnessProof, FlatDigitBlocks, FlatRingVec, RingMatrixView, RingSubfieldEncoding,
 };
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};

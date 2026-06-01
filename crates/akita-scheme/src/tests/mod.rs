@@ -102,7 +102,7 @@ fn expected_same_point_batched_shape(
             y_rings_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
             extension_opening_reduction: None,
             stage2_sumcheck: vec![3; root_rounds],
-            final_witness: akita_types::DirectWitnessShape::PackedDigits((
+            final_witness: akita_types::CleartextWitnessShape::PackedDigits((
                 root_w_len,
                 terminal_next_params.log_basis,
             )),
@@ -178,7 +178,7 @@ fn expected_same_point_batched_shape(
     )
     .expect("terminal layout");
     // The terminal recursive fold ships its `w` in cleartext under
-    // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
+    // MRowLayout::WithoutDBlock (D-block omitted from per-row `r` quotients), so
     // the expected packed-digit witness shape uses the terminal-layout ring
     // count instead of the intermediate-layout `w_ring_element_count`.
     let terminal_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<OneHotF>(
@@ -187,7 +187,7 @@ fn expected_same_point_batched_shape(
         1,
         1,
         1,
-        akita_types::MRowLayout::Terminal,
+        akita_types::MRowLayout::WithoutDBlock,
     )
     .expect("terminal-layout witness count")
         * terminal_lp.ring_dimension;
@@ -196,7 +196,7 @@ fn expected_same_point_batched_shape(
         y_rings_coeffs: terminal_lp.ring_dimension,
         extension_opening_reduction: None,
         stage2_sumcheck: vec![3; terminal_rounds],
-        final_witness: akita_types::DirectWitnessShape::PackedDigits((
+        final_witness: akita_types::CleartextWitnessShape::PackedDigits((
             terminal_next_w_len,
             terminal_next_params.log_basis,
         )),

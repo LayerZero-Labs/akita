@@ -15,8 +15,8 @@ use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_is_root_direct, schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaProofStep, AkitaScheduleInputs, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
-    ClaimIncidenceSummary, DirectWitnessProof, LevelParams, RingCommitment, RingSubfieldEncoding,
-    Schedule, VerifierClaims,
+    ClaimIncidenceSummary, CleartextWitnessProof, LevelParams, RingCommitment,
+    RingSubfieldEncoding, Schedule, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -55,7 +55,7 @@ where
                 return Err(AkitaError::InvalidProof);
             }
         }
-        AkitaBatchedRootProof::Direct { .. } => {
+        AkitaBatchedRootProof::ZeroFold { .. } => {
             if !proof.steps.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
@@ -123,7 +123,7 @@ fn checked_root_direct_witness_rings<const D: usize>(
 }
 
 fn validate_root_direct_recommitment_shape<F, const D: usize>(
-    witnesses: &[DirectWitnessProof<F>],
+    witnesses: &[CleartextWitnessProof<F>],
     setup_seed: &AkitaSetupSeed,
     incidence_summary: &ClaimIncidenceSummary,
     params: &LevelParams,
@@ -327,7 +327,7 @@ where
 }
 
 fn recommit_direct_witness_group<F, const D: usize>(
-    group_witnesses: &[DirectWitnessProof<F>],
+    group_witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
     params: &LevelParams,
     #[cfg(feature = "zk")] blinding_digits: &[i8],
@@ -381,7 +381,7 @@ where
 /// if witness reconstruction fails, or if any recomputed commitment differs
 /// from the proof commitment.
 pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
-    witnesses: &[DirectWitnessProof<F>],
+    witnesses: &[CleartextWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
     flat_commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
@@ -537,7 +537,7 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
     DirectCommitmentCheck: FnOnce(
-        &[DirectWitnessProof<F>],
+        &[CleartextWitnessProof<F>],
         &[RingCommitment<F, D>],
         &ClaimIncidenceSummary,
         RootDirectBlindingPayload<'_>,
@@ -551,7 +551,7 @@ where
     } = prepared_claims;
 
     match &proof.root {
-        AkitaBatchedRootProof::Direct { witnesses, .. } => {
+        AkitaBatchedRootProof::ZeroFold { witnesses, .. } => {
             #[cfg(feature = "zk")]
             if !proof.zk_hiding.is_empty() {
                 return Err(AkitaError::InvalidProof);
@@ -668,7 +668,7 @@ where
     BindTranscript:
         FnOnce(&mut T, &ClaimIncidenceSummary, &Schedule, BasisMode) -> Result<(), AkitaError>,
     DirectCommitmentCheck: FnOnce(
-        &[DirectWitnessProof<F>],
+        &[CleartextWitnessProof<F>],
         &AkitaVerifierSetup<F>,
         &[RingCommitment<F, D>],
         &ClaimIncidenceSummary,
@@ -779,9 +779,9 @@ mod tests {
             max_zk_d_len: 1,
             public_matrix_seed: [0u8; 32],
         };
-        let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
-            vec![F::zero(); 64],
-        ))];
+        let witnesses = vec![CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(vec![F::zero(); 64]),
+        )];
         let err = validate_root_direct_recommitment_shape::<F, D>(
             &witnesses,
             &setup_seed,
@@ -811,9 +811,9 @@ mod tests {
             max_zk_d_len: 1,
             public_matrix_seed: [0u8; 32],
         };
-        let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
-            vec![F::zero(); 32],
-        ))];
+        let witnesses = vec![CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(vec![F::zero(); 32]),
+        )];
         let err = validate_root_direct_recommitment_shape::<F, D>(
             &witnesses,
             &setup_seed,

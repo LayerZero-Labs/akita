@@ -12,7 +12,11 @@ fn aggregate_witnesses<F: FieldCore, const D: usize>(
 ) -> DecomposeFoldWitness<F, D> {
     let mut acc = witnesses[0].clone();
     for witness in &witnesses[1..] {
-        for (dst, src) in acc.z_pre.iter_mut().zip(witness.z_pre.iter()) {
+        for (dst, src) in acc
+            .z_folded_rings
+            .iter_mut()
+            .zip(witness.z_folded_rings.iter())
+        {
             *dst += *src;
         }
         for (dst, src) in acc

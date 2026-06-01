@@ -5,7 +5,7 @@ use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
 
 use crate::layout::digit_math::compute_num_digits_full_field;
 use crate::stage1_tree_stage_shapes;
-use crate::{DirectWitnessShape, LevelParams};
+use crate::{CleartextWitnessShape, LevelParams};
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {
@@ -31,12 +31,12 @@ pub fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
 }
 
 /// Serialized byte size for a terminal direct witness shape.
-pub fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
+pub fn direct_witness_bytes(field_bits: u32, shape: &CleartextWitnessShape) -> usize {
     match shape {
-        DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
+        CleartextWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
             packed_digits_bytes(*num_elems, *bits_per_elem)
         }
-        DirectWitnessShape::FieldElements(num_coeffs) => {
+        CleartextWitnessShape::FieldElements(num_coeffs) => {
             num_coeffs.saturating_mul(field_bytes(field_bits))
         }
     }
@@ -244,7 +244,7 @@ pub fn level_proof_bytes(
 /// A terminal level absorbs the cleartext recursive witness directly into the
 /// Fiat-Shamir transcript, so the proof no longer ships the next-level
 /// witness commitment, the stage-1 range-check sumcheck, or the next-witness
-/// evaluation claim. Under MRowLayout::Terminal the D-block is also dropped
+/// evaluation claim. Under MRowLayout::WithoutDBlock the D-block is also dropped
 /// from the M-matrix and `v` is omitted from `TerminalLevelProof` entirely.
 /// Only `y` and the (relation-only) stage-2 sumcheck remain. The cleartext
 /// witness itself is accounted for separately via [`direct_witness_bytes`].

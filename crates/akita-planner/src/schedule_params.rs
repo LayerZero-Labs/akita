@@ -28,8 +28,8 @@ use akita_types::{
     root_current_w_len, root_extension_opening_partials, scale_batched_root_layout,
     schedule_from_plan, terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AjtaiRole,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentEnvelope, DecompositionParams,
-    DirectStep, DirectWitnessShape, FoldStep, LevelParams, MRowLayout, Schedule, SisModulusFamily,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CleartextWitnessShape, CommitmentEnvelope,
+    DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout, Schedule, SisModulusFamily,
     Step,
 };
 
@@ -416,7 +416,7 @@ fn to_fold_step(
 /// Initial (placeholder) witness shape for a terminal direct step recorded
 /// during the suffix DP. The DP records this when transitioning into the
 /// terminal base case using only `(current_w_len, log_basis)`; the FINAL
-/// shape (computed from the last fold's `lp` under [`MRowLayout::Terminal`])
+/// shape (computed from the last fold's `lp` under [`MRowLayout::WithoutDBlock`])
 /// overwrites this once the enclosing fold candidate is known.
 fn to_direct_step(opts: &SearchOptions, current_w_len: usize, log_basis: u32) -> Step {
     let expansion = opts.recursive_witness_expansion;
@@ -426,7 +426,7 @@ fn to_direct_step(opts: &SearchOptions, current_w_len: usize, log_basis: u32) ->
         0,
         "terminal recursive witness length must be divisible by the extension expansion"
     );
-    let witness_shape = DirectWitnessShape::PackedDigits((current_w_len / expansion, log_basis));
+    let witness_shape = CleartextWitnessShape::PackedDigits((current_w_len / expansion, log_basis));
     let direct_bytes = direct_witness_bytes(opts.field_bits(), &witness_shape);
     Step::Direct(DirectStep {
         current_w_len,
@@ -467,7 +467,7 @@ fn finalize_terminal_direct_witness_shape(
             "terminal direct finalizer expected a direct suffix step".to_string(),
         ));
     };
-    let DirectWitnessShape::PackedDigits((_, log_basis)) = direct.witness_shape else {
+    let CleartextWitnessShape::PackedDigits((_, log_basis)) = direct.witness_shape else {
         return Err(AkitaError::InvalidSetup(
             "terminal direct finalizer expected a packed-digit witness".to_string(),
         ));
@@ -479,13 +479,13 @@ fn finalize_terminal_direct_witness_shape(
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
-        MRowLayout::Terminal,
+        MRowLayout::WithoutDBlock,
     )
     .expect("terminal recursive witness length overflow");
     let terminal_field_len = ring_count
         .checked_mul(candidate.lp.ring_dimension)
         .expect("terminal recursive witness length overflow");
-    let witness_shape = DirectWitnessShape::PackedDigits((terminal_field_len, log_basis));
+    let witness_shape = CleartextWitnessShape::PackedDigits((terminal_field_len, log_basis));
     let direct_bytes = direct_witness_bytes(opts.field_bits(), &witness_shape);
     // Bake the SIS-secure terminal-direct level params onto the step so
     // prover/verifier (and the materializer, when this candidate is
@@ -741,7 +741,7 @@ fn root_w_ring_element_count(
 
     let w_hat = w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat = t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let z_pre = z_vectors * lp.inner_width() * lp.num_digits_fold;
+    let z_folded_rings = z_vectors * lp.inner_width() * lp.num_digits_fold;
     let r_rows = lp.m_row_count(num_points, z_vectors)?;
     let r = r_rows * r_decomp;
 
@@ -760,11 +760,11 @@ fn root_w_ring_element_count(
                 lp.log_basis,
                 fb as usize,
             );
-        Ok(w_hat + t_hat + b_blinding + d_blinding + z_pre + r)
+        Ok(w_hat + t_hat + b_blinding + d_blinding + z_folded_rings + r)
     }
     #[cfg(not(feature = "zk"))]
     {
-        Ok(w_hat + t_hat + z_pre + r)
+        Ok(w_hat + t_hat + z_folded_rings + r)
     }
 }
 
@@ -1007,7 +1007,7 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let fb = opts.field_bits();
-    let root_direct_shape = DirectWitnessShape::FieldElements(root_w_len);
+    let root_direct_shape = CleartextWitnessShape::FieldElements(root_w_len);
     let mut best_cost = direct_witness_bytes(fb, &root_direct_shape);
     // Populate `commit_params` so consumers don't have to re-derive the
     // root commit layout from the schedule shape. Uses the same primitives

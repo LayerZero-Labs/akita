@@ -263,7 +263,7 @@ fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
     let t_hat: Vec<[i8; D]> = (0..cols)
         .map(|j| std::array::from_fn(|k| ((3 * j + k) % 5) as i8 - 2))
         .collect();
-    let z_pre: Vec<[i32; D]> = (0..cols)
+    let z_folded_rings: Vec<[i32; D]> = (0..cols)
         .map(|j| std::array::from_fn(|k| ((j + k) % 3) as i32 - 1))
         .collect();
 
@@ -273,7 +273,7 @@ fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
     let expected_b = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &t_hat, log_basis)
         .expect("expected B rows");
     let (d_rows, b_rows, _a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, rows, rows, 1, &w_hat, &t_hat, &z_pre, 1)
+        fused_split_eq_quotients::<F, D>(&slot, rows, rows, 1, &w_hat, &t_hat, &z_folded_rings, 1)
             .expect("fused split-eq rows");
 
     assert_eq!(d_rows, expected_d);
@@ -295,14 +295,14 @@ fn fused_split_eq_q128_quotient_chunks_before_crt_wrap() {
             .expect("valid ring matrix view"),
     )
     .expect("Q128 dispatch should support this field and ring dimension");
-    let z_pre = vec![[32_768i32; D]; cols];
+    let z_folded_rings = vec![[32_768i32; D]; cols];
 
     let (_d_rows, _b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
+        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_folded_rings, 32_768)
             .expect("fused split-eq rows");
 
     let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, j| {
-        let z = centered_i32_ring(&z_pre[j]);
+        let z = centered_i32_ring(&z_folded_rings[j]);
         let cyclic = cyclic_product(&row, &z);
         let negacyclic = row * z;
         acc += quotient_from_cyclic_and_negacyclic(&cyclic, &negacyclic);
@@ -326,13 +326,13 @@ fn fused_split_eq_q128_quotient_falls_back_when_one_term_exceeds_crt() {
             .expect("valid ring matrix view"),
     )
     .expect("Q128 dispatch should support this field and ring dimension");
-    let z_pre = vec![[32_768i32; D]; cols];
+    let z_folded_rings = vec![[32_768i32; D]; cols];
 
     let (_d_rows, _b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
+        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_folded_rings, 32_768)
             .expect("fused split-eq rows");
 
-    let z = centered_i32_ring(&z_pre[0]);
+    let z = centered_i32_ring(&z_folded_rings[0]);
     let expected = quotient_from_cyclic_and_negacyclic(&cyclic_product(&row, &z), &(row * z));
 
     assert_eq!(a_rows, vec![expected]);
@@ -353,14 +353,14 @@ fn fused_split_eq_uses_actual_centered_bound_when_hint_is_underreported() {
             .expect("valid ring matrix view"),
     )
     .expect("Q128 dispatch should support this field and ring dimension");
-    let z_pre = vec![[32_768i32; D]; cols];
+    let z_folded_rings = vec![[32_768i32; D]; cols];
 
     let (_d_rows, _b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 1)
+        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_folded_rings, 1)
             .expect("fused split-eq rows");
 
     let expected = (0..cols).fold(CyclotomicRing::<F, D>::zero(), |mut acc, j| {
-        let z = centered_i32_ring(&z_pre[j]);
+        let z = centered_i32_ring(&z_folded_rings[j]);
         let cyclic = cyclic_product(&row, &z);
         let negacyclic = row * z;
         acc += quotient_from_cyclic_and_negacyclic(&cyclic, &negacyclic);
@@ -509,10 +509,10 @@ fn fused_split_eq_quotients_uses_role_local_packed_widths() {
     let t_hat: Vec<[i8; D]> = (0..b_width)
         .map(|j| std::array::from_fn(|k| ((2 * j + k) % 7) as i8 - 3))
         .collect();
-    let z_pre: Vec<[i32; D]> = (0..a_width)
+    let z_folded_rings: Vec<[i32; D]> = (0..a_width)
         .map(|j| std::array::from_fn(|k| ((3 * j + k) % 7) as i32 - 3))
         .collect();
-    let z_rings: Vec<CyclotomicRing<F, D>> = z_pre
+    let z_rings: Vec<CyclotomicRing<F, D>> = z_folded_rings
         .iter()
         .map(|row| {
             CyclotomicRing::from_coefficients(std::array::from_fn(|k| F::from_i64(row[k] as i64)))
@@ -539,7 +539,7 @@ fn fused_split_eq_quotients_uses_role_local_packed_widths() {
         })
         .collect::<Vec<_>>();
     let (d_rows, b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, n_d, n_b, n_a, &w_hat, &t_hat, &z_pre, 3)
+        fused_split_eq_quotients::<F, D>(&slot, n_d, n_b, n_a, &w_hat, &t_hat, &z_folded_rings, 3)
             .expect("fused split-eq rows");
 
     assert_eq!(d_rows, expected_d);

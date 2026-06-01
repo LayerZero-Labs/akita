@@ -2,7 +2,7 @@ use akita_field::FieldCore;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, AkitaSchedulePlan,
-    DirectWitnessProof, LevelParams, Schedule, Step, TerminalLevelProof,
+    CleartextWitnessProof, LevelParams, Schedule, Step, TerminalLevelProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -543,7 +543,7 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
 
 fn emit_observed_tail_summary<FF: FieldCore + AkitaSerialize>(
     label: &str,
-    final_w: &DirectWitnessProof<FF>,
+    final_w: &CleartextWitnessProof<FF>,
 ) {
     let tail_bytes = final_w.serialized_size(Compress::No);
     let num_elems = final_w.num_elems();

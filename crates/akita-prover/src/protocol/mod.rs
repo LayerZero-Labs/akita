@@ -6,11 +6,13 @@ pub mod flow;
 pub(crate) mod masking;
 pub mod prg;
 pub mod quadratic_equation;
+pub mod ring_relation_witness;
 pub mod ring_switch;
 pub mod sumcheck;
 #[cfg(feature = "zk")]
 pub(crate) mod zk_hiding_commit;
 
+pub use akita_types::RingRelationInstance;
 pub use flow::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix,
     build_terminal_root_batched_proof, prepare_batched_prove_inputs, prove_batched_with_policy,
@@ -23,5 +25,9 @@ pub use flow::{
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
     RootLevelRawOutput, SuffixLevelOutput, SuffixLevelRequest,
 };
-pub use quadratic_equation::QuadraticEquation;
+pub use quadratic_equation::{
+    compute_relation_quotient, generate_y, new_ring_relation_prover,
+    new_ring_relation_recursive_multipoint_prover,
+};
+pub use ring_relation_witness::RingRelationWitness;
 pub use ring_switch::{commit_next_w_with_policy, RingSwitchOutput};

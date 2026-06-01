@@ -365,7 +365,7 @@ pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
     pub stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
     /// Terminal witness, absorbed via `ABSORB_SUMCHECK_W` in place of
     /// `next_w_commitment`.
-    pub final_witness: DirectWitnessProof<F>,
+    pub final_witness: CleartextWitnessProof<F>,
 }
 
 impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
@@ -378,7 +378,7 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
         #[cfg(not(feature = "zk"))] stage2_sumcheck: SumcheckProof<L>,
         #[cfg(feature = "zk")] stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
-        final_witness: DirectWitnessProof<F>,
+        final_witness: CleartextWitnessProof<F>,
     ) -> Self {
         Self {
             y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
@@ -461,9 +461,9 @@ pub enum AkitaBatchedRootProof<F: FieldCore, L: FieldCore> {
     Terminal(TerminalLevelProof<F, L>),
     /// Root-direct batched fast path: one direct field-element witness per
     /// claim, in the normalized incidence claim order used by the prover.
-    Direct {
+    ZeroFold {
         /// Per-claim direct witnesses.
-        witnesses: Vec<DirectWitnessProof<F>>,
+        witnesses: Vec<CleartextWitnessProof<F>>,
         /// Per-commitment B-blinding digit streams revealed for verifier
         /// recommitment in the root-direct zk fast path.
         #[cfg(feature = "zk")]
@@ -564,18 +564,18 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
 
     /// Construct the root-direct batched variant with one witness per claim.
     #[cfg(not(feature = "zk"))]
-    pub fn new_direct(witnesses: Vec<DirectWitnessProof<F>>) -> Self {
-        Self::Direct { witnesses }
+    pub fn new_zero_fold(witnesses: Vec<CleartextWitnessProof<F>>) -> Self {
+        Self::ZeroFold { witnesses }
     }
 
     /// Construct the root-direct batched variant with one witness per claim and
     /// one revealed B-blinding payload per opening-point commitment.
     #[cfg(feature = "zk")]
-    pub fn new_direct(
-        witnesses: Vec<DirectWitnessProof<F>>,
+    pub fn new_zero_fold(
+        witnesses: Vec<CleartextWitnessProof<F>>,
         b_blinding_digits: Vec<Vec<i8>>,
     ) -> Self {
-        Self::Direct {
+        Self::ZeroFold {
             witnesses,
             b_blinding_digits,
         }
@@ -585,7 +585,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     pub fn as_fold(&self) -> Option<&AkitaBatchedFoldRoot<F, L>> {
         match self {
             Self::Fold(fold) => Some(fold),
-            Self::Terminal(_) | Self::Direct { .. } => None,
+            Self::Terminal(_) | Self::ZeroFold { .. } => None,
         }
     }
 
@@ -593,7 +593,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     pub fn as_fold_mut(&mut self) -> Option<&mut AkitaBatchedFoldRoot<F, L>> {
         match self {
             Self::Fold(fold) => Some(fold),
-            Self::Terminal(_) | Self::Direct { .. } => None,
+            Self::Terminal(_) | Self::ZeroFold { .. } => None,
         }
     }
 
@@ -601,7 +601,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     pub fn as_terminal_root(&self) -> Option<&TerminalLevelProof<F, L>> {
         match self {
             Self::Terminal(terminal) => Some(terminal),
-            Self::Fold(_) | Self::Direct { .. } => None,
+            Self::Fold(_) | Self::ZeroFold { .. } => None,
         }
     }
 
@@ -609,15 +609,15 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     pub fn as_terminal_root_mut(&mut self) -> Option<&mut TerminalLevelProof<F, L>> {
         match self {
             Self::Terminal(terminal) => Some(terminal),
-            Self::Fold(_) | Self::Direct { .. } => None,
+            Self::Fold(_) | Self::ZeroFold { .. } => None,
         }
     }
 
     /// Borrow the per-claim direct witnesses when this is a root-direct
     /// batched proof.
-    pub fn as_direct(&self) -> Option<&[DirectWitnessProof<F>]> {
+    pub fn as_direct(&self) -> Option<&[CleartextWitnessProof<F>]> {
         match self {
-            Self::Direct { witnesses, .. } => Some(witnesses.as_slice()),
+            Self::ZeroFold { witnesses, .. } => Some(witnesses.as_slice()),
             Self::Fold(_) | Self::Terminal(_) => None,
         }
     }
@@ -626,7 +626,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     #[cfg(feature = "zk")]
     pub fn direct_b_blinding_digits(&self) -> Option<&[Vec<i8>]> {
         match self {
-            Self::Direct {
+            Self::ZeroFold {
                 b_blinding_digits, ..
             } => Some(b_blinding_digits.as_slice()),
             Self::Fold(_) | Self::Terminal(_) => None,
@@ -635,7 +635,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
 
     /// True when this root proof is a root-direct batched fast path.
     pub fn is_direct(&self) -> bool {
-        matches!(self, Self::Direct { .. })
+        matches!(self, Self::ZeroFold { .. })
     }
 
     /// True when this root proof is itself the terminal fold level.
@@ -731,7 +731,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedProof<F, L> {
     /// [`AkitaBatchedRootProof::as_direct`] to access the per-claim witnesses
     /// in that case), and panics if a fold-rooted proof does not terminate
     /// with a terminal step.
-    pub fn final_witness(&self) -> &DirectWitnessProof<F> {
+    pub fn final_witness(&self) -> &CleartextWitnessProof<F> {
         match &self.root {
             AkitaBatchedRootProof::Terminal(terminal) => &terminal.final_witness,
             AkitaBatchedRootProof::Fold(_) => {
@@ -742,7 +742,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedProof<F, L> {
                     .expect("fold-rooted Akita proof must terminate with a terminal step")
                     .final_witness
             }
-            AkitaBatchedRootProof::Direct { .. } => {
+            AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("final_witness() called on a root-direct batched proof")
             }
         }
@@ -783,8 +783,8 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedProof<F, L> {
             AkitaBatchedRootProof::Terminal(terminal) => {
                 AkitaBatchedProofShape::Terminal(terminal.shape())
             }
-            AkitaBatchedRootProof::Direct { witnesses, .. } => AkitaBatchedProofShape::Direct {
-                witness_shapes: witnesses.iter().map(DirectWitnessProof::shape).collect(),
+            AkitaBatchedRootProof::ZeroFold { witnesses, .. } => AkitaBatchedProofShape::ZeroFold {
+                witness_shapes: witnesses.iter().map(CleartextWitnessProof::shape).collect(),
             },
         }
     }

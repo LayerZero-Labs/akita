@@ -357,7 +357,7 @@ pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
     pub t_hat: &'a [[i8; D]],
     /// One centered `z` segment contributing to A-side quotient rows.
     pub z_segment: &'a [[i32; D]],
-    /// Infinity norm of the full centered `z_pre` witness.
+    /// Infinity norm of the full centered `z_folded_rings` witness.
     pub z_pre_centered_inf_norm: u32,
     /// Logarithm of the gadget basis used to produce `w_hat` and `t_hat`.
     pub log_basis: u32,
@@ -369,7 +369,7 @@ pub struct RingSwitchQuotientRowsPlan<'a, const D: usize> {
     pub n_a: usize,
     /// One centered `z` segment contributing to A-side quotient rows.
     pub z_segment: &'a [[i32; D]],
-    /// Infinity norm of the full centered `z_pre` witness.
+    /// Infinity norm of the full centered `z_folded_rings` witness.
     pub z_pre_centered_inf_norm: u32,
 }
 
