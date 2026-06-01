@@ -132,8 +132,6 @@ mod tests {
         setup: AkitaExpandedSetup<F>,
         full_vec_randomness: Vec<F>,
         alpha: F,
-        w_len: usize,
-        t_len: usize,
     }
 
     fn f(value: u128) -> F {
@@ -178,8 +176,6 @@ mod tests {
         let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
 
         let w_len = depth_open * total_blocks;
-        let t_len = depth_open * n_a * total_blocks;
-        let z_len = depth_fold * depth_commit * num_points * block_len;
         let b_blinding_digit_planes_per_point =
             zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
         let b_blinding_segment_len = num_points * b_blinding_digit_planes_per_point;
@@ -191,8 +187,6 @@ mod tests {
             &num_polys_per_point,
         )
         .expect("witness segment layout");
-        let b_offset = witness_segment_layout.b_blinding_offset;
-        let d_offset = witness_segment_layout.d_blinding_offset;
         let total_len = witness_segment_layout.offset_r;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
         let max_zk_b_len = n_b * b_blinding_digit_planes_per_point;
@@ -284,8 +278,6 @@ mod tests {
             setup,
             full_vec_randomness: (0..bits).map(|idx| f(4_000 + idx as u128)).collect(),
             alpha: f(5_000),
-            w_len,
-            t_len,
         }
     }
 
@@ -298,7 +290,7 @@ mod tests {
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
         let b_start = 1 + p.num_public_rows + p.n_d;
-        let b_offset = fx.w_len + fx.t_len;
+        let b_offset = p.segment_layout().unwrap().b_blinding_offset;
         let b_zk_view = fx
             .setup
             .zk_b_matrix()
@@ -332,7 +324,7 @@ mod tests {
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
         let d_start = 1 + p.num_public_rows;
-        let d_offset = fx.w_len + fx.t_len + p.b_blinding_segment_len;
+        let d_offset = p.segment_layout().unwrap().d_blinding_offset;
         let d_zk_view = fx
             .setup
             .zk_d_matrix()

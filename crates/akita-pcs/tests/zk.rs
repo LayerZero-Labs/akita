@@ -15,7 +15,7 @@ use akita_prover::protocol::ring_switch::{
     build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
 };
 use akita_prover::{
-    new_ring_relation_prover, AkitaProverSetup, CommitmentProver, RingRelationInstance,
+    new_ring_relation_prover, AkitaProverSetup, CommitmentProver,
     RingRelationWitness,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
