@@ -90,7 +90,7 @@ where
         let inputs = AkitaScheduleInputs {
             num_vars,
             level,
-            current_w_len: current_state.common_padded_len()?,
+            current_w_len: current_state.recursive_witness_len()?,
         };
         let (level_params, next_params) =
             select_fold_execution(level, inputs, current_state.log_basis)?;
@@ -114,7 +114,7 @@ where
     let inputs = AkitaScheduleInputs {
         num_vars,
         level,
-        current_w_len: current_state.common_padded_len()?,
+        current_w_len: current_state.recursive_witness_len()?,
     };
     let (level_params, next_params) =
         select_fold_execution(level, inputs, current_state.log_basis)?;
@@ -741,11 +741,27 @@ where
     }
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
-    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    let carried_claims = carried_openings
+        .iter()
+        .map(|claim| CarriedOpeningClaim {
+            commitment,
+            point: &claim.opening_point,
+            value: claim.opening,
+            basis: claim.basis,
+            natural_len: claim.natural_len,
+            padded_len: claim.padded_len,
+            kind: claim.kind,
+        })
+        .collect::<Vec<_>>();
+    append_carried_opening_batch_to_transcript(&carried_claims, transcript)?;
+    let carried_incidence = carried_opening_incidence_summary(&carried_claims)?;
     if carried_openings.is_empty()
         || carried_openings.iter().any(|claim| {
-            claim.padded_len != logical_w.len() || claim.natural_len > claim.padded_len
+            (matches!(claim.kind, CarriedOpeningKind::RecursiveWitness)
+                && claim.natural_len != logical_w.len())
+                || claim.natural_len > claim.padded_len
         })
+        || carried_incidence.num_claims() != carried_openings.len()
     {
         return Err(AkitaError::InvalidInput(
             "recursive carried openings must share the current witness domain".to_string(),
@@ -971,11 +987,27 @@ where
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     let commitment_u = commitment.as_ring_slice::<D>()?;
-    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    let carried_claims = carried_openings
+        .iter()
+        .map(|claim| CarriedOpeningClaim {
+            commitment,
+            point: &claim.opening_point,
+            value: claim.opening,
+            basis: claim.basis,
+            natural_len: claim.natural_len,
+            padded_len: claim.padded_len,
+            kind: claim.kind,
+        })
+        .collect::<Vec<_>>();
+    append_carried_opening_batch_to_transcript(&carried_claims, transcript)?;
+    let carried_incidence = carried_opening_incidence_summary(&carried_claims)?;
     if carried_openings.is_empty()
         || carried_openings.iter().any(|claim| {
-            claim.padded_len != logical_w.len() || claim.natural_len > claim.padded_len
+            (matches!(claim.kind, CarriedOpeningKind::RecursiveWitness)
+                && claim.natural_len != logical_w.len())
+                || claim.natural_len > claim.padded_len
         })
+        || carried_incidence.num_claims() != carried_openings.len()
     {
         return Err(AkitaError::InvalidInput(
             "recursive carried openings must share the current witness domain".to_string(),
@@ -1189,7 +1221,7 @@ where
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
-    let current_padded_len = current_state.common_padded_len()?;
+    let current_w_len = current_state.recursive_witness_len()?;
 
     let RecursiveProverState {
         w: current_w,
@@ -1201,7 +1233,7 @@ where
         #[cfg(feature = "zk")]
         zk_hiding,
     } = current_state;
-    let w_lp = current_layout(level_params, current_padded_len)?;
+    let w_lp = current_layout(level_params, current_w_len)?;
     let w_view = current_w.view::<F, D>()?;
     let logical_w = logical_w.as_ref().unwrap_or(&current_w);
     let typed_hint: AkitaCommitmentHint<F, D> = hint.to_typed::<D>()?;
@@ -1270,8 +1302,8 @@ where
     let _setup_span = tracing::info_span!("inter_level_setup_terminal", level).entered();
 
     let current_w = &current_state.w;
-    let current_padded_len = current_state.common_padded_len()?;
-    let w_lp = current_layout(level_params, current_padded_len)?;
+    let current_w_len = current_state.recursive_witness_len()?;
+    let w_lp = current_layout(level_params, current_w_len)?;
     let w_view = current_w.view::<F, D>()?;
     let logical_w = current_state.logical_w.as_ref().unwrap_or(current_w);
     let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;

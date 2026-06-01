@@ -41,13 +41,14 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM,
+    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
+    append_batched_commitments_to_transcript, append_carried_opening_batch_to_transcript,
+    append_claim_incidence_shape_to_transcript, append_claim_points_to_transcript,
+    append_claim_values_to_transcript, basis_weights, carried_opening_incidence_summary,
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
@@ -58,9 +59,9 @@ use akita_types::{
     schedule_root_fold_step, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    CarriedOpeningKind, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
-    IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
+    CarriedOpeningClaim, CarriedOpeningKind, ClaimIncidence, ClaimIncidenceLimits,
+    ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof,
+    FlatRingVec, IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
     RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
     TerminalLevelProof,
 };
@@ -125,7 +126,7 @@ impl<L: FieldCore> RecursiveCarriedOpening<L> {
             opening,
             basis: BasisMode::Lagrange,
             natural_len: w_len,
-            padded_len: w_len,
+            padded_len: w_len.next_power_of_two(),
             kind: CarriedOpeningKind::RecursiveWitness,
         }
     }
@@ -179,6 +180,17 @@ impl<F: FieldCore, L: FieldCore> RecursiveProverState<F, L> {
             ));
         }
         Ok(first.padded_len)
+    }
+
+    /// Natural field length of the ordinary recursive witness claim.
+    pub fn recursive_witness_len(&self) -> Result<usize, AkitaError> {
+        self.carried_openings
+            .iter()
+            .find(|claim| matches!(claim.kind, CarriedOpeningKind::RecursiveWitness))
+            .map(|claim| claim.natural_len)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("missing recursive witness carried opening".to_string())
+            })
     }
 }
 
