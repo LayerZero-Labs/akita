@@ -37,9 +37,11 @@ pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSlice
 pub use direct_witness::{DirectWitnessProof, DirectWitnessShape, PackedDigits};
 pub use hints::AkitaCommitmentHint;
 pub use incidence::{
-    append_claim_incidence_shape_to_transcript, sample_public_row_coefficients,
-    verifier_claims_to_incidence, CarriedOpeningKind, ClaimIncidence, ClaimIncidenceLimits,
-    ClaimIncidenceSummary, IncidenceClaim, PublicOpeningRow,
+    append_carried_opening_batch_to_transcript, append_claim_incidence_shape_to_transcript,
+    carried_opening_incidence_summary, sample_public_row_coefficients,
+    validate_carried_opening_batch, verifier_claims_to_incidence, CarriedOpeningClaim,
+    CarriedOpeningKind, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
+    IncidenceClaim, PublicOpeningRow,
 };
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
