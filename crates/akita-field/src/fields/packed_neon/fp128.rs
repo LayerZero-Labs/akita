@@ -1,7 +1,7 @@
 use super::*;
 
 /// Number of packed `Fp128` lanes in this backend.
-pub const WIDTH: usize = 2;
+pub const FP128_WIDTH: usize = 2;
 
 /// True SoA layout for two packed `Fp128` lanes.
 ///
@@ -163,7 +163,7 @@ impl<const P: u128> Eq for PackedFp128Neon<P> {}
 
 impl<const P: u128> PackedValue for PackedFp128Neon<P> {
     type Value = Fp128<P>;
-    const WIDTH: usize = WIDTH;
+    const WIDTH: usize = FP128_WIDTH;
 
     #[inline]
     fn from_fn<F>(mut f: F) -> Self
@@ -180,7 +180,7 @@ impl<const P: u128> PackedValue for PackedFp128Neon<P> {
 
     #[inline]
     fn extract(&self, lane: usize) -> Self::Value {
-        debug_assert!(lane < WIDTH);
+        debug_assert!(lane < FP128_WIDTH);
         Fp128([self.lo[lane], self.hi[lane]])
     }
 }
