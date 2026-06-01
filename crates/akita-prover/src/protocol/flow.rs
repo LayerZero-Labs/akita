@@ -138,6 +138,7 @@ impl<L: FieldCore> RecursiveCarriedOpening<L> {
 }
 
 /// Prover-only committed source carried into a recursive fold.
+#[derive(Clone)]
 pub struct RecursiveCarriedSource<F: FieldCore> {
     /// Current committed representation for this source.
     pub w: RecursiveWitnessFlat,

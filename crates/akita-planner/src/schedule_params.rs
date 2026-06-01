@@ -121,6 +121,10 @@ fn search_options_for_cfg<Cfg: CommitmentConfig>(
         extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
         recursive_witness_expansion: 1,
         recursive_public_rows: 1,
+        recursive_num_points: 1,
+        recursive_num_t_vectors: 1,
+        recursive_num_w_vectors: 1,
+        recursive_num_z_vectors: 1,
         table,
         stage1_challenge_config: Cfg::stage1_challenge_config,
         schedule_plan,
@@ -168,6 +172,14 @@ pub(crate) struct SearchOptions {
     pub recursive_witness_expansion: usize,
     /// Number of public opening rows used by each recursive fold.
     pub recursive_public_rows: usize,
+    /// Number of distinct opening points used by each recursive fold.
+    pub recursive_num_points: usize,
+    /// Number of commitment-side `t` vectors used by each recursive fold.
+    pub recursive_num_t_vectors: usize,
+    /// Number of relation-side `w` vectors used by each recursive fold.
+    pub recursive_num_w_vectors: usize,
+    /// Number of public `z` vectors emitted by each recursive fold.
+    pub recursive_num_z_vectors: usize,
     /// Optional generated schedule table to consult before DP search,
     /// gated by the [`ScheduleSearchMode`] argument on
     /// [`find_optimal_schedule`].
@@ -267,7 +279,7 @@ fn derive_candidate_level_params(
         current_w_len,
     };
 
-    let level_lp = match akita_derive::current_level_layout_with_log_basis(
+    let mut level_lp = match akita_derive::current_level_layout_with_log_basis(
         opts.sis_modulus_family,
         opts.ring_dimension,
         opts.decomposition,
@@ -283,14 +295,26 @@ fn derive_candidate_level_params(
     };
 
     let fb = opts.field_bits();
-    if opts.recursive_public_rows != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "recursive schedule planning currently requires exactly one public row".to_string(),
-        ));
+    if opts.recursive_num_points != 1
+        || opts.recursive_num_t_vectors != 1
+        || opts.recursive_num_w_vectors != 1
+        || opts.recursive_num_z_vectors != 1
+    {
+        level_lp = scale_batched_root_layout(
+            &level_lp,
+            opts.recursive_num_t_vectors,
+            (opts.stage1_challenge_config)(level_lp.ring_dimension)?.l1_norm(),
+            fb,
+        )?;
     }
-    // Recursive folds carry one recursive witness and open it at one prepared
-    // recursive point. Root batching is reflected only at level 0.
-    let w_ring_elements = w_ring_element_count_with_counts_bits(fb, &level_lp, 1, 1, 1, 1)?;
+    let w_ring_elements = w_ring_element_count_with_counts_bits(
+        fb,
+        &level_lp,
+        opts.recursive_num_points,
+        opts.recursive_num_t_vectors,
+        opts.recursive_num_w_vectors,
+        opts.recursive_num_z_vectors,
+    )?;
     let next_w_len = w_ring_elements
         .checked_mul(level_lp.ring_dimension)
         .and_then(|len| len.checked_mul(opts.recursive_witness_expansion))
@@ -569,6 +593,7 @@ fn successor_level_params_from_schedule(
 
 type ScheduleMemo = HashMap<(usize, usize, u32), (usize, Vec<Step>)>;
 
+#[allow(clippy::too_many_arguments)]
 fn derive_optimal_suffix_schedule(
     opts: &SearchOptions,
     memo: &mut ScheduleMemo,
@@ -577,6 +602,7 @@ fn derive_optimal_suffix_schedule(
     current_w_len: usize,
     current_lb: u32,
     depth: usize,
+    force_fold_at_current: bool,
 ) -> Result<(usize, Vec<Step>), AkitaError> {
     let key = (level, current_w_len, current_lb);
     if depth <= MAX_RECURSION_DEPTH {
@@ -585,25 +611,26 @@ fn derive_optimal_suffix_schedule(
         }
     }
 
-    let direct_allowed = level == 0
-        || akita_derive::direct_level_params_with_log_basis(
-            opts.sis_modulus_family,
-            opts.ring_dimension,
-            opts.decomposition,
-            match (opts.stage1_challenge_config)(opts.ring_dimension) {
-                Ok(s) => s,
-                Err(_) => return Ok((usize::MAX, Vec::new())),
-            },
-            opts.ring_subfield_embedding_norm_bound,
-            &opts.envelope,
-            AkitaScheduleInputs {
-                num_vars,
-                level,
-                current_w_len,
-            },
-            current_lb,
-        )
-        .is_ok();
+    let direct_allowed = !force_fold_at_current
+        && (level == 0
+            || akita_derive::direct_level_params_with_log_basis(
+                opts.sis_modulus_family,
+                opts.ring_dimension,
+                opts.decomposition,
+                match (opts.stage1_challenge_config)(opts.ring_dimension) {
+                    Ok(s) => s,
+                    Err(_) => return Ok((usize::MAX, Vec::new())),
+                },
+                opts.ring_subfield_embedding_norm_bound,
+                &opts.envelope,
+                AkitaScheduleInputs {
+                    num_vars,
+                    level,
+                    current_w_len,
+                },
+                current_lb,
+            )
+            .is_ok());
     let mut best_cost = usize::MAX;
     let mut best_schedule = Vec::new();
     if direct_allowed {
@@ -634,6 +661,7 @@ fn derive_optimal_suffix_schedule(
                 candidate.next_w_len,
                 lb,
                 depth + 1,
+                false,
             )?;
             if suffix_steps.is_empty() {
                 continue;
@@ -648,10 +676,10 @@ fn derive_optimal_suffix_schedule(
                     opts,
                     &mut suffix_steps,
                     &candidate,
-                    1,
-                    1,
-                    1,
-                    1,
+                    opts.recursive_num_points,
+                    opts.recursive_num_t_vectors,
+                    opts.recursive_num_w_vectors,
+                    opts.recursive_num_z_vectors,
                     num_vars,
                     level,
                 )?;
@@ -719,6 +747,73 @@ fn derive_optimal_suffix_schedule(
         memo.insert(key, (best_cost, best_schedule.clone()));
     }
 
+    Ok((best_cost, best_schedule))
+}
+
+fn derive_one_fold_suffix_schedule(
+    opts: &SearchOptions,
+    num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    current_lb: u32,
+) -> Result<(usize, Vec<Step>), AkitaError> {
+    let mut best_cost = usize::MAX;
+    let mut best_schedule = Vec::new();
+    for lb in basis_range(opts, num_vars, level, current_w_len) {
+        if lb < current_lb {
+            continue;
+        }
+        let Some(candidate) =
+            derive_candidate_level_params(opts, num_vars, level, current_w_len, lb)?
+        else {
+            continue;
+        };
+        let mut suffix_steps = vec![to_direct_step(opts, candidate.next_w_len, lb)];
+        finalize_terminal_direct_witness_shape(
+            opts,
+            &mut suffix_steps,
+            &candidate,
+            opts.recursive_num_points,
+            opts.recursive_num_t_vectors,
+            opts.recursive_num_w_vectors,
+            opts.recursive_num_z_vectors,
+            num_vars,
+            level,
+        )?;
+        let (direct_bytes, terminal_field_len) =
+            match suffix_steps.first().expect("suffix non-empty") {
+                Step::Direct(direct) => (direct.direct_bytes, direct.current_w_len),
+                Step::Fold(_) => unreachable!("suffix starts direct"),
+            };
+        let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
+            opts,
+            AkitaScheduleLookupKey::singleton(num_vars),
+            level,
+            current_w_len,
+        ) else {
+            continue;
+        };
+        let level_proof_size = compute_terminal_level_proof_size(
+            opts,
+            &candidate,
+            terminal_field_len,
+            opts.recursive_public_rows,
+        ) + eor_bytes;
+        let total = level_proof_size + direct_bytes;
+        if total < best_cost {
+            best_cost = total;
+            let mut steps = Vec::with_capacity(2);
+            steps.push(to_fold_step(
+                &candidate,
+                current_w_len,
+                level_proof_size,
+                opts.field_bits(),
+                Some(terminal_field_len),
+            ));
+            steps.extend(suffix_steps);
+            best_schedule = steps;
+        }
+    }
     Ok((best_cost, best_schedule))
 }
 
@@ -1068,6 +1163,7 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
             candidate.next_w_len,
             root_lb,
             0,
+            false,
         )?;
         if suffix_steps.is_empty() {
             continue;
@@ -1156,6 +1252,75 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
         steps: best_steps,
         total_bytes: best_cost,
     })
+}
+
+/// Find a recursive carried-opening suffix schedule for a caller-supplied state.
+///
+/// Unlike [`find_optimal_schedule`], this starts after the root fold. The root
+/// caller supplies the exact recursive level, current witness length, and active
+/// log-basis that enter the suffix. The lookup key still carries the public
+/// algebra context and incidence counts that should shape the recursive
+/// carried-opening batch.
+///
+/// The first carried-opening cut prefers a one-fold suffix when it exists, so
+/// the setup-prefix carry is consumed immediately instead of being propagated
+/// through additional recursive levels. If no one-fold suffix is available, the
+/// helper falls back to the recursive DP with the first suffix step forced to be
+/// a fold.
+///
+/// This is primarily used by tests that exercise carried-opening incidence
+/// shapes that are not yet emitted in the generated schedule tables.
+///
+/// # Errors
+///
+/// Returns an error if the start state is invalid or if no recursive suffix can
+/// be derived for the requested shape.
+pub fn find_recursive_carried_suffix_schedule<Cfg: CommitmentConfig>(
+    key: AkitaScheduleLookupKey,
+    start_level: usize,
+    current_w_len: usize,
+    current_log_basis: u32,
+    mode: ScheduleSearchMode,
+) -> Result<Schedule, AkitaError> {
+    if start_level == 0 || current_w_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "recursive suffix schedule requires a non-root, non-empty start state".to_string(),
+        ));
+    }
+    let mut opts = search_options_for_cfg::<Cfg>(key, mode)?;
+    opts.recursive_public_rows = key.num_z_vectors;
+    opts.recursive_num_points = key.num_points;
+    opts.recursive_num_t_vectors = key.num_t_vectors;
+    opts.recursive_num_w_vectors = key.num_w_vectors;
+    opts.recursive_num_z_vectors = key.num_z_vectors;
+    let mut memo = ScheduleMemo::new();
+    let (total_bytes, steps) = derive_one_fold_suffix_schedule(
+        &opts,
+        key.num_vars,
+        start_level,
+        current_w_len,
+        current_log_basis,
+    )?;
+    let (total_bytes, steps) = if steps.is_empty() {
+        derive_optimal_suffix_schedule(
+            &opts,
+            &mut memo,
+            key.num_vars,
+            start_level,
+            current_w_len,
+            current_log_basis,
+            0,
+            true,
+        )?
+    } else {
+        (total_bytes, steps)
+    };
+    if steps.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "recursive suffix schedule is empty".to_string(),
+        ));
+    }
+    Ok(Schedule { steps, total_bytes })
 }
 
 #[cfg(test)]

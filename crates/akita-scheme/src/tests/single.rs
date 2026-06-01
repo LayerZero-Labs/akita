@@ -219,6 +219,241 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
     .expect("degree-one roundtrip proof should verify");
 }
 
+fn schedule_with_setup_prefix_carried_suffix(
+    schedule: akita_types::Schedule,
+    num_vars: usize,
+) -> Result<akita_types::Schedule, AkitaError> {
+    let root_step = schedule
+        .steps
+        .first()
+        .cloned()
+        .ok_or(AkitaError::InvalidProof)?;
+    let akita_types::Step::Fold(root_fold) = &root_step else {
+        return Ok(schedule);
+    };
+    let root_next_w_len = root_fold.next_w_len;
+    let root_log_basis = root_fold.params.log_basis;
+    let root_level_bytes = root_fold.level_bytes;
+    let next_params = akita_types::scheduled_next_level_params(&schedule, 1)?;
+    let carried_key = AkitaScheduleLookupKey::new_with_points(num_vars, 2, 2, 2, 2);
+    let carried_suffix =
+        akita_prover::dispatch_ring_dim_result!(next_params.ring_dimension, |D_LEVEL| {
+            akita_planner::find_recursive_carried_suffix_schedule::<
+                akita_planner::test_utils::PlannerCfg<
+                    akita_config::WCommitmentConfig<{ D_LEVEL }, Cfg>,
+                >,
+            >(
+                carried_key,
+                1,
+                root_next_w_len,
+                root_log_basis,
+                akita_planner::ScheduleSearchMode::RuntimeTableSeeded,
+            )
+        })?;
+    if !matches!(
+        carried_suffix.steps.first(),
+        Some(akita_types::Step::Fold(_))
+    ) {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix carry needs a recursive fold to consume it".to_string(),
+        ));
+    }
+    let mut steps = Vec::with_capacity(carried_suffix.steps.len() + 1);
+    steps.push(root_step);
+    steps.extend(carried_suffix.steps);
+    Ok(akita_types::Schedule {
+        steps,
+        total_bytes: root_level_bytes
+            .checked_add(carried_suffix.total_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("carried schedule size overflow".into()))?,
+    })
+}
+
+#[test]
+fn recursive_suffix_verifies_witness_plus_dummy_setup_carried_batch() {
+    let num_vars = 15;
+    let (poly, evals) = make_dense_poly(num_vars);
+    let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 2).unwrap();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
+    let (commitment, hint) = <Scheme as CommitmentProver<F, D>>::commit(
+        &setup,
+        &CpuBackend,
+        &prepared,
+        std::slice::from_ref(&poly),
+    )
+    .unwrap();
+
+    let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
+    let opening = dense_opening(&evals, &opening_point);
+    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let commitments = [commitment.clone()];
+    let expanded_arc = setup.expanded.clone();
+    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
+    let proof = akita_prover::prove_batched_with_policy::<F, F, F, _, _, D, _, _, _, _, _>(
+        setup.expanded.as_ref(),
+        vec![(
+            &opening_point[..],
+            CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint,
+            },
+        )],
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+        |incidence_summary| {
+            let schedule = Cfg::get_params_for_prove(incidence_summary)?;
+            schedule_with_setup_prefix_carried_suffix(schedule, incidence_summary.num_vars())
+        },
+        Cfg::get_params_for_batched_commitment,
+        |schedule, _next_inputs| akita_types::scheduled_next_level_params(schedule, 1),
+        |transcript, incidence_summary, schedule, basis| {
+            akita_config::bind_transcript_instance_descriptor::<F, _, D, Cfg>(
+                setup.expanded.as_ref(),
+                incidence_summary,
+                schedule,
+                basis,
+                transcript,
+            )
+        },
+        |prepared_claims, schedule, next_params, transcript, basis| {
+            let num_vars = prepared_claims.incidence_summary.num_vars();
+            akita_prover::prove_folded_batched_with_policy::<F, F, F, _, _, _, D, _, _, _>(
+                setup.expanded.as_ref(),
+                &CpuBackend,
+                &prepared,
+                transcript,
+                prepared_claims,
+                &schedule,
+                basis,
+                &next_params,
+                |w| {
+                    akita_prover::commit_next_w_with_policy::<F, F, _, _, _, D>(
+                        &next_params,
+                        &expanded_arc,
+                        &CpuBackend,
+                        &prepared,
+                        w,
+                        |params, current_w_len| {
+                            akita_types::recursive_level_layout_from_params(
+                                params,
+                                current_w_len,
+                                Cfg::decomposition(),
+                            )
+                        },
+                        recursive_w_commit_layout_for_d::<Cfg>,
+                    )
+                },
+                |next_state, schedule, transcript| {
+                    prove_recursive_suffix::<F, _, _, D, Cfg>(
+                        &expanded_arc,
+                        &CpuBackend,
+                        &prepared,
+                        num_vars,
+                        transcript,
+                        next_state,
+                        schedule,
+                    )
+                },
+                |raw| {
+                    let committed_w = raw.next_state.w.clone();
+                    let carried_claim = raw.next_state.carried_openings[0].clone();
+                    let point = carried_claim.opening_point.clone();
+                    let opening = carried_claim.opening;
+                    raw.extra_carried_sources
+                        .push(akita_types::CarriedOpeningSourceProof {
+                            commitment: raw.next_state.commitment.clone(),
+                        });
+                    raw.extra_carried_openings
+                        .push(akita_types::CarriedOpeningProof {
+                            source_idx: 1,
+                            point: point.clone(),
+                            value: opening,
+                            basis: BasisMode::Lagrange,
+                            natural_len: carried_claim.natural_len,
+                            padded_len: carried_claim.padded_len,
+                            kind: akita_types::CarriedOpeningKind::SetupPrefix,
+                        });
+                    raw.next_state.extra_carried_sources.push(
+                        akita_prover::RecursiveCarriedSource {
+                            w: committed_w.clone(),
+                            logical_w: raw.next_state.logical_w.clone(),
+                            commitment: raw.next_state.commitment.clone(),
+                            hint: raw.next_state.hint.clone(),
+                        },
+                    );
+                    raw.next_state
+                        .carried_openings
+                        .push(akita_prover::RecursiveCarriedOpening {
+                            source_idx: 1,
+                            opening_point: point,
+                            opening,
+                            basis: BasisMode::Lagrange,
+                            natural_len: carried_claim.natural_len,
+                            padded_len: carried_claim.padded_len,
+                            kind: akita_types::CarriedOpeningKind::SetupPrefix,
+                        });
+                    Ok(())
+                },
+            )
+            .map(|(proof, _)| proof)
+        },
+    )
+    .unwrap();
+
+    let root = proof
+        .root
+        .as_fold()
+        .expect("fixture should use folded root");
+    assert_eq!(root.stage2.extra_carried_sources.len(), 1);
+    assert_eq!(root.stage2.extra_carried_openings.len(), 1);
+    assert!(!proof.steps.is_empty());
+
+    let openings = [opening];
+    let opening_groups = [&openings[..]];
+    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
+    akita_verifier::verify_batched_with_policy::<F, F, F, _, D, _, _, _, _, _>(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &opening_point[..],
+            CommittedOpenings {
+                openings: opening_groups[0],
+                commitment: &commitment,
+            },
+        )],
+        BasisMode::Lagrange,
+        |incidence_summary| {
+            let schedule = Cfg::get_params_for_prove(incidence_summary)?;
+            schedule_with_setup_prefix_carried_suffix(schedule, incidence_summary.num_vars())
+        },
+        |schedule, _next_inputs| akita_types::scheduled_next_level_params(schedule, 1),
+        Cfg::get_params_for_batched_commitment,
+        |transcript, incidence_summary, schedule, basis| {
+            akita_config::bind_transcript_instance_descriptor::<F, _, D, Cfg>(
+                &verifier_setup.expanded,
+                incidence_summary,
+                schedule,
+                basis,
+                transcript,
+            )
+        },
+        |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
+            akita_verifier::verify_root_direct_commitments_with_params::<F, D>(
+                witnesses,
+                setup,
+                commitments,
+                incidence_summary,
+                params,
+                direct_commitment_payload,
+            )
+        },
+    )
+    .expect("witness plus setup-prefix carried batch should verify");
+}
+
 #[test]
 fn folded_payload_commitments_and_digits_stay_base_field() {
     fn assert_base_flat_ring_vec(_: &FlatRingVec<F>) {}

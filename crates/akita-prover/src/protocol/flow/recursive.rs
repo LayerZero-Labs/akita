@@ -563,6 +563,112 @@ where
         .collect()
 }
 
+fn evaluate_carried_source_opening<F, L, const D: usize>(
+    source: &RecursiveCarriedSource<F>,
+    point: &[L],
+    next_params: &LevelParams,
+) -> Result<L, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    L: ExtField<F> + RingSubfieldEncoding<F>,
+{
+    if next_params.ring_dimension != D {
+        return Err(AkitaError::InvalidSetup(
+            "carried source propagation across ring dimensions is not implemented".to_string(),
+        ));
+    }
+    let alpha = next_params.ring_dimension.trailing_zeros() as usize;
+    let prepared_point = prepare_recursive_opening_point_ext::<F, L, D>(
+        point,
+        BasisMode::Lagrange,
+        next_params,
+        alpha,
+        BlockOrder::ColumnMajor,
+    )?;
+    let source_view = source.w.view::<F, D>()?;
+    let (y_ring, _) = evaluate_recursive_witness_at_multiplier_point(
+        &source_view,
+        &prepared_point.ring_multiplier_point,
+        next_params.block_len,
+        next_params.num_blocks,
+    )?;
+    recover_ring_subfield_inner_product::<F, L, D>(&y_ring, &prepared_point.inner_reduction)
+}
+
+fn propagate_extra_carried_sources<F, L, const D: usize>(
+    out: &mut ProveLevelOutput<F, L>,
+    extra_carried_sources: &[RecursiveCarriedSource<F>],
+    next_params: &LevelParams,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    L: ExtField<F> + RingSubfieldEncoding<F>,
+{
+    if extra_carried_sources.is_empty() {
+        return Ok(());
+    }
+    let point = out
+        .next_state
+        .carried_openings
+        .first()
+        .ok_or(AkitaError::InvalidProof)?
+        .opening_point
+        .clone();
+    let point_domain_len = 1usize
+        .checked_shl(point.len() as u32)
+        .ok_or_else(|| AkitaError::InvalidSetup("carried point domain overflow".to_string()))?;
+    let mut common_padded_len = out
+        .next_state
+        .w
+        .len()
+        .max(point_domain_len)
+        .next_power_of_two();
+    for source in extra_carried_sources {
+        let natural_len = source.logical_w.as_ref().unwrap_or(&source.w).len();
+        common_padded_len = common_padded_len.max(natural_len.next_power_of_two());
+    }
+    if let Some(witness_claim) = out.next_state.carried_openings.first_mut() {
+        witness_claim.padded_len = common_padded_len;
+    }
+    out.next_state.extra_carried_sources = extra_carried_sources.to_vec();
+    for (source_idx, source) in extra_carried_sources.iter().enumerate() {
+        let proof_source_idx = source_idx + 1;
+        let source_logical = source.logical_w.as_ref().unwrap_or(&source.w);
+        let opening = evaluate_carried_source_opening::<F, L, D>(source, &point, next_params)?;
+        let natural_len = source_logical.len();
+        out.level_proof
+            .stage2
+            .extra_carried_sources
+            .push(CarriedOpeningSourceProof {
+                commitment: source.commitment.clone(),
+            });
+        out.level_proof
+            .stage2
+            .extra_carried_openings
+            .push(CarriedOpeningProof {
+                source_idx: proof_source_idx,
+                point: point.clone(),
+                value: opening,
+                basis: BasisMode::Lagrange,
+                natural_len,
+                padded_len: common_padded_len,
+                kind: CarriedOpeningKind::SetupPrefix,
+            });
+        out.next_state
+            .carried_openings
+            .push(RecursiveCarriedOpening {
+                source_idx: proof_source_idx,
+                opening_point: point.clone(),
+                opening,
+                basis: BasisMode::Lagrange,
+                natural_len,
+                padded_len: common_padded_len,
+                kind: CarriedOpeningKind::SetupPrefix,
+            });
+    }
+    Ok(())
+}
+
 pub(in crate::protocol::flow) fn prove_recursive_extension_opening_reduction<F, L, T>(
     logical_w: &RecursiveWitnessFlat,
     opening_point: &[L],
@@ -711,7 +817,7 @@ pub fn prove_recursive_fold_with_params<F, L, T, B, const D: usize, CommitW>(
     commitment: &FlatRingVec<F>,
     level: usize,
     level_params: &LevelParams,
-    next_log_basis: u32,
+    next_params: &LevelParams,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
@@ -733,6 +839,7 @@ where
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
+    let next_log_basis = next_params.log_basis;
     {
         let x: u8 = 0;
         tracing::trace!(
@@ -925,6 +1032,13 @@ where
         .iter()
         .map(|claim| claim.source_idx)
         .collect::<Vec<_>>();
+    let mut commitment_rows = Vec::new();
+    for claim in carried_openings {
+        let source = quadratic_sources
+            .get(claim.source_idx)
+            .ok_or_else(|| AkitaError::InvalidInput("carried source index out of range".into()))?;
+        commitment_rows.extend_from_slice(source.commitment);
+    }
 
     let ring_opening_points = prepared_points
         .iter()
@@ -951,12 +1065,12 @@ where
     );
 
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
-    prove_fold_level_from_quadratic::<F, L, T, B, D, _>(
+    let mut out = prove_fold_level_from_quadratic::<F, L, T, B, D, _>(
         expanded,
         backend,
         prepared,
         transcript,
-        commitment_u,
+        &commitment_rows,
         level,
         level_params,
         next_log_basis,
@@ -968,7 +1082,9 @@ where
         #[cfg(feature = "zk")]
         zk_hiding,
         commit_w_for_next,
-    )
+    )?;
+    propagate_extra_carried_sources::<F, L, D>(&mut out, extra_carried_sources, next_params)?;
+    Ok(out)
 }
 
 /// Mirror of [`prove_recursive_fold_with_params`] producing a
@@ -1220,6 +1336,13 @@ where
         .iter()
         .map(|claim| claim.source_idx)
         .collect::<Vec<_>>();
+    let mut commitment_rows = Vec::new();
+    for claim in carried_openings {
+        let source = quadratic_sources
+            .get(claim.source_idx)
+            .ok_or_else(|| AkitaError::InvalidInput("carried source index out of range".into()))?;
+        commitment_rows.extend_from_slice(source.commitment);
+    }
     let quad_eq = Box::new(
         QuadraticEquation::<F, { D }>::new_recursive_multipoint_prover(
             backend,
@@ -1242,7 +1365,7 @@ where
         backend,
         prepared,
         transcript,
-        commitment_u,
+        &commitment_rows,
         level,
         level_params,
         final_log_basis,
@@ -1278,7 +1401,7 @@ pub fn prove_recursive_level_with_policy<F, L, T, B, const D: usize, CurrentLayo
     current_state: RecursiveProverState<F, L>,
     level: usize,
     level_params: &LevelParams,
-    next_log_basis: u32,
+    next_params: &LevelParams,
     current_layout: CurrentLayout,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
@@ -1334,7 +1457,7 @@ where
         &commitment,
         level,
         &w_lp,
-        next_log_basis,
+        next_params,
         #[cfg(feature = "zk")]
         zk_hiding,
         commit_w_for_next,

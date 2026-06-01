@@ -38,4 +38,6 @@ pub mod schedule_params;
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
 
-pub use schedule_params::{find_optimal_schedule, ScheduleSearchMode};
+pub use schedule_params::{
+    find_optimal_schedule, find_recursive_carried_suffix_schedule, ScheduleSearchMode,
+};

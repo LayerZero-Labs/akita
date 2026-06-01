@@ -142,7 +142,7 @@ where
             current_state,
             level,
             level_params,
-            next_params.log_basis,
+            &next_params,
             |params, current_w_len| {
                 akita_types::recursive_level_layout_from_params(
                     params,
@@ -179,7 +179,7 @@ where
                 current_state,
                 level,
                 level_params,
-                next_params.log_basis,
+                &next_params,
                 |params, current_w_len| {
                     akita_types::recursive_level_layout_from_params(
                         params,
