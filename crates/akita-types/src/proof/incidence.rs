@@ -100,7 +100,13 @@ where
         ));
     }
     let padded_num_vars = first.padded_len.trailing_zeros() as usize;
-    for claim in claims {
+    if first.source_idx != 0 || !matches!(first.kind, CarriedOpeningKind::RecursiveWitness) {
+        return Err(AkitaError::InvalidInput(
+            "carried-opening batch must start with the recursive witness source".to_string(),
+        ));
+    }
+    let mut source_used = vec![false; sources.len()];
+    for (claim_idx, claim) in claims.iter().enumerate() {
         if claim.padded_len != first.padded_len {
             return Err(AkitaError::InvalidInput(
                 "carried openings must share one padded domain".to_string(),
@@ -115,6 +121,21 @@ where
                 "carried-opening claim shape exceeds its padded domain".to_string(),
             ));
         }
+        if claim_idx == 0 {
+            source_used[0] = true;
+            continue;
+        }
+        if claim.source_idx == 0 || !matches!(claim.kind, CarriedOpeningKind::SetupPrefix) {
+            return Err(AkitaError::InvalidInput(
+                "extra carried-opening claims must reference setup-prefix sources".to_string(),
+            ));
+        }
+        source_used[claim.source_idx] = true;
+    }
+    if source_used.iter().any(|&used| !used) {
+        return Err(AkitaError::InvalidInput(
+            "carried-opening source table contains an unused source".to_string(),
+        ));
     }
     Ok(padded_num_vars)
 }
@@ -814,7 +835,7 @@ mod tests {
     }
 
     #[test]
-    fn carried_opening_transcript_binds_order_and_metadata() {
+    fn carried_opening_batch_rejects_invalid_source_kind_routing() {
         let commitment_a = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(1)]);
         let commitment_b = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(2)]);
         let sources = [
@@ -825,8 +846,62 @@ mod tests {
                 commitment: &commitment_b,
             },
         ];
+        let point = [TranscriptField::from_u64(3), TranscriptField::from_u64(4)];
+        let witness = CarriedOpeningClaim {
+            source_idx: 0,
+            point: &point,
+            value: TranscriptField::from_u64(5),
+            basis: BasisMode::Lagrange,
+            natural_len: 4,
+            padded_len: 4,
+            kind: CarriedOpeningKind::RecursiveWitness,
+        };
+        let setup = CarriedOpeningClaim {
+            source_idx: 1,
+            point: &point,
+            value: TranscriptField::from_u64(6),
+            basis: BasisMode::Lagrange,
+            natural_len: 4,
+            padded_len: 4,
+            kind: CarriedOpeningKind::SetupPrefix,
+        };
+
+        let witness_not_first = CarriedOpeningClaim {
+            kind: CarriedOpeningKind::RecursiveWitness,
+            ..setup
+        };
+        assert!(validate_carried_opening_batch(&sources, &[witness, witness_not_first]).is_err());
+
+        let setup_on_source_zero = CarriedOpeningClaim {
+            source_idx: 0,
+            ..setup
+        };
+        assert!(
+            validate_carried_opening_batch(&sources, &[witness, setup_on_source_zero]).is_err()
+        );
+
+        assert!(validate_carried_opening_batch(&sources, &[witness]).is_err());
+    }
+
+    #[test]
+    fn carried_opening_transcript_binds_order_and_metadata() {
+        let commitment_a = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(1)]);
+        let commitment_b = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(2)]);
+        let commitment_c = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(9)]);
+        let sources = [
+            CarriedOpeningSource {
+                commitment: &commitment_a,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_b,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_c,
+            },
+        ];
         let point_a = [TranscriptField::from_u64(3), TranscriptField::from_u64(4)];
         let point_b = [TranscriptField::from_u64(5), TranscriptField::from_u64(6)];
+        let point_c = [TranscriptField::from_u64(10), TranscriptField::from_u64(11)];
         let first = CarriedOpeningClaim {
             source_idx: 0,
             point: &point_a,
@@ -845,26 +920,42 @@ mod tests {
             padded_len: 4,
             kind: CarriedOpeningKind::SetupPrefix,
         };
-        let forward = carried_batch_challenge(&sources, &[first, second]);
-        let reversed = carried_batch_challenge(&sources, &[second, first]);
+        let third = CarriedOpeningClaim {
+            source_idx: 2,
+            point: &point_c,
+            value: TranscriptField::from_u64(12),
+            basis: BasisMode::Lagrange,
+            natural_len: 4,
+            padded_len: 4,
+            kind: CarriedOpeningKind::SetupPrefix,
+        };
+        let forward = carried_batch_challenge(&sources, &[first, second, third]);
+        let reversed = carried_batch_challenge(&sources, &[first, third, second]);
         assert_ne!(forward, reversed);
 
-        let changed_kind = CarriedOpeningClaim {
-            kind: CarriedOpeningKind::RecursiveWitness,
+        let changed_basis = CarriedOpeningClaim {
+            basis: BasisMode::Monomial,
             ..second
         };
         assert_ne!(
             forward,
-            carried_batch_challenge(&sources, &[first, changed_kind])
+            carried_batch_challenge(&sources, &[first, changed_basis, third])
         );
 
-        let changed_source = CarriedOpeningClaim {
-            source_idx: 0,
-            ..second
-        };
+        let swapped_sources = [
+            CarriedOpeningSource {
+                commitment: &commitment_a,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_c,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_b,
+            },
+        ];
         assert_ne!(
             forward,
-            carried_batch_challenge(&sources, &[first, changed_source])
+            carried_batch_challenge(&swapped_sources, &[first, second, third])
         );
     }
 
