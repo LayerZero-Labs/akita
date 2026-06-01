@@ -38,9 +38,8 @@ use akita_sumcheck::{
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_HAT, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM,
+    ABSORB_TERMINAL_W_HAT, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(not(feature = "zk"))]
@@ -48,18 +47,19 @@ use akita_types::dispatch_trace_inner_product_check;
 #[cfg(not(feature = "zk"))]
 use akita_types::recover_ring_subfield_inner_product;
 use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript,
+    append_batched_commitments_to_transcript, append_carried_opening_batch_to_transcript,
+    append_claim_incidence_shape_to_transcript, append_claim_points_to_transcript,
+    append_claim_values_to_transcript, carried_opening_incidence_summary,
     flatten_batched_commitment_rows, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
     sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_segment_layout,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    CarriedOpeningKind, ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof,
-    FlatRingVec, LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding,
-    Schedule, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts,
+    CarriedOpeningClaim, CarriedOpeningKind, ClaimIncidenceSummary, DirectWitnessProof,
+    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
+    RingOpeningPoint, RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 #[cfg(feature = "zk")]
 use zk::{verify_zk_hiding_commitment, zk_recovered_y_ring_lc};
@@ -114,6 +114,16 @@ impl<'a, F: FieldCore, L: FieldCore> RecursiveVerifierState<'a, F, L> {
             ));
         }
         Ok(first.padded_len)
+    }
+
+    pub(crate) fn recursive_witness_len(&self) -> Result<usize, AkitaError> {
+        self.carried_openings
+            .iter()
+            .find(|claim| matches!(claim.kind, CarriedOpeningKind::RecursiveWitness))
+            .map(|claim| claim.natural_len)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("missing recursive witness carried opening".to_string())
+            })
     }
 
     pub(crate) fn common_commitment(&self) -> Result<&'a FlatRingVec<F>, AkitaError> {

@@ -148,8 +148,22 @@ where
             &v_typed_owned
         }
     };
-    let commitment = current_state.common_commitment()?;
     let carried_openings = current_state.carried_openings.as_slice();
+    let _common_padded_len = current_state.common_padded_len()?;
+    let carried_claims = carried_openings
+        .iter()
+        .map(|claim| CarriedOpeningClaim {
+            commitment: claim.commitment,
+            point: &claim.opening_point,
+            value: claim.opening,
+            basis: claim.basis,
+            natural_len: claim.natural_len,
+            padded_len: claim.padded_len,
+            kind: claim.kind,
+        })
+        .collect::<Vec<_>>();
+    append_carried_opening_batch_to_transcript(&carried_claims, transcript)?;
+    let carried_incidence = carried_opening_incidence_summary(&carried_claims)?;
     if carried_openings.is_empty()
         || carried_openings
             .iter()
@@ -161,9 +175,9 @@ where
     if carried_openings.len() != 1 {
         return Err(AkitaError::InvalidProof);
     }
+    let commitment = current_state.common_commitment()?;
     let commitment_u = commitment.as_ring_slice::<D>()?;
-    commitment.append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
-    if y_rings.len() != carried_openings.len() {
+    if y_rings.len() != carried_incidence.num_claims() {
         return Err(AkitaError::InvalidProof);
     }
     let reduction_check = if <L as ExtField<F>>::EXT_DEGREE == 1 {
@@ -386,11 +400,11 @@ where
         },
     )?;
     tracing::debug!(w_len, is_last, "verify ring_switch");
-    let claim_to_point = (0..num_claims).collect::<Vec<_>>();
-    let claim_to_point_poly = (0..num_claims).collect::<Vec<_>>();
-    let claim_poly_indices = vec![0usize; num_claims];
+    let claim_to_point = carried_incidence.claim_to_point().to_vec();
+    let claim_to_point_poly = carried_incidence.claim_to_point().to_vec();
+    let claim_poly_indices = carried_incidence.claim_poly_indices().to_vec();
     let gamma = vec![L::one(); num_claims];
-    let num_polys_per_point = vec![1usize; num_claims];
+    let num_polys_per_point = carried_incidence.num_polys_per_point().to_vec();
 
     let rs = match &proof {
         FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, { D }>(
@@ -582,7 +596,7 @@ fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
             "schedule is missing fold step at level {level}"
         )));
     };
-    if step.current_w_len != current_state.common_padded_len()?
+    if step.current_w_len != current_state.recursive_witness_len()?
         || step.params.log_basis != current_state.log_basis
     {
         return Err(AkitaError::InvalidSetup(
@@ -820,7 +834,7 @@ where
                         commitment: level_proof.next_w_commitment(),
                         basis: BasisMode::Lagrange,
                         natural_len: next_w_len,
-                        padded_len: next_w_len,
+                        padded_len: next_w_len.next_power_of_two(),
                         kind: CarriedOpeningKind::RecursiveWitness,
                     }],
                     log_basis: scheduled_next_params.log_basis,
@@ -1056,7 +1070,7 @@ where
                     commitment: &fold_root.stage2.next_w_commitment,
                     basis: BasisMode::Lagrange,
                     natural_len: root_step.next_w_len,
-                    padded_len: root_step.next_w_len,
+                    padded_len: root_step.next_w_len.next_power_of_two(),
                     kind: CarriedOpeningKind::RecursiveWitness,
                 }],
                 log_basis: next_level_params.log_basis,
