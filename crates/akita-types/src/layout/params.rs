@@ -370,6 +370,24 @@ impl LevelParams {
         self.log_num_blocks() + self.log_block_len()
     }
 
+    /// Logical opening-point variable count for recursive fold levels.
+    ///
+    /// Matches [`crate::prepare_recursive_opening_point_ext`]: outer
+    /// block/position coordinates plus the inner `log2(ring_dimension)` bits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the summed dimension overflows `usize`.
+    pub fn recursive_opening_num_vars(&self) -> Result<usize, AkitaError> {
+        let alpha_bits = self.ring_dimension.trailing_zeros() as usize;
+        self.m_vars
+            .checked_add(self.r_vars)
+            .and_then(|n| n.checked_add(alpha_bits))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("recursive opening num_vars overflow".to_string())
+            })
+    }
+
     /// Row count with `num_commitments` explicit commitment vectors and
     /// `num_public_outputs` public y-rows.
     ///

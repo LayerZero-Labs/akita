@@ -382,7 +382,7 @@ where
     } else {
         MRowLayout::WithDBlock
     };
-    let num_vars = ring_opening_points[0].a.len();
+    let num_vars = lp.recursive_opening_num_vars()?;
     let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_claims])?;
     let commitment_routing = CommitmentRouting::from_recursive_multipoint(num_claims)?;
     let (gamma_base, row_coefficient_rings) =
