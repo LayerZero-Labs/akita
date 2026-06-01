@@ -299,7 +299,7 @@ fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
         nonzero_coeffs: vec![-1, 1],
     };
     let lp = LevelParams::params_only(SisModulusFamily::Q128, Cfg::D, 5, 2, 3, 5, sparse)
-        .with_decomp(4, 3, 2, 6, 3)
+        .with_decomp(4, 3, 2, 6, 0)
         .unwrap();
 
     let mut got = 1usize;
