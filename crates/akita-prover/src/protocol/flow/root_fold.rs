@@ -1224,8 +1224,11 @@ where
             commitment: committed_commitment,
             hint: committed_hint,
             log_basis: next_log_basis,
-            sumcheck_challenges,
-            opening: w_eval,
+            carried_openings: vec![RecursiveCarriedOpening::recursive_witness(
+                sumcheck_challenges,
+                w_eval,
+                expected_w_len,
+            )],
             #[cfg(feature = "zk")]
             zk_hiding,
         },

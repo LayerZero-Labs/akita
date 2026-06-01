@@ -8,6 +8,16 @@ use akita_types::{AkitaSetupSeed, FlatMatrix};
 type F = Fp32<251>;
 type E = Fp2<F, NegOneNr>;
 
+fn empty_recursive_hint_cache() -> RecursiveCommitmentHintCache<F> {
+    let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
+        Vec::new(),
+        Vec::new(),
+        #[cfg(feature = "zk")]
+        vec![FlatDigitBlocks::empty()],
+    );
+    RecursiveCommitmentHintCache::from_typed::<1>(hint).expect("empty recomposed hint cache")
+}
+
 fn setup() -> AkitaExpandedSetup<F> {
     AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -66,6 +76,47 @@ fn prover_claim_preparation_accepts_extension_points() {
     assert_eq!(prepared.incidence_summary.claim_to_point(), &[0, 0]);
     assert_eq!(prepared.flat_polys, vec![&polys[0], &polys[1]]);
     assert_eq!(prepared.group_polys, vec![&polys[0], &polys[1]]);
+}
+
+#[test]
+fn recursive_carried_opening_state_requires_common_padded_domain() {
+    let witness = RecursiveWitnessFlat::from_i8_digits(vec![1, -1, 2, 0]);
+    let base_claim = RecursiveCarriedOpening::recursive_witness(
+        vec![F::from_u64(3), F::from_u64(5)],
+        F::one(),
+        4,
+    );
+    let ok_state = RecursiveProverState {
+        w: witness.clone(),
+        logical_w: None,
+        commitment: FlatRingVec::from_coeffs(vec![F::zero(); 1]),
+        hint: empty_recursive_hint_cache(),
+        log_basis: 2,
+        carried_openings: vec![
+            base_claim.clone(),
+            RecursiveCarriedOpening {
+                kind: CarriedOpeningKind::SetupPrefix,
+                ..base_claim.clone()
+            },
+        ],
+    };
+    assert_eq!(ok_state.common_padded_len().unwrap(), 4);
+
+    let bad_state = RecursiveProverState {
+        w: witness,
+        logical_w: None,
+        commitment: FlatRingVec::from_coeffs(vec![F::zero(); 1]),
+        hint: empty_recursive_hint_cache(),
+        log_basis: 2,
+        carried_openings: vec![
+            base_claim.clone(),
+            RecursiveCarriedOpening {
+                padded_len: 8,
+                ..base_claim
+            },
+        ],
+    };
+    assert!(bad_state.common_padded_len().is_err());
 }
 
 #[test]

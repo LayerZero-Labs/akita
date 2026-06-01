@@ -38,8 +38,8 @@ pub use direct_witness::{DirectWitnessProof, DirectWitnessShape, PackedDigits};
 pub use hints::AkitaCommitmentHint;
 pub use incidence::{
     append_claim_incidence_shape_to_transcript, sample_public_row_coefficients,
-    verifier_claims_to_incidence, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    IncidenceClaim, PublicOpeningRow,
+    verifier_claims_to_incidence, CarriedOpeningKind, ClaimIncidence, ClaimIncidenceLimits,
+    ClaimIncidenceSummary, IncidenceClaim, PublicOpeningRow,
 };
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,

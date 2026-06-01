@@ -11,6 +11,15 @@ use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use std::collections::BTreeSet;
 
+/// Logical source of a carried opening at a recursive boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarriedOpeningKind {
+    /// The ordinary folded-witness opening carried between recursive levels.
+    RecursiveWitness,
+    /// A setup-prefix opening carried for later setup-claim offloading.
+    SetupPrefix,
+}
+
 /// One claimed opening edge from a point to a polynomial within the point's
 /// commitment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
