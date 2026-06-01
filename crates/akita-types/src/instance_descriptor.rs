@@ -133,15 +133,6 @@ pub struct ProtocolFeatureSet {
 }
 
 impl ProtocolFeatureSet {
-    /// Return the protocol feature set of the current build.
-    #[inline]
-    pub const fn current() -> Self {
-        Self {
-            zk: cfg!(feature = "zk"),
-            terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
-        }
-    }
-
     /// Return the current build features with an explicit terminal mode.
     #[inline]
     pub const fn with_terminal_proof_mode(terminal_proof_mode: TerminalProofMode) -> Self {
