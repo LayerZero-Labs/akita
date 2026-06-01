@@ -17,8 +17,8 @@ The central framing is security-equivalent extension degree, not equal extension
 Plonky3 is hash-based: achieving true 128-bit security over a 31-bit base field in practice drives the working extension up to degree 5.
 The sharp reason is that the soundness error of the random-evaluation arguments has the form `O(instance_size / |ext_field|)`, so the bit-security is roughly `log2(|ext_field|) - log2(instance_size)`.
 For a 31-bit base, a degree-4 extension is about `2^124` and a degree-5 extension is about `2^155`, so a large instance of size `2^22` leaves only about `124 - 22 = 102` bits at degree 4 (well under 128), while degree 5 gives about `155 - 22 = 133` bits.
-This field-size term comes from sampling challenges in the extension field (Schwartz-Zippel / random-linear-combination / DEEP-style quotienting and FRI proximity gaps), so it shrinks only by enlarging the field; it is not the FRI query / proof-of-work component, so grinding cannot cheaply buy the lost bits back.
-Akita is lattice-based: it reaches the same 128-bit target at degree 4, because its soundness comes from SIS / lattice hardness and it avoids those field-size-dependent random-evaluation and query-soundness arguments.
+This field-size term comes from sampling challenges in the extension field (Schwartz-Zippel / random-linear-combination / DEEP-style quotienting and FRI / Reed-Solomon proximity gaps, BCIKS20), so it shrinks only by enlarging the field; it is not the FRI query / proof-of-work component, so grinding cannot cheaply buy the lost bits back.
+Akita is lattice-based: it reaches the same 128-bit target at degree 4, because its random-challenge soundness comes from sumcheck, whose error is bounded by `O(degree * num_rounds / |ext_field|)` with `num_rounds = log2(instance_size)` (LFKN92; Thaler, *Proofs, Arguments, and Zero-Knowledge*, Prop. 2.9), so the field-size loss scales with `log2(N) ~ 22`, not with `N`; combined with extraction soundness from SIS / lattice hardness, the degree-4 extension does not have to absorb an instance-size-scaled random-evaluation or query-soundness term the way Plonky3's degree does.
 The fair security-equivalent comparison is therefore Akita degree-4 against Plonky3 degree-5, with Plonky3 degree-4 also measured as an additional (commonly cited, but security-insufficient for the 31-bit base) reference point.
 
 Data must cover architecture-specific SIMD: NEON on an aarch64 workstation (Apple-silicon class), and both AVX2 and AVX-512 on an x86_64 server (recent AMD/Intel class with native AVX-512).
@@ -40,10 +40,11 @@ The motivation for benchmarking both Plonky3 degree-4 and degree-5 is the securi
 
 | Setting | 128-bit-secure working field over a 31-bit base | Why |
 |---------|-------------------------------------------------|-----|
-| Plonky3 (hash-based) | base + degree-5 extension | random-evaluation soundness error is `O(instance_size / |ext_field|)`, i.e. about `31*d - log2(N)` bits; at `N = 2^22`, degree-4 (`~2^124`) gives only `~102` bits, degree-5 (`~2^155`) gives `~133` bits. The lost bits scale with instance size and are not the FRI query/PoW term, so grinding cannot cheaply recover them |
-| Akita (lattice-based) | base + degree-4 extension | soundness from SIS/lattice hardness; no random-evaluation / query-soundness term of the form `O(N / |ext_field|)`, so the extension field does not need the extra degree |
+| Plonky3 (hash-based) | base + degree-5 extension | random-evaluation soundness error is `O(instance_size / |ext_field|)`, i.e. about `31*d - log2(N)` bits; at `N = 2^22`, degree-4 (`~2^124`) gives only `~102` bits, degree-5 (`~2^155`) gives `~133` bits. The field-size term is the RS proximity-gap component (BCIKS20); the lost bits scale with instance size and are not the FRI query/PoW term, so grinding cannot cheaply recover them |
+| Akita (lattice-based) | base + degree-4 extension | extraction soundness from SIS/lattice hardness; the only field-size-dependent term is the sumcheck error `O(degree * log2(N) / |ext_field|)` (LFKN92; Thaler, Prop. 2.9), which scales with the number of rounds `log2(N)`, not with `N`, so there is no `O(N / |ext_field|)` term and the extension field does not need the extra degree |
 
 The precise soundness bit-accounting (the constant in `O(instance_size / |ext_field|)`, per-component losses, FRI query count, proximity gaps) belongs to the paper's security section, not to this bench spec.
+Akita's own challenge-grinding policy (proof-of-work on Fiat-Shamir nonces) would tune the query/PoW component, not the field-size term, and is specified separately in PR 102 (`Add transcript grinding specification`, spec-only, not yet implemented) with its merged prerequisite PR 104 (`Harden transcript replay, setup identity, and recursion inputs`); it does not change the degree choice benchmarked here.
 This spec records only the resulting extension-degree choice and benchmarks exactly those fields, so the paper can state "at equal 128-bit security, Akita's degree-4 arithmetic costs X while Plonky3's degree-5 arithmetic costs Y on the same hardware and SIMD width".
 
 ### Field Matrix
@@ -110,7 +111,7 @@ Each (library, field, arch, SIMD) cell measures the same operation set, matching
 - Phase 2 does not commit to landing any specific optimization. It is scoped to investigate and benchmark candidate improvements; each candidate ships only if it is a benchmark-gated win under the Phase 2 invariants. A candidate that does not clear the bar is recorded as rejected (with the measured reason), not merged.
 - No 32-bit cross-repo row: Plonky3 has no 32-bit prime, so Akita's `prime32_offset99` has no counterpart and is not part of the cross-repo matrix (it remains in the Akita-only `field_arith` rows).
 - No runtime CPU feature dispatch and no CI regression gate. These are paper-data runs, executed manually per architecture.
-- No new sub-workspace. Plonky3 0.5.3 is already in the workspace `Cargo.lock` (transitively via `spongefish`), and `field_arith/comparison.rs` already carries a foreign field dev-dep (`ark-bn254`), so the bench lives in-crate.
+- No new sub-workspace. Part of the Plonky3 0.5.3 graph is already in the workspace `Cargo.lock` (transitively via `spongefish`: `p3-field`, `p3-koala-bear`, `p3-monty-31`, plus the poseidon/challenger/dft/matrix/util crates); `p3-mersenne-31` and `p3-baby-bear` are *not* yet in the lock and are added here at the same 0.5.3 version and source, so no new advisory surface is expected. Combined with `field_arith/comparison.rs` already carrying a foreign field dev-dep (`ark-bn254`), the bench lives in-crate.
 
 ## Evaluation
 
@@ -119,7 +120,7 @@ Each (library, field, arch, SIMD) cell measures the same operation set, matching
 - [ ] `cargo bench -p akita-pcs --bench field_arith --no-run` builds on aarch64 (local) with the new Plonky3 rows.
 - [ ] The same builds clean on the x86_64 server under both the AVX2 and AVX-512 target-feature configurations.
 - [ ] `cargo clippy -p akita-pcs --benches -- -D warnings` and `cargo fmt --check` are clean.
-- [ ] `cargo deny check` passes with the added direct Plonky3 dev-deps (they are already present transitively, so no new advisories/licenses are expected).
+- [ ] `cargo deny check` passes with the added direct Plonky3 dev-deps. Two crates (`p3-mersenne-31`, `p3-baby-bear`) are new lockfile entries at 0.5.3; the rest of the 0.5.3 graph is already present transitively, so no new advisories/licenses are expected.
 - [ ] Akita `mersenne31` degree-4 rows (`tower`/`power`/`ring_subfield`) are added to `ext4.rs` so the exact-modulus base anchor has an extension counterpart (closes the gap noted in `specs/avx-simd-port.md`).
 - [ ] Full data captured on all three SIMD cells: NEON (aarch64 workstation), AVX2 (x86_64 server), AVX-512 (x86_64 server), saved as named Criterion baselines.
 - [ ] The Akita 128-bit base-field row (`prime128_offset275`) is captured on all three SIMD targets alongside the 31-bit rows.
@@ -149,17 +150,19 @@ Files:
 
 | File | Change |
 |------|--------|
-| `crates/akita-pcs/Cargo.toml` | add dev-deps `p3-field`, `p3-mersenne-31`, `p3-baby-bear`, `p3-koala-bear` at `= "0.5.3"` (matching the lock) |
+| `crates/akita-pcs/Cargo.toml` | add dev-deps `p3-field`, `p3-mersenne-31`, `p3-baby-bear`, `p3-koala-bear` at `= "0.5.3"`; `p3-field`/`p3-koala-bear` already resolve via the lock, `p3-mersenne-31`/`p3-baby-bear` are new same-version entries |
 | `crates/akita-pcs/benches/field_arith/plonky3.rs` | new module: a Plonky3-generic bench core mirroring `arithmetic.rs`, emitting identical Criterion group/ID strings, plus `bench_p3_base_matrix`, `bench_p3_ext4_matrix`, `bench_p3_ext5_matrix` |
 | `crates/akita-pcs/benches/field_arith/mod.rs` | `pub(crate) mod plonky3;` and re-export the three new entry points |
 | `crates/akita-pcs/benches/field_arith.rs` | add the three new functions to `criterion_group!` |
-| `crates/akita-pcs/benches/field_arith/ext4.rs` | add Akita `mersenne31_*_fp4` rows |
-| `crates/akita-pcs/benches/field_arith/ext5.rs` (or a section of `plonky3.rs`) | new `ext5` family, Plonky3-only |
+| `crates/akita-pcs/benches/field_arith/ext4.rs` | add Akita `mersenne31_*_fp4` rows (Akita degree-4 only) |
+| `crates/akita-pcs/benches/field_arith/plonky3.rs` (cont.) | the Plonky3-only `ext5` family lives here as `bench_p3_ext5_matrix` (listed above); there is no separate `ext5.rs` because Akita has no degree-5 analog |
 | `scripts/field_microbench_collect.py` | parse Criterion `estimates.json` across saved baselines into the paper CSV + markdown table |
+| `bench-data/field-microbench.{csv,md}` | new committed output artifacts: machine-readable CSV plus the paper-ready markdown pivot, emitted by the collect script |
 
 Reusability: the existing `bench_arithmetic_case` core is bound to Akita's `FieldCore` / `PackedField` traits and cannot accept Plonky3 types directly (orphan rule plus distinct traits).
 The new `plonky3.rs` therefore carries a parallel generic core `bench_p3_arithmetic_case<F: p3_field::Field>(...)` that runs the same operation set and writes to the same Criterion group/ID format strings (`field_arith/{family}/latency_chain/{label}_w{WIDTH}` and `.../throughput_stream/...`).
 It reuses `ArithmeticBenchParams`, `data.rs`, and every `AKITA_BENCH_*` env knob, so the only duplication is the trait-bound loop bodies.
+The composite chains (`mul_self`, `add_neg`, `double_add`) are written as the identical arithmetic expressions on both sides, not as a same-named library method, so the per-op workload (operation kind and count) is the same across Akita and Plonky3.
 Plonky3 packing is obtained generically via `<F as p3_field::Field>::Packing` (a `PackedField` with `WIDTH`).
 A later consolidation behind a single `trait FieldBenchOps` (with newtype wrappers for the Plonky3 types) is possible but out of scope; the parallel core is the minimal low-risk first cut.
 
@@ -228,7 +231,7 @@ Each candidate follows the same loop: measure baseline on the Phase 1 benches, i
 
 1. Add the four Plonky3 dev-deps to `crates/akita-pcs/Cargo.toml`; run `cargo deny check`.
 2. Implement `plonky3.rs` (generic core + base/ext4/ext5 matrices), pinning the 0.5.3 API points above.
-3. Add Akita `mersenne31_*_fp4` rows to `ext4.rs`; add the `ext5` family wiring.
+3. Add Akita `mersenne31_*_fp4` rows to `ext4.rs`; wire the Plonky3-only `ext5` family inside `plonky3.rs` (`bench_p3_ext5_matrix`).
 4. Wire `mod.rs` and the `criterion_group!` in `field_arith.rs`.
 5. `--no-run` build check on aarch64; fix lints/format.
 6. Push branch; set up the x86_64 server (1.95 toolchain + checkout); `--no-run` build check there under both AVX2 and AVX-512 flags.
@@ -272,6 +275,7 @@ Phase 2 (after all Phase 1 data is committed):
 
 - Plonky3 0.5.3 trait/method names for ring ops, inversion, random sampling, and the `Packing` associated type. Resolve by reading the pinned `p3-field` 0.5.3 source before writing the loop bodies.
 - Mersenne31 extension availability at degree 4/5 (complex-based). Decide anchor-only vs full extension early.
+- Plonky3 packed backends must be compile-time `target_feature` / `target-cpu` gated with no runtime CPU dispatch, or the "equal vector width per cell" invariant breaks. Plonky3 0.5.3 follows the same `target-cpu=native` convention as Akita (per the upstream README), but confirm there is no runtime feature detection in the `Packing` path before trusting per-cell width parity.
 - x86_64-server toolchain/PATH and CPU pinning for stable numbers.
 
 ## References
@@ -280,5 +284,9 @@ Phase 2 (after all Phase 1 data is committed):
 - `specs/fp31-field-optimization-retrospective.md`: Akita 31-bit optimization, Plonky3 Monty31/Mersenne31 references, recorded packed-mul numbers.
 - `specs/avx-simd-port.md`: AVX2/AVX-512/NEON packed backends, target-cpu flag convention, and the noted Mersenne31 ext4 bench gap this spec closes.
 - `specs/general-field-support.md`, `specs/extension-claim-incidence-cutover.md`: Akita extension-field representations (`Fp2`, tower/power/ring-subfield `Fp4`).
-- Plonky3 0.5.3: `p3-field`, `p3-mersenne-31`, `p3-baby-bear`, `p3-koala-bear` (already in `Cargo.lock` via `spongefish`).
+- Plonky3 0.5.3: `p3-field`, `p3-mersenne-31`, `p3-baby-bear`, `p3-koala-bear`. `p3-field`, `p3-koala-bear`, `p3-monty-31` (plus poseidon/challenger/dft/matrix/util) are already in `Cargo.lock` via `spongefish`; `p3-mersenne-31` and `p3-baby-bear` are added at the same 0.5.3 version.
+- Sumcheck soundness `<= v*d / |F|` over `v` rounds: Lund-Fortnow-Karloff-Nisan, "Algebraic Methods for Interactive Proof Systems" (LFKN, 1992); Thaler, *Proofs, Arguments, and Zero-Knowledge*, Prop. 2.9.
+- FRI / Reed-Solomon proximity-gap soundness and its field-size dependence (distinct from the query/PoW term): Ben-Sasson, Carmon, Ishai, Kopparty, Saraf, "Proximity Gaps for Reed-Solomon Codes" (BCIKS, 2020), ePrint 2020/654.
+- Plonky3 fields and ~128-bit extensions (Mersenne31 complex extension; BabyBear/KoalaBear quartic and quintic; soundness depends on field size, query count, and extension degree): Plonky3 README; Polygon/Plonky3 audit (Least Authority, 2024).
+- Akita transcript grinding: PR 102 (`Add transcript grinding specification`, spec-only, not yet implemented); merged prerequisite PR 104 (`Harden transcript replay, setup identity, and recursion inputs`).
 - Test fleet: an aarch64 workstation (Apple-silicon class, NEON) and an x86_64 server (recent AMD/Intel class with native AVX-512, exercised at both AVX2 and AVX-512).
