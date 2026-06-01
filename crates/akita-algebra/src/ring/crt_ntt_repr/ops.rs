@@ -178,19 +178,26 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
     }
 
-    /// Accumulate `lhs0 * rhs(digits)` and `lhs1 * rhs(digits)` into
-    /// `(acc0, acc1)` while sharing the digit CRT+NTT conversion scratch.
+    /// Accumulate `mat_row * rhs(digits)` into each `accs[row]` for an arbitrary
+    /// number of rows, sharing one digit CRT+NTT conversion across every row.
+    ///
+    /// `accs[row]` and `ntt_mat[row][col]` are the accumulator and matrix cell
+    /// for output row `row`. This generalizes the former single/pair/triple
+    /// `_with_lut_scratch` kernels: the rhs conversion (LUT + forward NTT) is
+    /// the only shared cost, computed once per CRT limb and reused across all
+    /// rows. The per-row multiply-accumulate is identical to the single-row
+    /// kernel, so wider `n_a` amortizes the conversion without changing math.
     #[inline]
-    pub fn add_assign_pointwise_mul_i8_pair_with_lut_scratch(
-        accs: [&mut Self; 2],
-        lhs: [&Self; 2],
+    pub fn add_assign_col_pointwise_mul_i8_multi_with_lut_scratch(
+        accs: &mut [Self],
+        ntt_mat: &[&[Self]],
+        col: usize,
         digits: &[i8; D],
         params: &CrtNttParamSet<W, K, D>,
         lut: &DigitMontLut<W, K>,
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
-        let [acc0, acc1] = accs;
-        let [lhs0, lhs1] = lhs;
+        debug_assert_eq!(accs.len(), ntt_mat.len());
 
         #[cfg(target_arch = "aarch64")]
         if neon::use_neon_ntt() {
@@ -205,41 +212,28 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
             for (k, rhs_limb) in scratch.iter().enumerate() {
                 let prime = params.primes[k];
-                unsafe {
-                    if size_of::<W>() == size_of::<i32>() {
-                        neon::pointwise_mul_acc_i32(
-                            acc0.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs0.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                        neon::pointwise_mul_acc_i32(
-                            acc1.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs1.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                    } else {
-                        neon::pointwise_mul_acc_i16(
-                            acc0.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs0.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                        neon::pointwise_mul_acc_i16(
-                            acc1.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs1.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
+                for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
+                    let lhs = &mat_row[col];
+                    unsafe {
+                        if size_of::<W>() == size_of::<i32>() {
+                            neon::pointwise_mul_acc_i32(
+                                acc.limbs[k].as_mut_ptr() as *mut i32,
+                                lhs.limbs[k].as_ptr() as *const i32,
+                                rhs_limb.as_ptr() as *const i32,
+                                D,
+                                prime.p.to_i64() as i32,
+                                prime.pinv.to_i64() as i32,
+                            );
+                        } else {
+                            neon::pointwise_mul_acc_i16(
+                                acc.limbs[k].as_mut_ptr() as *mut i16,
+                                lhs.limbs[k].as_ptr() as *const i16,
+                                rhs_limb.as_ptr() as *const i16,
+                                D,
+                                prime.p.to_i64() as i16,
+                                prime.pinv.to_i64() as i16,
+                            );
+                        }
                     }
                 }
             }
@@ -255,190 +249,25 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             forward_ntt(scratch_limb, params.primes[k], tw);
 
             let prime = params.primes[k];
-            let acc0_limb = &mut acc0.limbs[k];
-            let acc1_limb = &mut acc1.limbs[k];
-            let lhs0_limb = &lhs0.limbs[k];
-            let lhs1_limb = &lhs1.limbs[k];
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if let Some(mode) = x86_mode {
-                // SAFETY: guarded by x86 runtime dispatch.
-                unsafe {
-                    Self::add_assign_pointwise_mul_limb_x86(
-                        acc0_limb,
-                        lhs0_limb,
-                        scratch_limb,
-                        prime,
-                        mode,
-                    );
-                    Self::add_assign_pointwise_mul_limb_x86(
-                        acc1_limb,
-                        lhs1_limb,
-                        scratch_limb,
-                        prime,
-                        mode,
-                    );
-                }
-                continue;
-            }
-            for (((acc0_coeff, lhs0_coeff), acc1_coeff), (lhs1_coeff, rhs_coeff)) in acc0_limb
-                .iter_mut()
-                .zip(lhs0_limb.iter())
-                .zip(acc1_limb.iter_mut())
-                .zip(lhs1_limb.iter().zip(scratch_limb.iter()))
-            {
-                let prod0 = prime.mul(*lhs0_coeff, *rhs_coeff);
-                let sum0 = MontCoeff::from_raw(acc0_coeff.raw().wrapping_add(prod0.raw()));
-                *acc0_coeff = prime.reduce_range(sum0);
-
-                let prod1 = prime.mul(*lhs1_coeff, *rhs_coeff);
-                let sum1 = MontCoeff::from_raw(acc1_coeff.raw().wrapping_add(prod1.raw()));
-                *acc1_coeff = prime.reduce_range(sum1);
-            }
-        }
-    }
-
-    /// Accumulate `lhs0 * rhs(digits)`, `lhs1 * rhs(digits)`, and
-    /// `lhs2 * rhs(digits)` into `(acc0, acc1, acc2)` while sharing the digit
-    /// CRT+NTT conversion scratch.
-    #[inline]
-    pub fn add_assign_pointwise_mul_i8_triple_with_lut_scratch(
-        accs: [&mut Self; 3],
-        lhs: [&Self; 3],
-        digits: &[i8; D],
-        params: &CrtNttParamSet<W, K, D>,
-        lut: &DigitMontLut<W, K>,
-        scratch: &mut [[MontCoeff<W>; D]; K],
-    ) {
-        let [acc0, acc1, acc2] = accs;
-        let [lhs0, lhs1, lhs2] = lhs;
-
-        #[cfg(target_arch = "aarch64")]
-        if neon::use_neon_ntt() {
-            for (k, (scratch_limb, tw)) in
-                scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
-            {
-                for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
-                    *dst = lut.get(k, digit);
-                }
-                forward_ntt(scratch_limb, params.primes[k], tw);
-            }
-
-            for (k, rhs_limb) in scratch.iter().enumerate() {
-                let prime = params.primes[k];
-                unsafe {
-                    if size_of::<W>() == size_of::<i32>() {
-                        neon::pointwise_mul_acc_i32(
-                            acc0.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs0.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                        neon::pointwise_mul_acc_i32(
-                            acc1.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs1.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                        neon::pointwise_mul_acc_i32(
-                            acc2.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs2.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                    } else {
-                        neon::pointwise_mul_acc_i16(
-                            acc0.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs0.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                        neon::pointwise_mul_acc_i16(
-                            acc1.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs1.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                        neon::pointwise_mul_acc_i16(
-                            acc2.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs2.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
+            for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
+                let lhs = &mat_row[col];
+                let acc_limb = &mut acc.limbs[k];
+                let lhs_limb = &lhs.limbs[k];
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                if let Some(mode) = x86_mode {
+                    // SAFETY: guarded by x86 runtime dispatch.
+                    unsafe {
+                        Self::add_assign_pointwise_mul_limb_x86(
+                            acc_limb,
+                            lhs_limb,
+                            scratch_limb,
+                            prime,
+                            mode,
                         );
                     }
+                    continue;
                 }
-            }
-            return;
-        }
-
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let x86_mode = Self::x86_pointwise_mode();
-        for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
-            for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
-                *dst = lut.get(k, digit);
-            }
-            forward_ntt(scratch_limb, params.primes[k], tw);
-
-            let prime = params.primes[k];
-            let acc0_limb = &mut acc0.limbs[k];
-            let acc1_limb = &mut acc1.limbs[k];
-            let acc2_limb = &mut acc2.limbs[k];
-            let lhs0_limb = &lhs0.limbs[k];
-            let lhs1_limb = &lhs1.limbs[k];
-            let lhs2_limb = &lhs2.limbs[k];
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if let Some(mode) = x86_mode {
-                // SAFETY: guarded by x86 runtime dispatch.
-                unsafe {
-                    Self::add_assign_pointwise_mul_limb_x86(
-                        acc0_limb,
-                        lhs0_limb,
-                        scratch_limb,
-                        prime,
-                        mode,
-                    );
-                    Self::add_assign_pointwise_mul_limb_x86(
-                        acc1_limb,
-                        lhs1_limb,
-                        scratch_limb,
-                        prime,
-                        mode,
-                    );
-                    Self::add_assign_pointwise_mul_limb_x86(
-                        acc2_limb,
-                        lhs2_limb,
-                        scratch_limb,
-                        prime,
-                        mode,
-                    );
-                }
-                continue;
-            }
-            for idx in 0..D {
-                let rhs_coeff = scratch_limb[idx];
-
-                let prod0 = prime.mul(lhs0_limb[idx], rhs_coeff);
-                let sum0 = MontCoeff::from_raw(acc0_limb[idx].raw().wrapping_add(prod0.raw()));
-                acc0_limb[idx] = prime.reduce_range(sum0);
-
-                let prod1 = prime.mul(lhs1_limb[idx], rhs_coeff);
-                let sum1 = MontCoeff::from_raw(acc1_limb[idx].raw().wrapping_add(prod1.raw()));
-                acc1_limb[idx] = prime.reduce_range(sum1);
-
-                let prod2 = prime.mul(lhs2_limb[idx], rhs_coeff);
-                let sum2 = MontCoeff::from_raw(acc2_limb[idx].raw().wrapping_add(prod2.raw()));
-                acc2_limb[idx] = prime.reduce_range(sum2);
+                Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, scratch_limb, prime);
             }
         }
     }

@@ -31,10 +31,15 @@ This requires lowering `MAX_CRT_RING_DEGREE` from `1024` to `256` and removing t
 unused `D = 512` and `D = 1024` ring-degree presets, dispatch arms, and generated
 families/tables; `D > 256` is no longer a supported ring degree.
 The secondary deliverable originally proposed a backend-prepared layout
-experiment for the affected CRT/NTT-cache paths. The final implementation keeps
-the current row-major `NttSlotCache` CPU reference layout and treats physical
-layout migration as a follow-up; the optimization work that landed in this PR is
-limited to benchmark-gated x86 CRT/NTT kernels over the existing layout.
+experiment for the affected CRT/NTT-cache paths.
+The final implementation keeps the current row-major `NttSlotCache` CPU reference
+layout and treats physical layout migration as a follow-up.
+The optimization work that landed in this PR is limited to two changes over the
+existing layout: x86 CRT/NTT SIMD kernels enabled by runtime CPU feature
+detection (AVX-512 by default when the host supports it, AVX2 otherwise, scalar
+via env override), and a unification of the block-parallel i8 digit matvec onto a
+single generic multi-row kernel that replaces the former `n_a in {1, 2, 3}`
+specializations.
 Proof bytes, transcripts, schedules, serialization, and verifier behavior stay
 unchanged for both deliverables.
 
@@ -249,8 +254,12 @@ larger ring degree.
 8. Rewriting #134 chunking or "fixing" merged `single_cyclic` driver args for
    the Bugbot false positive (tests and optional cosmetic clarity only).
 9. Requiring Metal, AVX, or any accelerator backend for correctness.
-   x86 CRT/NTT SIMD is an optimization-only surface and must remain benchmark
-   gated with scalar/disabled-mode tests.
+   x86 CRT/NTT SIMD is an optimization-only surface: it is enabled by runtime CPU
+   feature detection (AVX-512 by default when the host supports
+   `avx512f`/`avx512dq`/`avx512bw`, AVX2 otherwise) and falls back to scalar.
+   The `AKITA_SCALAR_NTT`, `AKITA_AVX_NTT`, and `AKITA_AVX512_NTT` env overrides
+   drive scalar-equivalence and A/B tests, and correctness never depends on which
+   mode is selected.
 10. Changing canonical setup layout, proof layout, transcript binding, or
     verifier-visible semantics to accommodate a backend cache layout.
 11. Choosing one new physical cache layout without measurements.
@@ -586,12 +595,28 @@ Garner reconstruction, and backend-prepared buffers heterogeneous.
 The first implementation compared homogeneous candidates (`4 × i16` reference
 vs `2 × i32` production for Q32) before considering mixed-width profiles.
 
+### Block-parallel i8 digit matvec kernel
+
+The block-parallel i8 digit matvec previously special-cased `n_a in {1, 2, 3}`
+output rows with separate single/pair/triple kernels plus a generic fallback,
+duplicated across the plain, chunked, strided, and on-the-fly-decompose families.
+Those specializations only hoisted the per-digit CRT+NTT conversion out of the
+row loop; the per-row multiply-accumulate was identical to the generic path.
+The implementation now uses one kernel,
+`add_assign_col_pointwise_mul_i8_multi_with_lut_scratch`, that converts each digit
+once into reused scratch and multiply-accumulates into an arbitrary number of
+rows, so every family shares a single code path for all `n_a`.
+This is a bit-identical refactor (same blocks, column order, and per-coefficient
+Montgomery operations) validated against the schoolbook reference at `n_a = 3`,
+and it removes roughly 800 lines of duplicated kernel code.
+
 ### Deferred Follow-Ups
 
 1. **Remaining x86 CRT/NTT SIMD surfaces.**
-   This PR lands benchmark-gated AVX2 i32 pointwise/add-reduce, AVX2 i32 D32/D64+
-   transforms, opt-in AVX-512 i32 pointwise/add-reduce, and AVX2 i16
-   pointwise/add-reduce over the existing CRT limb layout.
+   This PR lands AVX2 i32 pointwise/add-reduce, AVX2 i32 D32 and D64+ transforms,
+   AVX-512 i32 pointwise/add-reduce, and AVX2 i16 pointwise/add-reduce over the
+   existing CRT limb layout, selected at runtime by CPU feature detection
+   (AVX-512 by default when available, AVX2 otherwise).
    Q16 full transforms, AVX-512-specific full transforms, IFMA-style arithmetic,
    and any layout-aware transform design remain follow-ups and must beat the
    current production branch on the same host before they are enabled.
@@ -599,6 +624,16 @@ vs `2 × i32` production for Q32) before considering mixed-width profiles.
    Prime-flat, column-tiled, or structure-of-arrays prepared caches remain
    plausible for future SIMD/GPU work, but they should be introduced only when
    benchmark evidence justifies keeping the backend-private layout.
+3. **Register-blocked multi-row macc kernel.**
+   The generic multi-row digit kernel reloads the shared rhs limb from L1 once per
+   output row.
+   A register-blocked variant could load each rhs lane once and fuse it into
+   several row accumulators, trading more complex per-arch `unsafe` code for fewer
+   loads.
+   Because the multiply-accumulate is dominated by per-coefficient Montgomery
+   multiply-reduce work and the shared rhs is already L1-resident, the upside is
+   expected to be marginal, so any production change is gated on a standalone macc
+   micro-benchmark first.
 
 ### Alternatives Considered
 

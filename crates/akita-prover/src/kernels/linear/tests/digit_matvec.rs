@@ -370,7 +370,7 @@ fn mat_vec_mul_i8_dense_single_row_matches_generic_on_block_parallel_path() {
 }
 
 #[test]
-fn mat_vec_mul_i8_dense_three_row_matches_generic_on_block_parallel_path() {
+fn mat_vec_mul_i8_dense_three_rows_match_schoolbook_on_block_parallel_path() {
     type F = Fp64<4294967197>;
     const D: usize = 64;
     let log_basis = 3;
@@ -420,21 +420,19 @@ fn mat_vec_mul_i8_dense_three_row_matches_generic_on_block_parallel_path() {
                 log_basis,
                 &params,
             );
-            let triple = super::mat_vec_mul_i8_dense_three_row_fused_with_params(
-                &ntt_mat,
-                &ring_block_slices,
-                num_digits,
-                log_basis,
-                &params,
-            );
-            assert_eq!(triple, generic);
+            let digit_blocks: Vec<Vec<[i8; D]>> = ring_blocks
+                .iter()
+                .map(|block| decompose_block_i8(block, num_digits, log_basis))
+                .collect();
+            let reference = schoolbook_digit_mat_vec(&mat, &digit_blocks);
+            assert_eq!(generic, reference);
         }
         _ => panic!("unexpected parameter family"),
     }
 }
 
 #[test]
-fn mat_vec_mul_digits_i8_three_row_matches_generic_on_block_parallel_path() {
+fn mat_vec_mul_digits_i8_three_rows_match_schoolbook_on_block_parallel_path() {
     type F = Fp64<4294967197>;
     const D: usize = 64;
     let log_basis = 3;
@@ -477,19 +475,8 @@ fn mat_vec_mul_digits_i8_three_row_matches_generic_on_block_parallel_path() {
                 Q32_NUM_PRIMES,
                 D,
             >(&ntt_mat, &digit_block_slices, log_basis, &params);
-            let fused = super::mat_vec_mul_digits_i8_three_row_block_parallel::<
-                F,
-                i32,
-                Q32_NUM_PRIMES,
-                D,
-                true,
-            >(
-                &ntt_mat,
-                &digit_block_slices,
-                super::balanced_digit_abs_bound(log_basis),
-                &params,
-            );
-            assert_eq!(fused, generic);
+            let reference = schoolbook_digit_mat_vec(&mat, &digit_blocks);
+            assert_eq!(generic, reference);
         }
         _ => panic!("unexpected parameter family"),
     }
