@@ -157,6 +157,93 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PlannerCfg<Cfg> {
     }
 }
 
+/// `Cfg` wrapper that selects [`TerminalProofMode::DirectRingRelations`] while
+/// reusing the inner config's generated table (and its envelope floor). Its
+/// `schedule_plan` re-materializes the inner table under
+/// `Self::terminal_proof_mode()`, so the root/fold structure is identical to
+/// the inner config and only the terminal step is rebuilt for direct mode
+/// (omitting the `r_hat` quotient and stage-2 sumcheck). Compose under
+/// [`PlannerCfg`] (`PlannerCfg<DirectTerminalCfg<Inner>>`) to also cover
+/// table-miss incidences through the direct-mode planner DP.
+///
+/// Every other policy hook delegates to the inner config, so this exercises the
+/// real production schedule-construction path with only the terminal mode
+/// flipped, no hand surgery.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DirectTerminalCfg<Cfg>(PhantomData<Cfg>);
+
+#[allow(clippy::expl_impl_clone_on_copy)]
+impl<Cfg> DirectTerminalCfg<Cfg> {
+    /// Construct the marker value. Carries no state; all trait methods are
+    /// associated functions.
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<Cfg: CommitmentConfig> CommitmentConfig for DirectTerminalCfg<Cfg> {
+    type Field = Cfg::Field;
+    type ClaimField = Cfg::ClaimField;
+    type ChallengeField = Cfg::ChallengeField;
+
+    const D: usize = Cfg::D;
+
+    fn decomposition() -> DecompositionParams {
+        Cfg::decomposition()
+    }
+
+    fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        Cfg::stage1_challenge_config(d)
+    }
+
+    fn fold_challenge_shape_at_level(
+        inputs: AkitaScheduleInputs,
+    ) -> akita_challenges::TensorChallengeShape {
+        Cfg::fold_challenge_shape_at_level(inputs)
+    }
+
+    fn sis_modulus_family() -> SisModulusFamily {
+        Cfg::sis_modulus_family()
+    }
+
+    fn terminal_proof_mode() -> TerminalProofMode {
+        TerminalProofMode::DirectRingRelations
+    }
+
+    fn schedule_table() -> Option<GeneratedScheduleTable> {
+        Cfg::schedule_table()
+    }
+
+    /// Re-materialize the inner table under `Self`'s direct terminal mode.
+    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+        akita_config::proof_optimized::schedule_plan_for::<Self>(key)
+    }
+
+    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
+        Cfg::audited_root_rank(role, max_num_vars)
+    }
+
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        Cfg::envelope(max_num_vars)
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+    }
+
+    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+        Cfg::log_basis_search_range(inputs)
+    }
+
+    fn ring_subfield_embedding_norm_bound() -> u32 {
+        Cfg::ring_subfield_embedding_norm_bound()
+    }
+}
+
 /// Derive the per-polynomial commitment layout optimized for a batch of
 /// `num_claims` polynomials with `num_vars` variables.
 ///

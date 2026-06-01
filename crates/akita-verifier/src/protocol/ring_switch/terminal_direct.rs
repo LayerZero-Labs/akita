@@ -400,29 +400,18 @@ fn terminal_direct_plane_layout(
         .checked_mul(lp.inner_width())
         .and_then(|len| len.checked_mul(num_public_rows))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal direct Z width overflow".to_string()))?;
-    let offset_z = if lp.m_vars >= lp.r_vars {
-        0
-    } else {
-        w_len.checked_add(t_len).ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal direct Z offset overflow".to_string())
-        })?
-    };
-    let offset_w = if lp.m_vars >= lp.r_vars { z_len } else { 0 };
-    let offset_t = if lp.m_vars >= lp.r_vars {
-        z_len.checked_add(w_len).ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal direct T offset overflow".to_string())
-        })?
-    } else {
-        w_len
-    };
+    // Direct mode omits `r_hat` and (being transparent-only) carries no
+    // blinding planes, so the shared ordering authority is consulted with zero
+    // blinding lengths; `offset_r` is intentionally unused here.
+    let offsets = ring_switch_segment_layout(w_len, t_len, z_len, 0, 0, lp.m_vars >= lp.r_vars)?;
     let total_planes = w_len
         .checked_add(t_len)
         .and_then(|len| len.checked_add(z_len))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal direct width overflow".to_string()))?;
     Ok(TerminalDirectPlaneLayout {
-        offset_w,
-        offset_t,
-        offset_z,
+        offset_w: offsets.offset_w,
+        offset_t: offsets.offset_t,
+        offset_z: offsets.offset_z,
         total_blocks,
         t_total_blocks,
         total_planes,

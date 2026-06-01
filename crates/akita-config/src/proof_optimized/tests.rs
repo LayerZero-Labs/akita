@@ -628,6 +628,54 @@ fn generated_d128_full_table_materializes_valid_plans() {
 
 #[test]
 #[cfg(not(feature = "zk"))]
+fn generated_table_rejects_sis_family_mismatch() {
+    type Cfg = fp128::D64Full;
+    let table = fp128_d64_full_table();
+    let mismatched = GeneratedScheduleTable {
+        sis_family: akita_types::SisModulusFamily::Q32,
+        entries: table.entries,
+    };
+    let entry = mismatched
+        .entries
+        .iter()
+        .find(|entry| entry.key.num_t_vectors == 1)
+        .expect("fp128 table should contain singleton rows");
+    let key = AkitaScheduleLookupKey::new_with_points(
+        entry.key.num_vars,
+        entry.key.num_commitment_groups,
+        entry.key.num_t_vectors,
+        entry.key.num_w_vectors,
+        entry.key.num_z_vectors,
+    );
+    // Drive the planner materializer directly with the mismatched table:
+    // `Cfg::schedule_plan` would use the unmodified `Cfg::schedule_table()`,
+    // so we bypass it to test the SIS-family mismatch rejection path.
+    let err = akita_derive::schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _>(
+        key,
+        mismatched,
+        akita_derive::PlanPolicy {
+            sis_family: Cfg::sis_modulus_family(),
+            ring_dimension: Cfg::D,
+            root_decomp: Cfg::decomposition(),
+            challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
+            recursive_public_rows: 1,
+            extension_opening_width: Cfg::CLAIM_EXT_DEGREE,
+            stage1_challenge_config: Cfg::stage1_challenge_config,
+            envelope: Cfg::envelope(key.num_vars),
+            ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+            fold_challenge_shape: Cfg::fold_challenge_shape_at_level,
+            terminal_proof_mode: Cfg::terminal_proof_mode(),
+        },
+    )
+    .expect_err("mismatched SIS family must be rejected");
+    assert!(
+        err.to_string().contains("SIS family mismatch"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+#[cfg(not(feature = "zk"))]
 fn adaptive_bounded_plan_matches_runtime_next_w_len() {
     for num_vars in [14, 20, 30] {
         assert_plan_matches_runtime_w_sizes::<fp128::D64Full>(num_vars);

@@ -176,6 +176,79 @@ fn fp32_ring_subfield_max_claims(
     Ok(max_num_batched_polys)
 }
 
+/// Single source of truth for the hand-built terminal-root schedule shared by
+/// the sumcheck and direct fp32 fixtures. The `mode` argument drives the
+/// terminal witness quotient (`IncludeRHat` vs `OmitRHat`), the terminal level
+/// bytes, and the direct step's recorded mode, so the two fixtures differ only
+/// by the mode they pass in.
+fn fp32_root_terminal_schedule(
+    incidence: &ClaimIncidenceSummary,
+    mode: akita_types::TerminalProofMode,
+) -> Result<akita_types::Schedule, AkitaError> {
+    let field_bits = Fp32RingSubfieldRootFoldCfg::decomposition().field_bits();
+    let lp = akita_types::scale_batched_root_layout(
+        &Fp32RingSubfieldRootFoldCfg::root_lp(),
+        incidence.num_claims(),
+        Fp32RingSubfieldRootFoldCfg::stage1_challenge_config(Fp32RingSubfieldRootFoldCfg::D)
+            .expect("stage1 challenge config")
+            .l1_norm(),
+        field_bits,
+    )?;
+    let quotient = match mode {
+        akita_types::TerminalProofMode::RingSwitchSumcheck => {
+            akita_types::TerminalWitnessQuotient::IncludeRHat
+        }
+        akita_types::TerminalProofMode::DirectRingRelations => {
+            akita_types::TerminalWitnessQuotient::OmitRHat
+        }
+    };
+    let w_ring = akita_types::w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+        field_bits,
+        &lp,
+        incidence.num_points(),
+        incidence.num_polynomials(),
+        incidence.num_claims(),
+        incidence.num_public_rows(),
+        akita_types::MRowLayout::Terminal,
+        quotient,
+    )?;
+    let compact_w_len = w_ring * Fp32RingSubfieldRootFoldCfg::D;
+    let witness_shape = akita_types::DirectWitnessShape::PackedDigits((compact_w_len, 3));
+    let direct_bytes = akita_types::direct_witness_bytes(field_bits, &witness_shape);
+    let level_bytes = akita_types::terminal_level_proof_bytes_for_mode(
+        field_bits,
+        field_bits,
+        &lp,
+        compact_w_len,
+        incidence.num_claims(),
+        mode,
+    );
+    Ok(akita_types::Schedule {
+        steps: vec![
+            Step::Fold(akita_types::FoldStep {
+                params: lp.clone(),
+                current_w_len: akita_types::root_current_w_len(&lp),
+                delta_fold_per_poly: lp.num_digits_fold,
+                w_ring,
+                next_w_len: compact_w_len,
+                level_bytes,
+            }),
+            Step::Direct(akita_types::DirectStep {
+                current_w_len: compact_w_len,
+                witness_shape,
+                direct_bytes,
+                terminal_proof_mode: mode,
+                commit_params: None,
+                // Stub fixture: terminal-direct level params equal the fold's
+                // `lp` (matches the deleted `Cfg::level_params_with_log_basis`
+                // override that returned `Self::root_lp()`).
+                level_params: Some(lp.clone()),
+            }),
+        ],
+        total_bytes: direct_bytes,
+    })
+}
+
 impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     type Field = akita_field::Prime32Offset99;
     type ClaimField = akita_field::RingSubfieldFp4<Self::Field>;
@@ -221,40 +294,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), incidence.num_claims())?;
-        let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
-            &lp,
-            incidence.num_points(),
-            incidence.num_polynomials(),
-            incidence.num_claims(),
-            incidence.num_public_rows(),
-            akita_types::MRowLayout::WithoutDBlock,
-        )?;
-        let compact_w_len = w_ring * Self::D;
-        Ok(akita_types::Schedule {
-            steps: vec![
-                Step::Fold(akita_types::FoldStep {
-                    params: lp.clone(),
-                    current_w_len: akita_types::root_current_w_len(&lp),
-                    next_w_len: compact_w_len,
-                    level_bytes: 0,
-                }),
-                Step::Direct(akita_types::DirectStep {
-                    current_w_len: compact_w_len,
-                    witness_shape: akita_types::CleartextWitnessShape::PackedDigits((
-                        compact_w_len,
-                        3,
-                    )),
-                    direct_bytes: compact_w_len,
-                    terminal_proof_mode: akita_types::TerminalProofMode::RingSwitchSumcheck,
-                    commit_params: None,
-                    // Stub fixture: terminal-direct level params equal the
-                    // fold's `lp`.
-                    params: Some(lp.clone()),
-                }),
-            ],
-            total_bytes: 0,
-        })
+        fp32_root_terminal_schedule(incidence, Self::terminal_proof_mode())
     }
 }
 
@@ -320,49 +360,7 @@ impl CommitmentConfig for Fp32RingSubfieldDirectRootFoldCfg {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = akita_types::scale_batched_root_layout(
-            &Fp32RingSubfieldRootFoldCfg::root_lp(),
-            incidence.num_claims(),
-            Self::stage1_challenge_config(Self::D)
-                .expect("stage1 challenge config")
-                .l1_norm(),
-            Self::decomposition().field_bits(),
-        )?;
-        let w_ring = akita_types::w_ring_element_count_with_counts_for_layout_bits_and_quotient(
-            Self::decomposition().field_bits(),
-            &lp,
-            incidence.num_points(),
-            incidence.num_polynomials(),
-            incidence.num_claims(),
-            incidence.num_public_rows(),
-            akita_types::MRowLayout::Terminal,
-            akita_types::TerminalWitnessQuotient::OmitRHat,
-        )?;
-        let compact_w_len = w_ring * Self::D;
-        let witness_shape = akita_types::DirectWitnessShape::PackedDigits((compact_w_len, 3));
-        let direct_bytes =
-            akita_types::direct_witness_bytes(Self::decomposition().field_bits(), &witness_shape);
-        Ok(akita_types::Schedule {
-            steps: vec![
-                Step::Fold(akita_types::FoldStep {
-                    params: lp.clone(),
-                    current_w_len: akita_types::root_current_w_len(&lp),
-                    delta_fold_per_poly: lp.num_digits_fold,
-                    w_ring,
-                    next_w_len: compact_w_len,
-                    level_bytes: 0,
-                }),
-                Step::Direct(akita_types::DirectStep {
-                    current_w_len: compact_w_len,
-                    witness_shape,
-                    direct_bytes,
-                    terminal_proof_mode: Self::terminal_proof_mode(),
-                    commit_params: None,
-                    level_params: Some(lp.clone()),
-                }),
-            ],
-            total_bytes: direct_bytes,
-        })
+        fp32_root_terminal_schedule(incidence, Self::terminal_proof_mode())
     }
 }
 
