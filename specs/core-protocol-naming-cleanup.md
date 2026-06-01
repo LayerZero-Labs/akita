@@ -148,7 +148,7 @@ Include them only if review agrees; otherwise they move to a follow-up.
 - All Tier 1 renames are applied with every call site updated; the workspace builds with no references to the old names.
 - `QuadraticEquation` is split: `RingRelationInstance` exists in `akita-types`, `RingRelationWitness` exists in `akita-prover`, and the prover constructors return both.
 - The verifier builds and consumes `RingRelationInstance`; the witness-column segment layout is derived from it on both sides (one `segment_layout` method) rather than duplicated between the verifier's `RingSwitchSegmentLayout` and the prover's inline offsets.
-- The per-claim incidence cluster is consolidated: `RingRelationInstance` holds a `ClaimIncidenceSummary` instead of the loose `claim_to_point` / `claim_poly_indices` / `num_polys_per_point` / `num_public_rows` fields (with `claim_to_point_poly` kept as the one explicit routing field).
+- The per-claim incidence cluster is consolidated into two named axes: `RingRelationInstance` holds a `ClaimIncidenceSummary` (evaluation axis) and a new `CommitmentRouting` (commitment axis), replacing the loose `claim_to_point` / `claim_poly_indices` / `num_polys_per_point` / `num_public_rows` / `claim_to_point_poly` fields. `CommitmentRouting` validates its indices at construction and adds no transcript bytes.
 - The `Option` witness fields and the `take_*` / `*_centered` accessor cluster on the old `QuadraticEquation` are gone.
 - `cargo fmt -q`, `cargo clippy --all -- -D warnings`, and `cargo test` pass on default features.
 - `cargo test --features zk` and `cargo test --no-default-features` pass.
@@ -211,10 +211,12 @@ The instance owns the fields it needs; it does not hold a `&LevelParams` borrow.
 Owning a handful of scalars plus the vectors it already materializes keeps the instance a self-contained value that both prover and verifier can pass by reference into the row-evaluation paths without threading a `LevelParams` lifetime through every evaluator.
 The `LevelParams`-derived quantity it consumes (`MRowLayout`) is a small `Copy` scalar, so copying it in is cheaper than carrying a borrow.
 
-The instance also folds the per-claim incidence cluster into one field rather than carrying loose vectors.
-The current `QuadraticEquation` re-flattens incidence into `claim_to_point`, `claim_poly_indices`, `num_polys_per_point`, and `num_public_rows`, all of which are exactly the accessors of `ClaimIncidenceSummary` (`crates/akita-types/src/proof/incidence.rs:94`); in `new_prover` they are literally copied out of the summary (`quadratic_equation.rs:670-672`).
-Both prover and verifier already construct and thread a `ClaimIncidenceSummary` (verifier: `levels.rs:283`, `recursive.rs:886`, `batched.rs`), so the instance holds the summary directly and exposes the four counts/maps through it.
-The one incidence field that is not a `ClaimIncidenceSummary` accessor is `claim_to_point_poly` (the committed-group index per claim); see the consolidation note below.
+The instance folds the per-claim incidence into two named axes rather than carrying five loose vectors.
+The loose vectors today encode two distinct things that the names hide.
+One axis is the **evaluation** incidence (which claim is opened at which point): `claim_to_point`, `num_polys_per_point`, `num_public_rows`, and `claim_poly_indices`, which are exactly the accessors of `ClaimIncidenceSummary` (`crates/akita-types/src/proof/incidence.rs:94`) and are literally copied out of the summary in `new_prover` (`quadratic_equation.rs:670-672`).
+The other axis is the **commitment** routing (which committed-polynomial bundle holds a claim's witness columns): `claim_to_point_poly` plus the commitment-view of `claim_poly_indices`, consumed in `compute_m_evals_x` to build the `t`-segment (`evals.rs:140-144`) entirely separately from the point side.
+These axes coincide in the root (one commitment per point, so `claim_to_point == claim_to_point_poly`, `quadratic_equation.rs:671`) but diverge in recursive multipoint (one shared commitment opened at many points: `claim_to_point` is the identity while `claim_to_point_poly` is all-zeros, `quadratic_equation.rs:890-891`), which is why a single summary cannot represent both.
+So the instance holds the evaluation axis as a `ClaimIncidenceSummary` (already constructed and threaded by both sides: verifier `levels.rs:283`, `recursive.rs:886`, `batched.rs`) and the commitment axis as a new `CommitmentRouting` type (see the consolidation note for its shape).
 
 ```rust
 // in akita-types
@@ -225,9 +227,8 @@ pub struct RingRelationInstance<F: FieldCore, const D: usize> {
     challenges: Challenges,                                  // from akita-challenges
     opening_points: Vec<RingOpeningPoint<F>>,
     ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>>,
-    incidence: ClaimIncidenceSummary,                        // claim_to_point / claim_poly_indices
-                                                             // / num_polys_per_point / num_public_rows
-    claim_to_point_poly: Vec<usize>,                         // committed-group routing (see note)
+    incidence: ClaimIncidenceSummary,                        // evaluation axis: claim -> opening point
+    commitment_routing: CommitmentRouting,                   // commitment axis: claim -> committed bundle
     gamma: Vec<F>,
     row_coefficient_rings: Vec<CyclotomicRing<F, D>>,        // derived from gamma
     // RHS targets
@@ -261,16 +262,26 @@ This is what keeps proof bytes and the `logging-transcript` event stream byte-id
 On the prover, `v = D · ŵ` is computed during construction (it has `w_hat` in hand) and stored; on the verifier, `v` is read from the proof.
 The instance never reaches into `RingRelationWitness` to recompute `v`, so the instance/witness boundary stays clean and `v` is identical on both sides by construction.
 
-**Incidence consolidation.**
-Folding the four loose incidence vectors into the existing `ClaimIncidenceSummary` is the consolidation that makes the shared type pull its weight: the verifier already holds a `ClaimIncidenceSummary`, so it builds the instance's incidence by moving in the summary it already has, with no re-flattening.
-The one field that does not fold in cleanly is `claim_to_point_poly`, the committed-group index per claim.
-It is genuinely distinct routing: in the root path it equals `claim_to_point` (one commitment per point, `quadratic_equation.rs:671`), but in the recursive multipoint path it is all-zeros while `claim_to_point` is the identity (`quadratic_equation.rs:890-891`), so it cannot be derived from the summary alone.
-Two options, to settle in review:
-- **Minimal:** keep `claim_to_point_poly` as one explicit `Vec<usize>` field on the instance (the shape above). Smallest change; the summary still absorbs the other four.
-- **Fuller:** extend `ClaimIncidenceSummary` with first-class commitment-group routing so the instance carries a single incidence object.
-  This is cleaner but must not change the transcript-absorbed shape: `append_claim_incidence_shape_to_transcript` (`incidence.rs:430`) binds only `num_vars` / `num_points` / `num_claims` / `num_polys_per_point` / `claim_to_point` / `claim_poly_indices`.
-  Any added routing field must stay out of that absorb (or the transcript-bytes invariant breaks), so it would be a derived, non-absorbed field on the summary.
-The spec recommends the minimal option for this PR and leaves the fuller `ClaimIncidenceSummary` extension as an optional follow-up, since it widens a shared verifier-reachable type.
+**Incidence consolidation (`CommitmentRouting`).**
+The evaluation axis is already consolidated: the instance moves in the `ClaimIncidenceSummary` both sides already construct, with no re-flattening.
+For the commitment axis, this spec introduces a named `CommitmentRouting` type in `akita-types` rather than leaving `claim_to_point_poly` as a bare, unexplained `Vec<usize>`:
+
+```rust
+// in akita-types, next to ClaimIncidenceSummary
+pub struct CommitmentRouting {
+    claim_to_group: Vec<usize>,       // was claim_to_point_poly: claim -> committed bundle
+    claim_poly_in_group: Vec<usize>,  // was the commitment-view of claim_poly_indices
+    num_polys_per_group: Vec<usize>,  // bundle p -> # polys committed in it
+}
+```
+
+This is the right shape because it names the second axis that the loose `claim_to_point_poly` left implicit, and because the verifier already carries this exact pairing as `PreparedRingSwitchRowEval.claim_to_point_poly: Vec<(usize, usize)>` (`crates/akita-verifier/src/protocol/ring_switch.rs:133`); `CommitmentRouting` is the named, owned form of that tuple list, shared by both sides.
+`compute_m_evals_x` builds its `t`-vector index from exactly these three (`evals.rs:118-144`), so the type captures a real computation, not a passive bag.
+
+Why a sibling type and not an extension of `ClaimIncidenceSummary`: the summary's model is one-commitment-per-point, enforced by its `validate()` (`incidence.rs:110-166`), and it is a verifier-reachable no-panic type. Folding a decoupled commitment axis into it would either weaken those invariants or require a second validation mode on the same type. Keeping `CommitmentRouting` separate preserves the summary's invariants and states the commitment axis as its own checked object.
+
+`CommitmentRouting` carries no new transcript bytes: the absorbed incidence shape stays exactly `append_claim_incidence_shape_to_transcript` (`incidence.rs:430`), which binds only `num_vars` / `num_points` / `num_claims` / `num_polys_per_point` / `claim_to_point` / `claim_poly_indices`. `CommitmentRouting` is in-memory routing only, so adding it changes no Fiat-Shamir output.
+`CommitmentRouting` must validate at construction (lengths equal `num_claims`, `claim_to_group[i] < num_polys_per_group.len()`, `claim_poly_in_group[i] < num_polys_per_group[claim_to_group[i]]`) to keep the verifier no-panic boundary; this mirrors the bounds `compute_m_evals_x` checks today at `evals.rs:96-111`.
 
 **Verifier adoption (the payoff).**
 The verifier today assembles the fold statement from loose pieces: `LevelParams`, the proof's `y_rings` / `v` / commitment rows, `ClaimIncidenceSummary`, and transcript-derived challenges, threaded by hand through `verify_root_level_inner` (`crates/akita-verifier/src/protocol/levels.rs:271`) and `verify_one_level_inner` (`crates/akita-verifier/src/protocol/levels/recursive.rs:120`).
@@ -282,7 +293,7 @@ Every field is already in the verifier's hands at this point, so this is a regro
 - `challenges`: the stage-1 fold challenges already sampled from the transcript.
 - `opening_points` / `ring_multiplier_points`: the verifier's reconstructed opening points (`RingMultiplierOpeningPoint::from_base` is already used in `proof/batch.rs`).
 - `incidence`: the `ClaimIncidenceSummary` the verifier already threads through `verify_root_level_inner` (`levels.rs:283`) and `verify_one_level_inner` (`recursive.rs:886`); this supplies `num_public_rows` and the three summary maps.
-- `claim_to_point_poly`: derived per path exactly as the prover does (root: equals `claim_to_point`; recursive: all-zeros).
+- `commitment_routing`: built from the same per-path data the verifier already derives for `PreparedRingSwitchRowEval.claim_to_point_poly` (`ring_switch.rs:133`); root collapses to the point routing, recursive multipoint routes all claims to group 0.
 - `gamma` / `row_coefficient_rings`: sampled via the same shared `sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)` the prover calls. The verifier already invokes it at `levels.rs:360`; the prover calls it at `root_fold.rs:286,449,806`. Same function, same transcript position, so the values match by construction.
 - `y` / `v`: the proof's `y_rings` / `v`.
 
@@ -353,7 +364,7 @@ Tier 2 adds a small increment on top: `build_w_coeffs` (about 8 occurrences acro
 The spec documents themselves are out of this count: `specs/terminal-direct-ring-relation.md` references some old names and would be updated if this lands first.
 
 Part 2 (the split and verifier adoption) is not captured by these literal counts.
-Its surface is the two prover constructors, the `ring_switch_build_w` signature and its callers, the deletion of the `Option` / `take_*` / `*_centered` accessor cluster, the new `RingRelationInstance` type in `akita-types` (holding a `ClaimIncidenceSummary` plus the `claim_to_point_poly` routing), the `segment_layout` method that replaces the verifier's `RingSwitchSegmentLayout` and the prover's inline `compute_m_evals_x` offsets, and the verifier statement-assembly sites in `crates/akita-verifier/src/protocol/levels.rs` and `levels/recursive.rs`.
+Its surface is the two prover constructors, the `ring_switch_build_w` signature and its callers, the deletion of the `Option` / `take_*` / `*_centered` accessor cluster, the new `RingRelationInstance` and `CommitmentRouting` types in `akita-types` (the instance holding a `ClaimIncidenceSummary` for the evaluation axis and a `CommitmentRouting` for the commitment axis), the `segment_layout` method that replaces the verifier's `RingSwitchSegmentLayout` and the prover's inline `compute_m_evals_x` offsets, and the verifier statement-assembly sites in `crates/akita-verifier/src/protocol/levels.rs` and `levels/recursive.rs`.
 This is a real refactor with net line movement, unlike part 1, and is the part where reviewer attention belongs.
 
 ### Alternatives Considered
