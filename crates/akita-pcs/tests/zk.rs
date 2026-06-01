@@ -14,9 +14,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::protocol::ring_switch::{
     build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
 };
-use akita_prover::{
-    AkitaProverSetup, CommitmentProver, RingRelationProver, RingRelationWitness,
-};
+use akita_prover::{AkitaProverSetup, CommitmentProver, RingRelationProver, RingRelationWitness};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::multilinear_eval;
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
