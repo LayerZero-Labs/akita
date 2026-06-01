@@ -6,6 +6,8 @@ use crate::api::commitment::{
 };
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
 use crate::kernels::linear::decompose_rows_i8_into;
+#[cfg(feature = "zk")]
+use crate::protocol::masking::sample_blinding_digits;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
@@ -14,10 +16,11 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
     active_setup_field_len, digest_level_params, filter_prefix_lengths_for_level_params,
     padded_setup_prefix_len, prefix_lengths_for_policy, select_setup_prefix_slot,
-    setup_prefix_slot_id, setup_seed_digest, AkitaCommitmentHint, AkitaExpandedSetup, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams,
-    MissingSetupPrefixSlotPolicy, RingCommitment, SetupPrefixDirectReason,
-    SetupPrefixPopulatePolicy, SetupPrefixSelectionOutcome, SetupPrefixSelectionRequest,
-    SetupPrefixSlot, SETUP_OFFLOAD_D_SETUP,
+    setup_prefix_slot_id, setup_seed_digest, AkitaCommitmentHint, AkitaExpandedSetup,
+    ClaimIncidenceSummary, FlatDigitBlocks, LevelParams, MissingSetupPrefixSlotPolicy,
+    RingCommitment, SetupPrefixDirectReason, SetupPrefixPopulatePolicy,
+    SetupPrefixSelectionOutcome, SetupPrefixSelectionRequest, SetupPrefixSlot,
+    SETUP_OFFLOAD_D_SETUP,
 };
 
 /// Commit one padded flat prefix of the shared setup matrix.
@@ -140,7 +143,25 @@ where
     validate_commit_outer_input_nonempty(b_input_len)?;
     let mut b_input_digits = vec![[0i8; D]; b_input_len];
     b_input_digits.copy_from_slice(decomposed_inner_rows.flat_digits());
+    #[cfg(feature = "zk")]
+    let b_blinding_digits =
+        sample_blinding_digits::<F, D>(level_params.b_key.row_len(), level_params.log_basis)?;
+    #[cfg(feature = "zk")]
+    let mut u = backend.digit_rows::<D>(prepared, level_params.b_key.row_len(), &b_input_digits)?;
+    #[cfg(not(feature = "zk"))]
     let u = backend.digit_rows::<D>(prepared, level_params.b_key.row_len(), &b_input_digits)?;
+    #[cfg(feature = "zk")]
+    {
+        let blinding_rows = backend.zk_b_digit_rows::<D>(
+            prepared,
+            level_params.b_key.row_len(),
+            b_blinding_digits.flat_digits().len(),
+            b_blinding_digits.flat_digits(),
+        )?;
+        for (row, blinding) in u.iter_mut().zip(blinding_rows) {
+            *row += blinding;
+        }
+    }
     if u.len() != level_params.b_key.row_len() {
         return Err(AkitaError::InvalidSetup(format!(
             "setup prefix commit returned {} B rows, expected {}",
@@ -149,7 +170,12 @@ where
         )));
     }
 
-    let hint = AkitaCommitmentHint::singleton(decomposed_inner_rows);
+    let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
+        decomposed_inner_rows,
+        recomposed_inner_rows,
+        #[cfg(feature = "zk")]
+        b_blinding_digits,
+    );
     let id = setup_prefix_slot_id(
         setup_seed_digest,
         D,
@@ -185,22 +211,21 @@ pub fn populate_setup_prefix_slots<F, const D: usize, B>(
     level_params: &LevelParams,
     incidence: &ClaimIncidenceSummary,
     policy: &SetupPrefixPopulatePolicy,
-) -> Result<(), AkitaError>
+) -> Result<usize, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
 {
     if matches!(policy, SetupPrefixPopulatePolicy::Disabled) {
-        return Ok(());
+        return Ok(0);
     }
     if D != SETUP_OFFLOAD_D_SETUP {
         return Err(AkitaError::InvalidSetup(format!(
             "setup prefix preprocessing requires D={SETUP_OFFLOAD_D_SETUP}, got D={D}"
         )));
     }
-    let seed_digest = setup_seed_digest(setup.expanded.seed()).map_err(|err| {
-        AkitaError::InvalidSetup(format!("setup seed digest failed: {err}"))
-    })?;
+    let seed_digest = setup_seed_digest(setup.expanded.seed())
+        .map_err(|err| AkitaError::InvalidSetup(format!("setup seed digest failed: {err}")))?;
     let natural_len = active_setup_field_len(level_params, incidence, D)?;
     let available_field_len = setup
         .expanded
@@ -210,11 +235,13 @@ where
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
         })?;
+    let level_params_digest = digest_level_params(std::slice::from_ref(level_params));
     let requested = filter_prefix_lengths_for_level_params(
         &prefix_lengths_for_policy(policy)?,
         level_params,
         D,
     );
+    let mut inserted = 0usize;
     for n_prefix in requested {
         if n_prefix < padded_setup_prefix_len(natural_len) {
             continue;
@@ -223,6 +250,10 @@ where
             continue;
         }
         if n_prefix > available_field_len {
+            continue;
+        }
+        let id = setup_prefix_slot_id(seed_digest, D, n_prefix, level_params_digest);
+        if setup.prefix_slots.get(&id).is_some() {
             continue;
         }
         let slot = commit_setup_prefix::<F, D, B>(
@@ -235,8 +266,44 @@ where
             natural_len,
         )?;
         setup.prefix_slots.insert(slot)?;
+        inserted = inserted.checked_add(1).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup prefix insert count overflow".to_string())
+        })?;
     }
-    Ok(())
+    Ok(inserted)
+}
+
+/// Populate setup-prefix slots for multiple concrete commitment shapes.
+///
+/// `FullLadder` materialization is shape-indexed because the slot id includes
+/// the commitment parameters. Supplying every scheduled `(LevelParams,
+/// ClaimIncidenceSummary)` pair lets one preprocessing pass materialize each
+/// ladder rung whose commitment shape exists in the schedule.
+///
+/// # Errors
+///
+/// Returns an error if any shape-specific population attempt fails or if the
+/// insertion count overflows.
+pub fn populate_setup_prefix_slots_for_shapes<F, const D: usize, B>(
+    setup: &mut AkitaProverSetup<F, D>,
+    backend: &B,
+    prepared: &B::PreparedSetup<D>,
+    shapes: &[(&LevelParams, &ClaimIncidenceSummary)],
+    policy: &SetupPrefixPopulatePolicy,
+) -> Result<usize, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    B: CommitmentComputeBackend<F>,
+{
+    let mut inserted = 0usize;
+    for (level_params, incidence) in shapes {
+        let shape_inserted =
+            populate_setup_prefix_slots(setup, backend, prepared, level_params, incidence, policy)?;
+        inserted = inserted.checked_add(shape_inserted).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup prefix insert count overflow".to_string())
+        })?;
+    }
+    Ok(inserted)
 }
 
 /// Select a prover-ready setup-prefix slot for one active shape.
@@ -257,22 +324,15 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
 {
-    let seed_digest = setup_seed_digest(setup.expanded.seed()).map_err(|err| {
-        AkitaError::InvalidSetup(format!("setup seed digest failed: {err}"))
-    })?;
+    let seed_digest = setup_seed_digest(setup.expanded.seed())
+        .map_err(|err| AkitaError::InvalidSetup(format!("setup seed digest failed: {err}")))?;
     let natural_len = active_setup_field_len(level_params, incidence, SETUP_OFFLOAD_D_SETUP)?;
     let request = SetupPrefixSelectionRequest {
         d_setup: SETUP_OFFLOAD_D_SETUP,
         natural_field_len: natural_len,
         level_params_digest: digest_level_params(std::slice::from_ref(level_params)),
     };
-    let outcome = select_setup_prefix_slot(
-        &setup.prefix_slots,
-        seed_digest,
-        D,
-        request,
-        n_min,
-    );
+    let outcome = select_setup_prefix_slot(&setup.prefix_slots, seed_digest, D, request, n_min);
     match (&outcome, missing_slot_policy) {
         (
             SetupPrefixSelectionOutcome::DirectScan {
@@ -407,7 +467,15 @@ mod tests {
             SetupMatrixEnvelope {
                 max_setup_len: setup_capacity_for(level_params, n_prefix).max(1),
                 #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
+                max_zk_b_len: level_params
+                    .b_key
+                    .row_len()
+                    .checked_mul(akita_types::zk::blinding_digit_plane_count::<F>(
+                        level_params.b_key.row_len(),
+                        32,
+                        level_params.log_basis,
+                    ))
+                    .expect("ZK B setup capacity"),
                 #[cfg(feature = "zk")]
                 max_zk_d_len: 1,
             },
@@ -423,9 +491,7 @@ mod tests {
             .num_blocks
             .checked_mul(level_params.block_len)
             .expect("witness shape");
-        let n_prefix = witness_ring_slots
-            .checked_mul(32)
-            .expect("prefix length");
+        let n_prefix = witness_ring_slots.checked_mul(32).expect("prefix length");
         let natural_len = active_setup_field_len(&level_params, &incidence, 32)
             .expect("natural len")
             .min(n_prefix);
@@ -468,7 +534,7 @@ mod tests {
         let mut setup = test_setup(&level_params, n_prefix);
         let backend = CpuBackend;
         let prepared = backend.prepare_setup::<32>(&setup).expect("prepared");
-        populate_setup_prefix_slots(
+        let inserted = populate_setup_prefix_slots(
             &mut setup,
             &backend,
             &prepared,
@@ -477,6 +543,7 @@ mod tests {
             &SetupPrefixPopulatePolicy::SelectedSlots(vec![n_prefix, n_prefix * 2]),
         )
         .expect("populate");
+        assert_eq!(inserted, 1);
         assert_eq!(setup.prefix_slots.len(), 1);
         let slot = setup
             .prefix_slots
@@ -488,6 +555,60 @@ mod tests {
             ))
             .expect("compatible slot");
         assert_eq!(slot.padded_len, n_prefix);
+    }
+
+    #[test]
+    fn populate_full_ladder_across_matching_shapes() {
+        let (small_params, small_incidence, small_prefix) = aligned_prefix_fixture();
+        let large_params = LevelParams::params_only(
+            SisModulusFamily::Q128,
+            32,
+            3,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::Uniform {
+                weight: 3,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_decomp(2, 0, 1, 1, 1, 0)
+        .expect("large level params");
+        let large_incidence = ClaimIncidenceSummary::same_point(8, 1).expect("large incidence");
+        let large_prefix = large_params
+            .num_blocks
+            .checked_mul(large_params.block_len)
+            .expect("large witness")
+            .checked_mul(32)
+            .expect("large prefix");
+        assert_eq!(large_prefix, small_prefix * 2);
+        assert_eq!(
+            padded_setup_prefix_len(
+                active_setup_field_len(&large_params, &large_incidence, 32).expect("large natural")
+            ),
+            large_prefix
+        );
+        let mut setup = test_setup(&large_params, large_prefix);
+        let backend = CpuBackend;
+        let prepared = backend.prepare_setup::<32>(&setup).expect("prepared");
+
+        let inserted = populate_setup_prefix_slots_for_shapes(
+            &mut setup,
+            &backend,
+            &prepared,
+            &[
+                (&small_params, &small_incidence),
+                (&large_params, &large_incidence),
+            ],
+            &SetupPrefixPopulatePolicy::FullLadder {
+                n_min: small_prefix,
+                n_max: large_prefix,
+            },
+        )
+        .expect("populate ladder");
+
+        assert_eq!(inserted, 2);
+        assert_eq!(setup.prefix_slots.len(), 2);
     }
 
     fn aligned_prefix_fixture() -> (LevelParams, ClaimIncidenceSummary, usize) {

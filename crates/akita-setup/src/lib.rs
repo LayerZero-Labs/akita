@@ -14,7 +14,7 @@ use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
     detect_field_modulus, planned_schedule_key_from_schedule, AkitaScheduleLookupKey,
-    AkitaSetupSeed, FlatMatrix,
+    AkitaSetupSeed, FlatMatrix, SetupPrefixProverRegistry,
 };
 #[cfg(test)]
 use akita_types::{AkitaVerifierSetup, SetupPrefixVerifierRegistry};
@@ -24,6 +24,8 @@ use std::fs;
 use std::io::Read;
 #[cfg(feature = "disk-persistence")]
 use std::path::PathBuf;
+#[cfg(feature = "disk-persistence")]
+use std::sync::Arc;
 /// Construct prover setup from a root commitment config.
 ///
 /// `akita-config` owns setup sizing policy; this crate owns optional disk
@@ -67,17 +69,21 @@ where
 
     #[cfg(feature = "disk-persistence")]
     {
-        match load_expanded_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
-        {
-            Ok(expanded) => {
+        match load_prover_setup::<F, D, Cfg>(max_num_vars, max_num_batched_polys, max_num_points) {
+            Ok(setup) => {
                 // A cached setup is acceptable only if its physical backing
                 // covers the packed setup envelope for the current request.
-                let cached_total = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-                let cached_points = expanded.seed().max_num_points;
+                let cached_total = setup
+                    .expanded
+                    .shared_matrix()
+                    .total_ring_elements_at::<D>()?;
+                let cached_points = setup.expanded.seed().max_num_points;
                 #[cfg(feature = "zk")]
-                let cached_zk_b_total = expanded.zk_b_matrix().total_ring_elements_at::<D>()?;
+                let cached_zk_b_total =
+                    setup.expanded.zk_b_matrix().total_ring_elements_at::<D>()?;
                 #[cfg(feature = "zk")]
-                let cached_zk_d_total = expanded.zk_d_matrix().total_ring_elements_at::<D>()?;
+                let cached_zk_d_total =
+                    setup.expanded.zk_d_matrix().total_ring_elements_at::<D>()?;
                 let cached_shape_covers_request =
                     cached_total >= max_setup_len && cached_points >= max_num_points;
                 #[cfg(feature = "zk")]
@@ -86,7 +92,7 @@ where
                     && cached_zk_d_total >= setup_envelope.max_zk_d_len;
                 if cached_shape_covers_request {
                     tracing::info!("Loaded setup from disk; backend preparation is explicit");
-                    return AkitaProverSetup::from_seed_validated_expanded(expanded);
+                    return Ok(setup);
                 }
                 if let Some(storage_path) =
                     get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
@@ -126,14 +132,35 @@ where
     )?;
 
     #[cfg(feature = "disk-persistence")]
-    save_expanded_setup::<F, Cfg>(
-        &setup.expanded,
+    if let Err(err) = persist_prover_setup::<F, D, Cfg>(
+        &setup,
         max_num_vars,
         max_num_batched_polys,
         max_num_points,
-    );
+    ) {
+        tracing::warn!("Failed to persist setup cache: {err}");
+    }
 
     Ok(setup)
+}
+
+/// Persist a prover setup, including any prover-ready setup-prefix slots, to
+/// the config-derived setup cache path.
+///
+/// Call this after `GenerateAndPersist` materializes prefix slots so later
+/// `new_prover_setup` calls can reload the preprocessed artifacts.
+#[cfg(feature = "disk-persistence")]
+pub fn persist_prover_setup<
+    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F>,
+>(
+    setup: &AkitaProverSetup<F, D>,
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    max_num_points: usize,
+) -> Result<(), AkitaError> {
+    save_prover_setup::<F, D, Cfg>(setup, max_num_vars, max_num_batched_polys, max_num_points)
 }
 
 // ---------------------------------------------------------------------------
@@ -224,26 +251,30 @@ pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "disk-persistence")]
-fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig<Field = F>>(
-    setup: &AkitaExpandedSetup<F>,
+fn save_prover_setup<
+    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F>,
+>(
+    setup: &AkitaProverSetup<F, D>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
-) {
+) -> Result<(), AkitaError> {
     let Some(storage_path) =
         get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
     else {
-        tracing::warn!("Could not determine storage directory; skipping setup save");
-        return;
+        return Err(AkitaError::InvalidSetup(
+            "could not determine storage directory".to_string(),
+        ));
     };
 
     if let Some(parent) = storage_path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
-            tracing::warn!(
-                "Failed to create setup cache directory {}: {e}",
+            return Err(AkitaError::InvalidSetup(format!(
+                "failed to create setup cache directory {}: {e}",
                 parent.display()
-            );
-            return;
+            )));
         }
     }
 
@@ -252,29 +283,35 @@ fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig<Fiel
     let file = match fs::File::create(&storage_path) {
         Ok(file) => file,
         Err(e) => {
-            tracing::warn!(
-                "Failed to create setup cache file {}: {e}",
+            return Err(AkitaError::InvalidSetup(format!(
+                "failed to create setup cache file {}: {e}",
                 storage_path.display()
-            );
-            return;
+            )));
         }
     };
     let mut writer = std::io::BufWriter::new(file);
 
-    if let Err(e) = setup.serialize_compressed(&mut writer) {
-        tracing::warn!(
-            "Failed to serialize setup cache {}: {e}",
-            storage_path.display()
-        );
+    if let Err(e) = setup.expanded.serialize_compressed(&mut writer) {
         let _ = fs::remove_file(&storage_path);
-        return;
+        return Err(AkitaError::InvalidSetup(format!(
+            "failed to serialize setup cache {}: {e}",
+            storage_path.display()
+        )));
+    }
+    if let Err(e) = setup.prefix_slots.serialize_compressed(&mut writer) {
+        let _ = fs::remove_file(&storage_path);
+        return Err(AkitaError::InvalidSetup(format!(
+            "failed to serialize setup-prefix cache {}: {e}",
+            storage_path.display()
+        )));
     }
 
     tracing::info!("Successfully saved setup to disk");
+    Ok(())
 }
 
 #[cfg(feature = "disk-persistence")]
-pub(crate) fn load_expanded_setup<
+pub(crate) fn load_prover_setup<
     F: FieldCore + Valid + CanonicalField + RandomSampling,
     const D: usize,
     Cfg: CommitmentConfig<Field = F>,
@@ -282,7 +319,7 @@ pub(crate) fn load_expanded_setup<
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
-) -> Result<AkitaExpandedSetup<F>, AkitaError> {
+) -> Result<AkitaProverSetup<F, D>, AkitaError> {
     let storage_path = get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("Failed to determine storage directory".to_string())
@@ -310,6 +347,15 @@ pub(crate) fn load_expanded_setup<
         max_num_points,
     )
     .map_err(|e| AkitaError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
+    let prefix_slots = SetupPrefixProverRegistry::<F, D>::deserialize_with_mode(
+        &mut reader,
+        Compress::Yes,
+        Validate::Yes,
+        &(),
+    )
+    .map_err(|e| {
+        AkitaError::InvalidSetup(format!("Failed to deserialize setup-prefix slots: {e}"))
+    })?;
     let mut trailing = [0u8; 1];
     if reader
         .read(&mut trailing)
@@ -326,7 +372,10 @@ pub(crate) fn load_expanded_setup<
     tracing::info!(
         "Loaded setup for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}, max_num_points={max_num_points}"
     );
-    Ok(setup)
+    Ok(AkitaProverSetup {
+        expanded: Arc::new(setup),
+        prefix_slots,
+    })
 }
 
 #[cfg(feature = "disk-persistence")]
@@ -527,8 +576,61 @@ mod tests {
 
                 let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
 
-                let loaded = load_expanded_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
-                assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
+                let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                assert_eq!(loaded.expanded, prover_setup.expanded);
+
+                cleanup_setup_file(MAX_VARS);
+            });
+        }
+
+        #[test]
+        fn prefix_slots_roundtrip_through_setup_cache() {
+            with_test_cache_dir("prefix-slots", || {
+                use akita_algebra::CyclotomicRing;
+                use akita_types::{
+                    setup_seed_digest, AkitaCommitmentHint, FlatDigitBlocks, RingCommitment,
+                    SetupPrefixSlot, SetupPrefixSlotId,
+                };
+
+                const MAX_VARS: usize = 13;
+
+                cleanup_setup_file(MAX_VARS);
+
+                let mut setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let id = SetupPrefixSlotId {
+                    setup_seed_digest: setup_seed_digest(setup.expanded.seed()).unwrap(),
+                    d_setup: TEST_D,
+                    n_prefix: TEST_D,
+                    level_params_digest: [9u8; 32],
+                };
+                let decomposed = FlatDigitBlocks::<TEST_D>::from_blocks(vec![Vec::new()]);
+                let recomposed = vec![Vec::new()];
+                #[cfg(feature = "zk")]
+                let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
+                    decomposed,
+                    recomposed,
+                    FlatDigitBlocks::empty(),
+                );
+                #[cfg(not(feature = "zk"))]
+                let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
+                    decomposed, recomposed,
+                );
+                setup
+                    .prefix_slots
+                    .insert(SetupPrefixSlot {
+                        id,
+                        natural_len: 1,
+                        padded_len: TEST_D,
+                        commitment: RingCommitment {
+                            u: vec![CyclotomicRing::zero()],
+                        },
+                        hint,
+                    })
+                    .unwrap();
+                persist_prover_setup::<TestF, TEST_D, Cfg>(&setup, MAX_VARS, 1, 1).unwrap();
+
+                let loaded = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                assert_eq!(loaded.prefix_slots, setup.prefix_slots);
 
                 cleanup_setup_file(MAX_VARS);
             });
@@ -570,9 +672,13 @@ mod tests {
                     #[cfg(feature = "zk")]
                     prover_setup.expanded.zk_d_matrix().clone(),
                 );
-                save_expanded_setup::<TestF, Cfg>(&corrupt, MAX_VARS, 1, 1);
+                let corrupt = AkitaProverSetup {
+                    expanded: Arc::new(corrupt),
+                    prefix_slots: SetupPrefixProverRegistry::new(),
+                };
+                save_prover_setup::<TestF, TEST_D, Cfg>(&corrupt, MAX_VARS, 1, 1).unwrap();
 
-                let err = load_expanded_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1)
+                let err = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1)
                     .expect_err("corrupt cached matrix must be rejected");
                 assert!(err
                     .to_string()
@@ -596,7 +702,7 @@ mod tests {
                 let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
                 file.write_all(&[0]).unwrap();
 
-                let err = load_expanded_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1)
+                let err = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1)
                     .expect_err("cache with trailing bytes must be rejected");
                 assert!(err.to_string().contains("trailing bytes"));
 
@@ -625,7 +731,11 @@ mod tests {
                     #[cfg(feature = "zk")]
                     prover_setup.expanded.zk_d_matrix().clone(),
                 );
-                save_expanded_setup::<TestF, Cfg>(&stale, MAX_VARS, MAX_BATCH, 1);
+                let stale = AkitaProverSetup {
+                    expanded: Arc::new(stale),
+                    prefix_slots: SetupPrefixProverRegistry::new(),
+                };
+                save_prover_setup::<TestF, TEST_D, Cfg>(&stale, MAX_VARS, MAX_BATCH, 1).unwrap();
 
                 let regenerated =
                     new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, MAX_BATCH, 1).unwrap();
@@ -651,11 +761,7 @@ mod tests {
 
                 let fresh_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
 
-                let loaded_expanded =
-                    load_expanded_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
-                let disk_setup =
-                    AkitaProverSetup::<TestF, TEST_D>::from_validated_expanded(loaded_expanded)
-                        .unwrap();
+                let disk_setup = load_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
 
                 let lp = Cfg::get_params_for_batched_commitment(
                     &akita_types::ClaimIncidenceSummary::same_point(MAX_VARS, 1)
