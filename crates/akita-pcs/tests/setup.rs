@@ -347,8 +347,8 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 /// construction time, unlike dense polys which rebuild blocks from the
 /// prover-supplied `block_len`. Under batched commits that split must match
 /// the layout the prover will use, which is
-/// [`akita_batched_root_layout(nv, setup_polys)`] — i.e., sized for the
-/// setup's `max_num_batched_polys`, not for a lone poly.
+/// `test_support::akita_batched_root_layout(nv, setup_polys)` — i.e., sized
+/// for the setup's `max_num_batched_polys`, not for a lone poly.
 fn run_onehot_batched_e2e<Cfg, const D: usize>(
     setup_nv: usize,
     setup_polys: usize,
@@ -362,8 +362,9 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     assert!(commit_batch >= 1);
 
     let k = D;
-    let layout = akita_planner::test_utils::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
-        .expect("batched layout");
+    let layout =
+        akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
+            .expect("batched layout");
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(total_ring * k, 1usize << poly_nv);
 
@@ -522,40 +523,40 @@ macro_rules! preset_module {
     };
 }
 
-// Wrap every preset in `PlannerCfg` so multipoint/batched setup sizing falls
-// through to DP. Tables-only configs (`D128*` has no table at all) would
-// otherwise reject these sizing iterations.
+// Multipoint/batched setup sizing falls through to the planner DP via the
+// default `runtime_schedule` fallback, so bare presets suffice — even
+// tables-only configs (`D128*` has no table at all).
 preset_module!(
     d128_full,
-    akita_planner::test_utils::PlannerCfg<fp128::D128Full>,
+    fp128::D128Full,
     128,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
     d64_full,
-    akita_planner::test_utils::PlannerCfg<fp128::D64Full>,
+    fp128::D64Full,
     64,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
     d64_onehot,
-    akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>,
+    fp128::D64OneHot,
     64,
     run_onehot_e2e,
     run_onehot_batched_e2e
 );
 preset_module!(
     d32_full,
-    akita_planner::test_utils::PlannerCfg<fp128::D32Full>,
+    fp128::D32Full,
     32,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
     d32_onehot,
-    akita_planner::test_utils::PlannerCfg<fp128::D32OneHot>,
+    fp128::D32OneHot,
     32,
     run_onehot_e2e,
     run_onehot_batched_e2e

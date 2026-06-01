@@ -15,25 +15,14 @@ description = "Offline schedule planner for the Akita polynomial commitment sche
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
-[package.metadata.cargo-machete]
-ignored = ["akita-algebra"]
-
 [dependencies]
-akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
-akita-config = { version = "0.1.0", path = "../akita-config" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
-tracing = "0.1"
 
 [features]
 default = []
-parallel = ["akita-algebra/parallel", "akita-field/parallel"]
-zk = ["akita-config/zk", "akita-types/zk"]
-# Test-only utilities. Gates `PlannerCfg<Cfg>` (the DP-routing `Cfg` wrapper
-# used by cross-crate test fixtures). Off by default so production callers
-# never include it.
-test-utils = []
+zk = ["akita-types/zk"]
 
 [lints]
 workspace = true

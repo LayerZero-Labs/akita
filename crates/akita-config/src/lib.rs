@@ -1,16 +1,20 @@
 //! [`CommitmentConfig`] — the single `<Cfg>` parameter used by
 //! `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`.
 //!
-//! `get_params_for_prove` / `get_params_for_batched_commitment` are
-//! table-only by default: schedule-table hit ⇒ expand the compact entry
-//! via [`akita_types::schedule_from_entry_bits`] (see
-//! [`CommitmentConfig::runtime_schedule`]); miss ⇒ [`AkitaError::InvalidSetup`].
+//! `get_params_for_prove` / `get_params_for_batched_commitment` resolve a
+//! schedule for **any** lookup key via [`CommitmentConfig::runtime_schedule`]:
+//! a schedule-table hit expands the compact entry through
+//! [`akita_types::schedule_from_entry_bits`]; a table miss regenerates the
+//! schedule with the offline DP search [`akita_planner::find_schedule`],
+//! driven by the `Cfg`-derived [`policy_of`] bridge. Fallback is the
+//! default for every preset.
 //!
 //! [`WCommitmentConfig`] is the derived recursive-w config used by
 //! `<Cfg>`-generic ring-degree dispatch helpers.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::generated::{table_entry, GeneratedScheduleTable, GeneratedScheduleTableEntry};
 use akita_types::{
@@ -20,8 +24,11 @@ use akita_types::{
 };
 use std::marker::PhantomData;
 
+pub mod generated_families;
 pub mod proof_optimized;
 pub mod tensor_verifier;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 mod transcript_binding;
 pub use proof_optimized::{
     matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
@@ -29,11 +36,30 @@ pub use proof_optimized::{
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
+/// Derive the `Cfg`-free [`PlannerPolicy`] the planner DP consumes from a
+/// preset.
+///
+/// This is the single bridge between a [`CommitmentConfig`] preset and
+/// [`akita_planner::find_schedule`]: every brute-force input is *derived*
+/// from the `Cfg` impl, so the `Cfg` impl stays the one source of truth for
+/// each preset's `(D, decomposition, sis_family, …)`. Never hand-write a
+/// `PlannerPolicy` literal per preset.
+pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
+    PlannerPolicy {
+        ring_dimension: Cfg::D,
+        decomposition: Cfg::decomposition(),
+        sis_family: Cfg::sis_modulus_family(),
+        ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+        claim_ext_degree: Cfg::CLAIM_EXT_DEGREE,
+        chal_ext_degree: Cfg::CHAL_EXT_DEGREE,
+        basis_range: Cfg::basis_range(),
+    }
+}
+
 pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookupKey) -> AkitaError {
     AkitaError::InvalidSetup(format!(
-        "{context} requires a generated schedule entry for key {key:?}; \
-         override the relevant `CommitmentConfig` default and call \
-         `akita_planner::find_schedule` to enable an offline DP fallback"
+        "{context} produced no schedule for key {key:?}; the config override \
+         returned `None` from `runtime_schedule` for this key"
     ))
 }
 
@@ -183,32 +209,50 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn basis_range() -> (u32, u32);
 
-    /// Build the runtime [`Schedule`] for `key` by expanding the resolved
-    /// compact entry, or `None` on table miss.
+    /// Build the runtime [`Schedule`] for `key`.
     ///
-    /// This replaces the former `akita-derive` materializer: the single
-    /// canonical entry walker [`akita_types::schedule_from_entry_bits`]
-    /// reconstructs each level's `LevelParams` (and proof-byte accounting)
-    /// from the compact steps using this config's policy.
+    /// On a schedule-table **hit**, the resolved compact entry is expanded
+    /// by the canonical entry walker [`akita_types::schedule_from_entry_bits`]
+    /// (each level's `LevelParams` + proof-byte accounting reconstructed from
+    /// the compact steps using this config's policy).
+    ///
+    /// On a table **miss**, the schedule is regenerated from scratch by the
+    /// offline DP search [`akita_planner::find_schedule`], driven by the
+    /// `Cfg`-derived [`policy_of::<Self>()`][policy_of] plus this config's
+    /// `stage1` / `fold_shape` hooks. The DP is deterministic in
+    /// `(policy, key)`, so prover and verifier regenerate identical
+    /// schedules and the Fiat-Shamir `PlanSection` digest stays consistent.
+    /// Fallback is the default for every preset, so any lookup key is
+    /// supported with no reliance on a pre-shipped table.
+    ///
+    /// Returns `Ok(None)` only if an override deliberately declines a key.
     ///
     /// # Errors
     ///
-    /// Propagates expansion / SIS-bucket failures or a structurally invalid
-    /// entry.
+    /// Propagates expansion / SIS-bucket failures, a structurally invalid
+    /// entry, or DP-search failures (invalid key dimensions, witness
+    /// overflow). Never panics — this is verifier-reachable.
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Option<Schedule>, AkitaError> {
-        let Some(entry) = Self::resolve_schedule(key)? else {
-            return Ok(None);
-        };
-        let challenge_field_bits =
-            Self::decomposition().field_bits() * Self::CHAL_EXT_DEGREE as u32;
-        let schedule = akita_types::schedule_from_entry_bits(
-            entry,
+        if let Some(entry) = Self::resolve_schedule(key)? {
+            let challenge_field_bits =
+                Self::decomposition().field_bits() * Self::CHAL_EXT_DEGREE as u32;
+            let schedule = akita_types::schedule_from_entry_bits(
+                entry,
+                key,
+                Self::sis_modulus_family(),
+                Self::decomposition(),
+                challenge_field_bits,
+                Self::CLAIM_EXT_DEGREE,
+                Self::ring_subfield_embedding_norm_bound(),
+                Self::stage1_challenge_config,
+                Self::fold_challenge_shape_at_level,
+            )?;
+            return Ok(Some(schedule));
+        }
+        // Table miss — regenerate via the (now lower) planner crate.
+        let schedule = akita_planner::find_schedule(
             key,
-            Self::sis_modulus_family(),
-            Self::decomposition(),
-            challenge_field_bits,
-            Self::CLAIM_EXT_DEGREE,
-            Self::ring_subfield_embedding_norm_bound(),
+            &policy_of::<Self>(),
             Self::stage1_challenge_config,
             Self::fold_challenge_shape_at_level,
         )?;

@@ -25,7 +25,6 @@ parallel = [
 ]
 zk = [
   "akita-config/zk",
-  "akita-planner/zk",
   "akita-prover/zk",
   "akita-setup/zk",
   "akita-types/zk",
@@ -45,8 +44,10 @@ akita-verifier = { version = "0.1.0", path = "../akita-verifier" }
 tracing = "0.1"
 
 [dev-dependencies]
-akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
-  "test-utils",
+# Test-only: enable `akita-config`'s test-support layout helpers for the
+# `#[cfg(test)]` modules. Resolver-2 keeps this out of production builds.
+akita-config = { version = "0.1.0", path = "../akita-config", features = [
+  "test-support",
 ] }
 rand = "0.8"
 

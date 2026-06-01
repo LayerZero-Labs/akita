@@ -1,30 +1,25 @@
 //! Shared metadata describing every `Cfg` family that ships with a
 //! generated schedule table in `akita-types::generated`.
 //!
-//! Both `gen_schedule_tables` (the offline table emitter) and the
-//! cross-crate drift-guard test consume [`ALL_GENERATED_FAMILIES`] so
-//! the two cannot drift apart: a missing `Cfg` here is missing in both
-//! the emitted artifact and the regression guard.
+//! Both the `gen_schedule_tables` binary (the offline table emitter) and
+//! the drift-guard test consume [`ALL_GENERATED_FAMILIES`] so the two
+//! cannot drift apart: a missing `Cfg` here is missing in both the emitted
+//! artifact and the regression guard.
 //!
-//! Each entry carries:
-//!
-//! - the on-disk module/const names of the generated table,
-//! - the inclusive `num_vars` range to enumerate,
-//! - the keys cross-product to emit (singleton and 4-batched at every
-//!   `num_vars`),
-//! - a `find_schedule::<Cfg>(_, false)` regen hook,
-//! - a `Cfg::schedule_table()` accessor so consumers can validate the
-//!   shipped artifact against the regen hook without ever needing to
-//!   know about `Cfg` directly.
+//! This list is the one place a preset `Cfg` type is bound to its regen
+//! hook and shipped table, so it lives in `akita-config` (the only crate
+//! that can name the presets). The `Cfg`-free DP itself lives in
+//! `akita-planner` and is reached through the `regen` glue below, which
+//! derives a [`akita_planner::PlannerPolicy`] from each preset via
+//! [`crate::policy_of`].
 
-use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
-use akita_config::tensor_verifier;
-use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
+use akita_planner::find_schedule;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, Schedule};
 
-use crate::find_schedule;
+use crate::proof_optimized::{fp128, fp16, fp32, fp64};
+use crate::{missing_generated_schedule, policy_of, tensor_verifier, CommitmentConfig};
 
 /// One generated schedule-table family.
 ///
@@ -46,14 +41,13 @@ pub struct GeneratedFamily {
     /// Inclusive upper bound of the `num_vars` range enumerated for
     /// this family.
     pub max_num_vars: usize,
-    /// `find_schedule::<Cfg>(key, false)` — DP regeneration that ignores
-    /// any prior shipped table for this Cfg.
+    /// Pure DP regeneration that ignores any shipped table
+    /// (`find_schedule(key, &policy_of::<Cfg>(), …)`).
     pub regen: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
-    /// `find_schedule::<Cfg>(key, true)` — fast-paths through
-    /// `Cfg::schedule_table()` when an entry exists, otherwise falls
-    /// through to the DP. Used by diagnostic comparisons against the
-    /// shipped table without rewiring the materializer plumbing.
-    pub regen_with_lookup: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    /// `Cfg::runtime_schedule(key)` — the table fast path when an entry
+    /// exists, falling through to the DP otherwise. Used by diagnostic
+    /// comparisons against the shipped table.
+    pub table_backed: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
     /// `Cfg::schedule_table()` for the family. Returns the table the
     /// linked binary currently ships for the active feature set
     /// (non-zk vs zk), or `None` when the Cfg has no shipped table.
@@ -62,7 +56,7 @@ pub struct GeneratedFamily {
 
 /// Build the ordered key cross-product emitted for `family`.
 ///
-/// The order matches what `gen_schedule_tables.rs` writes to disk: all
+/// The order matches what `gen_schedule_tables` writes to disk: all
 /// singleton (`num_polys = 1`) keys first, then all 4-batched
 /// (`num_polys = 4`) keys, each block ordered by `num_vars` ascending.
 /// Drift-guard tests assert positional equality against the shipped
@@ -84,14 +78,23 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKe
     Ok(keys)
 }
 
+/// Pure DP regeneration for `Cfg` — never consults the shipped table.
 fn regen<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-    find_schedule::<Cfg>(key, false)
+    find_schedule(
+        key,
+        &policy_of::<Cfg>(),
+        Cfg::stage1_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )
 }
 
-fn regen_with_lookup<Cfg: CommitmentConfig>(
+/// Table-backed resolution for `Cfg` — table hit when present, otherwise
+/// the DP fallback baked into `runtime_schedule`.
+fn table_backed<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
 ) -> Result<Schedule, AkitaError> {
-    find_schedule::<Cfg>(key, true)
+    Cfg::runtime_schedule(key)?
+        .ok_or_else(|| missing_generated_schedule("table-backed schedule", key))
 }
 
 /// Every `Cfg` that ships with a generated schedule table.
@@ -106,7 +109,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 50,
         regen: regen::<fp128::D32Full>,
-        regen_with_lookup: regen_with_lookup::<fp128::D32Full>,
+        table_backed: table_backed::<fp128::D32Full>,
         schedule_table: fp128::D32Full::schedule_table,
     },
     GeneratedFamily {
@@ -115,7 +118,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 50,
         regen: regen::<fp128::D32OneHot>,
-        regen_with_lookup: regen_with_lookup::<fp128::D32OneHot>,
+        table_backed: table_backed::<fp128::D32OneHot>,
         schedule_table: fp128::D32OneHot::schedule_table,
     },
     GeneratedFamily {
@@ -124,7 +127,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 50,
         regen: regen::<fp128::D64Full>,
-        regen_with_lookup: regen_with_lookup::<fp128::D64Full>,
+        table_backed: table_backed::<fp128::D64Full>,
         schedule_table: fp128::D64Full::schedule_table,
     },
     GeneratedFamily {
@@ -133,7 +136,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 50,
         regen: regen::<fp128::D64OneHot>,
-        regen_with_lookup: regen_with_lookup::<fp128::D64OneHot>,
+        table_backed: table_backed::<fp128::D64OneHot>,
         schedule_table: fp128::D64OneHot::schedule_table,
     },
     GeneratedFamily {
@@ -142,7 +145,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 50,
         regen: regen::<tensor_verifier::fp128::D64OneHotTensor>,
-        regen_with_lookup: regen_with_lookup::<tensor_verifier::fp128::D64OneHotTensor>,
+        table_backed: table_backed::<tensor_verifier::fp128::D64OneHotTensor>,
         schedule_table: tensor_verifier::fp128::D64OneHotTensor::schedule_table,
     },
     GeneratedFamily {
@@ -151,7 +154,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp32::D32Full>,
-        regen_with_lookup: regen_with_lookup::<fp32::D32Full>,
+        table_backed: table_backed::<fp32::D32Full>,
         schedule_table: fp32::D32Full::schedule_table,
     },
     GeneratedFamily {
@@ -160,7 +163,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp32::D32OneHot>,
-        regen_with_lookup: regen_with_lookup::<fp32::D32OneHot>,
+        table_backed: table_backed::<fp32::D32OneHot>,
         schedule_table: fp32::D32OneHot::schedule_table,
     },
     GeneratedFamily {
@@ -169,7 +172,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp32::D64Full>,
-        regen_with_lookup: regen_with_lookup::<fp32::D64Full>,
+        table_backed: table_backed::<fp32::D64Full>,
         schedule_table: fp32::D64Full::schedule_table,
     },
     GeneratedFamily {
@@ -178,7 +181,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp32::D64OneHot>,
-        regen_with_lookup: regen_with_lookup::<fp32::D64OneHot>,
+        table_backed: table_backed::<fp32::D64OneHot>,
         schedule_table: fp32::D64OneHot::schedule_table,
     },
     GeneratedFamily {
@@ -187,7 +190,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp16::D32Full>,
-        regen_with_lookup: regen_with_lookup::<fp16::D32Full>,
+        table_backed: table_backed::<fp16::D32Full>,
         schedule_table: fp16::D32Full::schedule_table,
     },
     GeneratedFamily {
@@ -196,7 +199,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp16::D32OneHot>,
-        regen_with_lookup: regen_with_lookup::<fp16::D32OneHot>,
+        table_backed: table_backed::<fp16::D32OneHot>,
         schedule_table: fp16::D32OneHot::schedule_table,
     },
     GeneratedFamily {
@@ -205,7 +208,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp16::D64Full>,
-        regen_with_lookup: regen_with_lookup::<fp16::D64Full>,
+        table_backed: table_backed::<fp16::D64Full>,
         schedule_table: fp16::D64Full::schedule_table,
     },
     GeneratedFamily {
@@ -214,7 +217,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp16::D64OneHot>,
-        regen_with_lookup: regen_with_lookup::<fp16::D64OneHot>,
+        table_backed: table_backed::<fp16::D64OneHot>,
         schedule_table: fp16::D64OneHot::schedule_table,
     },
     GeneratedFamily {
@@ -223,7 +226,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp64::D32Full>,
-        regen_with_lookup: regen_with_lookup::<fp64::D32Full>,
+        table_backed: table_backed::<fp64::D32Full>,
         schedule_table: fp64::D32Full::schedule_table,
     },
     GeneratedFamily {
@@ -232,7 +235,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp64::D32OneHot>,
-        regen_with_lookup: regen_with_lookup::<fp64::D32OneHot>,
+        table_backed: table_backed::<fp64::D32OneHot>,
         schedule_table: fp64::D32OneHot::schedule_table,
     },
     GeneratedFamily {
@@ -241,7 +244,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp64::D64Full>,
-        regen_with_lookup: regen_with_lookup::<fp64::D64Full>,
+        table_backed: table_backed::<fp64::D64Full>,
         schedule_table: fp64::D64Full::schedule_table,
     },
     GeneratedFamily {
@@ -250,7 +253,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         regen: regen::<fp64::D64OneHot>,
-        regen_with_lookup: regen_with_lookup::<fp64::D64OneHot>,
+        table_backed: table_backed::<fp64::D64OneHot>,
         schedule_table: fp64::D64OneHot::schedule_table,
     },
 ];

@@ -2,9 +2,9 @@
 
 use super::*;
 use akita_config::proof_optimized::fp128;
+use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::LiftBase;
-use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -27,13 +27,13 @@ use akita_verifier::direct_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D64Full>;
+type Cfg = fp128::D64Full;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<D, Cfg>;
 
 type OneHotF = fp128::Field;
-type OneHotCfg = akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>;
+type OneHotCfg = fp128::D64OneHot;
 const ONEHOT_D: usize = OneHotCfg::D;
 const BENCH_ONEHOT_K: usize = ONEHOT_D;
 type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;

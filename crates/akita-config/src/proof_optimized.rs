@@ -120,8 +120,8 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
 ) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
     let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
 
-    // Table-only: configs that want a runtime DP fallback override the
-    // `max_setup_matrix_size` trait method directly (see `PlannerCfg`).
+    // `runtime_schedule` serves the shipped table on a hit and regenerates
+    // via the planner DP on a miss, so every shape resolves to a schedule.
     let Some(schedule) = Cfg::runtime_schedule(cached_key)? else {
         return Ok(None);
     };

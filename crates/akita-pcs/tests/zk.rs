@@ -425,9 +425,8 @@ fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
 fn run_zk_dense_commitment_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
     BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>:
-        CommitmentConfig<Field = F, ClaimField = F>,
-    Scheme<D, akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>>: CommitmentProver<
+    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
+    Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
@@ -445,7 +444,7 @@ where
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    type Cfg<Base> = akita_planner::test_utils::PlannerCfg<RuntimePlanned<Base>>;
+    type Cfg<Base> = RuntimePlanned<Base>;
 
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
@@ -551,7 +550,7 @@ where
 }
 
 fn run_zk_dense_cursor_binding_negatives() {
-    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
+    type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
     const NV: usize = 14;
     const LABEL: &[u8] = b"zk_cursor_binding_negatives";
@@ -701,9 +700,8 @@ fn run_zk_dense_cursor_binding_negatives() {
 fn run_zk_dense_v_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
     BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>:
-        CommitmentConfig<Field = F, ClaimField = F>,
-    Scheme<D, akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>>: CommitmentProver<
+    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
+    Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
@@ -721,7 +719,7 @@ where
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    type Cfg<Base> = akita_planner::test_utils::PlannerCfg<RuntimePlanned<Base>>;
+    type Cfg<Base> = RuntimePlanned<Base>;
 
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
@@ -834,7 +832,7 @@ where
 }
 
 fn run_zk_dense_batched_shape_cases() {
-    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
+    type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
     const NV: usize = 14;
 
@@ -1006,7 +1004,7 @@ fn run_zk_dense_batched_shape_cases() {
 
 #[test]
 fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
-    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
+    type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
     const NV: usize = 14;
     const NUM_POINTS: usize = 2;

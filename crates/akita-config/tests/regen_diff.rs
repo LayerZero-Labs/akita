@@ -1,9 +1,9 @@
 //! Diagnostic: compare the post-refactor planner output against the shipped
 //! schedule tables, key-by-key.
 //!
-//! Runs `find_schedule::<Cfg>(key, true)` (shipped-table fast path) against
-//! `find_schedule::<Cfg>(key, false)` (from-scratch DP) for every shipped
-//! `(family, key)` and reports:
+//! Runs the table-backed resolution (`family.table_backed`, i.e. the table
+//! fast path with DP fallback) against the from-scratch DP (`family.regen`)
+//! for every shipped `(family, key)` and reports:
 //!
 //! - Per-family proof-size sums (old vs new) and the delta.
 //! - Per-family counts of keys whose plan changed (smaller / bigger / equal)
@@ -13,13 +13,13 @@
 //!   delta) for inspection.
 //!
 //! Marked `#[ignore]` so it never runs in `cargo test`; invoke with
-//! `cargo test -p akita-planner --test regen_diff -- --ignored --nocapture`.
+//! `cargo test -p akita-config --test regen_diff -- --ignored --nocapture`.
 
 #![allow(missing_docs)]
 
 use std::collections::BTreeMap;
 
-use akita_planner::generated_families::{family_keys, ALL_GENERATED_FAMILIES};
+use akita_config::generated_families::{family_keys, ALL_GENERATED_FAMILIES};
 use akita_types::{Schedule, Step};
 
 #[derive(Default, Clone, Copy)]
@@ -87,7 +87,7 @@ fn regen_diff_vs_shipped_tables() {
             }
         };
         for key in keys {
-            let old = match (family.regen_with_lookup)(key) {
+            let old = match (family.table_backed)(key) {
                 Ok(s) => s,
                 Err(_) => continue,
             };

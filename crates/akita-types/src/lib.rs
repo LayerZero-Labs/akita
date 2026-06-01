@@ -81,10 +81,10 @@ pub use schedule::{
     root_direct_schedule, scale_batched_root_layout, scale_batched_root_layout_unchecked,
     schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
     schedule_terminal_direct_witness_shape, scheduled_fold_execution, scheduled_next_level_params,
-    split_batched_root_params, validate_opening_points_for_claims, w_ring_element_count,
-    w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step,
+    validate_opening_points_for_claims, w_ring_element_count, w_ring_element_count_with_counts,
+    w_ring_element_count_with_counts_bits, w_ring_element_count_with_counts_for_layout,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    DirectStep, FoldStep, Schedule, Step,
 };
 pub use sis_offline::{
     derived_root_commitment_layout_from_params, direct_level_params_with_log_basis,

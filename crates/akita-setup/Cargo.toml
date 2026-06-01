@@ -23,12 +23,7 @@ parallel = [
   "akita-prover/parallel",
 ]
 disk-persistence = []
-zk = [
-  "akita-config/zk",
-  "akita-planner/zk",
-  "akita-prover/zk",
-  "akita-types/zk",
-]
+zk = ["akita-config/zk", "akita-prover/zk", "akita-types/zk"]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
@@ -38,11 +33,6 @@ akita-prover = { version = "0.1.0", path = "../akita-prover" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
-
-[dev-dependencies]
-akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
-  "test-utils",
-] }
 
 [lints]
 workspace = true

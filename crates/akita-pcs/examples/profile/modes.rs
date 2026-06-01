@@ -2,6 +2,7 @@ use crate::report::print_layout;
 use crate::workload::{onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot};
 use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
 use akita_config::tensor_verifier;
+use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
 use akita_field::{
@@ -10,7 +11,6 @@ use akita_field::{
 };
 use akita_field::{ExtField, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::AkitaSerialize;
 use akita_types::{

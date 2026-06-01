@@ -484,11 +484,11 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        // D128Full has no schedule table at all; wrap in `PlannerCfg` so
-        // setup-matrix sizing falls through to DP. D32Full has a singleton
-        // table but the (max_num_vars=12, polys=1, points=1) iteration is a
-        // table hit so the inner Cfg suffices without DP.
-        new_prover_setup::<fp128::Field, 128, akita_planner::test_utils::PlannerCfg<fp128::D128Full>>(12, 1, 1)
+        // D128Full has no schedule table at all, so setup-matrix sizing
+        // falls through to the planner DP via the default `runtime_schedule`
+        // fallback. D32Full has a singleton table but the
+        // (max_num_vars=12, polys=1, points=1) iteration is a table hit.
+        new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
         new_prover_setup::<fp128::Field, 32, fp128::D32Full>(12, 1, 1)
             .expect("small-D fp128 preset should accept the default field");

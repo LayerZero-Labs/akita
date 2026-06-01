@@ -12,21 +12,25 @@ fi
 if [ "$#" -gt 0 ]; then
   forbidden=("$@")
 else
+  # Note: `akita-planner` is intentionally NOT forbidden here. The DP search now
+  # sits *below* `akita-config` (`akita-config → akita-planner`) and serves as a
+  # verifier-reachable runtime fallback, so it legitimately appears in the
+  # dependency tree of every config-consuming crate.
   case "${pkg}" in
     akita-verifier)
-      forbidden=(akita-prover akita-pcs akita-planner)
+      forbidden=(akita-prover akita-pcs)
       ;;
     akita-prover)
-      forbidden=(akita-verifier akita-pcs akita-planner)
+      forbidden=(akita-verifier akita-pcs)
       ;;
     akita-config)
-      forbidden=(akita-prover akita-verifier akita-pcs akita-planner)
+      forbidden=(akita-prover akita-verifier akita-pcs)
       ;;
     akita-setup)
-      forbidden=(akita-verifier akita-pcs akita-planner)
+      forbidden=(akita-verifier akita-pcs)
       ;;
     akita-scheme)
-      forbidden=(akita-pcs akita-planner)
+      forbidden=(akita-pcs)
       ;;
     *)
       echo "no default forbidden dependency set for ${pkg}; pass forbidden packages explicitly" >&2
@@ -36,8 +40,7 @@ else
 fi
 
 # Walk both the default-feature graph and the all-features graph so an
-# opt-in feature can't sneak a forbidden crate into a downstream build
-# (e.g. a `planner = ["dep:akita-planner"]` feature on a runtime crate).
+# opt-in feature can't sneak a forbidden crate into a downstream build.
 default_tree="$(cargo tree -p "${pkg}" --edges normal)"
 all_features_tree="$(cargo tree -p "${pkg}" --edges normal --all-features)"
 

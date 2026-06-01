@@ -7,7 +7,7 @@
 //! - batched schedules for 4 polynomials, 1 group, 1 point
 //!
 //! The family list and per-family `(num_vars, num_claims)` key sequence
-//! live in `akita_planner::generated_families::ALL_GENERATED_FAMILIES`,
+//! live in `akita_config::generated_families::ALL_GENERATED_FAMILIES`,
 //! which the drift-guard test also consumes — adding a new generated
 //! family in one place picks it up in both the emitter and the guard.
 
@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
-use akita_planner::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
+use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
 use akita_types::generated::GeneratedScheduleKey;
 use akita_types::{
     generated_schedule_lookup_key, AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams,
@@ -119,12 +119,12 @@ fn output_const_name(family: &GeneratedFamily) -> String {
 fn generator_command() -> &'static str {
     #[cfg(feature = "zk")]
     {
-        "cargo run --release -p akita-planner --features zk --bin gen_schedule_tables -- \
+        "cargo run --release -p akita-config --features zk --bin gen_schedule_tables -- \
          <output-dir>"
     }
     #[cfg(not(feature = "zk"))]
     {
-        "cargo run --release -p akita-planner --bin gen_schedule_tables -- <output-dir>"
+        "cargo run --release -p akita-config --bin gen_schedule_tables -- <output-dir>"
     }
 }
 
@@ -163,7 +163,7 @@ fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() {
         return Err(
-            "usage: cargo run --release -p akita-planner --bin gen_schedule_tables -- \
+            "usage: cargo run --release -p akita-config --bin gen_schedule_tables -- \
              <output-dir> [family_module_name ...]"
                 .to_string(),
         );

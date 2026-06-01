@@ -2,11 +2,11 @@
 //!
 //! For every `(family, key)` covered by the shipped tables we materialize:
 //!
-//! - the **table-backed schedule** via `find_schedule(key, true)`, which
-//!   serves from `Cfg::schedule_table()` when the entry exists and
-//!   re-materializes its `total_bytes` from the audited shape;
-//! - the **regenerated schedule** via `find_schedule(key, false)`, which
-//!   runs the pure DP (new comparator) from scratch.
+//! - the **table-backed schedule** via `family.table_backed`, which serves
+//!   from `Cfg::schedule_table()` when the entry exists and otherwise falls
+//!   through to the DP;
+//! - the **regenerated schedule** via `family.regen`, which runs the pure
+//!   DP from scratch.
 //!
 //! The test asserts that `new_total <= old_total` for every key — i.e.
 //! the refactor never increases the proof size produced by the
@@ -14,7 +14,7 @@
 
 #![allow(missing_docs)]
 
-use akita_planner::generated_families::{family_keys, ALL_GENERATED_FAMILIES};
+use akita_config::generated_families::{family_keys, ALL_GENERATED_FAMILIES};
 
 #[derive(Debug, Default, Clone, Copy)]
 struct FamilyStats {
@@ -43,7 +43,7 @@ fn refactor_does_not_increase_proof_sizes() {
 
         let stats = by_family.entry(family.module_name).or_default();
         for key in keys {
-            let old = (family.regen_with_lookup)(key).unwrap_or_else(|e| {
+            let old = (family.table_backed)(key).unwrap_or_else(|e| {
                 panic!(
                     "table-backed schedule failed for family {} key={key:?}: {e}",
                     family.module_name

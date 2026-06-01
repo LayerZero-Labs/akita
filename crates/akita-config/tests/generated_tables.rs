@@ -2,7 +2,7 @@
 //! must agree exactly with what `gen_schedule_tables` would emit today.
 //!
 //! Coverage is metadata-driven: every entry in
-//! [`akita_planner::generated_families::ALL_GENERATED_FAMILIES`] is checked
+//! [`akita_config::generated_families::ALL_GENERATED_FAMILIES`] is checked
 //! against `Cfg::schedule_table()`, so adding a new family to the
 //! generator picks it up here automatically (no per-family handwritten
 //! row mirror).
@@ -18,7 +18,7 @@
 //!    behind a length match (a duplicate plus a missing key would still
 //!    pass a multiset check), and serialization regressions.
 //! 4. **Step content equality.** Every shipped entry's step sequence
-//!    matches what `find_schedule::<Cfg>(_, false)` produces.
+//!    matches what the pure DP regen (`family.regen`) produces.
 //!
 //! When this test fails the panic message lists per-family mismatch
 //! counts, the first three offending diffs, and the regenerate command
@@ -26,7 +26,7 @@
 
 #![allow(missing_docs)]
 
-use akita_planner::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
+use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
 use akita_types::generated::{
     GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTableEntry,
     GeneratedStep,
@@ -218,10 +218,10 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
 
 fn regen_hint() -> &'static str {
     if cfg!(feature = "zk") {
-        "cargo run --release -p akita-planner --features zk --bin gen_schedule_tables -- \
+        "cargo run --release -p akita-config --features zk --bin gen_schedule_tables -- \
          crates/akita-types/src/generated"
     } else {
-        "cargo run --release -p akita-planner --bin gen_schedule_tables -- \
+        "cargo run --release -p akita-config --bin gen_schedule_tables -- \
          crates/akita-types/src/generated"
     }
 }

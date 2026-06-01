@@ -17,13 +17,24 @@ readme = "../../README.md"
 
 [features]
 default = []
-zk = ["akita-types/zk"]
+zk = ["akita-planner/zk", "akita-types/zk"]
+# Test-only layout helpers (e.g. `test_support::akita_batched_root_layout`).
+# Never enabled in production; switched on through the dev-dependency edges of
+# `akita-pcs` and `akita-scheme` so their tests/examples can pre-size per-poly
+# inputs to match the batched commit layout.
+test-support = []
 
 [dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-planner = { version = "0.1.0", path = "../akita-planner" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
+tracing = "0.1"
+
+[[bin]]
+name = "gen_schedule_tables"
+path = "src/bin/gen_schedule_tables.rs"
 
 [lints]
 workspace = true

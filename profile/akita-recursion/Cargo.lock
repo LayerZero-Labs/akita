@@ -83,8 +83,10 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges",
  "akita-field",
+ "akita-planner",
  "akita-transcript",
  "akita-types",
+ "tracing",
 ]
 
 [[package]]
@@ -117,6 +119,15 @@ dependencies = [
  "akita-verifier",
  "rayon",
  "tracing",
+]
+
+[[package]]
+name = "akita-planner"
+version = "0.1.0"
+dependencies = [
+ "akita-challenges",
+ "akita-field",
+ "akita-types",
 ]
 
 [[package]]

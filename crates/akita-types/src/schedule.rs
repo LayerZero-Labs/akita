@@ -639,12 +639,6 @@ fn scale_batched_root_layout_inner(
     Ok(scaled)
 }
 
-/// Extract the per-polynomial layout from a batched root layout.
-pub fn split_batched_root_params(root_lp: &LevelParams, field_bits: u32) -> LevelParams {
-    let _ = root_lp.num_digits_fold(1, field_bits);
-    root_lp.clone()
-}
-
 /// Return the number of fold levels in a runtime schedule.
 pub fn schedule_num_fold_levels(schedule: &Schedule) -> usize {
     schedule

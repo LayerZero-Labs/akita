@@ -4,10 +4,10 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp16, fp32, fp64};
+use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{AkitaPolyOps, AkitaProverSetup};
@@ -910,8 +910,8 @@ fn batched_onehot_same_point_round_trip() {
     run_on_large_stack(|| {
         // NV=20 is large enough to include a recursive suffix, while the
         // two-claim incidence still misses singleton/4-batch generated tables
-        // and routes through the planner DP fallback via `PlannerCfg`.
-        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>;
+        // and routes through the planner DP fallback in `runtime_schedule`.
+        type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
         const NV: usize = 20;
 
