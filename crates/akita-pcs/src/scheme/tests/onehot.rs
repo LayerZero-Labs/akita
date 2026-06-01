@@ -1,5 +1,157 @@
 use super::*;
 
+#[derive(Clone)]
+struct DirectRecursiveOneHotCfg;
+
+impl DirectRecursiveOneHotCfg {
+    fn schedule_with_direct_terminal(
+        incidence: &ClaimIncidenceSummary,
+    ) -> Result<akita_types::Schedule, AkitaError> {
+        let mut schedule = OneHotCfg::get_params_for_prove(incidence)?;
+        if akita_types::schedule_num_fold_levels(&schedule) < 2 {
+            return Err(AkitaError::InvalidSetup(
+                "direct recursive onehot fixture requires a recursive terminal suffix".to_string(),
+            ));
+        }
+        let final_fold_idx = schedule
+            .steps
+            .len()
+            .checked_sub(2)
+            .ok_or_else(|| AkitaError::InvalidSetup("missing terminal fold".to_string()))?;
+        let (current_w_len, terminal_params) = match schedule.steps.get(final_fold_idx) {
+            Some(Step::Fold(fold)) => (fold.current_w_len, fold.params.clone()),
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "terminal direct fixture expected a fold before the final direct step"
+                        .to_string(),
+                ));
+            }
+        };
+        let terminal_lp = akita_types::recursive_level_layout_from_params(
+            &terminal_params,
+            current_w_len,
+            Self::decomposition(),
+        )?;
+        let w_ring = akita_types::w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+            Self::decomposition().field_bits(),
+            &terminal_lp,
+            1,
+            1,
+            1,
+            1,
+            akita_types::MRowLayout::Terminal,
+            akita_types::TerminalWitnessQuotient::OmitRHat,
+        )?;
+        let next_w_len = w_ring
+            .checked_mul(terminal_lp.ring_dimension)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("terminal witness length overflow".to_string())
+            })?;
+        let witness_shape =
+            akita_types::DirectWitnessShape::PackedDigits((next_w_len, terminal_lp.log_basis));
+        let direct_bytes =
+            akita_types::direct_witness_bytes(Self::decomposition().field_bits(), &witness_shape);
+        if let Some(Step::Fold(fold)) = schedule.steps.get_mut(final_fold_idx) {
+            fold.w_ring = w_ring;
+            fold.next_w_len = next_w_len;
+            fold.level_bytes = akita_types::terminal_level_proof_bytes_for_mode(
+                Self::decomposition().field_bits(),
+                Self::decomposition().field_bits(),
+                &terminal_lp,
+                next_w_len,
+                1,
+                Self::terminal_proof_mode(),
+            );
+        }
+        let direct = match schedule.steps.last_mut() {
+            Some(Step::Direct(direct)) => direct,
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "terminal direct fixture schedule does not end with direct step".to_string(),
+                ));
+            }
+        };
+        direct.current_w_len = next_w_len;
+        direct.witness_shape = witness_shape;
+        direct.direct_bytes = direct_bytes;
+        direct.terminal_proof_mode = Self::terminal_proof_mode();
+        direct.level_params = Some(terminal_lp);
+        Ok(schedule)
+    }
+}
+
+impl CommitmentConfig for DirectRecursiveOneHotCfg {
+    type Field = <OneHotCfg as CommitmentConfig>::Field;
+    type ClaimField = <OneHotCfg as CommitmentConfig>::ClaimField;
+    type ChallengeField = <OneHotCfg as CommitmentConfig>::ChallengeField;
+
+    const D: usize = OneHotCfg::D;
+
+    fn decomposition() -> akita_types::DecompositionParams {
+        OneHotCfg::decomposition()
+    }
+
+    fn stage1_challenge_config(
+        d: usize,
+    ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+        OneHotCfg::stage1_challenge_config(d)
+    }
+
+    fn fold_challenge_shape_at_level(
+        inputs: AkitaScheduleInputs,
+    ) -> akita_challenges::TensorChallengeShape {
+        OneHotCfg::fold_challenge_shape_at_level(inputs)
+    }
+
+    fn sis_modulus_family() -> akita_types::SisModulusFamily {
+        OneHotCfg::sis_modulus_family()
+    }
+
+    fn terminal_proof_mode() -> akita_types::TerminalProofMode {
+        akita_types::TerminalProofMode::DirectRingRelations
+    }
+
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        OneHotCfg::schedule_table()
+    }
+
+    fn schedule_plan(
+        key: AkitaScheduleLookupKey,
+    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
+        OneHotCfg::schedule_plan(key)
+    }
+
+    fn ring_subfield_embedding_norm_bound() -> u32 {
+        OneHotCfg::ring_subfield_embedding_norm_bound()
+    }
+
+    fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
+        OneHotCfg::audited_root_rank(role, max_num_vars)
+    }
+
+    fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
+        OneHotCfg::envelope(max_num_vars)
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
+        OneHotCfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+    }
+
+    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+        OneHotCfg::log_basis_search_range(inputs)
+    }
+
+    fn get_params_for_prove(
+        incidence: &ClaimIncidenceSummary,
+    ) -> Result<akita_types::Schedule, AkitaError> {
+        Self::schedule_with_direct_terminal(incidence)
+    }
+}
+
 #[test]
 fn batched_onehot_roundtrip_matches_public_shape_context() {
     // NV chosen large enough that the runtime schedule yields at least two
@@ -124,4 +276,89 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot verify");
+}
+
+#[test]
+fn direct_recursive_terminal_onehot_roundtrip() {
+    const NV: usize = 20;
+    const BATCH_SIZE: usize = 2;
+    type DirectScheme = AkitaCommitmentScheme<ONEHOT_D, DirectRecursiveOneHotCfg>;
+
+    let layout = akita_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("layout");
+    let polys: Vec<OneHotPoly<OneHotF, ONEHOT_D, u8>> = (0..BATCH_SIZE)
+        .map(|poly_idx| debug_make_onehot_poly(&layout, 0x0bee_fcaf_d1ec_7000 + poly_idx as u64))
+        .collect();
+    let poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> = polys.iter().collect();
+    let point = debug_random_point(NV);
+    let openings: Vec<OneHotF> = polys
+        .iter()
+        .map(|poly| debug_opening_from_poly(poly, &point, &layout))
+        .collect();
+
+    let setup =
+        <DirectScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE, 1)
+            .unwrap();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let verifier_setup =
+        <DirectScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
+    let (commitment, hint) = <DirectScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(
+        &setup,
+        &CpuBackend,
+        &prepared,
+        &poly_refs,
+    )
+    .expect("batched onehot commit");
+    let commitments = [commitment];
+
+    let mut prover_transcript =
+        AkitaTranscript::<OneHotF>::new(b"test/direct-recursive-terminal-onehot");
+    let proof = <DirectScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
+        &setup,
+        &CpuBackend,
+        &prepared,
+        vec![(
+            &point[..],
+            CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint,
+            },
+        )],
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .expect("batched onehot direct recursive terminal prove");
+
+    let AkitaBatchedProofShape::Fold { step_shapes, .. } = proof.shape() else {
+        panic!("direct recursive fixture should keep a recursive suffix");
+    };
+    let Some(AkitaProofStepShape::Terminal(terminal_shape)) = step_shapes.last() else {
+        panic!("direct recursive fixture should end with a terminal proof step");
+    };
+    assert!(matches!(
+        terminal_shape.relation,
+        TerminalRelationProofShape::DirectRingRelations
+    ));
+    let Some(akita_types::AkitaProofStep::Terminal(terminal)) = proof.steps.last() else {
+        panic!("direct recursive fixture should carry a terminal proof step");
+    };
+    assert!(terminal.stage2_sumcheck().is_none());
+
+    let opening_groups = [&openings[..]];
+    let mut verifier_transcript =
+        AkitaTranscript::<OneHotF>::new(b"test/direct-recursive-terminal-onehot");
+    <DirectScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &point[..],
+            CommittedOpenings {
+                openings: opening_groups[0],
+                commitment: &commitments[0],
+            },
+        )],
+        BasisMode::Lagrange,
+    )
+    .expect("batched onehot direct recursive terminal verify");
 }

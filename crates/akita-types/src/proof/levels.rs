@@ -363,6 +363,19 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     }
 }
 
+/// Terminal relation proof payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalRelationProof<L: FieldCore> {
+    /// Existing terminal relation-only ring-switch sumcheck.
+    #[cfg(not(feature = "zk"))]
+    RingSwitchSumcheck(SumcheckProof<L>),
+    /// Existing terminal relation-only masked ring-switch sumcheck.
+    #[cfg(feature = "zk")]
+    RingSwitchSumcheckMasked(SumcheckProofMasked<L>),
+    /// Direct terminal relation mode carries no terminal stage-2 proof bytes.
+    DirectRingRelations,
+}
+
 /// Terminal fold-level proof.
 ///
 /// Ships `final_witness` in cleartext, absorbed into the transcript at the
@@ -380,12 +393,9 @@ pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
     pub y_rings: FlatRingVec<F>,
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    /// Stage-2 fused sumcheck proof.
-    #[cfg(not(feature = "zk"))]
-    pub stage2_sumcheck: SumcheckProof<L>,
-    #[cfg(feature = "zk")]
-    pub stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
-    /// Terminal witness, absorbed via `ABSORB_NEXT_LEVEL_WITNESS_BINDING` in place of
+    /// Terminal relation proof payload.
+    pub relation: TerminalRelationProof<L>,
+    /// Terminal witness, absorbed via `ABSORB_SUMCHECK_W` in place of
     /// `next_w_commitment`.
     pub final_witness: CleartextWitnessProof<F>,
 }
@@ -406,9 +416,25 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
             y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
             extension_opening_reduction,
             #[cfg(not(feature = "zk"))]
-            stage2_sumcheck,
+            relation: TerminalRelationProof::RingSwitchSumcheck(stage2_sumcheck),
             #[cfg(feature = "zk")]
-            stage2_sumcheck_proof_masked,
+            relation: TerminalRelationProof::RingSwitchSumcheckMasked(stage2_sumcheck_proof_masked),
+            final_witness,
+        }
+    }
+
+    /// Construct a direct terminal relation proof with no terminal stage-2
+    /// sumcheck payload.
+    #[cfg(not(feature = "zk"))]
+    pub fn new_direct_with_extension_opening_reduction<const D: usize>(
+        y_rings: Vec<CyclotomicRing<F, D>>,
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+        final_witness: DirectWitnessProof<F>,
+    ) -> Self {
+        Self {
+            y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
+            extension_opening_reduction,
+            relation: TerminalRelationProof::DirectRingRelations,
             final_witness,
         }
     }
@@ -425,6 +451,24 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
         self.y_rings.try_to_vec()
     }
 
+    /// Existing terminal ring-switch sumcheck payload, when present.
+    #[cfg(not(feature = "zk"))]
+    pub fn stage2_sumcheck(&self) -> Option<&SumcheckProof<L>> {
+        match &self.relation {
+            TerminalRelationProof::RingSwitchSumcheck(sumcheck) => Some(sumcheck),
+            TerminalRelationProof::DirectRingRelations => None,
+        }
+    }
+
+    /// Existing terminal masked ring-switch sumcheck payload, when present.
+    #[cfg(feature = "zk")]
+    pub fn stage2_sumcheck_proof_masked(&self) -> Option<&SumcheckProofMasked<L>> {
+        match &self.relation {
+            TerminalRelationProof::RingSwitchSumcheckMasked(sumcheck) => Some(sumcheck),
+            TerminalRelationProof::DirectRingRelations => None,
+        }
+    }
+
     /// Derive the [`TerminalLevelProofShape`] for this terminal-level proof.
     pub fn shape(&self) -> TerminalLevelProofShape {
         TerminalLevelProofShape {
@@ -433,14 +477,30 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
                 .extension_opening_reduction
                 .as_ref()
                 .map(ExtensionOpeningReductionProof::shape),
-            stage2_sumcheck: {
+            relation: {
                 #[cfg(not(feature = "zk"))]
                 {
-                    sumcheck_shape(&self.stage2_sumcheck)
+                    match &self.relation {
+                        TerminalRelationProof::RingSwitchSumcheck(sumcheck) => {
+                            TerminalRelationProofShape::RingSwitchSumcheck(sumcheck_shape(sumcheck))
+                        }
+                        TerminalRelationProof::DirectRingRelations => {
+                            TerminalRelationProofShape::DirectRingRelations
+                        }
+                    }
                 }
                 #[cfg(feature = "zk")]
                 {
-                    sumcheck_proof_masked_shape(&self.stage2_sumcheck_proof_masked)
+                    match &self.relation {
+                        TerminalRelationProof::RingSwitchSumcheckMasked(sumcheck) => {
+                            TerminalRelationProofShape::RingSwitchSumcheck(
+                                sumcheck_proof_masked_shape(sumcheck),
+                            )
+                        }
+                        TerminalRelationProof::DirectRingRelations => {
+                            TerminalRelationProofShape::DirectRingRelations
+                        }
+                    }
                 }
             },
             final_witness: self.final_witness.shape(),

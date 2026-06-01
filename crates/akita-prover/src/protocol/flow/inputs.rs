@@ -473,6 +473,7 @@ where
             &root_step.params,
             root_step.next_w_len,
             final_log_basis,
+            direct_step.terminal_proof_mode,
             basis,
             setup_contribution_mode,
             #[cfg(feature = "zk")]

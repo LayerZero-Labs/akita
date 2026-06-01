@@ -41,6 +41,7 @@ where
         transcript,
         current_state,
         None,
+        TerminalProofMode::RingSwitchSumcheck,
         lp,
         block_order,
         setup_contribution_mode,
@@ -69,6 +70,7 @@ where
 pub(crate) fn verify_terminal_level<F, L, T, const D: usize>(
     terminal_proof: &TerminalLevelProof<F, L>,
     final_w_len: usize,
+    terminal_proof_mode: TerminalProofMode,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F, L>,
@@ -93,6 +95,7 @@ where
         transcript,
         current_state,
         Some(final_w_len),
+        terminal_proof_mode,
         lp,
         block_order,
         setup_contribution_mode,
@@ -130,6 +133,7 @@ fn verify_one_level_inner<F, L, T, const D: usize>(
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F, L>,
     final_w_len: Option<usize>,
+    terminal_proof_mode: TerminalProofMode,
     lp: &LevelParams,
     block_order: BlockOrder,
     setup_contribution_mode: SetupContributionMode,
@@ -427,6 +431,46 @@ where
         lp,
     };
 
+    if let FoldProofView::Terminal(terminal_proof) = &proof {
+        match terminal_proof_mode {
+            TerminalProofMode::RingSwitchSumcheck => {}
+            TerminalProofMode::DirectRingRelations => {
+                #[cfg(feature = "zk")]
+                {
+                    let _ = terminal_proof;
+                    return Err(AkitaError::InvalidProof);
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    if terminal_proof.stage2_sumcheck().is_some() {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
+                    verify_terminal_direct_ring_relations::<F, L, T, { D }>(
+                        &ring_opening_points,
+                        &ring_multiplier_points,
+                        &claim_to_point,
+                        &stage1_challenges,
+                        w_len,
+                        &terminal_proof.final_witness,
+                        transcript,
+                        &replay.parts,
+                        &setup.expanded,
+                        lp,
+                        &[1usize],
+                        &claim_to_point_poly,
+                        &claim_poly_indices,
+                        &gamma,
+                        commitment_u,
+                        &y_rings,
+                        num_claims,
+                    )?;
+                    return Ok(Vec::new());
+                }
+            }
+        }
+    }
+
     let rs = match &proof {
         FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, D>(
             &ring_switch_replay,
@@ -563,12 +607,16 @@ where
     #[cfg(not(feature = "zk"))]
     let stage2_sumcheck_ref = match &proof {
         FoldProofView::Intermediate(level_proof) => &level_proof.stage2.sumcheck_proof,
-        FoldProofView::Terminal(terminal_proof) => &terminal_proof.stage2_sumcheck,
+        FoldProofView::Terminal(terminal_proof) => terminal_proof
+            .stage2_sumcheck()
+            .ok_or(AkitaError::InvalidProof)?,
     };
     #[cfg(feature = "zk")]
     let stage2_sumcheck_masked_ref = match &proof {
         FoldProofView::Intermediate(level_proof) => &level_proof.stage2.sumcheck_proof_masked,
-        FoldProofView::Terminal(terminal_proof) => &terminal_proof.stage2_sumcheck_proof_masked,
+        FoldProofView::Terminal(terminal_proof) => terminal_proof
+            .stage2_sumcheck_proof_masked()
+            .ok_or(AkitaError::InvalidProof)?,
     };
     let challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -640,6 +688,16 @@ fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
     Ok((step.params.clone(), step.next_w_len, next_level_params))
 }
 
+fn scheduled_terminal_proof_mode(
+    schedule: &Schedule,
+    terminal_fold_level: usize,
+) -> Result<TerminalProofMode, AkitaError> {
+    match schedule.steps.get(terminal_fold_level + 1) {
+        Some(Step::Direct(direct)) => Ok(direct.terminal_proof_mode),
+        _ => Err(AkitaError::InvalidProof),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn dispatch_verify_intermediate_level<F, L, T>(
@@ -695,6 +753,7 @@ fn dispatch_verify_terminal_level<F, L, T>(
     level_d: usize,
     terminal_proof: &TerminalLevelProof<F, L>,
     final_w_len: usize,
+    terminal_proof_mode: TerminalProofMode,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F, L>,
@@ -718,6 +777,7 @@ where
             verify_terminal_level::<F, L, T, $d>(
                 terminal_proof,
                 final_w_len,
+                terminal_proof_mode,
                 setup,
                 transcript,
                 current_state,
@@ -874,9 +934,11 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 if level_d == D {
+                    let terminal_proof_mode = scheduled_terminal_proof_mode(schedule, level_index)?;
                     verify_terminal_level::<F, L, T, D>(
                         terminal_proof,
                         next_w_len,
+                        terminal_proof_mode,
                         setup,
                         transcript,
                         &current_state,
@@ -889,10 +951,12 @@ where
                         zk_relations,
                     )?
                 } else {
+                    let terminal_proof_mode = scheduled_terminal_proof_mode(schedule, level_index)?;
                     dispatch_verify_terminal_level::<F, L, T>(
                         level_d,
                         terminal_proof,
                         next_w_len,
+                        terminal_proof_mode,
                         setup,
                         transcript,
                         &current_state,
@@ -999,15 +1063,37 @@ where
             if !y_coeff_len.is_multiple_of(D) || y_coeff_len / D != opening_points.len() {
                 return Err(AkitaError::InvalidProof);
             }
+            #[cfg(not(feature = "zk"))]
+            let stage2_sumcheck = match terminal_direct.terminal_proof_mode {
+                TerminalProofMode::RingSwitchSumcheck => {
+                    Some(terminal.stage2_sumcheck().ok_or(AkitaError::InvalidProof)?)
+                }
+                TerminalProofMode::DirectRingRelations => {
+                    if terminal.stage2_sumcheck().is_some() {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    None
+                }
+            };
+            #[cfg(feature = "zk")]
+            let stage2_sumcheck_masked = match terminal_direct.terminal_proof_mode {
+                TerminalProofMode::RingSwitchSumcheck => Some(
+                    terminal
+                        .stage2_sumcheck_proof_masked()
+                        .ok_or(AkitaError::InvalidProof)?,
+                ),
+                TerminalProofMode::DirectRingRelations => return Err(AkitaError::InvalidProof),
+            };
             verify_terminal_root_level::<F, E, C, T, D>(
                 &terminal.y_rings,
                 terminal.extension_opening_reduction.as_ref(),
                 #[cfg(not(feature = "zk"))]
-                &terminal.stage2_sumcheck,
+                stage2_sumcheck,
                 #[cfg(feature = "zk")]
-                &terminal.stage2_sumcheck_proof_masked,
+                stage2_sumcheck_masked,
                 &terminal.final_witness,
                 root_step.next_w_len,
+                terminal_direct.terminal_proof_mode,
                 setup,
                 transcript,
                 opening_points,

@@ -433,7 +433,12 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                     kvs.get("stage1_interstage_claims_bytes", "0")
                 ),
                 "stage1_s_claim_bytes": int(kvs.get("stage1_s_claim_bytes", "0")),
+                "terminal_relation": kvs.get("terminal_relation", ""),
+                "terminal_relation_tag_bytes": int(
+                    kvs.get("terminal_relation_tag_bytes", "0")
+                ),
                 "stage2_sumcheck_bytes": int(kvs.get("stage2_sumcheck_bytes", "0")),
+                "final_witness_bytes": int(kvs.get("final_witness_bytes", "0")),
                 "next_w_commitment_bytes": int(kvs.get("next_w_commitment_bytes", "0")),
                 "next_w_eval_bytes": int(kvs.get("next_w_eval_bytes", "0")),
             }
@@ -1065,18 +1070,25 @@ def render_proof_levels(levels: list[dict[str, object]]) -> None:
     print("<summary>Per-level proof-size breakdown</summary>")
     print()
     print(
-        "| L | total | y_ring | v | stage1 sc | interstage | s_claim | "
-        "stage2 sc | next_w_commit | next_w_eval |"
+        "| L | kind | relation | total | y_ring | v | stage1 sc | interstage | "
+        "s_claim | rel tag | stage2 sc | final_w | next_w_commit | next_w_eval |"
     )
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print(
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+        "---: | ---: | ---: | ---: |"
+    )
     for level in levels:
         print(
-            f"| L{level['level']} | {fmt_bytes(float(level['total_bytes']))} B | "
+            f"| L{level['level']} | `{level.get('root_variant', 'fold')}` | "
+            f"`{level.get('terminal_relation', '')}` | "
+            f"{fmt_bytes(float(level['total_bytes']))} B | "
             f"{fmt_bytes(float(level['y_ring_bytes']))} | {fmt_bytes(float(level['v_bytes']))} | "
             f"{fmt_bytes(float(level['stage1_sumcheck_bytes']))} | "
             f"{fmt_bytes(float(level['stage1_interstage_claims_bytes']))} | "
             f"{fmt_bytes(float(level['stage1_s_claim_bytes']))} | "
+            f"{fmt_bytes(float(level.get('terminal_relation_tag_bytes', 0)))} | "
             f"{fmt_bytes(float(level['stage2_sumcheck_bytes']))} | "
+            f"{fmt_bytes(float(level.get('final_witness_bytes', 0)))} | "
             f"{fmt_bytes(float(level['next_w_commitment_bytes']))} | "
             f"{fmt_bytes(float(level['next_w_eval_bytes']))} |"
         )

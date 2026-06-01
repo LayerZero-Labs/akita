@@ -9,9 +9,9 @@ use super::validate_level_dispatch;
 mod extension_opening_reduction;
 #[cfg(feature = "zk")]
 mod zk;
-use crate::protocol::ring_switch::{
-    ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay,
-};
+#[cfg(not(feature = "zk"))]
+use crate::protocol::ring_switch::verify_terminal_direct_ring_relations;
+use crate::protocol::ring_switch::{ring_switch_verifier, ring_switch_verifier_terminal};
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
 use crate::stages::SetupSumcheckVerifier;
@@ -57,10 +57,9 @@ use akita_types::{
     tensor_row_partials_from_columns, terminal_witness_segment_layout,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, CleartextWitnessProof, CommitmentRouting,
-    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
-    RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding, Schedule, SetupContributionMode,
-    SetupSumcheckProof, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
+    ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
+    LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule,
+    Step, TerminalLevelProof, TerminalProofMode, TerminalWitnessSegmentLayout,
     TerminalWitnessTranscriptParts,
 };
 #[cfg(feature = "zk")]
@@ -245,10 +244,9 @@ where
         Some(v_flat),
         Some(stage1),
         #[cfg(not(feature = "zk"))]
-        &stage2.sumcheck_proof,
+        Some(&stage2.sumcheck_proof),
         #[cfg(feature = "zk")]
-        &stage2.sumcheck_proof_masked,
-        stage3_sumcheck_proof,
+        Some(&stage2.sumcheck_proof_masked),
         setup,
         transcript,
         claim_points,
@@ -287,10 +285,11 @@ where
 pub(crate) fn verify_terminal_root_level<F, E, C, T, const D: usize>(
     y_rings_flat: &FlatRingVec<F>,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
-    #[cfg(not(feature = "zk"))] stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
-    #[cfg(feature = "zk")] stage2_sumcheck_masked: &akita_sumcheck::SumcheckProofMasked<C>,
-    final_witness: &CleartextWitnessProof<F>,
+    #[cfg(not(feature = "zk"))] stage2_sumcheck: Option<&akita_sumcheck::SumcheckProof<C>>,
+    #[cfg(feature = "zk")] stage2_sumcheck_masked: Option<&akita_sumcheck::SumcheckProofMasked<C>>,
+    final_witness: &DirectWitnessProof<F>,
     final_w_len: usize,
+    terminal_proof_mode: TerminalProofMode,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claim_points: &[&[E]],
@@ -336,6 +335,7 @@ where
         RootStageInput::Terminal {
             final_witness,
             final_w_len,
+            terminal_proof_mode,
         },
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
@@ -352,6 +352,7 @@ enum RootStageInput<'a, F: FieldCore, C: FieldCore> {
     Terminal {
         final_witness: &'a CleartextWitnessProof<F>,
         final_w_len: usize,
+        terminal_proof_mode: TerminalProofMode,
     },
 }
 
@@ -361,9 +362,8 @@ fn verify_root_level_inner<F, E, C, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     v_flat: Option<&FlatRingVec<F>>,
     stage1: Option<&AkitaStage1Proof<C>>,
-    #[cfg(not(feature = "zk"))] stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
-    #[cfg(feature = "zk")] stage2_sumcheck_masked: &akita_sumcheck::SumcheckProofMasked<C>,
-    stage3_sumcheck_proof: Option<&SetupSumcheckProof<C>>,
+    #[cfg(not(feature = "zk"))] stage2_sumcheck: Option<&akita_sumcheck::SumcheckProof<C>>,
+    #[cfg(feature = "zk")] stage2_sumcheck_masked: Option<&akita_sumcheck::SumcheckProofMasked<C>>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claim_points: &[&[E]],
@@ -820,34 +820,50 @@ where
                 .clone()
         })
         .collect();
-    let m_row_layout = if is_terminal {
-        MRowLayout::WithoutDBlock
-    } else {
-        MRowLayout::WithDBlock
-    };
-    let commitment_routing = CommitmentRouting::from_root_incidence(incidence_summary)?;
-    let (gamma, row_coefficient_rings) =
-        RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<C>(
-            &row_coefficients,
-        )?;
-    let relation_instance = RingRelationInstance::new(
-        m_row_layout,
-        stage1_challenges.clone(),
-        ring_opening_points.clone(),
-        ring_multiplier_points.clone(),
-        incidence_summary.clone(),
-        commitment_routing,
-        gamma,
-        row_coefficient_rings,
-        y_rings.to_vec(),
-        v_typed.to_vec(),
-    )?;
-    relation_instance.check_v_shape_for_level(batched_lp)?;
-    let ring_switch_replay = RingSwitchReplay {
-        relation: &relation_instance,
-        row_coefficients: &row_coefficients,
-        lp: batched_lp,
-    };
+    if let RootStageInput::Terminal {
+        final_witness,
+        final_w_len,
+        terminal_proof_mode,
+    } = &stage_input
+    {
+        match terminal_proof_mode {
+            TerminalProofMode::RingSwitchSumcheck => {}
+            TerminalProofMode::DirectRingRelations => {
+                #[cfg(feature = "zk")]
+                {
+                    let _ = (final_witness, final_w_len);
+                    return Err(AkitaError::InvalidProof);
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    if stage2_sumcheck.is_some() {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
+                    verify_terminal_direct_ring_relations::<F, C, T, { D }>(
+                        &ring_opening_points,
+                        &ring_multiplier_points,
+                        incidence_summary.claim_to_point(),
+                        &stage1_challenges,
+                        *final_w_len,
+                        final_witness,
+                        transcript,
+                        &replay.parts,
+                        &setup.expanded,
+                        batched_lp,
+                        incidence_summary.num_polys_per_point(),
+                        incidence_summary.claim_to_point(),
+                        incidence_summary.claim_poly_indices(),
+                        &row_coefficients,
+                        commitment_rows,
+                        y_rings,
+                        incidence_summary.num_public_rows(),
+                    )?;
+                    return Ok(Vec::new());
+                }
+            }
+        }
+    }
     let rs = match &stage_input {
         RootStageInput::Intermediate {
             next_w_commitment, ..
@@ -985,12 +1001,14 @@ where
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         #[cfg(not(feature = "zk"))]
         {
+            let stage2_sumcheck = stage2_sumcheck.ok_or(AkitaError::InvalidProof)?;
             stage2_verifier.verify::<F, T, _>(stage2_sumcheck, transcript, |tr| {
                 sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?
         }
         #[cfg(feature = "zk")]
         {
+            let stage2_sumcheck_masked = stage2_sumcheck_masked.ok_or(AkitaError::InvalidProof)?;
             let challenges = stage2_verifier.verify_zk::<F, T, _>(
                 stage2_sumcheck_masked,
                 transcript,

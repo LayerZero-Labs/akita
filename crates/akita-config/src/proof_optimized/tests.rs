@@ -20,7 +20,9 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
     // must not contribute to the FS-bound `setup_levels`. Only
     // the preceding Fold steps (which do commit) appear.
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::{CleartextWitnessShape, DirectStep, FoldStep, SisModulusFamily, Step};
+    use akita_types::{
+        DirectStep, DirectWitnessShape, FoldStep, SisModulusFamily, Step, TerminalProofMode,
+    };
 
     let sparse = SparseChallengeConfig::Uniform {
         weight: 1,
@@ -39,7 +41,9 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
             current_w_len: 1 << 4,
             witness_shape: CleartextWitnessShape::PackedDigits((16, 3)),
             direct_bytes: 0,
-            params: None,
+            terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+            commit_params: None,
+            level_params: Some(direct_lp.clone()),
         }),
     ];
 
@@ -61,14 +65,16 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
     // contract is described on `DirectStep::params` and the
     // materializer comment that branches on it; this test locks
     // it in so neither side drifts.
-    use akita_types::{CleartextWitnessShape, DirectStep, Schedule, Step};
+    use akita_types::{DirectStep, DirectWitnessShape, Schedule, Step, TerminalProofMode};
 
     let uncommittable = Schedule {
         steps: vec![Step::Direct(DirectStep {
             current_w_len: 1 << 10,
             witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
             direct_bytes: 0,
-            params: None,
+            terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+            commit_params: None,
+            level_params: None,
         })],
         total_bytes: 0,
     };
@@ -135,7 +141,9 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
                     current_w_len: 1 << 10,
                     witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
                     direct_bytes: 0,
-                    params: None,
+                    terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+                    commit_params: None,
+                    level_params: None,
                 })],
                 total_bytes: 0,
             })

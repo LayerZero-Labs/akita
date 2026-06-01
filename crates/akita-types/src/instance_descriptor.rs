@@ -19,7 +19,7 @@ use blake2::{Blake2b, Digest};
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 1;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
@@ -128,6 +128,8 @@ impl AlgebraSection {
 pub struct ProtocolFeatureSet {
     /// Whether the `zk` feature is active.
     pub zk: bool,
+    /// Terminal proof relation mode.
+    pub terminal_proof_mode: TerminalProofMode,
 }
 
 impl ProtocolFeatureSet {
@@ -136,8 +138,28 @@ impl ProtocolFeatureSet {
     pub const fn current() -> Self {
         Self {
             zk: cfg!(feature = "zk"),
+            terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
         }
     }
+
+    /// Return the current build features with an explicit terminal mode.
+    #[inline]
+    pub const fn with_terminal_proof_mode(terminal_proof_mode: TerminalProofMode) -> Self {
+        Self {
+            zk: cfg!(feature = "zk"),
+            terminal_proof_mode,
+        }
+    }
+}
+
+/// Terminal relation proof mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalProofMode {
+    /// Existing terminal relation-only ring-switch sumcheck.
+    RingSwitchSumcheck,
+    /// Terminal direct all-row ring relation checks, with no terminal
+    /// ring-switch quotient or stage-2 sumcheck.
+    DirectRingRelations,
 }
 
 /// Setup-bound descriptor fields.
@@ -169,12 +191,15 @@ impl SetupSection {
         decomposition: DecompositionParams,
         sis_modulus_family: SisModulusFamily,
         setup_seed: &AkitaSetupSeed,
+        level_params: &[LevelParams],
+        terminal_proof_mode: TerminalProofMode,
     ) -> Result<Self, SerializationError> {
         Ok(Self {
             decomposition,
             sis_modulus_family,
             setup_seed_digest: setup_seed_digest(setup_seed)?,
-            protocol_features: ProtocolFeatureSet::current(),
+            protocol_features: ProtocolFeatureSet::with_terminal_proof_mode(terminal_proof_mode),
+            level_params_digest: digest_level_params(level_params),
         })
     }
 }
@@ -418,6 +443,12 @@ impl AkitaDeserialize for AlgebraSection {
 
 impl Valid for ProtocolFeatureSet {
     fn check(&self) -> Result<(), SerializationError> {
+        if self.zk && self.terminal_proof_mode == TerminalProofMode::DirectRingRelations {
+            return Err(SerializationError::InvalidData(
+                "direct terminal proof mode is not supported with zk".to_string(),
+            ));
+        }
+        self.terminal_proof_mode.check()?;
         Ok(())
     }
 }
@@ -428,11 +459,14 @@ impl AkitaSerialize for ProtocolFeatureSet {
         writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.zk.serialize_with_mode(writer, compress)
+        let mut writer = writer;
+        self.zk.serialize_with_mode(&mut writer, compress)?;
+        self.terminal_proof_mode
+            .serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.zk.serialized_size(compress)
+        self.zk.serialized_size(compress) + self.terminal_proof_mode.serialized_size(compress)
     }
 }
 
@@ -445,13 +479,57 @@ impl AkitaDeserialize for ProtocolFeatureSet {
         validate: Validate,
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
+        let mut reader = reader;
         let out = Self {
-            zk: bool::deserialize_with_mode(reader, compress, validate, &())?,
+            zk: bool::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            terminal_proof_mode: TerminalProofMode::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+impl Valid for TerminalProofMode {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for TerminalProofMode {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        terminal_proof_mode_tag(*self).serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        0u8.serialized_size(compress)
+    }
+}
+
+impl AkitaDeserialize for TerminalProofMode {
+    type Context = ();
+
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        let mode = decode_terminal_proof_mode(reader, compress, validate)?;
+        if matches!(validate, Validate::Yes) {
+            mode.check()?;
+        }
+        Ok(mode)
     }
 }
 
@@ -761,6 +839,27 @@ fn basis_mode_size(compress: Compress) -> usize {
     0u8.serialized_size(compress)
 }
 
+fn terminal_proof_mode_tag(mode: TerminalProofMode) -> u8 {
+    match mode {
+        TerminalProofMode::RingSwitchSumcheck => 0,
+        TerminalProofMode::DirectRingRelations => 1,
+    }
+}
+
+fn decode_terminal_proof_mode<R: Read>(
+    reader: R,
+    compress: Compress,
+    validate: Validate,
+) -> Result<TerminalProofMode, SerializationError> {
+    match u8::deserialize_with_mode(reader, compress, validate, &())? {
+        0 => Ok(TerminalProofMode::RingSwitchSumcheck),
+        1 => Ok(TerminalProofMode::DirectRingRelations),
+        other => Err(SerializationError::InvalidData(format!(
+            "unknown TerminalProofMode tag {other}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -800,7 +899,9 @@ mod tests {
                     current_w_len: 256,
                     witness_shape: CleartextWitnessShape::PackedDigits((64, 3)),
                     direct_bytes: 32,
-                    params: None,
+                    terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+                    commit_params: None,
+                    level_params: None,
                 }),
             ],
             total_bytes: 155,
@@ -817,7 +918,10 @@ mod tests {
                 },
                 sis_modulus_family: SisModulusFamily::Q32,
                 setup_seed_digest: [1; 32],
-                protocol_features: ProtocolFeatureSet::current(),
+                protocol_features: ProtocolFeatureSet::with_terminal_proof_mode(
+                    TerminalProofMode::RingSwitchSumcheck,
+                ),
+                level_params_digest: digest_level_params(&[sample_level_params()]),
             },
             PlanSection::from_schedule(&schedule),
             CallSection::from_incidence(&incidence, BasisMode::Lagrange).expect("call"),
@@ -892,6 +996,70 @@ mod tests {
     }
 
     #[test]
+    fn descriptor_binds_terminal_proof_mode() {
+        let mut sumcheck = sample_descriptor();
+        let mut direct = sumcheck.clone();
+        direct.setup.protocol_features.terminal_proof_mode = TerminalProofMode::DirectRingRelations;
+
+        assert_ne!(
+            sumcheck.canonical_bytes().expect("sumcheck descriptor"),
+            direct.canonical_bytes().expect("direct descriptor")
+        );
+
+        sumcheck.setup.protocol_features.terminal_proof_mode =
+            TerminalProofMode::RingSwitchSumcheck;
+        assert_eq!(
+            sumcheck.canonical_bytes().expect("sumcheck descriptor"),
+            sample_descriptor()
+                .canonical_bytes()
+                .expect("sample descriptor")
+        );
+    }
+
+    #[cfg(not(feature = "zk"))]
+    #[test]
+    fn protocol_features_roundtrip_direct_terminal_mode() {
+        let features =
+            ProtocolFeatureSet::with_terminal_proof_mode(TerminalProofMode::DirectRingRelations);
+        let mut bytes = Vec::new();
+        features
+            .serialize_uncompressed(&mut bytes)
+            .expect("serialize direct terminal features");
+
+        let decoded = ProtocolFeatureSet::deserialize_uncompressed(&bytes[..], &())
+            .expect("deserialize direct terminal features");
+        assert_eq!(decoded, features);
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn protocol_features_reject_zk_direct_terminal_mode() {
+        let features =
+            ProtocolFeatureSet::with_terminal_proof_mode(TerminalProofMode::DirectRingRelations);
+        let err = features
+            .check()
+            .expect_err("zk direct terminal mode must be rejected");
+        assert!(err
+            .to_string()
+            .contains("direct terminal proof mode is not supported with zk"));
+    }
+
+    #[test]
+    fn protocol_features_reject_unknown_terminal_mode_tag() {
+        let mut bytes = Vec::new();
+        false
+            .serialize_uncompressed(&mut bytes)
+            .expect("serialize zk flag");
+        255u8
+            .serialize_uncompressed(&mut bytes)
+            .expect("serialize unknown terminal mode tag");
+
+        let err = ProtocolFeatureSet::deserialize_uncompressed(&bytes[..], &())
+            .expect_err("unknown terminal proof mode tag must reject");
+        assert!(err.to_string().contains("unknown TerminalProofMode tag"));
+    }
+
+    #[test]
     fn setup_seed_digest_matches_setup_section() {
         let seed = AkitaSetupSeed {
             max_num_vars: 5,
@@ -913,6 +1081,8 @@ mod tests {
             },
             SisModulusFamily::Q32,
             &seed,
+            &level_params,
+            TerminalProofMode::RingSwitchSumcheck,
         )
         .expect("direct setup section");
 
@@ -929,7 +1099,9 @@ mod tests {
                 current_w_len: 8,
                 witness_shape: CleartextWitnessShape::FieldElements(8),
                 direct_bytes: 8,
-                params: None,
+                terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+                commit_params: None,
+                level_params: None,
             })],
             total_bytes: 8,
         };
@@ -938,7 +1110,9 @@ mod tests {
                 current_w_len: 8,
                 witness_shape: CleartextWitnessShape::PackedDigits((8, 3)),
                 direct_bytes: 3,
-                params: None,
+                terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+                commit_params: None,
+                level_params: None,
             })],
             total_bytes: 3,
         };
@@ -950,36 +1124,33 @@ mod tests {
     }
 
     #[test]
-    fn effective_schedule_digest_binds_root_direct_commit_params() {
-        // Two root-direct schedules with identical witness shape but
-        // different commit `params` must hash to different preamble bytes.
-        // This is the binding the dropped `SetupSection::level_params_digest`
-        // used to provide; it now lives in the per-proof schedule digest.
-        let mut other_params = sample_level_params();
-        other_params.num_blocks += 1;
-
-        let schedule_a = Schedule {
+    fn effective_schedule_digest_binds_direct_terminal_proof_mode() {
+        let sumcheck = Schedule {
             steps: vec![Step::Direct(crate::DirectStep {
                 current_w_len: 8,
-                witness_shape: CleartextWitnessShape::FieldElements(8),
-                direct_bytes: 0,
-                params: Some(sample_level_params()),
+                witness_shape: DirectWitnessShape::PackedDigits((8, 3)),
+                direct_bytes: 3,
+                terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+                commit_params: None,
+                level_params: None,
             })],
-            total_bytes: 0,
+            total_bytes: 3,
         };
-        let schedule_b = Schedule {
+        let direct = Schedule {
             steps: vec![Step::Direct(crate::DirectStep {
                 current_w_len: 8,
-                witness_shape: CleartextWitnessShape::FieldElements(8),
-                direct_bytes: 0,
-                params: Some(other_params),
+                witness_shape: DirectWitnessShape::PackedDigits((8, 3)),
+                direct_bytes: 3,
+                terminal_proof_mode: TerminalProofMode::DirectRingRelations,
+                commit_params: None,
+                level_params: None,
             })],
-            total_bytes: 0,
+            total_bytes: 3,
         };
 
         assert_ne!(
-            digest_effective_schedule(&schedule_a),
-            digest_effective_schedule(&schedule_b)
+            digest_effective_schedule(&sumcheck),
+            digest_effective_schedule(&direct)
         );
     }
 }

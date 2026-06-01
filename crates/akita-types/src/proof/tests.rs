@@ -300,6 +300,15 @@ fn tiny_terminal_stage2() -> SumcheckProof<F> {
     }
 }
 
+#[cfg(not(feature = "zk"))]
+fn nonempty_terminal_stage2() -> SumcheckProof<F> {
+    SumcheckProof {
+        round_polys: vec![CompressedUniPoly {
+            coeffs_except_linear_term: vec![F::zero(), F::one(), F::one() + F::one()],
+        }],
+    }
+}
+
 #[cfg(feature = "zk")]
 fn tiny_terminal_stage2_masked() -> SumcheckProofMasked<F> {
     SumcheckProofMasked {
@@ -364,4 +373,77 @@ fn terminal_level_proof_serde_round_trip() {
         .shape()
         .check()
         .expect("terminal shape with reduction passes Valid::check()");
+}
+
+#[cfg(not(feature = "zk"))]
+#[test]
+fn terminal_direct_relation_proof_serde_round_trip() {
+    const D: usize = 8;
+    let final_witness = DirectWitnessProof::PackedDigits(
+        PackedDigits::from_i8_digits_with_min_bits(&[1i8, -1, 0, 2], 3),
+    );
+    let proof = TerminalLevelProof::new_direct_with_extension_opening_reduction::<D>(
+        vec![CyclotomicRing::<F, D>::zero()],
+        None,
+        final_witness,
+    );
+    let shape = proof.shape();
+    assert!(matches!(
+        shape.relation,
+        TerminalRelationProofShape::DirectRingRelations
+    ));
+
+    let mut bytes = Vec::new();
+    proof
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize direct terminal proof");
+    assert_eq!(bytes.len(), proof.serialized_size(Compress::No));
+
+    let decoded = TerminalLevelProof::<F, F>::deserialize_uncompressed(&bytes[..], &shape)
+        .expect("deserialize direct terminal proof");
+    assert_eq!(decoded, proof);
+}
+
+#[cfg(not(feature = "zk"))]
+#[test]
+fn terminal_relation_shape_mismatch_rejects() {
+    const D: usize = 8;
+    let final_witness = DirectWitnessProof::PackedDigits(
+        PackedDigits::from_i8_digits_with_min_bits(&[1i8, -1, 0, 2], 3),
+    );
+    let direct: TerminalLevelProof<F, F> =
+        TerminalLevelProof::new_direct_with_extension_opening_reduction::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            None,
+            final_witness.clone(),
+        );
+    let mut direct_bytes = Vec::new();
+    direct
+        .serialize_uncompressed(&mut direct_bytes)
+        .expect("serialize direct terminal proof");
+    let mut sumcheck_shape = direct.shape();
+    sumcheck_shape.relation = TerminalRelationProofShape::RingSwitchSumcheck(vec![3]);
+    assert!(TerminalLevelProof::<F, F>::deserialize_uncompressed(
+        &direct_bytes[..],
+        &sumcheck_shape,
+    )
+    .is_err());
+
+    let sumcheck = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
+        vec![CyclotomicRing::<F, D>::zero()],
+        None,
+        nonempty_terminal_stage2(),
+        final_witness,
+    );
+    let mut sumcheck_bytes = Vec::new();
+    sumcheck
+        .serialize_uncompressed(&mut sumcheck_bytes)
+        .expect("serialize sumcheck terminal proof");
+    let mut direct_shape = sumcheck.shape();
+    direct_shape.relation = TerminalRelationProofShape::DirectRingRelations;
+    assert!(TerminalLevelProof::<F, F>::deserialize_uncompressed(
+        &sumcheck_bytes[..],
+        &direct_shape,
+    )
+    .is_err());
 }

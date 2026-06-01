@@ -43,6 +43,8 @@ fn scale_batched_root_layout_unchecked(
 #[derive(Clone)]
 struct Fp32RingSubfieldRootFoldCfg;
 #[derive(Clone)]
+struct Fp32RingSubfieldDirectRootFoldCfg;
+#[derive(Clone)]
 struct Fp32RingSubfieldOuterFallbackCfg;
 
 /// Synthetic root `LevelParams` for the two fp32 ring-subfield test
@@ -244,12 +246,122 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                         3,
                     )),
                     direct_bytes: compact_w_len,
+                    terminal_proof_mode: akita_types::TerminalProofMode::RingSwitchSumcheck,
+                    commit_params: None,
                     // Stub fixture: terminal-direct level params equal the
                     // fold's `lp`.
                     params: Some(lp.clone()),
                 }),
             ],
             total_bytes: 0,
+        })
+    }
+}
+
+impl CommitmentConfig for Fp32RingSubfieldDirectRootFoldCfg {
+    type Field = <Fp32RingSubfieldRootFoldCfg as CommitmentConfig>::Field;
+    type ClaimField = <Fp32RingSubfieldRootFoldCfg as CommitmentConfig>::ClaimField;
+    type ChallengeField = <Fp32RingSubfieldRootFoldCfg as CommitmentConfig>::ChallengeField;
+
+    const D: usize = Fp32RingSubfieldRootFoldCfg::D;
+
+    fn decomposition() -> akita_types::DecompositionParams {
+        Fp32RingSubfieldRootFoldCfg::decomposition()
+    }
+
+    fn stage1_challenge_config(
+        d: usize,
+    ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+        Fp32RingSubfieldRootFoldCfg::stage1_challenge_config(d)
+    }
+
+    fn sis_modulus_family() -> akita_types::SisModulusFamily {
+        Fp32RingSubfieldRootFoldCfg::sis_modulus_family()
+    }
+
+    fn terminal_proof_mode() -> akita_types::TerminalProofMode {
+        akita_types::TerminalProofMode::DirectRingRelations
+    }
+
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        None
+    }
+
+    fn schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
+        Ok(None)
+    }
+
+    fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
+        Fp32RingSubfieldRootFoldCfg::audited_root_rank(role, max_num_vars)
+    }
+
+    fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
+        Fp32RingSubfieldRootFoldCfg::envelope(max_num_vars)
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
+        Fp32RingSubfieldRootFoldCfg::max_setup_matrix_size(
+            max_num_vars,
+            max_num_batched_polys,
+            max_num_points,
+        )
+    }
+
+    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+        Fp32RingSubfieldRootFoldCfg::log_basis_search_range(inputs)
+    }
+
+    fn get_params_for_prove(
+        incidence: &ClaimIncidenceSummary,
+    ) -> Result<akita_types::Schedule, AkitaError> {
+        let lp = akita_types::scale_batched_root_layout(
+            &Fp32RingSubfieldRootFoldCfg::root_lp(),
+            incidence.num_claims(),
+            Self::stage1_challenge_config(Self::D)
+                .expect("stage1 challenge config")
+                .l1_norm(),
+            Self::decomposition().field_bits(),
+        )?;
+        let w_ring = akita_types::w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+            Self::decomposition().field_bits(),
+            &lp,
+            incidence.num_points(),
+            incidence.num_polynomials(),
+            incidence.num_claims(),
+            incidence.num_public_rows(),
+            akita_types::MRowLayout::Terminal,
+            akita_types::TerminalWitnessQuotient::OmitRHat,
+        )?;
+        let compact_w_len = w_ring * Self::D;
+        let witness_shape = akita_types::DirectWitnessShape::PackedDigits((compact_w_len, 3));
+        let direct_bytes =
+            akita_types::direct_witness_bytes(Self::decomposition().field_bits(), &witness_shape);
+        Ok(akita_types::Schedule {
+            steps: vec![
+                Step::Fold(akita_types::FoldStep {
+                    params: lp.clone(),
+                    current_w_len: akita_types::root_current_w_len(&lp),
+                    delta_fold_per_poly: lp.num_digits_fold,
+                    w_ring,
+                    next_w_len: compact_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Direct(akita_types::DirectStep {
+                    current_w_len: compact_w_len,
+                    witness_shape,
+                    direct_bytes,
+                    terminal_proof_mode: Self::terminal_proof_mode(),
+                    commit_params: None,
+                    level_params: Some(lp.clone()),
+                }),
+            ],
+            total_bytes: direct_bytes,
         })
     }
 }
@@ -334,6 +446,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                         next_w_len, 3,
                     )),
                     direct_bytes: next_w_len,
+                    terminal_proof_mode: akita_types::TerminalProofMode::RingSwitchSumcheck,
+                    commit_params: None,
                     // Stub fixture: terminal-direct level params equal the
                     // fold's `lp`.
                     params: Some(lp.clone()),
@@ -497,6 +611,247 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         akita_types::SetupContributionMode::Direct,
     );
     assert!(result.is_err());
+}
+
+#[test]
+fn fp32_ring_subfield_direct_terminal_root_roundtrip_checks_rows() {
+    type SmallCfg = Fp32RingSubfieldDirectRootFoldCfg;
+    type SmallF = <SmallCfg as CommitmentConfig>::Field;
+    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    const SMALL_D: usize = SmallCfg::D;
+    const NUM_VARS: usize = 1;
+    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+
+    let len = 1usize << NUM_VARS;
+    let evals_a = (0..len)
+        .map(|idx| SmallF::from_u64((5 * idx as u64) + 17))
+        .collect::<Vec<_>>();
+    let evals_b = (0..len)
+        .map(|idx| SmallF::from_u64((7 * idx as u64) + 29))
+        .collect::<Vec<_>>();
+    let poly_a = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_a).unwrap();
+    let poly_b = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals_b).unwrap();
+    let point_a = [SmallE::new([
+        SmallF::from_u64(3),
+        SmallF::from_u64(5),
+        SmallF::from_u64(7),
+        SmallF::from_u64(11),
+    ])];
+    let point_b = [SmallE::new([
+        SmallF::from_u64(13),
+        SmallF::from_u64(17),
+        SmallF::from_u64(19),
+        SmallF::from_u64(23),
+    ])];
+    let opening_at = |evals: &[SmallF], point: &[SmallE]| {
+        let weights = lagrange_weights(point).unwrap();
+        evals
+            .iter()
+            .zip(weights.iter())
+            .fold(SmallE::zero(), |acc, (&coeff, &weight)| {
+                acc + weight * SmallE::lift_base(coeff)
+            })
+    };
+    let opening_a0 = opening_at(&evals_a, &point_a);
+    let opening_a1 = opening_at(&evals_b, &point_a);
+    let opening_b0 = opening_at(&evals_a, &point_b);
+    let opening_b1 = opening_at(&evals_b, &point_b);
+
+    let setup =
+        <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 4, 2).unwrap();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+        &setup,
+        &CpuBackend,
+        &prepared,
+        &[poly_a.clone(), poly_b.clone()],
+    )
+    .unwrap();
+
+    let poly_refs = [&poly_a, &poly_b];
+    let commitments = [commitment];
+    let mut prover_transcript =
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-direct-terminal-root");
+    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+        &setup,
+        &CpuBackend,
+        &prepared,
+        vec![
+            (
+                &point_a[..],
+                CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint: hint.clone(),
+                },
+            ),
+            (
+                &point_b[..],
+                CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint,
+                },
+            ),
+        ],
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+
+    let terminal = match &proof.root {
+        akita_types::AkitaBatchedRootProof::Terminal(terminal) => terminal,
+        other => panic!("direct terminal-root fixture produced unexpected root: {other:?}"),
+    };
+    assert!(matches!(
+        terminal.relation,
+        akita_types::TerminalRelationProof::DirectRingRelations
+    ));
+    assert!(terminal.stage2_sumcheck().is_none());
+
+    let shape = proof.shape();
+    let mut bytes = Vec::new();
+    proof.serialize_uncompressed(&mut bytes).unwrap();
+    assert_eq!(bytes.len(), proof.size());
+    let decoded =
+        AkitaBatchedProof::<SmallF, SmallE>::deserialize_uncompressed(&*bytes, &shape).unwrap();
+    assert_eq!(decoded, proof);
+
+    let openings_a = [opening_a0, opening_a1];
+    let openings_b = [opening_b0, opening_b1];
+    let mut verifier_transcript =
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-direct-terminal-root");
+    <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![
+            (
+                &point_a[..],
+                CommittedOpenings {
+                    openings: &openings_a[..],
+                    commitment: &commitments[0],
+                },
+            ),
+            (
+                &point_b[..],
+                CommittedOpenings {
+                    openings: &openings_b[..],
+                    commitment: &commitments[0],
+                },
+            ),
+        ],
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+
+    let wrong_openings_b = [opening_b0, opening_b1 + SmallE::one()];
+    let mut verifier_transcript =
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-direct-terminal-root");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![
+            (
+                &point_a[..],
+                CommittedOpenings {
+                    openings: &openings_a[..],
+                    commitment: &commitments[0],
+                },
+            ),
+            (
+                &point_b[..],
+                CommittedOpenings {
+                    openings: &wrong_openings_b[..],
+                    commitment: &commitments[0],
+                },
+            ),
+        ],
+        BasisMode::Lagrange,
+    );
+    assert!(
+        result.is_err(),
+        "direct terminal rows must reject wrong claims"
+    );
+
+    let mut tampered_y = proof.clone();
+    let akita_types::AkitaBatchedRootProof::Terminal(terminal) = &mut tampered_y.root else {
+        panic!("expected terminal root proof");
+    };
+    let mut y_coeffs = terminal.y_rings.coeffs().to_vec();
+    let first_coeff = y_coeffs.first_mut().expect("non-empty y rows");
+    *first_coeff += SmallF::one();
+    terminal.y_rings = FlatRingVec::from_coeffs(y_coeffs);
+
+    let mut verifier_transcript =
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-direct-terminal-root");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &tampered_y,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![
+            (
+                &point_a[..],
+                CommittedOpenings {
+                    openings: &openings_a[..],
+                    commitment: &commitments[0],
+                },
+            ),
+            (
+                &point_b[..],
+                CommittedOpenings {
+                    openings: &openings_b[..],
+                    commitment: &commitments[0],
+                },
+            ),
+        ],
+        BasisMode::Lagrange,
+    );
+    assert!(
+        result.is_err(),
+        "direct terminal rows must reject tampered y rows"
+    );
+
+    let mut tampered = proof.clone();
+    let akita_types::AkitaBatchedRootProof::Terminal(terminal) = &mut tampered.root else {
+        panic!("expected terminal root proof");
+    };
+    let akita_types::DirectWitnessProof::PackedDigits(packed) = &mut terminal.final_witness else {
+        panic!("expected packed terminal witness");
+    };
+    let first_byte = packed.data.first_mut().expect("non-empty packed witness");
+    *first_byte ^= 1;
+
+    let mut verifier_transcript =
+        AkitaTranscript::<SmallF>::new(b"test/fp32-ring-subfield-direct-terminal-root");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &tampered,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![
+            (
+                &point_a[..],
+                CommittedOpenings {
+                    openings: &openings_a[..],
+                    commitment: &commitments[0],
+                },
+            ),
+            (
+                &point_b[..],
+                CommittedOpenings {
+                    openings: &openings_b[..],
+                    commitment: &commitments[0],
+                },
+            ),
+        ],
+        BasisMode::Lagrange,
+    );
+    assert!(
+        result.is_err(),
+        "direct terminal rows must reject tampered cleartext witnesses"
+    );
 }
 
 #[test]

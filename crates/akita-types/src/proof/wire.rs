@@ -406,12 +406,21 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             &mut writer,
             compress,
         )?;
-        #[cfg(not(feature = "zk"))]
-        self.stage2_sumcheck
-            .serialize_with_mode(&mut writer, compress)?;
-        #[cfg(feature = "zk")]
-        self.stage2_sumcheck_proof_masked
-            .serialize_with_mode(&mut writer, compress)?;
+        match &self.relation {
+            #[cfg(not(feature = "zk"))]
+            TerminalRelationProof::RingSwitchSumcheck(sumcheck) => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                sumcheck.serialize_with_mode(&mut writer, compress)?;
+            }
+            #[cfg(feature = "zk")]
+            TerminalRelationProof::RingSwitchSumcheckMasked(sumcheck) => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                sumcheck.serialize_with_mode(&mut writer, compress)?;
+            }
+            TerminalRelationProof::DirectRingRelations => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
         self.final_witness
             .serialize_with_mode(&mut writer, compress)
     }
@@ -422,15 +431,16 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                 self.extension_opening_reduction.as_ref(),
                 compress,
             )
-            + {
+            + match &self.relation {
                 #[cfg(not(feature = "zk"))]
-                {
-                    self.stage2_sumcheck.serialized_size(compress)
+                TerminalRelationProof::RingSwitchSumcheck(sumcheck) => {
+                    0u8.serialized_size(compress) + sumcheck.serialized_size(compress)
                 }
                 #[cfg(feature = "zk")]
-                {
-                    self.stage2_sumcheck_proof_masked.serialized_size(compress)
+                TerminalRelationProof::RingSwitchSumcheckMasked(sumcheck) => {
+                    0u8.serialized_size(compress) + sumcheck.serialized_size(compress)
                 }
+                TerminalRelationProof::DirectRingRelations => 0u8.serialized_size(compress),
             }
             + self.final_witness.serialized_size(compress)
     }
@@ -451,11 +461,31 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for TerminalLevelProof<F,
             #[cfg(feature = "zk")]
             reduction.sumcheck_proof_masked.check()?;
         }
-        #[cfg(not(feature = "zk"))]
-        self.stage2_sumcheck.check()?;
-        #[cfg(feature = "zk")]
-        self.stage2_sumcheck_proof_masked.check()?;
+        self.relation.check()?;
         self.final_witness.check()
+    }
+}
+
+impl<L: FieldCore + Valid> Valid for TerminalRelationProof<L> {
+    fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            #[cfg(not(feature = "zk"))]
+            Self::RingSwitchSumcheck(sumcheck) => sumcheck.check(),
+            #[cfg(feature = "zk")]
+            Self::RingSwitchSumcheckMasked(sumcheck) => sumcheck.check(),
+            Self::DirectRingRelations => {
+                #[cfg(feature = "zk")]
+                {
+                    return Err(SerializationError::InvalidData(
+                        "direct terminal proof mode is not supported with zk".to_string(),
+                    ));
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    Ok(())
+                }
+            }
+        }
     }
 }
 
@@ -483,21 +513,45 @@ impl<
             validate,
             ctx.extension_opening_reduction.as_ref(),
         )?;
-        #[cfg(not(feature = "zk"))]
-        let stage2_sumcheck = SumcheckProof::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.stage2_sumcheck,
-        )?;
-        #[cfg(feature = "zk")]
-        let stage2_sumcheck_proof_masked = SumcheckProofMasked::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.stage2_sumcheck,
-        )?;
-        let final_witness = CleartextWitnessProof::deserialize_with_mode(
+        let relation_tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let relation = match (&ctx.relation, relation_tag) {
+            (TerminalRelationProofShape::RingSwitchSumcheck(shape), 0) => {
+                #[cfg(not(feature = "zk"))]
+                {
+                    TerminalRelationProof::RingSwitchSumcheck(SumcheckProof::deserialize_with_mode(
+                        &mut reader,
+                        compress,
+                        validate,
+                        shape,
+                    )?)
+                }
+                #[cfg(feature = "zk")]
+                {
+                    TerminalRelationProof::RingSwitchSumcheckMasked(
+                        SumcheckProofMasked::deserialize_with_mode(
+                            &mut reader,
+                            compress,
+                            validate,
+                            shape,
+                        )?,
+                    )
+                }
+            }
+            (TerminalRelationProofShape::DirectRingRelations, 1) => {
+                TerminalRelationProof::DirectRingRelations
+            }
+            (TerminalRelationProofShape::RingSwitchSumcheck(_), other) => {
+                return Err(SerializationError::InvalidData(format!(
+                    "terminal relation proof tag {other} does not match sumcheck shape"
+                )))
+            }
+            (TerminalRelationProofShape::DirectRingRelations, other) => {
+                return Err(SerializationError::InvalidData(format!(
+                    "terminal relation proof tag {other} does not match direct shape"
+                )))
+            }
+        };
+        let final_witness = DirectWitnessProof::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
@@ -506,10 +560,7 @@ impl<
         let out = Self {
             y_rings,
             extension_opening_reduction,
-            #[cfg(not(feature = "zk"))]
-            stage2_sumcheck,
-            #[cfg(feature = "zk")]
-            stage2_sumcheck_proof_masked,
+            relation,
             final_witness,
         };
         if matches!(validate, Validate::Yes) {

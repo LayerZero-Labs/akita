@@ -19,11 +19,13 @@ use akita_types::sis::{
     FoldWitnessNorms,
 };
 use akita_types::{
-    decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
-    level_proof_bytes, root_extension_opening_partials,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
-    Schedule, Step,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+    root_current_w_len, root_extension_opening_partials, scale_batched_root_layout,
+    schedule_from_plan, terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
+    w_ring_element_count_with_counts_for_layout_bits, AjtaiKeyParams, AjtaiRole,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentEnvelope, DecompositionParams,
+    DirectStep, DirectWitnessShape, FoldStep, LevelParams, MRowLayout, Schedule, SisModulusFamily,
+    Step, TerminalProofMode,
 };
 
 use crate::PlannerPolicy;
@@ -237,23 +239,155 @@ struct FoldSuffix {
     steps: Vec<Step>,
 }
 
-/// Result of the suffix DP at one state. Both shape options are reported
-/// because the parent's proof-size formula depends on the child's first
-/// step:
-///
-/// - `best_direct` — best schedule whose first step is a `Step::Direct`
-///   (parent scores under `MRowLayout::WithoutDBlock`). `None` when infeasible.
-/// - `best_fold_per_lb` — best `Step::Fold`-first schedule per first-fold
-///   `log_basis`.
-#[derive(Clone)]
-struct SuffixResult {
-    best_direct: Option<(usize, Vec<Step>)>,
-    best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
+/// Initial (placeholder) witness shape for a terminal direct step recorded
+/// during the suffix DP. The DP records this when transitioning into the
+/// terminal base case using only `(current_w_len, log_basis)`; the FINAL
+/// shape (computed from the last fold's `lp` under [`MRowLayout::Terminal`])
+/// overwrites this once the enclosing fold candidate is known.
+fn to_direct_step(opts: &SearchOptions, current_w_len: usize, log_basis: u32) -> Step {
+    let expansion = opts.recursive_witness_expansion;
+    assert!(expansion > 0, "recursive witness expansion must be nonzero");
+    assert_eq!(
+        current_w_len % expansion,
+        0,
+        "terminal recursive witness length must be divisible by the extension expansion"
+    );
+    let witness_shape = DirectWitnessShape::PackedDigits((current_w_len / expansion, log_basis));
+    let direct_bytes = direct_witness_bytes(opts.field_bits(), &witness_shape);
+    Step::Direct(DirectStep {
+        current_w_len,
+        witness_shape,
+        direct_bytes,
+        terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+        // Terminal Direct after one or more folds: root commit params live
+        // on the first `FoldStep`, not on this terminal step.
+        commit_params: None,
+        // Populated by `finalize_terminal_direct_witness_shape` once the
+        // enclosing fold candidate (and therefore `terminal_field_len`)
+        // is known.
+        level_params: None,
+    })
 }
 
-impl SuffixResult {
-    fn is_empty(&self) -> bool {
-        self.best_direct.is_none() && self.best_fold_per_lb.is_empty()
+#[allow(clippy::too_many_arguments)]
+fn finalize_terminal_direct_witness_shape(
+    opts: &SearchOptions,
+    suffix_steps: &mut [Step],
+    candidate: &CandidateLevelParams,
+    num_points: usize,
+    num_t_vectors: usize,
+    num_w_vectors: usize,
+    num_public_rows: usize,
+    num_vars: usize,
+    fold_level: usize,
+) -> Result<(), AkitaError> {
+    if suffix_steps.len() != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "terminal direct finalizer expects exactly one suffix step".to_string(),
+        ));
+    }
+    let first = suffix_steps.first_mut().ok_or_else(|| {
+        AkitaError::InvalidSetup("terminal direct finalizer received empty suffix".to_string())
+    })?;
+    let Step::Direct(direct) = first else {
+        return Err(AkitaError::InvalidSetup(
+            "terminal direct finalizer expected a direct suffix step".to_string(),
+        ));
+    };
+    let DirectWitnessShape::PackedDigits((_, log_basis)) = direct.witness_shape else {
+        return Err(AkitaError::InvalidSetup(
+            "terminal direct finalizer expected a packed-digit witness".to_string(),
+        ));
+    };
+    let ring_count = w_ring_element_count_with_counts_for_layout_bits(
+        opts.field_bits(),
+        &candidate.lp,
+        num_points,
+        num_t_vectors,
+        num_w_vectors,
+        num_public_rows,
+        MRowLayout::Terminal,
+    )
+    .expect("terminal recursive witness length overflow");
+    let terminal_field_len = ring_count
+        .checked_mul(candidate.lp.ring_dimension)
+        .expect("terminal recursive witness length overflow");
+    let witness_shape = DirectWitnessShape::PackedDigits((terminal_field_len, log_basis));
+    let direct_bytes = direct_witness_bytes(opts.field_bits(), &witness_shape);
+    // Bake the SIS-secure terminal-direct level params onto the step so
+    // prover/verifier (and the materializer, when this candidate is
+    // emitted via the offline table) can read them straight from the
+    // schedule. This mirrors what the prover's
+    // `scheduled_next_level_params` callback used to compute on the fly.
+    let level_params = akita_derive::direct_level_params_with_log_basis(
+        opts.sis_modulus_family,
+        opts.ring_dimension,
+        opts.decomposition,
+        (opts.stage1_challenge_config)(opts.ring_dimension)?,
+        opts.ring_subfield_embedding_norm_bound,
+        &opts.envelope,
+        AkitaScheduleInputs {
+            num_vars,
+            level: fold_level + 1,
+            current_w_len: terminal_field_len,
+        },
+        log_basis,
+    )?;
+    direct.current_w_len = terminal_field_len;
+    direct.witness_shape = witness_shape;
+    direct.direct_bytes = direct_bytes;
+    direct.terminal_proof_mode = TerminalProofMode::RingSwitchSumcheck;
+    direct.level_params = Some(level_params);
+    Ok(())
+}
+
+fn basis_range(
+    opts: &SearchOptions,
+    num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+) -> std::ops::RangeInclusive<u32> {
+    let (lo, hi) = (opts.log_basis_search_range)(AkitaScheduleInputs {
+        num_vars,
+        level,
+        current_w_len,
+    });
+    lo..=hi
+}
+
+fn level_params_from_fold_step(opts: &SearchOptions, step: &FoldStep) -> LevelParams {
+    if let Ok(config) = (opts.stage1_challenge_config)(step.params.ring_dimension) {
+        debug_assert_eq!(config.l1_norm(), step.params.challenge_l1_mass());
+    }
+    step.params.clone()
+}
+
+fn successor_level_params_from_schedule(
+    opts: &SearchOptions,
+    num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    suffix_steps: &[Step],
+) -> Result<LevelParams, AkitaError> {
+    match suffix_steps
+        .first()
+        .expect("optimal suffix schedule must contain at least one step")
+    {
+        Step::Fold(step) => Ok(level_params_from_fold_step(opts, step)),
+        Step::Direct(step) => akita_derive::direct_level_params_with_log_basis(
+            opts.sis_modulus_family,
+            opts.ring_dimension,
+            opts.decomposition,
+            (opts.stage1_challenge_config)(opts.ring_dimension)?,
+            opts.ring_subfield_embedding_norm_bound,
+            &opts.envelope,
+            AkitaScheduleInputs {
+                num_vars,
+                level,
+                current_w_len,
+            },
+            step.log_basis(opts.field_bits()),
+        ),
     }
 }
 
@@ -670,7 +804,11 @@ pub fn find_schedule(
         current_w_len: witness_len,
         witness_shape: root_witness_shape,
         direct_bytes: best_cost,
-        params: root_direct_commit_params,
+        terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+        commit_params: root_direct_commit_params,
+        // Root-direct never has a next level after itself; the prover
+        // walk stops at this direct step.
+        level_params: None,
     })];
     let mut memo = ScheduleMemo::new();
 

@@ -2,8 +2,8 @@ use akita_field::FieldCore;
 use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep,
-    CleartextWitnessProof, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, AkitaSchedulePlan,
+    DirectWitnessProof, LevelParams, Schedule, Step, TerminalLevelProof, TerminalRelationProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -294,16 +294,26 @@ where
     let y_rings_size = level.y_rings.serialized_size(Compress::No);
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
+    let terminal_relation = match &level.relation {
+        #[cfg(not(feature = "zk"))]
+        TerminalRelationProof::RingSwitchSumcheck(_) => "ring_switch_sumcheck",
+        #[cfg(feature = "zk")]
+        TerminalRelationProof::RingSwitchSumcheckMasked(_) => "ring_switch_sumcheck_masked",
+        TerminalRelationProof::DirectRingRelations => "direct_ring_relations",
+    };
+    let terminal_relation_tag_size = 1usize;
     let stage2_sumcheck_size = {
         #[cfg(not(feature = "zk"))]
         {
-            level.stage2_sumcheck.serialized_size(Compress::No)
+            level
+                .stage2_sumcheck()
+                .map_or(0, |sumcheck| sumcheck.serialized_size(Compress::No))
         }
         #[cfg(feature = "zk")]
         {
             level
-                .stage2_sumcheck_proof_masked
-                .serialized_size(Compress::No)
+                .stage2_sumcheck_proof_masked()
+                .map_or(0, |sumcheck| sumcheck.serialized_size(Compress::No))
         }
     };
     let final_witness_size = level.final_witness.serialized_size(Compress::No);
@@ -315,8 +325,8 @@ where
 
     // Only the fields structurally present in `TerminalLevelProof` are
     // emitted: `y_rings`, optional extension-opening reduction, the
-    // stage-2 sumcheck, and `final_witness`. The intermediate-level
-    // fields (`v`, `stage1_*`, `stage3_sumcheck`, `next_w_*`) are absent at
+    // relation tag, optional stage-2 sumcheck, and `final_witness`. The
+    // intermediate-level fields (`v`, `stage1_*`, `next_w_*`) are absent at
     // terminal and therefore omitted from the tracing payload; downstream
     // parsers default missing keys to zero.
     tracing::info!(
@@ -327,6 +337,8 @@ where
         y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
+        terminal_relation,
+        terminal_relation_tag_bytes = terminal_relation_tag_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         final_witness_bytes = final_witness_size,
         root_variant = root_variant,
@@ -347,8 +359,10 @@ where
         ring_elem_count(level.y_rings.coeff_len(), D),
         D,
     );
+    eprintln!("[{label}]     terminal_relation={terminal_relation}");
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!("[{label}]     terminal_relation_tag={terminal_relation_tag_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     final_witness={final_witness_size} bytes (absorbed via transcript)");
     assert_eq!(
@@ -356,6 +370,7 @@ where
         y_rings_size
             + extension_opening_partials_size
             + extension_opening_sumcheck_size
+            + terminal_relation_tag_size
             + stage2_sumcheck_size
             + final_witness_size
     );

@@ -12,7 +12,8 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
-    ClaimIncidenceSummary, PlanSection, RingSubfieldEncoding, Schedule, SetupSection,
+    ClaimIncidenceSummary, PlanSection, RingSubfieldEncoding, Schedule, SetupSection, Step,
+    TerminalProofMode,
 };
 
 /// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
@@ -46,12 +47,26 @@ where
     Cfg::ClaimField: RingSubfieldEncoding<F>,
     Cfg::ChallengeField: RingSubfieldEncoding<F>,
 {
+    let terminal_proof_mode = Cfg::terminal_proof_mode();
+    validate_terminal_proof_mode_selectable(terminal_proof_mode)?;
+    validate_schedule_terminal_proof_mode(schedule, terminal_proof_mode)?;
+
+    let mut setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
+    if setup_levels.is_empty() {
+        // Defensive fallback: empty schedules and root-direct edge entries
+        // with no `commit_params` go through the same `Cfg`-driven path
+        // setup uses to size the shared matrix.
+        setup_levels.push(Cfg::get_params_for_batched_commitment(incidence)?);
+    }
+
     let descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ClaimField, Cfg::ChallengeField, D>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_family(),
             setup.seed(),
+            &setup_levels,
+            terminal_proof_mode,
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(schedule),
@@ -62,4 +77,79 @@ where
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor serialization: {err}")))?;
     transcript.bind_instance_bytes(&descriptor_bytes);
     Ok(())
+}
+
+fn validate_terminal_proof_mode_selectable(mode: TerminalProofMode) -> Result<(), AkitaError> {
+    match mode {
+        TerminalProofMode::RingSwitchSumcheck => Ok(()),
+        TerminalProofMode::DirectRingRelations => {
+            #[cfg(feature = "zk")]
+            {
+                Err(AkitaError::InvalidSetup(
+                    "direct terminal proof mode is not supported with zk".to_string(),
+                ))
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                Ok(())
+            }
+        }
+    }
+}
+
+fn validate_schedule_terminal_proof_mode(
+    schedule: &Schedule,
+    mode: TerminalProofMode,
+) -> Result<(), AkitaError> {
+    if !schedule
+        .steps
+        .iter()
+        .any(|step| matches!(step, Step::Fold(_)))
+    {
+        return Ok(());
+    }
+
+    let direct = match schedule.steps.last() {
+        Some(Step::Direct(direct)) => direct,
+        _ => {
+            return Err(AkitaError::InvalidSetup(
+                "folded schedule must terminate in a direct step".to_string(),
+            ));
+        }
+    };
+    if direct.terminal_proof_mode != mode {
+        return Err(AkitaError::InvalidSetup(format!(
+            "terminal proof mode mismatch between config and schedule: config={mode:?}, schedule={:?}",
+            direct.terminal_proof_mode
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn direct_terminal_mode_is_selectable_in_transparent_builds() {
+        validate_terminal_proof_mode_selectable(TerminalProofMode::DirectRingRelations)
+            .expect("direct mode is selectable once transparent prover/verifier routing is wired");
+    }
+
+    #[test]
+    #[cfg(feature = "zk")]
+    fn direct_terminal_mode_rejects_in_zk_builds() {
+        let err = validate_terminal_proof_mode_selectable(TerminalProofMode::DirectRingRelations)
+            .expect_err("direct mode has no zk masking contract");
+        assert!(err
+            .to_string()
+            .contains("direct terminal proof mode is not supported with zk"));
+    }
+
+    #[test]
+    fn ring_switch_terminal_mode_is_selectable() {
+        validate_terminal_proof_mode_selectable(TerminalProofMode::RingSwitchSumcheck)
+            .expect("existing terminal mode remains selectable");
+    }
 }

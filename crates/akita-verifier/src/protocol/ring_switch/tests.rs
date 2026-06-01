@@ -1,20 +1,11 @@
 use super::*;
+#[cfg(not(feature = "zk"))]
+use akita_challenges::SparseChallenge;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp32;
-use akita_types::{RingRelationSegmentLayout, SisModulusFamily};
-
-fn dummy_witness_segment_layout() -> RingRelationSegmentLayout {
-    RingRelationSegmentLayout {
-        offset_e: 0,
-        offset_t: 0,
-        offset_z: 0,
-        offset_r: 0,
-        #[cfg(feature = "zk")]
-        b_blinding_offset: 0,
-        #[cfg(feature = "zk")]
-        d_blinding_offset: 0,
-    }
-}
+use akita_types::SisModulusFamily;
+#[cfg(not(feature = "zk"))]
+use akita_types::{AkitaSetupSeed, DirectWitnessProof, FlatMatrix, PackedDigits};
 
 type F = Fp32<251>;
 const D: usize = 32;
@@ -91,4 +82,107 @@ fn multiplier_block_summary_rejects_malformed_shapes() {
     let err =
         summarize_pow2_multiplier_block_carries(&eq_low[..1], 0, 2, |_| Ok(F::one())).unwrap_err();
     assert!(matches!(err, AkitaError::InvalidSize { .. }));
+}
+
+#[cfg(not(feature = "zk"))]
+mod terminal_direct {
+    use super::*;
+
+    const SMALL_D: usize = 2;
+
+    fn small_params() -> LevelParams {
+        LevelParams::params_only(SisModulusFamily::Q32, SMALL_D, 2, 1, 1, 0, stage1_config())
+            .with_decomp(0, 0, 1, 1, 1, 0)
+            .unwrap()
+    }
+
+    fn one() -> CyclotomicRing<F, SMALL_D> {
+        CyclotomicRing::one()
+    }
+
+    fn setup() -> AkitaExpandedSetup<F> {
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupSeed {
+                max_num_vars: 1,
+                max_num_batched_polys: 1,
+                max_num_points: 1,
+                gen_ring_dim: SMALL_D,
+                max_setup_len: 1,
+                public_matrix_seed: [0u8; 32],
+            },
+            FlatMatrix::from_ring_slice::<SMALL_D>(&[one()]),
+        )
+    }
+
+    fn challenge() -> Challenges {
+        Challenges::from_sparse(
+            vec![SparseChallenge {
+                positions: vec![0],
+                coeffs: vec![1],
+            }],
+            1,
+            1,
+        )
+        .unwrap()
+    }
+
+    fn witness(digits: &[i8]) -> DirectWitnessProof<F> {
+        DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits(digits, 2))
+    }
+
+    fn opening_point() -> RingOpeningPoint<F> {
+        RingOpeningPoint {
+            a: vec![F::one()],
+            b: vec![F::one()],
+        }
+    }
+
+    fn verify_with(
+        digits: &[i8],
+        commitment_rows: &[CyclotomicRing<F, SMALL_D>],
+        y_rings: &[CyclotomicRing<F, SMALL_D>],
+    ) -> Result<(), AkitaError> {
+        let lp = small_params();
+        let setup = setup();
+        let final_witness = witness(digits);
+        let opening = opening_point();
+        let multiplier = RingMultiplierOpeningPoint::from_base(&opening);
+        verify_terminal_direct_relation_rows::<F, F, SMALL_D>(
+            &[opening],
+            &[multiplier],
+            &[0],
+            &challenge(),
+            digits.len(),
+            &final_witness,
+            &setup,
+            &lp,
+            &[1],
+            &[0],
+            &[0],
+            &[F::one()],
+            commitment_rows,
+            y_rings,
+            1,
+        )
+    }
+
+    #[test]
+    fn terminal_direct_relation_rows_accept_reduced_identity_relation() {
+        let digits = [1, 0, 1, 0, 1, 0];
+        verify_with(&digits, &[one()], &[one()]).unwrap();
+    }
+
+    #[test]
+    fn terminal_direct_relation_rows_reject_public_row_tamper() {
+        let digits = [1, 0, 1, 0, 1, 0];
+        let err = verify_with(&digits, &[one()], &[CyclotomicRing::zero()]).unwrap_err();
+        assert!(matches!(err, AkitaError::InvalidProof));
+    }
+
+    #[test]
+    fn terminal_direct_relation_rows_reject_r_tail_shape() {
+        let digits = [1, 0, 1, 0, 1, 0, 0, 0];
+        let err = verify_with(&digits, &[one()], &[one()]).unwrap_err();
+        assert!(matches!(err, AkitaError::InvalidProof));
+    }
 }

@@ -21,7 +21,7 @@ use akita_types::{
 use akita_types::{scheduled_fold_execution, scheduled_next_level_params, LevelParams};
 use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
-    TerminalLevelProofShape,
+    TerminalLevelProofShape, TerminalRelationProofShape,
 };
 use akita_types::{AkitaScheduleInputs, Step};
 use akita_verifier::cleartext_witness_opening_matches;
@@ -85,9 +85,9 @@ fn expected_same_point_batched_shape(
         return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
             y_rings_coeffs: incidence.num_public_rows() * root_step.params.ring_dimension,
             extension_opening_reduction: None,
-            stage2_sumcheck: vec![3; root_rounds],
-            final_witness: akita_types::CleartextWitnessShape::PackedDigits((
-                root_step.next_w_len,
+            relation: TerminalRelationProofShape::RingSwitchSumcheck(vec![3; root_rounds]),
+            final_witness: akita_types::DirectWitnessShape::PackedDigits((
+                root_w_len,
                 terminal_next_params.log_basis,
             )),
         });
@@ -175,8 +175,8 @@ fn expected_same_point_batched_shape(
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         y_rings_coeffs: terminal_params.ring_dimension,
         extension_opening_reduction: None,
-        stage2_sumcheck: terminal_stage2,
-        final_witness: akita_types::CleartextWitnessShape::PackedDigits((
+        relation: TerminalRelationProofShape::RingSwitchSumcheck(vec![3; terminal_rounds]),
+        final_witness: akita_types::DirectWitnessShape::PackedDigits((
             terminal_next_w_len,
             terminal_next_params.log_basis,
         )),

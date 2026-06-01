@@ -1,7 +1,11 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{ClaimIncidenceSummary, CleartextWitnessShape, LevelParams, RingOpeningPoint};
+use crate::generated::GeneratedScheduleKey;
+use crate::{
+    ClaimIncidenceSummary, DirectWitnessShape, LevelParams, RingOpeningPoint, TerminalProofMode,
+};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -161,6 +165,292 @@ impl AkitaScheduleLookupKey {
     }
 }
 
+/// Convert the public runtime lookup key into a generated-table lookup key.
+///
+/// The generated-table key preserves the legacy `num_commitment_groups` field
+/// name as part of its ABI; `num_points` is the runtime-facing alias under the
+/// one-commitment-per-point invariant.
+pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
+    GeneratedScheduleKey {
+        num_vars: key.num_vars,
+        num_commitment_groups: key.num_points,
+        num_t_vectors: key.num_t_vectors,
+        num_w_vectors: key.num_w_vectors,
+        num_z_vectors: key.num_z_vectors,
+    }
+}
+
+/// Fully planned public data for one Akita fold level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AkitaPlannedLevel {
+    /// Public inputs that selected this level.
+    pub inputs: AkitaScheduleInputs,
+    /// Active unified level params chosen for this level.
+    pub lp: LevelParams,
+    /// Public inputs for the next level after folding.
+    pub next_inputs: AkitaScheduleInputs,
+    /// Planned log-basis of the next level.
+    pub next_level_log_basis: u32,
+    /// `n_b * d` of the next level, used for next_w_commitment shape.
+    pub next_commit_coeffs: usize,
+    /// Exact bytes contributed by this level to the proof.
+    pub level_bytes: usize,
+}
+
+impl AkitaPlannedLevel {
+    /// Public state at the start of this fold level.
+    pub fn input_state(&self) -> AkitaPlannedState {
+        AkitaPlannedState {
+            level: self.inputs.level,
+            current_w_len: self.inputs.current_w_len,
+            log_basis: self.lp.log_basis,
+        }
+    }
+
+    /// Public state reached after this fold level.
+    pub fn output_state(&self) -> AkitaPlannedState {
+        AkitaPlannedState {
+            level: self.next_inputs.level,
+            current_w_len: self.next_inputs.current_w_len,
+            log_basis: self.next_level_log_basis,
+        }
+    }
+}
+
+/// Public state after a planned prefix of Akita fold levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AkitaPlannedState {
+    /// Next level index reached by the plan.
+    pub level: usize,
+    /// Witness length in field elements at this state.
+    pub current_w_len: usize,
+    /// Active log-basis for the witness at this state.
+    pub log_basis: u32,
+}
+
+/// Terminal direct packed-witness handoff in a planned opening proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AkitaPlannedDirectStep {
+    /// Public witness state carried by the direct handoff.
+    pub state: AkitaPlannedState,
+    /// Serialized witness shape carried by the direct handoff.
+    pub witness_shape: DirectWitnessShape,
+    /// Exact bytes contributed by the packed direct witness.
+    pub direct_bytes: usize,
+    /// Terminal proof mode for folded terminal direct steps.
+    pub terminal_proof_mode: TerminalProofMode,
+    /// Commit-layout params for the root-direct case (planned root
+    /// step is `Direct`). See [`DirectStep::commit_params`] for the full
+    /// three-state contract; the same rules apply here.
+    pub commit_params: Option<LevelParams>,
+    /// SIS-secure level params for the terminal `Direct(PackedDigits)`
+    /// step that sits after one or more folds. `None` for root-direct
+    /// (the root direct has no sumcheck-time level after itself).
+    pub level_params: Option<LevelParams>,
+}
+
+/// Exact current-step execution data recovered from a pinned schedule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AkitaPlannedLevelExecution {
+    /// Planned fold level that matches the current public state.
+    pub level: AkitaPlannedLevel,
+    /// Planned next-level params implied by the following schedule step.
+    pub next_level_params: LevelParams,
+}
+
+/// One step in a planned opening proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AkitaPlannedStep {
+    /// An Akita fold level with an explicit next-state handoff.
+    Fold(Box<AkitaPlannedLevel>),
+    /// The terminal packed-witness direct handoff. Boxed so the variant
+    /// stays small after `AkitaPlannedDirectStep` gained a
+    /// root-direct `commit_params: Option<LevelParams>` field.
+    Direct(Box<AkitaPlannedDirectStep>),
+}
+
+/// Deterministic level-by-level schedule selected from public inputs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AkitaSchedulePlan {
+    /// Planned opening-proof steps in execution order.
+    ///
+    /// The final step is always [`AkitaPlannedStep::Direct`].
+    pub steps: Vec<AkitaPlannedStep>,
+    /// Total proof bytes excluding the outer proof wrapper.
+    pub no_wrapper_bytes: usize,
+    /// Total proof bytes in the serialized singleton `AkitaBatchedProof`
+    /// wire format.
+    ///
+    /// The singleton batched proof is currently headerless, so this equals
+    /// [`Self::no_wrapper_bytes`].
+    pub exact_proof_bytes: usize,
+}
+
+impl AkitaSchedulePlan {
+    /// Iterate over all planned fold levels in execution order.
+    pub fn fold_levels(&self) -> impl Iterator<Item = &AkitaPlannedLevel> + '_ {
+        self.steps.iter().filter_map(|step| match step {
+            AkitaPlannedStep::Fold(level) => Some(level.as_ref()),
+            AkitaPlannedStep::Direct(_) => None,
+        })
+    }
+
+    /// Number of planned fold levels before the terminal direct step.
+    pub fn num_fold_levels(&self) -> usize {
+        self.fold_levels().count()
+    }
+
+    /// Return the terminal direct packed-witness handoff.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the schedule was constructed without a trailing direct step.
+    pub fn direct_step(&self) -> &AkitaPlannedDirectStep {
+        match self
+            .steps
+            .last()
+            .expect("planned schedule always contains at least one step")
+        {
+            AkitaPlannedStep::Direct(step) => step,
+            AkitaPlannedStep::Fold(_) => {
+                panic!("planned schedule must end in a direct packed-witness step")
+            }
+        }
+    }
+
+    /// Return the initial public witness state before any proof steps run.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the schedule was constructed without any steps.
+    pub fn initial_state(&self) -> AkitaPlannedState {
+        match self
+            .steps
+            .first()
+            .expect("planned schedule always contains at least one step")
+        {
+            AkitaPlannedStep::Fold(level) => level.input_state(),
+            AkitaPlannedStep::Direct(step) => step.state,
+        }
+    }
+
+    /// Iterate over the planned witness states after each executed fold prefix.
+    pub fn states(&self) -> impl Iterator<Item = AkitaPlannedState> + '_ {
+        std::iter::once(self.initial_state())
+            .chain(self.fold_levels().map(|level| level.output_state()))
+    }
+
+    /// Return the public witness state after `prefix_len` fold levels.
+    pub fn state_after_prefix(&self, prefix_len: usize) -> Option<AkitaPlannedState> {
+        if prefix_len == 0 {
+            return Some(self.initial_state());
+        }
+        self.fold_levels()
+            .nth(prefix_len - 1)
+            .map(AkitaPlannedLevel::output_state)
+    }
+
+    /// Return the final witness state after all planned Akita levels.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the schedule was constructed without a trailing direct step.
+    pub fn terminal_state(&self) -> AkitaPlannedState {
+        self.direct_step().state
+    }
+
+    /// Return the exact planned-state index matching public inputs and,
+    /// optionally, an expected log-basis.
+    pub fn exact_state_index(
+        &self,
+        inputs: AkitaScheduleInputs,
+        log_basis: Option<u32>,
+    ) -> Option<usize> {
+        self.states().position(|state| {
+            state.level == inputs.level
+                && state.current_w_len == inputs.current_w_len
+                && log_basis.is_none_or(|basis| state.log_basis == basis)
+        })
+    }
+}
+
+/// Render a stable identity for a planned schedule selected by public inputs.
+pub fn planned_schedule_key_from_schedule(
+    lookup_key: AkitaScheduleLookupKey,
+    schedule: &AkitaSchedulePlan,
+) -> String {
+    let mut key = format!(
+        "planner_v5_nv{}_g{}_t{}_w{}_z{}",
+        lookup_key.num_vars,
+        lookup_key.num_points,
+        lookup_key.num_t_vectors,
+        lookup_key.num_w_vectors,
+        lookup_key.num_z_vectors
+    );
+    for state in schedule.states() {
+        let _ = write!(key, "_l{}b{}", state.level, state.log_basis);
+    }
+    key
+}
+
+/// Resolve the exact planned fold execution matching a runtime public state.
+///
+/// # Errors
+///
+/// Returns an error if the matching fold is not followed by another planned
+/// step. Returns `Ok(None)` when the requested state is absent or is not a fold
+/// step.
+pub fn exact_planned_level_execution<Stage1Config>(
+    schedule: &AkitaSchedulePlan,
+    inputs: AkitaScheduleInputs,
+    log_basis: u32,
+    stage1_challenge_config: Stage1Config,
+) -> Result<Option<AkitaPlannedLevelExecution>, AkitaError>
+where
+    Stage1Config: Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+{
+    let Some(state_index) = schedule.exact_state_index(inputs, Some(log_basis)) else {
+        return Ok(None);
+    };
+    let Some(current_step) = schedule.steps.get(state_index) else {
+        return Ok(None);
+    };
+    let AkitaPlannedStep::Fold(current_level) = current_step else {
+        return Ok(None);
+    };
+    let Some(next_step) = schedule.steps.get(state_index + 1) else {
+        return Err(AkitaError::InvalidSetup(
+            "planned fold step must be followed by another schedule step".to_string(),
+        ));
+    };
+    let next_level_params = match next_step {
+        AkitaPlannedStep::Fold(next_level) => next_level.lp.clone(),
+        AkitaPlannedStep::Direct(direct) => {
+            let (d, n_b) = match direct.witness_shape {
+                DirectWitnessShape::PackedDigits(_) => {
+                    let entry_d = current_level.lp.ring_dimension;
+                    let entry_nb = current_level.next_commit_coeffs / entry_d;
+                    (entry_d, entry_nb)
+                }
+                DirectWitnessShape::FieldElements(_) => (current_level.lp.ring_dimension, 0),
+            };
+            LevelParams::params_only(
+                current_level.lp.a_key.sis_family(),
+                d,
+                direct.state.log_basis,
+                0,
+                n_b,
+                0,
+                stage1_challenge_config(d)?,
+            )
+        }
+    };
+    Ok(Some(AkitaPlannedLevelExecution {
+        level: current_level.as_ref().clone(),
+        next_level_params,
+    }))
+}
+
 /// Number of gadget decomposition levels needed for `r` over field `F`.
 pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
@@ -258,7 +548,49 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     num_public_rows: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
-    let e_hat_count = num_w_vectors
+    w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+        field_bits,
+        lp,
+        num_points,
+        num_t_vectors,
+        num_w_vectors,
+        num_public_rows,
+        layout,
+        TerminalWitnessQuotient::IncludeRHat,
+    )
+}
+
+/// Terminal witness quotient emission policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalWitnessQuotient {
+    /// Include decomposed `r_hat` quotient ring elements.
+    IncludeRHat,
+    /// Omit decomposed `r_hat` quotient ring elements.
+    OmitRHat,
+}
+
+/// Non-generic witness ring-element count with an explicit terminal quotient
+/// policy. The quotient policy only affects terminal direct relation mode;
+/// callers using intermediate layouts must keep [`TerminalWitnessQuotient::IncludeRHat`].
+#[allow(clippy::too_many_arguments)]
+pub fn w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+    field_bits: u32,
+    lp: &LevelParams,
+    num_points: usize,
+    num_t_vectors: usize,
+    num_w_vectors: usize,
+    num_public_rows: usize,
+    layout: crate::layout::MRowLayout,
+    quotient: TerminalWitnessQuotient,
+) -> Result<usize, AkitaError> {
+    if layout != crate::layout::MRowLayout::Terminal
+        && quotient == TerminalWitnessQuotient::OmitRHat
+    {
+        return Err(AkitaError::InvalidSetup(
+            "r_hat omission is only valid for terminal layout".to_string(),
+        ));
+    }
+    let w_hat_count = num_w_vectors
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
@@ -272,14 +604,21 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    // One public y-row per packaged public opening row.
-    let r_rows = lp.m_row_count_for(num_points, num_public_rows, layout)?;
-    let r_count = r_rows
-        .checked_mul(crate::sis::compute_num_digits_full_field(
-            field_bits,
-            lp.log_basis,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
+    let r_count = match quotient {
+        TerminalWitnessQuotient::IncludeRHat => {
+            // One public y-row per packaged public opening row.
+            let r_rows = lp.m_row_count_for(num_points, num_public_rows, layout)?;
+            r_rows
+                .checked_mul(crate::layout::digit_math::compute_num_digits_full_field(
+                    field_bits,
+                    lp.log_basis,
+                ))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("witness r-tail width overflow".to_string())
+                })?
+        }
+        TerminalWitnessQuotient::OmitRHat => 0,
+    };
     #[cfg(feature = "zk")]
     {
         // Terminal layout drops the D-block from the relation entirely, so
@@ -343,8 +682,10 @@ pub struct DirectStep {
     pub witness_shape: CleartextWitnessShape,
     /// Direct witness bytes.
     pub direct_bytes: usize,
-    /// Root commit layout for root-direct schedules (schedule starts
-    /// with this `Direct`, `witness_shape = FieldElements`).
+    /// Terminal proof mode for this direct handoff.
+    pub terminal_proof_mode: TerminalProofMode,
+    /// Commit-layout params for the root-direct case (the schedule's
+    /// first step is this `Direct`). Three states:
     ///
     /// `Some(_)` is the root commit layout — the verifier replays
     /// commitments against it and the transcript binds it through the
@@ -439,18 +780,9 @@ impl Schedule {
                     push_usize(bytes, direct.current_w_len);
                     append_direct_witness_shape_descriptor_bytes(bytes, &direct.witness_shape);
                     push_usize(bytes, direct.direct_bytes);
-                    // Root-direct commit layout (`Some` for committable root
-                    // entries, `None` for terminal-direct handoffs). Binding it
-                    // here is what lets the transcript drop the redundant
-                    // setup-level `level_params_digest`: the per-proof schedule
-                    // digest now pins the root-direct commit params directly.
-                    match &direct.params {
-                        Some(params) => {
-                            bytes.push(1);
-                            params.append_descriptor_bytes(bytes);
-                        }
-                        None => bytes.push(0),
-                    }
+                    bytes.push(terminal_proof_mode_descriptor_tag(
+                        direct.terminal_proof_mode,
+                    ));
                 }
             }
         }
@@ -472,6 +804,13 @@ fn append_direct_witness_shape_descriptor_bytes(
             bytes.push(1);
             push_usize(bytes, *coeff_len);
         }
+    }
+}
+
+fn terminal_proof_mode_descriptor_tag(mode: TerminalProofMode) -> u8 {
+    match mode {
+        TerminalProofMode::RingSwitchSumcheck => 0,
+        TerminalProofMode::DirectRingRelations => 1,
     }
 }
 
@@ -503,11 +842,141 @@ pub fn root_direct_schedule(
             current_w_len,
             witness_shape: CleartextWitnessShape::FieldElements(current_w_len),
             direct_bytes: 0,
-            // Root-direct: stores the root commit layout.
-            params: Some(commit_params),
+            terminal_proof_mode: TerminalProofMode::RingSwitchSumcheck,
+            commit_params: Some(commit_params),
+            // Root-direct never has a "next level after itself"; the
+            // schedule walks the single direct step and stops.
+            level_params: None,
         })],
         total_bytes: 0,
     })
+}
+
+/// Scale a per-polynomial root layout to a batched root layout.
+///
+/// # Errors
+///
+/// Returns an error when `num_claims` is zero or scaling overflows a layout
+/// width.
+pub fn scale_batched_root_layout(
+    root_lp: &LevelParams,
+    num_claims: usize,
+    root_stage1_l1_mass: usize,
+    field_bits: u32,
+) -> Result<LevelParams, AkitaError> {
+    if num_claims == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "max_num_batched_polys must be at least 1".to_string(),
+        ));
+    }
+
+    let mut scaled = root_lp.clone();
+    let d = scaled.ring_dimension;
+    scaled.b_key = crate::AjtaiKeyParams::try_new(
+        scaled.b_key.sis_family(),
+        scaled.b_key.row_len(),
+        root_lp
+            .b_key
+            .col_len()
+            .checked_mul(num_claims)
+            .ok_or_else(|| AkitaError::InvalidSetup("batched outer width overflow".to_string()))?,
+        scaled.b_key.collision_inf(),
+        d,
+    )?;
+    scaled.d_key = crate::AjtaiKeyParams::try_new(
+        scaled.d_key.sis_family(),
+        scaled.d_key.row_len(),
+        root_lp
+            .d_key
+            .col_len()
+            .checked_mul(num_claims)
+            .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?,
+        scaled.d_key.collision_inf(),
+        d,
+    )?;
+    scaled.num_digits_fold = root_lp.num_digits_fold.max(
+        crate::layout::digit_math::compute_num_digits_fold_with_claims(
+            root_lp.r_vars,
+            root_stage1_l1_mass,
+            root_lp.log_basis,
+            num_claims,
+            field_bits,
+        ),
+    );
+    Ok(scaled)
+}
+
+/// Extract the per-polynomial layout from a batched root layout.
+pub fn split_batched_root_params(root_lp: &LevelParams, field_bits: u32) -> LevelParams {
+    let per_poly_fold = crate::layout::digit_math::compute_num_digits_fold_with_claims(
+        root_lp.r_vars,
+        root_lp.challenge_l1_mass(),
+        root_lp.log_basis,
+        1,
+        field_bits,
+    );
+    let mut lp = root_lp.clone();
+    lp.num_digits_fold = per_poly_fold;
+    lp
+}
+
+/// Extract a per-polynomial batched root layout from the first fold level in a
+/// pre-computed schedule plan.
+pub fn split_batched_root_params_from_schedule_plan(
+    plan: &AkitaSchedulePlan,
+    field_bits: u32,
+) -> Option<LevelParams> {
+    let root_level = plan.fold_levels().next()?;
+    Some(split_batched_root_params(&root_level.lp, field_bits))
+}
+
+/// Translate an offline [`AkitaSchedulePlan`] into the runtime [`Schedule`]
+/// format.
+///
+/// `field_bits` is used only for terminal direct witnesses encoded as field
+/// elements; packed-digit direct witnesses carry their own bit width.
+pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule {
+    let mut steps = Vec::with_capacity(plan.steps.len());
+    for step in &plan.steps {
+        match step {
+            AkitaPlannedStep::Fold(level) => {
+                let lp = level.lp.clone();
+                let delta_fold_per_poly =
+                    crate::layout::digit_math::compute_num_digits_fold_with_claims(
+                        lp.r_vars,
+                        lp.challenge_l1_mass(),
+                        lp.log_basis,
+                        1,
+                        field_bits,
+                    );
+                let ring_dim = lp.ring_dimension;
+                let next_w_len = level.next_inputs.current_w_len;
+                let w_ring = next_w_len / ring_dim;
+                steps.push(Step::Fold(FoldStep {
+                    params: lp,
+                    current_w_len: level.inputs.current_w_len,
+                    delta_fold_per_poly,
+                    w_ring,
+                    next_w_len,
+                    level_bytes: level.level_bytes,
+                }));
+            }
+            AkitaPlannedStep::Direct(direct) => {
+                steps.push(Step::Direct(DirectStep {
+                    current_w_len: direct.state.current_w_len,
+                    witness_shape: direct.witness_shape.clone(),
+                    direct_bytes: direct.direct_bytes,
+                    terminal_proof_mode: direct.terminal_proof_mode,
+                    commit_params: direct.commit_params.clone(),
+                    level_params: direct.level_params.clone(),
+                }));
+            }
+        }
+    }
+    Schedule {
+        steps,
+        total_bytes: plan.exact_proof_bytes,
+    }
 }
 
 /// Return the number of fold levels in a runtime schedule.
@@ -621,13 +1090,14 @@ pub fn scheduled_fold_execution(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::digit_math::compute_num_digits_full_field;
     use crate::{
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-        root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
-        AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-        MRowLayout, PackedDigits, SisModulusFamily, TerminalLevelProof,
-        EXTENSION_OPENING_REDUCTION_DEGREE,
+        proof_ring_vec_bytes, root_extension_opening_partials, stage1_tree_stage_shapes,
+        sumcheck_rounds, terminal_level_proof_bytes, terminal_level_proof_bytes_for_mode,
+        AjtaiKeyParams, AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof,
+        AkitaStage1StageProof, AkitaStage2Proof, DirectWitnessProof, DirectWitnessShape,
+        FlatRingVec, PackedDigits, SisModulusFamily, TerminalLevelProof,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -665,7 +1135,198 @@ mod tests {
         assert_eq!(step.current_w_len, 8);
         assert_eq!(step.witness_shape, CleartextWitnessShape::FieldElements(8));
         assert_eq!(step.direct_bytes, 0);
-        assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
+        assert_eq!(
+            step.terminal_proof_mode,
+            TerminalProofMode::RingSwitchSumcheck
+        );
+        assert_eq!(step.commit_params.as_ref(), Some(&dummy_commit_params));
+        assert!(step.level_params.is_none());
+    }
+
+    #[test]
+    fn terminal_direct_witness_ring_count_excludes_r_hat() {
+        let lp = LevelParams::params_only(
+            crate::SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            3,
+            2,
+            SparseChallengeConfig::Uniform {
+                weight: 3,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_decomp(2, 3, 2, 2, 3, 0)
+        .expect("level params");
+        let field_bits = 128;
+        let num_points = 2;
+        let num_t_vectors = 3;
+        let num_w_vectors = 4;
+        let num_public_rows = 5;
+
+        let with_r_hat = w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+            field_bits,
+            &lp,
+            num_points,
+            num_t_vectors,
+            num_w_vectors,
+            num_public_rows,
+            crate::layout::MRowLayout::Terminal,
+            TerminalWitnessQuotient::IncludeRHat,
+        )
+        .expect("sumcheck-terminal witness size");
+        let without_r_hat = w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+            field_bits,
+            &lp,
+            num_points,
+            num_t_vectors,
+            num_w_vectors,
+            num_public_rows,
+            crate::layout::MRowLayout::Terminal,
+            TerminalWitnessQuotient::OmitRHat,
+        )
+        .expect("direct-terminal witness size");
+        let r_rows = lp
+            .m_row_count_for(
+                num_points,
+                num_public_rows,
+                crate::layout::MRowLayout::Terminal,
+            )
+            .expect("terminal row count");
+        let expected_r_hat = r_rows * compute_num_digits_full_field(field_bits, lp.log_basis);
+
+        assert_eq!(with_r_hat - without_r_hat, expected_r_hat);
+
+        let err = w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+            field_bits,
+            &lp,
+            num_points,
+            num_t_vectors,
+            num_w_vectors,
+            num_public_rows,
+            crate::layout::MRowLayout::Intermediate,
+            TerminalWitnessQuotient::OmitRHat,
+        )
+        .expect_err("non-terminal layouts must keep r_hat");
+        assert!(err
+            .to_string()
+            .contains("r_hat omission is only valid for terminal layout"));
+    }
+
+    #[cfg(not(feature = "zk"))]
+    #[test]
+    fn terminal_direct_witness_ring_count_ignores_omitted_r_hat_geometry() {
+        let lp = LevelParams::params_only(
+            crate::SisModulusFamily::Q128,
+            64,
+            3,
+            0,
+            usize::MAX,
+            0,
+            SparseChallengeConfig::Uniform {
+                weight: 3,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        );
+
+        assert_eq!(
+            w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+                128,
+                &lp,
+                2,
+                0,
+                0,
+                0,
+                crate::layout::MRowLayout::Terminal,
+                TerminalWitnessQuotient::OmitRHat,
+            )
+            .expect("direct mode omits r_hat rows before sizing them"),
+            0,
+        );
+
+        let err = w_ring_element_count_with_counts_for_layout_bits_and_quotient(
+            128,
+            &lp,
+            2,
+            0,
+            0,
+            0,
+            crate::layout::MRowLayout::Terminal,
+            TerminalWitnessQuotient::IncludeRHat,
+        )
+        .expect_err("sumcheck mode must still size r_hat rows");
+        assert!(err.to_string().contains("M-row count overflow"));
+    }
+
+    #[test]
+    fn terminal_direct_level_bytes_exclude_stage2_sumcheck() {
+        let lp = LevelParams::params_only(
+            crate::SisModulusFamily::Q128,
+            64,
+            3,
+            2,
+            3,
+            2,
+            SparseChallengeConfig::Uniform {
+                weight: 3,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        );
+        let next_w_len = 64 * 8;
+        let num_claims = 3;
+        let direct = terminal_level_proof_bytes_for_mode(
+            128,
+            128,
+            &lp,
+            next_w_len,
+            num_claims,
+            TerminalProofMode::DirectRingRelations,
+        );
+        let sumcheck = terminal_level_proof_bytes_for_mode(
+            128,
+            128,
+            &lp,
+            next_w_len,
+            num_claims,
+            TerminalProofMode::RingSwitchSumcheck,
+        );
+        let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, crate::field_bytes(128));
+        let terminal_relation_tag_bytes = 1;
+        let stage2_bytes =
+            sumcheck_rounds(lp.ring_dimension, next_w_len) * 3 * crate::field_bytes(128);
+
+        assert_eq!(direct, y_bytes + terminal_relation_tag_bytes);
+        assert_eq!(sumcheck, direct + stage2_bytes);
+    }
+
+    #[test]
+    fn terminal_direct_level_bytes_ignore_sumcheck_geometry() {
+        let lp = LevelParams::params_only(
+            crate::SisModulusFamily::Q128,
+            1,
+            3,
+            2,
+            3,
+            2,
+            SparseChallengeConfig::Uniform {
+                weight: 3,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        );
+        let direct = terminal_level_proof_bytes_for_mode(
+            128,
+            128,
+            &lp,
+            usize::MAX,
+            3,
+            TerminalProofMode::DirectRingRelations,
+        );
+
+        assert_eq!(
+            direct,
+            proof_ring_vec_bytes(3, 1, crate::field_bytes(128)) + 1
+        );
     }
 
     #[cfg(not(feature = "zk"))]
@@ -908,6 +1569,63 @@ mod tests {
                 final_witness_bytes_runtime,
                 "direct_witness_bytes should match the serialized packed-digit \
                  final witness at log_basis={log_basis}"
+            );
+        }
+    }
+
+    #[cfg(not(feature = "zk"))]
+    #[test]
+    fn planned_direct_terminal_level_bytes_match_terminal_payload_at_all_bases() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let next_w_len = D * 8;
+        let num_claims = 3;
+        let final_w_num_elems = 896;
+        let final_w_bits = 5;
+
+        for log_basis in 2..=6 {
+            let lp = LevelParams::params_only(
+                SisModulusFamily::Q128,
+                D,
+                log_basis,
+                2,
+                2,
+                2,
+                stage1_config.clone(),
+            )
+            .with_decomp(0, 0, 1, 1, 1, 0)
+            .unwrap();
+
+            let final_witness = DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
+                &vec![0i8; final_w_num_elems],
+                final_w_bits,
+            ));
+            let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
+            let terminal_proof =
+                TerminalLevelProof::<F, F>::new_direct_with_extension_opening_reduction(
+                    vec![CyclotomicRing::<F, D>::zero(); num_claims],
+                    None,
+                    final_witness,
+                );
+
+            let serialized_without_witness =
+                terminal_proof.serialized_size(Compress::No) - final_witness_bytes_runtime;
+
+            assert_eq!(
+                terminal_level_proof_bytes_for_mode(
+                    128,
+                    128,
+                    &lp,
+                    next_w_len,
+                    num_claims,
+                    TerminalProofMode::DirectRingRelations,
+                ),
+                serialized_without_witness,
+                "planned direct terminal-level bytes should match the serialized terminal body \
+                 (less final_witness) at log_basis={log_basis}"
             );
         }
     }
