@@ -1,5 +1,25 @@
 use super::*;
 
+fn verifier_carried_opening_from_proof<'a, F, L>(
+    claim: &'a CarriedOpeningProof<F, L>,
+) -> RecursiveVerifierCarriedOpening<'a, F, L>
+where
+    F: FieldCore,
+    L: FieldCore,
+{
+    RecursiveVerifierCarriedOpening {
+        opening_point: claim.point.clone(),
+        opening: claim.value,
+        #[cfg(feature = "zk")]
+        opening_mask: ZkR1csLinearCombination::zero(),
+        commitment: &claim.commitment,
+        basis: claim.basis,
+        natural_len: claim.natural_len,
+        padded_len: claim.padded_len,
+        kind: claim.kind,
+    }
+}
+
 /// Verify one intermediate recursive fold level.
 ///
 /// The returned challenges become the opening point for the next level.
@@ -823,20 +843,28 @@ where
                 if computed_next_w_len != next_w_len {
                     return Err(AkitaError::InvalidProof);
                 }
+                let mut carried_openings = vec![RecursiveVerifierCarriedOpening {
+                    opening_point: challenges,
+                    opening: level_proof.next_w_eval(),
+                    #[cfg(feature = "zk")]
+                    opening_mask: zk_ext_mask_lc_at::<F, L>(
+                        *zk_hiding_cursor - <L as ExtField<F>>::EXT_DEGREE,
+                    ),
+                    commitment: level_proof.next_w_commitment(),
+                    basis: BasisMode::Lagrange,
+                    natural_len: next_w_len,
+                    padded_len: next_w_len.next_power_of_two(),
+                    kind: CarriedOpeningKind::RecursiveWitness,
+                }];
+                carried_openings.extend(
+                    level_proof
+                        .stage2
+                        .extra_carried_openings
+                        .iter()
+                        .map(verifier_carried_opening_from_proof),
+                );
                 current_state = RecursiveVerifierState {
-                    carried_openings: vec![RecursiveVerifierCarriedOpening {
-                        opening_point: challenges,
-                        opening: level_proof.next_w_eval(),
-                        #[cfg(feature = "zk")]
-                        opening_mask: zk_ext_mask_lc_at::<F, L>(
-                            *zk_hiding_cursor - <L as ExtField<F>>::EXT_DEGREE,
-                        ),
-                        commitment: level_proof.next_w_commitment(),
-                        basis: BasisMode::Lagrange,
-                        natural_len: next_w_len,
-                        padded_len: next_w_len.next_power_of_two(),
-                        kind: CarriedOpeningKind::RecursiveWitness,
-                    }],
+                    carried_openings,
                     log_basis: scheduled_next_params.log_basis,
                 };
             }
@@ -1059,20 +1087,28 @@ where
                 return Err(AkitaError::InvalidProof);
             }
 
+            let mut carried_openings = vec![RecursiveVerifierCarriedOpening {
+                opening_point: root_challenges,
+                opening: fold_root.stage2.next_w_eval(),
+                #[cfg(feature = "zk")]
+                opening_mask: zk_ext_mask_lc_at::<F, C>(
+                    zk_hiding_cursor - <C as ExtField<F>>::EXT_DEGREE,
+                ),
+                commitment: &fold_root.stage2.next_w_commitment,
+                basis: BasisMode::Lagrange,
+                natural_len: root_step.next_w_len,
+                padded_len: root_step.next_w_len.next_power_of_two(),
+                kind: CarriedOpeningKind::RecursiveWitness,
+            }];
+            carried_openings.extend(
+                fold_root
+                    .stage2
+                    .extra_carried_openings
+                    .iter()
+                    .map(verifier_carried_opening_from_proof),
+            );
             let current_state = RecursiveVerifierState {
-                carried_openings: vec![RecursiveVerifierCarriedOpening {
-                    opening_point: root_challenges,
-                    opening: fold_root.stage2.next_w_eval(),
-                    #[cfg(feature = "zk")]
-                    opening_mask: zk_ext_mask_lc_at::<F, C>(
-                        zk_hiding_cursor - <C as ExtField<F>>::EXT_DEGREE,
-                    ),
-                    commitment: &fold_root.stage2.next_w_commitment,
-                    basis: BasisMode::Lagrange,
-                    natural_len: root_step.next_w_len,
-                    padded_len: root_step.next_w_len.next_power_of_two(),
-                    kind: CarriedOpeningKind::RecursiveWitness,
-                }],
+                carried_openings,
                 log_basis: next_level_params.log_basis,
             };
             verify_batched_recursive_suffix::<F, C, T, D>(

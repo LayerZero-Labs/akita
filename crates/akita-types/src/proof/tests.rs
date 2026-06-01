@@ -129,6 +129,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
         stage1_stages: Vec::new(),
         stage2_sumcheck_proof: Vec::new(),
         next_commit_coeffs: 1,
+        extra_carried_openings: Vec::new(),
     };
 
     let err = oversized.check().unwrap_err();
@@ -172,6 +173,7 @@ fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
         next_w_eval: F::zero(),
         #[cfg(feature = "zk")]
         next_w_eval_masked: F::zero(),
+        extra_carried_openings: Vec::new(),
     }
 }
 

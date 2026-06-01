@@ -4,6 +4,7 @@ use super::shapes::sumcheck_proof_masked_shape;
 #[cfg(not(feature = "zk"))]
 use super::shapes::sumcheck_shape;
 use super::*;
+use crate::BasisMode;
 
 /// One stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +49,27 @@ pub struct AkitaStage2Proof<F: FieldCore, L: FieldCore> {
     /// Masked claimed evaluation of the next witness `w` at the stage-2 challenge point.
     #[cfg(feature = "zk")]
     pub next_w_eval_masked: L,
+    /// Additional non-witness opening claims carried into the next recursive level.
+    pub extra_carried_openings: Vec<CarriedOpeningProof<F, L>>,
+}
+
+/// Proof-visible opening claim carried into the next recursive level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarriedOpeningProof<F: FieldCore, L: FieldCore> {
+    /// Commitment opened by this claim.
+    pub commitment: FlatRingVec<F>,
+    /// Evaluation point for the carried claim.
+    pub point: Vec<L>,
+    /// Claimed opening value at `point`.
+    pub value: L,
+    /// Basis used to interpret the point.
+    pub basis: BasisMode,
+    /// Unpadded logical field length of the opened object.
+    pub natural_len: usize,
+    /// Common padded field-domain length used by the carried batch.
+    pub padded_len: usize,
+    /// Logical source of this carried opening.
+    pub kind: CarriedOpeningKind,
 }
 
 impl<F: FieldCore, L: FieldCore> AkitaStage2Proof<F, L> {
@@ -175,6 +197,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
                 next_w_eval,
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: next_w_eval,
+                extra_carried_openings: Vec::new(),
             },
         )
     }
@@ -235,6 +258,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
                 next_w_eval,
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: next_w_eval,
+                extra_carried_openings: Vec::new(),
             },
         }
     }
@@ -540,6 +564,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
                 next_w_eval,
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: next_w_eval,
+                extra_carried_openings: Vec::new(),
             },
         )
         .with_extension_opening_reduction(extension_opening_reduction)

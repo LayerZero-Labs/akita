@@ -56,9 +56,9 @@ use akita_types::{
     sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_segment_layout,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    CarriedOpeningClaim, CarriedOpeningKind, ClaimIncidenceSummary, DirectWitnessProof,
-    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
-    RingOpeningPoint, RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    CarriedOpeningClaim, CarriedOpeningKind, CarriedOpeningProof, ClaimIncidenceSummary,
+    DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout,
+    RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
     TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 #[cfg(feature = "zk")]
