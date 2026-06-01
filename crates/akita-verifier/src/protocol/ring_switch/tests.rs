@@ -86,7 +86,9 @@ fn multiplier_block_summary_rejects_malformed_shapes() {
 
 #[cfg(not(feature = "zk"))]
 mod terminal_direct {
+    use super::super::terminal_direct::verify_terminal_direct_relation_rows;
     use super::*;
+    use akita_algebra::CyclotomicRing;
 
     const SMALL_D: usize = 2;
 
