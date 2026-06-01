@@ -650,7 +650,7 @@ mod tests {
                 nonzero_coeffs: vec![-1, 1],
             },
         )
-        .with_decomp(1, 1, 2, 2, 2, 0)
+        .with_decomp(1, 1, 2, 2, 0)
         .unwrap();
 
         assert!(matches!(

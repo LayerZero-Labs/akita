@@ -26,13 +26,6 @@ akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
 
-[dev-dependencies]
-# Test-only: the `proof_size.rs` byte-formula tests construct synthetic
-# `AkitaLevelProof` / `TerminalLevelProof` bodies and compare their
-# serialized size against the formula.
-akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
-
 [features]
 default = []
 parallel = ["akita-algebra/parallel", "akita-field/parallel"]

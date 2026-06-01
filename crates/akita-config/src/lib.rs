@@ -12,9 +12,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::generated::{
-    table_entry, GeneratedScheduleTable, GeneratedScheduleTableEntry,
-};
+use akita_types::generated::{table_entry, GeneratedScheduleTable, GeneratedScheduleTableEntry};
 use akita_types::{
     generated_schedule_lookup_key, AkitaScheduleInputs, AkitaScheduleLookupKey,
     ClaimIncidenceSummary, DecompositionParams, LevelParams, Schedule, SetupMatrixEnvelope,
