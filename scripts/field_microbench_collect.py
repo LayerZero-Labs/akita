@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path
 
-NS_PER_S = 1e9
+# Criterion 0.5 WallTime stores estimate point values in nanoseconds (see `WallTime::to_f64`).
 
 # Criterion 0.5 flattens `/` in group and bench ids into `_`.
 # group dir: field_arith_{family}_{latency_chain|throughput_stream}_{label}_w{width}
@@ -59,10 +59,11 @@ def median_ns(estimates_path: Path) -> tuple[float, float, float]:
     data = json.loads(estimates_path.read_text())
     median = data["median"]
     ci = median["confidence_interval"]
-    mean_s = float(median["point_estimate"])
-    lower_s = float(ci["lower_bound"])
-    upper_s = float(ci["upper_bound"])
-    return mean_s * NS_PER_S, lower_s * NS_PER_S, upper_s * NS_PER_S
+    return (
+        float(median["point_estimate"]),
+        float(ci["lower_bound"]),
+        float(ci["upper_bound"]),
+    )
 
 
 def collect_rows(criterion_root: Path, baseline: str, arch: str, simd: str) -> list[dict[str, str]]:
@@ -72,7 +73,7 @@ def collect_rows(criterion_root: Path, baseline: str, arch: str, simd: str) -> l
         rel = est_path.relative_to(criterion_root)
         # {group_dir}/{bench_dir}/{baseline}/estimates.json
         parts = rel.parts
-        if len(parts) < 3:
+        if len(parts) < 4:
             continue
         bench_id = parts[-3]
         group_dir = parts[-4]
@@ -101,7 +102,8 @@ def collect_rows(criterion_root: Path, baseline: str, arch: str, simd: str) -> l
                 "ext_degree": ext_degree,
                 "basis": basis,
                 "op": op,
-                "kind": kind,
+                "workload": kind_path,
+                "vectorization": kind,
                 "arch": arch,
                 "simd": simd,
                 "width": str(width),
@@ -124,7 +126,8 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         "ext_degree",
         "basis",
         "op",
-        "kind",
+        "workload",
+        "vectorization",
         "arch",
         "simd",
         "width",
@@ -138,7 +141,18 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(sorted(rows, key=lambda r: (r["library"], r["field"], r["op"], r["kind"])))
+        writer.writerows(
+            sorted(
+                rows,
+                key=lambda r: (
+                    r["library"],
+                    r["field"],
+                    r["op"],
+                    r["workload"],
+                    r["vectorization"],
+                ),
+            )
+        )
 
 
 def write_markdown(path: Path, rows: list[dict[str, str]]) -> None:
@@ -147,7 +161,9 @@ def write_markdown(path: Path, rows: list[dict[str, str]]) -> None:
     filtered = [
         r
         for r in rows
-        if r["kind"] == "packed" and r["op"] in headline_ops and r["family"] in ("ext4", "ext5")
+        if r["vectorization"] == "packed"
+        and r["op"] in headline_ops
+        and r["family"] in ("ext4", "ext5")
     ]
 
     lines = [
@@ -155,10 +171,22 @@ def write_markdown(path: Path, rows: list[dict[str, str]]) -> None:
         "",
         "Highlighted rows: Akita degree-4 (`ext4`, `mersenne31_*_fp4`) vs Plonky3 degree-5 (`ext5`).",
         "",
-        "| library | field | ext | basis | op | arch | simd | w | ns/lane |",
-        "|---------|-------|-----|-------|----|------|------|---|--------:|",
+        "`workload`: `latency_chain` is a dependent op chain (critical-path latency); "
+        "`throughput_stream` is parallel streams with independent ops.",
+        "",
+        "| library | field | ext | basis | op | workload | arch | simd | w | ns/lane |",
+        "|---------|-------|-----|-------|----|----------|------|------|---|--------:|",
     ]
-    for r in sorted(filtered, key=lambda x: (x["simd"], x["library"], x["field"], x["op"])):
+    for r in sorted(
+        filtered,
+        key=lambda x: (
+            x["simd"],
+            x["workload"],
+            x["library"],
+            x["field"],
+            x["op"],
+        ),
+    ):
         highlight = ""
         if r["library"] == "akita" and r["ext_degree"] == "4":
             highlight = " **"
@@ -166,7 +194,8 @@ def write_markdown(path: Path, rows: list[dict[str, str]]) -> None:
             highlight = " **"
         lines.append(
             f"| {r['library']} | {r['field']} | {r['ext_degree']} | {r['basis']} | {r['op']} | "
-            f"{r['arch']} | {r['simd']} | {r['width']} | {r['ns_per_op_or_lane']}{highlight} |"
+            f"{r['workload']} | {r['arch']} | {r['simd']} | {r['width']} | "
+            f"{r['ns_per_op_or_lane']}{highlight} |"
         )
     lines.append("")
     path.write_text("\n".join(lines))

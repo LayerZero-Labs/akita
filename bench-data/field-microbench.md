@@ -2,47 +2,49 @@
 
 Highlighted rows: Akita degree-4 (`ext4`, `mersenne31_*_fp4`) vs Plonky3 degree-5 (`ext5`).
 
-| library | field | ext | basis | op | arch | simd | w | ns/lane |
-|---------|-------|-----|-------|----|------|------|---|--------:|
-| akita | mersenne31 | 4 | tower | mul | aarch64 | neon | 4 | 1359731786.879 ** |
-| akita | mersenne31 | 4 | tower | mul | aarch64 | neon | 4 | 1914674429.459 ** |
-| akita | mersenne31 | 4 | power | mul | aarch64 | neon | 4 | 1405726405.090 ** |
-| akita | mersenne31 | 4 | ring_subfield | mul | aarch64 | neon | 4 | 2100147045.718 ** |
-| akita | mersenne31 | 4 | power | mul | aarch64 | neon | 4 | 1989245467.635 ** |
-| akita | mersenne31 | 4 | tower | square | aarch64 | neon | 4 | 1322684426.230 ** |
-| akita | mersenne31 | 4 | tower | square | aarch64 | neon | 4 | 2061968390.805 ** |
-| akita | mersenne31 | 4 | power | square | aarch64 | neon | 4 | 1358486538.928 ** |
-| akita | mersenne31 | 4 | ring_subfield | square | aarch64 | neon | 4 | 2992436703.757 ** |
-| akita | mersenne31 | 4 | power | square | aarch64 | neon | 4 | 2246050218.649 ** |
-| akita | prime31_offset19 | 4 | tower | mul | aarch64 | neon | 4 | 2091246879.964 ** |
-| akita | prime31_offset19 | 4 | power | mul | aarch64 | neon | 4 | 3216144355.093 ** |
-| akita | prime31_offset19 | 4 | power | mul | aarch64 | neon | 4 | 2052804487.179 ** |
-| akita | prime31_offset19 | 4 | tower | mul | aarch64 | neon | 4 | 3220548872.180 ** |
-| akita | prime31_offset19 | 4 | tower | square | aarch64 | neon | 4 | 2075129171.903 ** |
-| akita | prime31_offset19 | 4 | power | square | aarch64 | neon | 4 | 3515769909.810 ** |
-| akita | prime31_offset19 | 4 | power | square | aarch64 | neon | 4 | 2060029061.263 ** |
-| akita | prime31_offset19 | 4 | tower | square | aarch64 | neon | 4 | 3510371779.250 ** |
-| akita | prime32_offset99 | 4 | tower | mul | aarch64 | neon | 4 | 3801432291.667 ** |
-| akita | prime32_offset99 | 4 | power | mul | aarch64 | neon | 4 | 3845501754.386 ** |
-| akita | prime32_offset99 | 4 | power | mul | aarch64 | neon | 4 | 3747132297.132 ** |
-| akita | prime32_offset99 | 4 | tower | mul | aarch64 | neon | 4 | 4226608727.811 ** |
-| akita | prime32_offset99 | 4 | tower | square | aarch64 | neon | 4 | 3748044771.321 ** |
-| akita | prime32_offset99 | 4 | power | square | aarch64 | neon | 4 | 4305483922.636 ** |
-| akita | prime32_offset99 | 4 | power | square | aarch64 | neon | 4 | 3747013243.167 ** |
-| akita | prime32_offset99 | 4 | tower | square | aarch64 | neon | 4 | 4581771728.118 ** |
-| plonky3 | baby_bear | 4 |  | mul | aarch64 | neon | 4 | 2498045127.407 |
-| plonky3 | baby_bear | 4 |  | mul | aarch64 | neon | 4 | 4017022497.704 |
-| plonky3 | baby_bear | 5 |  | mul | aarch64 | neon | 4 | 5421842430.886 ** |
-| plonky3 | baby_bear | 5 |  | mul | aarch64 | neon | 4 | 3271290086.016 ** |
-| plonky3 | baby_bear | 4 |  | square | aarch64 | neon | 4 | 2246494609.240 |
-| plonky3 | baby_bear | 4 |  | square | aarch64 | neon | 4 | 4180061908.701 |
-| plonky3 | baby_bear | 5 |  | square | aarch64 | neon | 4 | 5362881562.882 ** |
-| plonky3 | baby_bear | 5 |  | square | aarch64 | neon | 4 | 3270518344.431 ** |
-| plonky3 | koala_bear | 5 |  | mul | aarch64 | neon | 4 | 3887448384.555 ** |
-| plonky3 | koala_bear | 5 |  | mul | aarch64 | neon | 4 | 2950705520.809 ** |
-| plonky3 | koala_bear | 4 |  | mul | aarch64 | neon | 4 | 2181321033.326 |
-| plonky3 | koala_bear | 4 |  | mul | aarch64 | neon | 4 | 3681658981.116 |
-| plonky3 | koala_bear | 5 |  | square | aarch64 | neon | 4 | 3770580504.321 ** |
-| plonky3 | koala_bear | 5 |  | square | aarch64 | neon | 4 | 2792610837.438 ** |
-| plonky3 | koala_bear | 4 |  | square | aarch64 | neon | 4 | 2072564872.565 |
-| plonky3 | koala_bear | 4 |  | square | aarch64 | neon | 4 | 3883309554.005 |
+`workload`: `latency_chain` is a dependent op chain (critical-path latency); `throughput_stream` is parallel streams with independent ops.
+
+| library | field | ext | basis | op | workload | arch | simd | w | ns/lane |
+|---------|-------|-----|-------|----|----------|------|------|---|--------:|
+| akita | mersenne31 | 4 | tower | mul | latency_chain | aarch64 | neon | 4 | 1.915 ** |
+| akita | mersenne31 | 4 | ring_subfield | mul | latency_chain | aarch64 | neon | 4 | 2.100 ** |
+| akita | mersenne31 | 4 | power | mul | latency_chain | aarch64 | neon | 4 | 1.989 ** |
+| akita | mersenne31 | 4 | tower | square | latency_chain | aarch64 | neon | 4 | 2.062 ** |
+| akita | mersenne31 | 4 | ring_subfield | square | latency_chain | aarch64 | neon | 4 | 2.992 ** |
+| akita | mersenne31 | 4 | power | square | latency_chain | aarch64 | neon | 4 | 2.246 ** |
+| akita | prime31_offset19 | 4 | power | mul | latency_chain | aarch64 | neon | 4 | 3.216 ** |
+| akita | prime31_offset19 | 4 | tower | mul | latency_chain | aarch64 | neon | 4 | 3.221 ** |
+| akita | prime31_offset19 | 4 | power | square | latency_chain | aarch64 | neon | 4 | 3.516 ** |
+| akita | prime31_offset19 | 4 | tower | square | latency_chain | aarch64 | neon | 4 | 3.510 ** |
+| akita | prime32_offset99 | 4 | power | mul | latency_chain | aarch64 | neon | 4 | 3.846 ** |
+| akita | prime32_offset99 | 4 | tower | mul | latency_chain | aarch64 | neon | 4 | 4.227 ** |
+| akita | prime32_offset99 | 4 | power | square | latency_chain | aarch64 | neon | 4 | 4.305 ** |
+| akita | prime32_offset99 | 4 | tower | square | latency_chain | aarch64 | neon | 4 | 4.582 ** |
+| plonky3 | baby_bear | 4 |  | mul | latency_chain | aarch64 | neon | 4 | 4.017 |
+| plonky3 | baby_bear | 5 |  | mul | latency_chain | aarch64 | neon | 4 | 5.422 ** |
+| plonky3 | baby_bear | 4 |  | square | latency_chain | aarch64 | neon | 4 | 4.180 |
+| plonky3 | baby_bear | 5 |  | square | latency_chain | aarch64 | neon | 4 | 5.363 ** |
+| plonky3 | koala_bear | 5 |  | mul | latency_chain | aarch64 | neon | 4 | 3.887 ** |
+| plonky3 | koala_bear | 4 |  | mul | latency_chain | aarch64 | neon | 4 | 3.682 |
+| plonky3 | koala_bear | 5 |  | square | latency_chain | aarch64 | neon | 4 | 3.771 ** |
+| plonky3 | koala_bear | 4 |  | square | latency_chain | aarch64 | neon | 4 | 3.883 |
+| akita | mersenne31 | 4 | tower | mul | throughput_stream | aarch64 | neon | 4 | 1.360 ** |
+| akita | mersenne31 | 4 | power | mul | throughput_stream | aarch64 | neon | 4 | 1.406 ** |
+| akita | mersenne31 | 4 | tower | square | throughput_stream | aarch64 | neon | 4 | 1.323 ** |
+| akita | mersenne31 | 4 | power | square | throughput_stream | aarch64 | neon | 4 | 1.358 ** |
+| akita | prime31_offset19 | 4 | tower | mul | throughput_stream | aarch64 | neon | 4 | 2.091 ** |
+| akita | prime31_offset19 | 4 | power | mul | throughput_stream | aarch64 | neon | 4 | 2.053 ** |
+| akita | prime31_offset19 | 4 | tower | square | throughput_stream | aarch64 | neon | 4 | 2.075 ** |
+| akita | prime31_offset19 | 4 | power | square | throughput_stream | aarch64 | neon | 4 | 2.060 ** |
+| akita | prime32_offset99 | 4 | tower | mul | throughput_stream | aarch64 | neon | 4 | 3.801 ** |
+| akita | prime32_offset99 | 4 | power | mul | throughput_stream | aarch64 | neon | 4 | 3.747 ** |
+| akita | prime32_offset99 | 4 | tower | square | throughput_stream | aarch64 | neon | 4 | 3.748 ** |
+| akita | prime32_offset99 | 4 | power | square | throughput_stream | aarch64 | neon | 4 | 3.747 ** |
+| plonky3 | baby_bear | 4 |  | mul | throughput_stream | aarch64 | neon | 4 | 2.498 |
+| plonky3 | baby_bear | 5 |  | mul | throughput_stream | aarch64 | neon | 4 | 3.271 ** |
+| plonky3 | baby_bear | 4 |  | square | throughput_stream | aarch64 | neon | 4 | 2.246 |
+| plonky3 | baby_bear | 5 |  | square | throughput_stream | aarch64 | neon | 4 | 3.271 ** |
+| plonky3 | koala_bear | 5 |  | mul | throughput_stream | aarch64 | neon | 4 | 2.951 ** |
+| plonky3 | koala_bear | 4 |  | mul | throughput_stream | aarch64 | neon | 4 | 2.181 |
+| plonky3 | koala_bear | 5 |  | square | throughput_stream | aarch64 | neon | 4 | 2.793 ** |
+| plonky3 | koala_bear | 4 |  | square | throughput_stream | aarch64 | neon | 4 | 2.073 |

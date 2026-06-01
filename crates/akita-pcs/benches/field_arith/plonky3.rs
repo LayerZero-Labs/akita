@@ -259,7 +259,7 @@ pub(crate) fn bench_p3_base_case<F>(
         "square",
         params.latency_iters,
         &packed_latency_inputs,
-        |acc| acc * acc,
+        |acc| acc.square(),
     );
     p3_bench_packed_unary_latency(
         &mut latency_group,
@@ -397,8 +397,8 @@ pub(crate) fn bench_p3_base_case<F>(
         "square",
         params,
         &packed_stream_lanes,
-        |acc, _| acc * acc,
-        |a, _| a * a,
+        |acc, _| acc.square(),
+        |a, _| a.square(),
     );
 
     throughput_group.throughput(Throughput::Elements(1));
@@ -684,7 +684,7 @@ pub(crate) fn bench_p3_ext_case<Base, EF>(
         "square",
         params.latency_iters,
         &packed_latency_inputs,
-        |acc| acc * acc,
+        |acc| acc.square(),
     );
     p3_bench_packed_ext_unary_latency(
         &mut latency_group,
@@ -794,8 +794,8 @@ pub(crate) fn bench_p3_ext_case<Base, EF>(
         "square",
         params,
         &packed_stream_lanes,
-        |acc, _| acc * acc,
-        |a, _| a * a,
+        |acc, _| acc.square(),
+        |a, _| a.square(),
     );
 
     throughput_group.finish();
