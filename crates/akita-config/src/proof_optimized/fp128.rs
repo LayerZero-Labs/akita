@@ -87,9 +87,14 @@ pub struct Fp128ScheduleSelection {
 fn candidate<Cfg: CommitmentConfig>(
     preset: Fp128Preset,
     key: AkitaScheduleLookupKey,
-) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    let schedule = Cfg::runtime_schedule(key)?;
-    Ok(Some(Fp128ScheduleSelection { preset, schedule }))
+) -> Option<Fp128ScheduleSelection> {
+    // A preset that cannot produce a schedule for this key (e.g. the
+    // SIS-floor tables don't cover it) is skipped rather than fatal: the
+    // selector still picks the best preset among those that *can* size the
+    // key. It returns `None` only when no preset in the family succeeds.
+    Cfg::runtime_schedule(key)
+        .ok()
+        .map(|schedule| Fp128ScheduleSelection { preset, schedule })
 }
 
 fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>
@@ -108,35 +113,24 @@ where
 ///
 /// The key carries singleton, grouped, and multipoint batch shape data, so
 /// this helper can be used by profile tooling without manually comparing
-/// typed preset schedule tables. Missing generated rows are ignored; the
-/// returned value is `None` only when no full-field preset has a generated
-/// entry for the key.
-///
-/// # Errors
-///
-/// Returns an error if a generated table entry is malformed.
-pub fn best_full_schedule(
-    key: AkitaScheduleLookupKey,
-) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    Ok(best_by_exact_bytes([
-        candidate::<D32Full>(Fp128Preset::D32Full, key)?,
-        candidate::<D64Full>(Fp128Preset::D64Full, key)?,
-    ]))
+/// typed preset schedule tables. A preset that cannot size the key is
+/// skipped (not fatal), so the returned value is `None` only when *no*
+/// full-field preset can produce a schedule for the key.
+pub fn best_full_schedule(key: AkitaScheduleLookupKey) -> Option<Fp128ScheduleSelection> {
+    best_by_exact_bytes([
+        candidate::<D32Full>(Fp128Preset::D32Full, key),
+        candidate::<D64Full>(Fp128Preset::D64Full, key),
+    ])
 }
 
 /// Select the best onehot fp128 preset for a schedule lookup key.
 ///
-/// Missing generated rows are ignored; the returned value is `None` only
-/// when no onehot preset has a generated entry for the key.
-///
-/// # Errors
-///
-/// Returns an error if a generated table entry is malformed.
-pub fn best_onehot_schedule(
-    key: AkitaScheduleLookupKey,
-) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    Ok(best_by_exact_bytes([
-        candidate::<D32OneHot>(Fp128Preset::D32OneHot, key)?,
-        candidate::<D64OneHot>(Fp128Preset::D64OneHot, key)?,
-    ]))
+/// A preset that cannot size the key is skipped (not fatal), so the returned
+/// value is `None` only when *no* onehot preset can produce a schedule for
+/// the key.
+pub fn best_onehot_schedule(key: AkitaScheduleLookupKey) -> Option<Fp128ScheduleSelection> {
+    best_by_exact_bytes([
+        candidate::<D32OneHot>(Fp128Preset::D32OneHot, key),
+        candidate::<D64OneHot>(Fp128Preset::D64OneHot, key),
+    ])
 }
