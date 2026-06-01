@@ -37,10 +37,12 @@ It explicitly does not rename transcript label constants, since labels are diagn
 Each row is `current -> proposed`, with the math/role that justifies it.
 Proposed names are recommendations; the exact spelling is the main thing to settle in review.
 
-1. `QuadraticEquation` (`crates/akita-prover/src/protocol/quadratic_equation.rs:245`) -> `RelationWitness`.
-   It is prover state for the linear negacyclic-ring relation `M * z = y + (X^D + 1) * r` plus fold challenges and witness data (`z_pre`, `w_hat`, `v`, `y`).
+1. `QuadraticEquation` (`crates/akita-prover/src/protocol/quadratic_equation.rs:245`) -> `RelationInstance`.
+   It is the per-fold-level instance of the negacyclic-ring relation `M * z = y + (X^D + 1) * r`, bundling three things: the RHS targets (`y` at `:254`, `v = D * w_hat` at `:247`), the structure that defines the virtual `M` (`challenges`, `opening_points` / `ring_multiplier_points`, `gamma` / `row_coefficient_rings`, the claim-incidence maps, `num_public_rows`, `m_row_layout`), and the prover's witness (`z_pre`, `w_hat`, `w_folded`, `hint`, and zk blinding).
+   `M` and `z` are never materialized (the struct doc says so), and the commitment `u` is consumed during construction rather than stored.
    "Quadratic" is paper-section jargon (the module doc says "Quadratic equation builder ... §4.2") and describes the proof-system relation degree, not the struct's content.
-   Alternatives: `RingRelationWitness`, `MatrixRelationState`.
+   The name should reflect that it holds relation + targets + witness, not the witness alone; `RelationWitness` is too narrow.
+   Alternatives: `FoldRelationState`, `RingRelationState`, `RelationWitness` (only if "witness" is read as "all prover state for this relation").
 
 2. `compute_r_split_eq` (`crates/akita-prover/src/protocol/quadratic_equation/r_split.rs:240`) -> `compute_relation_quotient`.
    It computes the divisibility quotient `r` of `M * z = y + (X^D + 1) * r` via gadget/Kronecker factorization, without materializing `M` or `z`.
@@ -63,8 +65,8 @@ Proposed names are recommendations; the exact spelling is the main thing to sett
 6. The "Direct" overload.
    Three unrelated meanings share the word, and the proposed terminal-direct-relation mode (`specs/terminal-direct-ring-relation.md`) would add a fourth.
    - `DirectWitnessProof` (`crates/akita-types/src/proof/direct_witness.rs:20`) -> `CleartextWitnessProof`.
-   - `AkitaBatchedRootProof::Direct` (`crates/akita-types/src/proof/levels.rs:457`) -> `RootZeroFold`.
-   - schedule `Step::Direct` -> `Step::ZeroFold`.
+   - `AkitaBatchedRootProof::Direct` (`crates/akita-types/src/proof/levels.rs:464`) -> `RootZeroFold`.
+   - `AkitaPlannedStep::Direct` (`crates/akita-types/src/schedule.rs:265`) -> `AkitaPlannedStep::ZeroFold` (and the related `AkitaPlannedDirectStep` / `direct_step()` accessors).
    These rename Rust identifiers only; serialization must remain by discriminant index, not by variant name (see Invariants).
 
 ### Rename Candidates (Tier 2, lower priority)
@@ -171,6 +173,54 @@ Recommended order so each step compiles:
 7. Run fmt, clippy, the full test matrix, and the byte-identity check.
 
 Because the repo makes no backward-compatibility guarantees, every rename is a full cutover with no aliases.
+
+### Diff Surface (estimated)
+
+The numbers below are literal-substring match counts on the worktree (`*.rs`, excluding `specs/`).
+They are an upper bound: they include doc comments, tests, and derived identifiers, and they are the surface a full implementation would touch.
+
+Per-symbol (Tier 1):
+
+| Symbol | Occurrences | Files |
+| --- | ---: | ---: |
+| `QuadraticEquation` | 35 | 12 |
+| `compute_r_split_eq` (+ `r_split` module/path) | ~22 | 12 |
+| `z_pre` (incl. derived `z_pre_centered`, `z_pre_centered_inf_norm`) | 157 | 15 |
+| `r_stage1` | 173 | 22 |
+| `MRowLayout::Intermediate` | 47 | 20 |
+| `MRowLayout::Terminal` | 38 | 18 |
+| `DirectWitnessProof` | 77 | 27 |
+| `AkitaBatchedRootProof::Direct` | 17 | 9 |
+| `AkitaPlannedStep::Direct` (+ `AkitaPlannedDirectStep`, `direct_step()`) | ~12 | few |
+
+Totals (Tier 1):
+
+- Unique files touched: about 70, across 9 crates.
+- Identifier occurrences: roughly 550 to 600.
+- Net line delta is near zero; this is almost entirely single-token replacement plus module-path and doc updates, not added or removed logic.
+
+Per-crate distribution of the ~70 files:
+
+| Crate | Files |
+| --- | ---: |
+| `akita-prover` | 32 |
+| `akita-types` | 12 |
+| `akita-verifier` | 11 |
+| `akita-pcs` | 6 |
+| `akita-scheme` | 4 |
+| `akita-config` | 2 |
+| `akita-planner` | 1 |
+| `akita-derive` | 1 |
+| `akita-challenges` | 1 |
+
+The blast radius is concentrated in `akita-prover`, `akita-types`, and `akita-verifier`; downstream crates are touched only lightly through re-exports and type references.
+
+Two symbols dominate: `z_pre` and `r_stage1` together account for roughly 330 of the ~560 occurrences.
+If a smaller first PR is preferred, those two renames split cleanly into their own commits or a separate PR without blocking the rest.
+
+Tier 2 adds a small increment on top: `build_w_coeffs` (about 8 occurrences across 3 files), `repeated_b*` (about 15 across 4 files), plus the `alpha` and doc-only changes.
+
+The spec documents themselves are out of this count: `specs/terminal-direct-ring-relation.md` references some old names and would be updated if this lands first.
 
 ### Alternatives Considered
 
