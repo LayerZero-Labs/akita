@@ -163,17 +163,17 @@ where
     // Terminal layout drops the D-block from the M-matrix entirely; offsets
     // and per-row gates must use 0 for the n_d position.
     let n_d_active = match m_row_layout {
-        MRowLayout::Intermediate => n_d,
-        MRowLayout::Terminal => 0,
+        MRowLayout::WithDBlock => n_d,
+        MRowLayout::WithoutDBlock => 0,
     };
     let t_len = depth_open * n_a * t_total_blocks;
     #[cfg(feature = "zk")]
     let d_blinding_segment_len = match m_row_layout {
-        MRowLayout::Intermediate => {
+        MRowLayout::WithDBlock => {
             akita_types::zk::blinding_digit_plane_count::<F>(n_d, D, log_basis)
         }
         // Terminal omits the D-block, so its blinding columns vanish too.
-        MRowLayout::Terminal => 0,
+        MRowLayout::WithoutDBlock => 0,
     };
     #[cfg(feature = "zk")]
     let b_blinding_digit_planes_per_point =
@@ -472,7 +472,7 @@ where
         })
         .collect();
 
-    let z_first = lp.m_vars >= lp.r_vars;
+    let z_first = akita_types::ring_column_z_first(lp);
     if z_first {
         out.extend(z_segment);
         out.extend(w_segment);

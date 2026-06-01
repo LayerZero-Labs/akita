@@ -19,7 +19,8 @@ use crate::validation::validate_i8_setup_log_basis;
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_build_w<F, B, const D: usize>(
-    quad_eq: &mut QuadraticEquation<F, D>,
+    instance: &RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     lp: &LevelParams,
@@ -35,19 +36,14 @@ where
             "ring_switch_build_w"
         );
     }
-    let w_hat = quad_eq
-        .take_w_hat()
-        .ok_or_else(|| AkitaError::InvalidInput("missing w_hat in prover".to_string()))?;
-    #[cfg(feature = "zk")]
-    let d_blinding_digits = quad_eq.take_d_blinding_digits().ok_or_else(|| {
-        AkitaError::InvalidInput("missing D-blinding digits in prover".to_string())
-    })?;
-    let z_pre = quad_eq
-        .take_z_pre()
-        .ok_or_else(|| AkitaError::InvalidInput("missing centered z_pre in prover".to_string()))?;
-    let mut hint = quad_eq
-        .take_hint()
-        .ok_or_else(|| AkitaError::InvalidInput("missing hint in prover".to_string()))?;
+    let RingRelationWitness {
+        z_folded_rings,
+        w_hat,
+        w_folded,
+        mut hint,
+        #[cfg(feature = "zk")]
+        d_blinding_digits,
+    } = witness;
     validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
     hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
     #[cfg(feature = "zk")]
@@ -57,15 +53,13 @@ where
     let recomposed_inner_rows = recomposed_inner_rows.ok_or_else(|| {
         AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
     })?;
-    let w_folded = quad_eq
-        .take_w_folded()
-        .ok_or_else(|| AkitaError::InvalidInput("missing w_folded in prover".to_string()))?;
+    let routing = instance.commitment_routing();
 
-    let r = compute_r_split_eq::<F, B, D>(
+    let r = compute_relation_quotient::<F, B, D>(
         backend,
         prepared,
         lp,
-        &quad_eq.challenges,
+        &instance.challenges,
         w_hat.flat_digits(),
         #[cfg(feature = "zk")]
         &d_blinding_digits,
@@ -74,27 +68,27 @@ where
         &b_blinding_digits,
         &recomposed_inner_rows,
         &w_folded,
-        quad_eq.ring_multiplier_points(),
-        quad_eq.claim_to_point(),
-        quad_eq.claim_to_point_poly(),
-        quad_eq.claim_poly_indices(),
-        quad_eq.row_coefficient_rings(),
-        &z_pre.centered_coeffs,
-        z_pre.centered_inf_norm,
-        quad_eq.y(),
-        quad_eq.num_polys_per_point(),
-        quad_eq.num_public_rows(),
+        instance.ring_multiplier_points(),
+        instance.claim_to_point(),
+        routing.claim_to_group(),
+        routing.claim_poly_in_group(),
+        instance.row_coefficient_rings(),
+        &z_folded_rings.centered_coeffs,
+        z_folded_rings.centered_inf_norm,
+        instance.y(),
+        routing.num_polys_per_group(),
+        instance.num_public_rows(),
         lp.num_blocks,
         lp.inner_width(),
-        quad_eq.m_row_layout(),
+        instance.m_row_layout(),
     )?;
     // Terminal layout drops the D-block from M and from the witness; the
     // d-blinding column segment must also disappear so the prover witness
     // matches the verifier's column offsets.
     #[cfg(feature = "zk")]
-    let d_blinding_for_w: FlatDigitBlocks<D> = match quad_eq.m_row_layout() {
-        MRowLayout::Intermediate => d_blinding_digits,
-        MRowLayout::Terminal => {
+    let d_blinding_for_w: FlatDigitBlocks<D> = match instance.m_row_layout() {
+        MRowLayout::WithDBlock => d_blinding_digits,
+        MRowLayout::WithoutDBlock => {
             FlatDigitBlocks::zeroed(Vec::new()).expect("empty FlatDigitBlocks always valid")
         }
     };
@@ -107,7 +101,7 @@ where
             &decomposed_inner_rows,
             #[cfg(feature = "zk")]
             &b_blinding_digits,
-            &z_pre.centered_coeffs,
+            &z_folded_rings.centered_coeffs,
             &r,
             lp,
         )
@@ -180,9 +174,9 @@ fn emit_blinding_planes<const D: usize>(
     }
 }
 
-/// Decompose z_pre elements and emit in digit-major order.
+/// Decompose z_folded_rings elements and emit in digit-major order.
 ///
-/// z_pre has `num_points * block_len * depth_commit` elements indexed as
+/// z_folded_rings has `num_points * block_len * depth_commit` elements indexed as
 /// `z[point * inner_width + blk * depth_commit + dc]`. Each decomposes into
 /// `num_digits_fold` planes.
 ///
@@ -201,7 +195,7 @@ fn emit_z_pre_block_inner<const D: usize>(
     debug_assert_eq!(
         total_elems % inner_width,
         0,
-        "z_pre length {total_elems} not divisible by inner_width {inner_width}",
+        "z_folded_rings length {total_elems} not divisible by inner_width {inner_width}",
     );
     let num_points = total_elems / inner_width;
 
@@ -285,7 +279,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         + b_blinding_planes
         + z_pre_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
-    let z_first = lp.m_vars >= lp.r_vars;
+    let z_first = akita_types::ring_column_z_first(lp);
     tracing::debug!(
         w_hat_planes,
         d_blinding_planes,
