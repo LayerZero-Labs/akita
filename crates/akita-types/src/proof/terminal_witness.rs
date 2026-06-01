@@ -27,7 +27,7 @@ pub struct TerminalWitnessTranscriptParts {
 ///
 /// Terminal folds have no stage-1 norm-check claim. Setting
 /// `batching_coeff = 0` removes the virtual norm contribution from every
-/// stage-2 round, so `s_claim` and `r_stage1` are structural zeros.
+/// stage-2 round, so `s_claim` and `stage1_point` are structural zeros.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelationOnlyStage2Inputs<E: FieldCore> {
     /// Zero coefficient for the omitted virtual norm-check oracle.
@@ -35,7 +35,7 @@ pub struct RelationOnlyStage2Inputs<E: FieldCore> {
     /// Zero claim for the omitted stage-1 sumcheck.
     pub s_claim: E,
     /// Zero challenge vector with length `col_bits + ring_bits`.
-    pub r_stage1: Vec<E>,
+    pub stage1_point: Vec<E>,
 }
 
 impl<E: FieldCore> RelationOnlyStage2Inputs<E> {
@@ -45,7 +45,7 @@ impl<E: FieldCore> RelationOnlyStage2Inputs<E> {
         Self {
             batching_coeff: E::zero(),
             s_claim: E::zero(),
-            r_stage1: vec![E::zero(); num_stage1_vars],
+            stage1_point: vec![E::zero(); num_stage1_vars],
         }
     }
 }
@@ -221,7 +221,7 @@ pub fn terminal_witness_segment_layout(
         .ok_or_else(|| AkitaError::InvalidSetup("terminal z-pre width overflow".to_string()))?;
     terminal_witness_segment_layout_from_counts(
         lp.ring_dimension,
-        lp.m_vars >= lp.r_vars,
+        crate::proof::ring_relation::ring_column_z_first(lp),
         z_pre_ring_count,
         w_hat_ring_count,
     )

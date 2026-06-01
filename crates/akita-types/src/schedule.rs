@@ -2,7 +2,7 @@
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::generated::GeneratedScheduleKey;
-use crate::{ClaimIncidenceSummary, DirectWitnessShape, LevelParams, RingOpeningPoint};
+use crate::{ClaimIncidenceSummary, CleartextWitnessShape, LevelParams, RingOpeningPoint};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use std::fmt::Write;
@@ -228,11 +228,11 @@ pub struct AkitaPlannedState {
 
 /// Terminal direct packed-witness handoff in a planned opening proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaPlannedDirectStep {
+pub struct AkitaPlannedZeroFoldStep {
     /// Public witness state carried by the direct handoff.
     pub state: AkitaPlannedState,
     /// Serialized witness shape carried by the direct handoff.
-    pub witness_shape: DirectWitnessShape,
+    pub witness_shape: CleartextWitnessShape,
     /// Exact bytes contributed by the packed direct witness.
     pub direct_bytes: usize,
     /// Commit-layout params for the root-direct case (planned root
@@ -260,9 +260,9 @@ pub enum AkitaPlannedStep {
     /// An Akita fold level with an explicit next-state handoff.
     Fold(Box<AkitaPlannedLevel>),
     /// The terminal packed-witness direct handoff. Boxed so the variant
-    /// stays small after `AkitaPlannedDirectStep` gained a
+    /// stays small after `AkitaPlannedZeroFoldStep` gained a
     /// root-direct `commit_params: Option<LevelParams>` field.
-    Direct(Box<AkitaPlannedDirectStep>),
+    ZeroFold(Box<AkitaPlannedZeroFoldStep>),
 }
 
 /// Deterministic level-by-level schedule selected from public inputs.
@@ -270,7 +270,7 @@ pub enum AkitaPlannedStep {
 pub struct AkitaSchedulePlan {
     /// Planned opening-proof steps in execution order.
     ///
-    /// The final step is always [`AkitaPlannedStep::Direct`].
+    /// The final step is always [`AkitaPlannedStep::ZeroFold`].
     pub steps: Vec<AkitaPlannedStep>,
     /// Total proof bytes excluding the outer proof wrapper.
     pub no_wrapper_bytes: usize,
@@ -287,7 +287,7 @@ impl AkitaSchedulePlan {
     pub fn fold_levels(&self) -> impl Iterator<Item = &AkitaPlannedLevel> + '_ {
         self.steps.iter().filter_map(|step| match step {
             AkitaPlannedStep::Fold(level) => Some(level.as_ref()),
-            AkitaPlannedStep::Direct(_) => None,
+            AkitaPlannedStep::ZeroFold(_) => None,
         })
     }
 
@@ -301,13 +301,13 @@ impl AkitaSchedulePlan {
     /// # Panics
     ///
     /// Panics if the schedule was constructed without a trailing direct step.
-    pub fn direct_step(&self) -> &AkitaPlannedDirectStep {
+    pub fn zero_fold_step(&self) -> &AkitaPlannedZeroFoldStep {
         match self
             .steps
             .last()
             .expect("planned schedule always contains at least one step")
         {
-            AkitaPlannedStep::Direct(step) => step,
+            AkitaPlannedStep::ZeroFold(step) => step,
             AkitaPlannedStep::Fold(_) => {
                 panic!("planned schedule must end in a direct packed-witness step")
             }
@@ -326,7 +326,7 @@ impl AkitaSchedulePlan {
             .expect("planned schedule always contains at least one step")
         {
             AkitaPlannedStep::Fold(level) => level.input_state(),
-            AkitaPlannedStep::Direct(step) => step.state,
+            AkitaPlannedStep::ZeroFold(step) => step.state,
         }
     }
 
@@ -352,7 +352,7 @@ impl AkitaSchedulePlan {
     ///
     /// Panics if the schedule was constructed without a trailing direct step.
     pub fn terminal_state(&self) -> AkitaPlannedState {
-        self.direct_step().state
+        self.zero_fold_step().state
     }
 
     /// Return the exact planned-state index matching public inputs and,
@@ -421,14 +421,14 @@ where
     };
     let next_level_params = match next_step {
         AkitaPlannedStep::Fold(next_level) => next_level.lp.clone(),
-        AkitaPlannedStep::Direct(direct) => {
+        AkitaPlannedStep::ZeroFold(direct) => {
             let (d, n_b) = match direct.witness_shape {
-                DirectWitnessShape::PackedDigits(_) => {
+                CleartextWitnessShape::PackedDigits(_) => {
                     let entry_d = current_level.lp.ring_dimension;
                     let entry_nb = current_level.next_commit_coeffs / entry_d;
                     (entry_d, entry_nb)
                 }
-                DirectWitnessShape::FieldElements(_) => (current_level.lp.ring_dimension, 0),
+                CleartextWitnessShape::FieldElements(_) => (current_level.lp.ring_dimension, 0),
             };
             LevelParams::params_only(
                 current_level.lp.a_key.sis_family(),
@@ -463,7 +463,7 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 
 /// Total ring elements in the recursive witness polynomial.
 ///
-/// Components: `w_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
+/// Components: `w_hat + t_hat + B-blinding + decomposed z_folded_rings + decomposed r`.
 pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize, AkitaError> {
     w_ring_element_count_with_counts::<F>(lp, 1, 1, 1, 1)
 }
@@ -482,7 +482,7 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
-        crate::layout::MRowLayout::Intermediate,
+        crate::layout::MRowLayout::WithDBlock,
     )
 }
 
@@ -528,7 +528,7 @@ pub fn w_ring_element_count_with_counts_bits(
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
-        crate::layout::MRowLayout::Intermediate,
+        crate::layout::MRowLayout::WithDBlock,
     )
 }
 
@@ -571,13 +571,13 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         // its per-row blinding is also unused. Intermediate layout keeps the
         // D-block blinding as before.
         let d_blinding_count = match layout {
-            crate::layout::MRowLayout::Intermediate => crate::zk::blinding_column_count_from_bits(
+            crate::layout::MRowLayout::WithDBlock => crate::zk::blinding_column_count_from_bits(
                 lp.d_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
                 field_bits as usize,
             ),
-            crate::layout::MRowLayout::Terminal => 0,
+            crate::layout::MRowLayout::WithoutDBlock => 0,
         };
         let b_blinding_count = num_points
             .checked_mul(crate::zk::blinding_column_count_from_bits(
@@ -631,7 +631,7 @@ pub struct DirectStep {
     /// Witness length entering the direct step.
     pub current_w_len: usize,
     /// Serialized terminal witness payload shape.
-    pub witness_shape: DirectWitnessShape,
+    pub witness_shape: CleartextWitnessShape,
     /// Direct witness bytes.
     pub direct_bytes: usize,
     /// Commit-layout params for the root-direct case (the schedule's
@@ -664,8 +664,8 @@ impl DirectStep {
     /// Active terminal log-basis for packed direct witnesses.
     pub fn log_basis(&self, field_bits: u32) -> u32 {
         match self.witness_shape {
-            DirectWitnessShape::PackedDigits((_, bits)) => bits,
-            DirectWitnessShape::FieldElements(_) => field_bits,
+            CleartextWitnessShape::PackedDigits((_, bits)) => bits,
+            CleartextWitnessShape::FieldElements(_) => field_bits,
         }
     }
 }
@@ -718,14 +718,17 @@ impl Schedule {
     }
 }
 
-fn append_direct_witness_shape_descriptor_bytes(bytes: &mut Vec<u8>, shape: &DirectWitnessShape) {
+fn append_direct_witness_shape_descriptor_bytes(
+    bytes: &mut Vec<u8>,
+    shape: &CleartextWitnessShape,
+) {
     match shape {
-        DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
+        CleartextWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
             bytes.push(0);
             push_usize(bytes, *num_elems);
             push_u32(bytes, *bits_per_elem);
         }
-        DirectWitnessShape::FieldElements(coeff_len) => {
+        CleartextWitnessShape::FieldElements(coeff_len) => {
             bytes.push(1);
             push_usize(bytes, *coeff_len);
         }
@@ -758,7 +761,7 @@ pub fn root_direct_schedule(
     Ok(Schedule {
         steps: vec![Step::Direct(DirectStep {
             current_w_len,
-            witness_shape: DirectWitnessShape::FieldElements(current_w_len),
+            witness_shape: CleartextWitnessShape::FieldElements(current_w_len),
             direct_bytes: 0,
             commit_params: Some(commit_params),
             // Root-direct never has a "next level after itself"; the
@@ -878,7 +881,7 @@ pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule
                     level_bytes: level.level_bytes,
                 }));
             }
-            AkitaPlannedStep::Direct(direct) => {
+            AkitaPlannedStep::ZeroFold(direct) => {
                 steps.push(Step::Direct(DirectStep {
                     current_w_len: direct.state.current_w_len,
                     witness_shape: direct.witness_shape.clone(),
@@ -924,7 +927,7 @@ pub fn schedule_root_fold_step(schedule: &Schedule) -> Option<&FoldStep> {
 /// Returns an error if the schedule does not end in a direct witness handoff.
 pub fn schedule_terminal_direct_witness_shape(
     schedule: &Schedule,
-) -> Result<&DirectWitnessShape, AkitaError> {
+) -> Result<&CleartextWitnessShape, AkitaError> {
     match schedule.steps.last() {
         Some(Step::Direct(step)) => Ok(&step.witness_shape),
         Some(Step::Fold(_)) => Err(AkitaError::InvalidSetup(
@@ -954,12 +957,12 @@ pub fn scheduled_next_level_params(
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
         Some(Step::Direct(step)) => match step.witness_shape {
-            DirectWitnessShape::PackedDigits(_) => step.level_params.clone().ok_or_else(|| {
+            CleartextWitnessShape::PackedDigits(_) => step.level_params.clone().ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "terminal direct step is missing baked level params".to_string(),
                 )
             }),
-            DirectWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
+            CleartextWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
                 "recursive schedule cannot transition into a field-element direct step".to_string(),
             )),
         },
@@ -1007,8 +1010,8 @@ mod tests {
         direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
         root_extension_opening_partials, stage1_tree_stage_shapes, sumcheck_rounds,
         terminal_level_proof_bytes, AjtaiKeyParams, AkitaBatchedRootProof, AkitaLevelProof,
-        AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, DirectWitnessProof,
-        DirectWitnessShape, FlatRingVec, PackedDigits, SisModulusFamily, TerminalLevelProof,
+        AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, CleartextWitnessProof,
+        CleartextWitnessShape, FlatRingVec, PackedDigits, SisModulusFamily, TerminalLevelProof,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -1048,7 +1051,7 @@ mod tests {
             panic!("root-direct schedule should contain one direct step");
         };
         assert_eq!(step.current_w_len, 8);
-        assert_eq!(step.witness_shape, DirectWitnessShape::FieldElements(8));
+        assert_eq!(step.witness_shape, CleartextWitnessShape::FieldElements(8));
         assert_eq!(step.direct_bytes, 0);
         assert_eq!(step.commit_params.as_ref(), Some(&dummy_commit_params));
         assert!(step.level_params.is_none());
@@ -1249,7 +1252,7 @@ mod tests {
             .unwrap();
             let rounds = sumcheck_rounds(D, next_w_len);
 
-            let final_witness = DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
+            let final_witness = CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
                 &vec![0i8; final_w_num_elems],
                 final_w_bits,
             ));
@@ -1284,7 +1287,7 @@ mod tests {
             assert_eq!(
                 direct_witness_bytes(
                     128,
-                    &DirectWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
+                    &CleartextWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
                 ),
                 final_witness_bytes_runtime,
                 "direct_witness_bytes should match the serialized packed-digit \

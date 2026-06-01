@@ -17,7 +17,7 @@ pub struct PackedDigits {
 
 /// Terminal direct witness payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DirectWitnessProof<F: FieldCore> {
+pub enum CleartextWitnessProof<F: FieldCore> {
     /// Packed small signed digits, used by the current recursive terminal
     /// witness.
     PackedDigits(PackedDigits),
@@ -26,7 +26,7 @@ pub enum DirectWitnessProof<F: FieldCore> {
     FieldElements(FlatRingVec<F>),
 }
 
-impl<F: FieldCore> DirectWitnessProof<F> {
+impl<F: FieldCore> CleartextWitnessProof<F> {
     /// Borrow the packed-digits payload, if present.
     pub fn as_packed_digits(&self) -> Option<&PackedDigits> {
         match self {
@@ -44,13 +44,13 @@ impl<F: FieldCore> DirectWitnessProof<F> {
     }
 
     /// Shape descriptor for this direct witness payload.
-    pub fn shape(&self) -> DirectWitnessShape {
+    pub fn shape(&self) -> CleartextWitnessShape {
         match self {
             Self::PackedDigits(packed) => {
-                DirectWitnessShape::PackedDigits((packed.num_elems, packed.bits_per_elem))
+                CleartextWitnessShape::PackedDigits((packed.num_elems, packed.bits_per_elem))
             }
             Self::FieldElements(field_elems) => {
-                DirectWitnessShape::FieldElements(field_elems.coeff_len())
+                CleartextWitnessShape::FieldElements(field_elems.coeff_len())
             }
         }
     }
@@ -96,7 +96,7 @@ impl<F: FieldCore> DirectWitnessProof<F> {
 
 /// Shape descriptor for deserializing a direct witness payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DirectWitnessShape {
+pub enum CleartextWitnessShape {
     /// Packed balanced digits.
     PackedDigits((usize, u32)),
     /// Raw field elements.
@@ -267,7 +267,7 @@ impl AkitaDeserialize for PackedDigits {
     ) -> Result<Self, SerializationError> {
         let (num_elems, bits_per_elem) = *ctx;
         if matches!(_validate, Validate::Yes) {
-            DirectWitnessShape::PackedDigits(*ctx).check()?;
+            CleartextWitnessShape::PackedDigits(*ctx).check()?;
         }
         let num_bits = num_elems.checked_mul(bits_per_elem as usize).ok_or(
             SerializationError::LengthLimitExceeded {
@@ -288,7 +288,7 @@ impl AkitaDeserialize for PackedDigits {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for DirectWitnessProof<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for CleartextWitnessProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -310,7 +310,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for DirectWitnessProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for DirectWitnessProof<F> {
+impl<F: FieldCore + Valid> Valid for CleartextWitnessProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::PackedDigits(packed) => packed.check(),
@@ -320,21 +320,21 @@ impl<F: FieldCore + Valid> Valid for DirectWitnessProof<F> {
 }
 
 impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for DirectWitnessProof<F>
+    for CleartextWitnessProof<F>
 {
-    type Context = DirectWitnessShape;
+    type Context = CleartextWitnessShape;
 
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
-        ctx: &DirectWitnessShape,
+        ctx: &CleartextWitnessShape,
     ) -> Result<Self, SerializationError> {
         let out = match ctx {
-            DirectWitnessShape::PackedDigits(shape) => Self::PackedDigits(
+            CleartextWitnessShape::PackedDigits(shape) => Self::PackedDigits(
                 PackedDigits::deserialize_with_mode(&mut reader, compress, validate, shape)?,
             ),
-            DirectWitnessShape::FieldElements(num_coeffs) => Self::FieldElements(
+            CleartextWitnessShape::FieldElements(num_coeffs) => Self::FieldElements(
                 FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, num_coeffs)?,
             ),
         };
