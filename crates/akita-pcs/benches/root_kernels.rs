@@ -84,6 +84,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                 layout.num_digits_commit,
                 layout.log_basis,
             ))
+            .unwrap()
         })
     });
     group.bench_function(
@@ -97,6 +98,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                     layout.num_digits_commit,
                     layout.log_basis,
                 ))
+                .unwrap()
             })
         },
     );
@@ -121,7 +123,9 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
                 n_a,
                 inner_width,
                 black_box(&digit_block_slices),
+                layout.log_basis,
             ))
+            .unwrap()
         })
     });
     group.finish();

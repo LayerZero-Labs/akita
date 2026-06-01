@@ -137,6 +137,7 @@ fn plain_root_d_image<const D: usize>(
             prepared,
             layout.d_key.row_len(),
             quad_eq.w_hat_flat().expect("debug w_hat"),
+            layout.log_basis,
         )
         .expect("plain v rows");
     assert_ne!(
