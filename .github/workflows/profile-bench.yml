@@ -20,6 +20,7 @@ env:
   # does not use the old adaptive `full`/`onehot` selectors.
   # Long hosted-runner configs are deferred from this PR's active matrix.
   # onehot_fp16_d32:32:1 remains deferred until tuning or a larger runner budget.
+  # dense_fp64_d32:25:1 remains deferred until the dense fp64 cell is re-enabled.
   AKITA_BENCH_MODE: onehot_fp128_d32
   AKITA_BENCH_RUNS: "3"
   # One warm-up run per case is discarded before the measured runs to
@@ -31,7 +32,7 @@ env:
     onehot_fp32_d32:32:1
     dense_fp32_d32:26:1
     onehot_fp64_d32:32:1
-    dense_fp128_d32:26:1
+    dense_fp128_d32:24:1
     onehot_fp128_d32:32:1
     onehot_fp128_d32:30:4
 
