@@ -476,9 +476,9 @@ impl<L: FieldCore + Valid> Valid for TerminalRelationProof<L> {
             Self::DirectRingRelations => {
                 #[cfg(feature = "zk")]
                 {
-                    return Err(SerializationError::InvalidData(
+                    Err(SerializationError::InvalidData(
                         "direct terminal proof mode is not supported with zk".to_string(),
-                    ));
+                    ))
                 }
                 #[cfg(not(feature = "zk"))]
                 {
