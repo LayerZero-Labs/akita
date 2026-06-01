@@ -272,7 +272,11 @@ pub fn schedule_from_entry(
                 };
                 // The root commits `num_t_vectors` polynomials (batch factor);
                 // recursive levels are always single-claim.
-                let level_num_claims = if fold_level == 0 { key.num_t_vectors } else { 1 };
+                let level_num_claims = if fold_level == 0 {
+                    key.num_t_vectors
+                } else {
+                    1
+                };
                 let lp = level.expand_to_level_params(
                     policy,
                     &stage1,

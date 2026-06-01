@@ -516,7 +516,7 @@ pub fn root_direct_schedule(
 /// `(family, ring_dimension)` is intentionally outside the audited
 /// SIS-floor tables. Production-facing expansion goes through the strict,
 /// `try_new`-audited path inside
-/// [`akita_planner::generated::GeneratedFoldStep::expand_to_level_params`].
+/// `akita_planner::generated::GeneratedFoldStep::expand_to_level_params`.
 ///
 /// # Errors
 ///

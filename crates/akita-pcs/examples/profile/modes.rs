@@ -165,8 +165,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan));
     } else {
         let schedule_key = AkitaScheduleLookupKey::new(nv, num_polys, num_polys, 1);
-        let plan = Cfg::runtime_schedule(schedule_key)
-            .expect("schedule plan");
+        let plan = Cfg::runtime_schedule(schedule_key).expect("schedule plan");
         let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {

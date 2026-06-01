@@ -421,7 +421,10 @@ fn compute_root_direct_level_params(
     let decomp = policy.decomposition;
     let alpha = (d as u32).trailing_zeros() as usize;
 
-    let level_decomp = DecompositionParams { log_basis, ..decomp };
+    let level_decomp = DecompositionParams {
+        log_basis,
+        ..decomp
+    };
     let (depth_commit, depth_open) = decomp_depths(level_decomp);
 
     // Outer/inner variable split: brute-force the optimum for a normal root,

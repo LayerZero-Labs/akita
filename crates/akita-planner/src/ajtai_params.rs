@@ -192,7 +192,14 @@ fn key_with_secure_rank(
     let Some(rank) = min_rank_for_secure_width(policy.sis_family, d, bucket, width as u64) else {
         return Ok(None);
     };
-    AjtaiKeyParams::try_new(policy.sis_family, rank, width, bucket, policy.ring_dimension).map(Some)
+    AjtaiKeyParams::try_new(
+        policy.sis_family,
+        rank,
+        width,
+        bucket,
+        policy.ring_dimension,
+    )
+    .map(Some)
 }
 
 pub(crate) fn compute_ajtai_key_params_a(
@@ -218,8 +225,14 @@ pub(crate) fn compute_ajtai_key_params_b(
     t_vectors: usize,
     log_basis: u32,
 ) -> Result<Option<AjtaiKeyParams>, AkitaError> {
-    let Some((width, bucket)) =
-        ajtai_b_width_bucket(policy, stage1, matrix_a_rank, num_blocks, t_vectors, log_basis)?
+    let Some((width, bucket)) = ajtai_b_width_bucket(
+        policy,
+        stage1,
+        matrix_a_rank,
+        num_blocks,
+        t_vectors,
+        log_basis,
+    )?
     else {
         return Ok(None);
     };

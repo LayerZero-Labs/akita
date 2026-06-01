@@ -43,8 +43,8 @@ impl GeneratedFoldStep {
     /// width helpers receive `num_claims` as the `t_vectors` factor.
     ///
     /// The A/B/D widths and audited collision buckets are derived by the
-    /// shared [`ajtai_a_width_bucket`] / [`ajtai_b_width_bucket`] /
-    /// [`ajtai_d_width_bucket`] helpers — the *same* functions the planner DP
+    /// shared `ajtai_a_width_bucket` / `ajtai_b_width_bucket` /
+    /// `ajtai_d_width_bucket` helpers — the *same* functions the planner DP
     /// (`compute_ajtai_key_params_*`) uses — so the bucket the DP sized
     /// `(n_a, n_b, n_d)` against can never drift from the bucket reconstructed
     /// here. The only difference is the rank source: the DP computes the tight

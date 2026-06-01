@@ -319,13 +319,12 @@ fn presets_select_expected_sis_modulus_family() {
 fn fp16_generated_schedule_tables_are_wired() {
     let onehot_key = AkitaScheduleLookupKey::singleton(32);
     let onehot_schedule =
-        <fp16::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key)
-            .unwrap();
+        <fp16::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key).unwrap();
     assert!(!onehot_schedule.steps.is_empty());
 
     let dense_key = AkitaScheduleLookupKey::singleton(27);
-    let dense_schedule = <fp16::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key)
-        .unwrap();
+    let dense_schedule =
+        <fp16::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key).unwrap();
     assert!(!dense_schedule.steps.is_empty());
 }
 
@@ -334,13 +333,12 @@ fn fp16_generated_schedule_tables_are_wired() {
 fn fp32_d32_generated_schedule_tables_are_wired() {
     let onehot_key = AkitaScheduleLookupKey::singleton(32);
     let onehot_schedule =
-        <fp32::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key)
-            .unwrap();
+        <fp32::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key).unwrap();
     assert!(!onehot_schedule.steps.is_empty());
 
     let dense_key = AkitaScheduleLookupKey::singleton(26);
-    let dense_schedule = <fp32::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key)
-        .unwrap();
+    let dense_schedule =
+        <fp32::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key).unwrap();
     assert!(!dense_schedule.steps.is_empty());
 }
 
@@ -353,8 +351,7 @@ fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
 
 #[cfg(not(feature = "zk"))]
 fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) {
-    let schedule = Cfg::runtime_schedule(key)
-        .expect("planner should succeed");
+    let schedule = Cfg::runtime_schedule(key).expect("planner should succeed");
     let num_fold_levels = schedule.num_fold_levels();
     for (idx, fold) in schedule.fold_steps().enumerate() {
         // The last fold in a fold-then-direct schedule is the terminal
@@ -408,8 +405,7 @@ fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: Generated
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
         );
-        Cfg::runtime_schedule(key)
-            .expect("config schedule should succeed");
+        Cfg::runtime_schedule(key).expect("config schedule should succeed");
     }
 }
 
@@ -428,8 +424,7 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
         );
-        let generated = Cfg::runtime_schedule(key)
-            .expect("config schedule should succeed");
+        let generated = Cfg::runtime_schedule(key).expect("config schedule should succeed");
         let Some(root) = generated.fold_steps().next() else {
             continue;
         };
