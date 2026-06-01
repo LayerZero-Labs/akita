@@ -6,7 +6,7 @@ Created: 2026-06-01
 
 Status: proposed
 
-PR: TBD
+PR: https://github.com/LayerZero-Labs/akita/pull/143
 
 ## Summary
 
