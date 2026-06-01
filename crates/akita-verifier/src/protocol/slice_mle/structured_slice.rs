@@ -377,8 +377,12 @@ mod tests {
     use akita_algebra::eq_poly::EqPolynomial;
     use akita_algebra::offset_eq::summarize_pow2_block_carries;
     use akita_algebra::ring::scalar_powers;
+    use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
-    use akita_types::{gadget_row_scalars, r_decomp_levels, MRowLayout, RingOpeningPoint};
+    use akita_types::{
+        gadget_row_scalars, r_decomp_levels, ring_relation_segment_layout_for_opening_shape,
+        LevelParams, MRowLayout, RingOpeningPoint, SisModulusFamily,
+    };
 
     use crate::protocol::ring_switch::summarize_pow2_block_carries_base;
 
@@ -403,6 +407,23 @@ mod tests {
         F::from_canonical_u128_reduced(value)
     }
 
+    fn fixture_lp() -> LevelParams {
+        LevelParams::params_only(
+            SisModulusFamily::Q128,
+            D,
+            5,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![1],
+            },
+        )
+        .with_decomp(2, 3, 1, 26, 4, 512 * 8)
+        .expect("structured slice fixture lp")
+    }
+
     fn fixture() -> StructuredFixture {
         // `nv = 32` in `fp128_d32_onehot.rs` includes repeated compact
         // recursive levels with this real D=32 shape.
@@ -423,14 +444,18 @@ mod tests {
         let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
         let inner_width = block_len * depth_commit;
 
-        let w_len = depth_open * total_blocks;
-        let t_len = depth_open * n_a * total_blocks;
-        let z_len = depth_fold * depth_commit * num_points * block_len;
         let levels = r_decomp_levels::<F>(log_basis);
-        let offset_w = 0usize;
-        let offset_t = w_len;
-        let offset_z = w_len + t_len;
-        let offset_r = offset_z + z_len;
+        let lp = fixture_lp();
+        let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
+            &lp,
+            MRowLayout::WithDBlock,
+            &num_polys_per_point,
+        )
+        .expect("witness segment layout");
+        let offset_w = witness_segment_layout.offset_w;
+        let offset_t = witness_segment_layout.offset_t;
+        let offset_z = witness_segment_layout.offset_z;
+        let offset_r = witness_segment_layout.offset_r;
         let total_len = offset_r + rows * levels;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
@@ -453,7 +478,6 @@ mod tests {
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(4_000 + idx as u128))
                 .collect(),
-            total_blocks,
             num_t_vectors: num_polys_per_point.iter().sum(),
             num_blocks,
             num_claims,
@@ -471,16 +495,16 @@ mod tests {
             log_basis,
             n_a,
             n_d,
-            m_row_layout: MRowLayout::Intermediate,
+            m_row_layout: MRowLayout::WithDBlock,
             n_b,
             num_points,
             rows,
-            z_first: false,
             claim_to_point_poly: vec![(0, 1), (1, 0), (0, 0)],
             num_polys_per_point,
             num_public_rows,
             gamma: (0..num_claims).map(|idx| f(5_000 + idx as u128)).collect(),
             claim_to_point: vec![1, 0, 1],
+            witness_segment_layout,
         };
         let full_vec_randomness = (0..bits).map(|idx| f(6_000 + idx as u128)).collect();
         let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
@@ -513,7 +537,7 @@ mod tests {
     fn w_structured_matches_materialized_range_inner_product() {
         let fx = fixture();
         let p = &fx.prepared;
-        let w_len = p.depth_open * p.total_blocks;
+        let w_len = p.depth_open * p.total_blocks();
         let eq = eq_evals(fx.offset_w + w_len, &fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
@@ -563,8 +587,9 @@ mod tests {
 
         let mut expected = F::zero();
         for x in 0..w_len {
-            let dig = x / p.total_blocks;
-            let blk = x % p.total_blocks;
+            let total_blocks = p.total_blocks();
+            let dig = x / total_blocks;
+            let blk = x % total_blocks;
             let claim_idx = blk / p.num_blocks;
             let block_idx = blk % p.num_blocks;
             let point_idx = p.claim_to_point[claim_idx];
@@ -582,7 +607,7 @@ mod tests {
     fn t_structured_matches_materialized_range_inner_product() {
         let fx = fixture();
         let p = &fx.prepared;
-        let t_len = p.depth_open * p.n_a * p.total_blocks;
+        let t_len = p.depth_open * p.n_a * p.total_blocks();
         let eq = eq_evals(fx.offset_t + t_len, &fx.full_vec_randomness);
         let offset_low_bits = p.num_blocks.trailing_zeros() as usize;
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
@@ -612,8 +637,9 @@ mod tests {
 
         let mut expected = F::zero();
         for x in 0..t_len {
-            let compound_dig = x / p.total_blocks;
-            let blk = x % p.total_blocks;
+            let total_blocks = p.total_blocks();
+            let compound_dig = x / total_blocks;
+            let blk = x % total_blocks;
             let a_idx = compound_dig / p.depth_open;
             let digit_idx = compound_dig % p.depth_open;
             let entry = p.eq_tau1[a_start + a_idx] * c_alphas[blk] * fx.g1_open[digit_idx];

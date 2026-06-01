@@ -16,8 +16,8 @@ use akita_types::zk;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams, MRowLayout,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
-    TerminalWitnessTranscriptParts,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingRelationSegmentLayout,
+    RingSubfieldEncoding, TerminalWitnessTranscriptParts,
 };
 
 #[cfg(feature = "zk")]
@@ -107,7 +107,6 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
     pub(crate) eq_tau1: Vec<F>,
-    pub(crate) total_blocks: usize,
     pub(crate) num_t_vectors: usize,
     pub(crate) num_blocks: usize,
     pub(crate) num_claims: usize,
@@ -129,23 +128,21 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) n_b: usize,
     pub(crate) num_points: usize,
     pub(crate) rows: usize,
-    pub(crate) z_first: bool,
     pub(crate) claim_to_point_poly: Vec<(usize, usize)>,
     pub(crate) num_polys_per_point: Vec<usize>,
     pub(crate) num_public_rows: usize,
     pub(crate) gamma: Vec<F>,
     pub(crate) claim_to_point: Vec<usize>,
+    pub(crate) witness_segment_layout: RingRelationSegmentLayout,
 }
 
-pub(crate) struct RingSwitchSegmentLayout {
-    pub(crate) offset_w: usize,
-    pub(crate) offset_t: usize,
-    pub(crate) offset_z: usize,
-    pub(crate) offset_r: usize,
-    #[cfg(feature = "zk")]
-    pub(crate) b_blinding_offset: usize,
-    #[cfg(feature = "zk")]
-    pub(crate) d_blinding_offset: usize,
+pub(crate) type RingSwitchSegmentLayout = RingRelationSegmentLayout;
+
+/// Fixed public relation inputs for verifier ring-switch replay.
+pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
+    pub relation: &'a RingRelationInstance<F, D>,
+    pub row_coefficients: &'a [E],
+    pub lp: &'a LevelParams,
 }
 
 /// Replay the verifier half of ring switching.
@@ -160,23 +157,13 @@ pub(crate) struct RingSwitchSegmentLayout {
 /// Returns an error if the claim shape is invalid, opening-point routing is
 /// inconsistent, transcript-bound challenge data has the wrong size, or ring-switch row-eval
 /// preparation fails.
-#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
-    opening_points: &[RingOpeningPoint<F>],
-    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
-    claim_to_point: &[usize],
-    challenges: &Challenges,
+    replay: &RingSwitchReplay<'_, F, E, D>,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
-    lp: &LevelParams,
-    num_polys_per_point: &[usize],
-    claim_to_point_poly: &[usize],
-    claim_poly_indices: &[usize],
-    gamma: &[E],
-    num_public_rows: usize,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -187,22 +174,8 @@ where
     // the outer wrapper just performs the witness absorb before delegating.
     transcript.record_wire_serde(ABSORB_SUMCHECK_W, w_commitment);
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
-    ring_switch_verifier_core::<F, E, T, D>(
-        opening_points,
-        ring_multiplier_points,
-        claim_to_point,
-        challenges,
-        w_len,
-        transcript,
-        lp,
-        num_polys_per_point,
-        claim_to_point_poly,
-        claim_poly_indices,
-        gamma,
-        num_public_rows,
-        MRowLayout::Intermediate,
-    )?
-    .into_intermediate()
+    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)?
+        .into_intermediate()
 }
 
 /// Terminal variant of [`ring_switch_verifier`].
@@ -215,23 +188,13 @@ where
 /// Returns an error if the claim shape is invalid, opening-point routing is
 /// inconsistent, transcript-bound challenge data has the wrong size, or
 /// ring-switch row-eval preparation fails.
-#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_terminal")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
-    opening_points: &[RingOpeningPoint<F>],
-    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
-    claim_to_point: &[usize],
-    challenges: &Challenges,
+    replay: &RingSwitchReplay<'_, F, E, D>,
     w_len: usize,
     transcript: &mut T,
     terminal_parts: &TerminalWitnessTranscriptParts,
-    lp: &LevelParams,
-    num_polys_per_point: &[usize],
-    claim_to_point_poly: &[usize],
-    claim_poly_indices: &[usize],
-    gamma: &[E],
-    num_public_rows: usize,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -240,40 +203,16 @@ where
 {
     transcript.record_wire_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
     transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
-    ring_switch_verifier_core::<F, E, T, D>(
-        opening_points,
-        ring_multiplier_points,
-        claim_to_point,
-        challenges,
-        w_len,
-        transcript,
-        lp,
-        num_polys_per_point,
-        claim_to_point_poly,
-        claim_poly_indices,
-        gamma,
-        num_public_rows,
-        MRowLayout::Terminal,
-    )?
-    .into_terminal_as_output()
+    ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithoutDBlock)?
+        .into_terminal_as_output()
 }
 
-#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
 #[inline(never)]
 fn ring_switch_verifier_core<F, E, T, const D: usize>(
-    opening_points: &[RingOpeningPoint<F>],
-    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
-    claim_to_point: &[usize],
-    challenges: &Challenges,
+    replay: &RingSwitchReplay<'_, F, E, D>,
     w_len: usize,
     transcript: &mut T,
-    lp: &LevelParams,
-    num_polys_per_point: &[usize],
-    claim_to_point_poly: &[usize],
-    claim_poly_indices: &[usize],
-    gamma: &[E],
-    num_public_rows: usize,
     m_row_layout: MRowLayout,
 ) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
 where
@@ -281,6 +220,18 @@ where
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
+    let relation = replay.relation;
+    let lp = replay.lp;
+    let opening_points = relation.opening_points();
+    let ring_multiplier_points = relation.ring_multiplier_points();
+    let claim_to_point = relation.claim_to_point();
+    let routing = relation.commitment_routing();
+    let num_polys_per_point = routing.num_polys_per_group();
+    let claim_to_point_poly = routing.claim_to_group();
+    let claim_poly_indices = routing.claim_poly_in_group();
+    let num_public_rows = relation.num_public_rows();
+    let gamma = replay.row_coefficients;
+
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let num_claims = claim_to_point.len();
@@ -322,12 +273,12 @@ where
         .trailing_zeros() as usize;
 
     let tau0 = match m_row_layout {
-        MRowLayout::Intermediate => Some(
+        MRowLayout::WithDBlock => Some(
             (0..num_sc_vars)
                 .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
                 .collect(),
         ),
-        MRowLayout::Terminal => None,
+        MRowLayout::WithoutDBlock => None,
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -336,21 +287,7 @@ where
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let prepared_row_eval = prepare_ring_switch_row_eval::<F, E, D>(
-        challenges,
-        alpha,
-        lp,
-        &tau1,
-        num_polys_per_point,
-        claim_to_point_poly,
-        claim_poly_indices,
-        gamma,
-        num_public_rows,
-        m_row_layout,
-        opening_points.len(),
-        ring_multiplier_points,
-        claim_to_point,
-    )?;
+    let prepared_row_eval = prepare_ring_switch_row_eval::<F, E, D>(replay, alpha, &tau1)?;
 
     Ok(RingSwitchVerifyCoreOutput {
         prepared_row_eval,
@@ -366,16 +303,48 @@ where
     })
 }
 
-/// Prepare deferred verifier ring-switch row evaluation data.
+/// Prepare deferred verifier ring-switch row evaluation data from a fixed
+/// [`RingRelationInstance`] and transcript-sampled row coefficients.
 ///
 /// # Errors
 ///
 /// Returns an error if gamma/challenge lengths do not match the claim shape,
 /// the expanded tau1 table is too short for the level layout, or sparse
 /// challenge evaluation fails.
-#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "prepare_ring_switch_row_eval")]
 pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
+    replay: &RingSwitchReplay<'_, F, E, D>,
+    alpha: E,
+    tau1: &[E],
+) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt + MulBase<F>,
+{
+    let relation = replay.relation;
+    let lp = replay.lp;
+    let witness_segment_layout = relation.segment_layout(lp)?;
+    let routing = relation.commitment_routing();
+    prepare_ring_switch_row_eval_inner::<F, E, D>(
+        &relation.challenges,
+        alpha,
+        lp,
+        tau1,
+        routing.num_polys_per_group(),
+        routing.claim_to_group(),
+        routing.claim_poly_in_group(),
+        replay.row_coefficients,
+        relation.num_public_rows(),
+        relation.m_row_layout(),
+        relation.opening_points().len(),
+        relation.ring_multiplier_points(),
+        relation.claim_to_point(),
+        witness_segment_layout,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     challenges: &Challenges,
     alpha: E,
     lp: &LevelParams,
@@ -389,6 +358,7 @@ pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
     opening_points_len: usize,
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
+    witness_segment_layout: RingRelationSegmentLayout,
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -446,8 +416,8 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
     #[cfg(feature = "zk")]
     let d_blinding_segment_len = match m_row_layout {
-        MRowLayout::Intermediate => zk::blinding_digit_plane_count::<F>(n_d, D, log_basis),
-        MRowLayout::Terminal => 0,
+        MRowLayout::WithDBlock => zk::blinding_digit_plane_count::<F>(n_d, D, log_basis),
+        MRowLayout::WithoutDBlock => 0,
     };
     #[cfg(feature = "zk")]
     let b_blinding_digit_planes_per_point = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
@@ -455,6 +425,7 @@ where
     let b_blinding_segment_len = num_points
         .checked_mul(b_blinding_digit_planes_per_point)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
+    // Must match [`RingSwitchDeferredRowEval::total_blocks`] on the prepared value.
     let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
@@ -474,8 +445,7 @@ where
         ));
     }
     let expected_d_width = depth_open
-        .checked_mul(num_blocks)
-        .and_then(|width| width.checked_mul(num_claims))
+        .checked_mul(total_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
     if lp.d_key.col_len() < expected_d_width {
         return Err(AkitaError::InvalidSetup(
@@ -551,8 +521,6 @@ where
         }
     };
 
-    let z_first = lp.m_vars >= lp.r_vars;
-
     let claim_to_point_poly: Vec<(usize, usize)> = claim_to_point_poly
         .iter()
         .zip(claim_poly_indices.iter())
@@ -562,7 +530,6 @@ where
     Ok(RingSwitchDeferredRowEval {
         c_alphas,
         eq_tau1,
-        total_blocks,
         num_t_vectors,
         num_blocks,
         num_claims,
@@ -584,112 +551,35 @@ where
         n_b,
         num_points,
         rows,
-        z_first,
         claim_to_point_poly,
         num_polys_per_point: num_polys_per_point.to_vec(),
         num_public_rows,
         gamma: gamma.to_vec(),
         claim_to_point: claim_to_point.to_vec(),
+        witness_segment_layout,
     })
 }
 
 impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
+    /// `num_blocks * num_claims` (W/D challenge logical length).
+    ///
+    /// Prepare validates the product with checked arithmetic before building
+    /// this struct; replay uses the unchecked product on those same fields.
+    #[inline(always)]
+    pub(crate) fn total_blocks(&self) -> usize {
+        self.num_blocks * self.num_claims
+    }
+
     /// Number of active D rows in the selected M-row layout.
     pub(crate) fn n_d_active(&self) -> usize {
         match self.m_row_layout {
-            MRowLayout::Intermediate => self.n_d,
-            MRowLayout::Terminal => 0,
+            MRowLayout::WithDBlock => self.n_d,
+            MRowLayout::WithoutDBlock => 0,
         }
     }
 
     pub(crate) fn segment_layout(&self) -> Result<RingSwitchSegmentLayout, AkitaError> {
-        if self.num_blocks == 0 || !self.num_blocks.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "num_blocks must be a non-zero power of two".to_string(),
-            ));
-        }
-        if self.block_len == 0
-            || self.depth_open == 0
-            || self.depth_commit == 0
-            || self.depth_fold == 0
-        {
-            return Err(AkitaError::InvalidSetup(
-                "prepared ring-switch layout has zero width".to_string(),
-            ));
-        }
-
-        let w_len = self
-            .depth_open
-            .checked_mul(self.total_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("W segment length overflow".to_string()))?;
-        let t_total_blocks = self
-            .num_blocks
-            .checked_mul(self.num_t_vectors)
-            .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;
-        let t_len = self
-            .depth_open
-            .checked_mul(self.n_a)
-            .and_then(|len| len.checked_mul(t_total_blocks))
-            .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
-        let z_len = self
-            .depth_fold
-            .checked_mul(self.depth_commit)
-            .and_then(|len| len.checked_mul(self.num_points))
-            .and_then(|len| len.checked_mul(self.block_len))
-            .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
-        #[cfg(feature = "zk")]
-        let b_blinding_segment_len = self.b_blinding_segment_len;
-        #[cfg(not(feature = "zk"))]
-        let b_blinding_segment_len = 0usize;
-        #[cfg(feature = "zk")]
-        let d_blinding_segment_len = self.d_blinding_segment_len;
-        #[cfg(not(feature = "zk"))]
-        let d_blinding_segment_len = 0usize;
-
-        let offset_z = if self.z_first {
-            0
-        } else {
-            w_len
-                .checked_add(t_len)
-                .and_then(|offset| offset.checked_add(b_blinding_segment_len))
-                .and_then(|offset| offset.checked_add(d_blinding_segment_len))
-                .ok_or_else(|| AkitaError::InvalidSetup("Z offset overflow".to_string()))?
-        };
-        let offset_w = if self.z_first { z_len } else { 0 };
-        let offset_t = if self.z_first {
-            z_len
-                .checked_add(w_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("T offset overflow".to_string()))?
-        } else {
-            w_len
-        };
-        let b_blinding_offset = offset_t
-            .checked_add(t_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("B blinding offset overflow".to_string()))?;
-        let d_blinding_offset = b_blinding_offset
-            .checked_add(b_blinding_segment_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("D blinding offset overflow".to_string()))?;
-        let offset_r_base = d_blinding_offset
-            .checked_add(d_blinding_segment_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?;
-        let offset_r = if self.z_first {
-            offset_r_base
-        } else {
-            offset_r_base
-                .checked_add(z_len)
-                .ok_or_else(|| AkitaError::InvalidSetup("r-tail offset overflow".to_string()))?
-        };
-
-        Ok(RingSwitchSegmentLayout {
-            offset_w,
-            offset_t,
-            offset_z,
-            offset_r,
-            #[cfg(feature = "zk")]
-            b_blinding_offset,
-            #[cfg(feature = "zk")]
-            d_blinding_offset,
-        })
+        Ok(self.witness_segment_layout)
     }
 
     /// Evaluate the prepared ring-switch row table at the supplied point.
@@ -767,6 +657,15 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let high_challenges = &x_challenges[offset_low_bits..];
 
         let x_low_challenges = &x_challenges[..offset_low_bits];
+        let total_blocks = self.total_blocks();
+        if let Some(c_alphas) = self.c_alphas.as_flat() {
+            if c_alphas.len() != total_blocks {
+                return Err(AkitaError::InvalidSize {
+                    expected: total_blocks,
+                    actual: c_alphas.len(),
+                });
+            }
+        }
         let challenge_block_summaries: Vec<[E; 2]> =
             self.c_alphas.summarize_all_block_carries::<F, D>(
                 self.num_claims,

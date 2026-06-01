@@ -1,7 +1,7 @@
 //! Verifier helpers for root-direct proof payloads.
 
 use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, DirectWitnessProof};
+use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, CleartextWitnessProof};
 
 /// Borrow the field-element payload from a direct witness.
 ///
@@ -9,7 +9,7 @@ use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, DirectWitness
 ///
 /// Returns an error if the witness is not encoded as field elements.
 pub(crate) fn direct_witness_field_elements<F: FieldCore>(
-    direct_witness: &DirectWitnessProof<F>,
+    direct_witness: &CleartextWitnessProof<F>,
 ) -> Result<&[F], AkitaError> {
     direct_witness
         .as_field_elements()
@@ -28,7 +28,7 @@ pub(crate) fn direct_witness_field_elements<F: FieldCore>(
 /// Returns an error if the witness length is not a power of two, does not
 /// match the opening-point dimension, or is not field-element encoded.
 pub fn direct_witness_opening_matches<F, E>(
-    direct_witness: &DirectWitnessProof<F>,
+    direct_witness: &CleartextWitnessProof<F>,
     opening_point: &[E],
     opening: &E,
     basis: BasisMode,
@@ -75,7 +75,7 @@ where
 /// witnesses/openings, routes a claim to a missing opening point, or any direct
 /// witness does not match its opening.
 pub(crate) fn verify_root_direct_openings_with_incidence<F, E>(
-    witnesses: &[DirectWitnessProof<F>],
+    witnesses: &[CleartextWitnessProof<F>],
     opening_points: &[&[E]],
     openings: &[E],
     incidence_summary: &ClaimIncidenceSummary,
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn direct_witness_opening_matches_extension_claim() {
-        let witness = DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
+        let witness = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
             F::from_u64(1),
             F::from_u64(2),
         ]));
@@ -155,9 +155,9 @@ mod tests {
 
     #[test]
     fn root_direct_openings_accept_incidence_summary() {
-        let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
-            vec![F::from_u64(1), F::from_u64(2)],
-        ))];
+        let witnesses = vec![CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(vec![F::from_u64(1), F::from_u64(2)]),
+        )];
         let point = [E::new(F::from_u64(3), F::from_u64(4))];
         let opening = [E::new(F::from_u64(4), F::from_u64(4))];
         let incidence_summary =
@@ -179,8 +179,8 @@ mod tests {
         // contributes its own witness, even when the polynomial is identical.
         let raw_poly = vec![F::from_u64(1), F::from_u64(2)];
         let witnesses = vec![
-            DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly.clone())),
-            DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly)),
+            CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly.clone())),
+            CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly)),
         ];
         let point_a = [E::new(F::from_u64(3), F::from_u64(4))];
         let point_b = [E::new(F::from_u64(5), F::from_u64(6))];

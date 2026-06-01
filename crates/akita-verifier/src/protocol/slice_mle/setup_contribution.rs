@@ -602,14 +602,35 @@ mod tests {
 
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
+    use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
-    use akita_types::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix, MRowLayout};
+    use akita_types::{
+        gadget_row_scalars, ring_relation_segment_layout_for_opening_shape, AkitaSetupSeed,
+        FlatMatrix, LevelParams, MRowLayout, SisModulusFamily,
+    };
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
 
     fn f(value: u128) -> F {
         F::from_canonical_u128_reduced(value)
+    }
+
+    fn fixture_lp() -> LevelParams {
+        LevelParams::params_only(
+            SisModulusFamily::Q128,
+            D,
+            5,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![1],
+            },
+        )
+        .with_decomp(2, 3, 1, 26, 4, 512 * 8)
+        .expect("setup contribution fixture lp")
     }
 
     #[test]
@@ -636,13 +657,17 @@ mod tests {
         // Claims deliberately do not follow group-local polynomial order.
         let claim_to_point_poly = vec![(0usize, 1usize), (1, 0), (0, 0)];
 
-        let w_len = depth_open * total_blocks;
-        let t_len = depth_open * n_a * total_blocks;
-        let z_len = depth_fold * depth_commit * num_points * block_len;
-        let offset_w = 0usize;
-        let offset_t = w_len;
-        let offset_z = w_len + t_len;
-        let total_len = offset_z + z_len;
+        let lp = fixture_lp();
+        let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
+            &lp,
+            MRowLayout::WithDBlock,
+            &num_polys_per_point,
+        )
+        .expect("witness segment layout");
+        let offset_w = witness_segment_layout.offset_w;
+        let offset_t = witness_segment_layout.offset_t;
+        let offset_z = witness_segment_layout.offset_z;
+        let total_len = witness_segment_layout.offset_r;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
         let stride_t = n_a * depth_open;
@@ -686,7 +711,6 @@ mod tests {
                 (0..total_blocks).map(|idx| f(41 + idx as u128)).collect(),
             ),
             eq_tau1: eq_tau1.clone(),
-            total_blocks,
             num_t_vectors: num_polys_per_point.iter().sum(),
             num_blocks,
             num_claims,
@@ -704,16 +728,16 @@ mod tests {
             log_basis,
             n_a,
             n_d,
-            m_row_layout: MRowLayout::Intermediate,
+            m_row_layout: MRowLayout::WithDBlock,
             n_b,
             num_points,
             rows,
-            z_first: false,
             claim_to_point_poly: claim_to_point_poly.clone(),
             num_polys_per_point: num_polys_per_point.clone(),
             num_public_rows,
             gamma: vec![F::one(); num_claims],
             claim_to_point: vec![1, 0, 1],
+            witness_segment_layout,
         };
 
         let full_vec_randomness: Vec<F> = (0..bits).map(|idx| f(101 + idx as u128)).collect();
