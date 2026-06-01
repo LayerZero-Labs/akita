@@ -397,7 +397,7 @@ where
     let w_len = if is_last {
         final_w_len.ok_or(AkitaError::InvalidProof)?
     } else {
-        w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims)?
+        w_ring_element_count_with_counts::<F>(lp, num_claims, num_claims, num_claims, num_claims)?
             .checked_mul(D)
             .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
     };
@@ -850,8 +850,8 @@ where
                 let y_ring_count = level_proof.y_ring.coeff_len() / level_d;
                 let computed_next_w_len = w_ring_element_count_with_counts::<F>(
                     &current_lp,
-                    1,
-                    1,
+                    y_ring_count,
+                    y_ring_count,
                     y_ring_count,
                     y_ring_count,
                 )?
@@ -876,21 +876,23 @@ where
                     padded_len: next_w_len.next_power_of_two(),
                     kind: CarriedOpeningKind::RecursiveWitness,
                 }];
-                carried_openings.extend(
-                    level_proof
-                        .stage2
-                        .extra_carried_openings
-                        .iter()
-                        .map(|claim| {
-                            let source = level_proof
-                                .stage2
-                                .extra_carried_sources
-                                .get(claim.source_idx.checked_sub(1).unwrap_or(usize::MAX))
-                                .ok_or(AkitaError::InvalidProof)?;
-                            Ok(verifier_carried_opening_from_proof(source, claim))
-                        })
-                        .collect::<Result<Vec<_>, AkitaError>>()?,
-                );
+                let extra_openings = level_proof
+                    .stage2
+                    .extra_carried_openings
+                    .iter()
+                    .map(|claim| {
+                        let source = level_proof
+                            .stage2
+                            .extra_carried_sources
+                            .get(claim.source_idx.checked_sub(1).unwrap_or(usize::MAX))
+                            .ok_or(AkitaError::InvalidProof)?;
+                        Ok(verifier_carried_opening_from_proof(source, claim))
+                    })
+                    .collect::<Result<Vec<_>, AkitaError>>()?;
+                if let Some(extra) = extra_openings.first() {
+                    carried_openings[0].padded_len = extra.padded_len;
+                }
+                carried_openings.extend(extra_openings);
                 current_state = RecursiveVerifierState {
                     carried_openings,
                     extra_carried_sources: level_proof
@@ -1140,21 +1142,23 @@ where
                 padded_len: root_step.next_w_len.next_power_of_two(),
                 kind: CarriedOpeningKind::RecursiveWitness,
             }];
-            carried_openings.extend(
-                fold_root
-                    .stage2
-                    .extra_carried_openings
-                    .iter()
-                    .map(|claim| {
-                        let source = fold_root
-                            .stage2
-                            .extra_carried_sources
-                            .get(claim.source_idx.checked_sub(1).unwrap_or(usize::MAX))
-                            .ok_or(AkitaError::InvalidProof)?;
-                        Ok(verifier_carried_opening_from_proof(source, claim))
-                    })
-                    .collect::<Result<Vec<_>, AkitaError>>()?,
-            );
+            let extra_openings = fold_root
+                .stage2
+                .extra_carried_openings
+                .iter()
+                .map(|claim| {
+                    let source = fold_root
+                        .stage2
+                        .extra_carried_sources
+                        .get(claim.source_idx.checked_sub(1).unwrap_or(usize::MAX))
+                        .ok_or(AkitaError::InvalidProof)?;
+                    Ok(verifier_carried_opening_from_proof(source, claim))
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            if let Some(extra) = extra_openings.first() {
+                carried_openings[0].padded_len = extra.padded_len;
+            }
+            carried_openings.extend(extra_openings);
             let current_state = RecursiveVerifierState {
                 carried_openings,
                 extra_carried_sources: fold_root
