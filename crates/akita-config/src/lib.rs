@@ -294,6 +294,21 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     fn basis_range() -> (u32, u32) {
         Cfg::basis_range()
     }
+
+    /// Resolve schedules through the parent `Cfg`, not this derived config.
+    ///
+    /// `WCommitmentConfig` is a layout-derivation helper: its real interface
+    /// is [`Self::decomposition`], consumed by
+    /// `akita_types::recursive_level_layout_from_params` to size recursive-w
+    /// openings. It is never the top-level config that drives prove/verify, so
+    /// this override is defensive. Like every other hook here, it defers to
+    /// `Cfg` (matching the previous `schedule_table` delegation) rather than
+    /// resolving against this config's synthetic balanced-digit policy
+    /// (`policy_of::<Self>()`), which would select a different table / DP
+    /// schedule than the parent.
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+        Cfg::runtime_schedule(key)
+    }
 }
 
 #[cfg(test)]
