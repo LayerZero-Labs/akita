@@ -630,10 +630,15 @@ and it removes roughly 800 lines of duplicated kernel code.
    A register-blocked variant could load each rhs lane once and fuse it into
    several row accumulators, trading more complex per-arch `unsafe` code for fewer
    loads.
-   Because the multiply-accumulate is dominated by per-coefficient Montgomery
-   multiply-reduce work and the shared rhs is already L1-resident, the upside is
-   expected to be marginal, so any production change is gated on a standalone macc
-   micro-benchmark first.
+   A standalone scalar macc micro-benchmark (`D = 64`, i32 prime, aarch64) ran
+   this comparison: a faithful 2-row and 4-row register-blocked shape landed
+   within 2-3% of the current row-major kernel (inside noise), per-macc cost was
+   flat across `n_a` (the compute-bound signature, so the shared L1 rhs reload is
+   effectively free), and a naive loop-transpose that reuses rhs at the cost of
+   per-row contiguity was 2.2x slower.
+   The current row-major shape is therefore retained, and a register-blocked SIMD
+   kernel is not pursued unless a future host-specific A/B shows the macc is
+   memory-bound rather than compute-bound.
 
 ### Alternatives Considered
 
