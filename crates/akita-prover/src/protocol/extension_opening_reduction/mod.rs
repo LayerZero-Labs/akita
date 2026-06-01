@@ -36,7 +36,7 @@ pub const SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS: usize = 12;
 /// - [`DelayedDeg2`] sums the wide `E::ProductAccum` products and reduces once
 ///   per round. This is only sound when `DELAYED_PRODUCT_SUM_IS_EXACT` is set,
 ///   i.e. the field's accumulator has been proven not to wrap for these batch
-///   sizes (e.g. `RingSubfieldFp4<Fp32>`, `Fp2<Fp64>`).
+///   sizes (e.g. `RingSubfieldFpExt4<Fp32>`, `FpExt2<Fp64>`).
 /// - [`DirectDeg2`] reduces every product immediately via `Mul`, so the summed
 ///   coefficient is byte-identical to per-term reduction. This is the
 ///   contract-safe path for fields that leave `DELAYED_PRODUCT_SUM_IS_EXACT` at

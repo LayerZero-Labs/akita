@@ -11,11 +11,11 @@ use num_traits::{One, Zero};
 
 use crate::{
     fields::{
-        AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp2, Fp2Config,
-        Fp2Fp64ProductAccum, Fp32, Fp32ProductAccum, Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32,
-        PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
-        RingSubfieldFp4Fp32ProductAccum, RingSubfieldFp4MulBackend, RingSubfieldFp8,
-        RingSubfieldFp8MulBackend, TowerBasisFp4, TowerBasisFp4Config,
+        AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp2Fp64ProductAccum,
+        Fp32, Fp32ProductAccum, Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32, FpExt2, FpExt2Config,
+        PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend,
+        RingSubfieldFp4Fp32ProductAccum, RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend,
+        RingSubfieldFpExt8, RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config,
     },
     CanonicalField, FieldCore,
 };
@@ -156,7 +156,7 @@ impl_prime_jolt_traits!(Fp32<P: u32>, from_canonical_u32, 4, 4);
 impl_prime_jolt_traits!(Fp64<P: u64>, from_canonical_u64, 8, 8);
 impl_prime_jolt_traits!(Fp128<P: u128>, from_canonical_u128, 16, 16);
 
-impl<F: FieldCore, C: Fp2Config<F>> Zero for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> Zero for FpExt2<F, C> {
     #[inline]
     fn zero() -> Self {
         Self::new(F::zero(), F::zero())
@@ -168,59 +168,59 @@ impl<F: FieldCore, C: Fp2Config<F>> Zero for Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> One for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> One for FpExt2<F, C> {
     #[inline]
     fn one() -> Self {
         Self::new(F::one(), F::zero())
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> fmt::Display for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> fmt::Display for FpExt2<F, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "({}, {})", self.coeffs[0], self.coeffs[1])
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> Hash for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> Hash for FpExt2<F, C> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.coeffs[0].hash(state);
         self.coeffs[1].hash(state);
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> Sum for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> Sum for FpExt2<F, C> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + x)
     }
 }
 
-impl<'a, F: FieldCore, C: Fp2Config<F>> Sum<&'a Self> for Fp2<F, C> {
+impl<'a, F: FieldCore, C: FpExt2Config<F>> Sum<&'a Self> for FpExt2<F, C> {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + *x)
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> Product for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> Product for FpExt2<F, C> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * x)
     }
 }
 
-impl<'a, F: FieldCore, C: Fp2Config<F>> Product<&'a Self> for Fp2<F, C> {
+impl<'a, F: FieldCore, C: FpExt2Config<F>> Product<&'a Self> for FpExt2<F, C> {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * *x)
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> jf::AdditiveGroup for Fp2<F, C> {}
-impl<F: FieldCore + Valid, C: Fp2Config<F>> jf::FieldCore for Fp2<F, C> {}
+impl<F: FieldCore, C: FpExt2Config<F>> jf::AdditiveGroup for FpExt2<F, C> {}
+impl<F: FieldCore + Valid, C: FpExt2Config<F>> jf::FieldCore for FpExt2<F, C> {}
 
-impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Zero
-    for TowerBasisFp4<F, C2, C4>
+impl<F: FieldCore, C2: FpExt2Config<F>, C4: TowerBasisFpExt4Config<F, C2>> Zero
+    for TowerBasisFpExt4<F, C2, C4>
 {
     #[inline]
     fn zero() -> Self {
-        Self::new(Fp2::zero(), Fp2::zero())
+        Self::new(FpExt2::zero(), FpExt2::zero())
     }
 
     #[inline]
@@ -229,28 +229,28 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Zero
     }
 }
 
-impl<F, C2, C4> One for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> One for TowerBasisFpExt4<F, C2, C4>
 where
-    F: FieldCore + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    F: FieldCore + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
 {
     #[inline]
     fn one() -> Self {
-        Self::new(Fp2::one(), Fp2::zero())
+        Self::new(FpExt2::one(), FpExt2::zero())
     }
 }
 
-impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> fmt::Display
-    for TowerBasisFp4<F, C2, C4>
+impl<F: FieldCore, C2: FpExt2Config<F>, C4: TowerBasisFpExt4Config<F, C2>> fmt::Display
+    for TowerBasisFpExt4<F, C2, C4>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "({}, {})", self.coeffs[0], self.coeffs[1])
     }
 }
 
-impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Hash
-    for TowerBasisFp4<F, C2, C4>
+impl<F: FieldCore, C2: FpExt2Config<F>, C4: TowerBasisFpExt4Config<F, C2>> Hash
+    for TowerBasisFpExt4<F, C2, C4>
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.coeffs[0].hash(state);
@@ -258,57 +258,57 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Hash
     }
 }
 
-impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Sum
-    for TowerBasisFp4<F, C2, C4>
+impl<F: FieldCore, C2: FpExt2Config<F>, C4: TowerBasisFpExt4Config<F, C2>> Sum
+    for TowerBasisFpExt4<F, C2, C4>
 {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + x)
     }
 }
 
-impl<'a, F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Sum<&'a Self>
-    for TowerBasisFp4<F, C2, C4>
+impl<'a, F: FieldCore, C2: FpExt2Config<F>, C4: TowerBasisFpExt4Config<F, C2>> Sum<&'a Self>
+    for TowerBasisFpExt4<F, C2, C4>
 {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + *x)
     }
 }
 
-impl<F, C2, C4> Product for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> Product for TowerBasisFpExt4<F, C2, C4>
 where
-    F: FieldCore + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    F: FieldCore + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
 {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * x)
     }
 }
 
-impl<'a, F, C2, C4> Product<&'a Self> for TowerBasisFp4<F, C2, C4>
+impl<'a, F, C2, C4> Product<&'a Self> for TowerBasisFpExt4<F, C2, C4>
 where
-    F: FieldCore + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    F: FieldCore + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
 {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * *x)
     }
 }
 
-impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> jf::AdditiveGroup
-    for TowerBasisFp4<F, C2, C4>
+impl<F: FieldCore, C2: FpExt2Config<F>, C4: TowerBasisFpExt4Config<F, C2>> jf::AdditiveGroup
+    for TowerBasisFpExt4<F, C2, C4>
 {
 }
-impl<F, C2, C4> jf::FieldCore for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> jf::FieldCore for TowerBasisFpExt4<F, C2, C4>
 where
-    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
 {
 }
 
-impl<F: FieldCore, C: PowerBasisFp4Config<F>> Zero for PowerBasisFp4<F, C> {
+impl<F: FieldCore, C: PowerBasisFpExt4Config<F>> Zero for PowerBasisFpExt4<F, C> {
     #[inline]
     fn zero() -> Self {
         Self::new([F::zero(), F::zero(), F::zero(), F::zero()])
@@ -320,8 +320,8 @@ impl<F: FieldCore, C: PowerBasisFp4Config<F>> Zero for PowerBasisFp4<F, C> {
     }
 }
 
-impl<F: FieldCore + PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> One
-    for PowerBasisFp4<F, C>
+impl<F: FieldCore + PowerBasisFpExt4MulBackend<C>, C: PowerBasisFpExt4Config<F>> One
+    for PowerBasisFpExt4<F, C>
 {
     #[inline]
     fn one() -> Self {
@@ -329,7 +329,7 @@ impl<F: FieldCore + PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> One
     }
 }
 
-impl<F: FieldCore, C: PowerBasisFp4Config<F>> fmt::Display for PowerBasisFp4<F, C> {
+impl<F: FieldCore, C: PowerBasisFpExt4Config<F>> fmt::Display for PowerBasisFpExt4<F, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -339,49 +339,49 @@ impl<F: FieldCore, C: PowerBasisFp4Config<F>> fmt::Display for PowerBasisFp4<F, 
     }
 }
 
-impl<F: FieldCore, C: PowerBasisFp4Config<F>> Hash for PowerBasisFp4<F, C> {
+impl<F: FieldCore, C: PowerBasisFpExt4Config<F>> Hash for PowerBasisFpExt4<F, C> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.coeffs.hash(state);
     }
 }
 
-impl<F: FieldCore, C: PowerBasisFp4Config<F>> Sum for PowerBasisFp4<F, C> {
+impl<F: FieldCore, C: PowerBasisFpExt4Config<F>> Sum for PowerBasisFpExt4<F, C> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + x)
     }
 }
 
-impl<'a, F: FieldCore, C: PowerBasisFp4Config<F>> Sum<&'a Self> for PowerBasisFp4<F, C> {
+impl<'a, F: FieldCore, C: PowerBasisFpExt4Config<F>> Sum<&'a Self> for PowerBasisFpExt4<F, C> {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + *x)
     }
 }
 
-impl<F: FieldCore + PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> Product
-    for PowerBasisFp4<F, C>
+impl<F: FieldCore + PowerBasisFpExt4MulBackend<C>, C: PowerBasisFpExt4Config<F>> Product
+    for PowerBasisFpExt4<F, C>
 {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * x)
     }
 }
 
-impl<'a, F: FieldCore + PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> Product<&'a Self>
-    for PowerBasisFp4<F, C>
+impl<'a, F: FieldCore + PowerBasisFpExt4MulBackend<C>, C: PowerBasisFpExt4Config<F>>
+    Product<&'a Self> for PowerBasisFpExt4<F, C>
 {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * *x)
     }
 }
 
-impl<F: FieldCore, C: PowerBasisFp4Config<F>> jf::AdditiveGroup for PowerBasisFp4<F, C> {}
-impl<F, C> jf::FieldCore for PowerBasisFp4<F, C>
+impl<F: FieldCore, C: PowerBasisFpExt4Config<F>> jf::AdditiveGroup for PowerBasisFpExt4<F, C> {}
+impl<F, C> jf::FieldCore for PowerBasisFpExt4<F, C>
 where
-    F: FieldCore + Valid + PowerBasisFp4MulBackend<C>,
-    C: PowerBasisFp4Config<F>,
+    F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C>,
+    C: PowerBasisFpExt4Config<F>,
 {
 }
 
-impl<F: FieldCore> Zero for RingSubfieldFp4<F> {
+impl<F: FieldCore> Zero for RingSubfieldFpExt4<F> {
     #[inline]
     fn zero() -> Self {
         Self::new([F::zero(), F::zero(), F::zero(), F::zero()])
@@ -393,14 +393,14 @@ impl<F: FieldCore> Zero for RingSubfieldFp4<F> {
     }
 }
 
-impl<F: FieldCore + RingSubfieldFp4MulBackend> One for RingSubfieldFp4<F> {
+impl<F: FieldCore + RingSubfieldFpExt4MulBackend> One for RingSubfieldFpExt4<F> {
     #[inline]
     fn one() -> Self {
         Self::new([F::one(), F::zero(), F::zero(), F::zero()])
     }
 }
 
-impl<F: FieldCore> fmt::Display for RingSubfieldFp4<F> {
+impl<F: FieldCore> fmt::Display for RingSubfieldFpExt4<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -410,40 +410,40 @@ impl<F: FieldCore> fmt::Display for RingSubfieldFp4<F> {
     }
 }
 
-impl<F: FieldCore> Hash for RingSubfieldFp4<F> {
+impl<F: FieldCore> Hash for RingSubfieldFpExt4<F> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.coeffs.hash(state);
     }
 }
 
-impl<F: FieldCore> Sum for RingSubfieldFp4<F> {
+impl<F: FieldCore> Sum for RingSubfieldFpExt4<F> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + x)
     }
 }
 
-impl<'a, F: FieldCore> Sum<&'a Self> for RingSubfieldFp4<F> {
+impl<'a, F: FieldCore> Sum<&'a Self> for RingSubfieldFpExt4<F> {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + *x)
     }
 }
 
-impl<F: FieldCore + RingSubfieldFp4MulBackend> Product for RingSubfieldFp4<F> {
+impl<F: FieldCore + RingSubfieldFpExt4MulBackend> Product for RingSubfieldFpExt4<F> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * x)
     }
 }
 
-impl<'a, F: FieldCore + RingSubfieldFp4MulBackend> Product<&'a Self> for RingSubfieldFp4<F> {
+impl<'a, F: FieldCore + RingSubfieldFpExt4MulBackend> Product<&'a Self> for RingSubfieldFpExt4<F> {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * *x)
     }
 }
 
-impl<F: FieldCore + RingSubfieldFp4MulBackend> jf::AdditiveGroup for RingSubfieldFp4<F> {}
-impl<F: FieldCore + Valid + RingSubfieldFp4MulBackend> jf::FieldCore for RingSubfieldFp4<F> {}
+impl<F: FieldCore + RingSubfieldFpExt4MulBackend> jf::AdditiveGroup for RingSubfieldFpExt4<F> {}
+impl<F: FieldCore + Valid + RingSubfieldFpExt4MulBackend> jf::FieldCore for RingSubfieldFpExt4<F> {}
 
-impl<F: FieldCore> Zero for RingSubfieldFp8<F> {
+impl<F: FieldCore> Zero for RingSubfieldFpExt8<F> {
     #[inline]
     fn zero() -> Self {
         Self::new([
@@ -464,7 +464,7 @@ impl<F: FieldCore> Zero for RingSubfieldFp8<F> {
     }
 }
 
-impl<F: FieldCore + RingSubfieldFp8MulBackend> One for RingSubfieldFp8<F> {
+impl<F: FieldCore + RingSubfieldFpExt8MulBackend> One for RingSubfieldFpExt8<F> {
     #[inline]
     fn one() -> Self {
         Self::new([
@@ -480,7 +480,7 @@ impl<F: FieldCore + RingSubfieldFp8MulBackend> One for RingSubfieldFp8<F> {
     }
 }
 
-impl<F: FieldCore> fmt::Display for RingSubfieldFp8<F> {
+impl<F: FieldCore> fmt::Display for RingSubfieldFpExt8<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -497,38 +497,38 @@ impl<F: FieldCore> fmt::Display for RingSubfieldFp8<F> {
     }
 }
 
-impl<F: FieldCore> Hash for RingSubfieldFp8<F> {
+impl<F: FieldCore> Hash for RingSubfieldFpExt8<F> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.coeffs.hash(state);
     }
 }
 
-impl<F: FieldCore> Sum for RingSubfieldFp8<F> {
+impl<F: FieldCore> Sum for RingSubfieldFpExt8<F> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + x)
     }
 }
 
-impl<'a, F: FieldCore> Sum<&'a Self> for RingSubfieldFp8<F> {
+impl<'a, F: FieldCore> Sum<&'a Self> for RingSubfieldFpExt8<F> {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| acc + *x)
     }
 }
 
-impl<F: FieldCore + RingSubfieldFp8MulBackend> Product for RingSubfieldFp8<F> {
+impl<F: FieldCore + RingSubfieldFpExt8MulBackend> Product for RingSubfieldFpExt8<F> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * x)
     }
 }
 
-impl<'a, F: FieldCore + RingSubfieldFp8MulBackend> Product<&'a Self> for RingSubfieldFp8<F> {
+impl<'a, F: FieldCore + RingSubfieldFpExt8MulBackend> Product<&'a Self> for RingSubfieldFpExt8<F> {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * *x)
     }
 }
 
-impl<F: FieldCore + RingSubfieldFp8MulBackend> jf::AdditiveGroup for RingSubfieldFp8<F> {}
-impl<F: FieldCore + Valid + RingSubfieldFp8MulBackend> jf::FieldCore for RingSubfieldFp8<F> {}
+impl<F: FieldCore + RingSubfieldFpExt8MulBackend> jf::AdditiveGroup for RingSubfieldFpExt8<F> {}
+impl<F: FieldCore + Valid + RingSubfieldFpExt8MulBackend> jf::FieldCore for RingSubfieldFpExt8<F> {}
 
 macro_rules! impl_wide_additive {
     ($ty:ty, $zero:expr) => {

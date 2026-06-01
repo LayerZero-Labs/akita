@@ -572,7 +572,7 @@ impl<const P: u128> ReduceTo<Fp128<P>> for Fp128x8i32 {
     }
 }
 
-/// Precomputed fold context for `RingSubfieldFp4<Fp32<P>>`.
+/// Precomputed fold context for `RingSubfieldFpExt4<Fp32<P>>`.
 ///
 /// Stores a 4×4 multiplication matrix derived from the challenge `r`,
 /// enabling fold via 4 scalar multiply-accumulates per coefficient
@@ -580,7 +580,7 @@ impl<const P: u128> ReduceTo<Fp128<P>> for Fp128x8i32 {
 #[derive(Debug, Clone, Copy)]
 pub struct FoldMatrixFp32(pub(crate) [[u32; 4]; 4]);
 
-/// Precomputed fold context for `Fp2<Fp64<P>, C>`.
+/// Precomputed fold context for `FpExt2<Fp64<P>, C>`.
 ///
 /// Stores the 2×2 "multiply by the challenge `r`" matrix in the `[1, u]`
 /// basis (`u² = NR`) as canonical `u64` limbs. Folding then uses two
@@ -623,8 +623,8 @@ pub trait HasUnreducedOps: FieldCore {
     /// When `true`, `reduce_product_accum(sum_i mul_to_product_accum(a_i, b_i))`
     /// equals `sum_i a_i * b_i` for batch sizes within the accumulator's
     /// non-wrapping headroom. The conservative default is `false`; a field opts
-    /// in only once its accumulator is proven exact (see `RingSubfieldFp4<Fp32>`
-    /// and `Fp2<Fp64>`). Fields that leave it `false` keep the per-term reduce
+    /// in only once its accumulator is proven exact (see `RingSubfieldFpExt4<Fp32>`
+    /// and `FpExt2<Fp64>`). Fields that leave it `false` keep the per-term reduce
     /// path, so callers that must stay byte-identical to `Mul` are unaffected.
     const DELAYED_PRODUCT_SUM_IS_EXACT: bool = false;
 

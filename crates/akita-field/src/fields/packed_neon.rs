@@ -1,7 +1,7 @@
 //! AArch64 NEON packed backends for Fp32, Fp64, Fp128.
 
 use super::packed::{PackedField, PackedValue};
-use crate::fields::ext::{Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config};
+use crate::fields::ext::{FpExt2Config, PowerBasisFpExt4Config, TowerBasisFpExt4Config};
 use crate::fields::{Fp128, Fp32, Fp64};
 use crate::Invertible;
 use core::arch::aarch64::{

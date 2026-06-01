@@ -77,7 +77,7 @@ impl Neg for Fp32ProductAccum {
     }
 }
 
-/// Accumulator for `RingSubfieldFp4<Fp32>` products with delayed reduction.
+/// Accumulator for `RingSubfieldFpExt4<Fp32>` products with delayed reduction.
 ///
 /// Each slot holds the unreduced u128 sum for one of the 4 ring-subfield
 /// coefficients. The fused polynomial-multiply + φ(X)-reduction is already
@@ -95,7 +95,7 @@ impl RingSubfieldFp4Fp32ProductAccum {
     pub const ZERO: Self = Self([0; 4]);
 
     /// Reduce accumulated unreduced coefficients to a canonical
-    /// `RingSubfieldFp4<Fp32<P>>`.
+    /// `RingSubfieldFpExt4<Fp32<P>>`.
     #[inline]
     pub fn reduce<const P: u32>(self) -> [Fp32<P>; 4] {
         [
@@ -235,7 +235,7 @@ impl Neg for Fp64ProductAccum {
     }
 }
 
-/// Accumulator for `Fp2<Fp64>` products with delayed reduction.
+/// Accumulator for `FpExt2<Fp64>` products with delayed reduction.
 ///
 /// Each coefficient is stored as an `Fp64ProductAccum` (lo64/hi64 limb-split).
 /// This avoids carry-chain arithmetic -- addition is `wrapping_add` per slot.

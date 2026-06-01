@@ -1,24 +1,24 @@
 //! Packed extension field types using transpose-based packing.
 //!
-//! A `PackedFp2` stores `[PF; 2]` where `PF` is the packed base field.
-//! Each `PF` lane contains the corresponding coefficient of an `Fp2` element.
-//! This enables WIDTH-fold parallel arithmetic over `Fp2` using existing SIMD
+//! A `PackedFpExt2` stores `[PF; 2]` where `PF` is the packed base field.
+//! Each `PF` lane contains the corresponding coefficient of an `FpExt2` element.
+//! This enables WIDTH-fold parallel arithmetic over `FpExt2` using existing SIMD
 //! base-field operations.
 
 use crate::fields::ext::{
-    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
-    RingSubfieldFp4MulBackend, RingSubfieldFp8, RingSubfieldFp8MulBackend, TowerBasisFp4,
-    TowerBasisFp4Config,
+    FpExt2, FpExt2Config, PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend,
+    RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
+    RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config,
 };
 use crate::fields::packed::{HasPacking, PackedField, PackedValue};
 use crate::{FieldCore, Invertible};
 use akita_serialization::Valid;
 use core::ops::{Add, Mul, Sub};
 
-/// Packed `Fp2` elements stored in transpose layout: `[PF; 2]`.
+/// Packed `FpExt2` elements stored in transpose layout: `[PF; 2]`.
 ///
-/// If `PF` has width `W`, this represents `W` parallel `Fp2` values.
-pub struct PackedFp2<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> {
+/// If `PF` has width `W`, this represents `W` parallel `FpExt2` values.
+pub struct PackedFpExt2<F: FieldCore, C: FpExt2Config<F>, PF: PackedField<Scalar = F>> {
     /// Degree-0 coefficient (packed across SIMD lanes).
     pub c0: PF,
     /// Degree-1 coefficient (packed across SIMD lanes).
@@ -26,24 +26,29 @@ pub struct PackedFp2<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>>
     _marker: std::marker::PhantomData<fn() -> (F, C)>,
 }
 
-impl<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> Clone for PackedFp2<F, C, PF> {
+impl<F: FieldCore, C: FpExt2Config<F>, PF: PackedField<Scalar = F>> Clone
+    for PackedFpExt2<F, C, PF>
+{
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> Copy for PackedFp2<F, C, PF> {}
+impl<F: FieldCore, C: FpExt2Config<F>, PF: PackedField<Scalar = F>> Copy
+    for PackedFpExt2<F, C, PF>
+{
+}
 
-impl<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> std::fmt::Debug
-    for PackedFp2<F, C, PF>
+impl<F: FieldCore, C: FpExt2Config<F>, PF: PackedField<Scalar = F>> std::fmt::Debug
+    for PackedFpExt2<F, C, PF>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PackedFp2").finish_non_exhaustive()
+        f.debug_struct("PackedFpExt2").finish_non_exhaustive()
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> PackedFp2<F, C, PF> {
-    /// Create a `PackedFp2` from its two packed coefficients.
+impl<F: FieldCore, C: FpExt2Config<F>, PF: PackedField<Scalar = F>> PackedFpExt2<F, C, PF> {
+    /// Create a `PackedFpExt2` from its two packed coefficients.
     #[inline]
     pub fn new(c0: PF, c1: PF) -> Self {
         Self {
@@ -54,13 +59,13 @@ impl<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> PackedFp2<F, C,
     }
 }
 
-impl<F, C, PF> PackedValue for PackedFp2<F, C, PF>
+impl<F, C, PF> PackedValue for PackedFpExt2<F, C, PF>
 where
     F: FieldCore + Valid + 'static,
-    C: Fp2Config<F> + 'static,
+    C: FpExt2Config<F> + 'static,
     PF: PackedField<Scalar = F>,
 {
-    type Value = Fp2<F, C>;
+    type Value = FpExt2<F, C>;
     const WIDTH: usize = PF::WIDTH;
 
     fn from_fn<G>(mut f: G) -> Self
@@ -78,14 +83,14 @@ where
     }
 
     fn extract(&self, lane: usize) -> Self::Value {
-        Fp2::new(self.c0.extract(lane), self.c1.extract(lane))
+        FpExt2::new(self.c0.extract(lane), self.c1.extract(lane))
     }
 }
 
-impl<F, C, PF> Add for PackedFp2<F, C, PF>
+impl<F, C, PF> Add for PackedFpExt2<F, C, PF>
 where
     F: FieldCore,
-    C: Fp2Config<F>,
+    C: FpExt2Config<F>,
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
@@ -95,10 +100,10 @@ where
     }
 }
 
-impl<F, C, PF> Sub for PackedFp2<F, C, PF>
+impl<F, C, PF> Sub for PackedFpExt2<F, C, PF>
 where
     F: FieldCore,
-    C: Fp2Config<F>,
+    C: FpExt2Config<F>,
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
@@ -108,27 +113,27 @@ where
     }
 }
 
-impl<F, C, PF> Mul for PackedFp2<F, C, PF>
+impl<F, C, PF> Mul for PackedFpExt2<F, C, PF>
 where
     F: FieldCore,
-    C: Fp2Config<F>,
+    C: FpExt2Config<F>,
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
-        let (c0, c1) = PF::fp2_mul::<C>(self.c0, self.c1, rhs.c0, rhs.c1);
+        let (c0, c1) = PF::fp_ext2_mul::<C>(self.c0, self.c1, rhs.c0, rhs.c1);
         Self::new(c0, c1)
     }
 }
 
-impl<F, C, PF> PackedField for PackedFp2<F, C, PF>
+impl<F, C, PF> PackedField for PackedFpExt2<F, C, PF>
 where
     F: FieldCore + Valid + 'static,
-    C: Fp2Config<F> + 'static,
+    C: FpExt2Config<F> + 'static,
     PF: PackedField<Scalar = F>,
 {
-    type Scalar = Fp2<F, C>;
+    type Scalar = FpExt2<F, C>;
 
     #[inline]
     fn broadcast(value: Self::Scalar) -> Self {
@@ -150,31 +155,31 @@ where
     }
 }
 
-impl<F, C> HasPacking for Fp2<F, C>
+impl<F, C> HasPacking for FpExt2<F, C>
 where
     F: FieldCore + Valid + HasPacking + 'static,
-    C: Fp2Config<F> + 'static,
+    C: FpExt2Config<F> + 'static,
 {
-    type Packing = PackedFp2<F, C, F::Packing>;
+    type Packing = PackedFpExt2<F, C, F::Packing>;
 }
 
-/// Packed `TowerBasisFp4` elements stored in transpose layout: `[PackedFp2; 2]`.
-pub struct PackedTowerBasisFp4<
+/// Packed `TowerBasisFpExt4` elements stored in transpose layout: `[PackedFpExt2; 2]`.
+pub struct PackedTowerBasisFpExt4<
     F: FieldCore,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
     PF: PackedField<Scalar = F>,
 > {
     /// Packed tower-basis coefficients `[b0, b1]`.
-    pub coeffs: [PackedFp2<F, C2, PF>; 2],
+    pub coeffs: [PackedFpExt2<F, C2, PF>; 2],
     _marker: std::marker::PhantomData<fn() -> C4>,
 }
 
-impl<F, C2, C4, PF> Clone for PackedTowerBasisFp4<F, C2, C4, PF>
+impl<F, C2, C4, PF> Clone for PackedTowerBasisFpExt4<F, C2, C4, PF>
 where
     F: FieldCore,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
     PF: PackedField<Scalar = F>,
 {
     fn clone(&self) -> Self {
@@ -182,38 +187,38 @@ where
     }
 }
 
-impl<F, C2, C4, PF> Copy for PackedTowerBasisFp4<F, C2, C4, PF>
+impl<F, C2, C4, PF> Copy for PackedTowerBasisFpExt4<F, C2, C4, PF>
 where
     F: FieldCore,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
     PF: PackedField<Scalar = F>,
 {
 }
 
-impl<F, C2, C4, PF> std::fmt::Debug for PackedTowerBasisFp4<F, C2, C4, PF>
+impl<F, C2, C4, PF> std::fmt::Debug for PackedTowerBasisFpExt4<F, C2, C4, PF>
 where
     F: FieldCore,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
     PF: PackedField<Scalar = F>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PackedTowerBasisFp4")
+        f.debug_struct("PackedTowerBasisFpExt4")
             .finish_non_exhaustive()
     }
 }
 
-impl<F, C2, C4, PF> PackedTowerBasisFp4<F, C2, C4, PF>
+impl<F, C2, C4, PF> PackedTowerBasisFpExt4<F, C2, C4, PF>
 where
     F: FieldCore,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
     PF: PackedField<Scalar = F>,
 {
-    /// Create a `PackedTowerBasisFp4` from its two `PackedFp2` halves.
+    /// Create a `PackedTowerBasisFpExt4` from its two `PackedFpExt2` halves.
     #[inline]
-    pub fn new(c0: PackedFp2<F, C2, PF>, c1: PackedFp2<F, C2, PF>) -> Self {
+    pub fn new(c0: PackedFpExt2<F, C2, PF>, c1: PackedFpExt2<F, C2, PF>) -> Self {
         Self {
             coeffs: [c0, c1],
             _marker: std::marker::PhantomData,
@@ -221,43 +226,43 @@ where
     }
 }
 
-impl<F, C2, C4, PF> PackedValue for PackedTowerBasisFp4<F, C2, C4, PF>
+impl<F, C2, C4, PF> PackedValue for PackedTowerBasisFpExt4<F, C2, C4, PF>
 where
     F: FieldCore + Valid + 'static,
-    C2: Fp2Config<F> + 'static,
-    C4: TowerBasisFp4Config<F, C2> + 'static,
+    C2: FpExt2Config<F> + 'static,
+    C4: TowerBasisFpExt4Config<F, C2> + 'static,
     PF: PackedField<Scalar = F>,
 {
-    type Value = TowerBasisFp4<F, C2, C4>;
+    type Value = TowerBasisFpExt4<F, C2, C4>;
     const WIDTH: usize = PF::WIDTH;
 
     fn from_fn<G>(mut f: G) -> Self
     where
         G: FnMut(usize) -> Self::Value,
     {
-        let mut c0s: Vec<Fp2<F, C2>> = Vec::with_capacity(PF::WIDTH);
-        let mut c1s: Vec<Fp2<F, C2>> = Vec::with_capacity(PF::WIDTH);
+        let mut c0s: Vec<FpExt2<F, C2>> = Vec::with_capacity(PF::WIDTH);
+        let mut c1s: Vec<FpExt2<F, C2>> = Vec::with_capacity(PF::WIDTH);
         for i in 0..PF::WIDTH {
             let val = f(i);
             c0s.push(val.coeffs[0]);
             c1s.push(val.coeffs[1]);
         }
         Self::new(
-            PackedFp2::from_fn(|i| c0s[i]),
-            PackedFp2::from_fn(|i| c1s[i]),
+            PackedFpExt2::from_fn(|i| c0s[i]),
+            PackedFpExt2::from_fn(|i| c1s[i]),
         )
     }
 
     fn extract(&self, lane: usize) -> Self::Value {
-        TowerBasisFp4::new(self.coeffs[0].extract(lane), self.coeffs[1].extract(lane))
+        TowerBasisFpExt4::new(self.coeffs[0].extract(lane), self.coeffs[1].extract(lane))
     }
 }
 
-impl<F, C2, C4, PF> Add for PackedTowerBasisFp4<F, C2, C4, PF>
+impl<F, C2, C4, PF> Add for PackedTowerBasisFpExt4<F, C2, C4, PF>
 where
     F: FieldCore,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
@@ -270,11 +275,11 @@ where
     }
 }
 
-impl<F, C2, C4, PF> Sub for PackedTowerBasisFp4<F, C2, C4, PF>
+impl<F, C2, C4, PF> Sub for PackedTowerBasisFpExt4<F, C2, C4, PF>
 where
     F: FieldCore,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
@@ -287,17 +292,17 @@ where
     }
 }
 
-impl<F, C2, C4, PF> Mul for PackedTowerBasisFp4<F, C2, C4, PF>
+impl<F, C2, C4, PF> Mul for PackedTowerBasisFpExt4<F, C2, C4, PF>
 where
     F: FieldCore + Valid + 'static,
-    C2: Fp2Config<F> + 'static,
-    C4: TowerBasisFp4Config<F, C2>,
+    C2: FpExt2Config<F> + 'static,
+    C4: TowerBasisFpExt4Config<F, C2>,
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
-        let [c0, c1, c2, c3] = PF::tower_basis_fp4_mul::<C2, C4>(
+        let [c0, c1, c2, c3] = PF::tower_basis_fp_ext4_mul::<C2, C4>(
             [
                 self.coeffs[0].c0,
                 self.coeffs[1].c0,
@@ -311,30 +316,30 @@ where
                 rhs.coeffs[1].c1,
             ],
         );
-        Self::new(PackedFp2::new(c0, c2), PackedFp2::new(c1, c3))
+        Self::new(PackedFpExt2::new(c0, c2), PackedFpExt2::new(c1, c3))
     }
 }
 
-impl<F, C2, C4, PF> PackedField for PackedTowerBasisFp4<F, C2, C4, PF>
+impl<F, C2, C4, PF> PackedField for PackedTowerBasisFpExt4<F, C2, C4, PF>
 where
-    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2> + 'static,
-    C2: Fp2Config<F> + 'static,
-    C4: TowerBasisFp4Config<F, C2> + 'static,
+    F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C2> + 'static,
+    C2: FpExt2Config<F> + 'static,
+    C4: TowerBasisFpExt4Config<F, C2> + 'static,
     PF: PackedField<Scalar = F>,
 {
-    type Scalar = TowerBasisFp4<F, C2, C4>;
+    type Scalar = TowerBasisFpExt4<F, C2, C4>;
 
     #[inline]
     fn broadcast(value: Self::Scalar) -> Self {
         Self::new(
-            PackedFp2::broadcast(value.coeffs[0]),
-            PackedFp2::broadcast(value.coeffs[1]),
+            PackedFpExt2::broadcast(value.coeffs[0]),
+            PackedFpExt2::broadcast(value.coeffs[1]),
         )
     }
 
     #[inline(always)]
     fn square(self) -> Self {
-        let [c0, c1, c2, c3] = PF::tower_basis_fp4_mul::<C2, C4>(
+        let [c0, c1, c2, c3] = PF::tower_basis_fp_ext4_mul::<C2, C4>(
             [
                 self.coeffs[0].c0,
                 self.coeffs[1].c0,
@@ -348,7 +353,7 @@ where
                 self.coeffs[1].c1,
             ],
         );
-        Self::new(PackedFp2::new(c0, c2), PackedFp2::new(c1, c3))
+        Self::new(PackedFpExt2::new(c0, c2), PackedFpExt2::new(c1, c3))
     }
 
     #[inline(always)]
@@ -360,12 +365,12 @@ where
         let v1 = self.coeffs[1].square();
         let nr = C4::non_residue();
         let nr_v1 = if nr.coeffs[0].is_zero() && nr.coeffs[1] == F::one() {
-            PackedFp2::new(C2::mul_non_residue(v1.c1, PF::broadcast), v1.c0)
+            PackedFpExt2::new(C2::mul_non_residue(v1.c1, PF::broadcast), v1.c0)
         } else {
-            PackedFp2::broadcast(nr) * v1
+            PackedFpExt2::broadcast(nr) * v1
         };
         let inv_norm = (v0 - nr_v1).inverse()?;
-        let zero = PackedFp2::broadcast(Fp2::zero());
+        let zero = PackedFpExt2::broadcast(FpExt2::zero());
         Some(Self::new(
             self.coeffs[0] * inv_norm,
             (zero - self.coeffs[1]) * inv_norm,
@@ -373,27 +378,30 @@ where
     }
 }
 
-impl<F, C2, C4> HasPacking for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> HasPacking for TowerBasisFpExt4<F, C2, C4>
 where
-    F: FieldCore + Valid + HasPacking + PowerBasisFp4MulBackend<C2> + 'static,
-    C2: Fp2Config<F> + 'static,
-    C4: TowerBasisFp4Config<F, C2> + 'static,
+    F: FieldCore + Valid + HasPacking + PowerBasisFpExt4MulBackend<C2> + 'static,
+    C2: FpExt2Config<F> + 'static,
+    C4: TowerBasisFpExt4Config<F, C2> + 'static,
 {
-    type Packing = PackedTowerBasisFp4<F, C2, C4, F::Packing>;
+    type Packing = PackedTowerBasisFpExt4<F, C2, C4, F::Packing>;
 }
 
-/// Packed `PowerBasisFp4` elements stored as `[PF; 4]`.
-pub struct PackedPowerBasisFp4<F: FieldCore, C: PowerBasisFp4Config<F>, PF: PackedField<Scalar = F>>
-{
+/// Packed `PowerBasisFpExt4` elements stored as `[PF; 4]`.
+pub struct PackedPowerBasisFpExt4<
+    F: FieldCore,
+    C: PowerBasisFpExt4Config<F>,
+    PF: PackedField<Scalar = F>,
+> {
     /// Packed coefficients in power-basis order.
     pub coeffs: [PF; 4],
     _marker: std::marker::PhantomData<fn() -> (F, C)>,
 }
 
-impl<F, C, PF> Clone for PackedPowerBasisFp4<F, C, PF>
+impl<F, C, PF> Clone for PackedPowerBasisFpExt4<F, C, PF>
 where
     F: FieldCore,
-    C: PowerBasisFp4Config<F>,
+    C: PowerBasisFpExt4Config<F>,
     PF: PackedField<Scalar = F>,
 {
     fn clone(&self) -> Self {
@@ -401,30 +409,30 @@ where
     }
 }
 
-impl<F, C, PF> Copy for PackedPowerBasisFp4<F, C, PF>
+impl<F, C, PF> Copy for PackedPowerBasisFpExt4<F, C, PF>
 where
     F: FieldCore,
-    C: PowerBasisFp4Config<F>,
+    C: PowerBasisFpExt4Config<F>,
     PF: PackedField<Scalar = F>,
 {
 }
 
-impl<F, C, PF> std::fmt::Debug for PackedPowerBasisFp4<F, C, PF>
+impl<F, C, PF> std::fmt::Debug for PackedPowerBasisFpExt4<F, C, PF>
 where
     F: FieldCore,
-    C: PowerBasisFp4Config<F>,
+    C: PowerBasisFpExt4Config<F>,
     PF: PackedField<Scalar = F>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PackedPowerBasisFp4")
+        f.debug_struct("PackedPowerBasisFpExt4")
             .finish_non_exhaustive()
     }
 }
 
-impl<F, C, PF> PackedPowerBasisFp4<F, C, PF>
+impl<F, C, PF> PackedPowerBasisFpExt4<F, C, PF>
 where
     F: FieldCore,
-    C: PowerBasisFp4Config<F>,
+    C: PowerBasisFpExt4Config<F>,
     PF: PackedField<Scalar = F>,
 {
     /// Create a packed value from packed power-basis coefficients.
@@ -437,13 +445,13 @@ where
     }
 }
 
-impl<F, C, PF> PackedValue for PackedPowerBasisFp4<F, C, PF>
+impl<F, C, PF> PackedValue for PackedPowerBasisFpExt4<F, C, PF>
 where
     F: FieldCore + Valid + 'static,
-    C: PowerBasisFp4Config<F> + 'static,
+    C: PowerBasisFpExt4Config<F> + 'static,
     PF: PackedField<Scalar = F>,
 {
-    type Value = PowerBasisFp4<F, C>;
+    type Value = PowerBasisFpExt4<F, C>;
     const WIDTH: usize = PF::WIDTH;
 
     fn from_fn<G>(mut f: G) -> Self
@@ -461,14 +469,14 @@ where
     }
 
     fn extract(&self, lane: usize) -> Self::Value {
-        PowerBasisFp4::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
+        PowerBasisFpExt4::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
     }
 }
 
-impl<F, C, PF> Add for PackedPowerBasisFp4<F, C, PF>
+impl<F, C, PF> Add for PackedPowerBasisFpExt4<F, C, PF>
 where
     F: FieldCore,
-    C: PowerBasisFp4Config<F>,
+    C: PowerBasisFpExt4Config<F>,
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
@@ -478,10 +486,10 @@ where
     }
 }
 
-impl<F, C, PF> Sub for PackedPowerBasisFp4<F, C, PF>
+impl<F, C, PF> Sub for PackedPowerBasisFpExt4<F, C, PF>
 where
     F: FieldCore,
-    C: PowerBasisFp4Config<F>,
+    C: PowerBasisFpExt4Config<F>,
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
@@ -491,26 +499,26 @@ where
     }
 }
 
-impl<F, C, PF> Mul for PackedPowerBasisFp4<F, C, PF>
+impl<F, C, PF> Mul for PackedPowerBasisFpExt4<F, C, PF>
 where
     F: FieldCore,
-    C: PowerBasisFp4Config<F>,
+    C: PowerBasisFpExt4Config<F>,
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
-        Self::new(PF::power_basis_fp4_mul::<C>(self.coeffs, rhs.coeffs))
+        Self::new(PF::power_basis_fp_ext4_mul::<C>(self.coeffs, rhs.coeffs))
     }
 }
 
-impl<F, C, PF> PackedField for PackedPowerBasisFp4<F, C, PF>
+impl<F, C, PF> PackedField for PackedPowerBasisFpExt4<F, C, PF>
 where
-    F: FieldCore + Valid + PowerBasisFp4MulBackend<C> + 'static,
-    C: PowerBasisFp4Config<F> + 'static,
+    F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C> + 'static,
+    C: PowerBasisFpExt4Config<F> + 'static,
     PF: PackedField<Scalar = F>,
 {
-    type Scalar = PowerBasisFp4<F, C>;
+    type Scalar = PowerBasisFpExt4<F, C>;
 
     #[inline]
     fn broadcast(value: Self::Scalar) -> Self {
@@ -519,7 +527,7 @@ where
 
     #[inline(always)]
     fn square(self) -> Self {
-        Self::new(PF::power_basis_fp4_mul::<C>(self.coeffs, self.coeffs))
+        Self::new(PF::power_basis_fp_ext4_mul::<C>(self.coeffs, self.coeffs))
     }
 
     #[inline(always)]
@@ -546,22 +554,22 @@ where
     }
 }
 
-impl<F, C> HasPacking for PowerBasisFp4<F, C>
+impl<F, C> HasPacking for PowerBasisFpExt4<F, C>
 where
-    F: FieldCore + Valid + HasPacking + PowerBasisFp4MulBackend<C> + 'static,
-    C: PowerBasisFp4Config<F> + 'static,
+    F: FieldCore + Valid + HasPacking + PowerBasisFpExt4MulBackend<C> + 'static,
+    C: PowerBasisFpExt4Config<F> + 'static,
 {
-    type Packing = PackedPowerBasisFp4<F, C, F::Packing>;
+    type Packing = PackedPowerBasisFpExt4<F, C, F::Packing>;
 }
 
-/// Packed `RingSubfieldFp4` elements stored as `[PF; 4]`.
-pub struct PackedRingSubfieldFp4<F: FieldCore, PF: PackedField<Scalar = F>> {
+/// Packed `RingSubfieldFpExt4` elements stored as `[PF; 4]`.
+pub struct PackedRingSubfieldFpExt4<F: FieldCore, PF: PackedField<Scalar = F>> {
     /// Packed coefficients in `[1, e1, e2, e3]` order.
     pub coeffs: [PF; 4],
     _marker: std::marker::PhantomData<fn() -> F>,
 }
 
-impl<F, PF> Clone for PackedRingSubfieldFp4<F, PF>
+impl<F, PF> Clone for PackedRingSubfieldFpExt4<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
@@ -571,25 +579,25 @@ where
     }
 }
 
-impl<F, PF> Copy for PackedRingSubfieldFp4<F, PF>
+impl<F, PF> Copy for PackedRingSubfieldFpExt4<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
 {
 }
 
-impl<F, PF> std::fmt::Debug for PackedRingSubfieldFp4<F, PF>
+impl<F, PF> std::fmt::Debug for PackedRingSubfieldFpExt4<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PackedRingSubfieldFp4")
+        f.debug_struct("PackedRingSubfieldFpExt4")
             .finish_non_exhaustive()
     }
 }
 
-impl<F, PF> PackedRingSubfieldFp4<F, PF>
+impl<F, PF> PackedRingSubfieldFpExt4<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
@@ -606,16 +614,16 @@ where
     /// Square using the packed ring-subfield backend hook.
     #[inline(always)]
     pub fn square(self) -> Self {
-        Self::new(PF::ring_subfield_fp4_square(self.coeffs))
+        Self::new(PF::ring_subfield_fp_ext4_square(self.coeffs))
     }
 }
 
-impl<F, PF> PackedValue for PackedRingSubfieldFp4<F, PF>
+impl<F, PF> PackedValue for PackedRingSubfieldFpExt4<F, PF>
 where
     F: FieldCore + Valid + 'static,
     PF: PackedField<Scalar = F>,
 {
-    type Value = RingSubfieldFp4<F>;
+    type Value = RingSubfieldFpExt4<F>;
     const WIDTH: usize = PF::WIDTH;
 
     fn from_fn<G>(mut f: G) -> Self
@@ -633,11 +641,11 @@ where
     }
 
     fn extract(&self, lane: usize) -> Self::Value {
-        RingSubfieldFp4::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
+        RingSubfieldFpExt4::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
     }
 }
 
-impl<F, PF> Add for PackedRingSubfieldFp4<F, PF>
+impl<F, PF> Add for PackedRingSubfieldFpExt4<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
@@ -651,7 +659,7 @@ where
     }
 }
 
-impl<F, PF> Sub for PackedRingSubfieldFp4<F, PF>
+impl<F, PF> Sub for PackedRingSubfieldFpExt4<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
@@ -665,7 +673,7 @@ where
     }
 }
 
-impl<F, PF> Mul for PackedRingSubfieldFp4<F, PF>
+impl<F, PF> Mul for PackedRingSubfieldFpExt4<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
@@ -673,16 +681,16 @@ where
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
-        Self::new(PF::ring_subfield_fp4_mul(self.coeffs, rhs.coeffs))
+        Self::new(PF::ring_subfield_fp_ext4_mul(self.coeffs, rhs.coeffs))
     }
 }
 
-impl<F, PF> PackedField for PackedRingSubfieldFp4<F, PF>
+impl<F, PF> PackedField for PackedRingSubfieldFpExt4<F, PF>
 where
-    F: FieldCore + Valid + RingSubfieldFp4MulBackend + 'static,
+    F: FieldCore + Valid + RingSubfieldFpExt4MulBackend + 'static,
     PF: PackedField<Scalar = F>,
 {
-    type Scalar = RingSubfieldFp4<F>;
+    type Scalar = RingSubfieldFpExt4<F>;
 
     #[inline]
     fn broadcast(value: Self::Scalar) -> Self {
@@ -691,7 +699,7 @@ where
 
     #[inline(always)]
     fn square(self) -> Self {
-        Self::new(PF::ring_subfield_fp4_square(self.coeffs))
+        Self::new(PF::ring_subfield_fp_ext4_square(self.coeffs))
     }
 
     #[inline(always)]
@@ -699,27 +707,27 @@ where
     where
         Self::Scalar: Invertible,
     {
-        Some(Self::new(PF::ring_subfield_fp4_inverse(self.coeffs)?))
+        Some(Self::new(PF::ring_subfield_fp_ext4_inverse(self.coeffs)?))
     }
 }
 
-impl<F> HasPacking for RingSubfieldFp4<F>
+impl<F> HasPacking for RingSubfieldFpExt4<F>
 where
-    F: FieldCore + Valid + HasPacking + RingSubfieldFp4MulBackend + 'static,
+    F: FieldCore + Valid + HasPacking + RingSubfieldFpExt4MulBackend + 'static,
 {
-    type Packing = PackedRingSubfieldFp4<F, F::Packing>;
+    type Packing = PackedRingSubfieldFpExt4<F, F::Packing>;
 }
 
-/// Packed `RingSubfieldFp8` elements stored in transpose layout: `[PF; 8]`.
+/// Packed `RingSubfieldFpExt8` elements stored in transpose layout: `[PF; 8]`.
 ///
 /// Each `PF` lane contains one coefficient of a degree-8 Chebyshev-basis element.
-pub struct PackedRingSubfieldFp8<F: FieldCore, PF: PackedField<Scalar = F>> {
+pub struct PackedRingSubfieldFpExt8<F: FieldCore, PF: PackedField<Scalar = F>> {
     /// Packed coefficients in `[1, e1, ..., e7]` order.
     pub coeffs: [PF; 8],
     _marker: std::marker::PhantomData<fn() -> F>,
 }
 
-impl<F, PF> Clone for PackedRingSubfieldFp8<F, PF>
+impl<F, PF> Clone for PackedRingSubfieldFpExt8<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
@@ -729,25 +737,25 @@ where
     }
 }
 
-impl<F, PF> Copy for PackedRingSubfieldFp8<F, PF>
+impl<F, PF> Copy for PackedRingSubfieldFpExt8<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
 {
 }
 
-impl<F, PF> std::fmt::Debug for PackedRingSubfieldFp8<F, PF>
+impl<F, PF> std::fmt::Debug for PackedRingSubfieldFpExt8<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PackedRingSubfieldFp8")
+        f.debug_struct("PackedRingSubfieldFpExt8")
             .finish_non_exhaustive()
     }
 }
 
-impl<F, PF> PackedRingSubfieldFp8<F, PF>
+impl<F, PF> PackedRingSubfieldFpExt8<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
@@ -762,12 +770,12 @@ where
     }
 }
 
-impl<F, PF> PackedValue for PackedRingSubfieldFp8<F, PF>
+impl<F, PF> PackedValue for PackedRingSubfieldFpExt8<F, PF>
 where
     F: FieldCore + Valid + 'static,
     PF: PackedField<Scalar = F>,
 {
-    type Value = RingSubfieldFp8<F>;
+    type Value = RingSubfieldFpExt8<F>;
     const WIDTH: usize = PF::WIDTH;
 
     fn from_fn<G>(mut f: G) -> Self
@@ -785,11 +793,11 @@ where
     }
 
     fn extract(&self, lane: usize) -> Self::Value {
-        RingSubfieldFp8::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
+        RingSubfieldFpExt8::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
     }
 }
 
-impl<F, PF> Add for PackedRingSubfieldFp8<F, PF>
+impl<F, PF> Add for PackedRingSubfieldFpExt8<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
@@ -801,7 +809,7 @@ where
     }
 }
 
-impl<F, PF> Sub for PackedRingSubfieldFp8<F, PF>
+impl<F, PF> Sub for PackedRingSubfieldFpExt8<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
@@ -813,7 +821,7 @@ where
     }
 }
 
-impl<F, PF> Mul for PackedRingSubfieldFp8<F, PF>
+impl<F, PF> Mul for PackedRingSubfieldFpExt8<F, PF>
 where
     F: FieldCore,
     PF: PackedField<Scalar = F>,
@@ -821,16 +829,16 @@ where
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
-        Self::new(PF::ring_subfield_fp8_mul(self.coeffs, rhs.coeffs))
+        Self::new(PF::ring_subfield_fp_ext8_mul(self.coeffs, rhs.coeffs))
     }
 }
 
-impl<F, PF> PackedField for PackedRingSubfieldFp8<F, PF>
+impl<F, PF> PackedField for PackedRingSubfieldFpExt8<F, PF>
 where
-    F: FieldCore + Valid + RingSubfieldFp8MulBackend + 'static,
+    F: FieldCore + Valid + RingSubfieldFpExt8MulBackend + 'static,
     PF: PackedField<Scalar = F>,
 {
-    type Scalar = RingSubfieldFp8<F>;
+    type Scalar = RingSubfieldFpExt8<F>;
 
     #[inline]
     fn broadcast(value: Self::Scalar) -> Self {
@@ -839,7 +847,7 @@ where
 
     #[inline(always)]
     fn square(self) -> Self {
-        Self::new(PF::ring_subfield_fp8_square(self.coeffs))
+        Self::new(PF::ring_subfield_fp_ext8_square(self.coeffs))
     }
 
     #[inline(always)]
@@ -847,7 +855,7 @@ where
     where
         Self::Scalar: Invertible,
     {
-        // Fp8 inversion uses Gaussian elimination — delegate lane by lane.
+        // FpExt8 inversion uses Gaussian elimination — delegate lane by lane.
         let mut coeffs: [Vec<F>; 8] = std::array::from_fn(|_| Vec::with_capacity(PF::WIDTH));
         for lane in 0..PF::WIDTH {
             let scalar = self.extract(lane);
@@ -862,11 +870,11 @@ where
     }
 }
 
-impl<F> HasPacking for RingSubfieldFp8<F>
+impl<F> HasPacking for RingSubfieldFpExt8<F>
 where
-    F: FieldCore + Valid + HasPacking + RingSubfieldFp8MulBackend + 'static,
+    F: FieldCore + Valid + HasPacking + RingSubfieldFpExt8MulBackend + 'static,
 {
-    type Packing = PackedRingSubfieldFp8<F, F::Packing>;
+    type Packing = PackedRingSubfieldFpExt8<F, F::Packing>;
 }
 
 #[cfg(test)]

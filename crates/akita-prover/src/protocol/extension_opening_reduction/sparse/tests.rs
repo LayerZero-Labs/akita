@@ -1,11 +1,11 @@
 use super::*;
-use akita_field::fields::{Prime24Offset3, TowerBasisFp4, TwoNr, UnitNr};
+use akita_field::fields::{Prime24Offset3, TowerBasisFpExt4, TwoNr, UnitNr};
 use akita_field::RandomSampling;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
 type F = Prime24Offset3;
-type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+type E = TowerBasisFpExt4<F, TwoNr, UnitNr>;
 
 /// One entry per stride-window at a random within-window offset — the real
 /// `np = 1` EOR witness shape (`stride = onehot_k / width = 2^s`).
@@ -102,13 +102,13 @@ fn merge_free_matches_general_round_by_round() {
 /// merge-free fast path both disabled). Covers the sequential and parallel
 /// (`>= 2^14` entries) regimes.
 ///
-/// Uses `RingSubfieldFp4<Fp32>` (the production fp32 `onehot_d32` field): it
+/// Uses `RingSubfieldFpExt4<Fp32>` (the production fp32 `onehot_d32` field): it
 /// implements `HasOptimizedFold`, required by the term-level fused path, and
 /// takes the delayed-reduction accumulator (`DELAYED_PRODUCT_SUM_IS_EXACT`).
 #[test]
 fn fused_term_matches_unfused_reference() {
-    use akita_field::fields::{Prime32Offset99, RingSubfieldFp4};
-    type TE = RingSubfieldFp4<Prime32Offset99>;
+    use akita_field::fields::{Prime32Offset99, RingSubfieldFpExt4};
+    type TE = RingSubfieldFpExt4<Prime32Offset99>;
 
     for (log_chunks, s) in [(6usize, 4usize), (14usize, 4usize)] {
         let mut rng = StdRng::seed_from_u64(0xfeed_1234 ^ ((log_chunks as u64) << 8));

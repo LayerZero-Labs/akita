@@ -10,13 +10,13 @@ use rand::SeedableRng;
 
 type F = Fp64<4294967197>;
 type E2 = Ext2<F>;
-type E4 = TowerBasisFp4<F, TwoNr, UnitNr>;
-type P4 = PowerBasisFp4<F, TwoNr>;
-type R4 = RingSubfieldFp4<F>;
-type R8 = RingSubfieldFp8<F>;
+type E4 = TowerBasisFpExt4<F, TwoNr, UnitNr>;
+type P4 = PowerBasisFpExt4<F, TwoNr>;
+type R4 = RingSubfieldFpExt4<F>;
+type R8 = RingSubfieldFpExt8<F>;
 
 #[test]
-fn fp2_add_sub_identity() {
+fn fp_ext2_add_sub_identity() {
     let a = E2::new(F::from_u64(3), F::from_u64(5));
     let b = E2::new(F::from_u64(7), F::from_u64(11));
     let c = a + b;
@@ -25,14 +25,14 @@ fn fp2_add_sub_identity() {
 }
 
 #[test]
-fn fp2_mul_one() {
+fn fp_ext2_mul_one() {
     let a = E2::new(F::from_u64(42), F::from_u64(13));
     assert_eq!(a * E2::one(), a);
     assert_eq!(E2::one() * a, a);
 }
 
 #[test]
-fn fp2_mul_commutativity() {
+fn fp_ext2_mul_commutativity() {
     let mut rng = StdRng::seed_from_u64(1234);
     let a = E2::random(&mut rng);
     let b = E2::random(&mut rng);
@@ -40,12 +40,12 @@ fn fp2_mul_commutativity() {
 }
 
 #[test]
-fn fp2_karatsuba_matches_schoolbook() {
+fn fp_ext2_karatsuba_matches_schoolbook() {
     let mut rng = StdRng::seed_from_u64(5678);
     for _ in 0..100 {
         let a = E2::random(&mut rng);
         let b = E2::random(&mut rng);
-        let nr = <TwoNr as Fp2Config<F>>::non_residue();
+        let nr = <TwoNr as FpExt2Config<F>>::non_residue();
         let expected = E2::new(
             (a.coeffs[0] * b.coeffs[0]) + (nr * (a.coeffs[1] * b.coeffs[1])),
             (a.coeffs[0] * b.coeffs[1]) + (a.coeffs[1] * b.coeffs[0]),
@@ -55,7 +55,7 @@ fn fp2_karatsuba_matches_schoolbook() {
 }
 
 #[test]
-fn fp2_square_matches_mul() {
+fn fp_ext2_square_matches_mul() {
     let mut rng = StdRng::seed_from_u64(9012);
     for _ in 0..100 {
         let a = E2::random(&mut rng);
@@ -64,7 +64,7 @@ fn fp2_square_matches_mul() {
 }
 
 #[test]
-fn fp2_inv() {
+fn fp_ext2_inv() {
     let mut rng = StdRng::seed_from_u64(3456);
     for _ in 0..50 {
         let a = E2::random(&mut rng);
@@ -76,7 +76,7 @@ fn fp2_inv() {
 }
 
 #[test]
-fn fp4_mul_commutativity() {
+fn fp_ext4_mul_commutativity() {
     let mut rng = StdRng::seed_from_u64(7890);
     let a = E4::random(&mut rng);
     let b = E4::random(&mut rng);
@@ -84,7 +84,7 @@ fn fp4_mul_commutativity() {
 }
 
 #[test]
-fn fp4_square_matches_mul() {
+fn fp_ext4_square_matches_mul() {
     let mut rng = StdRng::seed_from_u64(1111);
     for _ in 0..50 {
         let a = E4::random(&mut rng);
@@ -93,7 +93,7 @@ fn fp4_square_matches_mul() {
 }
 
 #[test]
-fn fp4_inv() {
+fn fp_ext4_inv() {
     let mut rng = StdRng::seed_from_u64(2222);
     for _ in 0..50 {
         let a = E4::random(&mut rng);
@@ -105,7 +105,7 @@ fn fp4_inv() {
 }
 
 #[test]
-fn power_basis_fp4_square_matches_mul() {
+fn power_basis_fp_ext4_square_matches_mul() {
     let mut rng = StdRng::seed_from_u64(3333);
     for _ in 0..50 {
         let a = P4::random(&mut rng);
@@ -114,7 +114,7 @@ fn power_basis_fp4_square_matches_mul() {
 }
 
 #[test]
-fn power_basis_fp4_inv() {
+fn power_basis_fp_ext4_inv() {
     let mut rng = StdRng::seed_from_u64(4444);
     for _ in 0..50 {
         let a = P4::random(&mut rng);
@@ -126,7 +126,7 @@ fn power_basis_fp4_inv() {
 }
 
 #[test]
-fn ring_subfield_fp4_multiplication_table() {
+fn ring_subfield_fp_ext4_multiplication_table() {
     let two = F::from_u64(2);
     let e1 = R4::new([F::zero(), F::one(), F::zero(), F::zero()]);
     let e2 = R4::new([F::zero(), F::zero(), F::one(), F::zero()]);
@@ -142,7 +142,7 @@ fn ring_subfield_fp4_multiplication_table() {
 }
 
 #[test]
-fn ring_subfield_fp4_square_matches_mul() {
+fn ring_subfield_fp_ext4_square_matches_mul() {
     let mut rng = StdRng::seed_from_u64(5555);
     for _ in 0..50 {
         let a = R4::random(&mut rng);
@@ -151,7 +151,7 @@ fn ring_subfield_fp4_square_matches_mul() {
 }
 
 #[test]
-fn ring_subfield_fp4_inv() {
+fn ring_subfield_fp_ext4_inv() {
     let mut rng = StdRng::seed_from_u64(6666);
     for _ in 0..50 {
         let a = R4::random(&mut rng);
@@ -163,7 +163,7 @@ fn ring_subfield_fp4_inv() {
 }
 
 #[test]
-fn ring_subfield_fp8_multiplication_table_spot_checks() {
+fn ring_subfield_fp_ext8_multiplication_table_spot_checks() {
     let two = F::from_u64(2);
     let e = |idx: usize| {
         R8::new(std::array::from_fn(|i| {
@@ -193,7 +193,7 @@ fn ring_subfield_fp8_multiplication_table_spot_checks() {
 }
 
 #[test]
-fn ring_subfield_fp8_square_matches_mul() {
+fn ring_subfield_fp_ext8_square_matches_mul() {
     let mut rng = StdRng::seed_from_u64(7777);
     for _ in 0..50 {
         let a = R8::random(&mut rng);
@@ -202,7 +202,7 @@ fn ring_subfield_fp8_square_matches_mul() {
 }
 
 #[test]
-fn ring_subfield_fp8_inv() {
+fn ring_subfield_fp_ext8_inv() {
     let mut rng = StdRng::seed_from_u64(8888);
     for _ in 0..50 {
         let a = R8::random(&mut rng);
@@ -214,7 +214,7 @@ fn ring_subfield_fp8_inv() {
 }
 
 #[test]
-fn ring_subfield_fp8_serialization_is_coeff_ordered() {
+fn ring_subfield_fp_ext8_serialization_is_coeff_ordered() {
     let x = R8::new(std::array::from_fn(|i| F::from_u64(i as u64 + 1)));
     let mut bytes = Vec::new();
     x.serialize_with_mode(&mut bytes, Compress::No).unwrap();
@@ -239,7 +239,7 @@ fn ring_subfield_fp8_serialization_is_coeff_ordered() {
 }
 
 #[test]
-fn frobenius_fp2_is_conjugation() {
+fn frobenius_fp_ext2_is_conjugation() {
     let x = E2::new(F::from_u64(13), F::from_u64(21));
     assert_eq!(<E2 as FrobeniusExtField<F>>::frobenius_pow(x, 0), x);
     assert_eq!(
@@ -254,7 +254,7 @@ fn frobenius_fp2_is_conjugation() {
 }
 
 #[test]
-fn canonical_moore_thetas_solve_fp2() {
+fn canonical_moore_thetas_solve_fp_ext2() {
     validate_canonical_frobenius_thetas::<F, E2>(2).unwrap();
     let thetas = canonical_frobenius_thetas::<F, E2>(2).unwrap();
     let z = [
@@ -300,7 +300,7 @@ fn canonical_ring_subfield_thetas_are_the_packing_basis() {
 }
 
 #[test]
-fn canonical_ring_subfield_fp8_thetas_are_the_packing_basis() {
+fn canonical_ring_subfield_fp_ext8_thetas_are_the_packing_basis() {
     let thetas = canonical_frobenius_thetas::<F, R8>(8).unwrap();
     for (idx, theta) in thetas.iter().enumerate().take(8) {
         assert_eq!(
@@ -326,7 +326,7 @@ fn duplicate_moore_theta_rejects() {
 }
 
 #[test]
-fn from_small_int_fp2() {
+fn from_small_int_fp_ext2() {
     let a = E2::from_u64(42);
     assert_eq!(a, E2::new(F::from_u64(42), F::zero()));
 
@@ -341,7 +341,7 @@ fn from_small_int_fp2() {
 }
 
 #[test]
-fn from_small_int_fp4() {
+fn from_small_int_fp_ext4() {
     let a = E4::from_u64(42);
     assert_eq!(a, E4::new(E2::from_u64(42), E2::zero()));
 
@@ -385,7 +385,7 @@ fn ext_field_from_base_slice() {
 }
 
 #[test]
-fn tower_and_power_basis_fp4_multiplication_agree() {
+fn tower_and_power_basis_fp_ext4_multiplication_agree() {
     let x_p = P4::new([
         F::from_u64(1),
         F::from_u64(2),
@@ -406,7 +406,7 @@ fn tower_and_power_basis_fp4_multiplication_agree() {
 }
 
 #[test]
-fn power_basis_fp4_transcript_limb_order_is_univariate() {
+fn power_basis_fp_ext4_transcript_limb_order_is_univariate() {
     let x = P4::new([
         F::from_u64(1),
         F::from_u64(2),
@@ -425,7 +425,7 @@ fn power_basis_fp4_transcript_limb_order_is_univariate() {
 }
 
 #[test]
-fn tower_basis_fp4_transcript_limb_order_is_univariate() {
+fn tower_basis_fp_ext4_transcript_limb_order_is_univariate() {
     let x = E4::new(
         E2::new(F::from_u64(1), F::from_u64(3)),
         E2::new(F::from_u64(2), F::from_u64(4)),
@@ -466,21 +466,21 @@ fn eq_impl() {
 }
 
 #[test]
-fn ring_subfield_fp4_fp32_product_accum_matches_direct_mul() {
-    use super::ring_subfield_fp4::ring_subfield_fp4_mul_to_accum_fp32;
+fn ring_subfield_fp_ext4_fp32_product_accum_matches_direct_mul() {
+    use super::ring_subfield_fp_ext4::ring_subfield_fp_ext4_mul_to_accum_fp32;
     use crate::fields::wide::RingSubfieldFp4Fp32ProductAccum;
     use crate::Fp32;
     use num_traits::Zero;
 
     type Fp = Fp32<251>;
-    type R4Fp32 = RingSubfieldFp4<Fp>;
+    type R4Fp32 = RingSubfieldFpExt4<Fp>;
 
     let mut rng = StdRng::seed_from_u64(0xACC0);
     for _ in 0..200 {
         let a = R4Fp32::random(&mut rng);
         let b = R4Fp32::random(&mut rng);
         let direct = a * b;
-        let accum = ring_subfield_fp4_mul_to_accum_fp32(a.coeffs, b.coeffs);
+        let accum = ring_subfield_fp_ext4_mul_to_accum_fp32(a.coeffs, b.coeffs);
         let reduced = R4Fp32::new(accum.reduce::<251>());
         assert_eq!(direct, reduced, "accum mismatch for a={a:?} b={b:?}");
     }
@@ -492,12 +492,12 @@ fn ring_subfield_fp4_fp32_product_accum_matches_direct_mul() {
 }
 
 #[test]
-fn ring_subfield_fp4_fp32_accum_summation() {
+fn ring_subfield_fp_ext4_fp32_accum_summation() {
     use crate::Fp32;
     use num_traits::Zero;
 
     type Fp = Fp32<251>;
-    type R4Fp32 = RingSubfieldFp4<Fp>;
+    type R4Fp32 = RingSubfieldFpExt4<Fp>;
 
     let mut rng = StdRng::seed_from_u64(0xACC1);
     let n = 1024;
@@ -555,19 +555,19 @@ fn mul_base_to_product_accum_matches_mul_base_sum() {
         );
     }
 
-    // fp4/Fp32 takes the optimal coordinate-scaling override; fp2/Fp64 takes
+    // fp_ext4/Fp32 takes the optimal coordinate-scaling override; fp_ext2/Fp64 takes
     // the lifted default body. Both defer reduction.
-    check::<Fp32<251>, RingSubfieldFp4<Fp32<251>>>(0xB001);
+    check::<Fp32<251>, RingSubfieldFpExt4<Fp32<251>>>(0xB001);
     check::<F, Ext2<F>>(0xB002);
 }
 
-// Regression guard for the `Fp2<Fp64>` delayed-reduction accumulator. The earlier
-// bug dropped the carry into bit 128 because each Fp2 coefficient (c0 up to ~2^130,
+// Regression guard for the `FpExt2<Fp64>` delayed-reduction accumulator. The earlier
+// bug dropped the carry into bit 128 because each FpExt2 coefficient (c0 up to ~2^130,
 // c1 up to ~2^129) was formed in a single `u128`. It only surfaces with near-`p`
 // operands -- products around 2^128 -- which the small-modulus tests never reach,
-// so these use the real 2^64-59 prime and cover both Fp2 configs.
+// so these use the real 2^64-59 prime and cover both FpExt2 configs.
 #[test]
-fn fp2_fp64_product_accum_matches_direct_mul_large_operands() {
+fn fp_ext2_fp64_product_accum_matches_direct_mul_large_operands() {
     use crate::Prime64Offset59;
 
     let mut rng = StdRng::seed_from_u64(0xF64A);
@@ -582,18 +582,18 @@ fn fp2_fp64_product_accum_matches_direct_mul_large_operands() {
         );
 
         // NegOneNr (IS_NEG_ONE = true): c0 = p00 + p^2 - p11.
-        let c = Fp2::<Prime64Offset59, NegOneNr>::random(&mut rng);
-        let d = Fp2::<Prime64Offset59, NegOneNr>::random(&mut rng);
+        let c = FpExt2::<Prime64Offset59, NegOneNr>::random(&mut rng);
+        let d = FpExt2::<Prime64Offset59, NegOneNr>::random(&mut rng);
         assert_eq!(
             c * d,
-            Fp2::<Prime64Offset59, NegOneNr>::reduce_product_accum(c.mul_to_product_accum(d)),
+            FpExt2::<Prime64Offset59, NegOneNr>::reduce_product_accum(c.mul_to_product_accum(d)),
             "NegOneNr accum mismatch c={c:?} d={d:?}"
         );
     }
 }
 
 #[test]
-fn fp2_fp64_accum_summation_large_operands() {
+fn fp_ext2_fp64_accum_summation_large_operands() {
     use crate::Prime64Offset59;
     use num_traits::Zero;
 
@@ -619,18 +619,18 @@ fn fp2_fp64_accum_summation_large_operands() {
     assert_eq!(
         direct_sum,
         E::reduce_product_accum(accum_sum),
-        "fp2<fp64> accumulated sum of {n} products mismatched"
+        "fp_ext2<fp64> accumulated sum of {n} products mismatched"
     );
 }
 
-// The specialized `Fp2<Fp64>` EOR fold must be byte-identical to the generic
+// The specialized `FpExt2<Fp64>` EOR fold must be byte-identical to the generic
 // `even + r·(odd − even)`. Full-word `Prime64Offset59` exercises the
 // carry-folding reduction path (products near 2^128, sum near 2^129);
 // sub-word `Prime40Offset195` exercises the no-overflow path. Random operands
 // reach carry=1 roughly half the time; the explicit max-coordinate cases pin
-// the worst case. Covers both `Fp2Config`s (TwoNr and NegOneNr).
+// the worst case. Covers both `FpExt2Config`s (TwoNr and NegOneNr).
 #[test]
-fn fp2_fp64_optimized_fold_matches_generic() {
+fn fp_ext2_fp64_optimized_fold_matches_generic() {
     use crate::{Prime40Offset195, Prime64Offset59};
 
     macro_rules! check_fold {
@@ -659,10 +659,10 @@ fn fp2_fp64_optimized_fold_matches_generic() {
             Ext2::random(&mut rng)
         );
         check_fold!(
-            Fp2<Prime64Offset59, NegOneNr>,
-            Fp2::random(&mut rng),
-            Fp2::random(&mut rng),
-            Fp2::random(&mut rng)
+            FpExt2<Prime64Offset59, NegOneNr>,
+            FpExt2::random(&mut rng),
+            FpExt2::random(&mut rng),
+            FpExt2::random(&mut rng)
         );
         check_fold!(
             Ext2<Prime40Offset195>,
@@ -671,10 +671,10 @@ fn fp2_fp64_optimized_fold_matches_generic() {
             Ext2::random(&mut rng)
         );
         check_fold!(
-            Fp2<Prime40Offset195, NegOneNr>,
-            Fp2::random(&mut rng),
-            Fp2::random(&mut rng),
-            Fp2::random(&mut rng)
+            FpExt2<Prime40Offset195, NegOneNr>,
+            FpExt2::random(&mut rng),
+            FpExt2::random(&mut rng),
+            FpExt2::random(&mut rng)
         );
     }
 
@@ -688,9 +688,9 @@ fn fp2_fp64_optimized_fold_matches_generic() {
         Ext2::new(max64, max64)
     );
     check_fold!(
-        Fp2<Prime64Offset59, NegOneNr>,
-        Fp2::new(max64, max64),
-        Fp2::zero(),
-        Fp2::new(max64, max64)
+        FpExt2<Prime64Offset59, NegOneNr>,
+        FpExt2::new(max64, max64),
+        FpExt2::zero(),
+        FpExt2::new(max64, max64)
     );
 }

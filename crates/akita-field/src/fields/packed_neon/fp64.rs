@@ -209,9 +209,9 @@ impl<const P: u64> PackedField for PackedFp64Neon<P> {
     }
 
     #[inline(always)]
-    fn fp2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
+    fn fp_ext2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
     where
-        C: Fp2Config<Self::Scalar>,
+        C: FpExt2Config<Self::Scalar>,
     {
         let v0 = a0 * b0;
         let v1 = a1 * b1;

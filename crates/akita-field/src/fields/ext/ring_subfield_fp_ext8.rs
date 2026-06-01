@@ -7,7 +7,7 @@ use super::*;
 /// `k = 0 → 2·constant`, `1 ≤ k ≤ 7 → +e_k`, `k = 8 → 0`,
 /// `9 ≤ k ≤ 15 → −e_{16−k}`.
 #[inline(always)]
-fn fp8_add_phi<V: Copy>(
+fn fp_ext8_add_phi<V: Copy>(
     out: &mut [V; 8],
     idx: usize,
     value: V,
@@ -19,11 +19,11 @@ fn fp8_add_phi<V: Copy>(
         1..=7 => out[idx] = add(out[idx], value),
         8 => {}
         9..=15 => out[16 - idx] = sub(out[16 - idx], value),
-        _ => unreachable!("fp8 Chebyshev index out of range"),
+        _ => unreachable!("fp_ext8 Chebyshev index out of range"),
     }
 }
 
-/// Karatsuba schedule for `RingSubfieldFp8` multiplication in the Chebyshev
+/// Karatsuba schedule for `RingSubfieldFpExt8` multiplication in the Chebyshev
 /// basis, generic over a lane type `V` and its add/sub/mul.
 ///
 /// One schedule serves every backend: the scalar field default and the NEON /
@@ -32,7 +32,7 @@ fn fp8_add_phi<V: Copy>(
 /// and callers that defer reduction to the end are both correct, provided the
 /// accumulator does not overflow.
 #[inline(always)]
-pub(crate) fn ring_subfield_fp8_mul_schedule<V, A, S, M>(
+pub(crate) fn ring_subfield_fp_ext8_mul_schedule<V, A, S, M>(
     a: [V; 8],
     b: [V; 8],
     zero: V,
@@ -57,27 +57,27 @@ where
 
     for (i, &diag_i) in diag.iter().enumerate().skip(1) {
         out[0] = add(out[0], add(diag_i, diag_i));
-        fp8_add_phi(&mut out, i + i, diag_i, &add, &sub);
+        fp_ext8_add_phi(&mut out, i + i, diag_i, &add, &sub);
     }
 
     for i in 1..8 {
         for j in (i + 1)..8 {
             let mixed = sub(sub(mul(add(a[i], a[j]), add(b[i], b[j])), diag[i]), diag[j]);
-            fp8_add_phi(&mut out, i + j, mixed, &add, &sub);
-            fp8_add_phi(&mut out, j - i, mixed, &add, &sub);
+            fp_ext8_add_phi(&mut out, i + j, mixed, &add, &sub);
+            fp_ext8_add_phi(&mut out, j - i, mixed, &add, &sub);
         }
     }
 
     out
 }
 
-/// Squaring schedule for `RingSubfieldFp8`, generic over a lane type `V`.
+/// Squaring schedule for `RingSubfieldFpExt8`, generic over a lane type `V`.
 ///
 /// Uses `(a_i + a_j)² − a_i² − a_j² = 2·a_i·a_j` to compute `a_i·a_j` directly
 /// and double, saving one add and two subs per cross-term versus the Karatsuba
-/// form. Shares `fp8_add_phi` with [`ring_subfield_fp8_mul_schedule`].
+/// form. Shares `fp_ext8_add_phi` with [`ring_subfield_fp_ext8_mul_schedule`].
 #[inline(always)]
-pub(crate) fn ring_subfield_fp8_square_schedule<V, A, S, M>(
+pub(crate) fn ring_subfield_fp_ext8_square_schedule<V, A, S, M>(
     a: [V; 8],
     zero: V,
     add: A,
@@ -101,15 +101,15 @@ where
 
     for (i, &sq_i) in sq.iter().enumerate().skip(1) {
         out[0] = add(out[0], add(sq_i, sq_i));
-        fp8_add_phi(&mut out, i + i, sq_i, &add, &sub);
+        fp_ext8_add_phi(&mut out, i + i, sq_i, &add, &sub);
     }
 
     for i in 1..8 {
         for j in (i + 1)..8 {
             let cross = mul(a[i], a[j]);
             let doubled = add(cross, cross);
-            fp8_add_phi(&mut out, i + j, doubled, &add, &sub);
-            fp8_add_phi(&mut out, j - i, doubled, &add, &sub);
+            fp_ext8_add_phi(&mut out, i + j, doubled, &add, &sub);
+            fp_ext8_add_phi(&mut out, j - i, doubled, &add, &sub);
         }
     }
 
@@ -117,31 +117,31 @@ where
 }
 
 #[inline(always)]
-fn ring_subfield_fp8_mul_coeffs<F: FieldCore>(a: [F; 8], b: [F; 8]) -> [F; 8] {
-    ring_subfield_fp8_mul_schedule(a, b, F::zero(), |x, y| x + y, |x, y| x - y, |x, y| x * y)
+fn ring_subfield_fp_ext8_mul_coeffs<F: FieldCore>(a: [F; 8], b: [F; 8]) -> [F; 8] {
+    ring_subfield_fp_ext8_mul_schedule(a, b, F::zero(), |x, y| x + y, |x, y| x - y, |x, y| x * y)
 }
 
 /// Backend hook for scalar ring-subfield degree-8 multiplication.
-pub trait RingSubfieldFp8MulBackend: FieldCore {
+pub trait RingSubfieldFpExt8MulBackend: FieldCore {
     /// Multiply coefficient arrays in `[1, e1, ..., e7]` basis.
     #[inline(always)]
-    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
-        ring_subfield_fp8_mul_coeffs::<Self>(a, b)
+    fn ring_subfield_fp_ext8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        ring_subfield_fp_ext8_mul_coeffs::<Self>(a, b)
     }
 }
 
-impl<const P: u32> RingSubfieldFp8MulBackend for Fp32<P> {}
-impl<const P: u64> RingSubfieldFp8MulBackend for Fp64<P> {}
-impl<const P: u128> RingSubfieldFp8MulBackend for Fp128<P> {}
+impl<const P: u32> RingSubfieldFpExt8MulBackend for Fp32<P> {}
+impl<const P: u64> RingSubfieldFpExt8MulBackend for Fp64<P> {}
+impl<const P: u128> RingSubfieldFpExt8MulBackend for Fp128<P> {}
 
 /// Degree-8 ring subfield element in canonical basis `[1, e1, ..., e7]`.
 #[repr(transparent)]
-pub struct RingSubfieldFp8<F: FieldCore> {
+pub struct RingSubfieldFpExt8<F: FieldCore> {
     /// Coefficients in basis `[1, e1, ..., e7]`.
     pub coeffs: [F; 8],
 }
 
-impl<F: FieldCore> RingSubfieldFp8<F> {
+impl<F: FieldCore> RingSubfieldFpExt8<F> {
     /// Construct from canonical ring-subfield basis coefficients.
     #[inline]
     pub fn new(coeffs: [F; 8]) -> Self {
@@ -203,37 +203,37 @@ impl<F: FieldCore> RingSubfieldFp8<F> {
     }
 }
 
-impl<F: FieldCore + std::fmt::Debug> std::fmt::Debug for RingSubfieldFp8<F> {
+impl<F: FieldCore + std::fmt::Debug> std::fmt::Debug for RingSubfieldFpExt8<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RingSubfieldFp8")
+        f.debug_struct("RingSubfieldFpExt8")
             .field("coeffs", &self.coeffs)
             .finish()
     }
 }
 
-impl<F: FieldCore> Clone for RingSubfieldFp8<F> {
+impl<F: FieldCore> Clone for RingSubfieldFpExt8<F> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<F: FieldCore> Copy for RingSubfieldFp8<F> {}
+impl<F: FieldCore> Copy for RingSubfieldFpExt8<F> {}
 
-impl<F: FieldCore> Default for RingSubfieldFp8<F> {
+impl<F: FieldCore> Default for RingSubfieldFpExt8<F> {
     fn default() -> Self {
         Self::zero()
     }
 }
 
-impl<F: FieldCore> PartialEq for RingSubfieldFp8<F> {
+impl<F: FieldCore> PartialEq for RingSubfieldFpExt8<F> {
     fn eq(&self, other: &Self) -> bool {
         self.coeffs == other.coeffs
     }
 }
 
-impl<F: FieldCore> Eq for RingSubfieldFp8<F> {}
+impl<F: FieldCore> Eq for RingSubfieldFpExt8<F> {}
 
-impl<F: FieldCore> Add for RingSubfieldFp8<F> {
+impl<F: FieldCore> Add for RingSubfieldFpExt8<F> {
     type Output = Self;
 
     #[inline(always)]
@@ -242,7 +242,7 @@ impl<F: FieldCore> Add for RingSubfieldFp8<F> {
     }
 }
 
-impl<F: FieldCore> Sub for RingSubfieldFp8<F> {
+impl<F: FieldCore> Sub for RingSubfieldFpExt8<F> {
     type Output = Self;
 
     #[inline(always)]
@@ -251,7 +251,7 @@ impl<F: FieldCore> Sub for RingSubfieldFp8<F> {
     }
 }
 
-impl<F: FieldCore> Neg for RingSubfieldFp8<F> {
+impl<F: FieldCore> Neg for RingSubfieldFpExt8<F> {
     type Output = Self;
 
     #[inline(always)]
@@ -260,7 +260,7 @@ impl<F: FieldCore> Neg for RingSubfieldFp8<F> {
     }
 }
 
-impl<F: FieldCore> AddAssign for RingSubfieldFp8<F> {
+impl<F: FieldCore> AddAssign for RingSubfieldFpExt8<F> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
         for i in 0..8 {
@@ -269,7 +269,7 @@ impl<F: FieldCore> AddAssign for RingSubfieldFp8<F> {
     }
 }
 
-impl<F: FieldCore> SubAssign for RingSubfieldFp8<F> {
+impl<F: FieldCore> SubAssign for RingSubfieldFpExt8<F> {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         for i in 0..8 {
@@ -278,23 +278,23 @@ impl<F: FieldCore> SubAssign for RingSubfieldFp8<F> {
     }
 }
 
-impl<F: RingSubfieldFp8MulBackend> Mul for RingSubfieldFp8<F> {
+impl<F: RingSubfieldFpExt8MulBackend> Mul for RingSubfieldFpExt8<F> {
     type Output = Self;
 
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
-        Self::new(F::ring_subfield_fp8_mul(self.coeffs, rhs.coeffs))
+        Self::new(F::ring_subfield_fp_ext8_mul(self.coeffs, rhs.coeffs))
     }
 }
 
-impl<F: RingSubfieldFp8MulBackend> MulAssign for RingSubfieldFp8<F> {
+impl<F: RingSubfieldFpExt8MulBackend> MulAssign for RingSubfieldFpExt8<F> {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
 }
 
-impl<'a, F: FieldCore> Add<&'a Self> for RingSubfieldFp8<F> {
+impl<'a, F: FieldCore> Add<&'a Self> for RingSubfieldFpExt8<F> {
     type Output = Self;
 
     fn add(self, rhs: &'a Self) -> Self::Output {
@@ -302,7 +302,7 @@ impl<'a, F: FieldCore> Add<&'a Self> for RingSubfieldFp8<F> {
     }
 }
 
-impl<'a, F: FieldCore> Sub<&'a Self> for RingSubfieldFp8<F> {
+impl<'a, F: FieldCore> Sub<&'a Self> for RingSubfieldFpExt8<F> {
     type Output = Self;
 
     fn sub(self, rhs: &'a Self) -> Self::Output {
@@ -310,7 +310,7 @@ impl<'a, F: FieldCore> Sub<&'a Self> for RingSubfieldFp8<F> {
     }
 }
 
-impl<'a, F: RingSubfieldFp8MulBackend> Mul<&'a Self> for RingSubfieldFp8<F> {
+impl<'a, F: RingSubfieldFpExt8MulBackend> Mul<&'a Self> for RingSubfieldFpExt8<F> {
     type Output = Self;
 
     fn mul(self, rhs: &'a Self) -> Self::Output {
@@ -318,7 +318,7 @@ impl<'a, F: RingSubfieldFp8MulBackend> Mul<&'a Self> for RingSubfieldFp8<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for RingSubfieldFp8<F> {
+impl<F: FieldCore + Valid> Valid for RingSubfieldFpExt8<F> {
     fn check(&self) -> Result<(), SerializationError> {
         for coeff in self.coeffs {
             coeff.check()?;
@@ -327,7 +327,7 @@ impl<F: FieldCore + Valid> Valid for RingSubfieldFp8<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for RingSubfieldFp8<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for RingSubfieldFpExt8<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -348,7 +348,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for RingSubfieldFp8<F> {
 }
 
 impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for RingSubfieldFp8<F>
+    for RingSubfieldFpExt8<F>
 {
     type Context = ();
 
@@ -376,14 +376,14 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
-impl<F: FieldCore + Valid + RingSubfieldFp8MulBackend> RingCore for RingSubfieldFp8<F> {
+impl<F: FieldCore + Valid + RingSubfieldFpExt8MulBackend> RingCore for RingSubfieldFpExt8<F> {
     #[inline(always)]
     fn square(&self) -> Self {
         *self * *self
     }
 }
 
-impl<F: FieldCore + Valid + RingSubfieldFp8MulBackend> Invertible for RingSubfieldFp8<F> {
+impl<F: FieldCore + Valid + RingSubfieldFpExt8MulBackend> Invertible for RingSubfieldFpExt8<F> {
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
@@ -431,20 +431,22 @@ impl<F: FieldCore + Valid + RingSubfieldFp8MulBackend> Invertible for RingSubfie
     }
 }
 
-impl<F: HalvingField + Valid + RingSubfieldFp8MulBackend> HalvingField for RingSubfieldFp8<F> {
+impl<F: HalvingField + Valid + RingSubfieldFpExt8MulBackend> HalvingField
+    for RingSubfieldFpExt8<F>
+{
     #[inline]
     fn half(self) -> Self {
         Self::new(std::array::from_fn(|i| self.coeffs[i].half()))
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid> RandomSampling for RingSubfieldFp8<F> {
+impl<F: FieldCore + RandomSampling + Valid> RandomSampling for RingSubfieldFpExt8<F> {
     fn random<R: RngCore>(rng: &mut R) -> Self {
         Self::new(std::array::from_fn(|_| F::random(rng)))
     }
 }
 
-impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for RingSubfieldFp8<F> {
+impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for RingSubfieldFpExt8<F> {
     fn from_u64(val: u64) -> Self {
         Self::from_u64(val)
     }
@@ -474,11 +476,11 @@ impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for RingSubfieldF
     }
 }
 
-impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for RingSubfieldFp8<F> {}
+impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for RingSubfieldFpExt8<F> {}
 
-macro_rules! impl_ring_subfield_fp8_unreduced_identity {
+macro_rules! impl_ring_subfield_fp_ext8_unreduced_identity {
     ($base:ident<$p:ident: $pty:ty>) => {
-        impl<const $p: $pty> HasUnreducedOps for RingSubfieldFp8<$base<$p>> {
+        impl<const $p: $pty> HasUnreducedOps for RingSubfieldFpExt8<$base<$p>> {
             type MulU64Accum = Self;
             type ProductAccum = Self;
 
@@ -501,17 +503,17 @@ macro_rules! impl_ring_subfield_fp8_unreduced_identity {
             }
         }
 
-        impl<const $p: $pty> MulBaseUnreduced<$base<$p>> for RingSubfieldFp8<$base<$p>> {}
+        impl<const $p: $pty> MulBaseUnreduced<$base<$p>> for RingSubfieldFpExt8<$base<$p>> {}
     };
 }
 
-impl_ring_subfield_fp8_unreduced_identity!(Fp32<P: u32>);
-impl_ring_subfield_fp8_unreduced_identity!(Fp64<P: u64>);
-impl_ring_subfield_fp8_unreduced_identity!(Fp128<P: u128>);
+impl_ring_subfield_fp_ext8_unreduced_identity!(Fp32<P: u32>);
+impl_ring_subfield_fp_ext8_unreduced_identity!(Fp64<P: u64>);
+impl_ring_subfield_fp_ext8_unreduced_identity!(Fp128<P: u128>);
 
-macro_rules! impl_ring_subfield_fp8_default_optimized_fold {
+macro_rules! impl_ring_subfield_fp_ext8_default_optimized_fold {
     ($base:ident<$p:ident: $pty:ty>) => {
-        impl<const $p: $pty> HasOptimizedFold for RingSubfieldFp8<$base<$p>> {
+        impl<const $p: $pty> HasOptimizedFold for RingSubfieldFpExt8<$base<$p>> {
             type FoldCtx = Self;
             #[inline]
             fn precompute_fold(r: Self) -> Self {
@@ -525,6 +527,6 @@ macro_rules! impl_ring_subfield_fp8_default_optimized_fold {
     };
 }
 
-impl_ring_subfield_fp8_default_optimized_fold!(Fp32<P: u32>);
-impl_ring_subfield_fp8_default_optimized_fold!(Fp64<P: u64>);
-impl_ring_subfield_fp8_default_optimized_fold!(Fp128<P: u128>);
+impl_ring_subfield_fp_ext8_default_optimized_fold!(Fp32<P: u32>);
+impl_ring_subfield_fp_ext8_default_optimized_fold!(Fp64<P: u64>);
+impl_ring_subfield_fp_ext8_default_optimized_fold!(Fp128<P: u128>);

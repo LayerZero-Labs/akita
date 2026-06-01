@@ -1,9 +1,9 @@
 //! Helpers for embedding base fields into extension fields.
 
 use crate::fields::ext::{
-    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
-    RingSubfieldFp4MulBackend, RingSubfieldFp8, RingSubfieldFp8MulBackend, TowerBasisFp4,
-    TowerBasisFp4Config, UnitNr,
+    FpExt2, FpExt2Config, PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend,
+    RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
+    RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config, UnitNr,
 };
 use crate::{
     pseudo_mersenne_modulus, AkitaError, FieldCore, FromPrimitiveInt, HasUnreducedOps,
@@ -132,10 +132,10 @@ where
     }
 }
 
-impl<F, C> FrobeniusExtField<F> for Fp2<F, C>
+impl<F, C> FrobeniusExtField<F> for FpExt2<F, C>
 where
     F: PseudoMersenneField + Valid,
-    C: Fp2Config<F>,
+    C: FpExt2Config<F>,
 {
     #[inline]
     fn frobenius_pow(self, power: usize) -> Self {
@@ -143,10 +143,10 @@ where
     }
 }
 
-impl<F, C2> FrobeniusExtField<F> for TowerBasisFp4<F, C2, UnitNr>
+impl<F, C2> FrobeniusExtField<F> for TowerBasisFpExt4<F, C2, UnitNr>
 where
-    F: PseudoMersenneField + Valid + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
+    F: PseudoMersenneField + Valid + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
 {
     #[inline]
     fn frobenius_pow(self, power: usize) -> Self {
@@ -154,10 +154,10 @@ where
     }
 }
 
-impl<F, C> FrobeniusExtField<F> for PowerBasisFp4<F, C>
+impl<F, C> FrobeniusExtField<F> for PowerBasisFpExt4<F, C>
 where
-    F: PseudoMersenneField + Valid + PowerBasisFp4MulBackend<C>,
-    C: PowerBasisFp4Config<F>,
+    F: PseudoMersenneField + Valid + PowerBasisFpExt4MulBackend<C>,
+    C: PowerBasisFpExt4Config<F>,
 {
     #[inline]
     fn frobenius_pow(self, power: usize) -> Self {
@@ -165,9 +165,9 @@ where
     }
 }
 
-impl<F> FrobeniusExtField<F> for RingSubfieldFp4<F>
+impl<F> FrobeniusExtField<F> for RingSubfieldFpExt4<F>
 where
-    F: PseudoMersenneField + Valid + RingSubfieldFp4MulBackend,
+    F: PseudoMersenneField + Valid + RingSubfieldFpExt4MulBackend,
 {
     #[inline]
     fn frobenius_pow(self, power: usize) -> Self {
@@ -175,9 +175,9 @@ where
     }
 }
 
-impl<F> FrobeniusExtField<F> for RingSubfieldFp8<F>
+impl<F> FrobeniusExtField<F> for RingSubfieldFpExt8<F>
 where
-    F: PseudoMersenneField + Valid + RingSubfieldFp8MulBackend,
+    F: PseudoMersenneField + Valid + RingSubfieldFpExt8MulBackend,
 {
     #[inline]
     fn frobenius_pow(self, power: usize) -> Self {
@@ -187,7 +187,7 @@ where
 
 /// Return the first `width` elements of the canonical extension basis.
 ///
-/// For [`RingSubfieldFp4`] and [`RingSubfieldFp8`] this is the fixed
+/// For [`RingSubfieldFpExt4`] and [`RingSubfieldFpExt8`] this is the fixed
 /// ring-subfield basis `[1, e1, ...]`, so the chosen Moore-type theta family
 /// is aligned with the coefficient packing basis used by `embed_subfield`.
 ///
@@ -317,10 +317,10 @@ impl<F: FieldCore + FromPrimitiveInt> ExtField<F> for F {
     }
 }
 
-impl<F, C> ExtField<F> for Fp2<F, C>
+impl<F, C> ExtField<F> for FpExt2<F, C>
 where
     F: FieldCore + FromPrimitiveInt + Valid,
-    C: Fp2Config<F>,
+    C: FpExt2Config<F>,
 {
     const EXT_DEGREE: usize = 2;
 
@@ -336,10 +336,10 @@ where
     }
 }
 
-impl<F, C2> ExtField<F> for TowerBasisFp4<F, C2, UnitNr>
+impl<F, C2> ExtField<F> for TowerBasisFpExt4<F, C2, UnitNr>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
+    F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
 {
     const EXT_DEGREE: usize = 4;
 
@@ -347,8 +347,8 @@ where
     fn from_base_slice(coeffs: &[F]) -> Self {
         assert_eq!(coeffs.len(), 4);
         Self::new(
-            Fp2::new(coeffs[0], coeffs[2]),
-            Fp2::new(coeffs[1], coeffs[3]),
+            FpExt2::new(coeffs[0], coeffs[2]),
+            FpExt2::new(coeffs[1], coeffs[3]),
         )
     }
 
@@ -363,51 +363,51 @@ where
     }
 }
 
-impl<F, C2> LiftBase<Fp2<F, C2>> for TowerBasisFp4<F, C2, UnitNr>
+impl<F, C2> LiftBase<FpExt2<F, C2>> for TowerBasisFpExt4<F, C2, UnitNr>
 where
-    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
+    F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
 {
     #[inline]
-    fn lift_base(x: Fp2<F, C2>) -> Self {
-        Self::new(x, Fp2::zero())
+    fn lift_base(x: FpExt2<F, C2>) -> Self {
+        Self::new(x, FpExt2::zero())
     }
 }
 
-impl<F, C2> MulBase<Fp2<F, C2>> for TowerBasisFp4<F, C2, UnitNr>
+impl<F, C2> MulBase<FpExt2<F, C2>> for TowerBasisFpExt4<F, C2, UnitNr>
 where
-    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
+    F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
 {
     #[inline]
-    fn mul_base(self, x: Fp2<F, C2>) -> Self {
+    fn mul_base(self, x: FpExt2<F, C2>) -> Self {
         Self::new(self.coeffs[0] * x, self.coeffs[1] * x)
     }
 }
 
-impl<F, C2> ExtField<Fp2<F, C2>> for TowerBasisFp4<F, C2, UnitNr>
+impl<F, C2> ExtField<FpExt2<F, C2>> for TowerBasisFpExt4<F, C2, UnitNr>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
+    F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
 {
     const EXT_DEGREE: usize = 2;
 
     #[inline]
-    fn from_base_slice(coeffs: &[Fp2<F, C2>]) -> Self {
+    fn from_base_slice(coeffs: &[FpExt2<F, C2>]) -> Self {
         assert_eq!(coeffs.len(), 2);
         Self::new(coeffs[0], coeffs[1])
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<Fp2<F, C2>> {
+    fn to_base_vec(&self) -> Vec<FpExt2<F, C2>> {
         vec![self.coeffs[0], self.coeffs[1]]
     }
 }
 
-impl<F, C> ExtField<F> for PowerBasisFp4<F, C>
+impl<F, C> ExtField<F> for PowerBasisFpExt4<F, C>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFp4MulBackend<C>,
-    C: PowerBasisFp4Config<F>,
+    F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFpExt4MulBackend<C>,
+    C: PowerBasisFpExt4Config<F>,
 {
     const EXT_DEGREE: usize = 4;
 
@@ -423,9 +423,9 @@ where
     }
 }
 
-impl<F> ExtField<F> for RingSubfieldFp4<F>
+impl<F> ExtField<F> for RingSubfieldFpExt4<F>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp4MulBackend,
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFpExt4MulBackend,
 {
     const EXT_DEGREE: usize = 4;
 
@@ -441,9 +441,9 @@ where
     }
 }
 
-impl<F> ExtField<F> for RingSubfieldFp8<F>
+impl<F> ExtField<F> for RingSubfieldFpExt8<F>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp8MulBackend,
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFpExt8MulBackend,
 {
     const EXT_DEGREE: usize = 8;
 
@@ -475,10 +475,10 @@ impl<F: FieldCore> MulBase<F> for F {
     }
 }
 
-impl<F, C> LiftBase<F> for Fp2<F, C>
+impl<F, C> LiftBase<F> for FpExt2<F, C>
 where
     F: FieldCore + Valid,
-    C: Fp2Config<F>,
+    C: FpExt2Config<F>,
 {
     #[inline]
     fn lift_base(x: F) -> Self {
@@ -486,10 +486,10 @@ where
     }
 }
 
-impl<F, C> MulBase<F> for Fp2<F, C>
+impl<F, C> MulBase<F> for FpExt2<F, C>
 where
     F: FieldCore + Valid,
-    C: Fp2Config<F>,
+    C: FpExt2Config<F>,
 {
     #[inline]
     fn mul_base(self, x: F) -> Self {
@@ -497,23 +497,23 @@ where
     }
 }
 
-impl<F, C2, C4> LiftBase<F> for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> LiftBase<F> for TowerBasisFpExt4<F, C2, C4>
 where
-    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
 {
     #[inline]
     fn lift_base(x: F) -> Self {
-        Self::new(Fp2::new(x, F::zero()), Fp2::new(F::zero(), F::zero()))
+        Self::new(FpExt2::new(x, F::zero()), FpExt2::new(F::zero(), F::zero()))
     }
 }
 
-impl<F, C2, C4> MulBase<F> for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> MulBase<F> for TowerBasisFpExt4<F, C2, C4>
 where
-    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
-    C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
+    F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C2>,
+    C2: FpExt2Config<F>,
+    C4: TowerBasisFpExt4Config<F, C2>,
 {
     #[inline]
     fn mul_base(self, x: F) -> Self {
@@ -521,10 +521,10 @@ where
     }
 }
 
-impl<F, C> LiftBase<F> for PowerBasisFp4<F, C>
+impl<F, C> LiftBase<F> for PowerBasisFpExt4<F, C>
 where
-    F: FieldCore + Valid + PowerBasisFp4MulBackend<C>,
-    C: PowerBasisFp4Config<F>,
+    F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C>,
+    C: PowerBasisFpExt4Config<F>,
 {
     #[inline]
     fn lift_base(x: F) -> Self {
@@ -532,10 +532,10 @@ where
     }
 }
 
-impl<F, C> MulBase<F> for PowerBasisFp4<F, C>
+impl<F, C> MulBase<F> for PowerBasisFpExt4<F, C>
 where
-    F: FieldCore + Valid + PowerBasisFp4MulBackend<C>,
-    C: PowerBasisFp4Config<F>,
+    F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C>,
+    C: PowerBasisFpExt4Config<F>,
 {
     #[inline]
     fn mul_base(self, x: F) -> Self {
@@ -543,9 +543,9 @@ where
     }
 }
 
-impl<F> LiftBase<F> for RingSubfieldFp4<F>
+impl<F> LiftBase<F> for RingSubfieldFpExt4<F>
 where
-    F: FieldCore + Valid + RingSubfieldFp4MulBackend,
+    F: FieldCore + Valid + RingSubfieldFpExt4MulBackend,
 {
     #[inline]
     fn lift_base(x: F) -> Self {
@@ -553,9 +553,9 @@ where
     }
 }
 
-impl<F> MulBase<F> for RingSubfieldFp4<F>
+impl<F> MulBase<F> for RingSubfieldFpExt4<F>
 where
-    F: FieldCore + Valid + RingSubfieldFp4MulBackend,
+    F: FieldCore + Valid + RingSubfieldFpExt4MulBackend,
 {
     #[inline]
     fn mul_base(self, x: F) -> Self {
@@ -563,9 +563,9 @@ where
     }
 }
 
-impl<F> LiftBase<F> for RingSubfieldFp8<F>
+impl<F> LiftBase<F> for RingSubfieldFpExt8<F>
 where
-    F: FieldCore + Valid + RingSubfieldFp8MulBackend,
+    F: FieldCore + Valid + RingSubfieldFpExt8MulBackend,
 {
     #[inline]
     fn lift_base(x: F) -> Self {
@@ -582,9 +582,9 @@ where
     }
 }
 
-impl<F> MulBase<F> for RingSubfieldFp8<F>
+impl<F> MulBase<F> for RingSubfieldFpExt8<F>
 where
-    F: FieldCore + Valid + RingSubfieldFp8MulBackend,
+    F: FieldCore + Valid + RingSubfieldFpExt8MulBackend,
 {
     #[inline]
     fn mul_base(self, x: F) -> Self {
@@ -598,8 +598,8 @@ mod tests {
     use crate::{Fp32, NegOneNr, UnitNr};
 
     type F = Fp32<251>;
-    type E2 = Fp2<F, NegOneNr>;
-    type E4 = TowerBasisFp4<F, NegOneNr, UnitNr>;
+    type E2 = FpExt2<F, NegOneNr>;
+    type E4 = TowerBasisFpExt4<F, NegOneNr, UnitNr>;
 
     #[test]
     fn mul_base_matches_full_multiply_for_base_field() {
@@ -610,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn mul_base_matches_full_multiply_for_fp2() {
+    fn mul_base_matches_full_multiply_for_fp_ext2() {
         let x = E2::new(F::from_u64(3), F::from_u64(5));
         let scalar = F::from_u64(11);
 
@@ -618,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn mul_base_matches_full_multiply_for_fp4() {
+    fn mul_base_matches_full_multiply_for_fp_ext4() {
         let x = E4::new(
             E2::new(F::from_u64(3), F::from_u64(5)),
             E2::new(F::from_u64(7), F::from_u64(13)),
@@ -629,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn fp4_mul_base_over_fp2_matches_full_multiply() {
+    fn fp_ext4_mul_base_over_fp_ext2_matches_full_multiply() {
         let x = E4::new(
             E2::new(F::from_u64(3), F::from_u64(5)),
             E2::new(F::from_u64(7), F::from_u64(13)),
@@ -643,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn fp4_lift_over_fp2_agrees_with_lift_over_base() {
+    fn fp_ext4_lift_over_fp_ext2_agrees_with_lift_over_base() {
         let scalar = F::from_u64(7);
         let via_base = <E4 as LiftBase<F>>::lift_base(scalar);
         let via_tower = <E4 as LiftBase<E2>>::lift_base(<E2 as LiftBase<F>>::lift_base(scalar));
@@ -652,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn fp4_ext_over_fp2_round_trips_through_base_slice() {
+    fn fp_ext4_ext_over_fp_ext2_round_trips_through_base_slice() {
         let x = E4::new(
             E2::new(F::from_u64(3), F::from_u64(5)),
             E2::new(F::from_u64(7), F::from_u64(13)),
@@ -670,7 +670,7 @@ mod tests {
     /// `[ChallengeField : F] = [ChallengeField : ClaimField] * [ClaimField : F]`
     /// the field-role convention relies on.
     #[test]
-    fn fp4_ext_degrees_chain_correctly() {
+    fn fp_ext4_ext_degrees_chain_correctly() {
         assert_eq!(
             <E4 as ExtField<F>>::EXT_DEGREE,
             <E4 as ExtField<E2>>::EXT_DEGREE * <E2 as ExtField<F>>::EXT_DEGREE

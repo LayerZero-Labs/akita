@@ -1,8 +1,9 @@
 //! Packed field abstractions and architecture-specific SIMD backends.
 
 use crate::fields::ext::{
-    power_basis_fp4_mul_coeffs, ring_subfield_fp8_mul_schedule, ring_subfield_fp8_square_schedule,
-    Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
+    power_basis_fp_ext4_mul_coeffs, ring_subfield_fp_ext8_mul_schedule,
+    ring_subfield_fp_ext8_square_schedule, FpExt2Config, PowerBasisFpExt4Config,
+    TowerBasisFpExt4Config,
 };
 use crate::fields::{Fp128, Fp32, Fp64};
 use crate::{FieldCore, Invertible};
@@ -93,11 +94,11 @@ pub trait PackedField:
         Some(Self::from_fn(|i| inverses[i]))
     }
 
-    /// Backend hook for multiplying two packed `Fp2` values in coefficient form.
+    /// Backend hook for multiplying two packed `FpExt2` values in coefficient form.
     #[inline(always)]
-    fn fp2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
+    fn fp_ext2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
     where
-        C: Fp2Config<Self::Scalar>,
+        C: FpExt2Config<Self::Scalar>,
     {
         let v0 = a0 * b0;
         let v1 = a1 * b1;
@@ -110,36 +111,36 @@ pub trait PackedField:
 
     /// Backend hook for multiplying packed power-basis quartics.
     #[inline(always)]
-    fn power_basis_fp4_mul<C>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
+    fn power_basis_fp_ext4_mul<C>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
     where
-        C: PowerBasisFp4Config<Self::Scalar>,
+        C: PowerBasisFpExt4Config<Self::Scalar>,
     {
-        power_basis_fp4_mul_coeffs::<Self::Scalar, C, Self, _>(a, b, Self::broadcast)
+        power_basis_fp_ext4_mul_coeffs::<Self::Scalar, C, Self, _>(a, b, Self::broadcast)
     }
 
     /// Backend hook for multiplying packed tower-basis quartics.
     #[inline(always)]
-    fn tower_basis_fp4_mul<C2, C4>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
+    fn tower_basis_fp_ext4_mul<C2, C4>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
     where
-        C2: Fp2Config<Self::Scalar>,
-        C4: TowerBasisFp4Config<Self::Scalar, C2>,
+        C2: FpExt2Config<Self::Scalar>,
+        C4: TowerBasisFpExt4Config<Self::Scalar, C2>,
     {
         let [a0, a1, a2, a3] = a;
         let [b0, b1, b2, b3] = b;
-        let (v0_0, v0_1) = Self::fp2_mul::<C2>(a0, a2, b0, b2);
-        let (v1_0, v1_1) = Self::fp2_mul::<C2>(a1, a3, b1, b3);
+        let (v0_0, v0_1) = Self::fp_ext2_mul::<C2>(a0, a2, b0, b2);
+        let (v1_0, v1_1) = Self::fp_ext2_mul::<C2>(a1, a3, b1, b3);
         let nr = C4::non_residue();
         let (nr_v1_0, nr_v1_1) = if nr.coeffs[0].is_zero() && nr.coeffs[1] == Self::Scalar::one() {
             (C2::mul_non_residue(v1_1, Self::broadcast), v1_0)
         } else {
-            Self::fp2_mul::<C2>(
+            Self::fp_ext2_mul::<C2>(
                 Self::broadcast(nr.coeffs[0]),
                 Self::broadcast(nr.coeffs[1]),
                 v1_0,
                 v1_1,
             )
         };
-        let (cross_0, cross_1) = Self::fp2_mul::<C2>(a0 + a1, a2 + a3, b0 + b1, b2 + b3);
+        let (cross_0, cross_1) = Self::fp_ext2_mul::<C2>(a0 + a1, a2 + a3, b0 + b1, b2 + b3);
         [
             v0_0 + nr_v1_0,
             cross_0 - v0_0 - v1_0,
@@ -150,7 +151,7 @@ pub trait PackedField:
 
     /// Backend hook for multiplying packed ring-subfield quartics.
     #[inline(always)]
-    fn ring_subfield_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+    fn ring_subfield_fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
         let [a0, a1, a2, a3] = a;
         let [b0, b1, b2, b3] = b;
         let tail0 = a1 * b1 + a2 * b2 + a3 * b3;
@@ -164,7 +165,7 @@ pub trait PackedField:
 
     /// Backend hook for squaring packed ring-subfield quartics.
     #[inline(always)]
-    fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
+    fn ring_subfield_fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
         let [a0, a1, a2, a3] = a;
         let x0 = a0;
         let x1 = a2;
@@ -194,7 +195,7 @@ pub trait PackedField:
 
     /// Backend hook for inverting packed ring-subfield quartics.
     #[inline(always)]
-    fn ring_subfield_fp4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
+    fn ring_subfield_fp_ext4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
     where
         Self::Scalar: Invertible,
     {
@@ -236,8 +237,8 @@ pub trait PackedField:
 
     /// Backend hook for multiplying packed ring-subfield degree-8 elements.
     #[inline(always)]
-    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
-        ring_subfield_fp8_mul_schedule(
+    fn ring_subfield_fp_ext8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        ring_subfield_fp_ext8_mul_schedule(
             a,
             b,
             Self::broadcast(Self::Scalar::zero()),
@@ -249,8 +250,8 @@ pub trait PackedField:
 
     /// Backend hook for squaring packed ring-subfield degree-8 elements.
     #[inline(always)]
-    fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
-        ring_subfield_fp8_square_schedule(
+    fn ring_subfield_fp_ext8_square(a: [Self; 8]) -> [Self; 8] {
+        ring_subfield_fp_ext8_square_schedule(
             a,
             Self::broadcast(Self::Scalar::zero()),
             |x, y| x + y,

@@ -171,7 +171,7 @@ impl<const P: u32> PackedFp32Avx2<P> {
 
     /// 4-way fused multiply-accumulate with a single end-reduction.
     /// Computes `sum_i a[i] * b[i]` lane-wise and canonicalizes. The key
-    /// fused operation for `RingSubfieldFp4` and power-basis Fp4 multiply.
+    /// fused operation for `RingSubfieldFpExt4` and power-basis FpExt4 multiply.
     /// Mirrors `PackedFp32Neon::dot_product_4_vec`. For `BITS <= 31`, four
     /// `(2^31 - 1)^2` products sum below `2^64`, so the raw products
     /// accumulate without overflow. For `BITS == 32`, each product is
@@ -242,13 +242,13 @@ impl<const P: u32> PackedFp32Avx2<P> {
         Self::solinas_reduce(sum_evn, sum_odd)
     }
 
-    /// Multiply by an `Fp2` non-residue (used by `fp2_mul`). Recognizes the
+    /// Multiply by an `FpExt2` non-residue (used by `fp_ext2_mul`). Recognizes the
     /// `nr == -1` and `nr == 2` fast paths to avoid full multiplies.
     /// Mirrors `PackedFp32Neon::mul_nr_vec`.
     #[inline(always)]
     unsafe fn mul_nr_vec<C>(x: __m256i) -> __m256i
     where
-        C: Fp2Config<Fp32<P>>,
+        C: FpExt2Config<Fp32<P>>,
     {
         if C::IS_NEG_ONE {
             Self::sub_vec(_mm256_setzero_si256(), x)
@@ -259,12 +259,12 @@ impl<const P: u32> PackedFp32Avx2<P> {
         }
     }
 
-    /// Multiply by the power-basis `w` (used by `power_basis_fp4_mul`).
+    /// Multiply by the power-basis `w` (used by `power_basis_fp_ext4_mul`).
     /// Recognizes the `w == 2` fast path. Mirrors `PackedFp32Neon::mul_w_vec`.
     #[inline(always)]
     unsafe fn mul_w_vec<C>(x: __m256i) -> __m256i
     where
-        C: PowerBasisFp4Config<Fp32<P>>,
+        C: PowerBasisFpExt4Config<Fp32<P>>,
     {
         if C::w().0 == 2 {
             Self::add_vec(x, x)
@@ -539,9 +539,9 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     }
 
     #[inline(always)]
-    fn fp2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
+    fn fp_ext2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
     where
-        C: Fp2Config<Self::Scalar>,
+        C: FpExt2Config<Self::Scalar>,
     {
         unsafe {
             let a0 = a0.to_vec();
@@ -561,9 +561,9 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     }
 
     #[inline(always)]
-    fn power_basis_fp4_mul<C>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
+    fn power_basis_fp_ext4_mul<C>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
     where
-        C: PowerBasisFp4Config<Self::Scalar>,
+        C: PowerBasisFpExt4Config<Self::Scalar>,
     {
         unsafe {
             let [a0, a1, a2, a3] = a.map(Self::to_vec);
@@ -625,7 +625,7 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     }
 
     #[inline(always)]
-    fn ring_subfield_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+    fn ring_subfield_fp_ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
         unsafe {
             let [a0, a1, a2, a3] = a.map(Self::to_vec);
             let [b0, b1, b2, b3] = b.map(Self::to_vec);
@@ -658,7 +658,7 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     }
 
     #[inline(always)]
-    fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
+    fn ring_subfield_fp_ext4_square(a: [Self; 4]) -> [Self; 4] {
         unsafe {
             let [a0, a1, a2, a3] = a.map(Self::to_vec);
             let zero = _mm256_setzero_si256();
@@ -689,7 +689,7 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     }
 
     #[inline(always)]
-    fn ring_subfield_fp4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
+    fn ring_subfield_fp_ext4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
     where
         Self::Scalar: Invertible,
     {
@@ -766,39 +766,39 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
     }
 
     #[inline(always)]
-    fn tower_basis_fp4_mul<C2, C4>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
+    fn tower_basis_fp_ext4_mul<C2, C4>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
     where
-        C2: Fp2Config<Self::Scalar>,
-        C4: TowerBasisFp4Config<Self::Scalar, C2>,
+        C2: FpExt2Config<Self::Scalar>,
+        C4: TowerBasisFpExt4Config<Self::Scalar, C2>,
     {
         let nr = C4::non_residue();
         if nr.coeffs[0].is_zero() && nr.coeffs[1] == Self::Scalar::one() {
-            return Self::power_basis_fp4_mul::<C2>(a, b);
+            return Self::power_basis_fp_ext4_mul::<C2>(a, b);
         }
 
         unsafe {
             let [a0, a1, a2, a3] = a.map(Self::to_vec);
             let [b0, b1, b2, b3] = b.map(Self::to_vec);
 
-            let (v0_0, v0_1) = Self::fp2_mul::<C2>(
+            let (v0_0, v0_1) = Self::fp_ext2_mul::<C2>(
                 Self::from_vec(a0),
                 Self::from_vec(a2),
                 Self::from_vec(b0),
                 Self::from_vec(b2),
             );
-            let (v1_0, v1_1) = Self::fp2_mul::<C2>(
+            let (v1_0, v1_1) = Self::fp_ext2_mul::<C2>(
                 Self::from_vec(a1),
                 Self::from_vec(a3),
                 Self::from_vec(b1),
                 Self::from_vec(b3),
             );
-            let (nr_v1_0, nr_v1_1) = Self::fp2_mul::<C2>(
+            let (nr_v1_0, nr_v1_1) = Self::fp_ext2_mul::<C2>(
                 Self::broadcast(nr.coeffs[0]),
                 Self::broadcast(nr.coeffs[1]),
                 v1_0,
                 v1_1,
             );
-            let (cross_0, cross_1) = Self::fp2_mul::<C2>(
+            let (cross_0, cross_1) = Self::fp_ext2_mul::<C2>(
                 Self::from_vec(Self::add_vec(a0, a1)),
                 Self::from_vec(Self::add_vec(a2, a3)),
                 Self::from_vec(Self::add_vec(b0, b1)),

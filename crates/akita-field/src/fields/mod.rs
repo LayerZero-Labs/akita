@@ -27,9 +27,10 @@ pub(crate) mod util;
 pub mod wide;
 
 pub use ext::{
-    Ext2, Fp2, Fp2Config, NegOneNr, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend,
-    RingSubfieldFp4, RingSubfieldFp4MulBackend, RingSubfieldFp8, RingSubfieldFp8MulBackend,
-    TowerBasisFp4, TowerBasisFp4Config, TwoNr, UnitNr,
+    Ext2, FpExt2, FpExt2Config, NegOneNr, PowerBasisFpExt4, PowerBasisFpExt4Config,
+    PowerBasisFpExt4MulBackend, RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend,
+    RingSubfieldFpExt8, RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config,
+    TwoNr, UnitNr,
 };
 pub use fp128::{
     Fp128, Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,

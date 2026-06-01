@@ -269,22 +269,22 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp2, Fp32, LiftBase, NegOneNr, TowerBasisFp4, UnitNr};
+    use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr, TowerBasisFpExt4, UnitNr};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
     };
 
     type Base = Fp32<251>;
-    type BaseFp2 = Fp2<Base, NegOneNr>;
-    type BaseTowerBasisFp4 = TowerBasisFp4<Base, NegOneNr, UnitNr>;
+    type BaseFpExt2 = FpExt2<Base, NegOneNr>;
+    type BaseTowerBasisFpExt4 = TowerBasisFpExt4<Base, NegOneNr, UnitNr>;
 
     #[derive(Clone)]
     struct ExtensionRoleConfig;
 
     impl CommitmentConfig for ExtensionRoleConfig {
         type Field = Base;
-        type ClaimField = BaseFp2;
-        type ChallengeField = BaseTowerBasisFp4;
+        type ClaimField = BaseFpExt2;
+        type ChallengeField = BaseTowerBasisFpExt4;
 
         const D: usize = 8;
 
@@ -339,7 +339,7 @@ mod tests {
 
         let c1 =
             ExtensionRoleConfig::sample_challenge_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
-        let c2 = sample_ext_challenge::<Base, BaseTowerBasisFp4, _>(
+        let c2 = sample_ext_challenge::<Base, BaseTowerBasisFpExt4, _>(
             &mut t2,
             labels::CHALLENGE_RING_SWITCH,
         );
@@ -350,7 +350,7 @@ mod tests {
     fn claim_ext_degree_default_matches_claim_field_ext_degree() {
         assert_eq!(
             ExtensionRoleConfig::CLAIM_EXT_DEGREE,
-            <BaseFp2 as ExtField<Base>>::EXT_DEGREE
+            <BaseFpExt2 as ExtField<Base>>::EXT_DEGREE
         );
         assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
     }
@@ -359,7 +359,7 @@ mod tests {
     fn chal_ext_degree_default_matches_challenge_field_ext_degree() {
         assert_eq!(
             ExtensionRoleConfig::CHAL_EXT_DEGREE,
-            <BaseTowerBasisFp4 as ExtField<Base>>::EXT_DEGREE
+            <BaseTowerBasisFpExt4 as ExtField<Base>>::EXT_DEGREE
         );
         assert_eq!(ExtensionRoleConfig::CHAL_EXT_DEGREE, 4);
     }
@@ -367,36 +367,39 @@ mod tests {
     #[test]
     fn chal_over_claim_degree_matches_quotient_of_absolute_degrees() {
         assert_eq!(
-            <BaseTowerBasisFp4 as ExtField<BaseFp2>>::EXT_DEGREE,
+            <BaseTowerBasisFpExt4 as ExtField<BaseFpExt2>>::EXT_DEGREE,
             ExtensionRoleConfig::CHAL_EXT_DEGREE / ExtensionRoleConfig::CLAIM_EXT_DEGREE
         );
     }
 
     #[test]
     fn extension_role_config_exercises_true_field_tower() {
-        assert_eq!(<BaseFp2 as ExtField<Base>>::EXT_DEGREE, 2);
-        assert_eq!(<BaseTowerBasisFp4 as ExtField<BaseFp2>>::EXT_DEGREE, 2);
-        assert_eq!(<BaseTowerBasisFp4 as ExtField<Base>>::EXT_DEGREE, 4);
+        assert_eq!(<BaseFpExt2 as ExtField<Base>>::EXT_DEGREE, 2);
+        assert_eq!(
+            <BaseTowerBasisFpExt4 as ExtField<BaseFpExt2>>::EXT_DEGREE,
+            2
+        );
+        assert_eq!(<BaseTowerBasisFpExt4 as ExtField<Base>>::EXT_DEGREE, 4);
         assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
         assert_eq!(ExtensionRoleConfig::CHAL_EXT_DEGREE, 4);
 
-        let claim = BaseFp2::from_base_slice(&[Base::from_u64(3), Base::from_u64(4)]);
-        let lifted = BaseTowerBasisFp4::lift_base(claim);
+        let claim = BaseFpExt2::from_base_slice(&[Base::from_u64(3), Base::from_u64(4)]);
+        let lifted = BaseTowerBasisFpExt4::lift_base(claim);
         assert_eq!(
-            <BaseTowerBasisFp4 as ExtField<BaseFp2>>::to_base_vec(&lifted),
-            vec![claim, BaseFp2::zero()]
+            <BaseTowerBasisFpExt4 as ExtField<BaseFpExt2>>::to_base_vec(&lifted),
+            vec![claim, BaseFpExt2::zero()]
         );
     }
 
     #[test]
     fn config_appends_extension_claim_role() {
-        let claim = BaseFp2::new(Base::from_u64(9), Base::from_u64(10));
+        let claim = BaseFpExt2::new(Base::from_u64(9), Base::from_u64(10));
 
         let mut t1 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
         let mut t2 = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
         ExtensionRoleConfig::append_claim_field(&mut t1, labels::ABSORB_EVALUATION_CLAIMS, &claim);
-        append_ext_field::<Base, BaseFp2, _>(&mut t2, labels::ABSORB_EVALUATION_CLAIMS, &claim);
+        append_ext_field::<Base, BaseFpExt2, _>(&mut t2, labels::ABSORB_EVALUATION_CLAIMS, &claim);
 
         let c1 = t1.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         let c2 = t2.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);

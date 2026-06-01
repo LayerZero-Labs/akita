@@ -1,12 +1,12 @@
 //! Quadratic, quartic, and ring-subfield extension fields.
 
-mod fp2;
-mod power_fp4;
-mod ring_subfield_fp4;
-mod ring_subfield_fp8;
+mod fp_ext2;
+mod power_fp_ext4;
+mod ring_subfield_fp_ext4;
+mod ring_subfield_fp_ext8;
 #[cfg(all(test, not(feature = "zk")))]
 mod tests;
-mod tower_fp4;
+mod tower_fp_ext4;
 
 use super::wide::{
     AccumPair, FoldMatrixFp32, FoldMatrixFp64, Fp2Fp64ProductAccum, HasOptimizedFold,
@@ -23,15 +23,15 @@ use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-pub use fp2::{Ext2, Fp2, Fp2Config, NegOneNr, TwoNr};
-pub(crate) use power_fp4::power_basis_fp4_mul_coeffs;
-pub use power_fp4::{PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend};
-pub use ring_subfield_fp4::{RingSubfieldFp4, RingSubfieldFp4MulBackend};
-pub(crate) use ring_subfield_fp8::{
-    ring_subfield_fp8_mul_schedule, ring_subfield_fp8_square_schedule,
+pub use fp_ext2::{Ext2, FpExt2, FpExt2Config, NegOneNr, TwoNr};
+pub(crate) use power_fp_ext4::power_basis_fp_ext4_mul_coeffs;
+pub use power_fp_ext4::{PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend};
+pub use ring_subfield_fp_ext4::{RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend};
+pub(crate) use ring_subfield_fp_ext8::{
+    ring_subfield_fp_ext8_mul_schedule, ring_subfield_fp_ext8_square_schedule,
 };
-pub use ring_subfield_fp8::{RingSubfieldFp8, RingSubfieldFp8MulBackend};
-pub use tower_fp4::{TowerBasisFp4, TowerBasisFp4Config, UnitNr};
+pub use ring_subfield_fp_ext8::{RingSubfieldFpExt8, RingSubfieldFpExt8MulBackend};
+pub use tower_fp_ext4::{TowerBasisFpExt4, TowerBasisFpExt4Config, UnitNr};
 
 /// Arithmetic shape shared by scalar and packed extension coefficients.
 pub trait ExtensionCoeff<F: FieldCore>:

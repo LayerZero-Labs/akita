@@ -1,11 +1,11 @@
 use super::*;
 
-/// `Fp2Config` with non-residue = -1.
+/// `FpExt2Config` with non-residue = -1.
 ///
 /// Valid when `p ≡ 3 (mod 4)`, i.e. -1 is a quadratic non-residue.
 pub struct NegOneNr;
 
-impl<F: FieldCore> Fp2Config<F> for NegOneNr {
+impl<F: FieldCore> FpExt2Config<F> for NegOneNr {
     const IS_NEG_ONE: bool = true;
 
     fn non_residue() -> F {
@@ -13,14 +13,14 @@ impl<F: FieldCore> Fp2Config<F> for NegOneNr {
     }
 }
 
-/// `Fp2Config` with non-residue = 2.
+/// `FpExt2Config` with non-residue = 2.
 ///
 /// Valid when `p ≡ 5 (mod 8)`, i.e. 2 is a quadratic non-residue.
 /// All Akita pseudo-Mersenne primes (`2^k - c` with `c ≡ 3 mod 8`)
 /// satisfy this.
 pub struct TwoNr;
 
-impl<F: FieldCore + FromPrimitiveInt> Fp2Config<F> for TwoNr {
+impl<F: FieldCore + FromPrimitiveInt> FpExt2Config<F> for TwoNr {
     fn non_residue() -> F {
         F::from_u64(2)
     }
@@ -35,8 +35,8 @@ impl<F: FieldCore + FromPrimitiveInt> Fp2Config<F> for TwoNr {
     }
 }
 
-/// Parameters for an `Fp2` quadratic extension over base field `F`.
-pub trait Fp2Config<F: FieldCore> {
+/// Parameters for an `FpExt2` quadratic extension over base field `F`.
+pub trait FpExt2Config<F: FieldCore> {
     /// Whether the non-residue is -1.
     ///
     /// When `true`, multiplication by the non-residue is a free negation and
@@ -63,13 +63,13 @@ pub trait Fp2Config<F: FieldCore> {
 
 /// Quadratic extension element `c0 + c1 * u` with `u^2 = NR`.
 #[repr(transparent)]
-pub struct Fp2<F: FieldCore, C: Fp2Config<F>> {
+pub struct FpExt2<F: FieldCore, C: FpExt2Config<F>> {
     /// Coefficients `[c0, c1]` in basis `[1, u]`.
     pub coeffs: [F; 2],
     _cfg: PhantomData<fn() -> C>,
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> FpExt2<F, C> {
     /// Construct `c0 + c1 * u`.
     #[inline]
     pub fn new(c0: F, c1: F) -> Self {
@@ -148,35 +148,37 @@ impl<F: FieldCore, C: Fp2Config<F>> Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore + std::fmt::Debug, C: Fp2Config<F>> std::fmt::Debug for Fp2<F, C> {
+impl<F: FieldCore + std::fmt::Debug, C: FpExt2Config<F>> std::fmt::Debug for FpExt2<F, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Fp2").field("coeffs", &self.coeffs).finish()
+        f.debug_struct("FpExt2")
+            .field("coeffs", &self.coeffs)
+            .finish()
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> Clone for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> Clone for FpExt2<F, C> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> Copy for Fp2<F, C> {}
+impl<F: FieldCore, C: FpExt2Config<F>> Copy for FpExt2<F, C> {}
 
-impl<F: FieldCore, C: Fp2Config<F>> Default for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> Default for FpExt2<F, C> {
     fn default() -> Self {
         Self::new(F::zero(), F::zero())
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> PartialEq for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> PartialEq for FpExt2<F, C> {
     fn eq(&self, other: &Self) -> bool {
         self.coeffs[0] == other.coeffs[0] && self.coeffs[1] == other.coeffs[1]
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> Eq for Fp2<F, C> {}
+impl<F: FieldCore, C: FpExt2Config<F>> Eq for FpExt2<F, C> {}
 
-impl<F: FieldCore, C: Fp2Config<F>> Add for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> Add for FpExt2<F, C> {
     type Output = Self;
     #[inline(always)]
     fn add(self, rhs: Self) -> Self::Output {
@@ -186,7 +188,7 @@ impl<F: FieldCore, C: Fp2Config<F>> Add for Fp2<F, C> {
         )
     }
 }
-impl<F: FieldCore, C: Fp2Config<F>> Sub for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> Sub for FpExt2<F, C> {
     type Output = Self;
     #[inline(always)]
     fn sub(self, rhs: Self) -> Self::Output {
@@ -196,28 +198,28 @@ impl<F: FieldCore, C: Fp2Config<F>> Sub for Fp2<F, C> {
         )
     }
 }
-impl<F: FieldCore, C: Fp2Config<F>> Neg for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> Neg for FpExt2<F, C> {
     type Output = Self;
     #[inline(always)]
     fn neg(self) -> Self::Output {
         Self::new(-self.coeffs[0], -self.coeffs[1])
     }
 }
-impl<F: FieldCore, C: Fp2Config<F>> AddAssign for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> AddAssign for FpExt2<F, C> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
         self.coeffs[0] = self.coeffs[0] + rhs.coeffs[0];
         self.coeffs[1] = self.coeffs[1] + rhs.coeffs[1];
     }
 }
-impl<F: FieldCore, C: Fp2Config<F>> SubAssign for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> SubAssign for FpExt2<F, C> {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         self.coeffs[0] = self.coeffs[0] - rhs.coeffs[0];
         self.coeffs[1] = self.coeffs[1] - rhs.coeffs[1];
     }
 }
-impl<F: FieldCore, C: Fp2Config<F>> Mul for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> Mul for FpExt2<F, C> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
@@ -227,33 +229,33 @@ impl<F: FieldCore, C: Fp2Config<F>> Mul for Fp2<F, C> {
         Self::new(v0 + Self::mul_nr(v1), cross - v0 - v1)
     }
 }
-impl<F: FieldCore, C: Fp2Config<F>> MulAssign for Fp2<F, C> {
+impl<F: FieldCore, C: FpExt2Config<F>> MulAssign for FpExt2<F, C> {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
 }
 
-impl<'a, F: FieldCore, C: Fp2Config<F>> Add<&'a Self> for Fp2<F, C> {
+impl<'a, F: FieldCore, C: FpExt2Config<F>> Add<&'a Self> for FpExt2<F, C> {
     type Output = Self;
     fn add(self, rhs: &'a Self) -> Self::Output {
         self + *rhs
     }
 }
-impl<'a, F: FieldCore, C: Fp2Config<F>> Sub<&'a Self> for Fp2<F, C> {
+impl<'a, F: FieldCore, C: FpExt2Config<F>> Sub<&'a Self> for FpExt2<F, C> {
     type Output = Self;
     fn sub(self, rhs: &'a Self) -> Self::Output {
         self - *rhs
     }
 }
-impl<'a, F: FieldCore, C: Fp2Config<F>> Mul<&'a Self> for Fp2<F, C> {
+impl<'a, F: FieldCore, C: FpExt2Config<F>> Mul<&'a Self> for FpExt2<F, C> {
     type Output = Self;
     fn mul(self, rhs: &'a Self) -> Self::Output {
         self * *rhs
     }
 }
 
-impl<F: FieldCore + Valid, C: Fp2Config<F>> Valid for Fp2<F, C> {
+impl<F: FieldCore + Valid, C: FpExt2Config<F>> Valid for FpExt2<F, C> {
     fn check(&self) -> Result<(), SerializationError> {
         self.coeffs[0].check()?;
         self.coeffs[1].check()?;
@@ -261,7 +263,7 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> Valid for Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize, C: Fp2Config<F>> AkitaSerialize for Fp2<F, C> {
+impl<F: FieldCore + AkitaSerialize, C: FpExt2Config<F>> AkitaSerialize for FpExt2<F, C> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -277,8 +279,8 @@ impl<F: FieldCore + AkitaSerialize, C: Fp2Config<F>> AkitaSerialize for Fp2<F, C
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, C: Fp2Config<F>> AkitaDeserialize
-    for Fp2<F, C>
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, C: FpExt2Config<F>> AkitaDeserialize
+    for FpExt2<F, C>
 {
     type Context = ();
 
@@ -298,7 +300,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, C: Fp2Config<F>> Aki
     }
 }
 
-impl<F: FieldCore + Valid, C: Fp2Config<F>> RingCore for Fp2<F, C> {
+impl<F: FieldCore + Valid, C: FpExt2Config<F>> RingCore for FpExt2<F, C> {
     /// Specialized squaring: 2 base-field multiplications instead of 3.
     ///
     /// `(c0 + c1·u)^2 = (c0^2 + NR·c1^2) + (2·c0·c1)·u`
@@ -313,7 +315,7 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> RingCore for Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore + Valid, C: Fp2Config<F>> Invertible for Fp2<F, C> {
+impl<F: FieldCore + Valid, C: FpExt2Config<F>> Invertible for FpExt2<F, C> {
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
@@ -323,20 +325,22 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> Invertible for Fp2<F, C> {
     }
 }
 
-impl<F: HalvingField + Valid, C: Fp2Config<F>> HalvingField for Fp2<F, C> {
+impl<F: HalvingField + Valid, C: FpExt2Config<F>> HalvingField for FpExt2<F, C> {
     #[inline]
     fn half(self) -> Self {
         Self::new(self.coeffs[0].half(), self.coeffs[1].half())
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid, C: Fp2Config<F>> RandomSampling for Fp2<F, C> {
+impl<F: FieldCore + RandomSampling + Valid, C: FpExt2Config<F>> RandomSampling for FpExt2<F, C> {
     fn random<R: RngCore>(rng: &mut R) -> Self {
         Self::new(F::random(rng), F::random(rng))
     }
 }
 
-impl<F: FieldCore + FromPrimitiveInt + Valid, C: Fp2Config<F>> FromPrimitiveInt for Fp2<F, C> {
+impl<F: FieldCore + FromPrimitiveInt + Valid, C: FpExt2Config<F>> FromPrimitiveInt
+    for FpExt2<F, C>
+{
     fn from_u64(val: u64) -> Self {
         Self::from_u64(val)
     }
@@ -354,18 +358,18 @@ impl<F: FieldCore + FromPrimitiveInt + Valid, C: Fp2Config<F>> FromPrimitiveInt 
     }
 }
 
-impl<F: FieldCore + BalancedDigitLookup + Valid, C: Fp2Config<F>> BalancedDigitLookup
-    for Fp2<F, C>
+impl<F: FieldCore + BalancedDigitLookup + Valid, C: FpExt2Config<F>> BalancedDigitLookup
+    for FpExt2<F, C>
 {
 }
 
-/// Identity-stub `HasUnreducedOps` for `Fp2` variants without a dedicated
+/// Identity-stub `HasUnreducedOps` for `FpExt2` variants without a dedicated
 /// delayed-reduction accumulator. `ProductAccum = Self`, so every multiply
-/// reduces immediately. Same pattern as `RingSubfieldFp4<Fp64/Fp128>` and
-/// `RingSubfieldFp8<*>`.
-macro_rules! impl_fp2_unreduced_identity {
+/// reduces immediately. Same pattern as `RingSubfieldFpExt4<Fp64/Fp128>` and
+/// `RingSubfieldFpExt8<*>`.
+macro_rules! impl_fp_ext2_unreduced_identity {
     ($base:ident<$p:ident: $pty:ty>) => {
-        impl<const $p: $pty, C: Fp2Config<$base<$p>>> HasUnreducedOps for Fp2<$base<$p>, C> {
+        impl<const $p: $pty, C: FpExt2Config<$base<$p>>> HasUnreducedOps for FpExt2<$base<$p>, C> {
             type MulU64Accum = Self;
             type ProductAccum = Self;
 
@@ -387,19 +391,19 @@ macro_rules! impl_fp2_unreduced_identity {
             }
         }
 
-        impl<const $p: $pty, C: Fp2Config<$base<$p>>> MulBaseUnreduced<$base<$p>>
-            for Fp2<$base<$p>, C>
+        impl<const $p: $pty, C: FpExt2Config<$base<$p>>> MulBaseUnreduced<$base<$p>>
+            for FpExt2<$base<$p>, C>
         {
         }
     };
 }
 
-impl_fp2_unreduced_identity!(Fp32<P: u32>);
-impl_fp2_unreduced_identity!(Fp128<P: u128>);
+impl_fp_ext2_unreduced_identity!(Fp32<P: u32>);
+impl_fp_ext2_unreduced_identity!(Fp128<P: u128>);
 
-macro_rules! impl_fp2_default_optimized_fold {
+macro_rules! impl_fp_ext2_default_optimized_fold {
     ($base:ident<$p:ident: $pty:ty>) => {
-        impl<const $p: $pty, C: Fp2Config<$base<$p>>> HasOptimizedFold for Fp2<$base<$p>, C> {
+        impl<const $p: $pty, C: FpExt2Config<$base<$p>>> HasOptimizedFold for FpExt2<$base<$p>, C> {
             type FoldCtx = Self;
             #[inline]
             fn precompute_fold(r: Self) -> Self {
@@ -413,17 +417,17 @@ macro_rules! impl_fp2_default_optimized_fold {
     };
 }
 
-impl_fp2_default_optimized_fold!(Fp32<P: u32>);
-impl_fp2_default_optimized_fold!(Fp128<P: u128>);
+impl_fp_ext2_default_optimized_fold!(Fp32<P: u32>);
+impl_fp_ext2_default_optimized_fold!(Fp128<P: u128>);
 
-/// Specialized EOR fold for `Fp2<Fp64<P>, C>`.
+/// Specialized EOR fold for `FpExt2<Fp64<P>, C>`.
 ///
-/// Mirrors `RingSubfieldFp4<Fp32>`: precompute the "multiply by `r`" matrix
+/// Mirrors `RingSubfieldFpExt4<Fp32>`: precompute the "multiply by `r`" matrix
 /// once per round, then fold each pair as `even + r·(odd − even)` using
 /// base-field (`u64`) products with a single delayed reduction per output
 /// coordinate. Only `Fp64` bases are specialized; other bases keep the generic
-/// `Fp2` fold via `impl_fp2_default_optimized_fold`.
-impl<const P: u64, C: Fp2Config<Fp64<P>>> HasOptimizedFold for Fp2<Fp64<P>, C> {
+/// `FpExt2` fold via `impl_fp_ext2_default_optimized_fold`.
+impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasOptimizedFold for FpExt2<Fp64<P>, C> {
     type FoldCtx = FoldMatrixFp64;
 
     /// Build the 2×2 "multiply by `r`" matrix in the `[1, u]` basis.
@@ -476,7 +480,7 @@ fn fp64_accum_limbs(lo128: u128, hi_carry: u128) -> [u128; 2] {
     [lo128 as u64 as u128, (lo128 >> 64) | (hi_carry << 64)]
 }
 
-/// Widening `Fp2<Fp64<P>, C>` multiplication with delayed reduction.
+/// Widening `FpExt2<Fp64<P>, C>` multiplication with delayed reduction.
 ///
 /// Each coefficient is a combination of base products that can exceed 128 bits
 /// — `c0` reaches `p00 + p^2` (IS_NEG_ONE) or `p00 + 2*p11` (just under 2^130),
@@ -487,7 +491,7 @@ fn fp64_accum_limbs(lo128: u128, hi_carry: u128) -> [u128; 2] {
 /// reducing once is exact. For `IS_NEG_ONE` configs the `p^2` bias keeps `c0`
 /// non-negative (and `p^2 == 0 (mod p)`, so it is invisible after reduction).
 #[inline(always)]
-pub(crate) fn fp2_mul_to_accum_fp64<const P: u64, C: Fp2Config<Fp64<P>>>(
+pub(crate) fn fp_ext2_mul_to_accum_fp64<const P: u64, C: FpExt2Config<Fp64<P>>>(
     a: [Fp64<P>; 2],
     b: [Fp64<P>; 2],
 ) -> Fp2Fp64ProductAccum {
@@ -518,11 +522,11 @@ pub(crate) fn fp2_mul_to_accum_fp64<const P: u64, C: Fp2Config<Fp64<P>>>(
     Fp2Fp64ProductAccum([c0_lo, c0_hi, c1_lo, c1_hi])
 }
 
-impl<const P: u64, C: Fp2Config<Fp64<P>>> HasUnreducedOps for Fp2<Fp64<P>, C> {
+impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasUnreducedOps for FpExt2<Fp64<P>, C> {
     type MulU64Accum = AccumPair<<Fp64<P> as HasUnreducedOps>::MulU64Accum>;
     type ProductAccum = Fp2Fp64ProductAccum;
 
-    // `fp2_mul_to_accum_fp64` keeps the full >128-bit coefficient via carry-aware
+    // `fp_ext2_mul_to_accum_fp64` keeps the full >128-bit coefficient via carry-aware
     // base-2^64 limbs, so summing a batch and reducing once equals per-term `Mul`.
     // Covered by the `Ext2<Prime64Offset59>` rounds in
     // `sparse_tensor_factor_matches_dense_factor_rounds`.
@@ -538,7 +542,7 @@ impl<const P: u64, C: Fp2Config<Fp64<P>>> HasUnreducedOps for Fp2<Fp64<P>, C> {
 
     #[inline]
     fn mul_to_product_accum(self, other: Self) -> Fp2Fp64ProductAccum {
-        fp2_mul_to_accum_fp64::<P, C>(self.coeffs, other.coeffs)
+        fp_ext2_mul_to_accum_fp64::<P, C>(self.coeffs, other.coeffs)
     }
 
     #[inline]
@@ -556,7 +560,7 @@ impl<const P: u64, C: Fp2Config<Fp64<P>>> HasUnreducedOps for Fp2<Fp64<P>, C> {
     }
 }
 
-impl<const P: u64, C: Fp2Config<Fp64<P>>> MulBaseUnreduced<Fp64<P>> for Fp2<Fp64<P>, C> {}
+impl<const P: u64, C: FpExt2Config<Fp64<P>>> MulBaseUnreduced<Fp64<P>> for FpExt2<Fp64<P>, C> {}
 
 /// Default quadratic extension used by Akita field tests and helpers.
-pub type Ext2<F> = Fp2<F, TwoNr>;
+pub type Ext2<F> = FpExt2<F, TwoNr>;

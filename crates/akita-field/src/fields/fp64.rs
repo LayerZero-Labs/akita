@@ -347,7 +347,7 @@ impl<const P: u64> Fp64<P> {
     /// (each `a·b` with `a, b < P`, so each `< 2^{2·BITS}`) to a canonical
     /// field element.
     ///
-    /// Used by the specialized `Fp2<Fp64>` EOR fold, which forms each output
+    /// Used by the specialized `FpExt2<Fp64>` EOR fold, which forms each output
     /// coordinate as a sum of two base-field products before a single
     /// reduction.
     ///
