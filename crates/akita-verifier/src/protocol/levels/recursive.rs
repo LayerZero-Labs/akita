@@ -406,7 +406,7 @@ where
     };
 
     let rs = match &proof {
-        FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, { D }>(
+        FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, D>(
             &ring_switch_replay,
             w_len,
             level_proof.next_w_commitment(),
@@ -414,7 +414,7 @@ where
         )?,
         FoldProofView::Terminal(_) => {
             let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
-            ring_switch_verifier_terminal::<F, L, T, { D }>(
+            ring_switch_verifier_terminal::<F, L, T, D>(
                 &ring_switch_replay,
                 w_len,
                 transcript,

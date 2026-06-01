@@ -97,7 +97,7 @@ mod tests {
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
     use akita_prover::{
-        new_ring_relation_prover, AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly,
+        AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver,
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
@@ -322,7 +322,7 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let (instance, witness) = new_ring_relation_prover::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             vec![ring_opening_point],
@@ -339,7 +339,7 @@ mod tests {
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
-        .expect("quadratic equation");
+        .expect("ring relation");
 
         let w = ring_switch_build_w::<F, CpuBackend, D>(
             &instance,
@@ -455,7 +455,7 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let (instance, witness) = new_ring_relation_prover::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             vec![ring_opening_point],
@@ -472,7 +472,7 @@ mod tests {
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
-        .expect("quadratic equation");
+        .expect("ring relation");
 
         let w = ring_switch_build_w::<F, CpuBackend, D>(
             &instance,
@@ -627,7 +627,7 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let (instance, witness) = new_ring_relation_prover::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             vec![ring_opening_point.clone()],
@@ -644,7 +644,7 @@ mod tests {
             vec![CyclotomicRing::<F, D>::one()],
             MRowLayout::WithDBlock,
         )
-        .expect("quadratic equation");
+        .expect("ring relation");
 
         ring_switch_build_w::<F, CpuBackend, D>(
             &instance,

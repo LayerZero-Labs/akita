@@ -40,19 +40,17 @@ pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix,
     build_terminal_root_batched_proof, commit_next_w_with_policy, prepare_batched_prove_inputs,
-    prove_batched_with_policy, prove_fold_level_from_quadratic, prove_folded_batched_with_policy,
-    prove_recursive_fold_with_params, prove_recursive_level_with_policy,
-    prove_recursive_suffix_with_policy, prove_root_direct, prove_root_fold_from_quadratic,
-    prove_root_fold_with_params, prove_terminal_fold_level_from_quadratic,
-    prove_terminal_recursive_fold_with_params, prove_terminal_recursive_level_with_policy,
-    prove_terminal_root_fold_from_quadratic, prove_terminal_root_fold_with_params,
-    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
-    RingSwitchOutput, RootLevelRawOutput, SuffixLevelOutput, SuffixLevelRequest,
+    prove_batched_with_policy, prove_fold_level_from_ring_relation,
+    prove_folded_batched_with_policy, prove_recursive_fold_with_params,
+    prove_recursive_level_with_policy, prove_recursive_suffix_with_policy, prove_root_direct,
+    prove_root_fold_from_ring_relation, prove_root_fold_with_params,
+    prove_terminal_fold_level_from_ring_relation, prove_terminal_recursive_fold_with_params,
+    prove_terminal_recursive_level_with_policy, prove_terminal_root_fold_from_ring_relation,
+    prove_terminal_root_fold_with_params, PreparedBatchedProveInputs, ProveLevelOutput,
+    RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput, RootLevelRawOutput,
+    SuffixLevelOutput, SuffixLevelRequest,
 };
-pub use protocol::{
-    new_ring_relation_prover, new_ring_relation_recursive_multipoint_prover, RingRelationInstance,
-    RingRelationWitness,
-};
+pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
 /// One commitment plus the polynomials it bundles, opened at one point.
 ///
 /// `polynomials` is the exact bundle committed together by the prover

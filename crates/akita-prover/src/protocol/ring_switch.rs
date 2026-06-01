@@ -6,7 +6,7 @@ use crate::api::commitment::{
 use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
-use crate::protocol::quadratic_equation::compute_relation_quotient;
+use crate::protocol::ring_relation::compute_relation_quotient;
 use crate::protocol::RingRelationWitness;
 use crate::{
     tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,

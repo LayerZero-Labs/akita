@@ -1,7 +1,7 @@
 use super::*;
 use crate::validation::validate_i8_setup_log_basis;
 
-/// Build the witness vector `w` from the quadratic equation state.
+/// Build the witness vector `w` from the ring-relation witness.
 ///
 /// This is the first half of the ring switch: it computes `r` and assembles
 /// `w` as a flat recursive witness. The resulting `w` is D-agnostic and can be
@@ -9,7 +9,7 @@ use crate::validation::validate_i8_setup_log_basis;
 ///
 /// # Errors
 ///
-/// Returns an error if the quadratic equation is missing prover-side data.
+/// Returns an error if the ring-relation witness is missing prover-side data.
 ///
 /// # Panics
 ///

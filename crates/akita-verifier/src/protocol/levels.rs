@@ -601,7 +601,7 @@ where
                 let v = &prepared_points[row.point_idx()].inner_reduction;
                 let trace_input = *y_ring * v.sigma_m1();
                 let coords = batched_opening.to_ring_subfield_coords();
-                if !dispatch_trace_inner_product_check::<F, { D }>(
+                if !dispatch_trace_inner_product_check::<F, D>(
                     &trace_input,
                     &coords,
                     AkitaError::InvalidProof,
@@ -751,7 +751,7 @@ where
     let rs = match &stage_input {
         RootStageInput::Intermediate {
             next_w_commitment, ..
-        } => ring_switch_verifier::<F, C, T, { D }>(
+        } => ring_switch_verifier::<F, C, T, D>(
             &ring_switch_replay,
             w_len,
             next_w_commitment,
@@ -759,7 +759,7 @@ where
         )?,
         RootStageInput::Terminal { .. } => {
             let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
-            ring_switch_verifier_terminal::<F, C, T, { D }>(
+            ring_switch_verifier_terminal::<F, C, T, D>(
                 &ring_switch_replay,
                 w_len,
                 transcript,

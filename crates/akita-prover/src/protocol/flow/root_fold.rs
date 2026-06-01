@@ -127,7 +127,7 @@ where
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let (instance, witness) = new_ring_relation_prover::<F, { D }, _, _, _>(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
         ring_opening_points,
@@ -155,7 +155,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    let mut raw = prove_root_fold_from_quadratic::<F, C, T, B, D, _>(
+    let mut raw = prove_root_fold_from_ring_relation::<F, C, T, B, D, _>(
         expanded,
         backend,
         prepared,
@@ -186,13 +186,13 @@ where
 /// The caller owns schedule/config selection and passes the expected next
 /// recursive witness length, next digit basis, and commitment policy for that
 /// witness. This function owns root polynomial folding, public root transcript
-/// setup, root quadratic-equation construction, and the folded-root prover
+/// setup, root ring-relation construction, and the folded-root prover
 /// mechanics.
 ///
 /// # Errors
 ///
 /// Returns an error if root inputs are malformed, polynomial folding or
-/// quadratic-equation construction fails, or the folded-root prover fails.
+/// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_root_fold_with_params<F, E, C, T, P, B, const D: usize, CommitW>(
@@ -497,7 +497,7 @@ where
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let (instance, witness) = new_ring_relation_prover::<F, { D }, _, _, _>(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
         ring_opening_points,
@@ -525,7 +525,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    prove_root_fold_from_quadratic::<F, C, T, B, D, _>(
+    prove_root_fold_from_ring_relation::<F, C, T, B, D, _>(
         expanded,
         backend,
         prepared,
@@ -552,9 +552,9 @@ where
 /// schedule has exactly one fold level (the root is itself the terminal).
 ///
 /// Mirrors the intermediate-root path through claim-incidence absorbs,
-/// optional extension-opening reduction, and quadratic-equation setup, then
+/// optional extension-opening reduction, and ring-relation setup, then
 /// emits a [`TerminalLevelProof`] via
-/// [`prove_terminal_root_fold_from_quadratic`] instead of a
+/// [`prove_terminal_root_fold_from_ring_relation`] instead of a
 /// [`RootLevelRawOutput`].
 ///
 /// # Errors
@@ -855,7 +855,7 @@ where
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let (instance, witness) = new_ring_relation_prover::<F, { D }, _, _, _>(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
         ring_opening_points,
@@ -883,7 +883,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    prove_terminal_root_fold_from_quadratic::<F, C, T, B, D>(
+    prove_terminal_root_fold_from_ring_relation::<F, C, T, B, D>(
         expanded,
         backend,
         prepared,
@@ -956,7 +956,7 @@ where
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let (instance, witness) = new_ring_relation_prover::<F, { D }, _, _, _>(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
         ring_opening_points,
@@ -984,7 +984,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    let mut terminal = prove_terminal_root_fold_from_quadratic::<F, C, T, B, D>(
+    let mut terminal = prove_terminal_root_fold_from_ring_relation::<F, C, T, B, D>(
         expanded,
         backend,
         prepared,
@@ -1007,7 +1007,7 @@ where
 }
 
 /// Prove the folded root level after root orchestration has built its
-/// quadratic equation and selected the next recursive commitment policy.
+/// ring relation and selected the next recursive commitment policy.
 ///
 /// The root caller owns transcript setup for public openings and gamma
 /// batching, schedule selection, and the commitment-row view used by the root
@@ -1022,7 +1022,7 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold_from_quadratic<F, C, T, B, const D: usize, CommitW>(
+pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -1033,8 +1033,8 @@ pub fn prove_root_fold_from_quadratic<F, C, T, B, const D: usize, CommitW>(
     next_log_basis: u32,
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
-    instance: RingRelationInstance<F, { D }>,
-    witness: RingRelationWitness<F, { D }>,
+    instance: RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
@@ -1047,7 +1047,7 @@ where
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
-    let logical_w = ring_switch_build_w::<F, B, { D }>(&instance, witness, backend, prepared, lp)?;
+    let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     if logical_w.len() != expected_w_len {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled root next-w length did not match runtime witness: expected={expected_w_len}, actual={}",
@@ -1065,7 +1065,7 @@ where
     } = next_commitment;
     let w_commitment_proof = committed_commitment.clone();
 
-    let rs = ring_switch_finalize_with_gamma::<F, C, T, { D }>(
+    let rs = ring_switch_finalize_with_gamma::<F, C, T, D>(
         &instance,
         expanded,
         transcript,
@@ -1237,7 +1237,7 @@ where
     })
 }
 
-/// Terminal-root analogue of [`prove_root_fold_from_quadratic`] used when the
+/// Terminal-root analogue of [`prove_root_fold_from_ring_relation`] used when the
 /// schedule has exactly one fold level (the root is itself the terminal).
 ///
 /// Produces a [`TerminalLevelProof`] with cleartext `final_witness` instead
@@ -1251,7 +1251,7 @@ where
 /// fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_root_fold_from_quadratic<F, C, T, B, const D: usize>(
+pub fn prove_terminal_root_fold_from_ring_relation<F, C, T, B, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -1260,8 +1260,8 @@ pub fn prove_terminal_root_fold_from_quadratic<F, C, T, B, const D: usize>(
     lp: &akita_types::LevelParams,
     expected_w_len: usize,
     final_log_basis: u32,
-    instance: RingRelationInstance<F, { D }>,
-    witness: RingRelationWitness<F, { D }>,
+    instance: RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
@@ -1278,7 +1278,7 @@ where
         instance.claim_to_point().len(),
         instance.num_public_rows(),
     )?;
-    let logical_w = ring_switch_build_w::<F, B, { D }>(&instance, witness, backend, prepared, lp)?;
+    let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     if logical_w.len() != expected_w_len {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled root next-w length did not match runtime witness: expected={expected_w_len}, actual={}",
@@ -1289,7 +1289,7 @@ where
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
 
-    let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, { D }>(
+    let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, D>(
         &instance,
         expanded,
         transcript,

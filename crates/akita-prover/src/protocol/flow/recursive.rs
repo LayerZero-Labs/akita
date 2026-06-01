@@ -139,7 +139,7 @@ where
     })
 }
 
-/// Prove one recursive fold level after the caller has built its quadratic
+/// Prove one recursive fold level after the caller has built its ring-relation
 /// equation and selected the commitment policy for the next `w`.
 ///
 /// The caller owns config/schedule decisions through `commit_w_for_next`; this
@@ -153,7 +153,7 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_fold_level_from_quadratic<F, L, T, B, const D: usize, CommitW>(
+pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -162,8 +162,8 @@ pub fn prove_fold_level_from_quadratic<F, L, T, B, const D: usize, CommitW>(
     level: usize,
     lp: &LevelParams,
     next_log_basis: u32,
-    instance: RingRelationInstance<F, { D }>,
-    witness: RingRelationWitness<F, { D }>,
+    instance: RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] proof_y_rings: Vec<CyclotomicRing<F, D>>,
@@ -184,7 +184,7 @@ where
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
-    let logical_w = ring_switch_build_w::<F, B, { D }>(&instance, witness, backend, prepared, lp)?;
+    let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     let next_commitment = {
         let _span = tracing::info_span!("commit_w_level", level).entered();
         commit_w_for_next(&logical_w)?
@@ -195,7 +195,7 @@ where
         hint: committed_hint,
     } = next_commitment;
     let w_commitment_proof = committed_commitment.clone();
-    let rs = ring_switch_finalize::<F, L, T, { D }>(
+    let rs = ring_switch_finalize::<F, L, T, D>(
         &instance,
         expanded,
         transcript,
@@ -369,7 +369,7 @@ where
 }
 
 /// Prove the terminal recursive fold level after the caller has built its
-/// quadratic equation.
+/// ring relation.
 ///
 /// At the terminal level the next witness is shipped in cleartext as
 /// [`PackedDigits`], so this function:
@@ -378,7 +378,7 @@ where
 /// * packs it into the terminal [`CleartextWitnessProof`] using
 ///   `final_log_basis` as the planner-mandated minimum bits per element,
 /// * absorbs logical `w_hat` before fold challenge sampling when the
-///   quadratic equation is built, then absorbs the remaining final-witness
+///   ring relation is built, then absorbs the remaining final-witness
 ///   bytes before sampling any ring-switch challenges,
 /// * skips the stage-1 sumcheck entirely (packed-digit range is structurally
 ///   enforced by the packing), and
@@ -391,7 +391,7 @@ where
 /// Returns an error if ring switching or the stage-2 sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_fold_level_from_quadratic<F, L, T, B, const D: usize>(
+pub fn prove_terminal_fold_level_from_ring_relation<F, L, T, B, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -400,8 +400,8 @@ pub fn prove_terminal_fold_level_from_quadratic<F, L, T, B, const D: usize>(
     _level: usize,
     lp: &LevelParams,
     final_log_basis: u32,
-    instance: RingRelationInstance<F, { D }>,
-    witness: RingRelationWitness<F, { D }>,
+    instance: RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
@@ -425,11 +425,11 @@ where
         instance.claim_to_point().len(),
         instance.num_public_rows(),
     )?;
-    let logical_w = ring_switch_build_w::<F, B, { D }>(&instance, witness, backend, prepared, lp)?;
+    let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     let final_witness = CleartextWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
-    let rs = ring_switch_finalize_terminal::<F, L, T, { D }>(
+    let rs = ring_switch_finalize_terminal::<F, L, T, D>(
         &instance,
         expanded,
         transcript,
@@ -686,12 +686,12 @@ where
 /// The caller owns schedule/config selection and passes the next-level
 /// commitment policy as a closure. This function owns recursive opening-point
 /// reduction, witness folding, public recursive transcript absorbs, recursive
-/// quadratic-equation construction, and the folded-level prover mechanics.
+/// ring-relation construction, and the folded-level prover mechanics.
 ///
 /// # Errors
 ///
 /// Returns an error if the recursive opening point has the wrong dimension,
-/// witness folding or quadratic-equation construction fails, or the folded
+/// witness folding or ring-relation construction fails, or the folded
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
@@ -848,7 +848,7 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
-    let (instance, witness) = new_ring_relation_recursive_multipoint_prover::<F, { D }, _, _>(
+    let (instance, witness) = RingRelationProver::new_recursive_multipoint::<F, D, _, _>(
         backend,
         prepared,
         ring_opening_points,
@@ -864,7 +864,7 @@ where
     )?;
 
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
-    prove_fold_level_from_quadratic::<F, L, T, B, D, _>(
+    prove_fold_level_from_ring_relation::<F, L, T, B, D, _>(
         expanded,
         backend,
         prepared,
@@ -889,9 +889,9 @@ where
 /// [`TerminalLevelProof`] instead of an intermediate
 /// [`AkitaLevelProof`] + next-witness commitment pair.
 ///
-/// All recursive-opening, witness folding, and quadratic-equation setup is
+/// All recursive-opening, witness folding, and ring-relation setup is
 /// identical to the intermediate path. The two differ only inside the inner
-/// fold proof (see [`prove_terminal_fold_level_from_quadratic`]).
+/// fold proof (see [`prove_terminal_fold_level_from_ring_relation`]).
 ///
 /// # Errors
 ///
@@ -1051,7 +1051,7 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
-    let (instance, witness) = new_ring_relation_recursive_multipoint_prover::<F, { D }, _, _>(
+    let (instance, witness) = RingRelationProver::new_recursive_multipoint::<F, D, _, _>(
         backend,
         prepared,
         ring_opening_points,
@@ -1067,7 +1067,7 @@ where
     )?;
 
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
-    prove_terminal_fold_level_from_quadratic::<F, L, T, B, D>(
+    prove_terminal_fold_level_from_ring_relation::<F, L, T, B, D>(
         expanded,
         backend,
         prepared,

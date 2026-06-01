@@ -15,7 +15,7 @@ use akita_prover::protocol::ring_switch::{
     build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
 };
 use akita_prover::{
-    new_ring_relation_prover, AkitaProverSetup, CommitmentProver, RingRelationWitness,
+    AkitaProverSetup, CommitmentProver, RingRelationProver, RingRelationWitness,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::multilinear_eval;
@@ -126,7 +126,7 @@ fn plain_root_d_image<const D: usize>(
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
-    let (instance, witness) = new_ring_relation_prover::<F, D, _, _, _>(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         &CpuBackend,
         prepared,
         vec![ring_opening_point],
@@ -143,7 +143,7 @@ fn plain_root_d_image<const D: usize>(
         vec![CyclotomicRing::<F, D>::one()],
         MRowLayout::WithDBlock,
     )
-    .expect("debug quadratic equation");
+    .expect("debug ring relation");
 
     let RingRelationWitness { w_hat, .. } = witness;
     let plain_v = CpuBackend
@@ -1101,7 +1101,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             .iter()
             .flat_map(|polys| polys.iter())
             .collect();
-        let (instance, witness) = new_ring_relation_prover::<F, D, _, _, _>(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             ring_opening_points,
@@ -1118,7 +1118,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             vec![CyclotomicRing::<F, D>::one(); incidence.num_claims()],
             MRowLayout::WithDBlock,
         )
-        .expect("quadratic equation");
+        .expect("ring relation");
         let w = ring_switch_build_w::<F, CpuBackend, D>(
             &instance,
             witness,
