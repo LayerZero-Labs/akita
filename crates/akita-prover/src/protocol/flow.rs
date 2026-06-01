@@ -59,11 +59,11 @@ use akita_types::{
     schedule_root_fold_step, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    CarriedOpeningClaim, CarriedOpeningKind, ClaimIncidence, ClaimIncidenceLimits,
-    ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof,
-    FlatRingVec, IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
-    TerminalLevelProof,
+    CarriedOpeningClaim, CarriedOpeningKind, CarriedOpeningProof, ClaimIncidence,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof, DirectWitnessShape,
+    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, MRowLayout,
+    PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
+    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -389,6 +389,8 @@ pub struct RootLevelRawOutput<F: FieldCore, L: FieldCore, const D: usize> {
     pub w_commitment_proof: FlatRingVec<F>,
     /// Claimed terminal evaluation of the recursive witness at this level.
     pub w_eval: L,
+    /// Additional proof-visible claims carried into the first recursive suffix level.
+    pub extra_carried_openings: Vec<CarriedOpeningProof<F, L>>,
     /// Recursive prover state for the first suffix level.
     pub next_state: RecursiveProverState<F, L>,
 }

@@ -1218,6 +1218,7 @@ where
         stage2_sumcheck_proof_masked,
         w_commitment_proof,
         w_eval: proof_w_eval,
+        extra_carried_openings: Vec::new(),
         next_state: RecursiveProverState {
             w: committed_witness,
             logical_w,
