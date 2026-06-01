@@ -1,7 +1,8 @@
 use super::*;
 
 fn verifier_carried_opening_from_proof<'a, F, L>(
-    claim: &'a CarriedOpeningProof<F, L>,
+    source: &'a CarriedOpeningSourceProof<F>,
+    claim: &'a CarriedOpeningProof<L>,
 ) -> RecursiveVerifierCarriedOpening<'a, F, L>
 where
     F: FieldCore,
@@ -12,7 +13,7 @@ where
         opening: claim.value,
         #[cfg(feature = "zk")]
         opening_mask: ZkR1csLinearCombination::zero(),
-        commitment: &claim.commitment,
+        commitment: &source.commitment,
         basis: claim.basis,
         natural_len: claim.natural_len,
         padded_len: claim.padded_len,
@@ -170,10 +171,17 @@ where
     };
     let carried_openings = current_state.carried_openings.as_slice();
     let _common_padded_len = current_state.common_padded_len()?;
+    let carried_sources = carried_openings
+        .iter()
+        .map(|claim| CarriedOpeningSource {
+            commitment: claim.commitment,
+        })
+        .collect::<Vec<_>>();
     let carried_claims = carried_openings
         .iter()
-        .map(|claim| CarriedOpeningClaim {
-            commitment: claim.commitment,
+        .enumerate()
+        .map(|(source_idx, claim)| CarriedOpeningClaim {
+            source_idx,
             point: &claim.opening_point,
             value: claim.opening,
             basis: claim.basis,
@@ -182,8 +190,8 @@ where
             kind: claim.kind,
         })
         .collect::<Vec<_>>();
-    append_carried_opening_batch_to_transcript(&carried_claims, transcript)?;
-    let carried_incidence = carried_opening_incidence_summary(&carried_claims)?;
+    append_carried_opening_batch_to_transcript(&carried_sources, &carried_claims, transcript)?;
+    let carried_incidence = carried_opening_incidence_summary(&carried_sources, &carried_claims)?;
     if carried_openings.is_empty()
         || carried_openings
             .iter()
@@ -861,7 +869,15 @@ where
                         .stage2
                         .extra_carried_openings
                         .iter()
-                        .map(verifier_carried_opening_from_proof),
+                        .map(|claim| {
+                            let source = level_proof
+                                .stage2
+                                .extra_carried_sources
+                                .get(claim.source_idx.checked_sub(1).unwrap_or(usize::MAX))
+                                .ok_or(AkitaError::InvalidProof)?;
+                            Ok(verifier_carried_opening_from_proof(source, claim))
+                        })
+                        .collect::<Result<Vec<_>, AkitaError>>()?,
                 );
                 current_state = RecursiveVerifierState {
                     carried_openings,
@@ -1105,7 +1121,15 @@ where
                     .stage2
                     .extra_carried_openings
                     .iter()
-                    .map(verifier_carried_opening_from_proof),
+                    .map(|claim| {
+                        let source = fold_root
+                            .stage2
+                            .extra_carried_sources
+                            .get(claim.source_idx.checked_sub(1).unwrap_or(usize::MAX))
+                            .ok_or(AkitaError::InvalidProof)?;
+                        Ok(verifier_carried_opening_from_proof(source, claim))
+                    })
+                    .collect::<Result<Vec<_>, AkitaError>>()?,
             );
             let current_state = RecursiveVerifierState {
                 carried_openings,

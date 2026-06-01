@@ -40,13 +40,13 @@ pub use incidence::{
     append_carried_opening_batch_to_transcript, append_claim_incidence_shape_to_transcript,
     carried_opening_incidence_summary, sample_public_row_coefficients,
     validate_carried_opening_batch, verifier_claims_to_incidence, CarriedOpeningClaim,
-    CarriedOpeningKind, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    IncidenceClaim, PublicOpeningRow,
+    CarriedOpeningKind, CarriedOpeningSource, ClaimIncidence, ClaimIncidenceLimits,
+    ClaimIncidenceSummary, IncidenceClaim, PublicOpeningRow,
 };
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, CarriedOpeningProof,
-    ExtensionOpeningReductionProof, TerminalLevelProof,
+    CarriedOpeningSourceProof, ExtensionOpeningReductionProof, TerminalLevelProof,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
@@ -59,7 +59,8 @@ pub use setup::{
 pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape, CarriedOpeningShape,
-    ExtensionOpeningReductionShape, LevelProofShape, TerminalLevelProofShape,
+    CarriedOpeningSourceShape, ExtensionOpeningReductionShape, LevelProofShape,
+    TerminalLevelProofShape,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

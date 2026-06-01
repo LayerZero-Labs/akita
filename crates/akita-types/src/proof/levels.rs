@@ -49,15 +49,24 @@ pub struct AkitaStage2Proof<F: FieldCore, L: FieldCore> {
     /// Masked claimed evaluation of the next witness `w` at the stage-2 challenge point.
     #[cfg(feature = "zk")]
     pub next_w_eval_masked: L,
+    /// Additional non-witness sources carried into the next recursive level.
+    pub extra_carried_sources: Vec<CarriedOpeningSourceProof<F>>,
     /// Additional non-witness opening claims carried into the next recursive level.
-    pub extra_carried_openings: Vec<CarriedOpeningProof<F, L>>,
+    pub extra_carried_openings: Vec<CarriedOpeningProof<L>>,
+}
+
+/// Proof-visible commitment source carried into the next recursive level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarriedOpeningSourceProof<F: FieldCore> {
+    /// Commitment opened by claims that reference this source.
+    pub commitment: FlatRingVec<F>,
 }
 
 /// Proof-visible opening claim carried into the next recursive level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CarriedOpeningProof<F: FieldCore, L: FieldCore> {
-    /// Commitment opened by this claim.
-    pub commitment: FlatRingVec<F>,
+pub struct CarriedOpeningProof<L: FieldCore> {
+    /// Source index in the carried-source table. Source 0 is the implicit next witness.
+    pub source_idx: usize,
     /// Evaluation point for the carried claim.
     pub point: Vec<L>,
     /// Claimed opening value at `point`.
@@ -197,6 +206,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
                 next_w_eval,
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: next_w_eval,
+                extra_carried_sources: Vec::new(),
                 extra_carried_openings: Vec::new(),
             },
         )
@@ -258,6 +268,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
                 next_w_eval,
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: next_w_eval,
+                extra_carried_sources: Vec::new(),
                 extra_carried_openings: Vec::new(),
             },
         }
@@ -564,6 +575,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
                 next_w_eval,
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: next_w_eval,
+                extra_carried_sources: Vec::new(),
                 extra_carried_openings: Vec::new(),
             },
         )

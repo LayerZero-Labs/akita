@@ -123,8 +123,11 @@ fn recursive_carried_opening_state_requires_common_padded_domain() {
 #[test]
 fn folded_root_assembly_preserves_extra_carried_openings() {
     let setup_commitment = FlatRingVec::from_coeffs(vec![F::from_u64(9)]);
+    let source = CarriedOpeningSourceProof {
+        commitment: setup_commitment,
+    };
     let extra = CarriedOpeningProof {
-        commitment: setup_commitment.clone(),
+        source_idx: 1,
         point: vec![F::from_u64(3), F::from_u64(5)],
         value: F::from_u64(7),
         basis: BasisMode::Lagrange,
@@ -157,6 +160,7 @@ fn folded_root_assembly_preserves_extra_carried_openings() {
         },
         w_commitment_proof: FlatRingVec::from_coeffs(vec![F::zero(); 1]),
         w_eval: F::from_u64(4),
+        extra_carried_sources: vec![source.clone()],
         extra_carried_openings: vec![extra.clone()],
         next_state,
     };
@@ -179,6 +183,7 @@ fn folded_root_assembly_preserves_extra_carried_openings() {
 
     assert_eq!(num_levels, 1);
     let fold = proof.root.as_fold().unwrap();
+    assert_eq!(fold.stage2.extra_carried_sources, vec![source]);
     assert_eq!(fold.stage2.extra_carried_openings, vec![extra]);
 }
 

@@ -1175,6 +1175,7 @@ mod tests {
                 next_w_eval: F::zero(),
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: F::zero(),
+                extra_carried_sources: Vec::new(),
                 extra_carried_openings: Vec::new(),
             },
         };

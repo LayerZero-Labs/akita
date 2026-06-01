@@ -295,6 +295,7 @@ where
         stage2_sumcheck_proof_masked,
         w_commitment_proof,
         w_eval,
+        extra_carried_sources,
         extra_carried_openings,
         next_state,
     } = raw;
@@ -321,6 +322,7 @@ where
         w_eval,
     );
     if let AkitaBatchedRootProof::Fold(fold_root) = &mut root {
+        fold_root.stage2.extra_carried_sources = extra_carried_sources;
         fold_root.stage2.extra_carried_openings = extra_carried_openings;
     }
     let steps = build_final_proof_steps::<F, L>(intermediate_levels, terminal);
