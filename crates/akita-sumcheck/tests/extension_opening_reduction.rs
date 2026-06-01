@@ -954,3 +954,360 @@ fn extension_opening_reduction_rejects_malformed_table_lengths() {
 fn proof_claim(witness_evals: &[F], factor_evals: &[F]) -> F {
     extension_opening_reduction_claim(witness_evals, factor_evals).unwrap()
 }
+
+// ---------------------------------------------------------------------------
+// Regression: EOR round messages must honor `DELAYED_PRODUCT_SUM_IS_EXACT`.
+//
+// `accumulate_dense_round`, `fused_fold_and_accumulate`, and the sparse
+// `accumulate_entries_with_factor` sum `mul_to_product_accum` products and
+// reduce once. That is only sound when the field's accumulator is exact w.r.t.
+// per-term `Mul`. For a field that leaves `DELAYED_PRODUCT_SUM_IS_EXACT` at its
+// conservative `false` default, the prover must reduce every product first, or
+// the round coefficients silently drift and the prover's claim diverges.
+//
+// The existing byte-identical tests only cover fields whose flag is `true`
+// (exact) or whose accumulator is trivially exact, so they cannot catch a
+// regression on the `false` path. These tests drive the public prover API with
+// a mock field whose product accumulator deliberately wraps mod 2^64, and
+// assert the emitted round messages stay byte-identical to per-term `Mul`.
+mod delayed_product_sum_contract {
+    use super::*;
+    use akita_field::fields::wide::HasOptimizedFold;
+    use akita_field::fields::HasUnreducedOps;
+    use akita_field::{AdditiveGroup, Invertible, One, RingCore, Zero};
+    use std::fmt;
+    use std::iter::{Product, Sum};
+    use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+
+    type Inner = Prime64Offset59;
+
+    /// `u64` product accumulator that adds modulo `2^64`. Each stored value is a
+    /// canonical residue `< p < 2^64`, but summing several near-`p` residues
+    /// wraps, so `reduce(Σ mul_to_product_accum)` diverges from `Σ a*b` — exactly
+    /// the hazard `DELAYED_PRODUCT_SUM_IS_EXACT = false` exists to flag.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    struct WrappingU64Accum(u64);
+
+    impl Zero for WrappingU64Accum {
+        fn zero() -> Self {
+            Self(0)
+        }
+        fn is_zero(&self) -> bool {
+            self.0 == 0
+        }
+    }
+    impl Add for WrappingU64Accum {
+        type Output = Self;
+        fn add(self, rhs: Self) -> Self {
+            Self(self.0.wrapping_add(rhs.0))
+        }
+    }
+    impl Add<&WrappingU64Accum> for WrappingU64Accum {
+        type Output = Self;
+        fn add(self, rhs: &Self) -> Self {
+            Self(self.0.wrapping_add(rhs.0))
+        }
+    }
+    impl AddAssign for WrappingU64Accum {
+        fn add_assign(&mut self, rhs: Self) {
+            self.0 = self.0.wrapping_add(rhs.0);
+        }
+    }
+    impl Sub for WrappingU64Accum {
+        type Output = Self;
+        fn sub(self, rhs: Self) -> Self {
+            Self(self.0.wrapping_sub(rhs.0))
+        }
+    }
+    impl Sub<&WrappingU64Accum> for WrappingU64Accum {
+        type Output = Self;
+        fn sub(self, rhs: &Self) -> Self {
+            Self(self.0.wrapping_sub(rhs.0))
+        }
+    }
+    impl SubAssign for WrappingU64Accum {
+        fn sub_assign(&mut self, rhs: Self) {
+            self.0 = self.0.wrapping_sub(rhs.0);
+        }
+    }
+    impl Neg for WrappingU64Accum {
+        type Output = Self;
+        fn neg(self) -> Self {
+            Self(self.0.wrapping_neg())
+        }
+    }
+    impl AdditiveGroup for WrappingU64Accum {}
+
+    /// Field wrapper over `Prime64Offset59` whose only non-standard behavior is
+    /// the lossy product accumulator above plus `DELAYED_PRODUCT_SUM_IS_EXACT =
+    /// false`. All ordinary arithmetic delegates to the exact inner field, so a
+    /// per-term `Mul` computation is trivially the ground truth.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+    struct LossyField(Inner);
+
+    impl LossyField {
+        fn from_u64(v: u64) -> Self {
+            Self(Inner::from_u64(v))
+        }
+    }
+    impl fmt::Display for LossyField {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+    impl Zero for LossyField {
+        fn zero() -> Self {
+            Self(Inner::zero())
+        }
+        fn is_zero(&self) -> bool {
+            self.0.is_zero()
+        }
+    }
+    impl One for LossyField {
+        fn one() -> Self {
+            Self(Inner::one())
+        }
+    }
+    impl Add for LossyField {
+        type Output = Self;
+        fn add(self, rhs: Self) -> Self {
+            Self(self.0 + rhs.0)
+        }
+    }
+    impl Add<&LossyField> for LossyField {
+        type Output = Self;
+        fn add(self, rhs: &Self) -> Self {
+            Self(self.0 + rhs.0)
+        }
+    }
+    impl AddAssign for LossyField {
+        fn add_assign(&mut self, rhs: Self) {
+            self.0 += rhs.0;
+        }
+    }
+    impl Sub for LossyField {
+        type Output = Self;
+        fn sub(self, rhs: Self) -> Self {
+            Self(self.0 - rhs.0)
+        }
+    }
+    impl Sub<&LossyField> for LossyField {
+        type Output = Self;
+        fn sub(self, rhs: &Self) -> Self {
+            Self(self.0 - rhs.0)
+        }
+    }
+    impl SubAssign for LossyField {
+        fn sub_assign(&mut self, rhs: Self) {
+            self.0 -= rhs.0;
+        }
+    }
+    impl Neg for LossyField {
+        type Output = Self;
+        fn neg(self) -> Self {
+            Self(-self.0)
+        }
+    }
+    impl Mul for LossyField {
+        type Output = Self;
+        fn mul(self, rhs: Self) -> Self {
+            Self(self.0 * rhs.0)
+        }
+    }
+    impl Mul<&LossyField> for LossyField {
+        type Output = Self;
+        fn mul(self, rhs: &Self) -> Self {
+            Self(self.0 * rhs.0)
+        }
+    }
+    impl MulAssign for LossyField {
+        fn mul_assign(&mut self, rhs: Self) {
+            self.0 *= rhs.0;
+        }
+    }
+    impl Sum for LossyField {
+        fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+            iter.fold(Self::zero(), |acc, x| acc + x)
+        }
+    }
+    impl<'a> Sum<&'a LossyField> for LossyField {
+        fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+            iter.fold(Self::zero(), |acc, x| acc + *x)
+        }
+    }
+    impl Product for LossyField {
+        fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
+            iter.fold(Self::one(), |acc, x| acc * x)
+        }
+    }
+    impl<'a> Product<&'a LossyField> for LossyField {
+        fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+            iter.fold(Self::one(), |acc, x| acc * *x)
+        }
+    }
+    impl AdditiveGroup for LossyField {}
+    impl RingCore for LossyField {}
+    impl Invertible for LossyField {
+        fn inverse(&self) -> Option<Self> {
+            self.0.inverse().map(Self)
+        }
+    }
+    impl FieldCore for LossyField {}
+
+    impl HasOptimizedFold for LossyField {
+        type FoldCtx = Self;
+        fn precompute_fold(r: Self) -> Self {
+            r
+        }
+        fn fold_one(r: &Self, even: Self, odd: Self) -> Self {
+            even + *r * (odd - even)
+        }
+    }
+
+    impl HasUnreducedOps for LossyField {
+        type MulU64Accum = WrappingU64Accum;
+        type ProductAccum = WrappingU64Accum;
+
+        // Deliberately inexact: the accumulator wraps mod 2^64, so a delayed
+        // batch sum diverges from per-term `Mul` once the sum crosses 2^64.
+        const DELAYED_PRODUCT_SUM_IS_EXACT: bool = false;
+
+        fn mul_u64_unreduced(self, small: u64) -> WrappingU64Accum {
+            WrappingU64Accum((self.0 * Inner::from_u64(small)).to_limbs())
+        }
+        fn mul_to_product_accum(self, other: Self) -> WrappingU64Accum {
+            WrappingU64Accum((self.0 * other.0).to_limbs())
+        }
+        fn reduce_mul_u64_accum(accum: WrappingU64Accum) -> Self {
+            Self(Inner::from_u64(accum.0))
+        }
+        fn reduce_product_accum(accum: WrappingU64Accum) -> Self {
+            Self(Inner::from_u64(accum.0))
+        }
+    }
+
+    /// `p - 1`, the largest canonical residue (~2^64); prime-agnostic via `-1`.
+    fn max_residue() -> LossyField {
+        -LossyField::one()
+    }
+
+    /// Ground-truth degree-2 round message `c + l·X + q·X²` computed entirely
+    /// with per-term `Mul`, with `l = claim - 2c - q`.
+    fn reference_round_eval(
+        witness: &[LossyField],
+        factor: &[LossyField],
+        claim: LossyField,
+        x: LossyField,
+    ) -> LossyField {
+        let half = witness.len() / 2;
+        let mut constant = LossyField::zero();
+        let mut quadratic = LossyField::zero();
+        for i in 0..half {
+            let w0 = witness[2 * i];
+            let w1 = witness[2 * i + 1];
+            let a0 = factor[2 * i];
+            let a1 = factor[2 * i + 1];
+            constant += w0 * a0;
+            quadratic += (w1 - w0) * (a1 - a0);
+        }
+        let linear = claim - constant - constant - quadratic;
+        constant + linear * x + quadratic * x * x
+    }
+
+    /// Exact multilinear fold `even + r·(odd − even)`, matching the prover.
+    fn reference_fold(table: &[LossyField], r: LossyField) -> Vec<LossyField> {
+        (0..table.len() / 2)
+            .map(|i| table[2 * i] + r * (table[2 * i + 1] - table[2 * i]))
+            .collect()
+    }
+
+    /// Confirm the chosen tables actually trip the lossy accumulator, so the
+    /// byte-identicality assertions below would fail if the prover summed wide
+    /// products instead of reducing per term.
+    fn assert_inputs_are_hazardous(witness: &[LossyField], factor: &[LossyField]) {
+        let half = witness.len() / 2;
+        let per_term = (0..half).fold(LossyField::zero(), |acc, i| {
+            acc + witness[2 * i] * factor[2 * i]
+        });
+        let delayed = {
+            let mut accum = WrappingU64Accum::zero();
+            for i in 0..half {
+                accum += witness[2 * i].mul_to_product_accum(factor[2 * i]);
+            }
+            LossyField::reduce_product_accum(accum)
+        };
+        assert_ne!(
+            per_term, delayed,
+            "test inputs must trigger the lossy delayed accumulator"
+        );
+    }
+
+    // Dense path: round 0 exercises `accumulate_dense_round`; later rounds use
+    // the cache filled by `fused_fold_and_accumulate`. Both must reduce per term
+    // for this field, so every round message matches the per-term reference.
+    #[test]
+    fn dense_round_messages_honor_delayed_product_flag() {
+        let zero = LossyField::zero();
+        let one = LossyField::one();
+        let two = LossyField::from_u64(2);
+        let max = max_residue();
+        // Even slots each multiply to ~2^64; four of them overflow a u64.
+        let mut witness = vec![one, two, one, two, one, two, one, two];
+        let mut factor = vec![max, zero, max, zero, max, zero, max, zero];
+        assert_inputs_are_hazardous(&witness, &factor);
+
+        let mut prover =
+            ExtensionOpeningReductionProver::new(witness.clone(), factor.clone()).unwrap();
+        let mut claim = prover.input_claim();
+
+        let eval_points = [zero, one, two, LossyField::from_u64(3)];
+        for round in 0..3 {
+            let prover_poly = prover.compute_round_univariate(round, claim);
+            for &x in &eval_points {
+                assert_eq!(
+                    prover_poly.evaluate(&x),
+                    reference_round_eval(&witness, &factor, claim, x),
+                    "dense round {round} diverged from per-term Mul at x={x:?}"
+                );
+            }
+            let challenge = LossyField::from_u64(7 + round as u64);
+            claim = prover_poly.evaluate(&challenge);
+            prover.ingest_challenge(round, challenge);
+            witness = reference_fold(&witness, challenge);
+            factor = reference_fold(&factor, challenge);
+        }
+    }
+
+    // Sparse path: round 0 exercises `accumulate_entries_with_factor`, which
+    // must take the per-term branch for this field.
+    #[test]
+    fn sparse_round_messages_honor_delayed_product_flag() {
+        let zero = LossyField::zero();
+        let one = LossyField::one();
+        let max = max_residue();
+        // Dense-equivalent tables (even slots nonzero) for the reference.
+        let witness = vec![one, zero, one, zero, one, zero, one, zero];
+        let factor = vec![max, zero, max, zero, max, zero, max, zero];
+        assert_inputs_are_hazardous(&witness, &factor);
+
+        let entries = vec![(0, one), (2, one), (4, one), (6, one)];
+        let sparse = SparseExtensionOpeningWitness::new(8, entries).unwrap();
+        let term =
+            BatchedExtensionOpeningReductionTerm::new_sparse(sparse, factor.clone(), one).unwrap();
+        let input_claim = BatchedExtensionOpeningReductionProver::input_claim_from_terms(
+            std::slice::from_ref(&term),
+        )
+        .unwrap();
+        let mut prover =
+            BatchedExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
+
+        let prover_poly = prover.compute_round_univariate(0, input_claim);
+        for x in [zero, one, LossyField::from_u64(2), LossyField::from_u64(3)] {
+            assert_eq!(
+                prover_poly.evaluate(&x),
+                reference_round_eval(&witness, &factor, input_claim, x),
+                "sparse round 0 diverged from per-term Mul at x={x:?}"
+            );
+        }
+    }
+}

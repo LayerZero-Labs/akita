@@ -297,8 +297,24 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
     where
         P: Fn(usize) -> (E, E) + Sync,
     {
-        let mut const_accum = E::ProductAccum::zero();
-        let mut quad_accum = E::ProductAccum::zero();
+        // Honor `DELAYED_PRODUCT_SUM_IS_EXACT`: only sum wide products and reduce
+        // once for fields whose accumulator is proven exact; otherwise reduce per
+        // term so the coefficients stay byte-identical to `Mul`, matching the
+        // dense round and `TensorEqualityFactor::factor_pair`.
+        let (constant, quadratic) = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+            Self::accumulate_entries_with_factor_using::<DelayedDeg2<E>, P>(entries, factor_pair)
+        } else {
+            Self::accumulate_entries_with_factor_using::<DirectDeg2<E>, P>(entries, factor_pair)
+        };
+        (coeff * constant, coeff * quadratic)
+    }
+
+    fn accumulate_entries_with_factor_using<A, P>(entries: &[(usize, E)], factor_pair: &P) -> (E, E)
+    where
+        A: Deg2RoundAccum<E>,
+        P: Fn(usize) -> (E, E) + Sync,
+    {
+        let mut acc = A::zero();
         let mut i = 0;
         while i < entries.len() {
             let pair = entries[i].0 / 2;
@@ -317,16 +333,14 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
             let (a0, a1) = factor_pair(pair);
             let da = a1 - a0;
             if w0 == E::zero() {
-                quad_accum += w1.mul_to_product_accum(da);
+                acc.add_quadratic_product(w1, da);
             } else {
-                const_accum += w0.mul_to_product_accum(a0);
-                quad_accum += (w1 - w0).mul_to_product_accum(da);
+                acc.add_constant_product(w0, a0);
+                acc.add_quadratic_product(w1 - w0, da);
             }
         }
 
-        let constant = E::reduce_product_accum(const_accum);
-        let quadratic = E::reduce_product_accum(quad_accum);
-        (coeff * constant, coeff * quadratic)
+        acc.finish()
     }
 
     fn accumulate_entries(entries: &[(usize, E)], factor_evals: &[E], coeff: E) -> (E, E) {

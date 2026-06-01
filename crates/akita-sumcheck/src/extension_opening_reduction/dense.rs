@@ -14,53 +14,60 @@ pub(crate) fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
     )
     .entered();
     debug_assert_eq!(witness_evals.len(), factor_evals.len());
-    let half = witness_evals.len() / 2;
     if coeff == E::zero() {
         return (E::zero(), E::zero());
     }
 
+    // Sum the wide products in `E::ProductAccum` only when the field has proven
+    // that delayed reduction is exact for these batch sizes; otherwise reduce
+    // each product immediately so the coefficients stay byte-identical to
+    // per-term `Mul` (the `DELAYED_PRODUCT_SUM_IS_EXACT` contract).
+    let (constant, quadratic) = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        accumulate_dense_round_with::<E, DelayedDeg2<E>>(witness_evals, factor_evals)
+    } else {
+        accumulate_dense_round_with::<E, DirectDeg2<E>>(witness_evals, factor_evals)
+    };
+    (coeff * constant, coeff * quadratic)
+}
+
+fn accumulate_dense_round_with<E, A>(witness_evals: &[E], factor_evals: &[E]) -> (E, E)
+where
+    E: FieldCore + HasUnreducedOps,
+    A: Deg2RoundAccum<E>,
+{
+    let half = witness_evals.len() / 2;
+
     #[cfg(feature = "parallel")]
     {
         if half >= DENSE_PARALLEL_PAIR_THRESHOLD {
-            let (const_accum, quad_accum) = (0..half)
+            return (0..half)
                 .into_par_iter()
-                .fold(
-                    || (E::ProductAccum::zero(), E::ProductAccum::zero()),
-                    |(mut constant, mut quadratic), i| {
-                        let w0 = witness_evals[2 * i];
-                        let w1 = witness_evals[2 * i + 1];
-                        let a0 = factor_evals[2 * i];
-                        let a1 = factor_evals[2 * i + 1];
+                .fold(A::zero, |mut acc, i| {
+                    let w0 = witness_evals[2 * i];
+                    let w1 = witness_evals[2 * i + 1];
+                    let a0 = factor_evals[2 * i];
+                    let a1 = factor_evals[2 * i + 1];
 
-                        constant += w0.mul_to_product_accum(a0);
-                        quadratic += (w1 - w0).mul_to_product_accum(a1 - a0);
-                        (constant, quadratic)
-                    },
-                )
-                .reduce(
-                    || (E::ProductAccum::zero(), E::ProductAccum::zero()),
-                    |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
-                );
-            let constant = E::reduce_product_accum(const_accum);
-            let quadratic = E::reduce_product_accum(quad_accum);
-            return (coeff * constant, coeff * quadratic);
+                    acc.add_constant_product(w0, a0);
+                    acc.add_quadratic_product(w1 - w0, a1 - a0);
+                    acc
+                })
+                .reduce(A::zero, A::merge)
+                .finish();
         }
     }
 
-    let mut const_accum = E::ProductAccum::zero();
-    let mut quad_accum = E::ProductAccum::zero();
+    let mut acc = A::zero();
     for i in 0..half {
         let w0 = witness_evals[2 * i];
         let w1 = witness_evals[2 * i + 1];
         let a0 = factor_evals[2 * i];
         let a1 = factor_evals[2 * i + 1];
 
-        const_accum += w0.mul_to_product_accum(a0);
-        quad_accum += (w1 - w0).mul_to_product_accum(a1 - a0);
+        acc.add_constant_product(w0, a0);
+        acc.add_quadratic_product(w1 - w0, a1 - a0);
     }
-    let constant = E::reduce_product_accum(const_accum);
-    let quadratic = E::reduce_product_accum(quad_accum);
-    (coeff * constant, coeff * quadratic)
+    acc.finish()
 }
 
 pub(crate) fn fold_dense_reduction_tables_in_place<E: HasUnreducedOps + HasOptimizedFold>(
@@ -91,6 +98,25 @@ fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
     debug_assert!(witness_evals.len().is_power_of_two());
     debug_assert!(witness_evals.len() >= 4);
 
+    // The fold itself (`E::fold_one`) is always exact; only the product
+    // accumulation respects `DELAYED_PRODUCT_SUM_IS_EXACT`, matching
+    // `accumulate_dense_round`.
+    if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        fused_fold_and_accumulate_with::<E, DelayedDeg2<E>>(witness_evals, factor_evals, r_round)
+    } else {
+        fused_fold_and_accumulate_with::<E, DirectDeg2<E>>(witness_evals, factor_evals, r_round)
+    }
+}
+
+fn fused_fold_and_accumulate_with<E, A>(
+    witness_evals: &mut Vec<E>,
+    factor_evals: &mut Vec<E>,
+    r_round: E,
+) -> (E, E)
+where
+    E: FieldCore + HasUnreducedOps + HasOptimizedFold,
+    A: Deg2RoundAccum<E>,
+{
     let half = witness_evals.len() / 2;
     let quarter = half / 2;
     let ctx = E::precompute_fold(r_round);
@@ -111,7 +137,7 @@ fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
                 folded_f.set_len(half);
             }
 
-            let (const_sum, quad_sum) = {
+            let acc = {
                 let input_w: &[E] = witness_evals;
                 let input_f: &[E] = factor_evals;
 
@@ -119,49 +145,40 @@ fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
                     .par_chunks_mut(2)
                     .zip(folded_f.par_chunks_mut(2))
                     .enumerate()
-                    .fold(
-                        || (E::ProductAccum::zero(), E::ProductAccum::zero()),
-                        |(mut c_acc, mut q_acc), (i, (w_out, f_out))| {
-                            let fw0 = E::fold_one(&ctx, input_w[4 * i], input_w[4 * i + 1]);
-                            let fw1 = E::fold_one(&ctx, input_w[4 * i + 2], input_w[4 * i + 3]);
-                            let fa0 = E::fold_one(&ctx, input_f[4 * i], input_f[4 * i + 1]);
-                            let fa1 = E::fold_one(&ctx, input_f[4 * i + 2], input_f[4 * i + 3]);
+                    .fold(A::zero, |mut acc, (i, (w_out, f_out))| {
+                        let fw0 = E::fold_one(&ctx, input_w[4 * i], input_w[4 * i + 1]);
+                        let fw1 = E::fold_one(&ctx, input_w[4 * i + 2], input_w[4 * i + 3]);
+                        let fa0 = E::fold_one(&ctx, input_f[4 * i], input_f[4 * i + 1]);
+                        let fa1 = E::fold_one(&ctx, input_f[4 * i + 2], input_f[4 * i + 3]);
 
-                            c_acc += fw0.mul_to_product_accum(fa0);
-                            q_acc += (fw1 - fw0).mul_to_product_accum(fa1 - fa0);
+                        acc.add_constant_product(fw0, fa0);
+                        acc.add_quadratic_product(fw1 - fw0, fa1 - fa0);
 
-                            w_out[0] = fw0;
-                            w_out[1] = fw1;
-                            f_out[0] = fa0;
-                            f_out[1] = fa1;
+                        w_out[0] = fw0;
+                        w_out[1] = fw1;
+                        f_out[0] = fa0;
+                        f_out[1] = fa1;
 
-                            (c_acc, q_acc)
-                        },
-                    )
-                    .reduce(
-                        || (E::ProductAccum::zero(), E::ProductAccum::zero()),
-                        |(c1, q1), (c2, q2)| (c1 + c2, q1 + q2),
-                    )
+                        acc
+                    })
+                    .reduce(A::zero, A::merge)
             };
 
             *witness_evals = folded_w;
             *factor_evals = folded_f;
-            let constant = E::reduce_product_accum(const_sum);
-            let quadratic = E::reduce_product_accum(quad_sum);
-            return (constant, quadratic);
+            return acc.finish();
         }
     }
 
-    let mut const_accum = E::ProductAccum::zero();
-    let mut quad_accum = E::ProductAccum::zero();
+    let mut acc = A::zero();
     for i in 0..quarter {
         let fw0 = E::fold_one(&ctx, witness_evals[4 * i], witness_evals[4 * i + 1]);
         let fw1 = E::fold_one(&ctx, witness_evals[4 * i + 2], witness_evals[4 * i + 3]);
         let fa0 = E::fold_one(&ctx, factor_evals[4 * i], factor_evals[4 * i + 1]);
         let fa1 = E::fold_one(&ctx, factor_evals[4 * i + 2], factor_evals[4 * i + 3]);
 
-        const_accum += fw0.mul_to_product_accum(fa0);
-        quad_accum += (fw1 - fw0).mul_to_product_accum(fa1 - fa0);
+        acc.add_constant_product(fw0, fa0);
+        acc.add_quadratic_product(fw1 - fw0, fa1 - fa0);
 
         witness_evals[2 * i] = fw0;
         witness_evals[2 * i + 1] = fw1;
@@ -170,9 +187,7 @@ fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
     }
     witness_evals.truncate(half);
     factor_evals.truncate(half);
-    let constant = E::reduce_product_accum(const_accum);
-    let quadratic = E::reduce_product_accum(quad_accum);
-    (constant, quadratic)
+    acc.finish()
 }
 
 /// Prover state for the degree-two extension-opening reduction sumcheck.

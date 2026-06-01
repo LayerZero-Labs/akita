@@ -717,6 +717,119 @@ pub fn extension_opening_reduction_eval_at_point<E: FieldCore>(
     Ok(witness_eval * factor_eval)
 }
 
+/// Degree-two round-message accumulator that honors a field's delayed-reduction
+/// exactness contract (`HasUnreducedOps::DELAYED_PRODUCT_SUM_IS_EXACT`).
+///
+/// Every extension-opening reduction round needs two batch sums: the constant
+/// coefficient `Σ c0·c1` and the quadratic coefficient `Σ q0·q1`. This trait
+/// abstracts how those products are summed so the dense, fused-fold, and sparse
+/// accumulation paths can all pick the right policy from one place:
+///
+/// - [`DelayedDeg2`] sums the wide `E::ProductAccum` products and reduces once
+///   per round. This is only sound when `DELAYED_PRODUCT_SUM_IS_EXACT` is set,
+///   i.e. the field's accumulator has been proven not to wrap for these batch
+///   sizes (e.g. `RingSubfieldFp4<Fp32>`, `RingSubfieldFp8<Fp16>`, `Fp2<Fp64>`).
+/// - [`DirectDeg2`] reduces every product immediately via `Mul`, so the summed
+///   coefficient is byte-identical to per-term reduction. This is the
+///   contract-safe path for fields that leave `DELAYED_PRODUCT_SUM_IS_EXACT` at
+///   its conservative `false` default.
+///
+/// Mirrors the same flag check already performed in
+/// [`sparse::TensorEqualityFactor::factor_pair`], so the entire EOR prover
+/// stays byte-identical to per-term `Mul` for any field whose delayed product
+/// sum is not exact.
+trait Deg2RoundAccum<E: FieldCore + HasUnreducedOps>: Sized + Send {
+    /// Empty accumulator (both coefficients zero).
+    fn zero() -> Self;
+    /// Accumulate `lhs·rhs` into the constant coefficient.
+    fn add_constant_product(&mut self, lhs: E, rhs: E);
+    /// Accumulate `lhs·rhs` into the quadratic coefficient.
+    fn add_quadratic_product(&mut self, lhs: E, rhs: E);
+    /// Combine two partial accumulators (for parallel reduction).
+    #[cfg(feature = "parallel")]
+    fn merge(self, other: Self) -> Self;
+    /// Reduce to the `(constant, quadratic)` round coefficients.
+    fn finish(self) -> (E, E);
+}
+
+/// Delayed-reduction accumulator. Sound only when the field's
+/// `DELAYED_PRODUCT_SUM_IS_EXACT` is `true`.
+struct DelayedDeg2<E: HasUnreducedOps> {
+    constant: E::ProductAccum,
+    quadratic: E::ProductAccum,
+}
+
+impl<E: FieldCore + HasUnreducedOps> Deg2RoundAccum<E> for DelayedDeg2<E> {
+    #[inline]
+    fn zero() -> Self {
+        Self {
+            constant: E::ProductAccum::zero(),
+            quadratic: E::ProductAccum::zero(),
+        }
+    }
+    #[inline]
+    fn add_constant_product(&mut self, lhs: E, rhs: E) {
+        self.constant += lhs.mul_to_product_accum(rhs);
+    }
+    #[inline]
+    fn add_quadratic_product(&mut self, lhs: E, rhs: E) {
+        self.quadratic += lhs.mul_to_product_accum(rhs);
+    }
+    #[cfg(feature = "parallel")]
+    #[inline]
+    fn merge(self, other: Self) -> Self {
+        Self {
+            constant: self.constant + other.constant,
+            quadratic: self.quadratic + other.quadratic,
+        }
+    }
+    #[inline]
+    fn finish(self) -> (E, E) {
+        (
+            E::reduce_product_accum(self.constant),
+            E::reduce_product_accum(self.quadratic),
+        )
+    }
+}
+
+/// Per-term reduction accumulator: every product is reduced immediately, so the
+/// summed coefficient is byte-identical to per-term `Mul`. Contract-safe
+/// fallback for fields with `DELAYED_PRODUCT_SUM_IS_EXACT == false`.
+struct DirectDeg2<E> {
+    constant: E,
+    quadratic: E,
+}
+
+impl<E: FieldCore + HasUnreducedOps> Deg2RoundAccum<E> for DirectDeg2<E> {
+    #[inline]
+    fn zero() -> Self {
+        Self {
+            constant: E::zero(),
+            quadratic: E::zero(),
+        }
+    }
+    #[inline]
+    fn add_constant_product(&mut self, lhs: E, rhs: E) {
+        self.constant += lhs * rhs;
+    }
+    #[inline]
+    fn add_quadratic_product(&mut self, lhs: E, rhs: E) {
+        self.quadratic += lhs * rhs;
+    }
+    #[cfg(feature = "parallel")]
+    #[inline]
+    fn merge(self, other: Self) -> Self {
+        Self {
+            constant: self.constant + other.constant,
+            quadratic: self.quadratic + other.quadratic,
+        }
+    }
+    #[inline]
+    fn finish(self) -> (E, E) {
+        (self.constant, self.quadratic)
+    }
+}
+
 mod batched;
 mod dense;
 mod output;
