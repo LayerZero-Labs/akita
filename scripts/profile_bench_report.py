@@ -818,6 +818,10 @@ def fmt_seconds(value: float) -> str:
     return f"{value:.3f}"
 
 
+def fmt_milliseconds(value: float) -> str:
+    return f"{value * 1_000.0:.1f}"
+
+
 def fmt_mib(value_kib: float) -> str:
     return f"{value_kib / 1024.0:.1f}"
 
@@ -857,7 +861,7 @@ TIME_METRICS = [
     Metric("setup_s", "Setup", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
     Metric("prove_total_s", "Prove", "s", fmt_seconds),
-    Metric("verify_total_s", "Verify", "s", fmt_seconds),
+    Metric("verify_total_s", "Verify", "ms", fmt_milliseconds),
     Metric("max_rss_kib", "Max RSS", "MiB", fmt_mib),
 ]
 
@@ -887,6 +891,13 @@ def fmt_optional_seconds(summary: dict[str, object], key: str) -> str:
     if value is None:
         return "n/a"
     return fmt_seconds(float(value))
+
+
+def fmt_optional_milliseconds(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "n/a"
+    return fmt_milliseconds(float(value))
 
 
 def fmt_optional_mib(summary: dict[str, object], key: str) -> str:
@@ -970,7 +981,7 @@ def render_matrix_summary(
         "Setup NTT MiB",
         "Commit s",
         "Prove s",
-        "Verify s",
+        "Verify ms",
         "RSS MiB",
         "Proof B",
     ]
@@ -995,7 +1006,7 @@ def render_matrix_summary(
             fmt_optional_mib_from_bytes(current, "setup_ntt_cache_bytes"),
             fmt_optional_seconds(current, "commit_s"),
             fmt_optional_seconds(current, "prove_total_s"),
-            fmt_optional_seconds(current, "verify_total_s"),
+            fmt_optional_milliseconds(current, "verify_total_s"),
             fmt_optional_mib(current, "max_rss_kib"),
             fmt_optional_bytes(current, "proof_size_bytes"),
         ]
@@ -1268,8 +1279,10 @@ def render_report(args: argparse.Namespace) -> int:
             ]:
                 observed_range = sample_range(current, key)
                 if observed_range is not None:
+                    formatter = fmt_milliseconds if key == "verify_total_s" else fmt_seconds
+                    unit = "ms" if key == "verify_total_s" else "s"
                     ranges.append(
-                        f"{label} `{fmt_seconds(observed_range[0])}-{fmt_seconds(observed_range[1])}s`"
+                        f"{label} `{formatter(observed_range[0])}-{formatter(observed_range[1])}{unit}`"
                     )
             if ranges:
                 print()
