@@ -5,6 +5,10 @@ macro_rules! dispatch_slot {
         let nr: usize = $num_rows;
         let nc: usize = $num_cols;
         match $slot {
+            NttSlotCache::Q16 { neg, params: p, .. } => {
+                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
+                $func(&rows, $($arg,)* p)
+            }
             NttSlotCache::Q32 { neg, params: p, .. } => {
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
@@ -180,6 +184,26 @@ pub fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: u
             "for dense predecomposed digit mat-vec",
         )?;
     }
+    mat_vec_mul_ntt_dense_digits_i8_trusted(slot, num_rows, num_cols, blocks, log_basis)
+}
+
+/// Dense pre-decomposed digit mat-vec for caller-owned trusted digit caches.
+///
+/// Keeps the public [`mat_vec_mul_ntt_dense_digits_i8`] validation boundary
+/// intact while letting `DensePoly` reuse its decomposer-produced cache without
+/// rescanning every digit plane on each commit.
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_dense_digits_i8_trusted")]
+pub(crate) fn mat_vec_mul_ntt_dense_digits_i8_trusted<
+    F: FieldCore + CanonicalField,
+    const D: usize,
+>(
+    slot: &NttSlotCache<D>,
+    num_rows: usize,
+    num_cols: usize,
+    blocks: &[&[[i8; D]]],
+    log_basis: u32,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    validate_i8_log_basis(log_basis)?;
     Ok(dispatch_slot!(
         slot,
         num_rows,

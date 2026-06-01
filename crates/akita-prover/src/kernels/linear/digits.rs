@@ -97,19 +97,38 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
         safe_width,
         params,
         |accs, start, end| {
-            for block_idx in 0..num_blocks {
-                let block = blocks[block_idx];
-                if start >= block.len() {
-                    continue;
-                }
-                let block_tile_end = end.min(block.len());
-                for (j, digit) in block[start..block_tile_end].iter().enumerate() {
-                    if CHECK_ZERO && is_zero_plane(digit) {
+            if CHECK_ZERO {
+                for (block_idx, block) in blocks.iter().enumerate() {
+                    if start >= block.len() {
                         continue;
                     }
-                    let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                    for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
-                        accumulate_pointwise_product_into(acc, &mat_row[start + j], &ntt_d, params);
+                    let block_tile_end = end.min(block.len());
+                    let tile = &block[start..block_tile_end];
+                    for (i, digit) in tile.iter().enumerate() {
+                        if is_zero_plane(digit) {
+                            continue;
+                        }
+                        let col = start + i;
+                        let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                        for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
+                            accumulate_pointwise_product_into(acc, &mat_row[col], &ntt_d, params);
+                        }
+                    }
+                }
+            } else {
+                for block_idx in 0..num_blocks {
+                    let block = blocks[block_idx];
+                    if start >= block.len() {
+                        continue;
+                    }
+                    let block_tile_end = end.min(block.len());
+                    let tile = &block[start..block_tile_end];
+                    for (i, digit) in tile.iter().enumerate() {
+                        let col = start + i;
+                        let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                        for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
+                            accumulate_pointwise_product_into(acc, &mat_row[col], &ntt_d, params);
+                        }
                     }
                 }
             }
@@ -195,7 +214,6 @@ pub(super) fn mat_vec_mul_digits_i8_strided_with_params<
         },
     )
 }
-
 pub(super) fn mat_vec_mul_raw_i8_strided_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
