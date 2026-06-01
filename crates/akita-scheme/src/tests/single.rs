@@ -410,10 +410,10 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     assert_eq!(proof.num_fold_levels(), 0);
     let witnesses = proof
         .root
-        .as_direct()
+        .as_zero_fold()
         .expect("root-direct batched proof expected");
     assert_eq!(witnesses.len(), 1);
-    assert!(direct_witness_opening_matches::<DirectF, DirectF>(
+    assert!(cleartext_witness_opening_matches::<DirectF, DirectF>(
         &witnesses[0],
         &opening_point,
         &opening,

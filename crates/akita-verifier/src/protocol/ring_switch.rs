@@ -128,8 +128,8 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) n_b: usize,
     pub(crate) num_points: usize,
     pub(crate) rows: usize,
-    pub(crate) claim_to_point_poly: Vec<(usize, usize)>,
-    pub(crate) num_polys_per_point: Vec<usize>,
+    pub(crate) claim_to_commitment_group_poly: Vec<(usize, usize)>,
+    pub(crate) num_polys_per_commitment_group: Vec<usize>,
     pub(crate) num_public_rows: usize,
     pub(crate) gamma: Vec<F>,
     pub(crate) claim_to_point: Vec<usize>,
@@ -150,7 +150,7 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E, const D: usize> {
 /// This handles multiple opening points, arbitrary claim-to-point mapping, and
 /// point-local polynomial bundles. The recursive/single-point path is the
 /// `opening_points = [pt]`, `claim_to_point = [0]`,
-/// `num_polys_per_point = [1]`, `num_public_rows = 1` specialization.
+/// `num_polys_per_commitment_group = [1]`, `num_public_rows = 1` specialization.
 ///
 /// # Errors
 ///
@@ -226,9 +226,9 @@ where
     let ring_multiplier_points = relation.ring_multiplier_points();
     let claim_to_point = relation.claim_to_point();
     let routing = relation.commitment_routing();
-    let num_polys_per_point = routing.num_polys_per_group();
-    let claim_to_point_poly = routing.claim_to_group();
-    let claim_poly_indices = routing.claim_poly_in_group();
+    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
+    let claim_to_commitment_group = routing.claim_to_commitment_group();
+    let claim_poly_in_commitment_group = routing.claim_poly_in_commitment_group();
     let num_public_rows = relation.num_public_rows();
     let gamma = replay.row_coefficients;
 
@@ -243,14 +243,17 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    if claim_to_point_poly.len() != num_claims || claim_poly_indices.len() != num_claims {
+    if claim_to_commitment_group.len() != num_claims
+        || claim_poly_in_commitment_group.len() != num_claims
+    {
         return Err(AkitaError::InvalidProof);
     }
-    let num_points = num_polys_per_point.len();
+    let num_points = num_polys_per_commitment_group.len();
     for claim_idx in 0..num_claims {
-        let point_idx = claim_to_point_poly[claim_idx];
-        if point_idx >= num_points
-            || claim_poly_indices[claim_idx] >= num_polys_per_point[point_idx]
+        let group_idx = claim_to_commitment_group[claim_idx];
+        if group_idx >= num_points
+            || claim_poly_in_commitment_group[claim_idx]
+                >= num_polys_per_commitment_group[group_idx]
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -330,9 +333,9 @@ where
         alpha,
         lp,
         tau1,
-        routing.num_polys_per_group(),
-        routing.claim_to_group(),
-        routing.claim_poly_in_group(),
+        routing.num_polys_per_commitment_group(),
+        routing.claim_to_commitment_group(),
+        routing.claim_poly_in_commitment_group(),
         replay.row_coefficients,
         relation.num_public_rows(),
         relation.m_row_layout(),
@@ -349,9 +352,9 @@ fn prepare_ring_switch_row_eval_inner<F, E, const D: usize>(
     alpha: E,
     lp: &LevelParams,
     tau1: &[E],
-    num_polys_per_point: &[usize],
-    claim_to_point_poly: &[usize],
-    claim_poly_indices: &[usize],
+    num_polys_per_commitment_group: &[usize],
+    claim_to_commitment_group: &[usize],
+    claim_poly_in_commitment_group: &[usize],
     gamma: &[E],
     num_public_rows: usize,
     m_row_layout: MRowLayout,
@@ -367,14 +370,17 @@ where
     validate_level_dispatch::<D>(lp)?;
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = claim_to_point.len();
-    if claim_to_point_poly.len() != num_claims || claim_poly_indices.len() != num_claims {
+    if claim_to_commitment_group.len() != num_claims
+        || claim_poly_in_commitment_group.len() != num_claims
+    {
         return Err(AkitaError::InvalidProof);
     }
-    let num_points = num_polys_per_point.len();
+    let num_points = num_polys_per_commitment_group.len();
     for claim_idx in 0..num_claims {
-        let point_idx = claim_to_point_poly[claim_idx];
-        if point_idx >= num_points
-            || claim_poly_indices[claim_idx] >= num_polys_per_point[point_idx]
+        let group_idx = claim_to_commitment_group[claim_idx];
+        if group_idx >= num_points
+            || claim_poly_in_commitment_group[claim_idx]
+                >= num_polys_per_commitment_group[group_idx]
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -410,7 +416,7 @@ where
     }
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
-    let num_t_vectors = num_polys_per_point
+    let num_t_vectors = num_polys_per_commitment_group
         .iter()
         .try_fold(0usize, |acc, &count| acc.checked_add(count))
         .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
@@ -452,7 +458,11 @@ where
             "D-key column width is too small for verifier layout".to_string(),
         ));
     }
-    let max_point_poly_count = num_polys_per_point.iter().copied().max().unwrap_or(0);
+    let max_point_poly_count = num_polys_per_commitment_group
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0);
     let expected_b_width = max_point_poly_count
         .checked_mul(lp.a_key.row_len())
         .and_then(|width| width.checked_mul(depth_open))
@@ -521,10 +531,10 @@ where
         }
     };
 
-    let claim_to_point_poly: Vec<(usize, usize)> = claim_to_point_poly
+    let claim_to_commitment_group_poly: Vec<(usize, usize)> = claim_to_commitment_group
         .iter()
-        .zip(claim_poly_indices.iter())
-        .map(|(&point_idx, &poly_idx)| (point_idx, poly_idx))
+        .zip(claim_poly_in_commitment_group.iter())
+        .map(|(&group_idx, &poly_idx)| (group_idx, poly_idx))
         .collect();
 
     Ok(RingSwitchDeferredRowEval {
@@ -551,8 +561,8 @@ where
         n_b,
         num_points,
         rows,
-        claim_to_point_poly,
-        num_polys_per_point: num_polys_per_point.to_vec(),
+        claim_to_commitment_group_poly,
+        num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
         num_public_rows,
         gamma: gamma.to_vec(),
         claim_to_point: claim_to_point.to_vec(),
@@ -676,12 +686,10 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             )?;
         let mut challenge_block_summaries_by_t_vector =
             vec![[E::zero(), E::zero()]; self.num_t_vectors];
-        // Per-point t-vector starting indices: `t_vector_offsets[p]` is the
-        // running sum of bundle sizes for points `< p`. Lifted out of the
-        // per-claim loop so the routing is O(num_points + num_claims) rather
-        // than O(num_points * num_claims).
+        // Per-commitment-group t-vector starting indices. Under the current
+        // relation-routing contract these match opening-point groups.
         let t_vector_offsets: Vec<usize> = self
-            .num_polys_per_point
+            .num_polys_per_commitment_group
             .iter()
             .scan(0usize, |acc, &count| {
                 let offset = *acc;
@@ -689,8 +697,10 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 Some(offset)
             })
             .collect();
-        for (claim_idx, &(point_idx, poly_idx)) in self.claim_to_point_poly.iter().enumerate() {
-            let t_vector_idx = t_vector_offsets[point_idx] + poly_idx;
+        for (claim_idx, &(group_idx, poly_idx)) in
+            self.claim_to_commitment_group_poly.iter().enumerate()
+        {
+            let t_vector_idx = t_vector_offsets[group_idx] + poly_idx;
             let [carry0, carry1] = challenge_block_summaries[claim_idx];
             challenge_block_summaries_by_t_vector[t_vector_idx][0] += carry0;
             challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;

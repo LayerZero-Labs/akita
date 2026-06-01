@@ -123,7 +123,7 @@ fn batched_root_direct_fast_path_round_trip() {
     );
     let direct_witnesses = proof
         .root
-        .as_direct()
+        .as_zero_fold()
         .expect("root-direct variant must expose per-claim direct witnesses");
     assert_eq!(direct_witnesses.len(), NUM_POLYS);
     assert!(

@@ -553,7 +553,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    let z_pre_count = num_public_rows
+    let z_folded_count = num_public_rows
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(lp.num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
@@ -591,7 +591,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
             .checked_add(t_hat_count)
             .and_then(|n| n.checked_add(b_blinding_count))
             .and_then(|n| n.checked_add(d_blinding_count))
-            .and_then(|n| n.checked_add(z_pre_count))
+            .and_then(|n| n.checked_add(z_folded_count))
             .and_then(|n| n.checked_add(r_count))
             .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
     }
@@ -599,7 +599,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     {
         w_hat_count
             .checked_add(t_hat_count)
-            .and_then(|n| n.checked_add(z_pre_count))
+            .and_then(|n| n.checked_add(z_folded_count))
             .and_then(|n| n.checked_add(r_count))
             .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
     }

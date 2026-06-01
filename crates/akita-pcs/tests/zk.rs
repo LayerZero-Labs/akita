@@ -1160,9 +1160,13 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
                 &alpha_evals_y,
                 &lp,
                 &tau1,
-                instance.commitment_routing().num_polys_per_group(),
-                instance.claim_to_point_poly(),
-                instance.commitment_routing().claim_poly_in_group(),
+                instance
+                    .commitment_routing()
+                    .num_polys_per_commitment_group(),
+                instance.commitment_routing().claim_to_commitment_group(),
+                instance
+                    .commitment_routing()
+                    .claim_poly_in_commitment_group(),
                 &gamma,
                 instance.num_public_rows(),
                 MRowLayout::WithDBlock,
@@ -1204,9 +1208,13 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             &alpha_evals_y,
             &lp,
             &tau1,
-            instance.commitment_routing().num_polys_per_group(),
-            instance.claim_to_point_poly(),
-            instance.commitment_routing().claim_poly_in_group(),
+            instance
+                .commitment_routing()
+                .num_polys_per_commitment_group(),
+            instance.commitment_routing().claim_to_commitment_group(),
+            instance
+                .commitment_routing()
+                .claim_poly_in_commitment_group(),
             &gamma,
             instance.num_public_rows(),
             MRowLayout::WithDBlock,

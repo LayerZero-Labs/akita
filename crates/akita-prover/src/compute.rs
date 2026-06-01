@@ -358,7 +358,7 @@ pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
     /// One centered `z` segment contributing to A-side quotient rows.
     pub z_segment: &'a [[i32; D]],
     /// Infinity norm of the full centered `z_folded_rings` witness.
-    pub z_pre_centered_inf_norm: u32,
+    pub z_folded_centered_inf_norm: u32,
     /// Logarithm of the gadget basis used to produce `w_hat` and `t_hat`.
     pub log_basis: u32,
 }
@@ -370,7 +370,7 @@ pub struct RingSwitchQuotientRowsPlan<'a, const D: usize> {
     /// One centered `z` segment contributing to A-side quotient rows.
     pub z_segment: &'a [[i32; D]],
     /// Infinity norm of the full centered `z_folded_rings` witness.
-    pub z_pre_centered_inf_norm: u32,
+    pub z_folded_centered_inf_norm: u32,
 }
 
 /// Named ring-switch relation rows returned by a backend.
@@ -896,7 +896,7 @@ where
             plan.w_hat,
             plan.t_hat,
             plan.z_segment,
-            plan.z_pre_centered_inf_norm,
+            plan.z_folded_centered_inf_norm,
             plan.log_basis,
         )?;
         Ok(RingSwitchRelationRows {
@@ -922,7 +922,7 @@ where
             &[][..],
             &[][..],
             plan.z_segment,
-            plan.z_pre_centered_inf_norm,
+            plan.z_folded_centered_inf_norm,
             1,
         )?;
         Ok(a_quotients)
@@ -1127,7 +1127,7 @@ mod tests {
                     w_hat: &w_hat,
                     t_hat: &t_hat,
                     z_segment: &z_segment,
-                    z_pre_centered_inf_norm: 3,
+                    z_folded_centered_inf_norm: 3,
                     log_basis: 3,
                 },
             )

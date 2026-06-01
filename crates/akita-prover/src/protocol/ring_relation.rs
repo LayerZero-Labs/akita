@@ -550,7 +550,7 @@ impl RingRelationProver {
         let z_folded_rings = {
             let num_points = opening_points.len();
             let _span =
-                tracing::info_span!("compute_batched_z_pre", num_points = num_points).entered();
+                tracing::info_span!("compute_batched_z_folded", num_points = num_points).entered();
             let mut polys_by_point: Vec<Vec<&P>> = vec![Vec::new(); num_points];
             let mut claim_indices_by_point: Vec<Vec<usize>> = vec![Vec::new(); num_points];
             for (claim_idx, poly) in polys.iter().enumerate() {
@@ -620,6 +620,7 @@ impl RingRelationProver {
             y,
             v,
         )?;
+        instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness {
             z_folded_rings,
             w_hat,
@@ -776,7 +777,7 @@ impl RingRelationProver {
         };
         let z_folded_rings = {
             let _span = tracing::info_span!(
-                "compute_recursive_multipoint_z_pre",
+                "compute_recursive_multipoint_z_folded",
                 num_claims = num_claims
             )
             .entered();
@@ -827,6 +828,11 @@ impl RingRelationProver {
         )?;
         let w_folded = pre_folded_by_claim.into_iter().flatten().collect();
 
+        if num_claims != 1 {
+            return Err(AkitaError::InvalidInput(
+                "recursive split opening/commitment routing is not supported".to_string(),
+            ));
+        }
         let num_vars = lp.recursive_opening_num_vars()?;
         let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_claims])?;
         let commitment_routing = CommitmentRouting::from_recursive_multipoint(num_claims)?;
@@ -842,6 +848,7 @@ impl RingRelationProver {
             y,
             v,
         )?;
+        instance.check_v_shape_for_level(&lp)?;
         let witness = RingRelationWitness {
             z_folded_rings,
             w_hat,

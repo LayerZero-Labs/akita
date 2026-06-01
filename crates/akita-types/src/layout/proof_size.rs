@@ -134,7 +134,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .checked_mul(lp.a_key.row_len())
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("planned T width overflow".to_string()))?;
-    let z_pre_count = lp
+    let z_folded_count = lp
         .inner_width()
         .checked_mul(lp.num_digits_fold)
         .ok_or_else(|| AkitaError::InvalidSetup("planned Z width overflow".to_string()))?;
@@ -161,7 +161,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
             .checked_add(t_hat_count)
             .and_then(|n| n.checked_add(b_blinding_count))
             .and_then(|n| n.checked_add(d_blinding_count))
-            .and_then(|n| n.checked_add(z_pre_count))
+            .and_then(|n| n.checked_add(z_folded_count))
             .and_then(|n| n.checked_add(r_count))
             .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))
     }
@@ -169,7 +169,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
     {
         w_hat_count
             .checked_add(t_hat_count)
-            .and_then(|n| n.checked_add(z_pre_count))
+            .and_then(|n| n.checked_add(z_folded_count))
             .and_then(|n| n.checked_add(r_count))
             .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))
     }

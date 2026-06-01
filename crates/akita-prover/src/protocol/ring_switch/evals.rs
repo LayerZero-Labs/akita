@@ -65,9 +65,9 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     alpha_pows: &[E],
     lp: &LevelParams,
     tau1: &[E],
-    num_polys_per_point: &[usize],
-    claim_to_point_poly: &[usize],
-    claim_poly_indices: &[usize],
+    num_polys_per_commitment_group: &[usize],
+    claim_to_commitment_group: &[usize],
+    claim_poly_in_commitment_group: &[usize],
     gamma: &[E],
     num_public_rows: usize,
     m_row_layout: MRowLayout,
@@ -93,19 +93,22 @@ where
             "batched prover ring-multiplier opening-point layout mismatch".to_string(),
         ));
     }
-    if claim_to_point_poly.len() != num_claims || claim_poly_indices.len() != num_claims {
+    if claim_to_commitment_group.len() != num_claims
+        || claim_poly_in_commitment_group.len() != num_claims
+    {
         return Err(AkitaError::InvalidInput(
-            "batched prover claim incidence lengths do not match".to_string(),
+            "batched prover commitment routing lengths do not match".to_string(),
         ));
     }
-    let num_points = num_polys_per_point.len();
+    let num_points = num_polys_per_commitment_group.len();
     for claim_idx in 0..num_claims {
-        let point_idx = claim_to_point_poly[claim_idx];
-        if point_idx >= num_points
-            || claim_poly_indices[claim_idx] >= num_polys_per_point[point_idx]
+        let group_idx = claim_to_commitment_group[claim_idx];
+        if group_idx >= num_points
+            || claim_poly_in_commitment_group[claim_idx]
+                >= num_polys_per_commitment_group[group_idx]
         {
             return Err(AkitaError::InvalidInput(
-                "batched prover claim incidence index out of range".to_string(),
+                "batched prover commitment routing index out of range".to_string(),
             ));
         }
     }
@@ -115,21 +118,20 @@ where
     let depth_fold = lp.num_digits_fold;
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
-    let num_t_vectors = num_polys_per_point
+    let num_t_vectors = num_polys_per_commitment_group
         .iter()
         .try_fold(0usize, |acc, &count| acc.checked_add(count))
         .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
-    let t_vector_to_group: Vec<(usize, usize)> = num_polys_per_point
+    let t_vector_to_group: Vec<(usize, usize)> = num_polys_per_commitment_group
         .iter()
         .enumerate()
-        .flat_map(|(point_idx, &group_poly_count)| {
-            (0..group_poly_count).map(move |poly_idx| (point_idx, poly_idx))
+        .flat_map(|(group_idx, &group_poly_count)| {
+            (0..group_poly_count).map(move |poly_idx| (group_idx, poly_idx))
         })
         .collect();
-    // Per-point t-vector starting indices; precomputed so the per-claim
-    // mapping below stays O(num_points + num_claims) instead of recomputing
-    // the prefix sum on every claim.
-    let t_vector_offsets: Vec<usize> = num_polys_per_point
+    // Per-commitment-group t-vector starting indices; precomputed so the
+    // per-claim mapping below stays O(groups + claims).
+    let t_vector_offsets: Vec<usize> = num_polys_per_commitment_group
         .iter()
         .scan(0usize, |acc, &count| {
             let offset = *acc;
@@ -137,10 +139,10 @@ where
             Some(offset)
         })
         .collect();
-    let claim_to_t_vector: Vec<usize> = claim_to_point_poly
+    let claim_to_t_vector: Vec<usize> = claim_to_commitment_group
         .iter()
-        .zip(claim_poly_indices.iter())
-        .map(|(&point_idx, &poly_idx)| t_vector_offsets[point_idx] + poly_idx)
+        .zip(claim_poly_in_commitment_group.iter())
+        .map(|(&group_idx, &poly_idx)| t_vector_offsets[group_idx] + poly_idx)
         .collect();
 
     let total_blocks = num_blocks
@@ -244,7 +246,11 @@ where
         Challenges::Tensor { factored: _ } => challenges.evals_at_pows::<F, E, D>(alpha_pows)?,
     };
 
-    let max_group_poly_count = num_polys_per_point.iter().copied().max().unwrap_or(0);
+    let max_group_poly_count = num_polys_per_commitment_group
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0);
     let d_message_width = total_blocks
         .checked_mul(depth_open)
         .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;

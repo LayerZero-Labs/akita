@@ -70,13 +70,13 @@ where
         &w_folded,
         instance.ring_multiplier_points(),
         instance.claim_to_point(),
-        routing.claim_to_group(),
-        routing.claim_poly_in_group(),
+        routing.claim_to_commitment_group(),
+        routing.claim_poly_in_commitment_group(),
         instance.row_coefficient_rings(),
         &z_folded_rings.centered_coeffs,
         z_folded_rings.centered_inf_norm,
         instance.y(),
-        routing.num_polys_per_group(),
+        routing.num_polys_per_commitment_group(),
         instance.num_public_rows(),
         lp.num_blocks,
         lp.inner_width(),
@@ -182,15 +182,15 @@ fn emit_blinding_planes<const D: usize>(
 ///
 /// Output order: for each `(dc, df)`, emit all `(point, blk)` pairs with
 /// the global block index `point * block_len + blk` innermost.
-fn emit_z_pre_block_inner<const D: usize>(
+fn emit_z_folded_block_inner<const D: usize>(
     out: &mut Vec<i8>,
-    z_pre_centered: &[[i32; D]],
+    z_folded_centered: &[[i32; D]],
     block_len: usize,
     depth_commit: usize,
     num_digits_fold: usize,
     log_basis: u32,
 ) {
-    let total_elems = z_pre_centered.len();
+    let total_elems = z_folded_centered.len();
     let inner_width = block_len * depth_commit;
     debug_assert_eq!(
         total_elems % inner_width,
@@ -200,7 +200,7 @@ fn emit_z_pre_block_inner<const D: usize>(
     let num_points = total_elems / inner_width;
 
     let mut all_planes = vec![[0i8; D]; total_elems * num_digits_fold];
-    for (k, z_j) in z_pre_centered.iter().enumerate() {
+    for (k, z_j) in z_folded_centered.iter().enumerate() {
         balanced_decompose_centered_i32_i8_into(
             z_j,
             &mut all_planes[k * num_digits_fold..(k + 1) * num_digits_fold],
@@ -249,7 +249,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
-    z_pre_centered: &[[i32; D]],
+    z_folded_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
 ) -> RecursiveWitnessFlat {
@@ -277,7 +277,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         + d_blinding_planes
         + t_hat_planes
         + b_blinding_planes
-        + z_pre_centered.len() * num_digits_fold;
+        + z_folded_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
     let z_first = akita_types::ring_column_z_first(lp);
     tracing::debug!(
@@ -285,8 +285,8 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         d_blinding_planes,
         t_hat_planes,
         b_blinding_planes,
-        z_pre_elems = z_pre_centered.len(),
-        z_pre_planes = z_pre_centered.len() * num_digits_fold,
+        z_folded_elems = z_folded_centered.len(),
+        z_folded_planes = z_folded_centered.len() * num_digits_fold,
         r_elems = r.len(),
         r_planes = r_hat_count,
         total_ring = z_count + r_hat_count,
@@ -318,9 +318,9 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     };
 
     if z_first {
-        emit_z_pre_block_inner(
+        emit_z_folded_block_inner(
             &mut out,
-            z_pre_centered,
+            z_folded_centered,
             block_len,
             depth_commit,
             num_digits_fold,
@@ -349,9 +349,9 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         emit_blinding_planes(&mut out, b_blinding_digits);
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
-        emit_z_pre_block_inner(
+        emit_z_folded_block_inner(
             &mut out,
-            z_pre_centered,
+            z_folded_centered,
             block_len,
             depth_commit,
             num_digits_fold,

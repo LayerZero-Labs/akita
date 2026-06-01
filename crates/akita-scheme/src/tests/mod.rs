@@ -23,7 +23,7 @@ use akita_types::{
     TerminalLevelProofShape,
 };
 use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, Step};
-use akita_verifier::direct_witness_opening_matches;
+use akita_verifier::cleartext_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};

@@ -31,7 +31,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
-    z_pre_max_abs: u32,
+    z_folded_max_abs: u32,
     w_digit_abs_bound: u64,
     t_digit_abs_bound: u64,
     params: &CrtNttParamSet<W, K, D>,
@@ -59,7 +59,8 @@ pub(super) fn fused_split_eq_quotients_with_params<
         ));
     }
 
-    let z_abs_bound = u64::from(z_pre_max_abs).max(centered_rows_abs_bound(z_folded_rings, z_len));
+    let z_abs_bound =
+        u64::from(z_folded_max_abs).max(centered_rows_abs_bound(z_folded_rings, z_len));
     if !digit_rows_within_digit_bound::<D>(w_hat, w_len, w_digit_abs_bound) {
         return Err(AkitaError::InvalidInput(
             "fused quotient w_hat contains digits outside its log_basis range".to_string(),
@@ -537,7 +538,7 @@ pub(crate) fn fused_split_eq_quotients<
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
-    z_pre_max_abs: u32,
+    z_folded_max_abs: u32,
 ) -> Result<
     (
         Vec<CyclotomicRing<F, D>>,
@@ -554,7 +555,7 @@ pub(crate) fn fused_split_eq_quotients<
         w_hat,
         t_hat,
         z_folded_rings,
-        z_pre_max_abs,
+        z_folded_max_abs,
         balanced_digit_abs_bound(6),
         balanced_digit_abs_bound(6),
     )
@@ -572,7 +573,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
-    z_pre_max_abs: u32,
+    z_folded_max_abs: u32,
     log_basis: u32,
 ) -> Result<
     (
@@ -592,7 +593,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
         w_hat,
         t_hat,
         z_folded_rings,
-        z_pre_max_abs,
+        z_folded_max_abs,
         digit_bound,
         digit_bound,
     )
@@ -610,7 +611,7 @@ fn fused_split_eq_quotients_with_digit_bound<
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
-    z_pre_max_abs: u32,
+    z_folded_max_abs: u32,
     w_digit_abs_bound: u64,
     t_digit_abs_bound: u64,
 ) -> Result<
@@ -653,7 +654,7 @@ fn fused_split_eq_quotients_with_digit_bound<
                 w_hat,
                 t_hat,
                 z_folded_rings,
-                z_pre_max_abs,
+                z_folded_max_abs,
                 w_digit_abs_bound,
                 t_digit_abs_bound,
                 p,
@@ -687,7 +688,7 @@ fn fused_split_eq_quotients_with_digit_bound<
                 w_hat,
                 t_hat,
                 z_folded_rings,
-                z_pre_max_abs,
+                z_folded_max_abs,
                 w_digit_abs_bound,
                 t_digit_abs_bound,
                 p,
@@ -721,7 +722,7 @@ fn fused_split_eq_quotients_with_digit_bound<
                 w_hat,
                 t_hat,
                 z_folded_rings,
-                z_pre_max_abs,
+                z_folded_max_abs,
                 w_digit_abs_bound,
                 t_digit_abs_bound,
                 p,

@@ -266,19 +266,18 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("W column width overflow".to_string()))?;
     let d_stride = n_cols_w;
 
-    // T's row weight is group-dependent and its c-axis indexes `poly_idx`
-    // within the group. Its M-layout high index, however, is the global
-    // t-vector slot `Σ_{h<g} num_polys_per_point[h] + poly_idx`, so sizing
-    // follows `num_polys_per_point` rather than the number of opened claims.
+    // T's row weight is commitment-group-dependent and its c-axis indexes
+    // `poly_idx` within the group. Its M-layout high index is the global
+    // t-vector slot `Σ_{h<g} num_polys_per_commitment_group[h] + poly_idx`.
     let max_group_poly_count = prepared
-        .num_polys_per_point
+        .num_polys_per_commitment_group
         .iter()
         .copied()
         .max()
         .unwrap_or(0);
-    let mut group_offsets = Vec::with_capacity(prepared.num_polys_per_point.len());
+    let mut group_offsets = Vec::with_capacity(prepared.num_polys_per_commitment_group.len());
     let mut next_offset = 0usize;
-    for &group_poly_count in &prepared.num_polys_per_point {
+    for &group_poly_count in &prepared.num_polys_per_commitment_group {
         group_offsets.push(next_offset);
         next_offset += group_poly_count;
     }
@@ -354,7 +353,7 @@ where
 
     let t_eq_slice_per_group: Vec<Vec<E>> = (0..prepared.num_points)
         .map(|g| {
-            let group_size = prepared.num_polys_per_point[g];
+            let group_size = prepared.num_polys_per_commitment_group[g];
             cfg_into_iter!(0..n_cols_t)
                 .map(|c| {
                     let poly_idx = c / cols_per_poly_t;
@@ -655,7 +654,7 @@ mod tests {
         let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
 
         // Claims deliberately do not follow group-local polynomial order.
-        let claim_to_point_poly = vec![(0usize, 1usize), (1, 0), (0, 0)];
+        let claim_to_commitment_group_poly = vec![(0usize, 1usize), (1, 0), (0, 0)];
 
         let lp = fixture_lp();
         let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
@@ -732,8 +731,8 @@ mod tests {
             n_b,
             num_points,
             rows,
-            claim_to_point_poly: claim_to_point_poly.clone(),
-            num_polys_per_point: num_polys_per_point.clone(),
+            claim_to_commitment_group_poly: claim_to_commitment_group_poly.clone(),
+            num_polys_per_commitment_group: num_polys_per_point.clone(),
             num_public_rows,
             gamma: vec![F::one(); num_claims],
             claim_to_point: vec![1, 0, 1],

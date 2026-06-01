@@ -68,6 +68,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
     ) -> Result<Self, AkitaError> {
         incidence.check()?;
         let commitment_routing = commitment_routing.check(incidence.num_claims())?;
+        commitment_routing.check_matches_incidence(&incidence)?;
         if gamma.len() != incidence.num_claims()
             || row_coefficient_rings.len() != incidence.num_claims()
         {
@@ -80,6 +81,11 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         {
             return Err(AkitaError::InvalidInput(
                 "ring relation opening points do not match public row count".to_string(),
+            ));
+        }
+        if y.len() != incidence.num_public_rows() {
+            return Err(AkitaError::InvalidInput(
+                "ring relation y rows do not match public row count".to_string(),
             ));
         }
         Ok(Self {
@@ -120,10 +126,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         self.incidence.claim_to_point()
     }
 
-    pub fn claim_to_point_poly(&self) -> &[usize] {
-        self.commitment_routing.claim_to_group()
-    }
-
     pub fn claim_poly_indices(&self) -> &[usize] {
         self.incidence.claim_poly_indices()
     }
@@ -146,6 +148,20 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
 
     pub fn y(&self) -> &[CyclotomicRing<F, D>] {
         &self.y
+    }
+
+    /// Validate layout-dependent D-row payload shape.
+    pub fn check_v_shape_for_level(&self, lp: &LevelParams) -> Result<(), AkitaError> {
+        let expected = match self.m_row_layout {
+            MRowLayout::WithDBlock => lp.d_key.row_len(),
+            MRowLayout::WithoutDBlock => 0,
+        };
+        if self.v.len() != expected {
+            return Err(AkitaError::InvalidInput(
+                "ring relation v rows do not match M-row layout".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Build base-field `gamma` and embedded row rings from transcript-sampled coefficients.
@@ -193,7 +209,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
             .ok_or_else(|| AkitaError::InvalidSetup("total block count overflow".to_string()))?;
         let num_t_vectors = self
             .commitment_routing
-            .num_polys_per_group()
+            .num_polys_per_commitment_group()
             .iter()
             .try_fold(0usize, |acc, &count| {
                 acc.checked_add(count)
@@ -332,4 +348,147 @@ pub fn ring_relation_segment_layout_for_opening_shape<
         Vec::new(),
     )?;
     instance.segment_layout(lp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::{SparseChallenge, SparseChallengeConfig};
+    use akita_field::Fp32;
+
+    type F = Fp32<251>;
+    const D: usize = 32;
+
+    fn stage1_config() -> SparseChallengeConfig {
+        SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![1],
+        }
+    }
+
+    fn opening_point(lp: &LevelParams) -> RingOpeningPoint<F> {
+        RingOpeningPoint {
+            a: vec![F::zero(); lp.block_len],
+            b: vec![F::zero(); lp.num_blocks],
+        }
+    }
+
+    fn test_level_params() -> LevelParams {
+        LevelParams::params_only(crate::SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
+            .with_decomp(2, 1, 1, 2, 1, 0)
+            .expect("test params")
+    }
+
+    fn test_challenges(lp: &LevelParams, num_claims: usize) -> Challenges {
+        let total = lp.num_blocks * num_claims;
+        Challenges::from_sparse(
+            vec![
+                SparseChallenge {
+                    positions: vec![0],
+                    coeffs: vec![1],
+                };
+                total
+            ],
+            lp.num_blocks,
+            num_claims,
+        )
+        .expect("challenges")
+    }
+
+    #[test]
+    fn relation_instance_rejects_split_commitment_routing() {
+        let lp = test_level_params();
+        let incidence =
+            ClaimIncidenceSummary::from_point_polys(2, vec![1, 1]).expect("valid incidence");
+        let routing =
+            CommitmentRouting::from_recursive_multipoint(incidence.num_claims()).expect("routing");
+        let opening_points = vec![opening_point(&lp), opening_point(&lp)];
+        let ring_multiplier_points = opening_points
+            .iter()
+            .map(RingMultiplierOpeningPoint::from_base)
+            .collect();
+        let err = RingRelationInstance::<F, D>::new(
+            MRowLayout::WithoutDBlock,
+            test_challenges(&lp, incidence.num_claims()),
+            opening_points,
+            ring_multiplier_points,
+            incidence,
+            routing,
+            vec![F::one(); 2],
+            vec![CyclotomicRing::one(); 2],
+            vec![CyclotomicRing::zero(); 2],
+            Vec::new(),
+        )
+        .expect_err("split routing must be rejected");
+        assert!(
+            format!("{err:?}").contains("split opening/commitment routing is not supported"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn relation_instance_rejects_y_row_mismatch() {
+        let lp = test_level_params();
+        let incidence =
+            ClaimIncidenceSummary::from_point_polys(2, vec![1]).expect("valid incidence");
+        let routing = CommitmentRouting::from_root_incidence(&incidence).expect("routing");
+        let opening_points = vec![opening_point(&lp)];
+        let ring_multiplier_points = opening_points
+            .iter()
+            .map(RingMultiplierOpeningPoint::from_base)
+            .collect();
+        let err = RingRelationInstance::<F, D>::new(
+            MRowLayout::WithoutDBlock,
+            test_challenges(&lp, incidence.num_claims()),
+            opening_points,
+            ring_multiplier_points,
+            incidence,
+            routing,
+            vec![F::one()],
+            vec![CyclotomicRing::one()],
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect_err("missing y row must be rejected");
+        assert!(
+            format!("{err:?}").contains("y rows do not match public row count"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn relation_segment_layout_uses_same_axis_contract() {
+        let lp = test_level_params();
+        let incidence =
+            ClaimIncidenceSummary::from_point_polys(2, vec![2, 1]).expect("valid incidence");
+        let routing = CommitmentRouting::from_root_incidence(&incidence).expect("routing");
+        let opening_points = vec![opening_point(&lp), opening_point(&lp)];
+        let ring_multiplier_points = opening_points
+            .iter()
+            .map(RingMultiplierOpeningPoint::from_base)
+            .collect();
+        let instance = RingRelationInstance::<F, D>::new(
+            MRowLayout::WithDBlock,
+            test_challenges(&lp, incidence.num_claims()),
+            opening_points,
+            ring_multiplier_points,
+            incidence,
+            routing,
+            vec![F::one(); 3],
+            vec![CyclotomicRing::one(); 3],
+            vec![CyclotomicRing::zero(); 2],
+            vec![CyclotomicRing::zero(); lp.d_key.row_len()],
+        )
+        .expect("same-axis relation");
+
+        let layout = instance.segment_layout(&lp).expect("layout");
+        assert_eq!(layout.offset_z, 0);
+        assert_eq!(layout.offset_w, 8);
+        assert_eq!(layout.offset_t, 20);
+        #[cfg(not(feature = "zk"))]
+        assert_eq!(layout.offset_r, 32);
+        instance
+            .check_v_shape_for_level(&lp)
+            .expect("v rows match layout");
+    }
 }

@@ -1,4 +1,4 @@
-//! Helpers for transcript-binding terminal direct witnesses.
+//! Helpers for transcript-binding terminal cleartext witnesses.
 
 use akita_field::{AkitaError, FieldCore};
 
@@ -160,7 +160,7 @@ pub fn terminal_w_hat_bytes_from_blocks<const D: usize>(
 pub fn terminal_witness_segment_layout_from_counts(
     ring_dimension: usize,
     z_first: bool,
-    z_pre_ring_count: usize,
+    z_folded_ring_count: usize,
     w_hat_ring_count: usize,
 ) -> Result<TerminalWitnessSegmentLayout, AkitaError> {
     if ring_dimension == 0 {
@@ -177,7 +177,7 @@ pub fn terminal_witness_segment_layout_from_counts(
         ));
     }
     let w_hat_digit_offset = if z_first {
-        z_pre_ring_count
+        z_folded_ring_count
             .checked_mul(ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat offset overflow".to_string()))?
     } else {
@@ -215,14 +215,14 @@ pub fn terminal_witness_segment_layout(
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat width overflow".to_string()))?;
-    let z_pre_ring_count = num_public_rows
+    let z_folded_ring_count = num_public_rows
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(lp.num_digits_fold))
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal z-pre width overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal z-folded width overflow".to_string()))?;
     terminal_witness_segment_layout_from_counts(
         lp.ring_dimension,
         crate::proof::ring_relation::ring_column_z_first(lp),
-        z_pre_ring_count,
+        z_folded_ring_count,
         w_hat_ring_count,
     )
 }

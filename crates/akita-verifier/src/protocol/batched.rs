@@ -2,7 +2,7 @@
 
 use super::{validate_level_dispatch, validate_log_basis};
 use crate::proof::claims::{prepare_verifier_claims, PreparedVerifierClaims};
-use crate::proof::direct::verify_root_direct_openings_with_incidence;
+use crate::proof::direct::verify_zero_fold_openings_with_incidence;
 use crate::protocol::levels::verify_fold_batched_proof;
 use akita_algebra::CyclotomicRing;
 use akita_field::{
@@ -564,7 +564,7 @@ where
             {
                 return Err(AkitaError::InvalidProof);
             }
-            verify_root_direct_openings_with_incidence(
+            verify_zero_fold_openings_with_incidence(
                 witnesses,
                 &opening_points,
                 &openings,

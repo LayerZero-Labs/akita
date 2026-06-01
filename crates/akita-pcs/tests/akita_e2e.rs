@@ -639,7 +639,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         assert_eq!(proof.size(), plan.exact_proof_bytes);
         let direct_witnesses = proof
             .root
-            .as_direct()
+            .as_zero_fold()
             .expect("root-direct batched proof should carry per-claim field witnesses");
         assert_eq!(direct_witnesses.len(), 1);
         let direct_field = direct_witnesses[0]

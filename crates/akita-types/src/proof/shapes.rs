@@ -55,7 +55,7 @@ pub struct TerminalLevelProofShape {
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
     /// Stage-2 sumcheck shape: one compact coefficient count per round.
     pub stage2_sumcheck: SumcheckProofShape,
-    /// Shape of the terminal direct witness.
+    /// Shape of the terminal cleartext witness.
     pub final_witness: CleartextWitnessShape,
 }
 
@@ -93,9 +93,9 @@ pub enum AkitaBatchedProofShape {
     /// Terminal-rooted batched proof (1-fold case): the root is itself the
     /// terminal fold level and no steps follow.
     Terminal(TerminalLevelProofShape),
-    /// Root-direct batched proof: one direct witness per claim.
+    /// Zero-fold batched proof: one cleartext witness per claim.
     ZeroFold {
-        /// Per-claim direct witness shapes.
+        /// Per-claim cleartext witness shapes.
         witness_shapes: Vec<CleartextWitnessShape>,
     },
 }

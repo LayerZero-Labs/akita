@@ -399,6 +399,7 @@ where
         y_rings.clone(),
         v_typed.to_vec(),
     )?;
+    relation_instance.check_v_shape_for_level(lp)?;
     let ring_switch_replay = crate::protocol::ring_switch::RingSwitchReplay {
         relation: &relation_instance,
         row_coefficients: &gamma,
@@ -472,7 +473,7 @@ where
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <L as ExtField<F>>::EXT_DEGREE;
     let stage2_verifier = match &proof {
-        FoldProofView::Terminal(terminal_proof) => AkitaStage2Verifier::new_with_direct_witness(
+        FoldProofView::Terminal(terminal_proof) => AkitaStage2Verifier::new_with_cleartext_witness(
             batching_coeff,
             s_claim,
             #[cfg(feature = "zk")]

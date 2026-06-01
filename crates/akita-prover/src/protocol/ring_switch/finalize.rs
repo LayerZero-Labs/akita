@@ -281,8 +281,8 @@ where
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let routing = instance.commitment_routing();
-    let num_polys_per_point = routing.num_polys_per_group();
-    let num_points = num_polys_per_point.len();
+    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
+    let num_points = num_polys_per_commitment_group.len();
     let num_public_rows = instance.num_public_rows();
 
     let num_ring_elems = w.len() / D;
@@ -314,8 +314,8 @@ where
     let opening_points = instance.opening_points();
     let ring_multiplier_points = instance.ring_multiplier_points();
     let claim_to_point = instance.claim_to_point();
-    let claim_to_point_poly = routing.claim_to_group();
-    let claim_poly_indices = routing.claim_poly_in_group();
+    let claim_to_commitment_group = routing.claim_to_commitment_group();
+    let claim_poly_in_commitment_group = routing.claim_poly_in_commitment_group();
     let challenges = &instance.challenges;
     if gamma.len() != claim_to_point.len() {
         return Err(AkitaError::InvalidInput(
@@ -336,9 +336,9 @@ where
                 &ring_alpha_evals_y,
                 lp,
                 &tau1,
-                num_polys_per_point,
-                claim_to_point_poly,
-                claim_poly_indices,
+                num_polys_per_commitment_group,
+                claim_to_commitment_group,
+                claim_poly_in_commitment_group,
                 gamma,
                 num_public_rows,
                 m_row_layout,
@@ -358,9 +358,9 @@ where
             &ring_alpha_evals_y,
             lp,
             &tau1,
-            num_polys_per_point,
-            claim_to_point_poly,
-            claim_poly_indices,
+            num_polys_per_commitment_group,
+            claim_to_commitment_group,
+            claim_poly_in_commitment_group,
             gamma,
             num_public_rows,
             m_row_layout,
