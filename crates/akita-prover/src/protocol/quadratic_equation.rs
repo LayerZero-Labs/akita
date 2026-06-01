@@ -293,6 +293,16 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     m_row_layout: MRowLayout,
 }
 
+/// One committed recursive source used by the recursive multipoint prover.
+pub struct RecursiveQuadraticSource<'a, F: FieldCore, const D: usize> {
+    /// Source witness digits under the current ring dimension.
+    pub witness: RecursiveWitnessView<'a, F, D>,
+    /// Commitment rows for this source.
+    pub commitment: &'a [CyclotomicRing<F, D>],
+    /// Commitment hint for this source.
+    pub hint: AkitaCommitmentHint<F, D>,
+}
+
 fn compute_v_rows<F, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -705,12 +715,11 @@ where
         prepared: &B::PreparedSetup<D>,
         ring_opening_points: Vec<RingOpeningPoint<F>>,
         ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>>,
-        witness: &RecursiveWitnessView<'_, F, D>,
+        sources: Vec<RecursiveQuadraticSource<'_, F, D>>,
+        claim_to_source: Vec<usize>,
         pre_folded_by_claim: Vec<Vec<CyclotomicRing<F, D>>>,
         lp: LevelParams,
-        mut hint: AkitaCommitmentHint<F, D>,
         transcript: &mut T,
-        commitment: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         m_row_layout: MRowLayout,
     ) -> Result<Self, AkitaError>
@@ -721,7 +730,9 @@ where
         validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
         let num_claims = ring_opening_points.len();
         if num_claims == 0
+            || sources.is_empty()
             || ring_multiplier_points.len() != num_claims
+            || claim_to_source.len() != num_claims
             || pre_folded_by_claim.len() != num_claims
             || y_rings.len() != num_claims
         {
@@ -742,6 +753,14 @@ where
         {
             return Err(AkitaError::InvalidInput(
                 "recursive multipoint ring-multiplier layout mismatch".to_string(),
+            ));
+        }
+        if claim_to_source
+            .iter()
+            .any(|&source_idx| source_idx >= sources.len())
+        {
+            return Err(AkitaError::InvalidInput(
+                "recursive multipoint source index out of range".to_string(),
             ));
         }
 
@@ -765,7 +784,59 @@ where
             }
             w_hat
         };
-        hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
+        let flattened_hint = {
+            let mut decomposed_inner_rows = Vec::with_capacity(num_claims);
+            let mut recomposed_inner_rows = Vec::with_capacity(num_claims);
+            #[cfg(feature = "zk")]
+            let mut b_blinding_digits = Vec::with_capacity(num_claims);
+            for &source_idx in &claim_to_source {
+                let mut hint = sources[source_idx].hint.clone();
+                hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
+                #[cfg(feature = "zk")]
+                let (mut digits, rows, mut blindings) = hint.into_parts();
+                #[cfg(not(feature = "zk"))]
+                let (mut digits, rows) = hint.into_parts();
+                let rows = rows.ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "missing recomposed inner rows in recursive source hint".to_string(),
+                    )
+                })?;
+                if digits.len() != 1 || rows.len() != 1 {
+                    return Err(AkitaError::InvalidInput(
+                        "recursive carried sources must be singleton commitments".to_string(),
+                    ));
+                }
+                #[cfg(feature = "zk")]
+                if blindings.len() != 1 {
+                    return Err(AkitaError::InvalidInput(
+                        "recursive carried source blinding hints must be singleton".to_string(),
+                    ));
+                }
+                decomposed_inner_rows.push(digits.remove(0));
+                recomposed_inner_rows.push(rows.into_iter().next().ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "missing recomposed inner rows in recursive source hint".to_string(),
+                    )
+                })?);
+                #[cfg(feature = "zk")]
+                b_blinding_digits.push(blindings.remove(0));
+            }
+            #[cfg(feature = "zk")]
+            {
+                AkitaCommitmentHint::with_recomposed_inner_rows(
+                    decomposed_inner_rows,
+                    recomposed_inner_rows,
+                    b_blinding_digits,
+                )
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                AkitaCommitmentHint::with_recomposed_inner_rows(
+                    decomposed_inner_rows,
+                    recomposed_inner_rows,
+                )
+            }
+        };
 
         // See the `new_prover` comment: Terminal layout omits `v = D · w_hat`
         // entirely, so skip both the D-side blinding sample and the D-NTT.
@@ -848,7 +919,8 @@ where
                         "recursive multipoint challenge offset overflow".into(),
                     )
                 })?;
-                let witness_part = witness.decompose_fold(
+                let source = &sources[claim_to_source[claim_idx]];
+                let witness_part = source.witness.decompose_fold(
                     &sparse_challenges[challenge_offset..next_offset],
                     lp.block_len,
                     lp.num_blocks,
@@ -871,9 +943,19 @@ where
             MRowLayout::Intermediate => (v.as_slice(), lp.d_key.row_len()),
             MRowLayout::Terminal => (&[][..], 0usize),
         };
+        let mut commitment_rows = Vec::new();
+        for &source_idx in &claim_to_source {
+            let commitment = sources[source_idx].commitment;
+            if commitment.len() != lp.b_key.row_len() {
+                return Err(AkitaError::InvalidInput(
+                    "recursive carried source commitment row width mismatch".to_string(),
+                ));
+            }
+            commitment_rows.extend_from_slice(commitment);
+        }
         let y = generate_y::<F, D>(
             y_v_slice,
-            commitment,
+            &commitment_rows,
             y_rings,
             n_d_active,
             lp.b_key.row_len(),
@@ -895,7 +977,7 @@ where
             #[cfg(feature = "zk")]
             d_blinding_digits: Some(d_blinding_digits),
             w_folded: Some(w_folded),
-            hint: Some(hint),
+            hint: Some(flattened_hint),
             num_polys_per_point: vec![1; num_claims],
             gamma: vec![F::one(); num_claims],
             row_coefficient_rings: vec![CyclotomicRing::one(); num_claims],

@@ -1,5 +1,6 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
+use super::RecursiveQuadraticSource;
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
     ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,

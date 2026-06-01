@@ -23,5 +23,5 @@ pub use flow::{
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveCarriedOpening, RecursiveProverState,
     RecursiveSuffixOutcome, RootLevelRawOutput, SuffixLevelOutput, SuffixLevelRequest,
 };
-pub use quadratic_equation::QuadraticEquation;
+pub use quadratic_equation::{QuadraticEquation, RecursiveQuadraticSource};
 pub use ring_switch::{commit_next_w_with_policy, RingSwitchOutput};
