@@ -86,6 +86,10 @@ ark-bn254 = { git = "https://github.com/arkworks-rs/algebra", rev = "3b2a12492cf
   "scalar_field",
 ] }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra", rev = "3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9" }
+p3-field = "=0.5.3"
+p3-mersenne-31 = "=0.5.3"
+p3-baby-bear = "=0.5.3"
+p3-koala-bear = "=0.5.3"
 tracing-chrome = "0.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 

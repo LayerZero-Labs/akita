@@ -73,7 +73,7 @@ Degree-5 extension (Plonky3 security-equivalent over a 31-bit base; no Akita ana
 | Bench label | Library | Type |
 |-------------|---------|------|
 | `p3_baby_bear_ext5` | Plonky3 | `BinomialExtensionField<BabyBear, 5>` |
-| `p3_koala_bear_ext5` | Plonky3 | `BinomialExtensionField<KoalaBear, 5>` |
+| `p3_koala_bear_ext5` | Plonky3 | `QuinticTrinomialExtensionField<KoalaBear>` |
 
 Mersenne31's Plonky3 extension is complex-based rather than a plain binomial, so `p3_mersenne31_ext4` / `ext5` are included only if the Plonky3 0.5.3 API exposes a clean degree-4/degree-5 extension over Mersenne31; otherwise Mersenne31 serves as the exact-modulus base-field anchor only, and BabyBear/KoalaBear carry the extension comparison.
 
@@ -160,17 +160,19 @@ Files:
 | `bench-data/field-microbench.{csv,md}` | new committed output artifacts: machine-readable CSV plus the paper-ready markdown pivot, emitted by the collect script |
 
 Reusability: the existing `bench_arithmetic_case` core is bound to Akita's `FieldCore` / `PackedField` traits and cannot accept Plonky3 types directly (orphan rule plus distinct traits).
-The new `plonky3.rs` therefore carries a parallel generic core `bench_p3_arithmetic_case<F: p3_field::Field>(...)` that runs the same operation set and writes to the same Criterion group/ID format strings (`field_arith/{family}/latency_chain/{label}_w{WIDTH}` and `.../throughput_stream/...`).
+The new `plonky3.rs` therefore carries two parallel generic cores that run the same operation set and write to the same Criterion group/ID format strings (`field_arith/{family}/latency_chain/{label}_w{WIDTH}` and `.../throughput_stream/...`):
+- `bench_p3_base_case<F: Field>` uses `F::Packing` (`PackedField`, real SIMD width).
+- `bench_p3_ext_case<Base, EF: ExtensionField<Base>>` uses `<EF as ExtensionField<Base>>::ExtensionPacking` (`PackedFieldExtension`, base-lane SIMD width). For extensions, `<EF as Field>::Packing = Self` (WIDTH 1) and must not be used for packed rows.
 It reuses `ArithmeticBenchParams`, `data.rs`, and every `AKITA_BENCH_*` env knob, so the only duplication is the trait-bound loop bodies.
 The composite chains (`mul_self`, `add_neg`, `double_add`) are written as the identical arithmetic expressions on both sides, not as a same-named library method, so the per-op workload (operation kind and count) is the same across Akita and Plonky3.
-Plonky3 packing is obtained generically via `<F as p3_field::Field>::Packing` (a `PackedField` with `WIDTH`).
 A later consolidation behind a single `trait FieldBenchOps` (with newtype wrappers for the Plonky3 types) is possible but out of scope; the parallel core is the minimal low-risk first cut.
 
-Plonky3 0.5.3 API points to pin during implementation (names drift across 0.4 to 0.5):
+Plonky3 0.5.3 API points pinned for implementation:
 
-- ring/field traits: `PrimeCharacteristicRing` for `ZERO`/`ONE`/`square`, `Field` for inversion (`try_inverse`/`inverse`).
-- random sampling path (`rng.random()` / `StandardUniform` vs a field helper).
-- `Field::Packing` associated type and `PackedField` method names (`from_fn`, `WIDTH`).
+- ring/field traits: `PrimeCharacteristicRing` for `ZERO`/`ONE`/`square`/`double`, `Field` for inversion (`try_inverse`/`inverse`).
+- random sampling: `p3-field` depends on `rand 0.10`, which does not interoperate with the bench harness `rand 0.8` `StdRng`. Sample base elements via `F::from_u64(rng.next_u64())` and extension elements via `EF::from_basis_coefficients_fn(|_| Base::from_u64(rng.next_u64()))`.
+- base packed type: `F::Packing` with `PackedField::from_fn` / `WIDTH`.
+- extension packed type: `<EF as ExtensionField<Base>>::ExtensionPacking` with `PackedFieldExtension::from_ext_slice`; packed `inverse` is omitted (no `PackedField::inverse`); scalar `inverse` uses `Field::inverse`.
 - Mersenne31 extension constructor (complex-based): confirm whether degree-4/degree-5 extensions over `Mersenne31` are exposed cleanly; if not, restrict extension rows to BabyBear/KoalaBear.
 
 ### SIMD Build Configurations

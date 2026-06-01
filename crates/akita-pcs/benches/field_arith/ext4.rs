@@ -6,9 +6,19 @@ use akita_field::{
 use criterion::Criterion;
 
 use super::arithmetic::bench_arithmetic_case;
+use super::cases::Mersenne31;
 use super::params::ArithmeticBenchParams;
 
 pub(crate) fn bench_ext4_matrix(c: &mut Criterion) {
+    type F31Mersenne = Mersenne31;
+    type PF31Mersenne = <F31Mersenne as HasPacking>::Packing;
+    type F31MersenneTowerFp4 = TowerBasisFp4<F31Mersenne, TwoNr, UnitNr>;
+    type PF31MersenneTowerFp4 = PackedTowerBasisFp4<F31Mersenne, TwoNr, UnitNr, PF31Mersenne>;
+    type F31MersennePowerFp4 = PowerBasisFp4<F31Mersenne, TwoNr>;
+    type PF31MersennePowerFp4 = PackedPowerBasisFp4<F31Mersenne, TwoNr, PF31Mersenne>;
+    type F31MersenneRingSubfieldFp4 = RingSubfieldFp4<F31Mersenne>;
+    type PF31MersenneRingSubfieldFp4 = <F31MersenneRingSubfieldFp4 as HasPacking>::Packing;
+
     type F31 = Prime31Offset19;
     type PF31 = <F31 as HasPacking>::Packing;
     type F31TowerFp4 = TowerBasisFp4<F31, TwoNr, UnitNr>;
@@ -28,6 +38,28 @@ pub(crate) fn bench_ext4_matrix(c: &mut Criterion) {
     type PF32RingSubfieldFp4 = <F32RingSubfieldFp4 as HasPacking>::Packing;
 
     let params = ArithmeticBenchParams::from_env("AKITA_BENCH_EXT4_ARITH", 512, 128);
+
+    bench_arithmetic_case::<F31MersenneTowerFp4, PF31MersenneTowerFp4>(
+        c,
+        "ext4",
+        "mersenne31_tower_fp4",
+        0xe400_1031_00a1,
+        params,
+    );
+    bench_arithmetic_case::<F31MersennePowerFp4, PF31MersennePowerFp4>(
+        c,
+        "ext4",
+        "mersenne31_power_fp4",
+        0xe400_2031_00a1,
+        params,
+    );
+    bench_arithmetic_case::<F31MersenneRingSubfieldFp4, PF31MersenneRingSubfieldFp4>(
+        c,
+        "ext4",
+        "mersenne31_ring_subfield_fp4",
+        0xe400_3031_00a1,
+        params,
+    );
 
     bench_arithmetic_case::<F31TowerFp4, PF31TowerFp4>(
         c,
