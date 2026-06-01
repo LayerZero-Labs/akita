@@ -236,7 +236,7 @@ impl Challenges {
     /// appear in `claim_indices`, returning a fresh `Challenges` of length
     /// `claim_indices.len() * num_blocks_per_claim`.
     ///
-    /// Used by `QuadraticEquation::new_prover` to chunk the global challenge
+    /// Used by `new_ring_relation_prover` to chunk the global challenge
     /// vector by opening point before handing each chunk to the poly
     /// backend.
     ///

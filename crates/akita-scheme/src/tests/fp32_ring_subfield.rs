@@ -184,7 +184,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
             incidence.num_polynomials(),
             incidence.num_claims(),
             incidence.num_public_rows(),
-            akita_types::MRowLayout::Terminal,
+            akita_types::MRowLayout::WithoutDBlock,
         )?;
         let compact_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
@@ -199,7 +199,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: compact_w_len,
-                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((
+                    witness_shape: akita_types::CleartextWitnessShape::PackedDigits((
                         compact_w_len,
                         3,
                     )),
@@ -312,7 +312,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             Self::decomposition().field_bits(),
         )?;
         // Single-fold schedule: the root IS the terminal fold, so its
-        // shipped `w` is built under MRowLayout::Terminal (no D-block in
+        // shipped `w` is built under MRowLayout::WithoutDBlock (no D-block in
         // the per-row `r` quotients). The schedule's `next_w_len` and the
         // following Direct step's witness shape must match that reduced
         // length.
@@ -322,7 +322,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             incidence.num_polynomials(),
             incidence.num_claims(),
             incidence.num_public_rows(),
-            akita_types::MRowLayout::Terminal,
+            akita_types::MRowLayout::WithoutDBlock,
         )?;
         let next_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
@@ -337,7 +337,9 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: next_w_len,
-                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
+                    witness_shape: akita_types::CleartextWitnessShape::PackedDigits((
+                        next_w_len, 3,
+                    )),
                     direct_bytes: next_w_len,
                     commit_params: None,
                     // Stub fixture: terminal-direct level params equal the
@@ -439,7 +441,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
             terminal.extension_opening_reduction.as_ref()
         }
-        akita_types::AkitaBatchedRootProof::Direct { .. } => {
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("root-direct proof has no folded root extension-opening reduction")
         }
     };
@@ -586,7 +588,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
             terminal.extension_opening_reduction.as_ref()
         }
-        akita_types::AkitaBatchedRootProof::Direct { .. } => {
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("root-direct proof has no folded root extension-opening reduction")
         }
     };
@@ -729,7 +731,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
             terminal.extension_opening_reduction.as_ref()
         }
-        akita_types::AkitaBatchedRootProof::Direct { .. } => {
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("root-direct proof has no folded root extension-opening reduction")
         }
     };

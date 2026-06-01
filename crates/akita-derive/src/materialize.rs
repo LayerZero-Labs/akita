@@ -16,9 +16,9 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, generated_schedule_lookup_key,
     level_layout_from_params, level_proof_bytes, root_extension_opening_partials,
     terminal_level_proof_bytes, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout_bits, AkitaPlannedDirectStep, AkitaPlannedLevel,
-    AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaSchedulePlan, CommitmentEnvelope, DecompositionParams, DirectWitnessShape, LevelParams,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaPlannedLevel, AkitaPlannedState,
+    AkitaPlannedStep, AkitaPlannedZeroFoldStep, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    AkitaSchedulePlan, CleartextWitnessShape, CommitmentEnvelope, DecompositionParams, LevelParams,
     MRowLayout, SisModulusFamily,
 };
 
@@ -321,7 +321,7 @@ where
                         num_t_vectors,
                         num_w_vectors,
                         num_public_rows,
-                        MRowLayout::Terminal,
+                        MRowLayout::WithoutDBlock,
                     )?;
                     let terminal_field_len = terminal_ring_count
                         .checked_mul(lp.ring_dimension)
@@ -444,20 +444,20 @@ where
                     None
                 };
                 let witness_shape = if fold_level == 0 {
-                    DirectWitnessShape::FieldElements(current_w_len)
+                    CleartextWitnessShape::FieldElements(current_w_len)
                 } else {
                     let terminal_field_len = terminal_witness_field_len.ok_or_else(|| {
                         AkitaError::InvalidSetup(
                             "terminal direct step missing precomputed witness length".to_string(),
                         )
                     })?;
-                    DirectWitnessShape::PackedDigits((terminal_field_len, current_log_basis))
+                    CleartextWitnessShape::PackedDigits((terminal_field_len, current_log_basis))
                 };
                 let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
 
                 let direct_current_w_len = match &witness_shape {
-                    DirectWitnessShape::PackedDigits((len, _)) => *len,
-                    DirectWitnessShape::FieldElements(len) => *len,
+                    CleartextWitnessShape::PackedDigits((len, _)) => *len,
+                    CleartextWitnessShape::FieldElements(len) => *len,
                 };
                 // Bake terminal-direct level params onto the planned step
                 // for `fold_level > 0` (i.e. terminal `Direct(PackedDigits)`
@@ -488,13 +488,15 @@ where
                     current_w_len: direct_current_w_len,
                     log_basis: current_log_basis,
                 };
-                steps.push(AkitaPlannedStep::Direct(Box::new(AkitaPlannedDirectStep {
-                    state,
-                    witness_shape,
-                    direct_bytes,
-                    commit_params,
-                    level_params,
-                })));
+                steps.push(AkitaPlannedStep::ZeroFold(Box::new(
+                    AkitaPlannedZeroFoldStep {
+                        state,
+                        witness_shape,
+                        direct_bytes,
+                        commit_params,
+                        level_params,
+                    },
+                )));
             }
         }
     }
@@ -503,7 +505,7 @@ where
         .iter()
         .map(|step| match step {
             AkitaPlannedStep::Fold(level) => level.level_bytes,
-            AkitaPlannedStep::Direct(step) => step.direct_bytes,
+            AkitaPlannedStep::ZeroFold(step) => step.direct_bytes,
         })
         .sum();
     Ok(AkitaSchedulePlan {

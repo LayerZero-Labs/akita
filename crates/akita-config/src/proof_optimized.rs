@@ -234,7 +234,7 @@ pub fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams
         .iter()
         .filter_map(|step| match step {
             AkitaPlannedStep::Fold(level) => Some(level.lp.clone()),
-            AkitaPlannedStep::Direct(direct) => direct
+            AkitaPlannedStep::ZeroFold(direct) => direct
                 .commit_params
                 .clone()
                 .or_else(|| direct.level_params.clone()),
