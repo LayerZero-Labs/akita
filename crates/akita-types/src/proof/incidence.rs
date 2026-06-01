@@ -43,11 +43,18 @@ impl CarriedOpeningKind {
     }
 }
 
+/// One commitment source carried into a recursive boundary batch.
+#[derive(Debug, Clone, Copy)]
+pub struct CarriedOpeningSource<'a, F: FieldCore> {
+    /// Commitment opened by claims that reference this source.
+    pub commitment: &'a FlatRingVec<F>,
+}
+
 /// One opening claim carried into a recursive boundary batch.
 #[derive(Debug, Clone, Copy)]
-pub struct CarriedOpeningClaim<'a, F: FieldCore, L: FieldCore> {
-    /// Commitment opened by this claim.
-    pub commitment: &'a FlatRingVec<F>,
+pub struct CarriedOpeningClaim<'a, L: FieldCore> {
+    /// Source index in the carried-source table.
+    pub source_idx: usize,
     /// Evaluation point in this claim's basis.
     pub point: &'a [L],
     /// Claimed value at `point`.
@@ -72,12 +79,18 @@ fn basis_transcript_id(basis: BasisMode) -> u8 {
 /// Each claim may have a shorter natural point, which is interpreted as padded
 /// with zero coordinates up to the common arity by the recursive verifier.
 pub fn validate_carried_opening_batch<F, L>(
-    claims: &[CarriedOpeningClaim<'_, F, L>],
+    sources: &[CarriedOpeningSource<'_, F>],
+    claims: &[CarriedOpeningClaim<'_, L>],
 ) -> Result<usize, AkitaError>
 where
     F: FieldCore,
     L: FieldCore,
 {
+    if sources.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "empty carried-opening source table".to_string(),
+        ));
+    }
     let first = claims
         .first()
         .ok_or_else(|| AkitaError::InvalidInput("empty carried-opening batch".to_string()))?;
@@ -96,6 +109,7 @@ where
         if claim.natural_len == 0
             || claim.natural_len > claim.padded_len
             || claim.point.len() > padded_num_vars
+            || claim.source_idx >= sources.len()
         {
             return Err(AkitaError::InvalidInput(
                 "carried-opening claim shape exceeds its padded domain".to_string(),
@@ -110,19 +124,21 @@ where
 /// The first 02C cut treats each carried opening as a single-polynomial public
 /// row in the common padded domain.
 pub fn carried_opening_incidence_summary<F, L>(
-    claims: &[CarriedOpeningClaim<'_, F, L>],
+    sources: &[CarriedOpeningSource<'_, F>],
+    claims: &[CarriedOpeningClaim<'_, L>],
 ) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
     L: FieldCore,
 {
-    let padded_num_vars = validate_carried_opening_batch(claims)?;
+    let padded_num_vars = validate_carried_opening_batch(sources, claims)?;
     ClaimIncidenceSummary::from_point_polys(padded_num_vars, vec![1; claims.len()])
 }
 
 /// Absorb carried-opening batch shape, commitments, points, and claimed values.
 pub fn append_carried_opening_batch_to_transcript<F, L, T>(
-    claims: &[CarriedOpeningClaim<'_, F, L>],
+    sources: &[CarriedOpeningSource<'_, F>],
+    claims: &[CarriedOpeningClaim<'_, L>],
     transcript: &mut T,
 ) -> Result<(), AkitaError>
 where
@@ -130,16 +146,20 @@ where
     L: ExtField<F>,
     T: Transcript<F>,
 {
-    let padded_num_vars = validate_carried_opening_batch(claims)?;
+    let padded_num_vars = validate_carried_opening_batch(sources, claims)?;
+    transcript.append_serde(ABSORB_BATCH_SHAPE, &sources.len());
     transcript.append_serde(ABSORB_BATCH_SHAPE, &claims.len());
     transcript.append_serde(ABSORB_BATCH_SHAPE, &padded_num_vars);
+    for source in sources {
+        transcript.append_serde(ABSORB_COMMITMENT, source.commitment);
+    }
     for claim in claims {
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.source_idx);
         transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.kind.as_u8());
         transcript.append_serde(ABSORB_BATCH_SHAPE, &basis_transcript_id(claim.basis));
         transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.natural_len);
         transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.padded_len);
         transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.point.len());
-        transcript.append_serde(ABSORB_COMMITMENT, claim.commitment);
         for coord in claim.point {
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
         }
@@ -663,10 +683,11 @@ mod tests {
     }
 
     fn carried_batch_challenge(
-        claims: &[CarriedOpeningClaim<'_, TranscriptField, TranscriptField>],
+        sources: &[CarriedOpeningSource<'_, TranscriptField>],
+        claims: &[CarriedOpeningClaim<'_, TranscriptField>],
     ) -> TranscriptField {
         let mut transcript = AkitaTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        append_carried_opening_batch_to_transcript(claims, &mut transcript).unwrap();
+        append_carried_opening_batch_to_transcript(sources, claims, &mut transcript).unwrap();
         transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION)
     }
 
@@ -712,11 +733,19 @@ mod tests {
     fn carried_opening_batch_uses_common_padded_incidence_domain() {
         let commitment_a = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(1)]);
         let commitment_b = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(2)]);
+        let sources = [
+            CarriedOpeningSource {
+                commitment: &commitment_a,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_b,
+            },
+        ];
         let point_a = [TranscriptField::from_u64(3), TranscriptField::from_u64(4)];
         let point_b = [TranscriptField::from_u64(5)];
         let claims = [
             CarriedOpeningClaim {
-                commitment: &commitment_a,
+                source_idx: 0,
                 point: &point_a,
                 value: TranscriptField::from_u64(6),
                 basis: BasisMode::Lagrange,
@@ -725,7 +754,7 @@ mod tests {
                 kind: CarriedOpeningKind::RecursiveWitness,
             },
             CarriedOpeningClaim {
-                commitment: &commitment_b,
+                source_idx: 1,
                 point: &point_b,
                 value: TranscriptField::from_u64(7),
                 basis: BasisMode::Lagrange,
@@ -735,8 +764,11 @@ mod tests {
             },
         ];
 
-        assert_eq!(validate_carried_opening_batch(&claims).unwrap(), 3);
-        let summary = carried_opening_incidence_summary(&claims).unwrap();
+        assert_eq!(
+            validate_carried_opening_batch(&sources, &claims).unwrap(),
+            3
+        );
+        let summary = carried_opening_incidence_summary(&sources, &claims).unwrap();
         assert_eq!(summary.num_vars(), 3);
         assert_eq!(summary.num_points(), 2);
         assert_eq!(summary.num_claims(), 2);
@@ -747,9 +779,12 @@ mod tests {
     #[test]
     fn carried_opening_batch_rejects_mismatched_or_invalid_domains() {
         let commitment = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(1)]);
+        let sources = [CarriedOpeningSource {
+            commitment: &commitment,
+        }];
         let point = [TranscriptField::from_u64(3), TranscriptField::from_u64(4)];
         let good = CarriedOpeningClaim {
-            commitment: &commitment,
+            source_idx: 0,
             point: &point,
             value: TranscriptField::from_u64(6),
             basis: BasisMode::Lagrange,
@@ -761,13 +796,13 @@ mod tests {
             padded_len: 4,
             ..good
         };
-        assert!(validate_carried_opening_batch(&[good, mismatched]).is_err());
+        assert!(validate_carried_opening_batch(&sources, &[good, mismatched]).is_err());
 
         let not_power_of_two = CarriedOpeningClaim {
             padded_len: 6,
             ..good
         };
-        assert!(validate_carried_opening_batch(&[not_power_of_two]).is_err());
+        assert!(validate_carried_opening_batch(&sources, &[not_power_of_two]).is_err());
 
         let point_too_long = [TranscriptField::from_u64(1), TranscriptField::from_u64(2)];
         let invalid_point = CarriedOpeningClaim {
@@ -775,17 +810,25 @@ mod tests {
             padded_len: 2,
             ..good
         };
-        assert!(validate_carried_opening_batch(&[invalid_point]).is_err());
+        assert!(validate_carried_opening_batch(&sources, &[invalid_point]).is_err());
     }
 
     #[test]
     fn carried_opening_transcript_binds_order_and_metadata() {
         let commitment_a = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(1)]);
         let commitment_b = FlatRingVec::from_coeffs(vec![TranscriptField::from_u64(2)]);
+        let sources = [
+            CarriedOpeningSource {
+                commitment: &commitment_a,
+            },
+            CarriedOpeningSource {
+                commitment: &commitment_b,
+            },
+        ];
         let point_a = [TranscriptField::from_u64(3), TranscriptField::from_u64(4)];
         let point_b = [TranscriptField::from_u64(5), TranscriptField::from_u64(6)];
         let first = CarriedOpeningClaim {
-            commitment: &commitment_a,
+            source_idx: 0,
             point: &point_a,
             value: TranscriptField::from_u64(7),
             basis: BasisMode::Lagrange,
@@ -794,7 +837,7 @@ mod tests {
             kind: CarriedOpeningKind::RecursiveWitness,
         };
         let second = CarriedOpeningClaim {
-            commitment: &commitment_b,
+            source_idx: 1,
             point: &point_b,
             value: TranscriptField::from_u64(8),
             basis: BasisMode::Lagrange,
@@ -802,15 +845,18 @@ mod tests {
             padded_len: 4,
             kind: CarriedOpeningKind::SetupPrefix,
         };
-        let forward = carried_batch_challenge(&[first, second]);
-        let reversed = carried_batch_challenge(&[second, first]);
+        let forward = carried_batch_challenge(&sources, &[first, second]);
+        let reversed = carried_batch_challenge(&sources, &[second, first]);
         assert_ne!(forward, reversed);
 
         let changed_kind = CarriedOpeningClaim {
             kind: CarriedOpeningKind::RecursiveWitness,
             ..second
         };
-        assert_ne!(forward, carried_batch_challenge(&[first, changed_kind]));
+        assert_ne!(
+            forward,
+            carried_batch_challenge(&sources, &[first, changed_kind])
+        );
     }
 
     #[test]

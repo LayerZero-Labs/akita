@@ -741,10 +741,11 @@ where
     }
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
+    let carried_sources = [CarriedOpeningSource { commitment }];
     let carried_claims = carried_openings
         .iter()
         .map(|claim| CarriedOpeningClaim {
-            commitment,
+            source_idx: 0,
             point: &claim.opening_point,
             value: claim.opening,
             basis: claim.basis,
@@ -753,8 +754,8 @@ where
             kind: claim.kind,
         })
         .collect::<Vec<_>>();
-    append_carried_opening_batch_to_transcript(&carried_claims, transcript)?;
-    let carried_incidence = carried_opening_incidence_summary(&carried_claims)?;
+    append_carried_opening_batch_to_transcript(&carried_sources, &carried_claims, transcript)?;
+    let carried_incidence = carried_opening_incidence_summary(&carried_sources, &carried_claims)?;
     if carried_openings.is_empty()
         || carried_openings.iter().any(|claim| {
             (matches!(claim.kind, CarriedOpeningKind::RecursiveWitness)
@@ -987,10 +988,11 @@ where
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     let commitment_u = commitment.as_ring_slice::<D>()?;
+    let carried_sources = [CarriedOpeningSource { commitment }];
     let carried_claims = carried_openings
         .iter()
         .map(|claim| CarriedOpeningClaim {
-            commitment,
+            source_idx: 0,
             point: &claim.opening_point,
             value: claim.opening,
             basis: claim.basis,
@@ -999,8 +1001,8 @@ where
             kind: claim.kind,
         })
         .collect::<Vec<_>>();
-    append_carried_opening_batch_to_transcript(&carried_claims, transcript)?;
-    let carried_incidence = carried_opening_incidence_summary(&carried_claims)?;
+    append_carried_opening_batch_to_transcript(&carried_sources, &carried_claims, transcript)?;
+    let carried_incidence = carried_opening_incidence_summary(&carried_sources, &carried_claims)?;
     if carried_openings.is_empty()
         || carried_openings.iter().any(|claim| {
             (matches!(claim.kind, CarriedOpeningKind::RecursiveWitness)

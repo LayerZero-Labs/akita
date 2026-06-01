@@ -52,19 +52,48 @@ where
     })
 }
 
-fn serialize_carried_openings<F, L, W>(
-    claims: &[CarriedOpeningProof<F, L>],
+fn serialize_carried_sources<F, W>(
+    sources: &[CarriedOpeningSourceProof<F>],
     mut writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
     F: FieldCore + AkitaSerialize,
+    W: Write,
+{
+    for source in sources {
+        source
+            .commitment
+            .serialize_with_mode(&mut writer, compress)?;
+    }
+    Ok(())
+}
+
+fn carried_sources_serialized_size<F>(
+    sources: &[CarriedOpeningSourceProof<F>],
+    compress: Compress,
+) -> usize
+where
+    F: FieldCore + AkitaSerialize,
+{
+    sources
+        .iter()
+        .map(|source| source.commitment.serialized_size(compress))
+        .sum()
+}
+
+fn serialize_carried_openings<L, W>(
+    claims: &[CarriedOpeningProof<L>],
+    mut writer: W,
+    compress: Compress,
+) -> Result<(), SerializationError>
+where
     L: FieldCore + AkitaSerialize,
     W: Write,
 {
     for claim in claims {
         claim
-            .commitment
+            .source_idx
             .serialize_with_mode(&mut writer, compress)?;
         claim
             .basis
@@ -86,18 +115,17 @@ where
     Ok(())
 }
 
-fn carried_openings_serialized_size<F, L>(
-    claims: &[CarriedOpeningProof<F, L>],
+fn carried_openings_serialized_size<L>(
+    claims: &[CarriedOpeningProof<L>],
     compress: Compress,
 ) -> usize
 where
-    F: FieldCore + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
     claims
         .iter()
         .map(|claim| {
-            claim.commitment.serialized_size(compress)
+            claim.source_idx.serialized_size(compress)
                 + 2
                 + claim.natural_len.serialized_size(compress)
                 + claim.padded_len.serialized_size(compress)
@@ -107,19 +135,18 @@ where
         .sum()
 }
 
-fn deserialize_carried_openings<F, L, R>(
+fn deserialize_carried_sources<F, R>(
     mut reader: R,
     compress: Compress,
     validate: Validate,
-    shapes: &[CarriedOpeningShape],
-) -> Result<Vec<CarriedOpeningProof<F, L>>, SerializationError>
+    shapes: &[CarriedOpeningSourceShape],
+) -> Result<Vec<CarriedOpeningSourceProof<F>>, SerializationError>
 where
     F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
-    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
     R: Read,
 {
-    let mut claims = Vec::new();
-    reserve_shape_len(&mut claims, shapes.len())?;
+    let mut sources = Vec::new();
+    reserve_shape_len(&mut sources, shapes.len())?;
     for shape in shapes {
         shape.check()?;
         let commitment = FlatRingVec::deserialize_with_mode(
@@ -128,6 +155,26 @@ where
             validate,
             &shape.commitment_coeffs,
         )?;
+        sources.push(CarriedOpeningSourceProof { commitment });
+    }
+    Ok(sources)
+}
+
+fn deserialize_carried_openings<L, R>(
+    mut reader: R,
+    compress: Compress,
+    validate: Validate,
+    shapes: &[CarriedOpeningShape],
+) -> Result<Vec<CarriedOpeningProof<L>>, SerializationError>
+where
+    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    R: Read,
+{
+    let mut claims = Vec::new();
+    reserve_shape_len(&mut claims, shapes.len())?;
+    for shape in shapes {
+        shape.check()?;
+        let source_idx = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let basis_tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let kind_tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let natural_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -152,7 +199,7 @@ where
             SerializationError::InvalidData(format!("unknown carried opening kind tag {kind_tag}"))
         })?;
         claims.push(CarriedOpeningProof {
-            commitment,
+            source_idx,
             point,
             value,
             basis,
@@ -252,6 +299,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         self.stage2
             .next_w_eval()
             .serialize_with_mode(&mut writer, compress)?;
+        serialize_carried_sources(&self.stage2.extra_carried_sources, &mut writer, compress)?;
         serialize_carried_openings(&self.stage2.extra_carried_openings, &mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -295,13 +343,20 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             })
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval().serialized_size(compress)
+            + carried_sources_serialized_size(&self.stage2.extra_carried_sources, compress)
             + carried_openings_serialized_size(&self.stage2.extra_carried_openings, compress)
     }
 }
 
-impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for CarriedOpeningProof<F, L> {
+impl<F: FieldCore + Valid> Valid for CarriedOpeningSourceProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.commitment.check()?;
+        Ok(())
+    }
+}
+
+impl<L: FieldCore + Valid> Valid for CarriedOpeningProof<L> {
+    fn check(&self) -> Result<(), SerializationError> {
         self.point.check()?;
         self.value.check()?;
         if self.natural_len == 0
@@ -347,6 +402,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
         self.stage2.sumcheck_proof_masked.check()?;
         self.stage2.next_w_commitment.check()?;
         self.stage2.next_w_eval().check()?;
+        self.stage2.extra_carried_sources.check()?;
         self.stage2.extra_carried_openings.check()
     }
 }
@@ -441,6 +497,12 @@ impl<
             next_w_eval: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
             #[cfg(feature = "zk")]
             next_w_eval_masked: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            extra_carried_sources: deserialize_carried_sources(
+                &mut reader,
+                compress,
+                validate,
+                &ctx.extra_carried_sources,
+            )?,
             extra_carried_openings: deserialize_carried_openings(
                 &mut reader,
                 compress,
@@ -693,6 +755,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         self.stage2
             .next_w_eval()
             .serialize_with_mode(&mut writer, compress)?;
+        serialize_carried_sources(&self.stage2.extra_carried_sources, &mut writer, compress)?;
         serialize_carried_openings(&self.stage2.extra_carried_openings, &mut writer, compress)
     }
 
@@ -737,6 +800,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             })
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval().serialized_size(compress)
+            + carried_sources_serialized_size(&self.stage2.extra_carried_sources, compress)
             + carried_openings_serialized_size(&self.stage2.extra_carried_openings, compress)
     }
 }
@@ -766,6 +830,7 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
         self.stage2.sumcheck_proof_masked.check()?;
         self.stage2.next_w_commitment.check()?;
         self.stage2.next_w_eval().check()?;
+        self.stage2.extra_carried_sources.check()?;
         self.stage2.extra_carried_openings.check()
     }
 }
@@ -860,6 +925,12 @@ impl<
             next_w_eval: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
             #[cfg(feature = "zk")]
             next_w_eval_masked: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            extra_carried_sources: deserialize_carried_sources(
+                &mut reader,
+                compress,
+                validate,
+                &ctx.extra_carried_sources,
+            )?,
             extra_carried_openings: deserialize_carried_openings(
                 &mut reader,
                 compress,
