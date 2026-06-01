@@ -77,17 +77,72 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
     // `get_params_for_batched_commitment` reads the root commit off the
     // runtime schedule's first step: a root-direct `params: None` is the
     // uncommittable edge and must be rejected loudly (rather than silently
-    // dropped, as the setup-levels reader above does). Mirror that exact
-    // match here against the synthetic schedule so the contract stays locked
-    // even though the trait method re-resolves its own schedule.
-    let rejected = match uncommittable.steps.first() {
-        Some(Step::Direct(direct)) => direct.params.is_none(),
-        _ => false,
-    };
+    // dropped, as the setup-levels reader above does). Drive the real trait
+    // method through a config whose `runtime_schedule` yields exactly this
+    // uncommittable schedule, and assert the documented `InvalidSetup`.
+    #[derive(Clone)]
+    struct UncommittableRootDirectCfg;
+    impl CommitmentConfig for UncommittableRootDirectCfg {
+        type Field = akita_field::Fp32<251>;
+        type ClaimField = akita_field::Fp32<251>;
+        type ChallengeField = akita_field::Fp32<251>;
+        const D: usize = 8;
+        fn decomposition() -> akita_types::DecompositionParams {
+            akita_types::DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 8,
+                log_open_bound: Some(8),
+            }
+        }
+        fn stage1_challenge_config(
+            _d: usize,
+        ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+            Ok(akita_challenges::SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            })
+        }
+        fn sis_modulus_family() -> akita_types::SisModulusFamily {
+            akita_types::SisModulusFamily::Q32
+        }
+        fn max_setup_matrix_size(
+            _max_num_vars: usize,
+            _max_num_batched_polys: usize,
+            _max_num_points: usize,
+        ) -> Result<SetupMatrixEnvelope, AkitaError> {
+            Ok(SetupMatrixEnvelope {
+                max_setup_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_b_len: 1,
+                #[cfg(feature = "zk")]
+                max_zk_d_len: 1,
+            })
+        }
+        fn basis_range() -> (u32, u32) {
+            (3, 3)
+        }
+        // Inject the uncommittable root-direct schedule so the default
+        // `get_params_for_batched_commitment` hits its rejection branch.
+        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+            Ok(Schedule {
+                steps: vec![Step::Direct(DirectStep {
+                    current_w_len: 1 << 10,
+                    witness_shape: DirectWitnessShape::FieldElements(1 << 10),
+                    direct_bytes: 0,
+                    params: None,
+                })],
+                total_bytes: 0,
+            })
+        }
+    }
+
+    let incidence = ClaimIncidenceSummary::same_point(10, 1).expect("singleton incidence");
+    let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&incidence)
+        .expect_err("uncommittable root-direct must reject get_params_for_batched_commitment");
     assert!(
-        rejected,
-        "uncommittable root-direct (params: None) must be the rejected edge \
-         in get_params_for_batched_commitment; see DirectStep::params"
+        err.to_string()
+            .contains("root-direct schedule is missing commit params"),
+        "unexpected error: {err}"
     );
 }
 
