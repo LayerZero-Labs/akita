@@ -40,24 +40,27 @@ Each row is `current -> proposed`, with the math/role that justifies it.
 Proposed names are recommendations; the exact spelling is the main thing to settle in review.
 
 1. `QuadraticEquation` (`crates/akita-prover/src/protocol/quadratic_equation.rs:245`) is split, not just renamed, into `RingRelationInstance` (public statement) and `RingRelationWitness` (prover secret).
-   Today it bundles three things for the per-fold-level negacyclic-ring relation `M * z = y + (X^D + 1) * r`: the RHS targets (`y` at `:254`, `v = D * w_hat` at `:247`), the structure that defines the virtual `M` (`challenges`, `opening_points` / `ring_multiplier_points`, `gamma` / `row_coefficient_rings`, the claim-incidence maps, `num_public_rows`, `m_row_layout`), and the prover's witness (`z_pre`, `w_hat`, `w_folded`, `hint`, and zk blinding).
+   Today it bundles three things for the per-fold-level negacyclic-ring relation `M * z = y + (X^D + 1) * r`: the RHS targets (`y` at `:254`, `v = D * w_hat` at `:247`), the structure that defines the virtual `M` (`challenges`, `opening_points` / `ring_multiplier_points`, `gamma` / `row_coefficient_rings`, the claim-incidence maps, `num_public_rows`, `m_row_layout`), and the prover's witness (`z_pre`, `w_hat`, `d_blinding_digits`, `w_folded`, `hint`).
    `M` and `z` are never materialized, and the commitment `u` is consumed during construction rather than stored.
-   The witness fields are `Option` today only so the prover can `.take()` them out during `ring_switch_build_w` (`take_z_pre`/`take_w_hat`/`take_w_folded`/`take_hint` at `quadratic_equation.rs:996-1047`); they are always `Some` after construction and the verifier never builds this type (zero references in `akita-verifier`).
+   The witness fields are `Option` today only so the prover can `.take()` them out during `ring_switch_build_w` (`take_z_pre`/`take_w_hat`/`take_d_blinding_digits`/`take_w_folded`/`take_hint` at `quadratic_equation.rs:997-1047`); they are always `Some` after construction and the verifier never builds this type (zero references in `akita-verifier`).
    That latent split is the design fix:
    - `RingRelationInstance` holds the public statement (challenges, opening points, incidence maps, `gamma` / `row_coefficient_rings`, `num_public_rows`, `m_row_layout`, and targets `y`, `v`) with no `Option` witness fields.
-   - `RingRelationWitness` holds the prover secret (`z_pre`, `w_hat`, `w_folded`, `hint`, zk blinding), passed by value into the prover.
+   - `RingRelationWitness` holds the prover secret (`z_pre`, `w_hat`, `d_blinding_digits`, `w_folded`, `hint`), passed by value into the prover.
+     `d_blinding_digits` is the D-side blinding for `v = D · ŵ`; it is always present, not only under the `zk` feature, so it is listed explicitly rather than folded into a generic "zk blinding".
    The `Ring` prefix is deliberate: it marks the negacyclic-ring relation, distinct from the stage-1 norm/range check.
    "Quadratic" was paper-section jargon (the module doc said "Quadratic equation builder ... §4.2") describing the proof-system relation degree, not the struct's content.
-   Crate homes: `RingRelationInstance` lives in `akita-types` so both prover and verifier can build it (it needs only `LevelParams`, `MRowLayout`, `Challenges`, `CyclotomicRing`, opening points, and incidence, all already in `akita-types`); `RingRelationWitness` stays in `akita-prover`.
+   Crate homes: `RingRelationInstance` lives in `akita-types` so both prover and verifier can build it.
+   It needs `LevelParams`, `MRowLayout`, `CyclotomicRing`, the opening points (`RingOpeningPoint`, `RingMultiplierOpeningPoint` in `proof/batch.rs`), and the incidence types, all defined in `akita-types`, plus `Challenges`, which is defined in `akita-challenges` (already a dependency of `akita-types`, see `akita-types/Cargo.toml`), so no new crate edge is added.
+   `RingRelationWitness` stays in `akita-prover` and cannot move: its `z_folded_rings` field has type `DecomposeFoldWitness`, which is defined in `akita-prover`, so the witness type is structurally prover-only and pulling it into `akita-types` would force a prover-only type down into the shared layer.
 
-2. `compute_r_split_eq` (`crates/akita-prover/src/protocol/quadratic_equation/r_split.rs:240`) -> `compute_relation_quotient`.
+2. `compute_r_split_eq` (`crates/akita-prover/src/protocol/quadratic_equation/r_split.rs:251`) -> `compute_relation_quotient`.
    It computes the divisibility quotient `r` of `M * z = y + (X^D + 1) * r` via gadget/Kronecker factorization, without materializing `M` or `z`.
    The "eq" is not an equality polynomial, and "split-eq" collides with the unrelated `GruenSplitEq` sumcheck factorization in `crates/akita-algebra/src/split_eq.rs`.
    The file `r_split.rs` is renamed to `relation_quotient.rs` and the re-export in `quadratic_equation.rs:36` is updated.
 
 3. `r_stage1` (verifier, e.g. `crates/akita-verifier/src/stages/stage2.rs:181`) -> `stage1_point`.
    It is the random point output by the stage-1 norm sumcheck, not the divisibility quotient `r`.
-   This removes the collision with quotient `r` and with the verifier helper `compute_r_contribution` (`crates/akita-verifier/src/protocol/slice_mle/structured_slice.rs:331`).
+   This removes the collision with quotient `r` and with the verifier helper `compute_r_contribution` (`crates/akita-verifier/src/protocol/slice_mle/structured_slice.rs:334`).
 
 4. `MRowLayout::Intermediate` / `MRowLayout::Terminal` (`crates/akita-types/src/layout/params.rs:26`) -> `MRowLayout::WithDBlock` / `MRowLayout::WithoutDBlock`.
    The variant selects whether the `D`-block rows `v = D * w_hat` appear in the relation, not the position in the fold chain.
@@ -71,9 +74,10 @@ Proposed names are recommendations; the exact spelling is the main thing to sett
 6. The "Direct" overload.
    Three unrelated meanings share the word, and the proposed terminal-direct-relation mode (`specs/terminal-direct-ring-relation.md`) would add a fourth.
    - `DirectWitnessProof` (`crates/akita-types/src/proof/direct_witness.rs:20`) -> `CleartextWitnessProof`.
-   - `AkitaBatchedRootProof::Direct` (`crates/akita-types/src/proof/levels.rs:464`) -> `RootZeroFold`.
-   - `AkitaPlannedStep::Direct` (`crates/akita-types/src/schedule.rs:265`) -> `AkitaPlannedStep::ZeroFold` (and the related `AkitaPlannedDirectStep` / `direct_step()` accessors).
-   These rename Rust identifiers only; serialization must remain by discriminant index, not by variant name (see Invariants).
+   - `AkitaBatchedRootProof::Direct` (`crates/akita-types/src/proof/levels.rs:464`) -> `AkitaBatchedRootProof::ZeroFold`.
+   - `AkitaPlannedStep::Direct` (`crates/akita-types/src/schedule.rs:265`) -> `AkitaPlannedStep::ZeroFold` (and the related `AkitaPlannedDirectStep` -> `AkitaPlannedZeroFoldStep` / `direct_step()` -> `zero_fold_step()` accessors).
+   Both 0-fold variants take the same `ZeroFold` spelling: they live on distinct enums, so there is no collision, and the shared name reflects that they are the same protocol concept at the root and in the schedule.
+   These rename Rust identifiers only; variant selection on the wire is driven by the externally supplied shape/context, not by an in-stream discriminant or variant name, so the renames are byte-safe (see Invariants).
 
 ### Rename Candidates (Tier 2, lower priority)
 
@@ -108,7 +112,9 @@ Include them only if review agrees; otherwise they move to a follow-up.
 
 - **Proof bytes unchanged.**
   Serialized proof bytes for every existing fixture are byte-identical before and after.
-  Enum-variant renames (Tier 1 item 6) must not change serialized discriminants; serialization stays index-based, not name-based.
+  The enum-variant renames (Tier 1 item 6) are inherently byte-safe: the proof wire form does not encode a Rust variant name or an in-stream discriminant tag for these enums.
+  Variant selection on deserialization is driven by the externally supplied shape/context (for example `AkitaProofStepShape::Intermediate` / `Terminal` in `crates/akita-types/src/proof/wire.rs`, and `DirectWitnessShape` for the cleartext witness), which is reconstructed from params rather than read from the byte stream.
+  There is no `serde`-style name-based serialization anywhere on the proof path, so renaming a Rust variant cannot move any byte.
   The instance/witness split touches no serialized type: `RingRelationInstance` and `RingRelationWitness` are in-memory prover/verifier state, not wire types.
 
 - **Transcript bytes unchanged.**
@@ -156,7 +162,8 @@ This is behavior-preserving (a rename plus an internal type split), so the stron
 - Run the full existing suite: `cargo test`, then `cargo test --features zk`, then `cargo test --no-default-features`.
 - Byte-identity check: before the rename, capture serialized bytes of a representative proof for one dense and one one-hot profile (for example via an `akita_e2e` fixture or a small scratch test) and after the rename assert the bytes are identical.
   If a proof-bytes golden test already exists, that is sufficient; otherwise add a temporary local check during implementation and do not commit it.
-- Discriminant-stability check for Tier 1 item 6: confirm `CleartextWitnessProof`, `RootZeroFold`, and `Step::ZeroFold` deserialize from bytes produced before the rename, proving the variant index did not move.
+- Wire-stability check for Tier 1 item 6: confirm a proof using `CleartextWitnessProof`, `AkitaBatchedRootProof::ZeroFold`, and `AkitaPlannedStep::ZeroFold` deserializes byte-for-byte from bytes produced before the rename.
+  This is the same round-trip byte-identity check as above, exercised on a 0-fold / cleartext-witness fixture; because variant selection is shape-driven (no in-stream variant tag or name), a successful round trip is sufficient evidence that the rename moved no byte.
 - Run `logging-transcript` tests (`cargo test -p akita-pcs transcript_hardening --features logging-transcript`) to confirm event-stream equality.
 
 Minimum acceptance commands:
@@ -195,20 +202,76 @@ Because the repo makes no backward-compatibility guarantees, every rename is a f
 This is part 2, the refactor.
 
 **Split.**
-`QuadraticEquation` becomes two types.
-`RingRelationInstance` (in `akita-types`) holds the public statement: `LevelParams` reference or the fields it needs, `MRowLayout`, fold `Challenges`, opening points (`RingOpeningPoint` / `RingMultiplierOpeningPoint`), the claim-incidence maps (`claim_to_point`, `claim_to_point_poly`, `claim_poly_indices`, `num_polys_per_point`, `num_public_rows`), `gamma` / `row_coefficient_rings`, and the targets `y` and `v`.
-`RingRelationWitness` (in `akita-prover`) holds the prover secret: `z_folded_rings` (was `z_pre`), `w_hat`, `w_folded`, `hint`, and zk blinding.
+`QuadraticEquation` becomes two types: a shared public statement `RingRelationInstance` (in `akita-types`) and a prover-only secret `RingRelationWitness` (in `akita-prover`).
+The verifier already builds and consumes the statement; today it does so from loose arguments rather than a named type, so the split also makes the verifier a first-class builder of the statement instead of a place that re-derives it ad hoc.
+
+**`RingRelationInstance` shape and ownership.**
+The instance owns the scalar fields and vectors it needs; it does not hold a `&LevelParams` borrow.
+Owning a handful of scalars plus the vectors it already materializes keeps the instance a self-contained value that both prover and verifier can pass by reference into the row-evaluation paths without threading a `LevelParams` lifetime through every evaluator.
+The `LevelParams`-derived quantities it consumes (`MRowLayout` and the per-level row counts) are small `Copy` scalars, so copying them in is cheaper than carrying a borrow.
+
+```rust
+// in akita-types
+pub struct RingRelationInstance<F: FieldCore, const D: usize> {
+    // shape (copied out of LevelParams, no borrow)
+    m_row_layout: MRowLayout,
+    num_public_rows: usize,
+    // structure that defines the virtual M
+    challenges: Challenges,                                  // from akita-challenges
+    opening_points: Vec<RingOpeningPoint<F>>,
+    ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F, D>>,
+    claim_to_point: Vec<usize>,
+    claim_to_point_poly: Vec<usize>,
+    claim_poly_indices: Vec<usize>,
+    num_polys_per_point: Vec<usize>,
+    gamma: Vec<F>,
+    row_coefficient_rings: Vec<CyclotomicRing<F, D>>,        // derived from gamma
+    // RHS targets
+    y: Vec<CyclotomicRing<F, D>>,
+    v: Vec<CyclotomicRing<F, D>>,                            // v = D * w_hat, present per m_row_layout
+}
+```
+
+`RingRelationWitness` (in `akita-prover`) holds the prover secret: `z_folded_rings` (was `z_pre`), `w_hat`, `d_blinding_digits`, `w_folded`, and `hint`.
+
+**Why the witness must stay in `akita-prover`.**
+This is not just a placement preference; the witness is structurally prover-only.
+`z_folded_rings` has type `DecomposeFoldWitness`, which is defined in `akita-prover` (`crates/akita-prover/src/lib.rs`), and the bundle also carries prover-only commitment state (`hint: AkitaCommitmentHint`).
+Moving `RingRelationWitness` into `akita-types` would force `DecomposeFoldWitness` (and the digit-decomposition machinery around it) down into the shared layer for no verifier benefit, since the verifier never holds the witness.
+So the instance goes up to `akita-types` and the witness stays in `akita-prover`; that asymmetry is the whole point of the split.
+
+**Constructors and witness consumption.**
 The two prover constructors (`new_prover`, `new_recursive_multipoint_prover`) return `(RingRelationInstance, RingRelationWitness)`.
-`ring_switch_build_w` takes `(&RingRelationInstance, RingRelationWitness)` and consumes the witness by value, replacing the `Option` fields and the `take_*` / `*_centered` accessor cluster (about ten methods) that exist only to move the witness out.
+`ring_switch_build_w` takes `(&RingRelationInstance, RingRelationWitness)` and consumes the witness by value.
+This deletes the `Option` witness fields and the cluster of accessors that exist only to move the witness out of the bundle: `take_z_pre`, `take_w_hat`, `take_w_folded`, `take_hint`, `take_d_blinding_digits`, plus the read-only `z_pre`, `z_pre_centered`, `z_pre_centered_inf_norm`, `w_hat`, `w_hat_flat`, `d_blinding_digits`, `w_folded`, `hint` accessors (about thirteen methods at `quadratic_equation.rs:980-1047`).
+With the witness owned by value, the prover reads its fields directly and the `Option`/`take_*` dance disappears.
 
-**Verifier adoption.**
-The verifier today assembles the fold statement from loose pieces: `LevelParams`, the proof's `y_rings` / `v` / commitment rows, `ClaimIncidenceSummary`, and transcript-derived challenges, threaded through `verify_root_level_inner` (`crates/akita-verifier/src/protocol/levels.rs:271`) and `verify_one_level_inner` (`crates/akita-verifier/src/protocol/levels/recursive.rs:120`).
-There is no single statement object today.
-Under this spec the verifier builds a `RingRelationInstance` from those same pieces and threads it into `prepare_ring_switch_row_eval` and `relation_claim_from_rows_extension`, so prover and verifier share one definition of the ring-relation statement.
+**Constructor contract (transcript invariance).**
+Building `RingRelationInstance` must not move any Fiat-Shamir sampling or transcript absorb into its constructor.
+The instance is populated from values that have already been sampled and absorbed: the constructor only copies/derives.
+The derived fields (`row_coefficient_rings` from `gamma`, and `v` from `w_hat` per `m_row_layout`) are pure deterministic functions of already-fixed inputs and are computed identically on both sides.
+This is what keeps proof bytes and the `logging-transcript` event stream byte-identical.
 
-**Concrete deduplication in scope.**
-The witness-column segment layout is currently the verifier's `RingSwitchSegmentLayout` (`crates/akita-verifier/src/protocol/ring_switch.rs:140,605`) versus the prover's inline offset arithmetic in `compute_m_evals_x` (`crates/akita-prover/src/protocol/ring_switch/evals.rs`).
-This spec moves that segment layout to a method on `RingRelationInstance` so both sides derive it from one place.
+**Verifier adoption (the payoff).**
+The verifier today assembles the fold statement from loose pieces: `LevelParams`, the proof's `y_rings` / `v` / commitment rows, `ClaimIncidenceSummary`, and transcript-derived challenges, threaded by hand through `verify_root_level_inner` (`crates/akita-verifier/src/protocol/levels.rs:271`) and `verify_one_level_inner` (`crates/akita-verifier/src/protocol/levels/recursive.rs:120`).
+There is no single statement object today, so the same incidence/opening/challenge plumbing is spelled out separately from the prover's.
+Under this spec the verifier builds one `RingRelationInstance` from those same pieces and threads `&RingRelationInstance` into `prepare_ring_switch_row_eval` (`crates/akita-verifier/src/protocol/ring_switch.rs`) and `relation_claim_from_rows_extension` (`crates/akita-types/src/proof/relation.rs`).
+Concretely the verifier maps its loose pieces onto the instance fields as follows:
+
+- `m_row_layout`, `num_public_rows`: from the level's `LevelParams` (copied out).
+- `challenges`: the stage-1 fold challenges already sampled from the transcript.
+- `opening_points` / `ring_multiplier_points`: the verifier's reconstructed opening points (`RingMultiplierOpeningPoint::from_base` is already used in `proof/batch.rs`).
+- `claim_to_point` / `claim_to_point_poly` / `claim_poly_indices` / `num_polys_per_point`: read straight from `ClaimIncidenceSummary`.
+- `gamma` / `row_coefficient_rings`: derived from the already-sampled batching challenge, the same derivation the prover runs.
+- `y` / `v`: the proof's `y_rings` / `v`.
+
+The verifier gains a single named statement it constructs once per level and reuses, instead of re-deriving incidence and row-coefficient data inline at each evaluation site, and prover and verifier now share one definition of what the ring-relation statement is.
+
+**Concrete deduplication in scope: the witness-column segment layout.**
+The witness-column segment layout is currently duplicated: the verifier has an explicit `RingSwitchSegmentLayout` (`crates/akita-verifier/src/protocol/ring_switch.rs:140`, built by `segment_layout()` at `:605`), while the prover open-codes the same offsets inline in `compute_m_evals_x` (`crates/akita-prover/src/protocol/ring_switch/evals.rs`).
+This spec moves that layout onto the instance as `RingRelationInstance::segment_layout(&self) -> Result<RingRelationSegmentLayout, AkitaError>`, computed from `m_row_layout`, `num_public_rows`, `num_polys_per_point`, and the opening-point counts it already owns.
+The verifier's `RingSwitchSegmentLayout` is replaced by this method's return type, and the prover's inline offset arithmetic in `compute_m_evals_x` calls the same method, so the column layout has exactly one definition.
+This is the deduplication that earns `RingRelationInstance` its place in `akita-types`: without it, the shared type would be a passive bag of fields rather than the single source of the layout both sides must agree on.
 
 **Deferred (enabled but not in this PR).**
 Unifying the ring-switch Fiat-Shamir sampling blocks (prover `finalize.rs` versus verifier `ring_switch_verifier_core`) and the fold-challenge wrapper (`derive_stage1_challenges` versus the prover inline path) is enabled by the shared instance but is left to a follow-up to keep this PR's review surface bounded.
@@ -216,6 +279,7 @@ Unifying the prover's materialized M-table build with the verifier's deferred sl
 
 **Why `akita-types`, not a dependency flip.**
 `RingRelationInstance` goes in `akita-types`, the existing lowest common dependency of both prover and verifier, next to `relation_claim_from_rows_extension` and `LevelParams::m_row_count_for` which already live there.
+Every field type it needs is reachable from `akita-types` without a new crate edge (`Challenges` via the existing `akita-challenges` dependency; everything else native to `akita-types`).
 This spec does not change the crate dependency direction; see Non-Goals.
 
 ### Diff Surface (estimated)
@@ -229,8 +293,8 @@ Per-symbol (Tier 1):
 | --- | ---: | ---: |
 | `QuadraticEquation` | 35 | 12 |
 | `compute_r_split_eq` (+ `r_split` module/path) | ~22 | 12 |
-| `z_pre` (incl. derived `z_pre_centered`, `z_pre_centered_inf_norm`) | 157 | 15 |
-| `r_stage1` | 173 | 22 |
+| `z_pre` (incl. derived `z_pre_centered`, `z_pre_centered_inf_norm`) | 146 | 15 |
+| `r_stage1` | 155 | 22 |
 | `MRowLayout::Intermediate` | 47 | 20 |
 | `MRowLayout::Terminal` | 38 | 18 |
 | `DirectWitnessProof` | 77 | 27 |
@@ -259,7 +323,7 @@ Per-crate distribution of the ~70 files:
 
 The blast radius is concentrated in `akita-prover`, `akita-types`, and `akita-verifier`; downstream crates are touched only lightly through re-exports and type references.
 
-Two symbols dominate: `z_pre` and `r_stage1` together account for roughly 330 of the ~560 occurrences.
+Two symbols dominate: `z_pre` and `r_stage1` together account for roughly 300 of the ~560 occurrences.
 If a smaller first PR is preferred, those two renames split cleanly into their own commits or a separate PR without blocking the rest.
 
 Tier 2 adds a small increment on top: `build_w_coeffs` (about 8 occurrences across 3 files), `repeated_b*` (about 15 across 4 files), plus the `alpha` and doc-only changes.
@@ -309,9 +373,10 @@ Suggested sequencing: land part 1 (renames) first, then part 2 (the split and ve
 
 Important risks to resolve first:
 
-- Confirm proof and shape serialization is by discriminant index, not by variant name, before renaming any serialized enum variant (Tier 1 item 6).
-  If any path serializes variant names, that path must be fixed or the variant rename dropped.
-- The byte-identity and discriminant-stability checks are the gate that this stayed behavior-preserving; run them before opening the PR, especially for part 2.
+- Confirm the proof path has no `serde`-style name-based variant serialization before renaming any serialized enum variant (Tier 1 item 6).
+  The current wire form selects variants from the externally supplied shape/context (`proof/wire.rs`), not from an in-stream discriminant or name, so the renames are byte-safe; if any path is later found to serialize variant names, that path must be fixed or the variant rename dropped.
+- The byte-identity check (including a 0-fold / cleartext-witness fixture) is the gate that this stayed behavior-preserving; run it before opening the PR, especially for part 2.
+- Before applying the renames, grep the workspace for the proposed new names (`stage1_point`, `compute_relation_quotient`, `z_folded_rings`, `ZeroFold`, `CleartextWitnessProof`, `WithDBlock` / `WithoutDBlock`) to confirm none already exist and collide; if one does, settle the spelling in review first.
 - `QuadraticEquation` is referenced across prover, tests, and re-exports; do the split last and lean on the compiler to find call sites.
 - For part 2, building `RingRelationInstance` on the verifier side must not move any challenge sampling or transcript absorb; populate the instance from already-sampled values so the `logging-transcript` event stream is unchanged.
 
