@@ -552,8 +552,7 @@ mod fp128_policy_tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
-        // B-row rank=1 at num_vars>=46 level=1 lb=2 — needs SIS floor fix
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 45);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 50);
     }
 
     #[test]
@@ -565,15 +564,13 @@ mod fp128_policy_tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn current_d32_full_schedule_stays_within_audited_sis_widths() {
-        // D-row rank=1 at num_vars>=30 level=2 lb=2 — needs SIS floor fix
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 29);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 50);
     }
 
     #[test]
     #[cfg(not(feature = "zk"))]
     fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
-        // D-row rank=1 at num_vars>=36 level=2 lb=2 — needs SIS floor fix
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 35);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 50);
     }
 
     #[test]
