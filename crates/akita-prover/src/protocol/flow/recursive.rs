@@ -766,11 +766,22 @@ where
         .collect::<Vec<_>>();
     append_carried_opening_batch_to_transcript(&carried_sources, &carried_claims, transcript)?;
     let carried_incidence = carried_opening_incidence_summary(&carried_sources, &carried_claims)?;
+    let mut source_views = Vec::with_capacity(extra_carried_sources.len() + 1);
+    source_views.push(*witness);
+    let mut source_logical_lens = Vec::with_capacity(extra_carried_sources.len() + 1);
+    source_logical_lens.push(logical_w.len());
+    for source in extra_carried_sources {
+        source_views.push(source.w.view::<F, D>()?);
+        source_logical_lens.push(source.logical_w.as_ref().unwrap_or(&source.w).len());
+    }
     if carried_openings.is_empty()
         || carried_openings.iter().any(|claim| {
             (matches!(claim.kind, CarriedOpeningKind::RecursiveWitness)
                 && claim.natural_len != logical_w.len())
                 || claim.natural_len > claim.padded_len
+                || source_logical_lens
+                    .get(claim.source_idx)
+                    .is_none_or(|&source_len| claim.natural_len > source_len)
         })
         || carried_incidence.num_claims() != carried_openings.len()
     {
@@ -835,9 +846,12 @@ where
         .entered();
         let mut y_rings = Vec::with_capacity(prepared_points.len());
         let mut folded = Vec::with_capacity(prepared_points.len());
-        for prepared_point in &prepared_points {
+        for (claim, prepared_point) in carried_openings.iter().zip(prepared_points.iter()) {
+            let source_view = source_views.get(claim.source_idx).ok_or_else(|| {
+                AkitaError::InvalidInput("carried source index out of range".to_string())
+            })?;
             let (y_ring, w_folded) = evaluate_recursive_witness_at_multiplier_point(
-                witness,
+                source_view,
                 &prepared_point.ring_multiplier_point,
                 level_params.block_len,
                 level_params.num_blocks,
@@ -894,6 +908,23 @@ where
         }
     }
     let commitment_u = commitment.as_ring_slice::<D>()?;
+    let mut quadratic_sources = Vec::with_capacity(extra_carried_sources.len() + 1);
+    quadratic_sources.push(RecursiveQuadraticSource {
+        witness: *witness,
+        commitment: commitment_u,
+        hint,
+    });
+    for source in extra_carried_sources {
+        quadratic_sources.push(RecursiveQuadraticSource {
+            witness: source.w.view::<F, D>()?,
+            commitment: source.commitment.as_ring_slice::<D>()?,
+            hint: source.hint.to_typed::<D>()?,
+        });
+    }
+    let claim_to_source = carried_openings
+        .iter()
+        .map(|claim| claim.source_idx)
+        .collect::<Vec<_>>();
 
     let ring_opening_points = prepared_points
         .iter()
@@ -909,12 +940,11 @@ where
             prepared,
             ring_opening_points,
             ring_multiplier_points,
-            witness,
+            quadratic_sources,
+            claim_to_source,
             w_folded_by_claim,
             level_params.clone(),
-            hint,
             transcript,
-            commitment_u,
             &y_rings,
             MRowLayout::Intermediate,
         )?,
@@ -1022,11 +1052,22 @@ where
         .collect::<Vec<_>>();
     append_carried_opening_batch_to_transcript(&carried_sources, &carried_claims, transcript)?;
     let carried_incidence = carried_opening_incidence_summary(&carried_sources, &carried_claims)?;
+    let mut source_views = Vec::with_capacity(extra_carried_sources.len() + 1);
+    source_views.push(*witness);
+    let mut source_logical_lens = Vec::with_capacity(extra_carried_sources.len() + 1);
+    source_logical_lens.push(logical_w.len());
+    for source in extra_carried_sources {
+        source_views.push(source.w.view::<F, D>()?);
+        source_logical_lens.push(source.logical_w.as_ref().unwrap_or(&source.w).len());
+    }
     if carried_openings.is_empty()
         || carried_openings.iter().any(|claim| {
             (matches!(claim.kind, CarriedOpeningKind::RecursiveWitness)
                 && claim.natural_len != logical_w.len())
                 || claim.natural_len > claim.padded_len
+                || source_logical_lens
+                    .get(claim.source_idx)
+                    .is_none_or(|&source_len| claim.natural_len > source_len)
         })
         || carried_incidence.num_claims() != carried_openings.len()
     {
@@ -1091,9 +1132,12 @@ where
         .entered();
         let mut y_rings = Vec::with_capacity(prepared_points.len());
         let mut folded = Vec::with_capacity(prepared_points.len());
-        for prepared_point in &prepared_points {
+        for (claim, prepared_point) in carried_openings.iter().zip(prepared_points.iter()) {
+            let source_view = source_views.get(claim.source_idx).ok_or_else(|| {
+                AkitaError::InvalidInput("carried source index out of range".to_string())
+            })?;
             let (y_ring, w_folded) = evaluate_recursive_witness_at_multiplier_point(
-                witness,
+                source_view,
                 &prepared_point.ring_multiplier_point,
                 level_params.block_len,
                 level_params.num_blocks,
@@ -1159,18 +1203,34 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
+    let mut quadratic_sources = Vec::with_capacity(extra_carried_sources.len() + 1);
+    quadratic_sources.push(RecursiveQuadraticSource {
+        witness: *witness,
+        commitment: commitment_u,
+        hint,
+    });
+    for source in extra_carried_sources {
+        quadratic_sources.push(RecursiveQuadraticSource {
+            witness: source.w.view::<F, D>()?,
+            commitment: source.commitment.as_ring_slice::<D>()?,
+            hint: source.hint.to_typed::<D>()?,
+        });
+    }
+    let claim_to_source = carried_openings
+        .iter()
+        .map(|claim| claim.source_idx)
+        .collect::<Vec<_>>();
     let quad_eq = Box::new(
         QuadraticEquation::<F, { D }>::new_recursive_multipoint_prover(
             backend,
             prepared,
             ring_opening_points,
             ring_multiplier_points,
-            witness,
+            quadratic_sources,
+            claim_to_source,
             w_folded_by_claim,
             level_params.clone(),
-            hint,
             transcript,
-            commitment_u,
             &y_rings,
             MRowLayout::Terminal,
         )?,
