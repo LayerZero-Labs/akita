@@ -55,10 +55,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Cfg::sis_modulus_family()
     }
 
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,

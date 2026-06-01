@@ -404,8 +404,7 @@ fn full_d64_prove_verify() {
         #[cfg(not(feature = "zk"))]
         {
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(FULL_TEST_NV))
-                .expect("schedule plan")
-                .expect("adaptive full config should expose a schedule plan");
+                .expect("schedule plan");
             assert_eq!(total_fold_levels, plan.num_fold_levels());
         }
 
@@ -454,8 +453,7 @@ fn full_d32_prove_verify() {
         #[cfg(not(feature = "zk"))]
         {
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(D32_TEST_NV))
-                .expect("schedule plan")
-                .expect("adaptive D32 config should expose a schedule plan");
+                .expect("schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
         }
 
@@ -588,8 +586,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         #[cfg(not(feature = "zk"))]
         let plan = {
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
-                .expect("schedule plan")
-                .expect("adaptive D32 config should expose a schedule plan");
+                .expect("schedule plan");
             assert_eq!(
                 plan.num_fold_levels(),
                 0,
@@ -721,8 +718,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
         #[cfg(not(feature = "zk"))]
         {
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
-                .expect("schedule plan")
-                .expect("adaptive full config should expose a schedule plan");
+                .expect("schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
 
             assert_eq!(
@@ -839,8 +835,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         #[cfg(not(feature = "zk"))]
         {
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
-                .expect("schedule plan")
-                .expect("adaptive onehot config should expose a schedule plan");
+                .expect("schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
             assert_eq!(
                 proof.size(),
@@ -888,8 +883,8 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     // future planner change that escapes the configured envelope.
     for nv in 10..=120 {
         let schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)) {
-            Ok(Some(schedule)) => schedule,
-            _ => continue,
+            Ok(schedule) => schedule,
+            Err(_) => continue,
         };
         let field_bits = <Cfg as CommitmentConfig>::decomposition().field_bits();
         let within_window = schedule.steps.iter().all(|step| match step {

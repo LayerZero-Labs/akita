@@ -123,9 +123,7 @@ pub mod fp64_d64_onehot;
 pub mod fp64_d64_onehot_zk;
 #[cfg(feature = "zk")]
 pub mod fp64_d64_zk;
-pub mod sis_floor;
-
-pub use sis_floor::SisModulusFamily;
+pub use akita_types::SisModulusFamily;
 
 pub fn table_entry(
     table: GeneratedScheduleTable,

@@ -3,7 +3,7 @@
 //! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
 //! the `stage1` / `fold_shape` closures, exactly the shape
-//! `akita_types::schedule_from_entry_bits` already consumes. This keeps the
+//! `crate::schedule_from_entry` already consumes. This keeps the
 //! DP a pure function of `(policy, key)` so `akita-config` can call it
 //! directly on a schedule-table miss without a dependency cycle.
 
@@ -11,11 +11,14 @@ use std::collections::{BTreeMap, HashMap};
 
 use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
+use akita_types::layout::digit_math::optimal_m_r_split;
+use akita_types::sis_floor::ceil_supported_collision;
 use akita_types::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_direct_commit_layout, root_extension_opening_partials,
+    decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
+    level_proof_bytes, root_extension_opening_partials,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DirectStep, DirectWitnessShape, FoldStep, LevelParams, MRowLayout, Schedule, Step,
+    DecompositionParams, DirectStep, DirectWitnessShape, FoldStep, LevelParams, MRowLayout,
+    Schedule, Step,
 };
 
 use crate::ajtai_params::{compute_all_ajtai_keys_params, Stage1Fn, WitnessType};
@@ -381,23 +384,105 @@ fn derive_optimal_suffix_schedule(
 /// committed `(m, r, n_a, n_b, n_d)` here via the SIS-floor search and
 /// stores it in `GeneratedDirectStep.commit`; the runtime reconstructs the
 /// identical `LevelParams` with `GeneratedFoldStep::expand_to_level_params`.
+///
+/// This derives every value directly and assembles a single `LevelParams`:
+///
+/// - `a_collision` — the audited A-role SIS bucket (`2·β` base norm scaled
+///   by the stage-1 infinity norm and the ring-subfield embedding norm).
+/// - `bd_collision = 2^lb − 1` — the B/D digit-range bucket.
+/// - `(m_vars, r_vars)` — `optimal_m_r_split` for a normal root, or `(0, 0)`
+///   for a tiny root that fits inside one padded ring element.
+/// - `(n_a, n_b, n_d)` — the tight SIS-floor ranks for the resulting
+///   inner / outer / D-matrix widths.
+///
+/// - `(n_a, n_b, n_d)` — the tight SIS-floor ranks for the resulting
+///   inner / outer / D-matrix widths, where the outer (B) and prover (D)
+///   widths already carry the `num_claims` batch factor (the root commits
+///   `num_claims` polynomials, so there is no separate per-claim-then-scale
+///   step; `num_claims == 1` is the singleton root).
+///
+/// `fold_challenge_shape` is stamped onto the committed level (the level-0
+/// shape; the `(m, r)` split itself is scored against the flat L1 mass).
+///
+/// Returns `Ok(None)` when any SIS-floor lookup or bound arithmetic rejects
+/// the candidate (the uncommittable edge), matching the previous
+/// `Result::ok()` fallback.
 fn compute_root_direct_level_params(
     policy: &PlannerPolicy,
     stage1: Stage1Fn<'_>,
     num_vars: usize,
     log_basis: u32,
+    fold_challenge_shape: TensorChallengeShape,
+    num_claims: usize,
 ) -> Result<Option<LevelParams>, AkitaError> {
     let stage1_config = stage1(policy.ring_dimension)?;
-    Ok(root_direct_commit_layout(
-        policy.sis_family,
-        policy.ring_dimension,
-        policy.decomposition,
-        stage1_config,
-        policy.ring_subfield_norm_bound,
-        num_vars,
+    let d = policy.ring_dimension;
+    let sis_family = policy.sis_family;
+    let decomp = policy.decomposition;
+    let alpha = (d as u32).trailing_zeros() as usize;
+
+    let level_decomp = DecompositionParams { log_basis, ..decomp };
+    let (depth_commit, depth_open) = decomp_depths(level_decomp);
+
+    // Outer/inner variable split: brute-force the optimum for a normal root,
+    // single-block `(0, 0)` for a tiny root (`num_vars <= log2(d)`). The
+    // optimizer needs the audited A-role collision bucket to score each `r`.
+    let (m_vars, r_vars) = if num_vars > alpha {
+        let a_inf = WitnessType::S.binding_norm(policy, stage1, log_basis, true)?;
+        let Some(a_collision) = ceil_supported_collision(sis_family, d as u32, a_inf) else {
+            return Ok(None);
+        };
+        let challenge_l1_mass = TensorChallengeShape::Flat.effective_l1_mass(&stage1_config);
+        let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
+            sis_family,
+            d as u32,
+            a_collision,
+            challenge_l1_mass,
+            decomp.log_commit_bound,
+            log_basis,
+            num_vars - alpha,
+            0,
+            decomp.field_bits(),
+        );
+        (m_vars, r_vars)
+    } else {
+        (0, 0)
+    };
+
+    let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
+        return Ok(None);
+    };
+    let Some(block_len) = 1usize.checked_shl(m_vars as u32) else {
+        return Ok(None);
+    };
+
+    // The A/B/D keys (widths + tight SIS-secure ranks + audited buckets) are
+    // exactly what every fold level derives, so reuse the shared helper.
+    // `t_vectors = num_claims` folds the batched-root scaling directly into
+    // the B/D widths — the root commits `num_claims` polynomials — so there
+    // is no separate per-claim-then-scale pass.
+    let Some((a_key, b_key, d_key)) = compute_all_ajtai_keys_params(
+        policy, stage1, block_len, num_blocks, num_claims, log_basis, true,
+    )?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(LevelParams {
+        ring_dimension: d,
         log_basis,
-    )
-    .ok())
+        a_key,
+        b_key,
+        d_key,
+        num_blocks,
+        block_len,
+        m_vars,
+        r_vars,
+        stage1_config,
+        fold_challenge_shape,
+        num_digits_commit: depth_commit,
+        num_digits_open: depth_open,
+    }))
 }
 
 /// Find the optimal schedule for a root schedule lookup key under `policy`.
@@ -450,11 +535,23 @@ pub fn find_schedule(
 
     let root_witness_shape = DirectWitnessShape::FieldElements(witness_len);
     let mut best_cost = direct_witness_bytes(field_bits, &root_witness_shape);
+    let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
+        num_vars: key.num_vars,
+        level: 0,
+        current_w_len: witness_len,
+    });
+    // The level-0 fold-challenge shape and the `num_claims = t_vectors` batch
+    // factor are folded directly into the committed B/D widths, so a table
+    // miss reproduces the exact root commit layout the table-hit expansion
+    // (`expand_to_level_params`) builds — no separate per-claim-then-scale
+    // pass. `Ok(None)` is the uncommittable (large-`num_vars`) edge.
     let root_direct_commit_params = compute_root_direct_level_params(
         policy,
         stage1,
         key.num_vars,
         policy.decomposition.log_basis,
+        fold_challenge_shape,
+        t_vectors,
     )?;
     let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
         current_w_len: witness_len,
@@ -465,11 +562,6 @@ pub fn find_schedule(
     let mut memo = ScheduleMemo::new();
 
     let stage1_config = stage1(policy.ring_dimension)?;
-    let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
-        num_vars: key.num_vars,
-        level: 0,
-        current_w_len: witness_len,
-    });
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = key.num_vars.saturating_sub(alpha);
 

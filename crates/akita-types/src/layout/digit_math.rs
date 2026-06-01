@@ -2,7 +2,7 @@
 
 use akita_field::{CanonicalField, FieldCore};
 
-use crate::generated::sis_floor::{min_rank_for_secure_width, SisModulusFamily};
+use crate::sis_floor::{min_rank_for_secure_width, SisModulusFamily};
 
 /// Maximum positive value representable by `num_digits` balanced base-`b` digits,
 /// where `b = 2^log_basis`.
@@ -216,7 +216,7 @@ pub fn compute_num_digits_fold_with_claims(
 ///
 /// `(sis_family, d, a_collision)` together specify which SIS-floor table
 /// row the lookup consults. `a_collision` must already be rounded up to
-/// the nearest audited bucket (call [`super::super::generated::sis_floor::ceil_supported_collision`]
+/// the nearest audited bucket (call [`crate::sis_floor::ceil_supported_collision`]
 /// upstream).
 ///
 /// # The tradeoff

@@ -164,7 +164,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     // key — the full per-level params are hashed by
     // `digest_effective_schedule`.
     let raw_schedule = match Cfg::runtime_schedule(schedule_lookup_key) {
-        Ok(Some(schedule)) => {
+        Ok(schedule) => {
             let digest = digest_effective_schedule(&schedule);
             let mut hex = String::with_capacity(digest.len() * 2);
             for byte in digest {
@@ -179,7 +179,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
                 schedule_lookup_key.num_z_vectors,
             )
         }
-        _ => format!(
+        Err(_) => format!(
             "miss_nv{}_g{}_t{}_w{}_z{}",
             schedule_lookup_key.num_vars,
             schedule_lookup_key.num_points,

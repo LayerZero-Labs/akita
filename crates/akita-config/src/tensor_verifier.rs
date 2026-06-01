@@ -8,7 +8,6 @@ pub mod fp128 {
     use super::CommitmentConfig;
     use akita_challenges::TensorChallengeShape;
     use akita_field::Prime128OffsetA7F7;
-    use akita_types::generated::GeneratedScheduleTable;
     use akita_types::{AkitaScheduleInputs, DecompositionParams, SisModulusFamily};
 
     /// Base field for the fp128 tensor-verifier presets.
@@ -62,10 +61,6 @@ pub mod fp128 {
 
         fn sis_modulus_family() -> SisModulusFamily {
             SisModulusFamily::Q128
-        }
-
-        fn schedule_table() -> Option<GeneratedScheduleTable> {
-            Some(akita_types::generated::fp128_d64_onehot_tensor_table())
         }
 
         fn max_setup_matrix_size(

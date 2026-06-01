@@ -3,11 +3,11 @@
 //!
 //! `get_params_for_prove` / `get_params_for_batched_commitment` resolve a
 //! schedule for **any** lookup key via [`CommitmentConfig::runtime_schedule`]:
-//! a schedule-table hit expands the compact entry through
-//! [`akita_types::schedule_from_entry_bits`]; a table miss regenerates the
-//! schedule with the offline DP search [`akita_planner::find_schedule`],
-//! driven by the `Cfg`-derived [`policy_of`] bridge. Fallback is the
-//! default for every preset.
+//! a schedule-table hit expands the compact entry through the planner's
+//! canonical walker [`akita_planner::schedule_from_entry`]; a table miss
+//! regenerates the schedule with the offline DP search
+//! [`akita_planner::find_schedule`], driven by the `Cfg`-derived
+//! [`policy_of`] bridge. Fallback is the default for every preset.
 //!
 //! [`WCommitmentConfig`] is the derived recursive-w config used by
 //! `<Cfg>`-generic ring-degree dispatch helpers.
@@ -16,11 +16,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::generated::{table_entry, GeneratedScheduleTable, GeneratedScheduleTableEntry};
 use akita_types::{
-    generated_schedule_lookup_key, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    ClaimIncidenceSummary, DecompositionParams, LevelParams, Schedule, SetupMatrixEnvelope,
-    SisModulusFamily, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ClaimIncidenceSummary, DecompositionParams,
+    LevelParams, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 use std::marker::PhantomData;
 
@@ -54,13 +52,6 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         chal_ext_degree: Cfg::CHAL_EXT_DEGREE,
         basis_range: Cfg::basis_range(),
     }
-}
-
-pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookupKey) -> AkitaError {
-    AkitaError::InvalidSetup(format!(
-        "{context} produced no schedule for key {key:?}; the config override \
-         returned `None` from `runtime_schedule` for this key"
-    ))
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -151,33 +142,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// SIS modulus family used by security-floor lookups.
     fn sis_modulus_family() -> SisModulusFamily;
 
-    /// Offline schedule table backing this config (preset only).
-    fn schedule_table() -> Option<GeneratedScheduleTable>;
-
-    /// Resolve the compact generated schedule entry for `key`, or `None`
-    /// on table miss.
-    ///
-    /// This is the single lookup the prover/verifier use to drive the
-    /// recursion: each fold level is reconstructed on demand from the
-    /// entry's compact steps via [`Self::runtime_schedule`], rather than
-    /// materializing a full plan up front.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidSetup` if the resolved entry is structurally invalid.
-    fn resolve_schedule(
-        key: AkitaScheduleLookupKey,
-    ) -> Result<Option<&'static GeneratedScheduleTableEntry>, AkitaError> {
-        let Some(table) = Self::schedule_table() else {
-            return Ok(None);
-        };
-        let entry = table_entry(table, generated_schedule_lookup_key(key));
-        if let Some(entry) = entry {
-            entry.validate()?;
-        }
-        Ok(entry)
-    }
-
     /// Infinity-norm expansion introduced when claim-field coordinates are
     /// embedded into the ring subfield via `psi`.
     ///
@@ -211,52 +175,29 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Build the runtime [`Schedule`] for `key`.
     ///
-    /// On a schedule-table **hit**, the resolved compact entry is expanded
-    /// by the canonical entry walker [`akita_types::schedule_from_entry_bits`]
-    /// (each level's `LevelParams` + proof-byte accounting reconstructed from
-    /// the compact steps using this config's policy).
-    ///
-    /// On a table **miss**, the schedule is regenerated from scratch by the
-    /// offline DP search [`akita_planner::find_schedule`], driven by the
-    /// `Cfg`-derived [`policy_of::<Self>()`][policy_of] plus this config's
-    /// `stage1` / `fold_shape` hooks. The DP is deterministic in
-    /// `(policy, key)`, so prover and verifier regenerate identical
-    /// schedules and the Fiat-Shamir `PlanSection` digest stays consistent.
-    /// Fallback is the default for every preset, so any lookup key is
-    /// supported with no reliance on a pre-shipped table.
-    ///
-    /// Returns `Ok(None)` only if an override deliberately declines a key.
+    /// Delegates entirely to the planner's cache-then-generate entry point
+    /// [`akita_planner::get_schedule`]: the planner owns the shipped tables,
+    /// so it selects the matching table from the `Cfg`-derived
+    /// [`policy_of::<Self>()`][policy_of] (and the level-0 fold shape),
+    /// expands the compact entry on a hit, and regenerates from scratch with
+    /// the offline DP on a miss. The result is deterministic in
+    /// `(policy, key)` plus this config's `stage1` / `fold_shape` hooks, so
+    /// prover and verifier resolve identical schedules and the Fiat-Shamir
+    /// `PlanSection` digest stays consistent. Any lookup key is supported
+    /// with no reliance on a pre-shipped table.
     ///
     /// # Errors
     ///
-    /// Propagates expansion / SIS-bucket failures, a structurally invalid
-    /// entry, or DP-search failures (invalid key dimensions, witness
-    /// overflow). Never panics — this is verifier-reachable.
-    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Option<Schedule>, AkitaError> {
-        if let Some(entry) = Self::resolve_schedule(key)? {
-            let challenge_field_bits =
-                Self::decomposition().field_bits() * Self::CHAL_EXT_DEGREE as u32;
-            let schedule = akita_types::schedule_from_entry_bits(
-                entry,
-                key,
-                Self::sis_modulus_family(),
-                Self::decomposition(),
-                challenge_field_bits,
-                Self::CLAIM_EXT_DEGREE,
-                Self::ring_subfield_embedding_norm_bound(),
-                Self::stage1_challenge_config,
-                Self::fold_challenge_shape_at_level,
-            )?;
-            return Ok(Some(schedule));
-        }
-        // Table miss — regenerate via the (now lower) planner crate.
-        let schedule = akita_planner::find_schedule(
+    /// Propagates expansion / SIS-bucket failures or DP-search failures
+    /// (invalid key dimensions, witness overflow). Never panics — this is
+    /// verifier-reachable.
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+        akita_planner::get_schedule(
             key,
             &policy_of::<Self>(),
             Self::stage1_challenge_config,
             Self::fold_challenge_shape_at_level,
-        )?;
-        Ok(Some(schedule))
+        )
     }
 
     /// Schedule consumed by the prove/verify root path.
@@ -267,8 +208,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// `InvalidSetup` if no schedule-table entry exists for `incidence`.
     fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
         let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
-        Self::runtime_schedule(key)?
-            .ok_or_else(|| missing_generated_schedule("prove schedule", key))
+        Self::runtime_schedule(key)
     }
 
     /// Root commit layout the `batched_prove` flow uses for `incidence`,
@@ -343,10 +283,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::sis_modulus_family()
     }
 
-    fn schedule_table() -> Option<GeneratedScheduleTable> {
-        Cfg::schedule_table()
-    }
-
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -405,10 +341,6 @@ mod tests {
 
         fn sis_modulus_family() -> SisModulusFamily {
             SisModulusFamily::Q32
-        }
-
-        fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-            None
         }
 
         fn max_setup_matrix_size(
@@ -507,7 +439,7 @@ mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
     #[cfg(not(feature = "zk"))]
-    use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+    use akita_types::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 
     #[cfg(not(feature = "zk"))]
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
@@ -516,9 +448,8 @@ mod fp128_policy_tests {
     ) {
         let d = Cfg::D as u32;
         for num_vars in min_num_vars..=max_num_vars {
-            let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars))
-                .unwrap()
-                .expect("audited config should have a schedule");
+            let schedule =
+                Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars)).unwrap();
 
             for (level_idx, fold) in schedule.fold_steps().enumerate() {
                 let lp = &fold.params;

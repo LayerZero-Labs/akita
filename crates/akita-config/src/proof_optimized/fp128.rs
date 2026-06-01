@@ -30,32 +30,12 @@ pub struct D32OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
-impl_fp128_preset!(D128Full, 128, 128, None);
-impl_fp128_preset!(D128OneHot, 128, 1, None);
-impl_fp128_preset!(
-    D64Full,
-    64,
-    128,
-    Some(akita_types::generated::fp128_d64_full_table())
-);
-impl_fp128_preset!(
-    D64OneHot,
-    64,
-    1,
-    Some(akita_types::generated::fp128_d64_onehot_table())
-);
-impl_fp128_preset!(
-    D32Full,
-    32,
-    128,
-    Some(akita_types::generated::fp128_d32_full_table())
-);
-impl_fp128_preset!(
-    D32OneHot,
-    32,
-    1,
-    Some(akita_types::generated::fp128_d32_onehot_table())
-);
+impl_fp128_preset!(D128Full, 128, 128);
+impl_fp128_preset!(D128OneHot, 128, 1);
+impl_fp128_preset!(D64Full, 64, 128);
+impl_fp128_preset!(D64OneHot, 64, 1);
+impl_fp128_preset!(D32Full, 32, 128);
+impl_fp128_preset!(D32OneHot, 32, 1);
 
 /// Concrete fp128 preset selected by a schedule-family query.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,7 +88,8 @@ fn candidate<Cfg: CommitmentConfig>(
     preset: Fp128Preset,
     key: AkitaScheduleLookupKey,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    Ok(Cfg::runtime_schedule(key)?.map(|schedule| Fp128ScheduleSelection { preset, schedule }))
+    let schedule = Cfg::runtime_schedule(key)?;
+    Ok(Some(Fp128ScheduleSelection { preset, schedule }))
 }
 
 fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>

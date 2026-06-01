@@ -2,9 +2,9 @@
 //!
 //! For every `(family, key)` covered by the shipped tables we materialize:
 //!
-//! - the **table-backed schedule** via `family.table_backed`, which serves
-//!   from `Cfg::schedule_table()` when the entry exists and otherwise falls
-//!   through to the DP;
+//! - the **table-backed schedule** via `family.table_backed`
+//!   (`Cfg::runtime_schedule`), which serves the shipped table on a hit and
+//!   otherwise falls through to the DP;
 //! - the **regenerated schedule** via `family.regen`, which runs the pure
 //!   DP from scratch.
 //!
@@ -33,10 +33,6 @@ fn refactor_does_not_increase_proof_sizes() {
         std::collections::BTreeMap::new();
 
     for family in ALL_GENERATED_FAMILIES {
-        if (family.schedule_table)().is_none() {
-            // No shipped table — skip (matches drift-guard semantics).
-            continue;
-        }
         let keys = family_keys(family).unwrap_or_else(|e| {
             panic!("family {} key enumeration failed: {e}", family.module_name)
         });

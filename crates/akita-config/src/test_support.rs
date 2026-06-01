@@ -39,33 +39,24 @@ where
     Cfg: CommitmentConfig,
 {
     let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_claims, num_claims, 1);
-    if let Some(schedule) = Cfg::runtime_schedule(lookup_key)? {
-        if let Some(root) = akita_types::schedule_root_fold_step(&schedule) {
-            let layout = root.params.clone();
-            tracing::info!(
-                num_vars,
-                num_claims,
-                total_bytes = schedule.total_bytes,
-                root_m = layout.log_block_len(),
-                root_r = layout.log_num_blocks(),
-                root_lb = layout.log_basis,
-                "batched root split: read from runtime schedule"
-            );
-            return Ok(layout);
-        }
+    let schedule = Cfg::runtime_schedule(lookup_key)?;
+    if let Some(root) = akita_types::schedule_root_fold_step(&schedule) {
+        let layout = root.params.clone();
         tracing::info!(
             num_vars,
             num_claims,
-            "batched root split: schedule is direct-only, falling back to config root layout"
+            total_bytes = schedule.total_bytes,
+            root_m = layout.log_block_len(),
+            root_r = layout.log_num_blocks(),
+            root_lb = layout.log_basis,
+            "batched root split: read from runtime schedule"
         );
-        return Cfg::get_params_for_batched_commitment(&ClaimIncidenceSummary::same_point(
-            num_vars, 1,
-        )?);
+        return Ok(layout);
     }
     tracing::info!(
         num_vars,
         num_claims,
-        "batched root split: runtime schedule declined the key, using singleton-derived fallback"
+        "batched root split: schedule is direct-only, falling back to config root layout"
     );
     Cfg::get_params_for_batched_commitment(&ClaimIncidenceSummary::same_point(num_vars, 1)?)
 }

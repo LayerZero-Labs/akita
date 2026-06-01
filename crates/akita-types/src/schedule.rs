@@ -1,7 +1,6 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::generated::GeneratedScheduleKey;
 use crate::{ClaimIncidenceSummary, DirectWitnessShape, LevelParams, RingOpeningPoint};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
@@ -67,7 +66,8 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 /// distinct point commitments equals the number of distinct opening points,
 /// so the planner-facing projection records `num_points`. The generated
 /// schedule table key still calls this field `num_commitment_groups` for ABI
-/// stability; the translation happens in `generated_schedule_lookup_key`.
+/// stability; the translation happens in
+/// `akita_planner::generated_schedule_lookup_key`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
     /// Root polynomial arity.
@@ -158,21 +158,6 @@ impl AkitaScheduleLookupKey {
             incidence.num_claims(),
             incidence.num_public_rows(),
         ))
-    }
-}
-
-/// Convert the public runtime lookup key into a generated-table lookup key.
-///
-/// The generated-table key preserves the legacy `num_commitment_groups` field
-/// name as part of its ABI; `num_points` is the runtime-facing alias under the
-/// one-commitment-per-point invariant.
-pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
-    GeneratedScheduleKey {
-        num_vars: key.num_vars,
-        num_commitment_groups: key.num_points,
-        num_t_vectors: key.num_t_vectors,
-        num_w_vectors: key.num_w_vectors,
-        num_z_vectors: key.num_z_vectors,
     }
 }
 
@@ -522,36 +507,16 @@ pub fn root_direct_schedule(
     })
 }
 
-/// Scale a per-polynomial root layout to a batched root layout.
+/// Scale a per-polynomial root layout to a batched root layout **without**
+/// the SIS-floor audit on the scaled B/D keys.
 ///
-/// Fold-digit counts are sized on demand for the tight tensor-aware bound
-/// `challenge_l1_mass · num_claims` — per claim the fold weight has
-/// `L1 ≤ root_lp.challenge_l1_mass()` (which squares `l1_norm` for
-/// `TensorChallengeShape::Tensor` since the per-block challenge is
-/// the ring product `left · right`), and `num_claims` claims are
-/// summed linearly during batching.
-///
-/// # Errors
-///
-/// Returns an error when `num_claims` is zero or scaling overflows a layout
-/// width.
-pub fn scale_batched_root_layout(
-    root_lp: &LevelParams,
-    num_claims: usize,
-    field_bits: u32,
-) -> Result<LevelParams, AkitaError> {
-    scale_batched_root_layout_inner(root_lp, num_claims, field_bits, BatchedScalingAudit::Strict)
-}
-
-/// `scale_batched_root_layout` without the SIS-floor audit on the
-/// scaled B/D keys.
-///
-/// Use this only for synthetic test fixtures (or other intermediate
-/// constructions) whose `(family, ring_dimension)` is intentionally
-/// outside the audited SIS-floor tables. Production-facing call sites
-/// must go through [`scale_batched_root_layout`] so the strict
-/// `AjtaiKeyParams::try_new` audit fires when the scaled widths
-/// outgrow the original ranks.
+/// Multiplies the outer (B) and prover (D) matrix widths by `num_claims`,
+/// leaving ranks, buckets, and geometry unchanged. Use this only for
+/// synthetic test fixtures (or other intermediate constructions) whose
+/// `(family, ring_dimension)` is intentionally outside the audited
+/// SIS-floor tables. Production-facing expansion goes through the strict,
+/// `try_new`-audited path inside
+/// [`akita_planner::generated::GeneratedFoldStep::expand_to_level_params`].
 ///
 /// # Errors
 ///
@@ -561,36 +526,13 @@ pub fn scale_batched_root_layout(
 pub fn scale_batched_root_layout_unchecked(
     root_lp: &LevelParams,
     num_claims: usize,
-    field_bits: u32,
-) -> Result<LevelParams, AkitaError> {
-    scale_batched_root_layout_inner(
-        root_lp,
-        num_claims,
-        field_bits,
-        BatchedScalingAudit::Unchecked,
-    )
-}
-
-#[derive(Clone, Copy)]
-enum BatchedScalingAudit {
-    Strict,
-    Unchecked,
-}
-
-fn scale_batched_root_layout_inner(
-    root_lp: &LevelParams,
-    num_claims: usize,
-    field_bits: u32,
-    audit: BatchedScalingAudit,
 ) -> Result<LevelParams, AkitaError> {
     if num_claims == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
-
-    let mut scaled = root_lp.clone();
-    let d = scaled.ring_dimension;
+    let d = root_lp.ring_dimension;
     let b_col_len = root_lp
         .b_key
         .col_len()
@@ -601,41 +543,21 @@ fn scale_batched_root_layout_inner(
         .col_len()
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?;
-    match audit {
-        BatchedScalingAudit::Strict => {
-            scaled.b_key = crate::AjtaiKeyParams::try_new(
-                scaled.b_key.sis_family(),
-                scaled.b_key.row_len(),
-                b_col_len,
-                scaled.b_key.collision_inf(),
-                d,
-            )?;
-            scaled.d_key = crate::AjtaiKeyParams::try_new(
-                scaled.d_key.sis_family(),
-                scaled.d_key.row_len(),
-                d_col_len,
-                scaled.d_key.collision_inf(),
-                d,
-            )?;
-        }
-        BatchedScalingAudit::Unchecked => {
-            scaled.b_key = crate::AjtaiKeyParams::new_unchecked(
-                scaled.b_key.sis_family(),
-                scaled.b_key.row_len(),
-                b_col_len,
-                scaled.b_key.collision_inf(),
-                d,
-            );
-            scaled.d_key = crate::AjtaiKeyParams::new_unchecked(
-                scaled.d_key.sis_family(),
-                scaled.d_key.row_len(),
-                d_col_len,
-                scaled.d_key.collision_inf(),
-                d,
-            );
-        }
-    }
-    let _ = root_lp.num_digits_fold(num_claims, field_bits);
+    let mut scaled = root_lp.clone();
+    scaled.b_key = crate::AjtaiKeyParams::new_unchecked(
+        scaled.b_key.sis_family(),
+        scaled.b_key.row_len(),
+        b_col_len,
+        scaled.b_key.collision_inf(),
+        d,
+    );
+    scaled.d_key = crate::AjtaiKeyParams::new_unchecked(
+        scaled.d_key.sis_family(),
+        scaled.d_key.row_len(),
+        d_col_len,
+        scaled.d_key.collision_inf(),
+        d,
+    );
     Ok(scaled)
 }
 
@@ -817,18 +739,6 @@ mod tests {
         SumcheckProofMasked {
             masked_round_polys: compressed_rounds(),
         }
-    }
-
-    #[test]
-    fn generated_schedule_key_preserves_commitment_group_count() {
-        let one_group = AkitaScheduleLookupKey::new_with_points(16, 1, 4, 4, 1);
-        let four_groups = AkitaScheduleLookupKey::new_with_points(16, 4, 4, 4, 1);
-
-        assert_ne!(
-            generated_schedule_lookup_key(one_group),
-            generated_schedule_lookup_key(four_groups),
-            "generated schedule lookup must not alias differently grouped commitment shapes"
-        );
     }
 
     #[test]

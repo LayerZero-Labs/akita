@@ -17,11 +17,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
-use akita_types::generated::GeneratedScheduleKey;
-use akita_types::{
-    generated_schedule_lookup_key, AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams,
-    Schedule, Step,
-};
+use akita_planner::generated::GeneratedScheduleKey;
+use akita_planner::generated_schedule_lookup_key;
+use akita_types::{AkitaScheduleLookupKey, DirectStep, FoldStep, LevelParams, Schedule, Step};
 
 fn emit_key(key: GeneratedScheduleKey) -> String {
     format!(

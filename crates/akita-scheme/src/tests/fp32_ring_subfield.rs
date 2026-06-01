@@ -11,11 +11,12 @@ struct Fp32RingSubfieldOuterFallbackCfg;
 /// Both fixtures share the same `(family, D, log_basis, log_commit_bound,
 /// stage1, ring_subfield)` setup and only differ in their
 /// `with_decomp` arguments. Constructs the placeholder via
-/// `params_only` and stamps the SIS-secure A and B/D collision buckets
-/// via `new_unchecked` so downstream consumers (notably
-/// `scale_batched_root_layout`'s strict
-/// [`akita_types::AjtaiKeyParams::try_new`] audit) see a real bucket
-/// instead of the `0` `params_only` default.
+/// `params_only` and stamps the A and B/D collision buckets via
+/// `new_unchecked` so the layout carries real buckets instead of the
+/// `0` `params_only` default. This `(family, D)` is intentionally
+/// outside the audited SIS-floor tables, so the fixture scales via
+/// `akita_types::scale_batched_root_layout_unchecked` rather than the
+/// strict, table-audited expansion path.
 fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
     use akita_types::AjtaiKeyParams;
     let sis_family = akita_types::SisModulusFamily::Q32;
@@ -156,10 +157,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         akita_types::SisModulusFamily::Q32
     }
 
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
     fn max_setup_matrix_size(
         _max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -180,7 +177,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         let lp = akita_types::scale_batched_root_layout_unchecked(
             &Self::root_lp(),
             incidence.num_claims(),
-            Self::decomposition().field_bits(),
         )?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
@@ -250,10 +246,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         akita_types::SisModulusFamily::Q32
     }
 
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
     fn max_setup_matrix_size(
         _max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -274,7 +266,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         let lp = akita_types::scale_batched_root_layout_unchecked(
             &Self::root_lp(),
             incidence.num_claims(),
-            Self::decomposition().field_bits(),
         )?;
         // Single-fold schedule: the root IS the terminal fold, so its
         // shipped `w` is built under MRowLayout::Terminal (no D-block in

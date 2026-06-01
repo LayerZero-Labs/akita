@@ -8,12 +8,12 @@
 //!
 //! These helpers are `Cfg`-free: every per-preset input is carried by the
 //! plain-value [`PlannerPolicy`] plus the `stage1` challenge-config closure,
-//! matching the shape `akita_types::schedule_from_entry_bits` already uses.
+//! matching the shape `crate::schedule_from_entry` already uses.
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 use akita_types::layout::digit_math::num_digits_for_bound;
+use akita_types::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 use akita_types::AjtaiKeyParams;
 
 use crate::PlannerPolicy;
@@ -48,21 +48,32 @@ impl WitnessType {
     ) -> Result<u32, AkitaError> {
         match self {
             Self::S => {
-                let base = if is_root_level {
-                    let beta = if policy.decomposition.log_commit_bound == 1 {
-                        1
-                    } else {
-                        (1u32 << (log_basis - 1)) - 1
-                    };
-                    2 * beta
-                } else {
-                    (1u32 << log_basis) - 1
-                };
-                Ok(base
-                    * stage1(policy.ring_dimension)?.infinity_norm()
-                    * policy.ring_subfield_norm_bound)
+                let base = akita_types::a_role_base_norm(
+                    log_basis,
+                    policy.decomposition.log_commit_bound,
+                    is_root_level,
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(format!(
+                        "A-role base norm overflow at log_basis={log_basis}"
+                    ))
+                })?;
+                base.checked_mul(stage1(policy.ring_dimension)?.infinity_norm())
+                    .and_then(|v| v.checked_mul(policy.ring_subfield_norm_bound))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(format!(
+                            "A-role binding norm overflow at log_basis={log_basis}"
+                        ))
+                    })
             }
-            Self::T | Self::W => Ok((1u32 << log_basis) - 1),
+            Self::T | Self::W => 1u32
+                .checked_shl(log_basis)
+                .and_then(|v| v.checked_sub(1))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(format!(
+                        "B/D-role binding norm overflow at log_basis={log_basis}"
+                    ))
+                }),
         }
     }
 
@@ -97,44 +108,41 @@ impl WitnessType {
     }
 }
 
-pub(crate) fn compute_ajtai_key_params_a(
+/// Canonical A-role `(width, audited collision bucket)` for one fold level.
+///
+/// This is the single source of the A-role inner width and collision-inf
+/// bucket, shared by the planner DP ([`compute_ajtai_key_params_a`]) and the
+/// table-hit expansion (`crate::generated::GeneratedFoldStep::expand_to_level_params`).
+/// Sharing it guarantees the bucket the DP sized `n_a` against can never
+/// drift from the bucket the expansion reconstructs.
+pub(crate) fn ajtai_a_width_bucket(
     policy: &PlannerPolicy,
     stage1: Stage1Fn<'_>,
     block_len: usize,
     log_basis: u32,
     is_root_level: bool,
-) -> Result<Option<AjtaiKeyParams>, AkitaError> {
+) -> Result<Option<(usize, u32)>, AkitaError> {
     let inf_norm = WitnessType::S.binding_norm(policy, stage1, log_basis, is_root_level)?;
     let num_digits = WitnessType::S.decomposed_num_digits(policy, log_basis, is_root_level);
     let Some(width) = block_len.checked_mul(num_digits) else {
         return Ok(None);
     };
     let d = policy.ring_dimension as u32;
-    let Some(ceil_inf_norm) = ceil_supported_collision(policy.sis_family, d, inf_norm) else {
+    let Some(bucket) = ceil_supported_collision(policy.sis_family, d, inf_norm) else {
         return Ok(None);
     };
-    let Some(rank) = min_rank_for_secure_width(policy.sis_family, d, ceil_inf_norm, width as u64)
-    else {
-        return Ok(None);
-    };
-    AjtaiKeyParams::try_new(
-        policy.sis_family,
-        rank,
-        width,
-        ceil_inf_norm,
-        policy.ring_dimension,
-    )
-    .map(Some)
+    Ok(Some((width, bucket)))
 }
 
-pub(crate) fn compute_ajtai_key_params_b(
+/// Canonical B-role `(width, audited collision bucket)` for one fold level.
+pub(crate) fn ajtai_b_width_bucket(
     policy: &PlannerPolicy,
     stage1: Stage1Fn<'_>,
     matrix_a_rank: usize,
     num_blocks: usize,
     t_vectors: usize,
     log_basis: u32,
-) -> Result<Option<AjtaiKeyParams>, AkitaError> {
+) -> Result<Option<(usize, u32)>, AkitaError> {
     let inf_norm = WitnessType::T.binding_norm(policy, stage1, log_basis, true)?;
     let num_digits = WitnessType::T.decomposed_num_digits(policy, log_basis, true);
     let Some(width) = matrix_a_rank
@@ -145,21 +153,77 @@ pub(crate) fn compute_ajtai_key_params_b(
         return Ok(None);
     };
     let d = policy.ring_dimension as u32;
-    let Some(ceil_inf_norm) = ceil_supported_collision(policy.sis_family, d, inf_norm) else {
+    let Some(bucket) = ceil_supported_collision(policy.sis_family, d, inf_norm) else {
         return Ok(None);
     };
-    let Some(rank) = min_rank_for_secure_width(policy.sis_family, d, ceil_inf_norm, width as u64)
+    Ok(Some((width, bucket)))
+}
+
+/// Canonical D-role `(width, audited collision bucket)` for one fold level.
+pub(crate) fn ajtai_d_width_bucket(
+    policy: &PlannerPolicy,
+    stage1: Stage1Fn<'_>,
+    num_blocks: usize,
+    t_vectors: usize,
+    log_basis: u32,
+) -> Result<Option<(usize, u32)>, AkitaError> {
+    let inf_norm = WitnessType::W.binding_norm(policy, stage1, log_basis, true)?;
+    let num_digits_open = WitnessType::W.decomposed_num_digits(policy, log_basis, true);
+    let Some(width) = num_digits_open
+        .checked_mul(num_blocks)
+        .and_then(|w| w.checked_mul(t_vectors))
     else {
         return Ok(None);
     };
-    AjtaiKeyParams::try_new(
-        policy.sis_family,
-        rank,
-        width,
-        ceil_inf_norm,
-        policy.ring_dimension,
-    )
-    .map(Some)
+    let d = policy.ring_dimension as u32;
+    let Some(bucket) = ceil_supported_collision(policy.sis_family, d, inf_norm) else {
+        return Ok(None);
+    };
+    Ok(Some((width, bucket)))
+}
+
+/// Resolve the tight SIS-secure rank for `(width, bucket)` and build the key.
+fn key_with_secure_rank(
+    policy: &PlannerPolicy,
+    width: usize,
+    bucket: u32,
+) -> Result<Option<AjtaiKeyParams>, AkitaError> {
+    let d = policy.ring_dimension as u32;
+    let Some(rank) = min_rank_for_secure_width(policy.sis_family, d, bucket, width as u64) else {
+        return Ok(None);
+    };
+    AjtaiKeyParams::try_new(policy.sis_family, rank, width, bucket, policy.ring_dimension).map(Some)
+}
+
+pub(crate) fn compute_ajtai_key_params_a(
+    policy: &PlannerPolicy,
+    stage1: Stage1Fn<'_>,
+    block_len: usize,
+    log_basis: u32,
+    is_root_level: bool,
+) -> Result<Option<AjtaiKeyParams>, AkitaError> {
+    let Some((width, bucket)) =
+        ajtai_a_width_bucket(policy, stage1, block_len, log_basis, is_root_level)?
+    else {
+        return Ok(None);
+    };
+    key_with_secure_rank(policy, width, bucket)
+}
+
+pub(crate) fn compute_ajtai_key_params_b(
+    policy: &PlannerPolicy,
+    stage1: Stage1Fn<'_>,
+    matrix_a_rank: usize,
+    num_blocks: usize,
+    t_vectors: usize,
+    log_basis: u32,
+) -> Result<Option<AjtaiKeyParams>, AkitaError> {
+    let Some((width, bucket)) =
+        ajtai_b_width_bucket(policy, stage1, matrix_a_rank, num_blocks, t_vectors, log_basis)?
+    else {
+        return Ok(None);
+    };
+    key_with_secure_rank(policy, width, bucket)
 }
 
 /// The A, B, and D Ajtai keys for one fold level.
@@ -205,28 +269,10 @@ pub(crate) fn compute_ajtai_key_params_d(
     t_vectors: usize,
     log_basis: u32,
 ) -> Result<Option<AjtaiKeyParams>, AkitaError> {
-    let inf_norm = WitnessType::W.binding_norm(policy, stage1, log_basis, true)?;
-    let num_digits_open = WitnessType::W.decomposed_num_digits(policy, log_basis, true);
-    let Some(width) = num_digits_open
-        .checked_mul(num_blocks)
-        .and_then(|w| w.checked_mul(t_vectors))
+    let Some((width, bucket)) =
+        ajtai_d_width_bucket(policy, stage1, num_blocks, t_vectors, log_basis)?
     else {
         return Ok(None);
     };
-    let d = policy.ring_dimension as u32;
-    let Some(ceil_inf_norm) = ceil_supported_collision(policy.sis_family, d, inf_norm) else {
-        return Ok(None);
-    };
-    let Some(rank) = min_rank_for_secure_width(policy.sis_family, d, ceil_inf_norm, width as u64)
-    else {
-        return Ok(None);
-    };
-    AjtaiKeyParams::try_new(
-        policy.sis_family,
-        rank,
-        width,
-        ceil_inf_norm,
-        policy.ring_dimension,
-    )
-    .map(Some)
+    key_with_secure_rank(policy, width, bucket)
 }

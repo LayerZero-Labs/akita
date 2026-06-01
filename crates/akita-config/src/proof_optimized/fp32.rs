@@ -57,8 +57,7 @@ impl_small_field_preset!(
     32,
     3,
     8,
-    vec![-1, 1],
-    Some(akita_types::generated::fp32_d32_table())
+    vec![-1, 1]
 );
 impl_small_field_preset!(
     D32OneHot,
@@ -70,8 +69,7 @@ impl_small_field_preset!(
     1,
     3,
     8,
-    vec![-1, 1],
-    Some(akita_types::generated::fp32_d32_onehot_table())
+    vec![-1, 1]
 );
 impl_small_field_preset!(
     D64Full,
@@ -83,8 +81,7 @@ impl_small_field_preset!(
     32,
     3,
     8,
-    vec![-1, 1],
-    Some(akita_types::generated::fp32_d64_table())
+    vec![-1, 1]
 );
 impl_small_field_preset!(
     D64OneHot,
@@ -96,8 +93,7 @@ impl_small_field_preset!(
     1,
     3,
     8,
-    vec![-1, 1],
-    Some(akita_types::generated::fp32_d64_onehot_table())
+    vec![-1, 1]
 );
 impl_small_field_preset!(
     D128Full,
@@ -109,8 +105,7 @@ impl_small_field_preset!(
     32,
     3,
     8,
-    vec![-1, 1],
-    None
+    vec![-1, 1]
 );
 impl_small_field_preset!(
     D128OneHot,
@@ -122,8 +117,7 @@ impl_small_field_preset!(
     1,
     3,
     8,
-    vec![-1, 1],
-    None
+    vec![-1, 1]
 );
 impl_small_field_preset!(
     D256Full,
@@ -135,8 +129,7 @@ impl_small_field_preset!(
     32,
     3,
     8,
-    vec![-1, 1],
-    None
+    vec![-1, 1]
 );
 impl_small_field_preset!(
     D256OneHot,
@@ -148,8 +141,7 @@ impl_small_field_preset!(
     1,
     3,
     8,
-    vec![-1, 1],
-    None
+    vec![-1, 1]
 );
 impl_small_field_preset!(
     D512Full,
@@ -161,8 +153,7 @@ impl_small_field_preset!(
     32,
     3,
     8,
-    vec![-1, 1],
-    None
+    vec![-1, 1]
 );
 impl_small_field_preset!(
     D512OneHot,
@@ -174,6 +165,5 @@ impl_small_field_preset!(
     1,
     3,
     8,
-    vec![-1, 1],
-    None
+    vec![-1, 1]
 );

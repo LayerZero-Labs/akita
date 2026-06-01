@@ -41,15 +41,24 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
     let key = table_miss_key(num_vars);
 
     // The shipped table must NOT carry this key — otherwise the test is not
-    // exercising the DP fallback path.
+    // exercising the DP fallback path. (Shipped tables only hold
+    // `num_points == 1` keys; this multipoint key misses every table.)
+    let policy = policy_of::<Cfg>();
+    let table_has_key = akita_planner::shipped_table(&policy, false)
+        .and_then(|table| {
+            akita_planner::generated::table_entry(
+                table,
+                akita_planner::generated_schedule_lookup_key(key),
+            )
+        })
+        .is_some();
     assert!(
-        Cfg::resolve_schedule(key).expect("resolve").is_none(),
+        !table_has_key,
         "expected a table miss for the multipoint key; the table unexpectedly carries it"
     );
 
     let from_runtime = Cfg::runtime_schedule(key)
-        .expect("runtime_schedule must not error on a valid multipoint key")
-        .expect("runtime_schedule must regenerate via DP on a table miss");
+        .expect("runtime_schedule must not error on a valid multipoint key");
 
     let from_dp = find_schedule(
         key,

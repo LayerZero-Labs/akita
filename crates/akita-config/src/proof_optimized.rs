@@ -122,9 +122,7 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
 
     // `runtime_schedule` serves the shipped table on a hit and regenerates
     // via the planner DP on a miss, so every shape resolves to a schedule.
-    let Some(schedule) = Cfg::runtime_schedule(cached_key)? else {
-        return Ok(None);
-    };
+    let schedule = Cfg::runtime_schedule(cached_key)?;
 
     Ok(Some(matrix_envelope_for_schedule::<Cfg>(
         &schedule, incidence,
@@ -510,7 +508,7 @@ fn add_zk_ext_scalar_slots<Cfg: CommitmentConfig>(
 
 /// Generate a [`CommitmentConfig`] impl for one fp128 preset.
 macro_rules! impl_fp128_preset {
-    ($cfg:ident, $d:expr, $log_commit_bound:expr, $table:expr) => {
+    ($cfg:ident, $d:expr, $log_commit_bound:expr) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = Field;
             type ClaimField = Field;
@@ -556,10 +554,6 @@ macro_rules! impl_fp128_preset {
                 akita_types::SisModulusFamily::Q128
             }
 
-            fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-                $table
-            }
-
             fn max_setup_matrix_size(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
@@ -583,7 +577,7 @@ macro_rules! impl_fp128_preset {
 }
 
 macro_rules! impl_small_field_preset {
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $log_basis:expr, $weight:expr, $coeffs:expr, $table:expr) => {
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $log_basis:expr, $weight:expr, $coeffs:expr) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ClaimField = $claim_field;
@@ -620,10 +614,6 @@ macro_rules! impl_small_field_preset {
 
             fn sis_modulus_family() -> akita_types::SisModulusFamily {
                 $family
-            }
-
-            fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-                $table
             }
 
             fn max_setup_matrix_size(

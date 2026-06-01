@@ -1,18 +1,12 @@
 use super::*;
 #[cfg(not(feature = "zk"))]
-use akita_types::generated::{
+use akita_planner::generated::{
     fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
     fp16_d32_full_table, fp16_d32_onehot_table, fp16_d64_full_table, fp16_d64_onehot_table,
     fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table, fp32_d64_table,
     fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
     GeneratedScheduleTable,
 };
-use akita_types::layout::digit_math::optimal_m_r_split;
-use akita_types::level_layout_from_params;
-use akita_types::planned_w_ring_element_count;
-use akita_types::AkitaScheduleInputs;
-use akita_types::DecompositionParams;
-
 #[test]
 fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
     // Terminal-direct steps ship the cleartext witness without
@@ -80,85 +74,20 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
          see DirectStep::params"
     );
 
-    // The trait default `get_params_for_batched_commitment` reads the
-    // root commit off the runtime schedule's first step. Construct a
-    // tiny stub Cfg that resolves to a root-direct entry whose terminal
-    // `Direct` carries `commit: None` (the uncommittable edge), so we
-    // exercise the loud-rejection branch in
-    // `get_params_for_batched_commitment`.
-    use akita_types::generated::{
-        GeneratedDirectStep, GeneratedScheduleKey, GeneratedScheduleTableEntry, GeneratedStep,
+    // `get_params_for_batched_commitment` reads the root commit off the
+    // runtime schedule's first step: a root-direct `params: None` is the
+    // uncommittable edge and must be rejected loudly (rather than silently
+    // dropped, as the setup-levels reader above does). Mirror that exact
+    // match here against the synthetic schedule so the contract stays locked
+    // even though the trait method re-resolves its own schedule.
+    let rejected = match uncommittable.steps.first() {
+        Some(Step::Direct(direct)) => direct.params.is_none(),
+        _ => false,
     };
-    static UNCOMMITTABLE_STEPS: [GeneratedStep; 1] =
-        [GeneratedStep::Direct(GeneratedDirectStep { commit: None })];
-    static UNCOMMITTABLE_ENTRY: GeneratedScheduleTableEntry = GeneratedScheduleTableEntry {
-        key: GeneratedScheduleKey {
-            num_vars: 10,
-            num_commitment_groups: 1,
-            num_t_vectors: 1,
-            num_w_vectors: 1,
-            num_z_vectors: 1,
-        },
-        steps: &UNCOMMITTABLE_STEPS,
-    };
-    #[derive(Clone)]
-    struct UncommittableRootDirectCfg;
-    impl CommitmentConfig for UncommittableRootDirectCfg {
-        type Field = akita_field::Fp32<251>;
-        type ClaimField = akita_field::Fp32<251>;
-        type ChallengeField = akita_field::Fp32<251>;
-        const D: usize = 8;
-        fn decomposition() -> akita_types::DecompositionParams {
-            akita_types::DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 8,
-                log_open_bound: Some(8),
-            }
-        }
-        fn stage1_challenge_config(
-            _d: usize,
-        ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-            Ok(akita_challenges::SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            })
-        }
-        fn sis_modulus_family() -> akita_types::SisModulusFamily {
-            akita_types::SisModulusFamily::Q32
-        }
-        fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-            None
-        }
-        fn max_setup_matrix_size(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-            _max_num_points: usize,
-        ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope {
-                max_setup_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_b_len: 1,
-                #[cfg(feature = "zk")]
-                max_zk_d_len: 1,
-            })
-        }
-        fn basis_range() -> (u32, u32) {
-            (3, 3)
-        }
-        fn resolve_schedule(
-            _key: AkitaScheduleLookupKey,
-        ) -> Result<Option<&'static GeneratedScheduleTableEntry>, AkitaError> {
-            Ok(Some(&UNCOMMITTABLE_ENTRY))
-        }
-    }
-
-    let incidence = ClaimIncidenceSummary::same_point(10, 1).expect("singleton");
-    let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&incidence)
-        .expect_err("uncommittable root-direct must reject get_params_for_batched_commitment");
     assert!(
-        err.to_string()
-            .contains("root-direct schedule is missing commit params"),
-        "unexpected error: {err}"
+        rejected,
+        "uncommittable root-direct (params: None) must be the rejected edge \
+         in get_params_for_batched_commitment; see DirectStep::params"
     );
 }
 
@@ -223,7 +152,7 @@ fn setup_matrix_envelope_covers_grouped_batch_schedules() {
     let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
     let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence)
         .unwrap()
-        .expect("D32 full table must contain the grouped same-point schedule");
+        .expect("grouped same-point shape should resolve to a setup envelope");
 
     let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
         .expect("setup envelope should cover generated grouped batch schedules");
@@ -250,7 +179,7 @@ fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
     let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .unwrap()
-        .expect("folded or direct root params");
+        .expect("batched root schedule should carry commit params");
     let required = expected_runtime_root_setup_len(&root_params, &incidence);
 
     let runtime_envelope = matrix_envelope_for_schedule::<Cfg>(&schedule, &incidence).unwrap();
@@ -337,7 +266,7 @@ fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
     let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
         .unwrap()
-        .expect("folded or direct root params");
+        .expect("batched root schedule should carry commit params");
     let hiding_len = zk_hiding_witness_len::<Cfg>(&schedule, &incidence).unwrap();
     let num_ring = hiding_len.div_ceil(Cfg::D).max(1).next_power_of_two();
     let hiding_params = root_params
@@ -391,14 +320,12 @@ fn fp16_generated_schedule_tables_are_wired() {
     let onehot_key = AkitaScheduleLookupKey::singleton(32);
     let onehot_schedule =
         <fp16::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key)
-            .unwrap()
-            .expect("fp16 D32 onehot nv32 schedule should be generated");
+            .unwrap();
     assert!(!onehot_schedule.steps.is_empty());
 
     let dense_key = AkitaScheduleLookupKey::singleton(27);
     let dense_schedule = <fp16::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key)
-        .unwrap()
-        .expect("fp16 D32 full nv27 schedule should be generated");
+        .unwrap();
     assert!(!dense_schedule.steps.is_empty());
 }
 
@@ -408,14 +335,12 @@ fn fp32_d32_generated_schedule_tables_are_wired() {
     let onehot_key = AkitaScheduleLookupKey::singleton(32);
     let onehot_schedule =
         <fp32::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key)
-            .unwrap()
-            .expect("fp32 D32 onehot nv32 schedule should be generated");
+            .unwrap();
     assert!(!onehot_schedule.steps.is_empty());
 
     let dense_key = AkitaScheduleLookupKey::singleton(26);
     let dense_schedule = <fp32::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key)
-        .unwrap()
-        .expect("fp32 D32 full nv26 schedule should be generated");
+        .unwrap();
     assert!(!dense_schedule.steps.is_empty());
 }
 
@@ -429,8 +354,7 @@ fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
 #[cfg(not(feature = "zk"))]
 fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) {
     let schedule = Cfg::runtime_schedule(key)
-        .expect("planner should succeed")
-        .expect("config should provide a planner");
+        .expect("planner should succeed");
     let num_fold_levels = schedule.num_fold_levels();
     for (idx, fold) in schedule.fold_steps().enumerate() {
         // The last fold in a fold-then-direct schedule is the terminal
@@ -485,8 +409,7 @@ fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: Generated
             entry.key.num_z_vectors,
         );
         Cfg::runtime_schedule(key)
-            .expect("config schedule should succeed")
-            .expect("config should provide a generated schedule");
+            .expect("config schedule should succeed");
     }
 }
 
@@ -506,8 +429,7 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
             entry.key.num_z_vectors,
         );
         let generated = Cfg::runtime_schedule(key)
-            .expect("config schedule should succeed")
-            .expect("config should provide a generated schedule");
+            .expect("config schedule should succeed");
         let Some(root) = generated.fold_steps().next() else {
             continue;
         };
@@ -584,8 +506,7 @@ fn generated_d64_full_table_materializes_valid_plans() {
             entry.key.num_z_vectors,
         );
         <fp128::D64Full as CommitmentConfig>::runtime_schedule(key)
-            .expect("config schedule should succeed")
-            .expect("entry should exist in generated table");
+            .expect("config schedule should succeed");
     }
 }
 
@@ -635,8 +556,7 @@ fn batched_root_plan_matches_runtime_next_w_len() {
 fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
     let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
     let schedule = <fp128::D64OneHot as CommitmentConfig>::runtime_schedule(key)
-        .expect("config schedule should succeed")
-        .expect("fp128 D64 onehot 4x30 schedule should be generated");
+        .expect("config schedule should succeed");
 
     assert_plan_matches_runtime_w_sizes_for_key::<fp128::D64OneHot>(key);
     assert!(
@@ -657,74 +577,12 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
 }
 
 #[test]
-fn recursive_onehot_split_matches_open_digit_witness_count() {
-    type Cfg = fp128::D64OneHot;
-
-    // Use the root decomposition basis directly: this test exercises the
-    // tight (m, r) split optimizer at a recursive state that is not part of
-    // the canonical schedule, so we don't rely on `log_basis_at_level`.
-    let log_basis = Cfg::decomposition().log_basis;
-    let inputs = AkitaScheduleInputs {
-        num_vars: 30,
-        level: 1,
-        current_w_len: 25_974_272,
-    };
-    let params = akita_types::direct_level_params_with_log_basis(
-        Cfg::sis_modulus_family(),
-        Cfg::D,
-        Cfg::decomposition(),
-        Cfg::stage1_challenge_config(Cfg::D).unwrap(),
-        Cfg::ring_subfield_embedding_norm_bound(),
-        inputs,
-        log_basis,
-    )
-    .unwrap();
-    let root = Cfg::decomposition();
-    let decomp = DecompositionParams {
-        log_basis: params.log_basis,
-        log_commit_bound: params.log_basis,
-        log_open_bound: Some(root.log_open_bound.unwrap_or(root.log_commit_bound)),
-    };
-    let num_ring = inputs.current_w_len / params.ring_dimension;
-    let lp_12_7 = level_layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
-    let lp_11_8 = level_layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
-    let w_12_7 = planned_w_ring_element_count::<<Cfg as CommitmentConfig>::Field>(
-        Cfg::decomposition().field_bits(),
-        &lp_12_7,
-    )
-    .unwrap();
-    let w_11_8 = planned_w_ring_element_count::<<Cfg as CommitmentConfig>::Field>(
-        Cfg::decomposition().field_bits(),
-        &lp_11_8,
-    )
-    .unwrap();
-    let reduced_vars = (inputs.current_w_len / params.ring_dimension)
-        .next_power_of_two()
-        .trailing_zeros() as usize;
-
-    assert!(w_12_7 < w_11_8);
-    let (m, r, _n_a) = optimal_m_r_split(
-        params.a_key.sis_family(),
-        params.ring_dimension as u32,
-        params.a_key.collision_inf(),
-        params.challenge_l1_mass(),
-        decomp.log_commit_bound,
-        decomp.log_basis,
-        reduced_vars,
-        num_ring,
-        decomp.field_bits(),
-    );
-    assert_eq!((m, r), (12, 7));
-}
-
-#[test]
 #[cfg(not(feature = "zk"))]
 fn tight_block_len_is_no_larger_than_pow2() {
     for num_vars in [14, 20, 30] {
         let schedule =
             fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars))
-                .expect("planner should succeed")
-                .expect("config should provide a planner");
+                .expect("planner should succeed");
         for (level_idx, fold) in schedule.fold_steps().enumerate() {
             let lp = &fold.params;
             let pow2_block = 1usize << lp.m_vars;

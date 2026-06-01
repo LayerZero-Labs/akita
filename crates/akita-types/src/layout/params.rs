@@ -9,7 +9,7 @@ use akita_field::AkitaError;
 
 use crate::descriptor_bytes::{push_i8, push_u32, push_usize, sis_family_tag};
 
-pub use crate::generated::sis_floor::SisModulusFamily;
+pub use crate::sis_floor::SisModulusFamily;
 
 /// Per-level M-matrix row layout selector.
 ///
@@ -70,7 +70,7 @@ impl AjtaiKeyParams {
         assert!(row_len > 0, "AjtaiKeyParams: row_len = 0");
         assert!(col_len > 0, "AjtaiKeyParams: col_len = 0");
         assert!(collision_inf > 0, "AjtaiKeyParams: collision_inf = 0");
-        let floor = crate::generated::sis_floor::min_rank_for_secure_width(
+        let floor = crate::sis_floor::min_rank_for_secure_width(
             sis_family,
             ring_dimension as u32,
             collision_inf,
@@ -126,7 +126,7 @@ impl AjtaiKeyParams {
         if collision_inf == 0 {
             return Err(invalid("AjtaiKeyParams: collision_inf = 0".to_string()));
         }
-        let floor = crate::generated::sis_floor::min_rank_for_secure_width(
+        let floor = crate::sis_floor::min_rank_for_secure_width(
             sis_family,
             ring_dimension as u32,
             collision_inf,
