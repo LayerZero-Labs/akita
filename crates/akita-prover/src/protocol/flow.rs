@@ -58,10 +58,11 @@ use akita_types::{
     schedule_root_fold_step, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof,
-    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
-    MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
-    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    CarriedOpeningKind, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
+    DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
+    IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
+    RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
+    TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -99,6 +100,37 @@ pub use root_fold::{
     prove_terminal_root_fold_from_quadratic, prove_terminal_root_fold_with_params,
 };
 
+/// One opening claim carried into the next recursive fold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecursiveCarriedOpening<L: FieldCore> {
+    /// Evaluation point in the carried claim's basis.
+    pub opening_point: Vec<L>,
+    /// Claimed value at `opening_point`.
+    pub opening: L,
+    /// Basis used to interpret `opening_point`.
+    pub basis: BasisMode,
+    /// Unpadded logical field length of the opened object.
+    pub natural_len: usize,
+    /// Common padded field-domain length used by the recursive batch.
+    pub padded_len: usize,
+    /// Logical source of this carried opening.
+    pub kind: CarriedOpeningKind,
+}
+
+impl<L: FieldCore> RecursiveCarriedOpening<L> {
+    /// Build the ordinary size-one carried witness claim used by today's path.
+    pub fn recursive_witness(opening_point: Vec<L>, opening: L, w_len: usize) -> Self {
+        Self {
+            opening_point,
+            opening,
+            basis: BasisMode::Lagrange,
+            natural_len: w_len,
+            padded_len: w_len,
+            kind: CarriedOpeningKind::RecursiveWitness,
+        }
+    }
+}
+
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     /// Current committed recursive witness representation.
@@ -111,10 +143,8 @@ pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     pub hint: RecursiveCommitmentHintCache<F>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
-    /// Sumcheck challenges that become the next recursive opening point.
-    pub sumcheck_challenges: Vec<L>,
-    /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
-    pub opening: L,
+    /// Opening claims carried into this recursive level.
+    pub carried_openings: Vec<RecursiveCarriedOpening<L>>,
     /// Proof-level ZK hiding material fixed at batched-prove startup.
     #[cfg(feature = "zk")]
     pub zk_hiding: ZkHidingProverState<F>,
@@ -125,6 +155,30 @@ impl<F: FieldCore, L: FieldCore> RecursiveProverState<F, L> {
     #[inline]
     pub fn logical_w(&self) -> &RecursiveWitnessFlat {
         self.logical_w.as_ref().unwrap_or(&self.w)
+    }
+
+    /// Padded domain length shared by all carried openings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidInput`] if the carried batch is empty or
+    /// does not use one common padded field domain.
+    pub fn common_padded_len(&self) -> Result<usize, AkitaError> {
+        let first = self
+            .carried_openings
+            .first()
+            .ok_or_else(|| AkitaError::InvalidInput("empty carried-opening batch".to_string()))?;
+        if first.padded_len == 0
+            || self
+                .carried_openings
+                .iter()
+                .any(|claim| claim.padded_len != first.padded_len)
+        {
+            return Err(AkitaError::InvalidInput(
+                "carried openings must share one padded domain".to_string(),
+            ));
+        }
+        Ok(first.padded_len)
     }
 }
 

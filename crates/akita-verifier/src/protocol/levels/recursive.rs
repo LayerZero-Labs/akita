@@ -148,16 +148,22 @@ where
             &v_typed_owned
         }
     };
-    let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
-    if current_state.opening_point.len() < alpha_bits {
-        return Err(AkitaError::InvalidSetup(
-            "opening point length underflow".to_string(),
-        ));
+    let commitment = current_state.common_commitment()?;
+    let carried_openings = current_state.carried_openings.as_slice();
+    if carried_openings.is_empty()
+        || carried_openings
+            .iter()
+            .any(|claim| claim.natural_len > claim.padded_len)
+    {
+        return Err(AkitaError::InvalidProof);
     }
-    current_state
-        .commitment
-        .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
-    if y_rings.len() != 1 {
+    #[cfg(feature = "zk")]
+    if carried_openings.len() != 1 {
+        return Err(AkitaError::InvalidProof);
+    }
+    let commitment_u = commitment.as_ring_slice::<D>()?;
+    commitment.append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    if y_rings.len() != carried_openings.len() {
         return Err(AkitaError::InvalidProof);
     }
     let reduction_check = if <L as ExtField<F>>::EXT_DEGREE == 1 {
@@ -176,13 +182,17 @@ where
             }
             (width.trailing_zeros() as usize, width)
         };
-        if split_bits > current_state.opening_point.len() || reduction.partials.len() != width {
+        if carried_openings.len() != 1 {
+            return Err(AkitaError::InvalidProof);
+        }
+        let claim = &carried_openings[0];
+        if split_bits > claim.opening_point.len() || reduction.partials.len() != width {
             return Err(AkitaError::InvalidProof);
         }
         #[cfg(not(feature = "zk"))]
         check_tensor_extension_opening_claim::<F, L>(
-            &current_state.opening_point,
-            current_state.opening,
+            &claim.opening_point,
+            claim.opening,
             &reduction.partials,
         )?;
         #[cfg(feature = "zk")]
@@ -191,12 +201,8 @@ where
             .collect::<Vec<_>>();
         #[cfg(feature = "zk")]
         {
-            let head_weights =
-                EqPolynomial::<L>::evals(&current_state.opening_point[..split_bits])?;
-            let true_opening = ZkRelationAccumulator::unmask_lc(
-                current_state.opening,
-                &current_state.opening_mask,
-            );
+            let head_weights = EqPolynomial::<L>::evals(&claim.opening_point[..split_bits])?;
+            let true_opening = ZkRelationAccumulator::unmask_lc(claim.opening, &claim.opening_mask);
             let mut residual = ZkR1csLinearCombination::zero();
             residual.add_scaled(-L::one(), &true_opening);
             for ((&partial, mask), weight) in reduction
@@ -231,7 +237,7 @@ where
             }
             input_claim_mask
         };
-        let tail_point = &current_state.opening_point[split_bits..];
+        let tail_point = &claim.opening_point[split_bits..];
         #[cfg(not(feature = "zk"))]
         let result = ExtensionOpeningReductionSumcheck::new(input_claim, tail_point.len())
             .verify::<F, _, _>(&reduction.sumcheck, transcript, |tr| {
@@ -263,19 +269,23 @@ where
             Some((result.final_claim, factor, result_challenges))
         }
     };
-    let protocol_point = match &reduction_check {
-        Some((_final_claim, _factor, rho)) => {
-            ring_subfield_packed_extension_opening_point::<F, L, D>(rho.len(), rho)?
-        }
-        None => current_state.opening_point.clone(),
-    };
-    let prepared_points = vec![prepare_recursive_opening_point_ext::<F, L, D>(
-        &protocol_point,
-        current_state.basis,
-        lp,
-        alpha_bits,
-        block_order,
-    )?];
+    let mut prepared_points = Vec::with_capacity(carried_openings.len());
+    for (claim_idx, claim) in carried_openings.iter().enumerate() {
+        let protocol_point = match (&reduction_check, claim_idx) {
+            (Some((_final_claim, _factor, rho)), 0) => {
+                ring_subfield_packed_extension_opening_point::<F, L, D>(rho.len(), rho)?
+            }
+            (Some(_), _) => return Err(AkitaError::InvalidProof),
+            (None, _) => claim.opening_point.clone(),
+        };
+        prepared_points.push(prepare_recursive_opening_point_ext::<F, L, D>(
+            &protocol_point,
+            claim.basis,
+            lp,
+            alpha_bits,
+            block_order,
+        )?);
+    }
     for prepared_point in &prepared_points {
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
@@ -313,10 +323,9 @@ where
                 )?;
             }
             None => {
-                let true_opening = ZkRelationAccumulator::unmask_lc(
-                    current_state.opening,
-                    &current_state.opening_mask,
-                );
+                let claim = &carried_openings[0];
+                let true_opening =
+                    ZkRelationAccumulator::unmask_lc(claim.opening, &claim.opening_mask);
                 let mut residual = y_opening;
                 residual.add_scaled(-L::one(), &true_opening);
                 zk_push_linear_zero(zk_relations, "recursive y-ring opening relation", residual)?;
@@ -329,8 +338,10 @@ where
             check_extension_opening_reduction_output(final_claim, internal_claims[0], factor)?;
         }
         None => {
-            if internal_claims[0] != current_state.opening {
-                return Err(AkitaError::InvalidProof);
+            for (claim, &internal_claim) in carried_openings.iter().zip(internal_claims.iter()) {
+                if internal_claim != claim.opening {
+                    return Err(AkitaError::InvalidProof);
+                }
             }
         }
     }
@@ -376,9 +387,10 @@ where
     )?;
     tracing::debug!(w_len, is_last, "verify ring_switch");
     let claim_to_point = (0..num_claims).collect::<Vec<_>>();
-    let claim_to_point_poly = vec![0usize; num_claims];
+    let claim_to_point_poly = (0..num_claims).collect::<Vec<_>>();
     let claim_poly_indices = vec![0usize; num_claims];
     let gamma = vec![L::one(); num_claims];
+    let num_polys_per_point = vec![1usize; num_claims];
 
     let rs = match &proof {
         FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, { D }>(
@@ -390,7 +402,7 @@ where
             level_proof.next_w_commitment(),
             transcript,
             lp,
-            &[1usize],
+            &num_polys_per_point,
             &claim_to_point_poly,
             &claim_poly_indices,
             &gamma,
@@ -407,7 +419,7 @@ where
                 transcript,
                 &replay.parts,
                 lp,
-                &[1usize],
+                &num_polys_per_point,
                 &claim_to_point_poly,
                 &claim_poly_indices,
                 &gamma,
@@ -570,7 +582,8 @@ fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
             "schedule is missing fold step at level {level}"
         )));
     };
-    if step.current_w_len != current_state.w_len || step.params.log_basis != current_state.log_basis
+    if step.current_w_len != current_state.common_padded_len()?
+        || step.params.log_basis != current_state.log_basis
     {
         return Err(AkitaError::InvalidSetup(
             "scheduled recursive level did not match runtime state".to_string(),
@@ -737,7 +750,7 @@ where
                     // The terminal slot must be a Terminal variant.
                     return Err(AkitaError::InvalidProof);
                 }
-                if !current_state.commitment.can_decode_vec(level_d)
+                if !current_state.common_commitment()?.can_decode_vec(level_d)
                     || !level_proof.y_ring.can_decode_vec(level_d)
                     || !level_proof.v.can_decode_vec(level_d)
                 {
@@ -797,15 +810,19 @@ where
                     return Err(AkitaError::InvalidProof);
                 }
                 current_state = RecursiveVerifierState {
-                    opening_point: challenges,
-                    opening: level_proof.next_w_eval(),
-                    #[cfg(feature = "zk")]
-                    opening_mask: zk_ext_mask_lc_at::<F, L>(
-                        *zk_hiding_cursor - <L as ExtField<F>>::EXT_DEGREE,
-                    ),
-                    commitment: level_proof.next_w_commitment(),
-                    basis: BasisMode::Lagrange,
-                    w_len: next_w_len,
+                    carried_openings: vec![RecursiveVerifierCarriedOpening {
+                        opening_point: challenges,
+                        opening: level_proof.next_w_eval(),
+                        #[cfg(feature = "zk")]
+                        opening_mask: zk_ext_mask_lc_at::<F, L>(
+                            *zk_hiding_cursor - <L as ExtField<F>>::EXT_DEGREE,
+                        ),
+                        commitment: level_proof.next_w_commitment(),
+                        basis: BasisMode::Lagrange,
+                        natural_len: next_w_len,
+                        padded_len: next_w_len,
+                        kind: CarriedOpeningKind::RecursiveWitness,
+                    }],
                     log_basis: scheduled_next_params.log_basis,
                 };
             }
@@ -813,7 +830,7 @@ where
                 if !is_last {
                     return Err(AkitaError::InvalidProof);
                 }
-                if !current_state.commitment.can_decode_vec(level_d)
+                if !current_state.common_commitment()?.can_decode_vec(level_d)
                     || !terminal_proof.y_rings.can_decode_vec(level_d)
                 {
                     return Err(AkitaError::InvalidProof);
@@ -1029,15 +1046,19 @@ where
             }
 
             let current_state = RecursiveVerifierState {
-                opening_point: root_challenges,
-                opening: fold_root.stage2.next_w_eval(),
-                #[cfg(feature = "zk")]
-                opening_mask: zk_ext_mask_lc_at::<F, C>(
-                    zk_hiding_cursor - <C as ExtField<F>>::EXT_DEGREE,
-                ),
-                commitment: &fold_root.stage2.next_w_commitment,
-                basis: BasisMode::Lagrange,
-                w_len: root_step.next_w_len,
+                carried_openings: vec![RecursiveVerifierCarriedOpening {
+                    opening_point: root_challenges,
+                    opening: fold_root.stage2.next_w_eval(),
+                    #[cfg(feature = "zk")]
+                    opening_mask: zk_ext_mask_lc_at::<F, C>(
+                        zk_hiding_cursor - <C as ExtField<F>>::EXT_DEGREE,
+                    ),
+                    commitment: &fold_root.stage2.next_w_commitment,
+                    basis: BasisMode::Lagrange,
+                    natural_len: root_step.next_w_len,
+                    padded_len: root_step.next_w_len,
+                    kind: CarriedOpeningKind::RecursiveWitness,
+                }],
                 log_basis: next_level_params.log_basis,
             };
             verify_batched_recursive_suffix::<F, C, T, D>(

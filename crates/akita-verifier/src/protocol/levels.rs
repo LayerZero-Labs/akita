@@ -56,9 +56,10 @@ use akita_types::{
     sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_segment_layout,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule,
-    Step, TerminalLevelProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    CarriedOpeningKind, ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof,
+    FlatRingVec, LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding,
+    Schedule, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
+    TerminalWitnessTranscriptParts,
 };
 #[cfg(feature = "zk")]
 use zk::{verify_zk_hiding_commitment, zk_recovered_y_ring_lc};
@@ -67,23 +68,75 @@ mod recursive;
 
 pub(crate) use recursive::verify_fold_batched_proof;
 
-/// Verifier state carried between recursive fold levels.
-pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
-    /// Current opening point for the committed recursive witness.
+/// One opening claim carried into the next recursive verifier level.
+pub(crate) struct RecursiveVerifierCarriedOpening<'a, F: FieldCore, L: FieldCore> {
+    /// Evaluation point in this claim's basis.
     pub opening_point: Vec<L>,
-    /// Claimed opening value for the current commitment.
+    /// Claimed opening value.
     pub opening: L,
     /// Hidden mask added to `opening` in the public proof.
     #[cfg(feature = "zk")]
     pub opening_mask: ZkR1csLinearCombination<L>,
-    /// Current recursive witness commitment.
+    /// Commitment opened by this claim.
     pub commitment: &'a FlatRingVec<F>,
-    /// Basis used to interpret the current opening point.
+    /// Basis used to interpret `opening_point`.
     pub basis: BasisMode,
-    /// Current recursive witness length in field elements.
-    pub w_len: usize,
+    /// Unpadded logical field length of the opened object.
+    pub natural_len: usize,
+    /// Common padded field-domain length used by the recursive batch.
+    pub padded_len: usize,
+    /// Logical source of this carried opening.
+    pub kind: CarriedOpeningKind,
+}
+
+/// Verifier state carried between recursive fold levels.
+pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
+    /// Opening claims carried into this recursive level.
+    pub carried_openings: Vec<RecursiveVerifierCarriedOpening<'a, F, L>>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
+}
+
+impl<'a, F: FieldCore, L: FieldCore> RecursiveVerifierState<'a, F, L> {
+    pub(crate) fn common_padded_len(&self) -> Result<usize, AkitaError> {
+        let first = self
+            .carried_openings
+            .first()
+            .ok_or_else(|| AkitaError::InvalidInput("empty carried-opening batch".to_string()))?;
+        if first.padded_len == 0
+            || self
+                .carried_openings
+                .iter()
+                .any(|claim| claim.padded_len != first.padded_len)
+        {
+            return Err(AkitaError::InvalidInput(
+                "carried openings must share one padded domain".to_string(),
+            ));
+        }
+        Ok(first.padded_len)
+    }
+
+    pub(crate) fn common_commitment(&self) -> Result<&'a FlatRingVec<F>, AkitaError> {
+        let first = self
+            .carried_openings
+            .first()
+            .ok_or_else(|| AkitaError::InvalidInput("empty carried-opening batch".to_string()))?;
+        for claim in &self.carried_openings {
+            match claim.kind {
+                CarriedOpeningKind::RecursiveWitness | CarriedOpeningKind::SetupPrefix => {}
+            }
+        }
+        if self
+            .carried_openings
+            .iter()
+            .any(|claim| claim.commitment != first.commitment)
+        {
+            return Err(AkitaError::InvalidInput(
+                "carried openings with different commitments are not wired yet".to_string(),
+            ));
+        }
+        Ok(first.commitment)
+    }
 }
 
 struct TerminalWitnessReplay {
