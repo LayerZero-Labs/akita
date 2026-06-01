@@ -380,6 +380,7 @@ pub fn prove_folded_batched_with_policy<
     const D: usize,
     CommitRootNext,
     BuildSuffix,
+    AdjustRaw,
 >(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
@@ -391,6 +392,7 @@ pub fn prove_folded_batched_with_policy<
     root_next_params: &LevelParams,
     commit_root_next: CommitRootNext,
     build_suffix: BuildSuffix,
+    adjust_raw: AdjustRaw,
 ) -> Result<(AkitaBatchedProof<F, C>, usize), AkitaError>
 where
     F: FieldCore
@@ -418,6 +420,7 @@ where
         &Schedule,
         &mut T,
     ) -> Result<RecursiveSuffixOutcome<F, C>, AkitaError>,
+    AdjustRaw: FnOnce(&mut RootLevelRawOutput<F, C, D>) -> Result<(), AkitaError>,
 {
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
 
@@ -468,7 +471,7 @@ where
                 ));
             }
         };
-        let _ = (commit_root_next, build_suffix, root_next_params);
+        let _ = (commit_root_next, build_suffix, root_next_params, adjust_raw);
         let terminal = prove_terminal_root_fold_with_params::<F, E, C, T, P, B, D>(
             expanded,
             backend,
@@ -498,7 +501,7 @@ where
         ));
     }
 
-    let raw = prove_root_fold_with_params::<F, E, C, T, P, B, D, _>(
+    let mut raw = prove_root_fold_with_params::<F, E, C, T, P, B, D, _>(
         expanded,
         backend,
         prepared,
@@ -518,6 +521,7 @@ where
         basis,
         |w| commit_root_next(w),
     )?;
+    adjust_raw(&mut raw)?;
 
     build_folded_batched_proof_with_suffix::<F, C, D, _>(raw, |next_state| {
         build_suffix(next_state, schedule, transcript)

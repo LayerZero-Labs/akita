@@ -47,9 +47,9 @@ pub use protocol::{
     prove_root_fold_with_params, prove_terminal_fold_level_from_quadratic,
     prove_terminal_recursive_fold_with_params, prove_terminal_recursive_level_with_policy,
     prove_terminal_root_fold_from_quadratic, prove_terminal_root_fold_with_params,
-    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveCarriedOpening, RecursiveProverState,
-    RecursiveSuffixOutcome, RingSwitchOutput, RootLevelRawOutput, SuffixLevelOutput,
-    SuffixLevelRequest,
+    PreparedBatchedProveInputs, ProveLevelOutput, RecursiveCarriedOpening, RecursiveCarriedSource,
+    RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput, RootLevelRawOutput,
+    SuffixLevelOutput, SuffixLevelRequest,
 };
 /// One commitment plus the polynomials it bundles, opened at one point.
 ///

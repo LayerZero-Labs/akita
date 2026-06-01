@@ -857,6 +857,15 @@ mod tests {
             forward,
             carried_batch_challenge(&sources, &[first, changed_kind])
         );
+
+        let changed_source = CarriedOpeningClaim {
+            source_idx: 0,
+            ..second
+        };
+        assert_ne!(
+            forward,
+            carried_batch_challenge(&sources, &[first, changed_source])
+        );
     }
 
     #[test]
