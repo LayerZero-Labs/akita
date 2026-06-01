@@ -569,6 +569,20 @@ pub enum TerminalWitnessQuotient {
     OmitRHat,
 }
 
+impl TerminalProofMode {
+    /// Witness quotient policy for this terminal proof mode.
+    ///
+    /// Direct row checks need no `r_hat` quotient digits; the sumcheck path
+    /// keeps them.
+    #[inline]
+    pub const fn terminal_witness_quotient(self) -> TerminalWitnessQuotient {
+        match self {
+            Self::RingSwitchSumcheck => TerminalWitnessQuotient::IncludeRHat,
+            Self::DirectRingRelations => TerminalWitnessQuotient::OmitRHat,
+        }
+    }
+}
+
 /// Non-generic witness ring-element count with an explicit terminal quotient
 /// policy. The quotient policy only affects terminal direct relation mode;
 /// callers using intermediate layouts must keep [`TerminalWitnessQuotient::IncludeRHat`].

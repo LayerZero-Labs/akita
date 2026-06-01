@@ -25,7 +25,7 @@ use akita_types::{
     w_ring_element_count_with_counts_for_layout_bits_and_quotient, AjtaiKeyParams, AjtaiRole,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentEnvelope, DecompositionParams,
     DirectStep, DirectWitnessShape, FoldStep, LevelParams, MRowLayout, Schedule, SisModulusFamily,
-    Step, TerminalProofMode, TerminalWitnessQuotient,
+    Step, TerminalProofMode,
 };
 
 use crate::PlannerPolicy;
@@ -537,7 +537,7 @@ fn finalize_terminal_direct_witness_shape(
         num_w_vectors,
         num_public_rows,
         MRowLayout::Terminal,
-        terminal_witness_quotient(opts.terminal_proof_mode),
+        opts.terminal_proof_mode.terminal_witness_quotient(),
     )
     .expect("terminal recursive witness length overflow");
     let terminal_field_len = ring_count
@@ -570,15 +570,6 @@ fn finalize_terminal_direct_witness_shape(
     direct.terminal_proof_mode = opts.terminal_proof_mode;
     direct.level_params = Some(level_params);
     Ok(())
-}
-
-/// Map a terminal proof mode to its terminal-witness quotient policy. Direct
-/// row checks need no `r_hat` quotient digits; the sumcheck path keeps them.
-fn terminal_witness_quotient(mode: TerminalProofMode) -> TerminalWitnessQuotient {
-    match mode {
-        TerminalProofMode::RingSwitchSumcheck => TerminalWitnessQuotient::IncludeRHat,
-        TerminalProofMode::DirectRingRelations => TerminalWitnessQuotient::OmitRHat,
-    }
 }
 
 fn basis_range(

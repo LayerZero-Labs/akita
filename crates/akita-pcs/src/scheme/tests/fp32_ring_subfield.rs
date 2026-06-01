@@ -194,14 +194,7 @@ fn fp32_root_terminal_schedule(
             .l1_norm(),
         field_bits,
     )?;
-    let quotient = match mode {
-        akita_types::TerminalProofMode::RingSwitchSumcheck => {
-            akita_types::TerminalWitnessQuotient::IncludeRHat
-        }
-        akita_types::TerminalProofMode::DirectRingRelations => {
-            akita_types::TerminalWitnessQuotient::OmitRHat
-        }
-    };
+    let quotient = mode.terminal_witness_quotient();
     let w_ring = akita_types::w_ring_element_count_with_counts_for_layout_bits_and_quotient(
         field_bits,
         &lp,
