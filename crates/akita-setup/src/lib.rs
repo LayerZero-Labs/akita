@@ -194,6 +194,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
     B: CommitmentComputeBackend<F>,
 {
+    let slot_count_before = setup.prefix_slots.len();
     let outcome = select_prover_setup_prefix_slot(
         setup,
         backend,
@@ -209,7 +210,8 @@ where
             SetupPrefixSelectionOutcome::Selected(_),
             MissingSetupPrefixSlotPolicy::GenerateAndPersist
         )
-    ) {
+    ) && setup.prefix_slots.len() > slot_count_before
+    {
         persist_prover_setup::<F, D, Cfg>(
             setup,
             request.max_num_vars,
@@ -694,7 +696,7 @@ mod tests {
         }
 
         #[test]
-        fn generate_and_persist_writes_selected_prefix_slot() {
+        fn generate_and_persist_skips_preexisting_prefix_slot() {
             with_test_cache_dir("generate-and-persist", || {
                 use akita_algebra::CyclotomicRing;
                 use akita_prover::{ComputeBackendSetup, CpuBackend};
@@ -782,8 +784,7 @@ mod tests {
                     MAX_VARS, MAX_BATCH, MAX_POINTS,
                 )
                 .unwrap();
-                assert_eq!(loaded.prefix_slots, setup.prefix_slots);
-                assert_eq!(loaded.prefix_slots.len(), 1);
+                assert!(loaded.prefix_slots.is_empty());
 
                 if let Some(path) = get_storage_path::<PersistCfg>(MAX_VARS, MAX_BATCH, MAX_POINTS)
                 {

@@ -521,11 +521,12 @@ impl<F: FieldCore, const D: usize> SetupPrefixProverRegistry<F, D> {
     }
 
     pub fn insert(&mut self, slot: SetupPrefixSlot<F, D>) -> Result<(), AkitaError> {
-        if self.slots.insert(slot.id, slot).is_some() {
+        if self.slots.contains_key(&slot.id) {
             return Err(AkitaError::InvalidSetup(
                 "duplicate setup prefix slot id".to_string(),
             ));
         }
+        self.slots.insert(slot.id, slot);
         Ok(())
     }
 
@@ -645,11 +646,12 @@ impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
     }
 
     pub fn insert(&mut self, slot: SetupPrefixVerifierSlot<F>) -> Result<(), AkitaError> {
-        if self.slots.insert(slot.id, slot).is_some() {
+        if self.slots.contains_key(&slot.id) {
             return Err(AkitaError::InvalidSetup(
                 "duplicate setup prefix slot id".to_string(),
             ));
         }
+        self.slots.insert(slot.id, slot);
         Ok(())
     }
 
@@ -1137,5 +1139,77 @@ mod tests {
             } => {}
             other => panic!("expected missing slot, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
+        use crate::proof::FlatDigitBlocks;
+        use akita_algebra::CyclotomicRing;
+        use akita_field::Prime32Offset99 as F;
+
+        let id = SetupPrefixSlotId {
+            setup_seed_digest: [7u8; 32],
+            d_setup: 32,
+            n_prefix: 32,
+            level_params_digest: [9u8; 32],
+        };
+        let slot = |natural_len| {
+            let decomposed = FlatDigitBlocks::<32>::from_blocks(vec![Vec::new()]);
+            let recomposed = vec![Vec::new()];
+            #[cfg(feature = "zk")]
+            let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
+                decomposed,
+                recomposed,
+                FlatDigitBlocks::empty(),
+            );
+            #[cfg(not(feature = "zk"))]
+            let hint =
+                AkitaCommitmentHint::singleton_with_recomposed_inner_rows(decomposed, recomposed);
+            SetupPrefixSlot {
+                id,
+                natural_len,
+                padded_len: id.n_prefix,
+                commitment: RingCommitment {
+                    u: vec![CyclotomicRing::<F, 32>::zero()],
+                },
+                hint,
+            }
+        };
+
+        let mut registry = SetupPrefixProverRegistry::<F, 32>::new();
+        registry.insert(slot(1)).expect("first insert");
+        registry
+            .insert(slot(2))
+            .expect_err("duplicate insert must fail");
+
+        assert_eq!(registry.get(&id).expect("stored slot").natural_len, 1);
+    }
+
+    #[test]
+    fn verifier_registry_duplicate_insert_does_not_replace_existing_slot() {
+        use akita_field::Prime32Offset99 as F;
+
+        let id = SetupPrefixSlotId {
+            setup_seed_digest: [7u8; 32],
+            d_setup: 32,
+            n_prefix: 32,
+            level_params_digest: [9u8; 32],
+        };
+        let slot = |natural_len| SetupPrefixVerifierSlot {
+            id,
+            natural_len,
+            padded_len: id.n_prefix,
+            commitment: SetupPrefixPublicCommitment {
+                rows: vec![FlatRingVec::from_coeffs(vec![F::zero()])],
+            },
+        };
+
+        let mut registry = SetupPrefixVerifierRegistry::<F>::new();
+        registry.insert(slot(1)).expect("first insert");
+        registry
+            .insert(slot(2))
+            .expect_err("duplicate insert must fail");
+
+        assert_eq!(registry.get(&id).expect("stored slot").natural_len, 1);
     }
 }
