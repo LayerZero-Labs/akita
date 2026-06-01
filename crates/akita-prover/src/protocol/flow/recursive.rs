@@ -365,6 +365,7 @@ where
                 w_eval,
                 committed_witness_len,
             )],
+            extra_carried_sources: Vec::new(),
             #[cfg(feature = "zk")]
             zk_hiding,
         },
@@ -705,6 +706,7 @@ pub fn prove_recursive_fold_with_params<F, L, T, B, const D: usize, CommitW>(
     witness: &RecursiveWitnessView<'_, F, D>,
     logical_w: &RecursiveWitnessFlat,
     carried_openings: &[RecursiveCarriedOpening<L>],
+    extra_carried_sources: &[RecursiveCarriedSource<F>],
     hint: AkitaCommitmentHint<F, D>,
     commitment: &FlatRingVec<F>,
     level: usize,
@@ -741,11 +743,19 @@ where
     }
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
-    let carried_sources = [CarriedOpeningSource { commitment }];
+    let mut carried_sources = Vec::with_capacity(extra_carried_sources.len() + 1);
+    carried_sources.push(CarriedOpeningSource { commitment });
+    carried_sources.extend(
+        extra_carried_sources
+            .iter()
+            .map(|source| CarriedOpeningSource {
+                commitment: &source.commitment,
+            }),
+    );
     let carried_claims = carried_openings
         .iter()
         .map(|claim| CarriedOpeningClaim {
-            source_idx: 0,
+            source_idx: claim.source_idx,
             point: &claim.opening_point,
             value: claim.opening,
             basis: claim.basis,
@@ -953,6 +963,7 @@ pub fn prove_terminal_recursive_fold_with_params<F, L, T, B, const D: usize>(
     witness: &RecursiveWitnessView<'_, F, D>,
     logical_w: &RecursiveWitnessFlat,
     carried_openings: &[RecursiveCarriedOpening<L>],
+    extra_carried_sources: &[RecursiveCarriedSource<F>],
     hint: AkitaCommitmentHint<F, D>,
     commitment: &FlatRingVec<F>,
     level: usize,
@@ -988,11 +999,19 @@ where
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     let commitment_u = commitment.as_ring_slice::<D>()?;
-    let carried_sources = [CarriedOpeningSource { commitment }];
+    let mut carried_sources = Vec::with_capacity(extra_carried_sources.len() + 1);
+    carried_sources.push(CarriedOpeningSource { commitment });
+    carried_sources.extend(
+        extra_carried_sources
+            .iter()
+            .map(|source| CarriedOpeningSource {
+                commitment: &source.commitment,
+            }),
+    );
     let carried_claims = carried_openings
         .iter()
         .map(|claim| CarriedOpeningClaim {
-            source_idx: 0,
+            source_idx: claim.source_idx,
             point: &claim.opening_point,
             value: claim.opening,
             basis: claim.basis,
@@ -1232,6 +1251,7 @@ where
         hint,
         log_basis: _,
         carried_openings,
+        extra_carried_sources,
         #[cfg(feature = "zk")]
         zk_hiding,
     } = current_state;
@@ -1249,6 +1269,7 @@ where
         &w_view,
         logical_w,
         &carried_openings,
+        &extra_carried_sources,
         typed_hint,
         &commitment,
         level,
@@ -1319,6 +1340,7 @@ where
         &w_view,
         logical_w,
         &current_state.carried_openings,
+        &current_state.extra_carried_sources,
         typed_hint,
         &current_state.commitment,
         level,

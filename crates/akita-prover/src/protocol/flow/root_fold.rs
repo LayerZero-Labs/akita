@@ -1231,6 +1231,7 @@ where
                 w_eval,
                 expected_w_len,
             )],
+            extra_carried_sources: Vec::new(),
             #[cfg(feature = "zk")]
             zk_hiding,
         },

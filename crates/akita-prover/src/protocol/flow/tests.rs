@@ -99,6 +99,7 @@ fn recursive_carried_opening_state_requires_common_padded_domain() {
                 ..base_claim.clone()
             },
         ],
+        extra_carried_sources: Vec::new(),
     };
     assert_eq!(ok_state.common_padded_len().unwrap(), 4);
 
@@ -115,6 +116,7 @@ fn recursive_carried_opening_state_requires_common_padded_domain() {
                 ..base_claim
             },
         ],
+        extra_carried_sources: Vec::new(),
     };
     assert!(bad_state.common_padded_len().is_err());
 }
@@ -146,6 +148,7 @@ fn folded_root_assembly_preserves_extra_carried_openings() {
             F::from_u64(4),
             4,
         )],
+        extra_carried_sources: Vec::new(),
     };
     let raw = RootLevelRawOutput::<F, F, 1> {
         y_rings: vec![CyclotomicRing::<F, 1>::zero()],
