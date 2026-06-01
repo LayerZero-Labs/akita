@@ -788,11 +788,11 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
-    let z_pre = cfg_iter!(centered_coeffs)
+    let z_folded_rings = cfg_iter!(centered_coeffs)
         .map(|coeff_accum| signed_accum_to_ring::<F, D>(*coeff_accum, modulus))
         .collect();
     DecomposeFoldWitness {
-        z_pre,
+        z_folded_rings,
         centered_coeffs,
         centered_inf_norm,
     }

@@ -8,10 +8,11 @@ use crate::protocol::ring_switch::{
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 #[cfg(feature = "zk")]
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
+use crate::protocol::{new_ring_relation_prover, new_ring_relation_recursive_multipoint_prover};
 use crate::{
-    AkitaPolyOps, CommittedPolynomials, ProverClaims, ProverComputeBackend, QuadraticEquation,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
-    RootTensorProjectionPoly,
+    AkitaPolyOps, CommittedPolynomials, ProverClaims, ProverComputeBackend,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, RingRelationInstance,
+    RingRelationWitness, RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
@@ -58,10 +59,10 @@ use akita_types::{
     schedule_root_fold_step, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof,
-    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
-    MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
-    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof,
+    CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim,
+    LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
+    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};

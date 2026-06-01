@@ -493,7 +493,7 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaStage1Prover<E> {
-    /// Produce the full stage-1 tree proof and return the final `r_stage1`.
+    /// Produce the full stage-1 tree proof and return the final `stage1_point`.
     ///
     /// # Errors
     ///
@@ -546,7 +546,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
                     ring_bits,
                 )?;
                 #[cfg(feature = "zk")]
-                let (sumcheck_proof_masked, r_stage1, handoff_mask) = {
+                let (sumcheck_proof_masked, stage1_point, handoff_mask) = {
                     if precommitted_stage_pads.len() != 1
                         || !precommitted_child_claim_masks.is_empty()
                     {
@@ -567,7 +567,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
                     (sumcheck_proof_masked, challenges, handoff_mask)
                 };
                 #[cfg(not(feature = "zk"))]
-                let (sumcheck, r_stage1, _final_claim) = leaf_stage
+                let (sumcheck, stage1_point, _final_claim) = leaf_stage
                     .prove::<F, T, _>(transcript, |tr| {
                         sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
                     })?;
@@ -586,9 +586,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
                     s_claim: true_s_claim,
                 };
                 #[cfg(feature = "zk")]
-                return Ok((proof, r_stage1, true_s_claim));
+                return Ok((proof, stage1_point, true_s_claim));
                 #[cfg(not(feature = "zk"))]
-                return Ok((proof, r_stage1));
+                return Ok((proof, stage1_point));
             }
             Stage1Witness::PaddedS(s_table) => s_table,
         };
@@ -688,7 +688,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
         let mut leaf_stage =
             PolynomialStageProver::new(s_table, &current_tau, current_claim, batched_leaf_coeffs)?;
         #[cfg(feature = "zk")]
-        let (leaf_sumcheck_proof_masked, r_stage1, handoff_mask) = {
+        let (leaf_sumcheck_proof_masked, stage1_point, handoff_mask) = {
             if precommitted_stage_pads.len() != 1 {
                 return Err(AkitaError::InvalidProof);
             }
@@ -703,7 +703,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
             (sumcheck_proof_masked, challenges, handoff_mask)
         };
         #[cfg(not(feature = "zk"))]
-        let (leaf_sumcheck, r_stage1, _leaf_final_claim) = leaf_stage
+        let (leaf_sumcheck, stage1_point, _leaf_final_claim) = leaf_stage
             .prove::<F, T, _>(transcript, |tr| {
                 sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
             })?;
@@ -724,9 +724,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
             s_claim: true_s_claim,
         };
         #[cfg(feature = "zk")]
-        return Ok((proof, r_stage1, true_s_claim));
+        return Ok((proof, stage1_point, true_s_claim));
         #[cfg(not(feature = "zk"))]
-        return Ok((proof, r_stage1));
+        return Ok((proof, stage1_point));
     }
 }
 
