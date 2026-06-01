@@ -251,7 +251,7 @@ pub struct SetupSection {
     /// included because they do not change verifier transcript behavior.
     pub protocol_features: ProtocolFeatureSet,
 
-    // NOTE (planner-runtime-flow-cleanup): the former `level_params_digest`
+    // NOTE (planner-refactor): the former `level_params_digest`
     // field has been dropped. The full per-level `LevelParams` are now bound
     // by `PlanSection::effective_schedule_digest` (which digests each step's
     // `LevelParams`, including the root-direct commit layout), so a separate
