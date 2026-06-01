@@ -14,8 +14,11 @@ The comparison fixes a common base-field bit width (31-bit) and a common extensi
 It is deliberately not a strict apples-to-apples modulus comparison: the two systems use different prime moduli and different internal representations (Akita uses canonical Solinas / pseudo-Mersenne primes, Plonky3 uses Montgomery 31-bit primes), so the comparison is "same bit width, same extension degree, best available SIMD per architecture".
 
 The central framing is security-equivalent extension degree, not equal extension degree.
-Plonky3 is hash-based: achieving true 128-bit security over a 31-bit base field in practice drives the working extension up to degree 5, because soundness gaps appear in components such as lookup arguments (LogUp) and proximity testing / random-query sampling (FRI), all of which consume challenge-field bits that scale with the extension size.
-Akita is lattice-based: it reaches the same 128-bit target at degree 4, because its soundness comes from SIS / lattice hardness and it avoids those field-size-dependent lookup and query-soundness arguments.
+Plonky3 is hash-based: achieving true 128-bit security over a 31-bit base field in practice drives the working extension up to degree 5.
+The sharp reason is that the soundness error of the random-evaluation arguments has the form `O(instance_size / |ext_field|)`, so the bit-security is roughly `log2(|ext_field|) - log2(instance_size)`.
+For a 31-bit base, a degree-4 extension is about `2^124` and a degree-5 extension is about `2^155`, so a large instance of size `2^22` leaves only about `124 - 22 = 102` bits at degree 4 (well under 128), while degree 5 gives about `155 - 22 = 133` bits.
+This field-size term comes from sampling challenges in the extension field (Schwartz-Zippel / random-linear-combination / DEEP-style quotienting and FRI proximity gaps), so it shrinks only by enlarging the field; it is not the FRI query / proof-of-work component, so grinding cannot cheaply buy the lost bits back.
+Akita is lattice-based: it reaches the same 128-bit target at degree 4, because its soundness comes from SIS / lattice hardness and it avoids those field-size-dependent random-evaluation and query-soundness arguments.
 The fair security-equivalent comparison is therefore Akita degree-4 against Plonky3 degree-5, with Plonky3 degree-4 also measured as an additional (commonly cited, but security-insufficient for the 31-bit base) reference point.
 
 Data must cover architecture-specific SIMD: NEON on an aarch64 workstation (Apple-silicon class), and both AVX2 and AVX-512 on an x86_64 server (recent AMD/Intel class with native AVX-512).
@@ -37,11 +40,11 @@ The motivation for benchmarking both Plonky3 degree-4 and degree-5 is the securi
 
 | Setting | 128-bit-secure working field over a 31-bit base | Why |
 |---------|-------------------------------------------------|-----|
-| Plonky3 (hash-based) | base + degree-5 extension | LogUp-style lookups and FRI query soundness consume challenge-field bits; degree-4 over a 31-bit prime (≈ 2^124) leaves insufficient margin, degree-5 (≈ 2^155) restores it |
-| Akita (lattice-based) | base + degree-4 extension | soundness from SIS/lattice hardness; no LogUp-style lookups, no FRI query sampling, so the challenge field does not need the extra degree |
+| Plonky3 (hash-based) | base + degree-5 extension | random-evaluation soundness error is `O(instance_size / |ext_field|)`, i.e. about `31*d - log2(N)` bits; at `N = 2^22`, degree-4 (`~2^124`) gives only `~102` bits, degree-5 (`~2^155`) gives `~133` bits. The lost bits scale with instance size and are not the FRI query/PoW term, so grinding cannot cheaply recover them |
+| Akita (lattice-based) | base + degree-4 extension | soundness from SIS/lattice hardness; no random-evaluation / query-soundness term of the form `O(N / |ext_field|)`, so the extension field does not need the extra degree |
 
-The precise soundness bit-accounting (per-component loss for LogUp, FRI query count, proximity gaps) belongs to the paper's security section, not to this bench spec.
-This spec records the resulting extension-degree choice and benchmarks exactly those fields, so the paper can state "at equal 128-bit security, Akita's degree-4 arithmetic costs X while Plonky3's degree-5 arithmetic costs Y on the same hardware and SIMD width".
+The precise soundness bit-accounting (the constant in `O(instance_size / |ext_field|)`, per-component losses, FRI query count, proximity gaps) belongs to the paper's security section, not to this bench spec.
+This spec records only the resulting extension-degree choice and benchmarks exactly those fields, so the paper can state "at equal 128-bit security, Akita's degree-4 arithmetic costs X while Plonky3's degree-5 arithmetic costs Y on the same hardware and SIMD width".
 
 ### Field Matrix
 
