@@ -105,6 +105,8 @@ pub use root_fold::{
 /// One opening claim carried into the next recursive fold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecursiveCarriedOpening<L: FieldCore> {
+    /// Source index in the recursive carried-source table.
+    pub source_idx: usize,
     /// Evaluation point in the carried claim's basis.
     pub opening_point: Vec<L>,
     /// Claimed value at `opening_point`.
@@ -123,6 +125,7 @@ impl<L: FieldCore> RecursiveCarriedOpening<L> {
     /// Build the ordinary size-one carried witness claim used by today's path.
     pub fn recursive_witness(opening_point: Vec<L>, opening: L, w_len: usize) -> Self {
         Self {
+            source_idx: 0,
             opening_point,
             opening,
             basis: BasisMode::Lagrange,
@@ -131,6 +134,18 @@ impl<L: FieldCore> RecursiveCarriedOpening<L> {
             kind: CarriedOpeningKind::RecursiveWitness,
         }
     }
+}
+
+/// Prover-only committed source carried into a recursive fold.
+pub struct RecursiveCarriedSource<F: FieldCore> {
+    /// Current committed representation for this source.
+    pub w: RecursiveWitnessFlat,
+    /// Logical witness when it differs from the committed representation.
+    pub logical_w: Option<RecursiveWitnessFlat>,
+    /// Commitment to this source.
+    pub commitment: FlatRingVec<F>,
+    /// D-erased commitment hint for this source.
+    pub hint: RecursiveCommitmentHintCache<F>,
 }
 
 /// Runtime state carried between recursive prove levels.
@@ -147,6 +162,9 @@ pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     pub log_basis: u32,
     /// Opening claims carried into this recursive level.
     pub carried_openings: Vec<RecursiveCarriedOpening<L>>,
+    /// Extra committed sources referenced by carried openings. Source index 0
+    /// is the ordinary recursive witness stored in `w`; extras start at 1.
+    pub extra_carried_sources: Vec<RecursiveCarriedSource<F>>,
     /// Proof-level ZK hiding material fixed at batched-prove startup.
     #[cfg(feature = "zk")]
     pub zk_hiding: ZkHidingProverState<F>,
