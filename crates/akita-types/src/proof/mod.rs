@@ -45,7 +45,7 @@ pub use incidence::{
 };
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
-    AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+    AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, CarriedOpeningProof,
     ExtensionOpeningReductionProof, TerminalLevelProof,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
@@ -58,7 +58,7 @@ pub use setup::{
 #[cfg(feature = "zk")]
 pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use shapes::{
-    AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
+    AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape, CarriedOpeningShape,
     ExtensionOpeningReductionShape, LevelProofShape, TerminalLevelProofShape,
 };
 pub use stage1::{

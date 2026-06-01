@@ -25,10 +25,20 @@ pub enum CarriedOpeningKind {
 }
 
 impl CarriedOpeningKind {
-    fn transcript_id(self) -> u8 {
+    /// Stable wire identifier for proof serialization and transcript binding.
+    pub fn as_u8(self) -> u8 {
         match self {
             Self::RecursiveWitness => 0,
             Self::SetupPrefix => 1,
+        }
+    }
+
+    /// Decode a stable wire identifier.
+    pub fn from_u8(tag: u8) -> Result<Self, AkitaError> {
+        match tag {
+            0 => Ok(Self::RecursiveWitness),
+            1 => Ok(Self::SetupPrefix),
+            _ => Err(AkitaError::InvalidProof),
         }
     }
 }
@@ -53,10 +63,7 @@ pub struct CarriedOpeningClaim<'a, F: FieldCore, L: FieldCore> {
 }
 
 fn basis_transcript_id(basis: BasisMode) -> u8 {
-    match basis {
-        BasisMode::Lagrange => 0,
-        BasisMode::Monomial => 1,
-    }
+    basis.as_u8()
 }
 
 /// Validate carried-opening batch metadata and return the common padded domain arity.
@@ -127,7 +134,7 @@ where
     transcript.append_serde(ABSORB_BATCH_SHAPE, &claims.len());
     transcript.append_serde(ABSORB_BATCH_SHAPE, &padded_num_vars);
     for claim in claims {
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.kind.transcript_id());
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.kind.as_u8());
         transcript.append_serde(ABSORB_BATCH_SHAPE, &basis_transcript_id(claim.basis));
         transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.natural_len);
         transcript.append_serde(ABSORB_BATCH_SHAPE, &claim.padded_len);

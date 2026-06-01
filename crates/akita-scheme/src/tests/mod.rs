@@ -117,6 +117,7 @@ fn expected_same_point_batched_shape(
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
         stage2_sumcheck_proof: vec![3; root_rounds],
         next_commit_coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
+        extra_carried_openings: Vec::new(),
     };
     let first_level_params = next_level_params.clone();
 
@@ -154,6 +155,7 @@ fn expected_same_point_batched_shape(
             stage2_sumcheck_proof: vec![3; rounds],
             next_commit_coeffs: next_level_params.b_key.row_len()
                 * next_level_params.ring_dimension,
+            extra_carried_openings: Vec::new(),
         }));
         current_w_len = next_w_len;
         current_log_basis = next_level_params.log_basis;
