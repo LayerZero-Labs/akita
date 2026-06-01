@@ -119,6 +119,69 @@ fn recursive_carried_opening_state_requires_common_padded_domain() {
     assert!(bad_state.common_padded_len().is_err());
 }
 
+#[cfg(not(feature = "zk"))]
+#[test]
+fn folded_root_assembly_preserves_extra_carried_openings() {
+    let setup_commitment = FlatRingVec::from_coeffs(vec![F::from_u64(9)]);
+    let extra = CarriedOpeningProof {
+        commitment: setup_commitment.clone(),
+        point: vec![F::from_u64(3), F::from_u64(5)],
+        value: F::from_u64(7),
+        basis: BasisMode::Lagrange,
+        natural_len: 4,
+        padded_len: 4,
+        kind: CarriedOpeningKind::SetupPrefix,
+    };
+    let next_state = RecursiveProverState {
+        w: RecursiveWitnessFlat::from_i8_digits(vec![1, 0, -1, 2]),
+        logical_w: None,
+        commitment: FlatRingVec::from_coeffs(vec![F::zero(); 1]),
+        hint: empty_recursive_hint_cache(),
+        log_basis: 2,
+        carried_openings: vec![RecursiveCarriedOpening::recursive_witness(
+            vec![F::from_u64(1), F::from_u64(2)],
+            F::from_u64(4),
+            4,
+        )],
+    };
+    let raw = RootLevelRawOutput::<F, F, 1> {
+        y_rings: vec![CyclotomicRing::<F, 1>::zero()],
+        extension_opening_reduction: None,
+        v: Vec::new(),
+        stage1: AkitaStage1Proof {
+            stages: Vec::new(),
+            s_claim: F::zero(),
+        },
+        stage2_sumcheck_proof: SumcheckProof {
+            round_polys: Vec::new(),
+        },
+        w_commitment_proof: FlatRingVec::from_coeffs(vec![F::zero(); 1]),
+        w_eval: F::from_u64(4),
+        extra_carried_openings: vec![extra.clone()],
+        next_state,
+    };
+
+    let (proof, num_levels) = build_folded_batched_proof_with_suffix(raw, |_next_state| {
+        Ok(RecursiveSuffixOutcome {
+            intermediate_levels: Vec::new(),
+            terminal: TerminalLevelProof::new_with_extension_opening_reduction::<1>(
+                vec![CyclotomicRing::<F, 1>::zero()],
+                None,
+                SumcheckProof {
+                    round_polys: Vec::new(),
+                },
+                DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![F::zero()])),
+            ),
+            num_levels: 1,
+        })
+    })
+    .unwrap();
+
+    assert_eq!(num_levels, 1);
+    let fold = proof.root.as_fold().unwrap();
+    assert_eq!(fold.stage2.extra_carried_openings, vec![extra]);
+}
+
 #[test]
 fn recursive_extension_opening_reduction_pads_to_opening_cube() {
     let logical_w = RecursiveWitnessFlat::from_i8_digits(vec![1, -1, 2, 0, 3, -2]);
