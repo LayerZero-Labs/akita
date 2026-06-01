@@ -208,9 +208,12 @@ fn fp32_root_terminal_schedule(
     let compact_w_len = w_ring * Fp32RingSubfieldRootFoldCfg::D;
     let witness_shape = akita_types::DirectWitnessShape::PackedDigits((compact_w_len, 3));
     let direct_bytes = akita_types::direct_witness_bytes(field_bits, &witness_shape);
+    let challenge_field_bits = field_bits
+        .checked_mul(Fp32RingSubfieldRootFoldCfg::CHAL_EXT_DEGREE as u32)
+        .ok_or_else(|| AkitaError::InvalidSetup("challenge field bits overflow".to_string()))?;
     let level_bytes = akita_types::terminal_level_proof_bytes_for_mode(
         field_bits,
-        field_bits,
+        challenge_field_bits,
         &lp,
         compact_w_len,
         incidence.num_claims(),
