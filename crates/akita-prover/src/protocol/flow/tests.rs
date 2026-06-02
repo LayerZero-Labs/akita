@@ -100,6 +100,8 @@ fn recursive_carried_opening_state_requires_common_padded_domain() {
             },
         ],
         extra_carried_sources: Vec::new(),
+        #[cfg(feature = "zk")]
+        zk_hiding: ZkHidingProverState::new(Vec::new()),
     };
     assert_eq!(ok_state.common_padded_len().unwrap(), 4);
 
@@ -117,6 +119,8 @@ fn recursive_carried_opening_state_requires_common_padded_domain() {
             },
         ],
         extra_carried_sources: Vec::new(),
+        #[cfg(feature = "zk")]
+        zk_hiding: ZkHidingProverState::new(Vec::new()),
     };
     assert!(bad_state.common_padded_len().is_err());
 }
