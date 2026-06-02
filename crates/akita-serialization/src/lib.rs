@@ -171,18 +171,18 @@ pub trait AkitaDeserialize: Sized {
 mod primitive_impls {
     use super::*;
 
-    fn checked_vec_len(len: u64, validate: Validate) -> Result<usize, SerializationError> {
+    fn checked_vec_len<T>(len: u64, validate: Validate) -> Result<usize, SerializationError> {
         let len_usize =
             usize::try_from(len).map_err(|_| SerializationError::LengthLimitExceeded {
                 len,
                 max: usize::MAX,
             })?;
 
-        if validate == Validate::Yes && len_usize > DEFAULT_MAX_SEQUENCE_LEN {
-            return Err(SerializationError::LengthLimitExceeded {
-                len,
-                max: DEFAULT_MAX_SEQUENCE_LEN,
-            });
+        if validate == Validate::Yes {
+            let max_len = DEFAULT_MAX_SEQUENCE_LEN / std::mem::size_of::<T>().max(1);
+            if len_usize > max_len {
+                return Err(SerializationError::LengthLimitExceeded { len, max: max_len });
+            }
         }
 
         Ok(len_usize)
@@ -353,7 +353,7 @@ mod primitive_impls {
             _ctx: &(),
         ) -> Result<Self, SerializationError> {
             let encoded_len = u64::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            let len = checked_vec_len(encoded_len, validate)?;
+            let len = checked_vec_len::<T>(encoded_len, validate)?;
             let mut vec = Vec::new();
             vec.try_reserve_exact(len).map_err(|_| {
                 SerializationError::InvalidData("vector allocation failed".to_string())
@@ -398,6 +398,21 @@ mod tests {
 
         let decoded = Vec::<u8>::deserialize_compressed_unchecked(&bytes[..], &()).unwrap();
         assert_eq!(decoded, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn validated_vec_rejects_element_size_allocation_exhaustion() {
+        let mut bytes = Vec::new();
+        let max_usize_len = DEFAULT_MAX_SEQUENCE_LEN / std::mem::size_of::<usize>();
+        ((max_usize_len as u64) + 1)
+            .serialize_compressed(&mut bytes)
+            .unwrap();
+
+        let err = Vec::<usize>::deserialize_compressed(&bytes[..], &()).unwrap_err();
+        assert!(matches!(
+            err,
+            SerializationError::LengthLimitExceeded { .. }
+        ));
     }
 
     proptest! {
