@@ -99,7 +99,7 @@ The scalar `Fp16` backend uses `i64` wide accumulators with
 1. **Codegen-only change.** Serialised proof bytes are identical across
    all four backends (scalar `NoPacking`, NEON, AVX2, AVX-512) for any
    fixed `(setup, polynomial, opening point, transcript)`.  Verified by
-   the 7 new `packed_ring_subfield_fp8_*` parity tests plus all existing
+   the `packed_ring_subfield_fp8_*` parity tests plus all existing
    scheme-level tests.
 2. **Existing paths untouched.** The `Fp32`, `Fp64`, `Fp128` packed
    backends are not modified.  `RingSubfieldFp4` arithmetic is unchanged.
@@ -120,10 +120,6 @@ The scalar `Fp16` backend uses `i64` wide accumulators with
   (e.g. `vtbl` / `vpshufb`) for small-field multiplication.  Karatsuba
   over vector arithmetic proved simpler and already saturates the ALU
   pipeline; lookup-table exploration is deferred.
-- **AVX-512 split-half accumulation.** The AVX2 backend widens/narrows
-  per `add_vec`/`sub_vec`/`mul_vec` call.  Staying in u32 throughout
-  (two half-accumulators) would halve the widen/narrow traffic at the
-  cost of doubled register pressure.  Left as a follow-up.
 - **Runtime CPU dispatch.**  Single-backend-per-binary, matching the
   existing workspace convention.
 - **No CI changes.**  The pre-existing `packed_avx{2,512}` and
@@ -146,12 +142,20 @@ The scalar `Fp16` backend uses `i64` wide accumulators with
 
 ### Testing Strategy
 
-- 7 new parity tests in `packed_ext.rs`:
-  `packed_ring_subfield_fp8_{mul,square,inverse,add,sub,mul_identity,square_matches_mul}_fp16` —
-  compare `PackedRingSubfieldFp8` results against scalar `RingSubfieldFp8`
-  lane-by-lane.  These automatically exercise whichever backend is selected
-  by `<Fp16<P> as HasPacking>::Packing`.
-- All 157 existing `akita-field` tests pass.
+- Packed-vs-scalar parity tests in `packed_ext/tests.rs`, each comparing
+  `PackedRingSubfieldFp8` lane by lane against scalar `RingSubfieldFp8` and
+  automatically exercising whichever backend `<F as HasPacking>::Packing`
+  resolves to (scalar `NoPacking`, NEON, AVX2, or AVX-512):
+  - `packed_ring_subfield_fp8_mul_{fp64,prime31,prime32,fp16}` — multiply.
+  - `packed_ring_subfield_fp8_square{,_fp16}` — square, including the Fp16
+    SIMD square kernel.
+  - `packed_ring_subfield_fp8_fp16_edge` — Fp16 mul and square at field
+    boundary coefficients (`0, 1, (P-1)/2, P-2, P-1`), stressing the Solinas
+    reduction and the canonicalizing add/sub wraparound.
+  - `packed_ring_subfield_fp8_broadcast`, `packed_fp16_basic_arithmetic`.
+- CI exercises the scalar and AVX2 legs; NEON is covered on AArch64 dev
+  machines and AVX-512 on the Zen 5 benchmark host.
+- All existing `akita-field` tests pass.
 - The `full_fp16_d64` profile exercises end-to-end commit + prove + verify.
 
 ### Performance
@@ -176,6 +180,25 @@ Profile: `full_fp16_d64` prove time:
 |   20 |            282 ms |   132 ms |   116 ms |  **2.14×** |   **2.36×** |
 |   25 |           1404 ms |   785 ms |   693 ms |  **1.79×** |   **1.92×** |
 
+> **STALE — needs re-measurement.** The `full_fp16_d64` mode no longer exists
+> (current modes are `{dense,onehot}_fp16_{d32,d64}` etc.), so this table is
+> not reproducible as written. A 2026-06 re-run on the Zen 5 host with
+> `onehot_fp16_d64`/`dense_fp16_d64` gave scalar→AVX2 ratios of only
+> ~1.02–1.25× (e.g. dense nv25: scalar 1049 ms → AVX2 841 ms), because
+> `RingSubfieldFp8<Fp16>` multiply is not the E2E prove bottleneck for these
+> modes. The kernel microbench below is the reliable measure of the SIMD fp8
+> speedup; the E2E ratios above should be re-derived against a real mode.
+
+**AVX2 fp8 kernel microbench** (`field_arith/ext8`, `prime16_offset99`,
+ns/lane, criterion `--baseline` comparison on the same Zen 5 host). The
+widen-once split-half rewrite replaced the original per-op widen/narrow:
+
+| fp8 op    | per-op (chain / stream) | widen-once (chain / stream) | change         |
+| --------- | -----------------------:| ---------------------------:| --------------:|
+| `mul`     |     17.82 / 17.67       |        10.32 / 9.92         | −42% / −44%   |
+| `square`  |     11.51 / 11.27       |         8.12 / 7.09         | −30% / −37%   |
+| `mul_self`|     17.71 / 17.51       |        10.75 / 9.73         | −39% / −44%   |
+
 ## Design
 
 ### Architecture
@@ -193,15 +216,29 @@ Profile: `full_fp16_d64` prove time:
 
 - `ring_subfield_fp8_mul(a, b) -> [Self; 8]` — default: generic Karatsuba.
 - `ring_subfield_fp8_square(a) -> [Self; 8]` — default: cross-product doubling.
-- `ring_subfield_fp8_inverse(a) -> Option<[Self; 8]>` — default: `None` (falls back
-  to lane-by-lane scalar inversion in `PackedRingSubfieldFp8`).
 
-Each SIMD backend (`PackedFp16{Neon,Avx2,Avx512}`) overrides `mul` and
-`square` with architecture-specific intrinsics that operate on native
-vector types and call the backend's own `add_vec`/`sub_vec`/`mul_vec`.
-The `add_phi` fold-back is implemented per-backend as a free function
-(`neon_ring_subfield_fp8_add_phi_16`, `avx2_ring_subfield_fp8_add_phi_16`,
-`avx512_ring_subfield_fp8_add_phi_16`).
+Inversion is not a `PackedField` hook: `PackedRingSubfieldFp8::inverse` runs
+the scalar Gaussian-elimination inverse lane by lane.
+
+The 36-multiply Karatsuba schedule and the Chebyshev `φ` fold-back live in
+exactly one place — the lane-generic `ring_subfield_fp8_{mul,square}_schedule`
+free functions in `ext/ring_subfield_fp8.rs`, parameterised over a lane type
+`V` and its `add`/`sub`/`mul`.  Every consumer drives that one schedule:
+
+- the generic `PackedField` default passes `Self` with operator `+`/`-`/`*`;
+- the scalar field default passes `F` with field ops;
+- the `i64` Fp16 scalar path passes `i64` with raw integer ops, deferring a
+  single `rem_euclid` reduction per coefficient;
+- each SIMD backend (`PackedFp16{Neon,Avx2,Avx512}`) widens every input
+  coefficient to u32 once at entry, runs the schedule over u32 lanes via
+  `#[inline(always)]` closures wrapping its own `add_u32`/`sub_u32`/`mul_u32`,
+  and narrows once per output coefficient. NEON and AVX2 split the 16 u16
+  lanes into two u32 halves and run the schedule per half; AVX-512 keeps all
+  16 lanes in one `__m512i` of u32.
+
+The closures inline fully, so each monomorphization compiles to
+backend-specific intrinsics with no abstraction overhead (confirmed neutral
+on the fp8 mul/square benches).
 
 **`Fp16Packing` cfg cascade** (in `packed.rs`):
 
@@ -225,10 +262,10 @@ intermediates.  `Fp32`/`Fp64`/`Fp128` use the generic default.
   the element range `[0, 65437)` is too large for byte-indexed tables.
   Decomposition into nibbles would need 4 table lookups + recombination,
   which exceeded the cost of direct widening multiply.
-- **Staying in u32 throughout (AVX2).** Would avoid per-op widen/narrow
-  but doubles register pressure (16 `__m256i` accumulators for 8
-  coefficients × 2 halves).  Marginal on Zen 5 where the rename file is
-  deep; more attractive on older µarches.  Deferred.
+- **Per-op widen/narrow (AVX2, original).** The first AVX2 cut widened and
+  narrowed inside every `add_vec`/`sub_vec`/`mul_vec`. Switching to widen-once
+  split-half u32 (matching NEON/AVX-512) cut fp8 mul/square by 30–44% on
+  Zen 5 with no register-pressure regression, so the per-op form was dropped.
 - **Fp8 base field (8-bit modulus).** The spec explicitly limits scope
   to `Fp16`.  An 8-bit base field would enable byte-lane SIMD (32 lanes
   on NEON, 32/64 on AVX2/512) but introduces significant algebraic
@@ -237,9 +274,11 @@ intermediates.  `Fp32`/`Fp64`/`Fp128` use the generic default.
 ## Documentation
 
 This spec is the primary documentation.  Inline doc comments on
-`solinas_reduce_16` / `solinas_reduce` explain the three-fold bound.
-Module-level doc comments on `packed_{neon,avx2,avx512}.rs` updated to
-include `Fp16`.
+`solinas_reduce_16` / `solinas_reduce` explain the three-fold bound, and
+`ring_subfield_fp8_{mul,square}_schedule` / `fp8_add_phi` in
+`ext/ring_subfield_fp8.rs` document the shared Karatsuba schedule and `φ`
+fold-back.  Module-level doc comments on `packed_{neon,avx2,avx512}.rs`
+updated to include `Fp16`.
 
 ## References
 
@@ -247,7 +286,7 @@ include `Fp16`.
   the Fp16 field family spec that introduced `RingSubfieldFp8`.
 - [`specs/avx-simd-port.md`](avx-simd-port.md) — the AVX port for Fp32
   `RingSubfieldFp4`, whose patterns this PR follows for fp8.
+- [`crates/akita-field/src/fields/ext/ring_subfield_fp8.rs`](../crates/akita-field/src/fields/ext/ring_subfield_fp8.rs)
+  — shared lane-generic Karatsuba schedule and `φ` fold-back driven by every backend.
 - [`crates/akita-field/src/fields/packed_neon.rs`](../crates/akita-field/src/fields/packed_neon.rs)
-  — NEON backend (reference implementation).
-- [`crates/akita-field/src/fields/ext.rs`](../crates/akita-field/src/fields/ext.rs)
-  — Chebyshev basis multiplication rule and `add_phi` fold-back.
+  — NEON backend (reference SIMD wiring of the shared schedule).

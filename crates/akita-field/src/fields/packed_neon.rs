@@ -1,7 +1,10 @@
 //! AArch64 NEON packed backends for Fp16, Fp32, Fp64, Fp128.
 
 use super::packed::{PackedField, PackedValue};
-use crate::fields::ext::{Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config};
+use crate::fields::ext::{
+    ring_subfield_fp8_mul_schedule, ring_subfield_fp8_square_schedule, Fp2Config,
+    PowerBasisFp4Config, TowerBasisFp4Config,
+};
 use crate::fields::{Fp128, Fp16, Fp32, Fp64};
 use crate::Invertible;
 use core::arch::aarch64::{
@@ -712,86 +715,18 @@ impl<const P: u32> PackedFp16Neon<P> {
         vminq_u32(f3, vsubq_u32(f3, p32))
     }
 
-    #[inline(always)]
-    fn ring_subfield_fp8_add_phi_u32(out: &mut [uint32x4_t; 8], idx: usize, value: uint32x4_t) {
-        match idx {
-            0 => out[0] = Self::add_u32(out[0], Self::add_u32(value, value)),
-            1..=7 => out[idx] = Self::add_u32(out[idx], value),
-            8 => {}
-            9..=15 => out[16 - idx] = Self::sub_u32(out[16 - idx], value),
-            _ => unreachable!(),
-        }
-    }
-
+    /// Run the shared fp8 multiply schedule on one widened `uint32x4_t` half.
     #[inline(always)]
     fn ring_subfield_fp8_mul_u32(a: [uint32x4_t; 8], b: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
         let zero = unsafe { vdupq_n_u32(0) };
-        let mut out = [zero; 8];
-
-        let diag: [uint32x4_t; 8] = std::array::from_fn(|i| Self::mul_u32(a[i], b[i]));
-        out[0] = diag[0];
-
-        for k in 1..8 {
-            let mixed = Self::sub_u32(
-                Self::sub_u32(
-                    Self::mul_u32(Self::add_u32(a[0], a[k]), Self::add_u32(b[0], b[k])),
-                    diag[0],
-                ),
-                diag[k],
-            );
-            out[k] = Self::add_u32(out[k], mixed);
-        }
-
-        for (i, &diag_i) in diag.iter().enumerate().skip(1) {
-            out[0] = Self::add_u32(out[0], Self::add_u32(diag_i, diag_i));
-            Self::ring_subfield_fp8_add_phi_u32(&mut out, i + i, diag_i);
-        }
-
-        for i in 1..8usize {
-            for j in (i + 1)..8usize {
-                let mixed = Self::sub_u32(
-                    Self::sub_u32(
-                        Self::mul_u32(Self::add_u32(a[i], a[j]), Self::add_u32(b[i], b[j])),
-                        diag[i],
-                    ),
-                    diag[j],
-                );
-                Self::ring_subfield_fp8_add_phi_u32(&mut out, i + j, mixed);
-                Self::ring_subfield_fp8_add_phi_u32(&mut out, j - i, mixed);
-            }
-        }
-
-        out
+        ring_subfield_fp8_mul_schedule(a, b, zero, Self::add_u32, Self::sub_u32, Self::mul_u32)
     }
 
+    /// Run the shared fp8 square schedule on one widened `uint32x4_t` half.
     #[inline(always)]
     fn ring_subfield_fp8_square_u32(a: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
         let zero = unsafe { vdupq_n_u32(0) };
-        let mut out = [zero; 8];
-
-        let sq: [uint32x4_t; 8] = std::array::from_fn(|i| Self::mul_u32(a[i], a[i]));
-        out[0] = sq[0];
-
-        for k in 1..8 {
-            let cross = Self::mul_u32(a[0], a[k]);
-            out[k] = Self::add_u32(out[k], Self::add_u32(cross, cross));
-        }
-
-        for (i, &sq_i) in sq.iter().enumerate().skip(1) {
-            out[0] = Self::add_u32(out[0], Self::add_u32(sq_i, sq_i));
-            Self::ring_subfield_fp8_add_phi_u32(&mut out, i + i, sq_i);
-        }
-
-        for i in 1..8usize {
-            for j in (i + 1)..8usize {
-                let cross = Self::mul_u32(a[i], a[j]);
-                let doubled = Self::add_u32(cross, cross);
-                Self::ring_subfield_fp8_add_phi_u32(&mut out, i + j, doubled);
-                Self::ring_subfield_fp8_add_phi_u32(&mut out, j - i, doubled);
-            }
-        }
-
-        out
+        ring_subfield_fp8_square_schedule(a, zero, Self::add_u32, Self::sub_u32, Self::mul_u32)
     }
 }
 

@@ -1,7 +1,8 @@
 //! Packed field abstractions and architecture-specific SIMD backends.
 
 use crate::fields::ext::{
-    power_basis_fp4_mul_coeffs, Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
+    power_basis_fp4_mul_coeffs, ring_subfield_fp8_mul_schedule, ring_subfield_fp8_square_schedule,
+    Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
 };
 use crate::fields::{Fp128, Fp16, Fp32, Fp64};
 use crate::{FieldCore, Invertible};
@@ -60,17 +61,6 @@ pub trait PackedValue: 'static + Copy + Send + Sync {
             }
         }
         out
-    }
-}
-
-#[inline(always)]
-fn ring_subfield_fp8_add_phi_packed<PF: PackedField>(out: &mut [PF; 8], idx: usize, value: PF) {
-    match idx {
-        0 => out[0] = out[0] + value + value,
-        1..=7 => out[idx] = out[idx] + value,
-        8 => {}
-        9..=15 => out[16 - idx] = out[16 - idx] - value,
-        _ => unreachable!(),
     }
 }
 
@@ -247,62 +237,26 @@ pub trait PackedField:
     /// Backend hook for multiplying packed ring-subfield degree-8 elements.
     #[inline(always)]
     fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
-        let diag: [Self; 8] = std::array::from_fn(|i| a[i] * b[i]);
-        let mut out = [Self::broadcast(Self::Scalar::zero()); 8];
-        out[0] = diag[0];
-
-        for k in 1..8 {
-            let mixed = (a[0] + a[k]) * (b[0] + b[k]) - diag[0] - diag[k];
-            out[k] = out[k] + mixed;
-        }
-
-        for (i, &diag_i) in diag.iter().enumerate().skip(1) {
-            out[0] = out[0] + diag_i + diag_i;
-            ring_subfield_fp8_add_phi_packed(&mut out, i + i, diag_i);
-        }
-
-        for i in 1..8usize {
-            for j in (i + 1)..8usize {
-                let mixed = (a[i] + a[j]) * (b[i] + b[j]) - diag[i] - diag[j];
-                ring_subfield_fp8_add_phi_packed(&mut out, i + j, mixed);
-                ring_subfield_fp8_add_phi_packed(&mut out, j - i, mixed);
-            }
-        }
-
-        out
+        ring_subfield_fp8_mul_schedule(
+            a,
+            b,
+            Self::broadcast(Self::Scalar::zero()),
+            |x, y| x + y,
+            |x, y| x - y,
+            |x, y| x * y,
+        )
     }
 
     /// Backend hook for squaring packed ring-subfield degree-8 elements.
-    ///
-    /// Exploits the identity `(a_i + a_j)² - a_i² - a_j² = 2·a_i·a_j` by
-    /// computing `a_i·a_j` directly and doubling, saving one add + two subs
-    /// per cross-term compared to the Karatsuba form used in `mul`.
     #[inline(always)]
     fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
-        let sq: [Self; 8] = std::array::from_fn(|i| a[i] * a[i]);
-        let mut out = [Self::broadcast(Self::Scalar::zero()); 8];
-        out[0] = sq[0];
-
-        for k in 1..8 {
-            let cross = a[0] * a[k];
-            out[k] = out[k] + cross + cross;
-        }
-
-        for (i, &sq_i) in sq.iter().enumerate().skip(1) {
-            out[0] = out[0] + sq_i + sq_i;
-            ring_subfield_fp8_add_phi_packed(&mut out, i + i, sq_i);
-        }
-
-        for i in 1..8usize {
-            for j in (i + 1)..8usize {
-                let cross = a[i] * a[j];
-                let doubled = cross + cross;
-                ring_subfield_fp8_add_phi_packed(&mut out, i + j, doubled);
-                ring_subfield_fp8_add_phi_packed(&mut out, j - i, doubled);
-            }
-        }
-
-        out
+        ring_subfield_fp8_square_schedule(
+            a,
+            Self::broadcast(Self::Scalar::zero()),
+            |x, y| x + y,
+            |x, y| x - y,
+            |x, y| x * y,
+        )
     }
 }
 

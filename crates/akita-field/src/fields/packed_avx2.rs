@@ -3,7 +3,10 @@
 //! Techniques adapted from plonky2 (Goldilocks) and plonky3 (Mersenne-31).
 
 use super::packed::{PackedField, PackedValue};
-use crate::fields::ext::{Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config};
+use crate::fields::ext::{
+    ring_subfield_fp8_mul_schedule, ring_subfield_fp8_square_schedule, Fp2Config,
+    PowerBasisFp4Config, TowerBasisFp4Config,
+};
 use crate::fields::{Fp128, Fp16, Fp32, Fp64};
 use crate::Invertible;
 use core::arch::x86_64::*;
@@ -607,48 +610,36 @@ impl<const P: u32> PackedFp16Avx2<P> {
         _mm256_permute4x64_epi64::<0xD8>(packed)
     }
 
+    /// Canonical modular add of two `__m256i` of 8 u32 lanes (each in `[0, P)`).
     #[inline(always)]
-    unsafe fn add_vec(a: __m256i, b: __m256i) -> __m256i {
+    unsafe fn add_u32(a: __m256i, b: __m256i) -> __m256i {
         let p32 = _mm256_set1_epi32(P as i32);
-        let sum_lo = _mm256_add_epi32(Self::widen_lo(a), Self::widen_lo(b));
-        let sum_hi = _mm256_add_epi32(Self::widen_hi(a), Self::widen_hi(b));
-        let red_lo = _mm256_min_epu32(sum_lo, _mm256_sub_epi32(sum_lo, p32));
-        let red_hi = _mm256_min_epu32(sum_hi, _mm256_sub_epi32(sum_hi, p32));
-        Self::narrow(red_lo, red_hi)
+        let sum = _mm256_add_epi32(a, b);
+        _mm256_min_epu32(sum, _mm256_sub_epi32(sum, p32))
     }
 
+    /// Canonical modular sub of two `__m256i` of 8 u32 lanes (each in `[0, P)`).
     #[inline(always)]
-    unsafe fn sub_vec(a: __m256i, b: __m256i) -> __m256i {
+    unsafe fn sub_u32(a: __m256i, b: __m256i) -> __m256i {
         let p32 = _mm256_set1_epi32(P as i32);
-        let diff_lo = _mm256_add_epi32(_mm256_sub_epi32(Self::widen_lo(a), Self::widen_lo(b)), p32);
-        let diff_hi = _mm256_add_epi32(_mm256_sub_epi32(Self::widen_hi(a), Self::widen_hi(b)), p32);
-        let red_lo = _mm256_min_epu32(diff_lo, _mm256_sub_epi32(diff_lo, p32));
-        let red_hi = _mm256_min_epu32(diff_hi, _mm256_sub_epi32(diff_hi, p32));
-        Self::narrow(red_lo, red_hi)
+        let diff = _mm256_add_epi32(_mm256_sub_epi32(a, b), p32);
+        _mm256_min_epu32(diff, _mm256_sub_epi32(diff, p32))
     }
 
-    /// Widen-multiply-reduce: widens both halves to u32, multiplies,
-    /// applies three Solinas folds, and narrows back to u16.
+    /// Multiply two `__m256i` of 8 u32 lanes (each in `[0, P)`) and reduce.
     #[inline(always)]
-    unsafe fn mul_vec(a: __m256i, b: __m256i) -> __m256i {
-        let a_lo = Self::widen_lo(a);
-        let a_hi = Self::widen_hi(a);
-        let b_lo = Self::widen_lo(b);
-        let b_hi = Self::widen_hi(b);
-        let prod_lo = _mm256_mullo_epi32(a_lo, b_lo);
-        let prod_hi = _mm256_mullo_epi32(a_hi, b_hi);
-        Self::solinas_reduce_16(prod_lo, prod_hi)
+    unsafe fn mul_u32(a: __m256i, b: __m256i) -> __m256i {
+        Self::solinas_reduce_u32(_mm256_mullo_epi32(a, b))
     }
 
-    /// Three-fold Solinas reduction of two `__m256i` of u32 products back
-    /// to one `__m256i` of 16 u16 values.
+    /// Three Solinas folds of one `__m256i` of 8 u32 products, reduced to `[0, P)`.
     ///
     /// Three folds suffice for all valid `Fp16<P>` parameters
     /// (`BITS ≤ 16`, `C(C+1) < P`). Worst-case bound after fold 3:
     ///   fold1 ≤ (C+1)·2^BITS → fold2 ≤ 2^BITS + C² − 2C
     ///   fold3 ≤ C² − C − 1 < 2^BITS (since C < √P ≤ 2⁸).
     #[inline(always)]
-    unsafe fn solinas_reduce_16(prod_lo: __m256i, prod_hi: __m256i) -> __m256i {
+    unsafe fn solinas_reduce_u32(prod: __m256i) -> __m256i {
         let mask = _mm256_set1_epi32((1u32 << Self::BITS) as i32 - 1);
         let c = _mm256_set1_epi32(Fp16::<P>::C as i32);
         let shift = _mm_set_epi64x(0, Self::BITS as i64);
@@ -659,17 +650,62 @@ impl<const P: u32> PackedFp16Avx2<P> {
             _mm256_add_epi32(lo, _mm256_mullo_epi32(hi, c))
         };
 
-        let f1_lo = fold(prod_lo);
-        let f1_hi = fold(prod_hi);
-        let f2_lo = fold(f1_lo);
-        let f2_hi = fold(f1_hi);
-        let f3_lo = fold(f2_lo);
-        let f3_hi = fold(f2_hi);
-
+        let f3 = fold(fold(fold(prod)));
         let p32 = _mm256_set1_epi32(P as i32);
-        let red_lo = _mm256_min_epu32(f3_lo, _mm256_sub_epi32(f3_lo, p32));
-        let red_hi = _mm256_min_epu32(f3_hi, _mm256_sub_epi32(f3_hi, p32));
-        Self::narrow(red_lo, red_hi)
+        _mm256_min_epu32(f3, _mm256_sub_epi32(f3, p32))
+    }
+
+    #[inline(always)]
+    unsafe fn add_vec(a: __m256i, b: __m256i) -> __m256i {
+        Self::narrow(
+            Self::add_u32(Self::widen_lo(a), Self::widen_lo(b)),
+            Self::add_u32(Self::widen_hi(a), Self::widen_hi(b)),
+        )
+    }
+
+    #[inline(always)]
+    unsafe fn sub_vec(a: __m256i, b: __m256i) -> __m256i {
+        Self::narrow(
+            Self::sub_u32(Self::widen_lo(a), Self::widen_lo(b)),
+            Self::sub_u32(Self::widen_hi(a), Self::widen_hi(b)),
+        )
+    }
+
+    /// Widen-multiply-reduce: widens both halves to u32, multiplies,
+    /// applies three Solinas folds, and narrows back to u16.
+    #[inline(always)]
+    unsafe fn mul_vec(a: __m256i, b: __m256i) -> __m256i {
+        Self::narrow(
+            Self::mul_u32(Self::widen_lo(a), Self::widen_lo(b)),
+            Self::mul_u32(Self::widen_hi(a), Self::widen_hi(b)),
+        )
+    }
+
+    /// Run the shared fp8 multiply schedule on one widened `__m256i` u32 half.
+    #[inline(always)]
+    fn ring_subfield_fp8_mul_u32(a: [__m256i; 8], b: [__m256i; 8]) -> [__m256i; 8] {
+        let zero = unsafe { _mm256_setzero_si256() };
+        ring_subfield_fp8_mul_schedule(
+            a,
+            b,
+            zero,
+            |x, y| unsafe { Self::add_u32(x, y) },
+            |x, y| unsafe { Self::sub_u32(x, y) },
+            |x, y| unsafe { Self::mul_u32(x, y) },
+        )
+    }
+
+    /// Run the shared fp8 square schedule on one widened `__m256i` u32 half.
+    #[inline(always)]
+    fn ring_subfield_fp8_square_u32(a: [__m256i; 8]) -> [__m256i; 8] {
+        let zero = unsafe { _mm256_setzero_si256() };
+        ring_subfield_fp8_square_schedule(
+            a,
+            zero,
+            |x, y| unsafe { Self::add_u32(x, y) },
+            |x, y| unsafe { Self::sub_u32(x, y) },
+            |x, y| unsafe { Self::mul_u32(x, y) },
+        )
     }
 }
 
@@ -759,25 +795,6 @@ impl<const P: u32> MulAssign for PackedFp16Avx2<P> {
     }
 }
 
-/// Chebyshev φ fold-back for AVX2 Fp16 `__m256i` accumulators (K=8).
-#[inline(always)]
-unsafe fn avx2_ring_subfield_fp8_add_phi_16<const P: u32>(
-    out: &mut [__m256i; 8],
-    idx: usize,
-    value: __m256i,
-) {
-    match idx {
-        0 => {
-            out[0] =
-                PackedFp16Avx2::<P>::add_vec(out[0], PackedFp16Avx2::<P>::add_vec(value, value))
-        }
-        1..=7 => out[idx] = PackedFp16Avx2::<P>::add_vec(out[idx], value),
-        8 => {}
-        9..=15 => out[16 - idx] = PackedFp16Avx2::<P>::sub_vec(out[16 - idx], value),
-        _ => unreachable!(),
-    }
-}
-
 impl<const P: u32> PackedField for PackedFp16Avx2<P> {
     type Scalar = Fp16<P>;
 
@@ -795,85 +812,29 @@ impl<const P: u32> PackedField for PackedFp16Avx2<P> {
 
     /// Chebyshev-basis Karatsuba multiplication for `RingSubfieldFp8` lanes.
     ///
-    /// Each `add_vec`/`sub_vec`/`mul_vec` widens to two `__m256i` of u32,
-    /// operates, and narrows back.  A split-half approach that stays in u32
-    /// throughout (like the AVX-512 variant) would halve the widen/narrow
-    /// traffic at the cost of doubled accumulator count; left as a follow-up.
+    /// Widens the 16 u16 lanes into two `__m256i` u32 halves once at entry,
+    /// runs the full fp8 schedule per half in u32 arithmetic (matching the
+    /// NEON and AVX-512 backends), and narrows once per output coefficient.
     #[inline(always)]
     fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
-        unsafe {
-            let a = a.map(Self::to_vec);
-            let b = b.map(Self::to_vec);
-            let zero = _mm256_setzero_si256();
-            let mut out = [zero; 8];
-
-            let diag: [__m256i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], b[i]));
-            out[0] = diag[0];
-
-            for k in 1..8 {
-                let mixed = Self::sub_vec(
-                    Self::sub_vec(
-                        Self::mul_vec(Self::add_vec(a[0], a[k]), Self::add_vec(b[0], b[k])),
-                        diag[0],
-                    ),
-                    diag[k],
-                );
-                out[k] = Self::add_vec(out[k], mixed);
-            }
-
-            for (i, &diag_i) in diag.iter().enumerate().skip(1) {
-                out[0] = Self::add_vec(out[0], Self::add_vec(diag_i, diag_i));
-                avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + i, diag_i);
-            }
-
-            for i in 1..8usize {
-                for j in (i + 1)..8usize {
-                    let mixed = Self::sub_vec(
-                        Self::sub_vec(
-                            Self::mul_vec(Self::add_vec(a[i], a[j]), Self::add_vec(b[i], b[j])),
-                            diag[i],
-                        ),
-                        diag[j],
-                    );
-                    avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + j, mixed);
-                    avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, j - i, mixed);
-                }
-            }
-
-            out.map(Self::from_vec)
-        }
+        let a = a.map(Self::to_vec);
+        let b = b.map(Self::to_vec);
+        let a_lo: [__m256i; 8] = std::array::from_fn(|i| unsafe { Self::widen_lo(a[i]) });
+        let a_hi: [__m256i; 8] = std::array::from_fn(|i| unsafe { Self::widen_hi(a[i]) });
+        let b_lo: [__m256i; 8] = std::array::from_fn(|i| unsafe { Self::widen_lo(b[i]) });
+        let b_hi: [__m256i; 8] = std::array::from_fn(|i| unsafe { Self::widen_hi(b[i]) });
+        let out_lo = Self::ring_subfield_fp8_mul_u32(a_lo, b_lo);
+        let out_hi = Self::ring_subfield_fp8_mul_u32(a_hi, b_hi);
+        std::array::from_fn(|i| Self::from_vec(unsafe { Self::narrow(out_lo[i], out_hi[i]) }))
     }
 
     #[inline(always)]
     fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
-        unsafe {
-            let a = a.map(Self::to_vec);
-            let zero = _mm256_setzero_si256();
-            let mut out = [zero; 8];
-
-            let sq: [__m256i; 8] = std::array::from_fn(|i| Self::mul_vec(a[i], a[i]));
-            out[0] = sq[0];
-
-            for k in 1..8 {
-                let cross = Self::mul_vec(a[0], a[k]);
-                out[k] = Self::add_vec(out[k], Self::add_vec(cross, cross));
-            }
-
-            for (i, &sq_i) in sq.iter().enumerate().skip(1) {
-                out[0] = Self::add_vec(out[0], Self::add_vec(sq_i, sq_i));
-                avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + i, sq_i);
-            }
-
-            for i in 1..8usize {
-                for j in (i + 1)..8usize {
-                    let cross = Self::mul_vec(a[i], a[j]);
-                    let doubled = Self::add_vec(cross, cross);
-                    avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, i + j, doubled);
-                    avx2_ring_subfield_fp8_add_phi_16::<P>(&mut out, j - i, doubled);
-                }
-            }
-
-            out.map(Self::from_vec)
-        }
+        let a = a.map(Self::to_vec);
+        let a_lo: [__m256i; 8] = std::array::from_fn(|i| unsafe { Self::widen_lo(a[i]) });
+        let a_hi: [__m256i; 8] = std::array::from_fn(|i| unsafe { Self::widen_hi(a[i]) });
+        let out_lo = Self::ring_subfield_fp8_square_u32(a_lo);
+        let out_hi = Self::ring_subfield_fp8_square_u32(a_hi);
+        std::array::from_fn(|i| Self::from_vec(unsafe { Self::narrow(out_lo[i], out_hi[i]) }))
     }
 }

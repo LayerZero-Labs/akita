@@ -655,6 +655,72 @@ fn packed_ring_subfield_fp8_square() {
 }
 
 #[test]
+fn packed_ring_subfield_fp8_square_fp16() {
+    let mut rng = StdRng::seed_from_u64(505);
+    let width = <PR8Fp16 as PackedValue>::WIDTH;
+    let a_elems: Vec<R8Fp16> = (0..width).map(|_| R8Fp16::random(&mut rng)).collect();
+
+    let pa = PR8Fp16::from_fn(|i| a_elems[i]);
+    let sq = pa.square();
+
+    for (i, a) in a_elems.iter().enumerate() {
+        assert_eq!(
+            sq.extract(i),
+            a.square(),
+            "packed RingSubfieldFp8<Fp16> square mismatch at lane {i}"
+        );
+    }
+}
+
+/// Edge-value parity for the Fp16 fp8 mul and square kernels.
+///
+/// Stresses the Solinas reduction and the canonicalizing add/sub wraparound
+/// with coefficients at the field boundary (`0`, `1`, `(P-1)/2`, `P-2`, `P-1`)
+/// across every lane. Selects whichever backend `HasPacking` resolves to, so
+/// the scalar / NEON / AVX2 / AVX-512 CI legs each exercise their own kernel.
+#[test]
+fn packed_ring_subfield_fp8_fp16_edge() {
+    use crate::fields::pseudo_mersenne::PRIME16_OFFSET99_MODULUS as MODULUS;
+    type F16 = Prime16Offset99;
+
+    let edges: [u16; 6] = [
+        0,
+        1,
+        2,
+        ((MODULUS - 1) / 2) as u16,
+        (MODULUS - 2) as u16,
+        (MODULUS - 1) as u16,
+    ];
+    let elem = |offset: usize| {
+        R8Fp16::new(std::array::from_fn(|j| {
+            F16::from_canonical_u16(edges[(offset + j) % edges.len()])
+        }))
+    };
+
+    let width = <PR8Fp16 as PackedValue>::WIDTH;
+    let a_elems: Vec<R8Fp16> = (0..width).map(elem).collect();
+    let b_elems: Vec<R8Fp16> = (0..width).map(|i| elem(i + 3)).collect();
+
+    let pa = PR8Fp16::from_fn(|i| a_elems[i]);
+    let pb = PR8Fp16::from_fn(|i| b_elems[i]);
+    let pmul = pa * pb;
+    let psq = pa.square();
+
+    for i in 0..width {
+        assert_eq!(
+            pmul.extract(i),
+            a_elems[i] * b_elems[i],
+            "packed RingSubfieldFp8<Fp16> edge mul mismatch at lane {i}"
+        );
+        assert_eq!(
+            psq.extract(i),
+            a_elems[i].square(),
+            "packed RingSubfieldFp8<Fp16> edge square mismatch at lane {i}"
+        );
+    }
+}
+
+#[test]
 fn packed_ring_subfield_fp8_broadcast() {
     let val = R8Fp64::new([
         F::from_u64(1),
