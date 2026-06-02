@@ -32,6 +32,11 @@ REQUIRED_RUN_METRICS = (
     "proof_size_bytes",
     "accounted_bytes",
     "max_rss_kib",
+    "crt_profile",
+    "crt_num_primes",
+    "crt_limb_bits",
+    "balanced_digit_safe_width",
+    "raw_i8_safe_width",
     "claim_ext_degree",
     "challenge_ext_degree",
     "akita_levels",
@@ -353,6 +358,13 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             summary["setup_ring_elements"] = int(kvs["setup_ring_elements"])
             summary["setup_vector_bytes"] = int(kvs["setup_vector_bytes"])
             summary["setup_ntt_cache_bytes"] = int(kvs["setup_ntt_cache_bytes"])
+        elif "CRT NTT profile" in line and kvs.get("label") == mode:
+            summary["crt_profile"] = kvs["crt_profile"]
+            summary["crt_num_primes"] = int(kvs["crt_num_primes"])
+            summary["crt_limb_bits"] = int(kvs["crt_limb_bits"])
+            summary["max_i8_log_basis"] = int(kvs["max_i8_log_basis"])
+            summary["balanced_digit_safe_width"] = int(kvs["balanced_digit_safe_width"])
+            summary["raw_i8_safe_width"] = int(kvs["raw_i8_safe_width"])
         elif " INFO setup" in line and kvs.get("label") == mode:
             summary["setup_s"] = float(kvs["elapsed_s"])
         elif " INFO commit" in line and kvs.get("label") == mode:
@@ -520,6 +532,11 @@ def infer_failure_phase(summary: dict[str, object], first_missing: str | None = 
         "accounted_bytes": "proof accounting",
         "consistent_proof_accounting": "proof accounting",
         "max_rss_kib": "memory",
+        "crt_profile": "CRT profile",
+        "crt_num_primes": "CRT profile",
+        "crt_limb_bits": "CRT profile",
+        "balanced_digit_safe_width": "CRT capacity",
+        "raw_i8_safe_width": "CRT capacity",
         "claim_ext_degree": "field roles",
         "challenge_ext_degree": "field roles",
         "akita_levels": "proof levels",
@@ -564,6 +581,11 @@ SUMMARY_CSV_COLUMNS = (
     "setup_ring_elements",
     "setup_vector_bytes",
     "setup_ntt_cache_bytes",
+    "crt_profile",
+    "crt_num_primes",
+    "crt_limb_bits",
+    "balanced_digit_safe_width",
+    "raw_i8_safe_width",
     "commit_s",
     "prove_total_s",
     "verify_total_s",
@@ -796,6 +818,10 @@ def fmt_seconds(value: float) -> str:
     return f"{value:.3f}"
 
 
+def fmt_milliseconds(value: float) -> str:
+    return f"{value * 1_000.0:.1f}"
+
+
 def fmt_mib(value_kib: float) -> str:
     return f"{value_kib / 1024.0:.1f}"
 
@@ -835,7 +861,7 @@ TIME_METRICS = [
     Metric("setup_s", "Setup", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
     Metric("prove_total_s", "Prove", "s", fmt_seconds),
-    Metric("verify_total_s", "Verify", "s", fmt_seconds),
+    Metric("verify_total_s", "Verify", "ms", fmt_milliseconds),
     Metric("max_rss_kib", "Max RSS", "MiB", fmt_mib),
 ]
 
@@ -865,6 +891,13 @@ def fmt_optional_seconds(summary: dict[str, object], key: str) -> str:
     if value is None:
         return "n/a"
     return fmt_seconds(float(value))
+
+
+def fmt_optional_milliseconds(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "n/a"
+    return fmt_milliseconds(float(value))
 
 
 def fmt_optional_mib(summary: dict[str, object], key: str) -> str:
@@ -948,7 +981,7 @@ def render_matrix_summary(
         "Setup NTT MiB",
         "Commit s",
         "Prove s",
-        "Verify s",
+        "Verify ms",
         "RSS MiB",
         "Proof B",
     ]
@@ -973,7 +1006,7 @@ def render_matrix_summary(
             fmt_optional_mib_from_bytes(current, "setup_ntt_cache_bytes"),
             fmt_optional_seconds(current, "commit_s"),
             fmt_optional_seconds(current, "prove_total_s"),
-            fmt_optional_seconds(current, "verify_total_s"),
+            fmt_optional_milliseconds(current, "verify_total_s"),
             fmt_optional_mib(current, "max_rss_kib"),
             fmt_optional_bytes(current, "proof_size_bytes"),
         ]
@@ -1249,8 +1282,10 @@ def render_report(args: argparse.Namespace) -> int:
             ]:
                 observed_range = sample_range(current, key)
                 if observed_range is not None:
+                    formatter = fmt_milliseconds if key == "verify_total_s" else fmt_seconds
+                    unit = "ms" if key == "verify_total_s" else "s"
                     ranges.append(
-                        f"{label} `{fmt_seconds(observed_range[0])}-{fmt_seconds(observed_range[1])}s`"
+                        f"{label} `{formatter(observed_range[0])}-{formatter(observed_range[1])}{unit}`"
                     )
             if ranges:
                 print()
@@ -1268,6 +1303,18 @@ def render_report(args: argparse.Namespace) -> int:
             print(
                 f"- Setup NTT cache: `{fmt_bytes(float(current['setup_ntt_cache_bytes']))} B` "
                 f"({fmt_optional_mib_from_bytes(current, 'setup_ntt_cache_bytes')} MiB)"
+            )
+        if current.get("crt_profile") is not None:
+            print(
+                f"- CRT profile: `{current['crt_profile']}` "
+                f"(K={current.get('crt_num_primes', 'n/a')}, "
+                f"limb_bits={current.get('crt_limb_bits', 'n/a')})"
+            )
+        if current.get("balanced_digit_safe_width") is not None or current.get("raw_i8_safe_width") is not None:
+            print(
+                "- CRT safe widths: "
+                f"`balanced_digit={current.get('balanced_digit_safe_width', 'n/a')}`, "
+                f"`raw_i8={current.get('raw_i8_safe_width', 'n/a')}`"
             )
         if current.get("proof_size_bytes") is not None:
             print(f"- Proof size: `{fmt_bytes(float(current['proof_size_bytes']))} B`")

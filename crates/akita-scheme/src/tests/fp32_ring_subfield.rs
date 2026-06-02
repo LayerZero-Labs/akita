@@ -134,7 +134,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     type ClaimField = akita_field::RingSubfieldFp4<Self::Field>;
     type ChallengeField = Self::ClaimField;
 
-    const D: usize = 16;
+    const D: usize = 32;
 
     fn decomposition() -> akita_types::DecompositionParams {
         akita_types::DecompositionParams {
@@ -223,7 +223,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     type ClaimField = akita_field::RingSubfieldFp4<Self::Field>;
     type ChallengeField = Self::ClaimField;
 
-    const D: usize = 16;
+    const D: usize = 32;
 
     fn decomposition() -> akita_types::DecompositionParams {
         akita_types::DecompositionParams {

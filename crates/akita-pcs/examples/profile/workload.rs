@@ -1,5 +1,6 @@
 use crate::report::{
-    emit_runtime_schedule_summary, print_batched_proof_summary, report_setup_sizes, report_timing,
+    emit_runtime_schedule_summary, print_batched_proof_summary, report_crt_profile,
+    report_setup_sizes, report_timing,
 };
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
@@ -444,6 +445,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         setup_ring_elements * D * std::mem::size_of::<FF>(),
         prepared.shared_ntt_cache_bytes(),
     );
+    report_crt_profile(label, prepared.shared_ntt_profile());
 
     run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &poly, &original_pt, opening, plan);
 }
@@ -527,6 +529,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         setup_ring_elements * D * std::mem::size_of::<FF>(),
         prepared.shared_ntt_cache_bytes(),
     );
+    report_crt_profile(label, prepared.shared_ntt_profile());
 
     run_prove::<FF, D, Cfg, _>(label, &setup, &prepared, &onehot_poly, &pt, opening, plan);
 }
@@ -629,6 +632,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         setup_ring_elements * D * std::mem::size_of::<FF>(),
         prepared.shared_ntt_cache_bytes(),
     );
+    report_crt_profile(label, prepared.shared_ntt_profile());
 
     let t0 = Instant::now();
     let (commitment, hint) = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(
