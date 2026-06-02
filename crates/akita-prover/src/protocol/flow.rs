@@ -9,10 +9,11 @@ use crate::protocol::ring_switch::{
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 #[cfg(feature = "zk")]
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
+use crate::protocol::RingRelationProver;
 use crate::{
-    AkitaPolyOps, CommittedPolynomials, ProverClaims, ProverComputeBackend, QuadraticEquation,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
-    RootTensorProjectionPoly,
+    AkitaPolyOps, CommittedPolynomials, ProverClaims, ProverComputeBackend,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, RingRelationInstance,
+    RingRelationWitness, RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
@@ -62,7 +63,7 @@ use akita_types::{
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
     CarriedOpeningClaim, CarriedOpeningKind, CarriedOpeningProof, CarriedOpeningSource,
     CarriedOpeningSourceProof, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
+    CleartextWitnessProof, CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
     IncidenceClaim, LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint,
     RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
     TerminalLevelProof,
@@ -87,9 +88,9 @@ pub use inputs::{
     prove_root_direct,
 };
 pub use recursive::{
-    prove_fold_level_from_quadratic, prove_recursive_fold_with_params,
+    prove_fold_level_from_ring_relation, prove_recursive_fold_with_params,
     prove_recursive_level_with_policy, prove_recursive_suffix_with_policy,
-    prove_terminal_fold_level_from_quadratic, prove_terminal_recursive_fold_with_params,
+    prove_terminal_fold_level_from_ring_relation, prove_terminal_recursive_fold_with_params,
     prove_terminal_recursive_level_with_policy, SuffixLevelOutput, SuffixLevelRequest,
 };
 #[cfg(test)]
@@ -99,8 +100,8 @@ pub(in crate::protocol::flow) use recursive::{
 pub(in crate::protocol::flow) use root_extension::*;
 pub(in crate::protocol::flow) use root_fold::evaluate_recursive_witness_at_multiplier_point;
 pub use root_fold::{
-    prove_root_fold_from_quadratic, prove_root_fold_with_params,
-    prove_terminal_root_fold_from_quadratic, prove_terminal_root_fold_with_params,
+    prove_root_fold_from_ring_relation, prove_root_fold_with_params,
+    prove_terminal_root_fold_from_ring_relation, prove_terminal_root_fold_with_params,
 };
 
 /// One opening claim carried into the next recursive fold.
@@ -723,7 +724,7 @@ where
                 );
             }
             // Recursive-level ring mask: added to that level's `y_ring` before
-            // ring-switching so the current quadratic-equation value is hidden.
+            // ring-switching so the current ring-relation value is hidden.
             hiding_witness.extend((0..D).map(|_| F::random(&mut rng)));
             // Terminal recursive folds skip Stage 1 and consume only Stage 2 pads.
             let include_stage1 = step_idx + 1 < fold_steps.len();

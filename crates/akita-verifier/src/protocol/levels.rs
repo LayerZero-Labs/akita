@@ -7,7 +7,9 @@
 use super::validate_level_dispatch;
 #[cfg(feature = "zk")]
 mod zk;
-use crate::protocol::ring_switch::{ring_switch_verifier, ring_switch_verifier_terminal};
+use crate::protocol::ring_switch::{
+    ring_switch_verifier, ring_switch_verifier_terminal, RingSwitchReplay,
+};
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
 use akita_algebra::CyclotomicRing;
@@ -57,10 +59,10 @@ use akita_types::{
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
     CarriedOpeningClaim, CarriedOpeningKind, CarriedOpeningProof, CarriedOpeningSource,
-    CarriedOpeningSourceProof, ClaimIncidenceSummary, DirectWitnessProof,
+    CarriedOpeningSourceProof, ClaimIncidenceSummary, CleartextWitnessProof, CommitmentRouting,
     ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
-    RingOpeningPoint, RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
-    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding, Schedule, Step,
+    TerminalLevelProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 #[cfg(feature = "zk")]
 use zk::{verify_zk_hiding_commitment, zk_recovered_y_ring_lc};
@@ -69,86 +71,67 @@ mod recursive;
 
 pub(crate) use recursive::verify_fold_batched_proof;
 
-/// One opening claim carried into the next recursive verifier level.
+/// Verifier state carried between recursive fold levels.
+pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
+    /// Current recursive witness commitment.
+    pub commitment: &'a FlatRingVec<F>,
+    /// Current digit basis, as `log2(b)`.
+    pub log_basis: u32,
+    /// Opening claims carried into this recursive level.
+    pub carried_openings: Vec<RecursiveVerifierCarriedOpening<'a, F, L>>,
+    /// Extra proof-visible carried commitments. Source index 0 is `commitment`.
+    pub extra_carried_sources: Vec<RecursiveVerifierCarriedSource<'a, F>>,
+}
+
+pub(crate) struct RecursiveVerifierCarriedSource<'a, F: FieldCore> {
+    pub commitment: &'a FlatRingVec<F>,
+}
+
 pub(crate) struct RecursiveVerifierCarriedOpening<'a, F: FieldCore, L: FieldCore> {
-    /// Source index in the recursive carried-source table.
     pub source_idx: usize,
-    /// Evaluation point in this claim's basis.
     pub opening_point: Vec<L>,
-    /// Claimed opening value.
     pub opening: L,
-    /// Hidden mask added to `opening` in the public proof.
     #[cfg(feature = "zk")]
     pub opening_mask: ZkR1csLinearCombination<L>,
-    /// Commitment opened by this claim.
     pub commitment: &'a FlatRingVec<F>,
-    /// Basis used to interpret `opening_point`.
     pub basis: BasisMode,
-    /// Unpadded logical field length of the opened object.
     pub natural_len: usize,
-    /// Common padded field-domain length used by the recursive batch.
     pub padded_len: usize,
-    /// Logical source of this carried opening.
     pub kind: CarriedOpeningKind,
 }
 
-/// Verifier-visible carried source commitment.
-pub(crate) struct RecursiveVerifierCarriedSource<'a, F: FieldCore> {
-    /// Commitment opened by claims that reference this source.
-    pub commitment: &'a FlatRingVec<F>,
-}
-
-/// Verifier state carried between recursive fold levels.
-pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
-    /// Opening claims carried into this recursive level.
-    pub carried_openings: Vec<RecursiveVerifierCarriedOpening<'a, F, L>>,
-    /// Extra carried source commitments. Source index 0 is the ordinary
-    /// recursive witness source referenced by the witness claim.
-    pub extra_carried_sources: Vec<RecursiveVerifierCarriedSource<'a, F>>,
-    /// Current digit basis, as `log2(b)`.
-    pub log_basis: u32,
-}
-
 impl<'a, F: FieldCore, L: FieldCore> RecursiveVerifierState<'a, F, L> {
+    fn recursive_witness_claim(
+        &self,
+    ) -> Result<&RecursiveVerifierCarriedOpening<'a, F, L>, AkitaError> {
+        self.carried_openings
+            .iter()
+            .find(|claim| matches!(claim.kind, CarriedOpeningKind::RecursiveWitness))
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    pub(crate) fn recursive_witness_len(&self) -> Result<usize, AkitaError> {
+        Ok(self.recursive_witness_claim()?.natural_len)
+    }
+
     pub(crate) fn common_padded_len(&self) -> Result<usize, AkitaError> {
         let first = self
             .carried_openings
             .first()
-            .ok_or_else(|| AkitaError::InvalidInput("empty carried-opening batch".to_string()))?;
-        if first.padded_len == 0
-            || self
-                .carried_openings
-                .iter()
-                .any(|claim| claim.padded_len != first.padded_len)
+            .ok_or(AkitaError::InvalidProof)?;
+        if self
+            .carried_openings
+            .iter()
+            .any(|claim| claim.padded_len != first.padded_len)
         {
-            return Err(AkitaError::InvalidInput(
-                "carried openings must share one padded domain".to_string(),
-            ));
+            return Err(AkitaError::InvalidProof);
         }
         Ok(first.padded_len)
     }
 
-    pub(crate) fn recursive_witness_len(&self) -> Result<usize, AkitaError> {
-        self.carried_openings
-            .iter()
-            .find(|claim| matches!(claim.kind, CarriedOpeningKind::RecursiveWitness))
-            .map(|claim| claim.natural_len)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("missing recursive witness carried opening".to_string())
-            })
-    }
-
     pub(crate) fn source_commitments(&self) -> Result<Vec<&'a FlatRingVec<F>>, AkitaError> {
-        let witness_source = self
-            .carried_openings
-            .iter()
-            .find(|claim| claim.source_idx == 0)
-            .map(|claim| claim.commitment)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("missing recursive witness carried source".to_string())
-            })?;
         let mut sources = Vec::with_capacity(self.extra_carried_sources.len() + 1);
-        sources.push(witness_source);
+        sources.push(self.commitment);
         sources.extend(
             self.extra_carried_sources
                 .iter()
@@ -164,7 +147,7 @@ struct TerminalWitnessReplay {
 
 fn prepare_terminal_witness_replay<F, T>(
     transcript: &mut T,
-    final_witness: &DirectWitnessProof<F>,
+    final_witness: &CleartextWitnessProof<F>,
     final_w_len: usize,
     layout: TerminalWitnessSegmentLayout,
 ) -> Result<TerminalWitnessReplay, AkitaError>
@@ -274,7 +257,7 @@ pub(crate) fn verify_terminal_root_level<F, E, C, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     #[cfg(not(feature = "zk"))] stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
     #[cfg(feature = "zk")] stage2_sumcheck_masked: &akita_sumcheck::SumcheckProofMasked<C>,
-    final_witness: &DirectWitnessProof<F>,
+    final_witness: &CleartextWitnessProof<F>,
     final_w_len: usize,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -334,7 +317,7 @@ enum RootStageInput<'a, F: FieldCore, C: FieldCore> {
         next_w_eval: C,
     },
     Terminal {
-        final_witness: &'a DirectWitnessProof<F>,
+        final_witness: &'a CleartextWitnessProof<F>,
         final_w_len: usize,
     },
 }
@@ -670,7 +653,7 @@ where
                 let v = &prepared_points[row.point_idx()].inner_reduction;
                 let trace_input = *y_ring * v.sigma_m1();
                 let coords = batched_opening.to_ring_subfield_coords();
-                if !dispatch_trace_inner_product_check::<F, { D }>(
+                if !dispatch_trace_inner_product_check::<F, D>(
                     &trace_input,
                     &coords,
                     AkitaError::InvalidProof,
@@ -752,6 +735,7 @@ where
             batched_lp,
             num_claims,
             incidence_summary.num_public_rows(),
+            F::modulus_bits(),
         )?;
         Some(prepare_terminal_witness_replay::<F, T>(
             transcript,
@@ -770,9 +754,9 @@ where
         num_claims,
         batched_lp,
         if is_terminal {
-            MRowLayout::Terminal
+            MRowLayout::WithoutDBlock
         } else {
-            MRowLayout::Intermediate
+            MRowLayout::WithDBlock
         },
     )?;
 
@@ -790,40 +774,50 @@ where
                 .clone()
         })
         .collect();
+    let m_row_layout = if is_terminal {
+        MRowLayout::WithoutDBlock
+    } else {
+        MRowLayout::WithDBlock
+    };
+    let commitment_routing = CommitmentRouting::from_root_incidence(incidence_summary)?;
+    let (gamma, row_coefficient_rings) =
+        RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<C>(
+            &row_coefficients,
+        )?;
+    let relation_instance = RingRelationInstance::new(
+        m_row_layout,
+        stage1_challenges.clone(),
+        ring_opening_points.clone(),
+        ring_multiplier_points.clone(),
+        incidence_summary.clone(),
+        commitment_routing,
+        gamma,
+        row_coefficient_rings,
+        y_rings.to_vec(),
+        v_typed.to_vec(),
+    )?;
+    relation_instance.check_v_shape_for_level(batched_lp)?;
+    let ring_switch_replay = RingSwitchReplay {
+        relation: &relation_instance,
+        row_coefficients: &row_coefficients,
+        lp: batched_lp,
+    };
     let rs = match &stage_input {
         RootStageInput::Intermediate {
             next_w_commitment, ..
-        } => ring_switch_verifier::<F, C, T, { D }>(
-            &ring_opening_points,
-            &ring_multiplier_points,
-            incidence_summary.claim_to_point(),
-            &stage1_challenges,
+        } => ring_switch_verifier::<F, C, T, D>(
+            &ring_switch_replay,
             w_len,
             next_w_commitment,
             transcript,
-            batched_lp,
-            incidence_summary.num_polys_per_point(),
-            incidence_summary.claim_to_point(),
-            incidence_summary.claim_poly_indices(),
-            &row_coefficients,
-            incidence_summary.num_public_rows(),
         )?,
         RootStageInput::Terminal { .. } => {
             let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
-            ring_switch_verifier_terminal::<F, C, T, { D }>(
-                &ring_opening_points,
-                &ring_multiplier_points,
-                incidence_summary.claim_to_point(),
-                &stage1_challenges,
+            ring_switch_verifier_terminal::<F, C, T, D>(
+                &ring_switch_replay,
                 w_len,
                 transcript,
                 &replay.parts,
-                batched_lp,
-                incidence_summary.num_polys_per_point(),
-                incidence_summary.claim_to_point(),
-                incidence_summary.claim_poly_indices(),
-                &row_coefficients,
-                incidence_summary.num_public_rows(),
             )?
         }
     };
@@ -839,17 +833,17 @@ where
         zk_relation_claim_mask_from_y_masks::<C, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
     #[cfg(feature = "zk")]
     let mut s_claim_mask = ZkR1csLinearCombination::<C>::zero();
-    let (batching_coeff, s_claim, r_stage1) = match (&stage_input, stage1) {
+    let (batching_coeff, s_claim, stage1_point) = match (&stage_input, stage1) {
         (RootStageInput::Intermediate { .. }, Some(stage1_proof)) => {
             let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
             let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
             #[cfg(not(feature = "zk"))]
-            let r_stage1 = {
+            let stage1_point = {
                 let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
                 stage1_verifier.verify::<F, T>(stage1_proof, transcript)?
             };
             #[cfg(feature = "zk")]
-            let r_stage1 = {
+            let stage1_point = {
                 let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
                 let (r, mask) = stage1_verifier.verify::<F, T>(
                     stage1_proof,
@@ -863,13 +857,13 @@ where
             transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
             let batching_coeff: C =
                 sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            (batching_coeff, stage1_proof.s_claim, r_stage1)
+            (batching_coeff, stage1_proof.s_claim, stage1_point)
         }
         (RootStageInput::Terminal { .. }, None) => {
             // Relation-only stage-2: skip stage-1 entirely. Dummy zeros for
-            // r_stage1 + batching_coeff zero out the virtual half.
-            let r_stage1 = vec![C::zero(); rs.col_bits + rs.ring_bits];
-            (C::zero(), C::zero(), r_stage1)
+            // stage1_point + batching_coeff zero out the virtual half.
+            let stage1_point = vec![C::zero(); rs.col_bits + rs.ring_bits];
+            (C::zero(), C::zero(), stage1_point)
         }
         _ => return Err(AkitaError::InvalidProof),
     };
@@ -880,7 +874,7 @@ where
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <C as ExtField<F>>::EXT_DEGREE;
     let stage2_verifier = match &stage_input {
         RootStageInput::Terminal { final_witness, .. } => {
-            AkitaStage2Verifier::new_with_direct_witness(
+            AkitaStage2Verifier::new_with_cleartext_witness(
                 batching_coeff,
                 s_claim,
                 #[cfg(feature = "zk")]
@@ -889,7 +883,7 @@ where
                 relation_claim_mask,
                 final_witness,
                 w_len,
-                r_stage1,
+                stage1_point,
                 rs.alpha_evals_y,
                 row_eval_source,
                 &setup.expanded,
@@ -916,7 +910,7 @@ where
                 *next_w_eval,
                 #[cfg(feature = "zk")]
                 zk_ext_mask_lc_at::<F, C>(stage2_next_w_eval_mask_cursor),
-                r_stage1,
+                stage1_point,
                 rs.alpha_evals_y,
                 row_eval_source,
                 &setup.expanded,

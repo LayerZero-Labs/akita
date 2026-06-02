@@ -354,7 +354,10 @@ mod primitive_impls {
         ) -> Result<Self, SerializationError> {
             let encoded_len = u64::deserialize_with_mode(&mut reader, compress, validate, &())?;
             let len = checked_vec_len(encoded_len, validate)?;
-            let mut vec = Vec::with_capacity(len);
+            let mut vec = Vec::new();
+            vec.try_reserve_exact(len).map_err(|_| {
+                SerializationError::InvalidData("vector allocation failed".to_string())
+            })?;
             for _ in 0..len {
                 vec.push(T::deserialize_with_mode(
                     &mut reader,

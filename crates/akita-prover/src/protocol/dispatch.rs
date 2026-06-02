@@ -1,7 +1,7 @@
 //! Runtime-to-const-generic dispatch for ring dimension D.
 //!
 //! The supported D values (all powers of 2 that admit a CRT+NTT decomposition)
-//! are: 32, 64, 128, 256, 512, 1024.
+//! are: 32, 64, 128, 256.
 
 /// Bridge a runtime `d: usize` to a const-generic `D` context.
 ///
@@ -10,7 +10,7 @@
 ///
 /// # Supported dimensions
 ///
-/// 32, 64, 128, 256, 512, 1024.
+/// 32, 64, 128, 256.
 ///
 /// # Panics
 ///
@@ -45,14 +45,6 @@ macro_rules! dispatch_ring_dim {
                 const $D: usize = 256;
                 $body
             }
-            512 => {
-                const $D: usize = 512;
-                $body
-            }
-            1024 => {
-                const $D: usize = 1024;
-                $body
-            }
             _ => panic!("unsupported ring dimension: {__d}"),
         }
     }};
@@ -81,14 +73,6 @@ macro_rules! dispatch_ring_dim_result {
                 const $D: usize = 256;
                 $body
             }
-            512 => {
-                const $D: usize = 512;
-                $body
-            }
-            1024 => {
-                const $D: usize = 1024;
-                $body
-            }
             _ => Err(akita_field::AkitaError::InvalidInput(format!(
                 "unsupported ring dimension: {__d}"
             ))),
@@ -97,7 +81,7 @@ macro_rules! dispatch_ring_dim_result {
 }
 
 /// The set of supported ring dimensions for [`dispatch_ring_dim!`].
-pub const SUPPORTED_RING_DIMS: &[usize] = &[32, 64, 128, 256, 512, 1024];
+pub const SUPPORTED_RING_DIMS: &[usize] = &[32, 64, 128, 256];
 
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {

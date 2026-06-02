@@ -17,12 +17,12 @@
 //! full polynomial as `s(X) = l(X) * q(X)`, where `l` is the linear eq factor
 //! for the current round and `q` has degree `b/2`. The proof sends the
 //! headerless `q` message with its linear term omitted, rather than the full
-//! degree-`b/2 + 1` product polynomial. After all rounds, at `r_stage1`, the
+//! degree-`b/2 + 1` product polynomial. After all rounds, at `stage1_point`, the
 //! verifier checks
 //!
-//! `eq(tau0, r_stage1) * Q(s_claim)`
+//! `eq(tau0, stage1_point) * Q(s_claim)`
 //!
-//! where `s_claim = S(r_stage1) = w(r_stage1) * (w(r_stage1) + 1)` is the
+//! where `s_claim = S(stage1_point) = w(stage1_point) * (w(stage1_point) + 1)` is the
 //! carried virtual claim passed into stage 2.
 //!
 //! ## `b = 8` specialization

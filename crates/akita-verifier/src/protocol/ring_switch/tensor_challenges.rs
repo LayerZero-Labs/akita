@@ -13,7 +13,6 @@ pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
 }
 
 impl<F: FieldCore> PreparedChallengeEvals<F> {
-    #[cfg(test)]
     pub(crate) fn as_flat(&self) -> Option<&[F]> {
         match self {
             Self::Flat(c_alphas) => Some(c_alphas),

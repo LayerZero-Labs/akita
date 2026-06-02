@@ -12,6 +12,16 @@
 
 use super::prime::{MontCoeff, NttPrime, PrimeWidth};
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline]
+fn use_x86_i32_transform_ntt<W: PrimeWidth, const D: usize>() -> bool {
+    // D32 uses a dedicated small-degree kernel. D64+ uses the generic AVX2
+    // transform loop.
+    D >= 32
+        && std::mem::size_of::<W>() == std::mem::size_of::<i32>()
+        && super::avx::use_avx2_transform_ntt()
+}
+
 /// Precomputed twiddle factors for a specific prime and degree `D`.
 ///
 /// `D` must be a power of two.
@@ -134,6 +144,18 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if use_x86_i32_transform_ntt::<W, D>() {
+        unsafe {
+            super::avx::forward_ntt_i32(
+                &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                *(&prime as *const _ as *const NttPrime<i32>),
+                &*(tw as *const _ as *const NttTwiddles<i32, D>),
+            );
+        }
+        return;
+    }
+
     #[cfg(target_arch = "aarch64")]
     if super::neon::use_neon_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
@@ -193,6 +215,18 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if use_x86_i32_transform_ntt::<W, D>() {
+        unsafe {
+            super::avx::inverse_ntt_i32(
+                &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                *(&prime as *const _ as *const NttPrime<i32>),
+                &*(tw as *const _ as *const NttTwiddles<i32, D>),
+            );
+        }
+        return;
+    }
+
     #[cfg(target_arch = "aarch64")]
     if super::neon::use_neon_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
@@ -251,6 +285,18 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if use_x86_i32_transform_ntt::<W, D>() {
+        unsafe {
+            super::avx::forward_ntt_cyclic_i32(
+                &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                *(&prime as *const _ as *const NttPrime<i32>),
+                &*(tw as *const _ as *const NttTwiddles<i32, D>),
+            );
+        }
+        return;
+    }
+
     #[cfg(target_arch = "aarch64")]
     if super::neon::use_neon_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {
@@ -305,6 +351,18 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
 ) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if use_x86_i32_transform_ntt::<W, D>() {
+        unsafe {
+            super::avx::inverse_ntt_cyclic_i32(
+                &mut *(a as *mut _ as *mut [MontCoeff<i32>; D]),
+                *(&prime as *const _ as *const NttPrime<i32>),
+                &*(tw as *const _ as *const NttTwiddles<i32, D>),
+            );
+        }
+        return;
+    }
+
     #[cfg(target_arch = "aarch64")]
     if super::neon::use_neon_ntt() {
         if std::mem::size_of::<W>() == std::mem::size_of::<i32>() {

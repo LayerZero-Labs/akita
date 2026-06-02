@@ -138,7 +138,7 @@ where
             .collect();
         Ok(AkitaBatchedProof {
             zk_hiding: ZkHidingProof::default(),
-            root: AkitaBatchedRootProof::new_direct(witnesses, b_blinding_digits),
+            root: AkitaBatchedRootProof::new_zero_fold(witnesses, b_blinding_digits),
             steps: Vec::new(),
         })
     }
@@ -146,7 +146,7 @@ where
     {
         let _ = hints;
         Ok(AkitaBatchedProof {
-            root: AkitaBatchedRootProof::new_direct(witnesses),
+            root: AkitaBatchedRootProof::new_zero_fold(witnesses),
             steps: Vec::new(),
         })
     }
@@ -464,8 +464,8 @@ where
             }
         };
         let final_log_basis = match direct_step.witness_shape {
-            DirectWitnessShape::PackedDigits((_, bits)) => bits,
-            DirectWitnessShape::FieldElements(_) => {
+            CleartextWitnessShape::PackedDigits((_, bits)) => bits,
+            CleartextWitnessShape::FieldElements(_) => {
                 return Err(AkitaError::InvalidSetup(
                     "terminal root requires a packed-digit direct step".to_string(),
                 ));

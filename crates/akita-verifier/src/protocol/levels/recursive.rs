@@ -1,4 +1,5 @@
 use super::*;
+use akita_types::{ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 
 fn verifier_carried_opening_from_proof<'a, F, L>(
     source: &'a CarriedOpeningSourceProof<F>,
@@ -402,7 +403,8 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
     };
     let terminal_replay = if let FoldProofView::Terminal(terminal_proof) = &proof {
-        let layout = terminal_witness_segment_layout(lp, num_claims, num_claims)?;
+        let layout =
+            terminal_witness_segment_layout(lp, num_claims, num_claims, F::modulus_bits())?;
         Some(prepare_terminal_witness_replay::<F, T>(
             transcript,
             &terminal_proof.final_witness,
@@ -419,50 +421,59 @@ where
         num_claims,
         lp,
         if is_last {
-            MRowLayout::Terminal
+            MRowLayout::WithoutDBlock
         } else {
-            MRowLayout::Intermediate
+            MRowLayout::WithDBlock
         },
     )?;
     tracing::debug!(w_len, is_last, "verify ring_switch");
-    let claim_to_point = carried_incidence.claim_to_point().to_vec();
-    let claim_to_point_poly = carried_incidence.claim_to_point().to_vec();
-    let claim_poly_indices = carried_incidence.claim_poly_indices().to_vec();
     let gamma = vec![L::one(); num_claims];
-    let num_polys_per_point = carried_incidence.num_polys_per_point().to_vec();
+    let m_row_layout = if is_last {
+        MRowLayout::WithoutDBlock
+    } else {
+        MRowLayout::WithDBlock
+    };
+    let claim_to_source = carried_openings
+        .iter()
+        .map(|claim| claim.source_idx)
+        .collect::<Vec<_>>();
+    let commitment_routing =
+        CommitmentRouting::from_recursive_sources(claim_to_source, source_commitments.len())?;
+    let (gamma_base, row_coefficient_rings) =
+        RingRelationInstance::<F, D>::gamma_and_row_rings_from_coefficients::<L>(&gamma)?;
+    let relation_instance = RingRelationInstance::new(
+        m_row_layout,
+        stage1_challenges.clone(),
+        ring_opening_points.clone(),
+        ring_multiplier_points.clone(),
+        carried_incidence.clone(),
+        commitment_routing,
+        gamma_base,
+        row_coefficient_rings,
+        y_rings.clone(),
+        v_typed.to_vec(),
+    )?;
+    relation_instance.check_v_shape_for_level(lp)?;
+    let ring_switch_replay = crate::protocol::ring_switch::RingSwitchReplay {
+        relation: &relation_instance,
+        row_coefficients: &gamma,
+        lp,
+    };
 
     let rs = match &proof {
-        FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, { D }>(
-            &ring_opening_points,
-            &ring_multiplier_points,
-            &claim_to_point,
-            &stage1_challenges,
+        FoldProofView::Intermediate(level_proof) => ring_switch_verifier::<F, L, T, D>(
+            &ring_switch_replay,
             w_len,
             level_proof.next_w_commitment(),
             transcript,
-            lp,
-            &num_polys_per_point,
-            &claim_to_point_poly,
-            &claim_poly_indices,
-            &gamma,
-            num_claims,
         )?,
         FoldProofView::Terminal(_) => {
             let replay = terminal_replay.as_ref().ok_or(AkitaError::InvalidProof)?;
-            ring_switch_verifier_terminal::<F, L, T, { D }>(
-                &ring_opening_points,
-                &ring_multiplier_points,
-                &claim_to_point,
-                &stage1_challenges,
+            ring_switch_verifier_terminal::<F, L, T, D>(
+                &ring_switch_replay,
                 w_len,
                 transcript,
                 &replay.parts,
-                lp,
-                &num_polys_per_point,
-                &claim_to_point_poly,
-                &claim_poly_indices,
-                &gamma,
-                num_claims,
             )?
         }
     };
@@ -489,18 +500,18 @@ where
         zk_relation_claim_mask_from_y_masks::<L, D>(&rs.tau1, rs.alpha, y_rings.len(), &y_masks)?;
     #[cfg(feature = "zk")]
     let mut s_claim_mask = ZkR1csLinearCombination::<L>::zero();
-    let (batching_coeff, s_claim, r_stage1) = match &proof {
+    let (batching_coeff, s_claim, stage1_point) = match &proof {
         FoldProofView::Intermediate(level_proof) => {
             let stage1 = &level_proof.stage1;
             let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
             let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
             #[cfg(not(feature = "zk"))]
-            let r_stage1 = {
+            let stage1_point = {
                 let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
                 stage1_verifier.verify::<F, T>(stage1, transcript)?
             };
             #[cfg(feature = "zk")]
-            let r_stage1 = {
+            let stage1_point = {
                 let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
                 let (r, mask) = stage1_verifier.verify::<F, T>(
                     stage1,
@@ -514,11 +525,11 @@ where
             transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
             let batching_coeff: L =
                 sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            (batching_coeff, stage1.s_claim, r_stage1)
+            (batching_coeff, stage1.s_claim, stage1_point)
         }
         FoldProofView::Terminal(_) => {
-            let r_stage1 = vec![L::zero(); rs.col_bits + rs.ring_bits];
-            (L::zero(), L::zero(), r_stage1)
+            let stage1_point = vec![L::zero(); rs.col_bits + rs.ring_bits];
+            (L::zero(), L::zero(), stage1_point)
         }
     };
     let stage2_input_claim = batching_coeff * s_claim + relation_claim;
@@ -527,7 +538,7 @@ where
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <L as ExtField<F>>::EXT_DEGREE;
     let stage2_verifier = match &proof {
-        FoldProofView::Terminal(terminal_proof) => AkitaStage2Verifier::new_with_direct_witness(
+        FoldProofView::Terminal(terminal_proof) => AkitaStage2Verifier::new_with_cleartext_witness(
             batching_coeff,
             s_claim,
             #[cfg(feature = "zk")]
@@ -536,7 +547,7 @@ where
             relation_claim_mask,
             &terminal_proof.final_witness,
             w_len,
-            r_stage1,
+            stage1_point,
             rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
@@ -561,7 +572,7 @@ where
             level_proof.stage2.next_w_eval(),
             #[cfg(feature = "zk")]
             zk_ext_mask_lc_at::<F, L>(stage2_next_w_eval_mask_cursor),
-            r_stage1,
+            stage1_point,
             rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
@@ -694,8 +705,6 @@ where
         64 => dispatch!(64),
         128 => dispatch!(128),
         256 => dispatch!(256),
-        512 => dispatch!(512),
-        1024 => dispatch!(1024),
         _ => Err(AkitaError::InvalidProof),
     }
 }
@@ -745,8 +754,6 @@ where
         64 => dispatch!(64),
         128 => dispatch!(128),
         256 => dispatch!(256),
-        512 => dispatch!(512),
-        1024 => dispatch!(1024),
         _ => Err(AkitaError::InvalidProof),
     }
 }
@@ -893,7 +900,12 @@ where
                     carried_openings[0].padded_len = extra.padded_len;
                 }
                 carried_openings.extend(extra_openings);
+                let commitment = carried_openings
+                    .first()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .commitment;
                 current_state = RecursiveVerifierState {
+                    commitment,
                     carried_openings,
                     extra_carried_sources: level_proof
                         .stage2
@@ -1027,7 +1039,7 @@ where
     let mut zk_hiding_cursor = 0usize;
 
     match &proof.root {
-        akita_types::AkitaBatchedRootProof::Direct { .. } => Err(AkitaError::InvalidProof),
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => Err(AkitaError::InvalidProof),
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
             // 1-fold case: the root itself is the terminal fold. No recursive
             // suffix follows.
@@ -1159,7 +1171,12 @@ where
                 carried_openings[0].padded_len = extra.padded_len;
             }
             carried_openings.extend(extra_openings);
+            let commitment = carried_openings
+                .first()
+                .ok_or(AkitaError::InvalidProof)?
+                .commitment;
             let current_state = RecursiveVerifierState {
+                commitment,
                 carried_openings,
                 extra_carried_sources: fold_root
                     .stage2

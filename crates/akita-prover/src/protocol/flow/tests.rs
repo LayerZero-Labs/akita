@@ -177,7 +177,7 @@ fn folded_root_assembly_preserves_extra_carried_openings() {
                 SumcheckProof {
                     round_polys: Vec::new(),
                 },
-                DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![F::zero()])),
+                CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![F::zero()])),
             ),
             num_levels: 1,
         })

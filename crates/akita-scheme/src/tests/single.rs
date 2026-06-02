@@ -235,19 +235,15 @@ fn schedule_with_setup_prefix_carried_suffix(
     let root_log_basis = root_fold.params.log_basis;
     let root_level_bytes = root_fold.level_bytes;
     let next_params = akita_types::scheduled_next_level_params(&schedule, 1)?;
-    let carried_key = AkitaScheduleLookupKey::new_with_points(num_vars, 2, 2, 2, 2);
+    let carried_key = akita_types::AkitaScheduleLookupKey::new_with_points(num_vars, 2, 2, 2, 2);
     let carried_suffix =
         akita_prover::dispatch_ring_dim_result!(next_params.ring_dimension, |D_LEVEL| {
-            akita_planner::find_recursive_carried_suffix_schedule::<
-                akita_planner::test_utils::PlannerCfg<
-                    akita_config::WCommitmentConfig<{ D_LEVEL }, Cfg>,
-                >,
-            >(
+            type WCfg<const D: usize, Cfg> = akita_config::WCommitmentConfig<D, Cfg>;
+            akita_config::test_support::recursive_carried_suffix_schedule::<WCfg<{ D_LEVEL }, Cfg>>(
                 carried_key,
                 1,
                 root_next_w_len,
                 root_log_basis,
-                akita_planner::ScheduleSearchMode::RuntimeTableSeeded,
             )
         })?;
     if !matches!(
@@ -480,7 +476,7 @@ fn recursive_suffix_verifies_witness_plus_dummy_setup_carried_batch() {
 #[test]
 fn folded_payload_commitments_and_digits_stay_base_field() {
     fn assert_base_flat_ring_vec(_: &FlatRingVec<F>) {}
-    fn assert_base_direct_witness(_: &akita_types::DirectWitnessProof<F>) {}
+    fn assert_base_direct_witness(_: &akita_types::CleartextWitnessProof<F>) {}
 
     let (_, _, proof, _, _, _) = make_verify_fixture(16);
     let root = proof
@@ -668,10 +664,10 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
     assert_eq!(proof.num_fold_levels(), 0);
     let witnesses = proof
         .root
-        .as_direct()
+        .as_zero_fold()
         .expect("root-direct batched proof expected");
     assert_eq!(witnesses.len(), 1);
-    assert!(direct_witness_opening_matches::<DirectF, DirectF>(
+    assert!(cleartext_witness_opening_matches::<DirectF, DirectF>(
         &witnesses[0],
         &opening_point,
         &opening,
