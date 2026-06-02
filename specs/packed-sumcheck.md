@@ -128,35 +128,90 @@ Both converge on the same five moves; copy them.
 ### D1 — Packed unreduced accumulator (DECIDED: build it)
 
 Akita's EOR/sum-check speed rests on the **wide scalar** `HasUnreducedOps::ProductAccum`
-(defer modular reduction across a sum, e.g. `MulBaseUnreduced::mul_base_to_product_accum`
-added in PR #136). Plonky3/leanMultisig get their speed from Montgomery + SIMD, **not**
-delayed reduction — so out of the box the two strategies do not compose: a packed
-`add_constant_product` needs a **packed unreduced accumulator** (a lane-wise wide type).
+(defer modular reduction across a sum, e.g. `MulBaseUnreduced::mul_base_to_product_accum`,
+PR #136): accumulate many products in a wide integer, reduce once. Akita already wires this
+into the EOR accumulate; the packed path must keep it.
 
-**Decision (locked): build the packed unreduced accumulator and keep both wins** — SIMD
-lanes *and* deferred reduction. This is the end-state; do **not** settle for a packed path
-that drops delayed reduction. Concretely:
+**The field form (Montgomery vs pseudo-Mersenne) is *not* the obstacle.** Delayed reduction
+is clean in Montgomery too: a sum of Montgomery products `Σ â_i·b̂_i = R²·Σ a_i b_i`
+reduces to the Montgomery form of the dot with a single reduction. Plonky3 and leanMultisig
+both do exactly this *scalarly, in production* — `MontyField31::dot_product` accumulates
+products in a `u128` and applies **one** `monty_reduce_u128` (prior art below). So "deferred
+reduction needs pseudo-Mersenne" is **false**; akita's prime choice is incidental here, not
+enabling.
 
-- Add a **`PackedHasUnreducedOps`** with a lane-wise wide `ProductAccum` (an arch-native
-  wide vector, transposed the same way `PackedRingSubfieldFp4` packs the reduced element),
-  plus packed `mul_base_to_product_accum` / `add_constant_product` / `add_quadratic_product`
-  that honor the same `DELAYED_PRODUCT_SUM_IS_EXACT` bound as the scalar path. One
-  horizontal reduce per round turns the packed accumulator into the scalar round message.
-- This is the highest-payoff piece: it makes the *accumulate* (not just the fold)
-  lane-parallel while **preserving the deferred-reduction win that makes akita's scalar EOR
-  fast in the first place**. The pseudo-Mersenne reductions akita already vectorizes
-  (`mul_pmersenne31_vec`, PR #142) are the building blocks for the packed wide reduce.
+**The real constraint is SIMD lane width, and it is identical for both field forms.** The
+full-sum accumulator is *wide* — products are ~`2^62`, and summing `2^k` of them needs a
+`u128` — and `u128` does not vectorize cleanly (a 128-bit NEON register is **one** `u128`
+lane, so a `u128`-per-lane accumulator gets no SIMD parallelism on the accumulate). So the
+packed accumulator must **not** be a `u128`-per-lane full-sum buffer. The practical packed
+form is **chunked delayed reduction in `u64` lanes**: accumulate `K` products per `u64`
+lane (`K` bounded by the lane headroom, ~2-4 for a 31-bit prime), reduce, repeat — exactly
+the `dot_product_2/4/5/8` fused kernels Plonky3/leanMultisig already ship, generalized and
+wired into the EOR/sumcheck accumulate loop.
+
+**Decision (locked): build the packed chunked-reduce accumulator.** Concretely:
+
+- Add a **`PackedHasUnreducedOps`** whose `ProductAccum` holds `K`-bounded partial sums in
+  `F::Packing` `u64` lanes, with packed `mul_base_to_product_accum` / `add_constant_product`
+  / `add_quadratic_product` that reduce every `K` terms (a packed `mul_pmersenne31`-style
+  reduce, PR #142) and honor the scalar `DELAYED_PRODUCT_SUM_IS_EXACT` bound. One horizontal
+  reduce per round emits the scalar message.
+- Akita's edge over the references is twofold: (i) it already ships the scalar full-sum
+  accumulator and wires it into EOR (`mul_base_to_product_accum`), whereas leanMultisig
+  added trait hooks for *exactly this* (base×ext sumcheck delayed reduction) but left them
+  unwired (prior art below); (ii) pseudo-Mersenne `mod p` accepts a full `u64` input, so it
+  may afford a larger chunk `K` (more amortization per reduce) than the tighter standard
+  `monty_reduce` bound — verify, do not assume.
 
 **Sequencing (de-risk; not a re-litigation of the decision):** land the packed *fold*
 first (Slice 1) — the linear interpolation `a + r·(b−a)` needs only packed
 add/sub/mul-by-broadcast and **no** accumulator, so it captures the fold-dominated bulk of
-the measured win immediately and validates the packed-table plumbing. Then land the packed
-accumulator (Slice 2) for the univariate accumulate. Packing the fold first is a stepping
-stone *toward* the packed accumulator, not an alternative to it.
+the measured win immediately and validates the packed-table plumbing. Then land the
+chunked-reduce accumulator (Slice 2) for the univariate accumulate. Packing the fold first
+is a stepping stone *toward* the accumulator, not an alternative to it.
 
-**Rejected:** an eager per-lane reduce on the packed path (reduce every product instead of
-deferring). Simpler, but it throws away the delayed-reduction win akita already depends on;
-the packed unreduced accumulator is strictly better and is the committed path.
+**Rejected:** (a) a `u128`-per-lane full-sum accumulator — it does not vectorize (one lane
+on a 128-bit register); (b) an eager per-product reduce — it throws away the deferred-
+reduction win akita already depends on. The chunked `u64`-lane reduce is the committed
+middle path.
+
+### D1 prior art (delayed reduction, including in Montgomery form)
+
+Precise public references for the chunked-reduce design — and for the (correct) point that
+Montgomery composes cleanly with delayed reduction:
+
+- **Plonky3** (`Plonky3/Plonky3`, commit `3dc870c2`):
+  - Fused packed dot, AVX2 — the headroom argument verbatim ("all inputs `< P < 2^31`, so
+    `l0*r0 + l1*r1 < 2P² < 2^32 P`, so the Montgomery reduction algorithm can be applied to
+    the sum of the products instead of to each product individually"):
+    [`monty-31/src/x86_64_avx2/packing.rs#L510-L512`](https://github.com/Plonky3/Plonky3/blob/3dc870c2adff2591f2377b214f5166c5a66d9eb3/monty-31/src/x86_64_avx2/packing.rs#L510-L512).
+    NEON / AVX-512 mirror it; the kernels are `dot_product_2/4/5/8` in
+    `monty-31/src/{aarch64_neon,x86_64_avx2,x86_64_avx512}/packing.rs`.
+  - Scalar `Sum` passes through `u64` "allowing for delayed reductions" for `N > 7`:
+    [`monty-31/src/monty_31.rs#L250-L255`](https://github.com/Plonky3/Plonky3/blob/3dc870c2adff2591f2377b214f5166c5a66d9eb3/monty-31/src/monty_31.rs#L250-L255).
+- **leanMultisig** (`leanEthereum/leanMultisig`, commit `a2efa4f3`):
+  - **Clean Montgomery full-sum delayed reduction, in production:**
+    `MontyField31::dot_product` accumulates products in a `u128` and applies one
+    `monty_reduce_u128`:
+    [`crates/backend/koala-bear/src/monty_31/monty_31.rs#L342-L361`](https://github.com/leanEthereum/leanMultisig/blob/a2efa4f35ccea70884ba77b417c1fd9ca2933559/crates/backend/koala-bear/src/monty_31/monty_31.rs#L342-L361).
+  - **Direct precedent for akita's exact scenario:** Tom Wambsgans's commit
+    [*"delayed modular reduction for base x ext product sumcheck (first round of whir)"*](https://github.com/leanEthereum/leanMultisig/commit/ab19b44863d41a841dc280006afa431742769b7a)
+    added `reduce_product_sum(u128)` / `reduce_signed_product_sum(i128)` —
+    [trait `field.rs#L897-L908`](https://github.com/leanEthereum/leanMultisig/blob/a2efa4f35ccea70884ba77b417c1fd9ca2933559/crates/backend/field/src/field.rs#L897-L908),
+    [Monty impl `monty_31.rs#L628-L639`](https://github.com/leanEthereum/leanMultisig/blob/a2efa4f35ccea70884ba77b417c1fd9ca2933559/crates/backend/koala-bear/src/monty_31/monty_31.rs#L628-L639).
+    These hooks are **currently uncalled** (the packed sumcheck accumulates in reduced
+    `EFPacking`): leanMultisig built the scalar/trait machinery for delayed base×ext
+    reduction but did **not** wire the *packed* version — consistent with the lane-width
+    constraint above.
+  - Broader delayed reduction is listed as open work:
+    [`TODO.md#L8`](https://github.com/leanEthereum/leanMultisig/blob/a2efa4f35ccea70884ba77b417c1fd9ca2933559/TODO.md#L8).
+
+Takeaway: chunked `u64`-lane reduce is established prior art (Plonky3 fused dots); full-sum
+delayed reduction is clean in Montgomery (leanMultisig scalar `dot_product`); the base×ext
+sumcheck delayed reduction akita targets was prototyped by leanMultisig but not taken to the
+packed path. Akita's packed `ProductAccum` generalizes the fused-dot pattern into the
+EOR/sumcheck loop.
 
 ### D2 — Fold order / lane alignment
 
