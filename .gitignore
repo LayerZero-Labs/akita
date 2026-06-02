@@ -10,4 +10,7 @@ profile_traces/
 
 bench_results/
 
+scripts/__pycache__/
+scripts/tests/__pycache__/
+
 .cursor/
