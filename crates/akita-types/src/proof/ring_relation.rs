@@ -451,7 +451,7 @@ mod tests {
         )
         .expect_err("missing y row must be rejected");
         assert!(
-            format!("{err:?}").contains("y rows do not match public row count"),
+            format!("{err:?}").contains("y rows shorter than public row count"),
             "unexpected error: {err:?}"
         );
     }
