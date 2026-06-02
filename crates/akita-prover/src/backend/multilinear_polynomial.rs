@@ -304,7 +304,7 @@ where
         }
     }
 
-    fn direct_root_witness(&self) -> Result<akita_types::DirectWitnessProof<F>, AkitaError> {
+    fn direct_root_witness(&self) -> Result<akita_types::CleartextWitnessProof<F>, AkitaError> {
         match self {
             Self::Dense(poly) => poly.direct_root_witness(),
             Self::OneHot(poly) => poly.direct_root_witness(),

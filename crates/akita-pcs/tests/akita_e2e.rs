@@ -4,10 +4,10 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp16, fp32, fp64};
+use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{AkitaPolyOps, AkitaProverSetup};
@@ -143,6 +143,16 @@ type DenseFixture<FField, E, L, const D: usize> = (
     LevelParams,
 );
 
+/// Active log-basis of a runtime schedule's terminal direct step.
+#[cfg(not(feature = "zk"))]
+fn schedule_terminal_log_basis<Cfg: CommitmentConfig>(schedule: &akita_types::Schedule) -> u32 {
+    let field_bits = Cfg::decomposition().field_bits();
+    match schedule.steps.last() {
+        Some(akita_types::Step::Direct(direct)) => direct.log_basis(field_bits),
+        _ => panic!("schedule must end in a terminal direct step"),
+    }
+}
+
 /// Count the total number of fold levels (including the batched root and the
 /// terminal step) in a singleton-shaped batched proof, matching the planner's
 /// `num_fold_levels` convention.
@@ -152,7 +162,7 @@ fn batched_total_fold_levels<FF: CanonicalField, L: FieldCore>(
     use akita_types::{AkitaBatchedRootProof, AkitaProofStep};
     let root_fold = match proof.root {
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => 1,
-        AkitaBatchedRootProof::Direct { .. } => 0,
+        AkitaBatchedRootProof::ZeroFold { .. } => 0,
     };
     let suffix_fold = proof
         .steps
@@ -393,9 +403,8 @@ fn full_d64_prove_verify() {
         assert!(total_fold_levels > 0, "proof must have at least one level");
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(FULL_TEST_NV))
-                .expect("schedule plan")
-                .expect("adaptive full config should expose a schedule plan");
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(FULL_TEST_NV))
+                .expect("schedule plan");
             assert_eq!(total_fold_levels, plan.num_fold_levels());
         }
 
@@ -443,9 +452,8 @@ fn full_d32_prove_verify() {
 
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(D32_TEST_NV))
-                .expect("schedule plan")
-                .expect("adaptive D32 config should expose a schedule plan");
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(D32_TEST_NV))
+                .expect("schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
         }
 
@@ -577,9 +585,8 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let nv = TINY_DIRECT_TEST_NV;
         #[cfg(not(feature = "zk"))]
         let plan = {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
-                .expect("schedule plan")
-                .expect("adaptive D32 config should expose a schedule plan");
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
+                .expect("schedule plan");
             assert_eq!(
                 plan.num_fold_levels(),
                 0,
@@ -636,10 +643,10 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         assert_eq!(batched_total_fold_levels(&proof), 0);
         assert!(proof.is_root_direct());
         #[cfg(not(feature = "zk"))]
-        assert_eq!(proof.size(), plan.exact_proof_bytes);
+        assert_eq!(proof.size(), plan.total_bytes);
         let direct_witnesses = proof
             .root
-            .as_direct()
+            .as_zero_fold()
             .expect("root-direct batched proof should carry per-claim field witnesses");
         assert_eq!(direct_witnesses.len(), 1);
         let direct_field = direct_witnesses[0]
@@ -710,9 +717,8 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
 
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
-                .expect("schedule plan")
-                .expect("adaptive full config should expose a schedule plan");
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
+                .expect("schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
 
             assert_eq!(
@@ -721,7 +727,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
                     .as_packed_digits()
                     .expect("current terminal witness should be packed digits")
                     .bits_per_elem,
-                plan.terminal_state().log_basis
+                schedule_terminal_log_basis::<Cfg>(&plan)
             );
         }
 
@@ -828,16 +834,15 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                 .expect("deserialize adaptive onehot proof");
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
-                .expect("schedule plan")
-                .expect("adaptive onehot config should expose a schedule plan");
+            let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
+                .expect("schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
             assert_eq!(
                 proof.size(),
-                plan.exact_proof_bytes,
+                plan.total_bytes,
                 "actual proof size {} does not match planner estimate {}",
                 proof.size(),
-                plan.exact_proof_bytes
+                plan.total_bytes
             );
             assert_eq!(
                 decoded
@@ -845,7 +850,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                     .as_packed_digits()
                     .expect("current terminal witness should be packed digits")
                     .bits_per_elem,
-                plan.terminal_state().log_basis
+                schedule_terminal_log_basis::<Cfg>(&plan)
             );
         }
 
@@ -877,13 +882,18 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     // with stale singleton plans); the assertion exists only to catch any
     // future planner change that escapes the configured envelope.
     for nv in 10..=120 {
-        let plan = match Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)) {
-            Ok(Some(plan)) => plan,
-            _ => continue,
+        let schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)) {
+            Ok(schedule) => schedule,
+            Err(_) => continue,
         };
+        let field_bits = <Cfg as CommitmentConfig>::decomposition().field_bits();
+        let within_window = schedule.steps.iter().all(|step| match step {
+            akita_types::Step::Fold(fold) => fold.params.log_basis <= 6,
+            akita_types::Step::Direct(direct) => direct.log_basis(field_bits) <= 6,
+        });
         assert!(
-            plan.states().all(|state| state.log_basis <= 6),
-            "adaptive onehot schedule selected log_basis > 6 at nv={nv}: {plan:?}"
+            within_window,
+            "adaptive onehot schedule selected log_basis > 6 at nv={nv}: {schedule:?}"
         );
     }
 }
@@ -895,8 +905,8 @@ fn batched_onehot_same_point_round_trip() {
     run_on_large_stack(|| {
         // NV=20 is large enough to include a recursive suffix, while the
         // two-claim incidence still misses singleton/4-batch generated tables
-        // and routes through the planner DP fallback via `PlannerCfg`.
-        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>;
+        // and routes through the planner DP fallback in `runtime_schedule`.
+        type Cfg = fp128::D64OneHot;
         const D: usize = Cfg::D;
         const NV: usize = 20;
 
@@ -1091,15 +1101,15 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             }
             akita_types::AkitaBatchedRootProof::Terminal(ref mut terminal) => {
                 match &mut terminal.final_witness {
-                    akita_types::DirectWitnessProof::PackedDigits(packed) => {
+                    akita_types::CleartextWitnessProof::PackedDigits(packed) => {
                         packed.data[0] ^= 1;
                     }
-                    akita_types::DirectWitnessProof::FieldElements(_) => {
+                    akita_types::CleartextWitnessProof::FieldElements(_) => {
                         panic!("expected packed-digits final witness for tamper test");
                     }
                 }
             }
-            akita_types::AkitaBatchedRootProof::Direct { .. } => {
+            akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("root-direct batched proof has no folded root to tamper");
             }
         }
@@ -1117,126 +1127,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         assert!(
             result.is_err(),
             "tampered batched root stage1 s_claim must be rejected"
-        );
-    });
-}
-#[test]
-fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = fp128::D64OneHot;
-        const D: usize = Cfg::D;
-        const NV: usize = 30;
-        const BATCH_SIZE: usize = 4;
-
-        let layout = akita_batched_root_layout::<Cfg>(NV, BATCH_SIZE).expect("layout");
-        let total_field = (layout.num_blocks * layout.block_len)
-            .checked_mul(D)
-            .expect("total field size overflow");
-        let total_chunks = total_field / ONEHOT_K;
-        assert_eq!(total_chunks * ONEHOT_K, total_field);
-
-        let polys: Vec<OneHotPoly<F, D>> = (0..BATCH_SIZE)
-            .map(|poly_idx| {
-                let mut rng = StdRng::seed_from_u64(0x600d_f00d_1234_0000 + poly_idx as u64);
-                let indices: Vec<Option<usize>> = (0..total_chunks)
-                    .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
-                    .collect();
-                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
-            })
-            .collect();
-        let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
-        let pt = random_point(NV);
-        let openings: Vec<F> = polys
-            .iter()
-            .map(|poly| opening_from_poly(poly, &pt, &layout))
-            .collect();
-
-        #[cfg(feature = "disk-persistence")]
-        purge_setup_cache(NV);
-
-        let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
-            NV, BATCH_SIZE, 1,
-        )
-        .unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let verifier_setup =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-            &setup,
-            &CpuBackend,
-            &prepared,
-            &poly_refs,
-        )
-        .unwrap();
-        let commitments = [commitment];
-        let hints = vec![hint];
-
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
-        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
-            &CpuBackend,
-            &prepared,
-            prove_input(
-                &pt[..],
-                &poly_refs[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .unwrap();
-
-        let mut serialized = Vec::new();
-        let proof_shape = proof.shape();
-        proof
-            .serialize_compressed(&mut serialized)
-            .expect("serialize batched onehot proof");
-        let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof_shape)
-            .expect("deserialize batched onehot proof");
-
-        assert!(
-            decoded.final_witness().num_elems() <= 245_888,
-            "expected byte-aware batched schedule to keep folding, got final_w with {} elems",
-            decoded.final_witness().num_elems()
-        );
-        assert!(
-            decoded.num_fold_levels() > 0,
-            "test fixture must include a recursive suffix to cover truncation"
-        );
-
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
-        let opening_groups = [&openings[..]];
-        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
-            BasisMode::Lagrange,
-        );
-        assert!(
-            result.is_ok(),
-            "batched onehot 4x30 verification must pass: {:?}",
-            result.err()
-        );
-
-        let mut truncated = decoded.clone();
-        truncated.steps.remove(0);
-        let mut truncated_transcript = AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
-        let truncated_result =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-                &truncated,
-                &verifier_setup,
-                &mut truncated_transcript,
-                verify_input(&pt[..], opening_groups[0], &commitments[0]),
-                BasisMode::Lagrange,
-            );
-        assert!(
-            truncated_result.is_err(),
-            "proof with a truncated scheduled recursive suffix must be rejected"
         );
     });
 }

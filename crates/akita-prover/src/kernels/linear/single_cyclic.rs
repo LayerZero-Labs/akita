@@ -23,6 +23,12 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
         "for single predecomposed digit mat-vec",
     )?;
     Ok(match slot {
+        NttSlotCache::Q16 { neg, params: p, .. } => {
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
+        }
         NttSlotCache::Q32 { neg, params: p, .. } => {
             let rows: Vec<&[_]> = (0..num_rows)
                 .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
@@ -61,6 +67,12 @@ pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: 
         "for cyclic single predecomposed digit mat-vec",
     )?;
     Ok(match slot {
+        NttSlotCache::Q16 { cyc, params: p, .. } => {
+            let rows: Vec<&[_]> = (0..num_rows)
+                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+                .collect();
+            mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, p)
+        }
         NttSlotCache::Q32 { cyc, params: p, .. } => {
             let rows: Vec<&[_]> = (0..num_rows)
                 .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])

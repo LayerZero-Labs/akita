@@ -58,7 +58,7 @@ where
     // `v` never travels on the wire, so the absorb must be skipped on
     // both prover and verifier to keep the Fiat-Shamir transcript in
     // sync. Intermediate layouts still bind the prover's `v` rows.
-    if matches!(m_row_layout, MRowLayout::Intermediate) {
+    if matches!(m_row_layout, MRowLayout::WithDBlock) {
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
     }
     sample_folding_challenges::<F, T, D>(
@@ -475,7 +475,7 @@ impl<E: FieldCore> AkitaStage1Verifier<E> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
-    /// Verify the full stage-1 tree proof and return the final `r_stage1`.
+    /// Verify the full stage-1 tree proof and return the final `stage1_point`.
     ///
     /// # Errors
     ///

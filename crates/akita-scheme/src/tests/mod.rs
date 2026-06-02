@@ -2,9 +2,9 @@
 
 use super::*;
 use akita_config::proof_optimized::fp128;
+use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::LiftBase;
-use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -22,18 +22,18 @@ use akita_types::{
     AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape,
     TerminalLevelProofShape,
 };
-use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, Step};
-use akita_verifier::direct_witness_opening_matches;
+use akita_types::{AkitaScheduleInputs, Step};
+use akita_verifier::cleartext_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D64Full>;
+type Cfg = fp128::D64Full;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<D, Cfg>;
 
 type OneHotF = fp128::Field;
-type OneHotCfg = akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>;
+type OneHotCfg = fp128::D64OneHot;
 const ONEHOT_D: usize = OneHotCfg::D;
 const BENCH_ONEHOT_K: usize = ONEHOT_D;
 type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
@@ -78,7 +78,7 @@ fn expected_same_point_batched_shape(
         current_w_len: root_step.current_w_len,
     };
     let level_lp = &root_step.params;
-    let root_lp = akita_derive::root_level_params_for_layout_with_log_basis(
+    let root_lp = akita_types::root_level_params_for_layout_with_log_basis(
         OneHotCfg::sis_modulus_family(),
         OneHotCfg::D,
         OneHotCfg::decomposition(),
@@ -102,7 +102,7 @@ fn expected_same_point_batched_shape(
             y_rings_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
             extension_opening_reduction: None,
             stage2_sumcheck: vec![3; root_rounds],
-            final_witness: akita_types::DirectWitnessShape::PackedDigits((
+            final_witness: akita_types::CleartextWitnessShape::PackedDigits((
                 root_w_len,
                 terminal_next_params.log_basis,
             )),
@@ -187,7 +187,7 @@ fn expected_same_point_batched_shape(
         1,
         1,
         1,
-        akita_types::MRowLayout::Terminal,
+        akita_types::MRowLayout::WithoutDBlock,
     )
     .expect("terminal-layout witness count")
         * terminal_lp.ring_dimension;
@@ -196,7 +196,7 @@ fn expected_same_point_batched_shape(
         y_rings_coeffs: terminal_lp.ring_dimension,
         extension_opening_reduction: None,
         stage2_sumcheck: vec![3; terminal_rounds],
-        final_witness: akita_types::DirectWitnessShape::PackedDigits((
+        final_witness: akita_types::CleartextWitnessShape::PackedDigits((
             terminal_next_w_len,
             terminal_next_params.log_basis,
         )),

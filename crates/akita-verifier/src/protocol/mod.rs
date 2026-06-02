@@ -12,7 +12,7 @@ pub use batched::{
     verify_batched_with_policy, verify_root_direct_commitments_with_params,
     RootDirectBlindingPayload,
 };
-pub use ring_switch::{prepare_ring_switch_row_eval, RingSwitchDeferredRowEval};
+pub use ring_switch::{prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay};
 
 #[inline]
 pub(crate) fn validate_ring_dispatch<const D: usize>() -> Result<usize, AkitaError> {

@@ -97,7 +97,7 @@ mod tests {
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
     use akita_prover::{
-        AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, QuadraticEquation,
+        AkitaPolyOps, ComputeBackendSetup, CpuBackend, DensePoly, RingRelationProver,
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
@@ -107,7 +107,7 @@ mod tests {
         ring_opening_point_from_field, BasisMode, BlockOrder, ClaimIncidenceSummary, MRowLayout,
         RingMultiplierOpeningPoint,
     };
-    use akita_verifier::prepare_ring_switch_row_eval;
+    use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn ring_multiplier_root_rows_match_direct_relation_claim() {
         type F = fp128::Field;
-        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
+        type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
@@ -322,7 +322,7 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             vec![ring_opening_point],
@@ -337,12 +337,18 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
-            MRowLayout::Intermediate,
+            MRowLayout::WithDBlock,
         )
-        .expect("quadratic equation");
+        .expect("ring relation");
 
-        let w = ring_switch_build_w::<F, CpuBackend, D>(&mut quad_eq, &CpuBackend, &prepared, &lp)
-            .expect("ring-switch witness");
+        let w = ring_switch_build_w::<F, CpuBackend, D>(
+            &instance,
+            witness,
+            &CpuBackend,
+            &prepared,
+            &lp,
+        )
+        .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
@@ -364,10 +370,10 @@ mod tests {
                 .collect();
             let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
-                &[quad_eq.opening_point().clone()],
+                &[instance.opening_points()[0].clone()],
                 std::slice::from_ref(&ring_multiplier_point),
                 &[0usize],
-                &quad_eq.challenges,
+                &instance.challenges,
                 alpha,
                 &alpha_evals_y,
                 &lp,
@@ -377,14 +383,14 @@ mod tests {
                 &[0usize],
                 &[F::one()],
                 1,
-                MRowLayout::Intermediate,
+                MRowLayout::WithDBlock,
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
             let expected = relation_claim_from_rows::<F, D>(
                 &tau1,
                 alpha,
-                &quad_eq.v,
+                &instance.v,
                 &commitment.u,
                 std::slice::from_ref(&y_ring),
             )
@@ -396,7 +402,7 @@ mod tests {
     #[test]
     fn full_root_rows_match_direct_relation_claim() {
         type F = fp128::Field;
-        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
+        type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
@@ -449,7 +455,7 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             vec![ring_opening_point],
@@ -464,12 +470,18 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
-            MRowLayout::Intermediate,
+            MRowLayout::WithDBlock,
         )
-        .expect("quadratic equation");
+        .expect("ring relation");
 
-        let w = ring_switch_build_w::<F, CpuBackend, D>(&mut quad_eq, &CpuBackend, &prepared, &lp)
-            .expect("ring-switch witness");
+        let w = ring_switch_build_w::<F, CpuBackend, D>(
+            &instance,
+            witness,
+            &CpuBackend,
+            &prepared,
+            &lp,
+        )
+        .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
@@ -491,10 +503,10 @@ mod tests {
                 .collect();
             let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
-                &[quad_eq.opening_point().clone()],
+                &[instance.opening_points()[0].clone()],
                 std::slice::from_ref(&ring_multiplier_point),
                 &[0usize],
-                &quad_eq.challenges,
+                &instance.challenges,
                 alpha,
                 &alpha_evals_y,
                 &lp,
@@ -504,14 +516,14 @@ mod tests {
                 &[0usize],
                 &[F::one()],
                 1,
-                MRowLayout::Intermediate,
+                MRowLayout::WithDBlock,
             )
             .expect("m evals");
             let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
             let expected = relation_claim_from_rows::<F, D>(
                 &tau1,
                 alpha,
-                &quad_eq.v,
+                &instance.v,
                 &commitment.u,
                 std::slice::from_ref(&y_ring),
             )
@@ -559,7 +571,7 @@ mod tests {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
-        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
+        type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
@@ -615,7 +627,7 @@ mod tests {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
         let incidence_summary = single_point_group_incidence(NV, 1);
 
-        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             vec![ring_opening_point.clone()],
@@ -630,12 +642,13 @@ mod tests {
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![CyclotomicRing::<F, D>::one()],
-            MRowLayout::Intermediate,
+            MRowLayout::WithDBlock,
         )
-        .expect("quadratic equation");
+        .expect("ring relation");
 
         ring_switch_build_w::<F, CpuBackend, D>(
-            &mut quad_eq,
+            &instance,
+            witness,
             &CpuBackend,
             &prepared,
             &level_params,
@@ -655,7 +668,7 @@ mod tests {
             std::slice::from_ref(&ring_opening_point),
             std::slice::from_ref(&ring_multiplier_point),
             &[0usize],
-            &quad_eq.challenges,
+            &instance.challenges,
             alpha,
             &alpha_evals_y,
             &level_params,
@@ -665,7 +678,7 @@ mod tests {
             &[0usize],
             &[F::one()],
             1,
-            MRowLayout::Intermediate,
+            MRowLayout::WithDBlock,
         )
         .expect("m evals (materialized)");
 
@@ -675,22 +688,14 @@ mod tests {
 
         let expected = multilinear_eval(&m_evals_x, &x_challenges).expect("multilinear_eval");
 
-        let prepared = prepare_ring_switch_row_eval::<F, F, D>(
-            &quad_eq.challenges,
-            alpha,
-            &level_params,
-            &tau1,
-            &[1usize],
-            &[0usize],
-            &[0usize],
-            &[F::one()],
-            1,
-            MRowLayout::Intermediate,
-            1,
-            std::slice::from_ref(&ring_multiplier_point),
-            &[0usize],
-        )
-        .expect("prepare_ring_switch_row_eval");
+        let gamma = [F::one()];
+        let replay = RingSwitchReplay {
+            relation: &instance,
+            row_coefficients: &gamma,
+            lp: &level_params,
+        };
+        let prepared = prepare_ring_switch_row_eval::<F, F, D>(&replay, alpha, &tau1)
+            .expect("prepare_ring_switch_row_eval");
 
         let got = prepared
             .eval_at_point::<F, D>(

@@ -2,6 +2,8 @@
 
 use akita_field::{CanonicalField, FieldCore};
 
+use crate::sis_floor::{min_rank_for_secure_width, SisModulusFamily};
+
 /// Maximum positive value representable by `num_digits` balanced base-`b` digits,
 /// where `b = 2^log_basis`.
 ///
@@ -126,7 +128,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
     out
 }
 
-/// Number of balanced digits needed to decompose the folded witness `z_pre`.
+/// Number of balanced digits needed to decompose the folded witness `z_folded_rings`.
 ///
 /// The folding step multiplies the witness by a sparse challenge vector with
 /// L1-mass `challenge_l1_mass` and applies `r_vars` levels of block folding,
@@ -160,7 +162,11 @@ pub fn compute_num_digits_fold_with_claims(
     if beta == 0 {
         return 1;
     }
-    let log_beta = 128 - beta.leading_zeros();
+    // `beta` bounds `|v|`, so `+beta` itself must be representable.
+    // `compute_num_digits` interprets its `log_bound` as a signed bit width
+    // (range `[-2^(L-1), 2^(L-1) - 1]`), so add one bit so the positive end
+    // covers `+beta` instead of just `+beta - 1`.
+    let log_beta = (128 - beta.leading_zeros()).saturating_add(1);
     num_digits_for_bound(log_beta, field_bits, log_basis)
 }
 
@@ -198,6 +204,21 @@ pub fn compute_num_digits_fold_with_claims(
 ///   corresponds to paper's `τ`)
 /// - `m_eff` = effective row count (see below)
 ///
+/// # `n_A` is per-`r`, derived from the SIS-floor tables
+///
+/// `n_A` is *not* a free parameter — it is the minimum SIS-secure A-rank for
+/// the candidate's `inner_width(r) = block_len(r) * δ_commit`. So for each
+/// `r` we look up `min_rank_for_secure_width(sis_family, d, a_collision,
+/// inner_width(r))` and feed that value into the opening cost, scoring
+/// every candidate against its own SIS-secure rank instead of a single
+/// fixed-point value shared across all `r`. This replaces what used to be
+/// an outer fixed-point in the planner.
+///
+/// `(sis_family, d, a_collision)` together specify which SIS-floor table
+/// row the lookup consults. `a_collision` must already be rounded up to
+/// the nearest audited bucket (call [`crate::sis_floor::ceil_supported_collision`]
+/// upstream).
+///
 /// # The tradeoff
 ///
 /// As `r` increases: term 1 grows exponentially (`2^r`), but term 2 shrinks
@@ -209,57 +230,92 @@ pub fn compute_num_digits_fold_with_claims(
 /// optimum which is generally asymmetric (especially for onehot where
 /// `δ_commit = 1`).
 ///
-/// # Tight z_pre mode
+/// # Tight z_folded_rings mode
 ///
 /// - `num_ring > 0`: `m_eff = ⌈num_ring / 2^r⌉` — the actual occupied row
 ///   count, which can be smaller than `2^m` when the ring-element count isn't
 ///   a power of two.
 /// - `num_ring = 0`: `m_eff = 2^m` — the standard power-of-two upper bound.
 ///
+/// # Return value
+///
+/// Returns `(m_vars, r_vars, n_a)` — the chosen split *and* the
+/// per-`r` SIS-secure A-rank that goes with it. Callers that build a
+/// `LevelParams` from the split should use this `n_a` (e.g.
+/// `LevelParams::a_key.row_len`) instead of re-running the SIS-floor
+/// lookup themselves, otherwise `with_decomp`'s derived `b_key.col_len
+/// = n_a * δ_open * num_blocks` would race against the cost the optimizer
+/// scored.
+///
+/// # Fallback
+///
+/// If `reduced_vars` is too small/large to brute-force, or if *every*
+/// `r` in `1..reduced_vars` falls off the SIS-floor table for the given
+/// `(sis_family, d, a_collision)`, returns the paper's symmetric split
+/// `m = r = reduced_vars / 2` with `n_a = 1`. This is a cost-estimate
+/// fallback only; downstream consumers (materializer / prover) re-derive
+/// the SIS-strict layout for selected candidates.
+///
 /// # Panics
 ///
 /// Panics if `log_basis` is 0 or at least 128.
+#[allow(clippy::too_many_arguments)]
 pub fn optimal_m_r_split(
-    n_a: u32,
+    sis_family: SisModulusFamily,
+    d: u32,
+    a_collision: u32,
     challenge_l1_mass: usize,
     log_commit_bound: u32,
     log_basis: u32,
     reduced_vars: usize,
     num_ring: usize,
     field_bits: u32,
-) -> (usize, usize) {
+) -> (usize, usize, u32) {
     // Too few variables to optimize; too many would overflow `2^r` in u64.
     // Fall back to the paper's symmetric split m = r.
     if reduced_vars <= 2 || reduced_vars >= 53 {
         let r = reduced_vars / 2;
-        return (reduced_vars - r, r);
+        return (reduced_vars - r, r, 1);
     }
 
     let open_bound = log_commit_bound.max(field_bits);
     let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
     let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
 
-    // Per-block cost from |t̂| + |ŵ|: each of the 2^r blocks contributes
-    // (1 + n_A) · δ_open ring elements, matching the witness construction
-    // where both ŵ and t̂ use δ_open.
-    let per_block_cost = delta_open + n_a as u64 * delta_open;
-
-    let mut best = (u64::MAX, reduced_vars / 2); // (cost, r)
+    let mut best: Option<(u64, usize, u32)> = None;
 
     for r in 1..reduced_vars {
         let num_blocks = 1u64 << r;
 
-        // Effective row count: exact when we know the ring count, else 2^m.
-        let m_eff = if num_ring > 0 {
+        // Block geometry: tight when we know the ring count, else 2^m.
+        let block_len: u64 = if num_ring > 0 {
             num_ring.div_ceil(1usize << r) as u64
         } else {
             1u64 << (reduced_vars - r)
         };
+        let m_eff = block_len;
+
+        // Per-`r` `n_A`: the SIS-secure A-rank for this candidate's
+        // `inner_width`. Skip the candidate if the SIS-floor table
+        // doesn't cover its width — there's no feasible secure rank
+        // and any cost we'd compute would be meaningless.
+        let Some(inner_width) = (block_len as usize).checked_mul(delta_commit as usize) else {
+            continue;
+        };
+        let Some(n_a) = min_rank_for_secure_width(sis_family, d, a_collision, inner_width as u64)
+        else {
+            continue;
+        };
+        let n_a_u32 = n_a as u32;
 
         // δ_fold grows with r because β = 2^r · challenge_l1_mass · 2^(lb-1).
         let delta_fold =
             compute_num_digits_fold_with_claims(r, challenge_l1_mass, log_basis, 1, field_bits)
                 as u64;
+
+        // Per-block opening cost: each of the 2^r blocks contributes
+        // (1 + n_A) · δ_open ring elements (both ŵ and t̂ use δ_open).
+        let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
 
         // |t̂| + |ŵ|                    +  |ẑ|
         let opening_cost = per_block_cost.saturating_mul(num_blocks);
@@ -268,13 +324,18 @@ pub fn optimal_m_r_split(
             .saturating_mul(m_eff);
         let total = opening_cost.saturating_add(folding_cost);
 
-        if total < best.0 {
-            best = (total, r);
+        if best.is_none_or(|(c, _, _)| total < c) {
+            best = Some((total, r, n_a_u32));
         }
     }
 
-    let best_r = best.1;
-    (reduced_vars - best_r, best_r)
+    match best {
+        Some((_, r, n_a)) => (reduced_vars - r, r, n_a),
+        None => {
+            let r = reduced_vars / 2;
+            (reduced_vars - r, r, 1)
+        }
+    }
 }
 
 #[cfg(test)]

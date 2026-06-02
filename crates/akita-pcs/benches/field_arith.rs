@@ -6,7 +6,7 @@ mod field_arith_suite;
 use criterion::{criterion_group, criterion_main};
 use field_arith_suite::{
     bench_base_field_matrix, bench_comparisons, bench_ext2_matrix, bench_ext4_matrix,
-    bench_kernel_patterns, bench_parallel_throughput, bench_wide_ops,
+    bench_ext8_matrix, bench_kernel_patterns, bench_parallel_throughput, bench_wide_ops,
 };
 
 criterion_group!(
@@ -14,6 +14,7 @@ criterion_group!(
     bench_base_field_matrix,
     bench_ext2_matrix,
     bench_ext4_matrix,
+    bench_ext8_matrix,
     bench_wide_ops,
     bench_kernel_patterns,
     bench_comparisons,
