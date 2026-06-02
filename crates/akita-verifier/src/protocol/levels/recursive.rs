@@ -639,8 +639,6 @@ where
         64 => dispatch!(64),
         128 => dispatch!(128),
         256 => dispatch!(256),
-        512 => dispatch!(512),
-        1024 => dispatch!(1024),
         _ => Err(AkitaError::InvalidProof),
     }
 }
@@ -690,8 +688,6 @@ where
         64 => dispatch!(64),
         128 => dispatch!(128),
         256 => dispatch!(256),
-        512 => dispatch!(512),
-        1024 => dispatch!(1024),
         _ => Err(AkitaError::InvalidProof),
     }
 }

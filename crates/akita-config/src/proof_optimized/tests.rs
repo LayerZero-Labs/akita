@@ -1,7 +1,10 @@
 use super::*;
+use akita_field::{CanonicalField, One};
 #[cfg(not(feature = "zk"))]
 use akita_types::generated::{
     fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
+};
+use akita_types::generated::{
     fp16_d32_full_table, fp16_d32_onehot_table, fp16_d64_full_table, fp16_d64_onehot_table,
     fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table, fp32_d64_table,
     fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
@@ -11,6 +14,10 @@ use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::level_layout_from_params;
 use akita_types::planned_w_ring_element_count;
 use akita_types::DecompositionParams;
+use akita_types::SisModulusFamily;
+
+const MAX_I8_LOG_BASIS: u32 = 6;
+const RAW_I8_RHS_MAX_ABS: u64 = 128;
 
 #[test]
 fn setup_level_params_from_runtime_schedule_includes_terminal_direct_level_params() {
@@ -491,6 +498,86 @@ fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: Generated
     }
 }
 
+fn crt_product_for_small_field_cfg<Cfg: CommitmentConfig>() -> (&'static str, u128) {
+    match Cfg::sis_modulus_family() {
+        SisModulusFamily::Q16 => ("Q16/3xi16", 2_513_112_702_977),
+        SisModulusFamily::Q32 => ("Q32/2xi32", 1_152_837_945_367_908_353),
+        SisModulusFamily::Q64 => ("Q64/3xi32", 1_237_793_655_097_897_487_951_597_569),
+        family => panic!("small-field capacity test does not cover {family:?}"),
+    }
+}
+
+fn small_field_single_term_safe_width<Cfg: CommitmentConfig>(
+    ring_dimension: usize,
+    rhs_abs_bound: u64,
+) -> Option<usize> {
+    if rhs_abs_bound == 0 || ring_dimension == 0 {
+        return None;
+    }
+    let (_profile_id, crt_product) = crt_product_for_small_field_cfg::<Cfg>();
+    let modulus = (-Cfg::Field::one()).to_canonical_u128() + 1;
+    let setup_abs_bound = modulus / 2;
+    let denom = 2u128
+        .checked_mul(ring_dimension as u128)?
+        .checked_mul(setup_abs_bound)?
+        .checked_mul(u128::from(rhs_abs_bound))?;
+    if denom == 0 || crt_product <= denom {
+        return None;
+    }
+    let width = (crt_product - 1) / denom;
+    usize::try_from(width).ok()
+}
+
+fn assert_level_has_crt_i8_capacity<Cfg: CommitmentConfig>(
+    key: AkitaScheduleLookupKey,
+    level: &LevelParams,
+) {
+    assert!(
+        (1..=MAX_I8_LOG_BASIS).contains(&level.log_basis),
+        "generated schedule uses log_basis={} outside the i8 kernel contract for {} key={key:?}",
+        level.log_basis,
+        std::any::type_name::<Cfg>()
+    );
+    let balanced_digit_bound = 1u64 << (level.log_basis - 1);
+    let (profile_id, _product) = crt_product_for_small_field_cfg::<Cfg>();
+    for (role, rhs_abs_bound) in [
+        ("schedule balanced digit", balanced_digit_bound),
+        ("max balanced i8 digit", 1u64 << (MAX_I8_LOG_BASIS - 1)),
+        ("raw signed-i8", RAW_I8_RHS_MAX_ABS),
+    ] {
+        let safe_width =
+            small_field_single_term_safe_width::<Cfg>(level.ring_dimension, rhs_abs_bound);
+        assert!(
+            matches!(safe_width, Some(width) if width > 0),
+            "{profile_id} has no single-term CRT capacity for {role} at D={} rhs_abs_bound={} in {} key={key:?}",
+            level.ring_dimension,
+            rhs_abs_bound,
+            std::any::type_name::<Cfg>()
+        );
+    }
+}
+
+fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
+    table: GeneratedScheduleTable,
+) {
+    for entry in table.entries {
+        let key = AkitaScheduleLookupKey::new_with_points(
+            entry.key.num_vars,
+            entry.key.num_commitment_groups,
+            entry.key.num_t_vectors,
+            entry.key.num_w_vectors,
+            entry.key.num_z_vectors,
+        );
+        let plan = Cfg::schedule_plan(key)
+            .expect("config schedule should succeed")
+            .expect("config should provide a generated schedule");
+        let levels = setup_level_params_from_plan(&plan);
+        for level in &levels {
+            assert_level_has_crt_i8_capacity::<Cfg>(key, level);
+        }
+    }
+}
+
 #[cfg(not(feature = "zk"))]
 fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     let mut checked_folded_entry = false;
@@ -607,6 +694,40 @@ fn generated_small_field_schedule_tables_match_cfg_schedule() {
     assert_every_table_entry_materializes::<fp64::D32OneHot>(fp64_d32_onehot_table());
     assert_every_table_entry_materializes::<fp64::D64Full>(fp64_d64_table());
     assert_every_table_entry_materializes::<fp64::D64OneHot>(fp64_d64_onehot_table());
+}
+
+#[test]
+#[cfg(not(feature = "zk"))]
+fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32Full>(fp16_d32_full_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32OneHot>(fp16_d32_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64Full>(fp16_d64_full_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64OneHot>(fp16_d64_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D32Full>(fp32_d32_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D32OneHot>(fp32_d32_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64Full>(fp32_d64_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64OneHot>(fp32_d64_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32Full>(fp64_d32_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32OneHot>(fp64_d32_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64Full>(fp64_d64_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64OneHot>(fp64_d64_onehot_table());
+}
+
+#[test]
+#[cfg(feature = "zk")]
+fn generated_zk_small_field_schedule_tables_have_crt_i8_capacity() {
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32Full>(fp16_d32_full_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32OneHot>(fp16_d32_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64Full>(fp16_d64_full_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64OneHot>(fp16_d64_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D32Full>(fp32_d32_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D32OneHot>(fp32_d32_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64Full>(fp32_d64_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64OneHot>(fp32_d64_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32Full>(fp64_d32_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32OneHot>(fp64_d32_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64Full>(fp64_d64_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64OneHot>(fp64_d64_onehot_table());
 }
 
 #[test]
