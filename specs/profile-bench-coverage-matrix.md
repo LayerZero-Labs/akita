@@ -10,12 +10,12 @@
 ## Summary
 
 This PR widens the profile benchmark workflow from a small fp128/fp32 sample
-into a 6-case active D32 matrix across fp16, fp32, fp64, and fp128, reduces
+into a 7-case active D32 matrix across fp16, fp32, fp64, and fp128, reduces
 samples from 5 to 3, and keeps the existing fp128 same-point batched one-hot
-coverage. Three intended hosted-runner cells are documented but deferred:
-`onehot_fp16_d32:32:1` and `dense_fp128_d32:26:1` are currently too expensive
-for this PR's active CI budget, while `dense_fp64_d32:26:1` remains blocked
-until PR #105's eq-table sizing fix lands.
+coverage. Two intended hosted-runner cells are documented but deferred:
+`onehot_fp16_d32:32:1` is currently too expensive for this PR's active CI
+budget, while `dense_fp64_d32:25:1` is kept as the next dense fp64 target but
+is not re-enabled yet.
 The workflow intentionally replaces the old adaptive fp128 profile selectors
 with explicit D32 cases; the benchmark path does not choose D at runtime.
 
@@ -39,6 +39,7 @@ The checked-in workflow currently runs:
 | `onehot_fp32_d32` | fp32 | 1-of-256 one-hot | 32 | 1 | D32 | Small-field one-hot smoke. |
 | `dense_fp32_d32` | fp32 | dense | 26 | 1 | D32 | Small-field dense smoke. |
 | `onehot_fp64_d32` | fp64 | 1-of-256 one-hot | 32 | 1 | D32 | Small-field one-hot smoke. |
+| `dense_fp128_d32` | fp128 | dense | 24 | 1 | D32 | Slim fp128 dense smoke that keeps the Q128 dense path active. |
 | `onehot_fp128_d32` | fp128 | 1-of-256 one-hot | 32 | 1 | D32 | Explicit fp128 one-hot mode. |
 | `onehot_fp128_d32` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D32 | Preserves same-point batched one-hot coverage. |
 
@@ -52,15 +53,15 @@ Deferred target cells:
 | Mode | Field | Workload | Variables | Polys | Config | Re-enable condition |
 | --- | --- | --- | ---: | ---: | --- | --- |
 | `onehot_fp16_d32` | fp16 | 1-of-256 one-hot | 32 | 1 | D32 | Re-enable after small-field one-hot prover cost is reduced or CI budget changes. |
-| `dense_fp128_d32` | fp128 | dense | 26 | 1 | D32 | Re-enable after dense fp128 commit/prove cost is reduced or CI budget changes. |
-| `dense_fp64_d32` | fp64 | dense | 26 | 1 | D32 | Re-enable after PR #105 fixes the eq-table sizing panic. |
+| `dense_fp64_d32` | fp64 | dense | 25 | 1 | D32 | Re-enable after separate dense fp64 validation and hosted-runner budget review. |
 
 The first successful 8-case candidate run identified the two cost offenders:
 `onehot_fp16_d32:32:1` spent about 210 seconds in proving and peaked around
 6.2 GiB RSS, while `dense_fp128_d32:26:1` spent about 56 seconds in commit plus
 38 seconds in prove and peaked around 8.4 GiB RSS. Those numbers are useful
-profiling data, but they are not yet acceptable as always-on PR benchmark
-coverage.
+profiling data, but the always-on fp128 dense cell is intentionally reduced to
+`dense_fp128_d32:24:1` so CI still exercises the Q128 dense path without paying
+the full `nv=26` cost.
 
 ### Scope
 
@@ -131,20 +132,24 @@ The test-coverage cleanup touches:
 - No hosted-runner timing stability guarantee is attempted. The matrix is for
   trend visibility and cross-prime smoke coverage, not precise microbenchmarking.
 - No profile-only workaround is added for deferred hosted-runner cells. The
-  `onehot_fp16_d32:32:1` and `dense_fp128_d32:26:1` cells remain blocked on
-  performance work, and `dense_fp64_d32:26:1` remains blocked on PR #105.
+  `onehot_fp16_d32:32:1` cell remains blocked on performance work, and
+  `dense_fp64_d32:25:1` remains documented but inactive until a separate
+  re-enable pass.
 
 ## Evaluation
 
 ### Acceptance Criteria
 
 - [x] `.github/workflows/profile-bench.yml` sets `AKITA_BENCH_RUNS` to `3`.
-- [x] The active workflow lists exactly the 6 currently supported
+- [x] The active workflow lists exactly the 7 currently supported
       hosted-runner matrix cases.
-- [x] The known long hosted-runner offenders, `onehot_fp16_d32:32:1` and
-      `dense_fp128_d32:26:1`, are documented as deferred rather than active.
-- [ ] `dense_fp64_d32:26:1` is re-enabled after PR #105 lands and completes
-      setup, commit, prove, verify, proof summary, and proof accounting.
+- [x] The known long hosted-runner offender `onehot_fp16_d32:32:1` is
+      documented as deferred rather than active.
+- [x] `dense_fp128_d32` remains active at `nv=24`, not the earlier `nv=26`
+      hosted-runner offender size.
+- [ ] `dense_fp64_d32:25:1` is re-enabled after a separate validation pass
+      and completes setup, commit, prove, verify, proof summary, and proof
+      accounting.
 - [x] Every new case has a semantic case ID containing field family, workload,
       variable count, polynomial count, and D config.
 - [x] Old benchmark mode names and checked-in call sites are fully cut over to
@@ -200,7 +205,7 @@ Local checks performed during this PR:
 - `cargo nextest run --no-default-features --features parallel,disk-persistence -p akita-pcs --test setup --test batched_aggregated_e2e`
 - `cargo build --release --quiet --example profile`
 - release smoke for the original 8-case candidate matrix, which identified the
-  two long hosted-runner offenders now deferred from active CI
+  long hosted-runner offenders and motivated the slim fp128 dense active size
 - D32 dense report-gate smoke for `dense_fp16_d32:26:1` and
   `dense_fp32_d32:26:1`
 - D32 small-field smoke for `onehot_fp16_d32`, `dense_fp16_d32`,
@@ -213,8 +218,8 @@ Local checks performed during this PR:
   against new semantic IDs
 - synthetic missing-summary render check
 - shell simulation of the workflow fallback render block
-- active workflow matrix parse check: exactly 6 active cases, with
-  `onehot_fp16_d32:32:1`, `dense_fp128_d32:26:1`, and `dense_fp64_d32:26:1`
+- active workflow matrix parse check: exactly 7 active cases, with
+  `onehot_fp16_d32:32:1` and `dense_fp64_d32:25:1`
   omitted until their respective follow-ups
 
 The focused nextest slice for `setup` and `batched_aggregated_e2e` completed
@@ -227,10 +232,11 @@ about 7 minutes in release build and about 3 minutes 20 seconds in benchmark
 execution for 3 cases x 5 samples.
 
 This PR reduces per-case samples from 5 to 3 and expands the active matrix from
-3 cases to 6 cases. The first 8-case candidate run was useful for finding
+3 cases to 7 cases. The first 8-case candidate run was useful for finding
 costly coverage, but `onehot_fp16_d32:32:1` and `dense_fp128_d32:26:1` are too
-expensive for this PR's always-on hosted-runner budget. The active workflow is
-therefore a smoke matrix, not an exhaustive benchmark suite.
+expensive for this PR's always-on hosted-runner budget. The active workflow
+therefore keeps dense fp128 coverage at `nv=24` and remains a smoke matrix, not
+an exhaustive benchmark suite.
 
 One PR run completed all 8 candidate benchmark cases with status `ok`, but the job
 failed later in GitHub API baseline/comment handling. This PR now treats those
@@ -343,9 +349,9 @@ verification, and folded-proof assertions.
 
 4. Permanently drop the deferred long cells.
    Rejected because the point of the matrix is cross-prime and workload
-   visibility. Temporarily disabling `onehot_fp16_d32:32:1`,
-   `dense_fp128_d32:26:1`, and `dense_fp64_d32:26:1` is acceptable, but the
-   cells stay documented as intended coverage.
+   visibility. Temporarily disabling `onehot_fp16_d32:32:1` and
+   `dense_fp64_d32:25:1` is acceptable, and reducing dense fp128 from `nv=26`
+   to `nv=24` keeps the active Q128 dense path within hosted-runner budget.
 
 5. Add compatibility aliases for old profile modes or old artifact IDs.
    Rejected under the repo's full-cutover policy. Checked-in call sites and
@@ -374,9 +380,9 @@ cost only.
 
 - Re-enable `onehot_fp16_d32:32:1` after small-field one-hot prover cost is
   reduced or the CI runner budget changes.
-- Re-enable `dense_fp128_d32:26:1` after dense fp128 commit/prove cost is
-  reduced or the CI runner budget changes.
-- Re-enable `dense_fp64_d32:26:1` after PR #105 lands.
+- Revisit `dense_fp128_d32:26:1` after dense fp128 commit/prove cost is reduced
+  or the CI runner budget changes.
+- Re-enable `dense_fp64_d32:25:1` after a separate dense fp64 validation pass.
 - Record the first fully successful expanded workflow runtime after the
   deferred cells are re-enabled.
 - Use the candidate matrix data to prioritize real dense/one-hot prover

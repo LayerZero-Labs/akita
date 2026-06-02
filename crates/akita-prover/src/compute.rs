@@ -11,11 +11,16 @@ use crate::backend::onehot::{
 };
 use crate::backend::sparse_ring::{column_sweep_sparse, SparseRingBlockEntry};
 use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
+#[cfg(test)]
+use crate::kernels::linear::fused_split_eq_quotients;
 use crate::kernels::linear::{
-    fused_split_eq_quotients, mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8_strided,
+    fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_dense_digits_i8_trusted,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_i8_strided,
-    mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+    selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
 };
+#[cfg(any(test, feature = "zk"))]
+use crate::validation::MAX_I8_LOG_BASIS;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::{HasWide, ReduceTo};
@@ -91,6 +96,8 @@ pub enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
     CachedDigits {
         /// Per-block digit slices.
         digit_block_slices: Vec<&'a [[i8; D]]>,
+        /// Logarithm of the gadget basis used to produce the cached digits.
+        log_basis: u32,
     },
     /// Ring coefficients need backend-side digit decomposition.
     CoeffBlocks {
@@ -238,6 +245,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         row_len: usize,
         digits: &[[i8; D]],
+        log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 
     /// Negacyclic ZK B-blinding digit mat-vec rows.
@@ -272,6 +280,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         row_len: usize,
         digits: &[[i8; D]],
+        log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 
     /// Cyclic ZK B-blinding digit mat-vec rows.
@@ -351,6 +360,8 @@ pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
     pub z_segment: &'a [[i32; D]],
     /// Infinity norm of the full centered `z_pre` witness.
     pub z_pre_centered_inf_norm: u32,
+    /// Logarithm of the gadget basis used to produce `w_hat` and `t_hat`.
+    pub log_basis: u32,
 }
 
 /// Additional public-row quotient operation input.
@@ -422,10 +433,41 @@ pub struct CpuBackend;
 pub struct CpuPreparedSetup<F: FieldCore, const D: usize> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     ntt_shared: NttSlotCache<D>,
+    ntt_i8_capacity: CrtI8CapacityProfile,
     #[cfg(feature = "zk")]
     ntt_zk_b: OnceLock<NttSlotCache<D>>,
     #[cfg(feature = "zk")]
     ntt_zk_d: OnceLock<NttSlotCache<D>>,
+}
+
+/// CRT/NTT profile and universal i8 capacity metadata for a prepared setup.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PreparedCrtNttProfile {
+    /// Stable profile identifier used by benchmark/report tooling.
+    pub profile_id: &'static str,
+    /// Number of CRT primes in the selected profile.
+    pub num_primes: usize,
+    /// Signed limb width used by the CRT NTT representation.
+    pub limb_bits: u32,
+    /// Largest balanced i8 log basis accepted by prover i8 kernels.
+    pub max_i8_log_basis: u32,
+    /// Safe accumulation width for balanced i8 digits at `max_i8_log_basis`.
+    pub balanced_digit_safe_width: usize,
+    /// Safe accumulation width for raw signed i8 recursive-witness inputs.
+    pub raw_i8_safe_width: usize,
+}
+
+impl From<CrtI8CapacityProfile> for PreparedCrtNttProfile {
+    fn from(profile: CrtI8CapacityProfile) -> Self {
+        Self {
+            profile_id: profile.profile_id,
+            num_primes: profile.num_primes,
+            limb_bits: profile.limb_bits,
+            max_i8_log_basis: profile.max_i8_log_basis,
+            balanced_digit_safe_width: profile.balanced_digit_safe_width,
+            raw_i8_safe_width: profile.raw_i8_safe_width,
+        }
+    }
 }
 
 impl<F: FieldCore, const D: usize> CpuPreparedSetup<F, D> {
@@ -433,6 +475,13 @@ impl<F: FieldCore, const D: usize> CpuPreparedSetup<F, D> {
     /// cyclic slots). Diagnostic surface for the profiler / bench report.
     pub fn shared_ntt_cache_bytes(&self) -> usize {
         self.ntt_shared.cache_bytes()
+    }
+
+    /// CRT/NTT profile and universal i8 capacity metadata for the shared setup
+    /// cache. The capacity widths are the boundary checked during backend
+    /// preparation before hot i8 kernels can rely on their internal invariant.
+    pub fn shared_ntt_profile(&self) -> PreparedCrtNttProfile {
+        self.ntt_i8_capacity.into()
     }
 }
 
@@ -476,7 +525,7 @@ fn zk_digit_rows_from_slot<F: FieldCore + CanonicalField, const D: usize>(
         ));
     }
     validate_digit_row_request(row_len, row_width, total_ring_elements)?;
-    Ok(mat_vec_mul_ntt_single_i8(slot, row_len, row_width, digits))
+    mat_vec_mul_ntt_single_i8(slot, row_len, row_width, digits, MAX_I8_LOG_BASIS)
 }
 
 #[cfg(feature = "zk")]
@@ -496,9 +545,7 @@ fn zk_cyclic_digit_rows_from_slot<F: FieldCore + CanonicalField, const D: usize>
         ));
     }
     validate_digit_row_request(row_len, row_width, total_ring_elements)?;
-    Ok(mat_vec_mul_ntt_single_i8_cyclic(
-        slot, row_len, row_width, digits,
-    ))
+    mat_vec_mul_ntt_single_i8_cyclic(slot, row_len, row_width, digits, MAX_I8_LOG_BASIS)
 }
 
 #[cfg(feature = "zk")]
@@ -547,11 +594,13 @@ where
         &self,
         expanded: Arc<AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup<D>, AkitaError> {
+        let ntt_i8_capacity = selected_crt_i8_capacity_profile::<F, D>()?;
         let total = expanded.shared_matrix.total_ring_elements_at::<D>()?;
         let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total)?)?;
         Ok(CpuPreparedSetup {
             expanded,
             ntt_shared,
+            ntt_i8_capacity,
             #[cfg(feature = "zk")]
             ntt_zk_b: OnceLock::new(),
             #[cfg(feature = "zk")]
@@ -576,14 +625,18 @@ where
         prepared: &Self::PreparedSetup<D>,
         plan: DenseCommitRowsPlan<'_, F, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        Ok(match plan.input {
-            DenseCommitInput::CachedDigits { digit_block_slices } => {
+        match plan.input {
+            DenseCommitInput::CachedDigits {
+                digit_block_slices,
+                log_basis,
+            } => {
                 let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
-                mat_vec_mul_ntt_dense_digits_i8(
+                mat_vec_mul_ntt_dense_digits_i8_trusted(
                     &prepared.ntt_shared,
                     plan.n_a,
                     row_width,
                     &digit_block_slices,
+                    log_basis,
                 )
             }
             DenseCommitInput::CoeffBlocks {
@@ -597,16 +650,16 @@ where
                     })
                 })?;
                 if plan.n_a == 1 {
-                    mat_vec_mul_ntt_i8_dense_single_row(
+                    Ok(mat_vec_mul_ntt_i8_dense_single_row(
                         &prepared.ntt_shared,
                         row_width,
                         &block_slices,
                         num_digits_commit,
                         log_basis,
-                    )
+                    )?
                     .into_iter()
                     .map(|ring| vec![ring])
-                    .collect()
+                    .collect())
                 } else {
                     mat_vec_mul_ntt_i8_dense(
                         &prepared.ntt_shared,
@@ -618,7 +671,7 @@ where
                     )
                 }
             }
-        })
+        }
     }
 
     fn onehot_commit_rows<const D: usize>(
@@ -695,14 +748,14 @@ where
             .checked_mul(plan.num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
         if plan.num_digits_commit == 1 {
-            Ok(mat_vec_mul_ntt_digits_i8_strided(
+            mat_vec_mul_ntt_raw_i8_strided(
                 &prepared.ntt_shared,
                 plan.n_rows,
                 row_width,
                 plan.coeffs,
                 plan.num_blocks,
                 plan.block_len,
-            ))
+            )
         } else {
             let ring_elems: Vec<CyclotomicRing<F, D>> = plan
                 .coeffs
@@ -712,7 +765,7 @@ where
                     CyclotomicRing::from_coefficients(coeffs)
                 })
                 .collect();
-            Ok(mat_vec_mul_ntt_i8_strided(
+            mat_vec_mul_ntt_i8_strided(
                 &prepared.ntt_shared,
                 plan.n_rows,
                 row_width,
@@ -721,7 +774,7 @@ where
                 plan.block_len,
                 plan.num_digits_commit,
                 plan.log_basis,
-            ))
+            )
         }
     }
 }
@@ -735,6 +788,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         row_len: usize,
         digits: &[[i8; D]],
+        log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         validate_digit_row_request(
             row_len,
@@ -744,12 +798,13 @@ where
                 .shared_matrix
                 .total_ring_elements_at::<D>()?,
         )?;
-        Ok(mat_vec_mul_ntt_single_i8(
+        mat_vec_mul_ntt_single_i8(
             &prepared.ntt_shared,
             row_len,
             digits.len(),
             digits,
-        ))
+            log_basis,
+        )
     }
 
     #[cfg(feature = "zk")]
@@ -802,6 +857,7 @@ where
         prepared: &Self::PreparedSetup<D>,
         row_len: usize,
         digits: &[[i8; D]],
+        log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         validate_digit_row_request(
             row_len,
@@ -811,12 +867,13 @@ where
                 .shared_matrix
                 .total_ring_elements_at::<D>()?,
         )?;
-        Ok(mat_vec_mul_ntt_single_i8_cyclic(
+        mat_vec_mul_ntt_single_i8_cyclic(
             &prepared.ntt_shared,
             row_len,
             digits.len(),
             digits,
-        ))
+            log_basis,
+        )
     }
 
     #[cfg(feature = "zk")]
@@ -872,7 +929,7 @@ where
     where
         F: HalvingField,
     {
-        let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients(
+        let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
             &prepared.ntt_shared,
             plan.n_d,
             plan.n_b,
@@ -881,7 +938,8 @@ where
             plan.t_hat,
             plan.z_segment,
             plan.z_pre_centered_inf_norm,
-        );
+            plan.log_basis,
+        )?;
         Ok(RingSwitchRelationRows {
             d_cyclic,
             b_cyclic,
@@ -897,7 +955,7 @@ where
     where
         F: HalvingField,
     {
-        let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients(
+        let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
             &prepared.ntt_shared,
             0,
             0,
@@ -906,7 +964,8 @@ where
             &[][..],
             plan.z_segment,
             plan.z_pre_centered_inf_norm,
-        );
+            1,
+        )?;
         Ok(a_quotients)
     }
 }
@@ -1017,13 +1076,29 @@ mod tests {
     }
 
     #[test]
+    fn cpu_prepared_setup_reports_checked_crt_capacity_profile() {
+        let prepared = prepared();
+        let profile = prepared.shared_ntt_profile();
+
+        assert_eq!(profile.profile_id, "Q32/2xi32");
+        assert_eq!(profile.num_primes, 2);
+        assert_eq!(profile.limb_bits, 32);
+        assert_eq!(profile.max_i8_log_basis, MAX_I8_LOG_BASIS);
+        assert!(profile.balanced_digit_safe_width > 0);
+        assert!(profile.raw_i8_safe_width > 0);
+    }
+
+    #[test]
     fn cpu_digit_rows_match_direct_kernel() {
         let prepared = prepared();
         let digits = vec![[1i8; D], [-1i8; D], [2i8; D]];
+        let log_basis = 3;
         let via_backend = CpuBackend
-            .digit_rows::<D>(&prepared, 2, &digits)
+            .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
-        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, digits.len(), &digits);
+        let direct =
+            mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, digits.len(), &digits, log_basis)
+                .expect("direct digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -1031,10 +1106,13 @@ mod tests {
     fn cpu_digit_rows_accept_logical_input_longer_than_stride() {
         let prepared = prepared();
         let digits = vec![[1i8; D]; 12];
+        let log_basis = 3;
         let via_backend = CpuBackend
-            .digit_rows::<D>(&prepared, 2, &digits)
+            .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
-        let direct = mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, digits.len(), &digits);
+        let direct =
+            mat_vec_mul_ntt_single_i8(&prepared.ntt_shared, 2, digits.len(), &digits, log_basis)
+                .expect("direct digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -1042,11 +1120,18 @@ mod tests {
     fn cpu_cyclic_digit_rows_match_direct_kernel() {
         let prepared = prepared();
         let digits = vec![[1i8; D], [0i8; D], [-2i8; D], [3i8; D]];
+        let log_basis = 3;
         let via_backend = CpuBackend
-            .cyclic_digit_rows::<D>(&prepared, 2, &digits)
+            .cyclic_digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend cyclic digit rows");
-        let direct =
-            mat_vec_mul_ntt_single_i8_cyclic(&prepared.ntt_shared, 2, digits.len(), &digits);
+        let direct = mat_vec_mul_ntt_single_i8_cyclic(
+            &prepared.ntt_shared,
+            2,
+            digits.len(),
+            &digits,
+            log_basis,
+        )
+        .expect("direct cyclic digit rows");
         assert_eq!(via_backend, direct);
     }
 
@@ -1097,11 +1182,13 @@ mod tests {
                     t_hat: &t_hat,
                     z_segment: &z_segment,
                     z_pre_centered_inf_norm: 3,
+                    log_basis: 3,
                 },
             )
             .expect("backend ring-switch relation rows");
         let direct =
-            fused_split_eq_quotients(&prepared.ntt_shared, 1, 1, 1, &w_hat, &t_hat, &z_segment, 3);
+            fused_split_eq_quotients(&prepared.ntt_shared, 1, 1, 1, &w_hat, &t_hat, &z_segment, 3)
+                .expect("direct fused split-eq rows");
         assert_eq!(
             (
                 via_backend.d_cyclic,

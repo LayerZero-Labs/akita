@@ -1,4 +1,5 @@
 use super::*;
+use crate::validation::validate_i8_setup_log_basis;
 
 /// Build the witness vector `w` from the quadratic equation state.
 ///
@@ -47,6 +48,7 @@ where
     let mut hint = quad_eq
         .take_hint()
         .ok_or_else(|| AkitaError::InvalidInput("missing hint in prover".to_string()))?;
+    validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
     hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
     #[cfg(feature = "zk")]
     let (decomposed_inner_rows, recomposed_inner_rows, b_blinding_digits) = hint.into_flat_parts();

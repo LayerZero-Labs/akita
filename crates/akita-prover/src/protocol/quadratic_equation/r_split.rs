@@ -2,6 +2,7 @@ use super::repeated_b::repeated_b_commitment_rows;
 #[cfg(feature = "zk")]
 use super::repeated_b::{add_zk_b_blinding_cyclic_rows, add_zk_d_blinding_cyclic_rows};
 use super::*;
+use crate::validation::validate_i8_setup_log_basis;
 
 /// Add only the high-half quotient contribution of `challenge * ring`.
 ///
@@ -276,6 +277,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
     B: RingSwitchComputeBackend<F>,
 {
+    validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
     if num_polys_per_point.is_empty() || num_polys_per_point.contains(&0) {
         return Err(AkitaError::InvalidProof);
     }
@@ -406,6 +408,7 @@ where
             t_hat: relation_t_hat,
             z_segment: first_z_segment,
             z_pre_centered_inf_norm,
+            log_basis: lp.log_basis,
         },
     )?;
     if relation_rows.d_cyclic.len() != n_d_active
@@ -472,6 +475,7 @@ where
             b_blinding_digits,
             num_polys_per_point,
             blocks_per_claim,
+            lp.log_basis,
         )?
     };
     if commitment_cyclic_rows.len() != commitment_row_count {

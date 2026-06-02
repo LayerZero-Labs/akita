@@ -43,50 +43,45 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
     }
 
     /// Fused negacyclic shift + accumulate: `dst += self * X^k`.
+    ///
+    /// Requires `k < D`.
+    /// Wide version of [`CyclotomicRing::shift_accumulate_into`].
+    /// `WideCyclotomicRing` has no support for general negacyclic shifts (`k >= D`).
+    /// For `k >= D`, reduce to `CyclotomicRing` and use [`CyclotomicRing::negacyclic_shift`].
     #[inline]
     pub fn shift_accumulate_into(&self, dst: &mut Self, k: usize) {
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] += self.coeffs[i];
-            }
-            return;
+        debug_assert!(
+            k < D,
+            "fused method shift_accumulate_into: k={k} must be < D={D}"
+        );
+
+        let (lo, hi) = dst.coeffs.split_at_mut(k);
+        let (self_lo, self_hi) = self.coeffs.split_at(D - k);
+        for (d, s) in hi.iter_mut().zip(self_lo) {
+            *d += *s; // i + k < D
         }
-        for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] += self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] -= self.coeffs[i];
-            }
+        for (d, s) in lo.iter_mut().zip(self_hi) {
+            *d -= *s; // i + k >= D
         }
     }
 
     /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
+    ///
+    /// Requires `k < D`.
+    /// Wide version of [`CyclotomicRing::shift_sub_into`].
+    /// `WideCyclotomicRing` has no support for general negacyclic shifts (`k >= D`).
+    /// For `k >= D`, reduce to `CyclotomicRing` and use [`CyclotomicRing::negacyclic_shift`].
     #[inline]
     pub fn shift_sub_into(&self, dst: &mut Self, k: usize) {
-        let k = k % D;
-        if k == 0 {
-            for i in 0..D {
-                dst.coeffs[i] -= self.coeffs[i];
-            }
-            return;
-        }
-        for i in 0..D {
-            let target = i + k;
-            if target < D {
-                dst.coeffs[target] -= self.coeffs[i];
-            } else {
-                dst.coeffs[target - D] += self.coeffs[i];
-            }
-        }
-    }
+        debug_assert!(k < D, "fused method shift_sub_into: k={k} must be < D={D}");
 
-    /// Fused multiply-by-monomial-sum + accumulate:
-    /// `dst += self * (X^{k_1} + X^{k_2} + ...)`.
-    pub fn mul_by_monomial_sum_into(&self, dst: &mut Self, nonzero_positions: &[usize]) {
-        for &k in nonzero_positions {
-            self.shift_accumulate_into(dst, k);
+        let (lo, hi) = dst.coeffs.split_at_mut(k);
+        let (self_lo, self_hi) = self.coeffs.split_at(D - k);
+        for (d, s) in hi.iter_mut().zip(self_lo) {
+            *d -= *s; // i + k < D
+        }
+        for (d, s) in lo.iter_mut().zip(self_hi) {
+            *d += *s; // i + k >= D
         }
     }
 }
