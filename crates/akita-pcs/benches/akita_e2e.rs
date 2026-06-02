@@ -151,6 +151,7 @@ fn bench_dense_phases<
                         )],
                         &mut transcript,
                         BasisMode::Lagrange,
+                        akita_types::SetupContributionMode::Direct,
                     )
                     .unwrap(),
                 )
@@ -176,6 +177,7 @@ fn bench_dense_phases<
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -194,6 +196,7 @@ fn bench_dense_phases<
                     },
                 )]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .unwrap();
         })
@@ -224,6 +227,7 @@ fn bench_dense_phases<
                 )],
                 &mut pt_tr,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .unwrap();
             let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
@@ -239,6 +243,7 @@ fn bench_dense_phases<
                     },
                 )],
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .unwrap();
             black_box(())
@@ -354,6 +359,7 @@ fn bench_onehot_phases<
                         )],
                         &mut transcript,
                         BasisMode::Lagrange,
+                        akita_types::SetupContributionMode::Direct,
                     )
                     .unwrap(),
                 )
@@ -379,6 +385,7 @@ fn bench_onehot_phases<
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -397,6 +404,7 @@ fn bench_onehot_phases<
                     },
                 )]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .unwrap();
         })
@@ -427,6 +435,7 @@ fn bench_onehot_phases<
                 )],
                 &mut pt_tr,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .unwrap();
             let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
@@ -442,6 +451,7 @@ fn bench_onehot_phases<
                     },
                 )],
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .unwrap();
             black_box(())

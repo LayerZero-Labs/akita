@@ -128,6 +128,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
         v_coeffs: 1,
         stage1_stages: Vec::new(),
         stage2_sumcheck_proof: Vec::new(),
+        stage3_sumcheck: None,
         next_commit_coeffs: 1,
     };
 

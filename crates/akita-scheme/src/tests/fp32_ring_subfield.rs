@@ -427,6 +427,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -463,6 +464,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -481,6 +483,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
     assert!(result.is_err());
 
@@ -499,6 +502,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
     assert!(result.is_err());
 }
@@ -576,6 +580,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
     // After Phase 1, the root variant depends on the schedule: multi-fold
@@ -609,6 +614,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -627,6 +633,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
     assert!(result.is_err());
 }
@@ -719,6 +726,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
         ],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
     // After Phase 1, the root variant depends on the schedule: multi-fold
@@ -761,6 +769,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
             ),
         ],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -788,6 +797,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
             ),
         ],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
     assert!(
         result.is_err(),

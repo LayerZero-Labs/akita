@@ -4,6 +4,7 @@ use akita_challenges::TensorChallenges as TensorChallengeSet;
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 
 /// Challenge evaluations used by deferred ring-switch row replay.
+#[derive(Clone)]
 pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
     Flat(Vec<F>),
     Tensor {

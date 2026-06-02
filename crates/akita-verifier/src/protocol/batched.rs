@@ -16,7 +16,7 @@ use akita_types::{
     schedule_is_root_direct, schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaProofStep, AkitaScheduleInputs, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
     ClaimIncidenceSummary, DirectWitnessProof, LevelParams, RingCommitment, RingSubfieldEncoding,
-    Schedule, VerifierClaims,
+    Schedule, SetupContributionMode, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -525,6 +525,7 @@ pub(crate) fn verify_batched_proof_with_schedule<
     basis: BasisMode,
     schedule: &Schedule,
     schedule_context: BatchedVerifierScheduleContext,
+    setup_contribution_mode: SetupContributionMode,
     verify_direct_commitments: DirectCommitmentCheck,
 ) -> Result<(), AkitaError>
 where
@@ -601,6 +602,7 @@ where
                 schedule,
                 &layouts.root_lp,
                 &layouts.next_level_params,
+                setup_contribution_mode,
             )?;
         }
     }
@@ -651,6 +653,7 @@ pub fn verify_batched_with_policy<
     next_params: NextParams,
     mut direct_params: DirectParams,
     bind_transcript: BindTranscript,
+    setup_contribution_mode: SetupContributionMode,
     verify_direct_commitments: DirectCommitmentCheck,
 ) -> Result<(), AkitaError>
 where
@@ -723,6 +726,7 @@ where
         basis,
         &schedule,
         schedule_context,
+        setup_contribution_mode,
         |witnesses, commitments, incidence_summary, direct_commitment_payload| {
             let params = match root_direct_params {
                 Some(params) => params,

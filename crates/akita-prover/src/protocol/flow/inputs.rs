@@ -293,6 +293,7 @@ where
         stage2_sumcheck_proof,
         #[cfg(feature = "zk")]
         stage2_sumcheck_proof_masked,
+        stage3_sumcheck_proof,
         w_commitment_proof,
         w_eval,
         next_state,
@@ -316,6 +317,7 @@ where
         stage2_sumcheck_proof,
         #[cfg(feature = "zk")]
         stage2_sumcheck_proof_masked,
+        stage3_sumcheck_proof,
         w_commitment_proof,
         w_eval,
     );
@@ -383,6 +385,7 @@ pub fn prove_folded_batched_with_policy<
     schedule: &Schedule,
     basis: BasisMode,
     root_next_params: &LevelParams,
+    setup_contribution_mode: SetupContributionMode,
     commit_root_next: CommitRootNext,
     build_suffix: BuildSuffix,
 ) -> Result<(AkitaBatchedProof<F, C>, usize), AkitaError>
@@ -477,6 +480,7 @@ where
             root_step.next_w_len,
             final_log_basis,
             basis,
+            setup_contribution_mode,
             #[cfg(feature = "zk")]
             &mut zk_hiding_state,
         )?;
@@ -510,6 +514,7 @@ where
         #[cfg(feature = "zk")]
         zk_hiding_state,
         basis,
+        setup_contribution_mode,
         |w| commit_root_next(w),
     )?;
 

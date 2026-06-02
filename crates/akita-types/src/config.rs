@@ -41,6 +41,16 @@ pub struct CommitmentEnvelope {
     pub max_n_d: usize,
 }
 
+/// Verifier strategy for the public setup contribution in the ring-switch row
+/// evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupContributionMode {
+    /// Evaluate the setup contribution directly from the expanded setup matrix.
+    Direct,
+    /// Use the recursive setup-contribution path.
+    Recursive,
+}
+
 /// Selects which Ajtai role the audited rank floor applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AjtaiRole {

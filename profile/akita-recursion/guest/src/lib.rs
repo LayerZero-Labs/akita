@@ -66,10 +66,8 @@ const _: () = {
 )]
 fn akita_verify(input: &[u8]) -> u32 {
     // `&[u8]` (rather than `Vec<u8>`) so the postcard-decoded input is a
-    // zero-copy borrow into the guest's input region — no heap
-    // allocation, no megabyte-scale memcpy on entry. The Jolt macro
-    // emits `postcard::take_from_bytes::<&[u8]>(input_slice)`, which
-    // postcard implements as a borrowed `Bytes` slice.
+    // zero-copy borrow into the guest's input region: no megabyte-scale copy
+    // before verifier replay.
     start_cycle_tracking("deserialize_input");
     #[cfg(any(
         feature = "trusted-benchmark-artifact",
@@ -106,18 +104,7 @@ fn akita_verify(input: &[u8]) -> u32 {
     // surface is `<Cfg>`-generic and routes every policy through `Cfg`
     // internally — no closures to thread through.
     start_cycle_tracking("akita_verify");
-    let result = verify_batched_with_policy::<
-        F,
-        Claim,
-        Challenge,
-        _,
-        D,
-        _,
-        _,
-        _,
-        _,
-        _,
-    >(
+    let result = verify_batched_with_policy::<F, Claim, Challenge, _, D, _, _, _, _, _>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
@@ -135,6 +122,7 @@ fn akita_verify(input: &[u8]) -> u32 {
                 transcript,
             )
         },
+        decoded.setup_contribution_mode,
         |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
             verify_root_direct_commitments_with_params::<F, D>(
                 witnesses,
@@ -150,6 +138,6 @@ fn akita_verify(input: &[u8]) -> u32 {
 
     match result {
         Ok(()) => 0,
-        Err(_) => 2,
+        Err(err) => panic!("recursive verifier rejected proof: {err:?}"),
     }
 }

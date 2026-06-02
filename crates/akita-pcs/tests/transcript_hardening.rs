@@ -77,6 +77,7 @@ fn event_stream_equality_small() {
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 
@@ -90,6 +91,7 @@ fn event_stream_equality_small() {
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("verify");
 
@@ -297,6 +299,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
             ),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
         let terminal_layout =
@@ -311,6 +314,7 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect_err("tampered terminal proof must reject");
     });
@@ -399,6 +403,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             prove_input(&point, &poly_refs, &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 

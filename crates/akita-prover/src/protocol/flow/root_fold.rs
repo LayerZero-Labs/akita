@@ -94,6 +94,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<C>>,
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] zk_hiding: ZkHidingProverState<F>,
+    setup_contribution_mode: SetupContributionMode,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
@@ -173,6 +174,7 @@ where
         #[cfg(feature = "zk")]
         y_rings_masked,
         row_coefficients,
+        setup_contribution_mode,
         commit_w_for_next,
     )?;
     raw.extension_opening_reduction = extension_opening_reduction;
@@ -210,6 +212,7 @@ pub fn prove_root_fold_with_params<F, E, C, T, P, B, const D: usize, CommitW>(
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     basis: BasisMode,
+    setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
@@ -392,6 +395,7 @@ where
             zk_hiding_commitment,
             #[cfg(feature = "zk")]
             zk_hiding,
+            setup_contribution_mode,
         );
     }
 
@@ -542,6 +546,7 @@ where
         #[cfg(feature = "zk")]
         y_rings_masked,
         row_coefficients,
+        setup_contribution_mode,
         commit_w_for_next,
     )
 }
@@ -576,6 +581,7 @@ pub fn prove_terminal_root_fold_with_params<F, E, C, T, P, B, const D: usize>(
     expected_w_len: usize,
     final_log_basis: u32,
     basis: BasisMode,
+    _setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
@@ -1033,6 +1039,7 @@ pub fn prove_root_fold_from_quadratic<F, C, T, B, const D: usize, CommitW>(
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
+    setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
@@ -1094,9 +1101,9 @@ where
         col_bits,
         ring_bits,
         tau0,
-        tau1: _,
+        tau1,
         b,
-        alpha: _,
+        alpha,
     } = rs;
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     #[cfg(feature = "zk")]
@@ -1201,6 +1208,30 @@ where
     #[cfg(feature = "zk")]
     let proof_w_eval = w_eval_masked;
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
+    let stage3_sumcheck_proof = match setup_contribution_mode {
+        SetupContributionMode::Recursive => {
+            let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
+            let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_len)?;
+            let output = SetupSumcheckProver::prove::<F, T, _, D>(
+                setup_view.as_slice(),
+                lp,
+                &quad_eq,
+                &tau1,
+                alpha,
+                &sumcheck_challenges[ring_bits..],
+                &row_coefficients,
+                quad_eq.num_public_rows(),
+                MRowLayout::Intermediate,
+                transcript,
+                |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+            )?;
+            Some(SetupSumcheckProof {
+                claim: output.claim,
+                sumcheck: output.sumcheck,
+            })
+        }
+        SetupContributionMode::Direct => None,
+    };
 
     Ok(RootLevelRawOutput {
         #[cfg(feature = "zk")]
@@ -1216,6 +1247,7 @@ where
         stage2_sumcheck_proof,
         #[cfg(feature = "zk")]
         stage2_sumcheck_proof_masked,
+        stage3_sumcheck_proof,
         w_commitment_proof,
         w_eval: proof_w_eval,
         next_state: RecursiveProverState {

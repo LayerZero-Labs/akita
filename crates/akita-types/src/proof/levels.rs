@@ -1,7 +1,6 @@
 use super::shapes::level_proof_shape;
 #[cfg(feature = "zk")]
 use super::shapes::sumcheck_proof_masked_shape;
-#[cfg(not(feature = "zk"))]
 use super::shapes::sumcheck_shape;
 use super::*;
 
@@ -85,6 +84,24 @@ pub struct ExtensionOpeningReductionProof<L: FieldCore> {
     pub sumcheck_proof_masked: SumcheckProofMasked<L>,
 }
 
+/// Product-sumcheck proof for the public setup contribution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupSumcheckProof<L: FieldCore> {
+    /// Claimed setup contribution fed into the stage-2 final row evaluation.
+    pub claim: L,
+    /// Degree-two product sumcheck over `S(lambda, y) * omega(lambda) * alpha(y)`.
+    pub sumcheck: SumcheckProof<L>,
+}
+
+impl<L: FieldCore> SetupSumcheckProof<L> {
+    /// Shape descriptor required for headerless deserialization.
+    pub fn shape(&self) -> SetupProductSumcheckShape {
+        SetupProductSumcheckShape {
+            sumcheck: sumcheck_shape(&self.sumcheck),
+        }
+    }
+}
+
 impl<L: FieldCore> ExtensionOpeningReductionProof<L> {
     /// Shape descriptor required for headerless deserialization.
     pub fn shape(&self) -> ExtensionOpeningReductionShape {
@@ -130,6 +147,8 @@ pub struct AkitaLevelProof<F: FieldCore, L: FieldCore> {
     pub stage1: AkitaStage1Proof<L>,
     /// Stage-2 fused payload.
     pub stage2: AkitaStage2Proof<F, L>,
+    /// Optional stage-3 setup product-sumcheck proof.
+    pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
 }
 
 impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
@@ -147,6 +166,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2,
+            stage3_sumcheck_proof: None,
         }
     }
 
@@ -236,6 +256,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: next_w_eval,
             },
+            stage3_sumcheck_proof: None,
         }
     }
 
@@ -337,6 +358,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
             &self.v,
             &self.stage1,
             &self.stage2,
+            self.stage3_sumcheck_proof.as_ref(),
         )
     }
 }
@@ -363,6 +385,8 @@ pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
     pub stage2_sumcheck: SumcheckProof<L>,
     #[cfg(feature = "zk")]
     pub stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
+    /// Optional stage-3 setup product-sumcheck proof.
+    pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
     /// Terminal witness, absorbed via `ABSORB_SUMCHECK_W` in place of
     /// `next_w_commitment`.
     pub final_witness: DirectWitnessProof<F>,
@@ -387,6 +411,7 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
             stage2_sumcheck,
             #[cfg(feature = "zk")]
             stage2_sumcheck_proof_masked,
+            stage3_sumcheck_proof: None,
             final_witness,
         }
     }
@@ -421,6 +446,10 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
                     sumcheck_proof_masked_shape(&self.stage2_sumcheck_proof_masked)
                 }
             },
+            stage3_sumcheck: self
+                .stage3_sumcheck_proof
+                .as_ref()
+                .map(SetupSumcheckProof::shape),
             final_witness: self.final_witness.shape(),
         }
     }
@@ -440,6 +469,8 @@ pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
     pub stage1: AkitaStage1Proof<L>,
     /// Stage-2 fused payload.
     pub stage2: AkitaStage2Proof<F, L>,
+    /// Optional stage-3 setup product-sumcheck proof.
+    pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
 }
 
 /// Root proof payload for fused batched openings.
@@ -485,6 +516,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2,
+            stage3_sumcheck_proof: None,
         })
     }
 
@@ -508,6 +540,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
             stage2_sumcheck_proof,
             #[cfg(feature = "zk")]
             stage2_sumcheck_proof_masked,
+            None,
             next_w_commitment,
             next_w_eval,
         )
@@ -523,6 +556,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         stage1: AkitaStage1Proof<L>,
         #[cfg(not(feature = "zk"))] stage2_sumcheck_proof: SumcheckProof<L>,
         #[cfg(feature = "zk")] stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
+        stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: L,
     ) -> Self {
@@ -542,7 +576,19 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
                 next_w_eval_masked: next_w_eval,
             },
         )
+        .with_stage3_sumcheck_proof(stage3_sumcheck_proof)
         .with_extension_opening_reduction(extension_opening_reduction)
+    }
+
+    /// Attach a stage-3 setup sumcheck proof to a folded root proof.
+    pub fn with_stage3_sumcheck_proof(
+        mut self,
+        stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
+    ) -> Self {
+        if let Self::Fold(fold) = &mut self {
+            fold.stage3_sumcheck_proof = stage3_sumcheck_proof;
+        }
+        self
     }
 
     /// Attach extension-opening reduction payloads to a folded root proof.
@@ -702,6 +748,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedFoldRoot<F, L> {
             &self.v,
             &self.stage1,
             &self.stage2,
+            self.stage3_sumcheck_proof.as_ref(),
         )
     }
 }

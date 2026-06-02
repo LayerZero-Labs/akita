@@ -161,6 +161,7 @@ where
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("prove");
     assert_folded_proof("single dense setup-capacity round trip", &proof);
@@ -172,6 +173,7 @@ where
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("verify");
 }
@@ -241,6 +243,7 @@ where
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("prove");
     assert_folded_proof("single onehot setup-capacity round trip", &proof);
@@ -252,6 +255,7 @@ where
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("verify");
 }
@@ -326,6 +330,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched prove");
     assert_folded_proof("batched dense setup-capacity round trip", &proof);
@@ -337,6 +342,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched verify");
 }
@@ -419,6 +425,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         ),
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot prove");
     assert_folded_proof("batched onehot setup-capacity round trip", &proof);
@@ -430,6 +437,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &mut verifier_transcript,
         verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot verify");
 }

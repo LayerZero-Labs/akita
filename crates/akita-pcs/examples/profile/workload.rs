@@ -19,7 +19,8 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     AkitaBatchedProof, AkitaCommitmentHint, AkitaSchedulePlan, AkitaVerifierSetup, BasisMode,
-    BlockOrder, ClaimIncidenceSummary, LevelParams, RingCommitment, RingSubfieldEncoding, Step,
+    BlockOrder, ClaimIncidenceSummary, LevelParams, RingCommitment, RingSubfieldEncoding,
+    SetupContributionMode, Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -218,6 +219,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
+    let setup_contribution_mode = SetupContributionMode::Direct;
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         setup,
         &CpuBackend,
@@ -232,6 +234,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        setup_contribution_mode,
     )
     .unwrap();
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
@@ -258,21 +261,25 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
         );
     }
     if let Some(plan) = plan {
-        assert_eq!(
-            proof.size(),
-            plan.exact_proof_bytes,
-            "runtime proof bytes should match the planned proof size"
-        );
+        if setup_contribution_mode == SetupContributionMode::Direct {
+            assert_eq!(
+                proof.size(),
+                plan.exact_proof_bytes,
+                "runtime proof bytes should match the planned proof size"
+            );
+        }
         emit_planned_schedule_summary(label, plan);
     } else {
         let incidence =
             ClaimIncidenceSummary::same_point(pt.len(), 1).expect("same-point incidence summary");
         let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
-        assert_eq!(
-            proof.size(),
-            schedule.total_bytes,
-            "runtime proof bytes should match the runtime schedule proof size"
-        );
+        if setup_contribution_mode == SetupContributionMode::Direct {
+            assert_eq!(
+                proof.size(),
+                schedule.total_bytes,
+                "runtime proof bytes should match the runtime schedule proof size"
+            );
+        }
         emit_runtime_schedule_summary(label, &schedule, Cfg::decomposition().field_bits());
     }
 
@@ -291,6 +298,7 @@ fn run_prove<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>, P: AkitaPoly
             },
         )],
         BasisMode::Lagrange,
+        setup_contribution_mode,
     ) {
         Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
         Err(e) => {
@@ -583,6 +591,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
+    let setup_contribution_mode = SetupContributionMode::Direct;
     let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         &setup,
         &CpuBackend,
@@ -597,6 +606,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        setup_contribution_mode,
     )
     .unwrap();
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
@@ -606,18 +616,22 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         ClaimIncidenceSummary::same_point(nv, num_polys).expect("same-point incidence summary");
     let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
     if let Some(plan) = plan {
-        assert_eq!(
-            proof.size(),
-            plan.exact_proof_bytes,
-            "runtime proof bytes should match the planned proof size"
-        );
+        if setup_contribution_mode == SetupContributionMode::Direct {
+            assert_eq!(
+                proof.size(),
+                plan.exact_proof_bytes,
+                "runtime proof bytes should match the planned proof size"
+            );
+        }
         emit_planned_schedule_summary(label, plan);
     } else {
-        assert_eq!(
-            proof.size(),
-            schedule.total_bytes,
-            "runtime proof bytes should match the runtime schedule proof size"
-        );
+        if setup_contribution_mode == SetupContributionMode::Direct {
+            assert_eq!(
+                proof.size(),
+                schedule.total_bytes,
+                "runtime proof bytes should match the runtime schedule proof size"
+            );
+        }
         emit_runtime_schedule_summary(label, &schedule, Cfg::decomposition().field_bits());
     }
     tracing::info!(
@@ -671,6 +685,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             },
         )],
         BasisMode::Lagrange,
+        setup_contribution_mode,
     ) {
         Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
         Err(e) => {

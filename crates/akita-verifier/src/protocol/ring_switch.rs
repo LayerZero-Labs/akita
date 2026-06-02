@@ -142,6 +142,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 /// alpha-evaluated folding challenges and the tau1 eq-polynomial expansion.
 /// Everything else is passed by reference at evaluation time to avoid
 /// duplicating setup matrix views, opening points, and gadget vectors.
+#[derive(Clone)]
 pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
     pub(crate) eq_tau1: Vec<F>,
@@ -175,11 +176,11 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) claim_to_point: Vec<usize>,
 }
 
-pub(crate) struct RingSwitchSegmentLayout {
-    pub(crate) offset_w: usize,
-    pub(crate) offset_t: usize,
-    pub(crate) offset_z: usize,
-    pub(crate) offset_r: usize,
+pub struct RingSwitchSegmentLayout {
+    pub offset_w: usize,
+    pub offset_t: usize,
+    pub offset_z: usize,
+    pub offset_r: usize,
     #[cfg(feature = "zk")]
     pub(crate) b_blinding_offset: usize,
     #[cfg(feature = "zk")]
@@ -640,7 +641,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
     }
 
-    pub(crate) fn segment_layout(&self) -> Result<RingSwitchSegmentLayout, AkitaError> {
+    pub fn segment_layout(&self) -> Result<RingSwitchSegmentLayout, AkitaError> {
         if self.num_blocks == 0 || !self.num_blocks.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
                 "num_blocks must be a non-zero power of two".to_string(),
@@ -744,6 +745,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         opening_points: &[RingOpeningPoint<F>],
         ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
         alpha: E,
+        setup_claim: Option<E>,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -923,23 +925,27 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let setup_contribution = {
             let _span = tracing::info_span!("setup_contribution").entered();
             jolt_start_cycle_tracking("setup_contribution");
-            let evaluator = SetupEvaluator::new(
-                self,
-                x_challenges,
-                Some(&eq_low),
-                Some(&z_block_low_eq),
-                &alpha_pows,
-                &fold_gadget,
-                layout.offset_w,
-                layout.offset_t,
-                layout.offset_z,
-            );
-            let result = match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
-                SetupEvaluation::Direct(value) => Ok(value),
-                #[cfg(test)]
-                SetupEvaluation::Recursive(_) => Err(AkitaError::InvalidSetup(
-                    "setup evaluator returned recursive output for direct mode".into(),
-                )),
+            let result = if let Some(claim) = setup_claim {
+                Ok(claim)
+            } else {
+                let evaluator = SetupEvaluator::new(
+                    self,
+                    x_challenges,
+                    Some(&eq_low),
+                    Some(&z_block_low_eq),
+                    &alpha_pows,
+                    &fold_gadget,
+                    layout.offset_w,
+                    layout.offset_t,
+                    layout.offset_z,
+                );
+                match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
+                    SetupEvaluation::Direct(value) => Ok(value),
+                    #[cfg(test)]
+                    SetupEvaluation::Recursive(_) => Err(AkitaError::InvalidSetup(
+                        "setup evaluator returned recursive output for direct mode".into(),
+                    )),
+                }
             };
             jolt_end_cycle_tracking("setup_contribution");
             result?

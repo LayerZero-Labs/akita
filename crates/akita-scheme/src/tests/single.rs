@@ -47,6 +47,7 @@ fn verify_passes_for_consistent_opening() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -63,6 +64,7 @@ fn verify_passes_for_consistent_opening() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
 
     assert!(result.is_ok());
@@ -113,6 +115,7 @@ fn verify_rejects_wrong_opening() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -132,6 +135,7 @@ fn verify_rejects_wrong_opening() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
 
     assert!(
@@ -170,6 +174,7 @@ fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
                 },
             )],
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
     }));
 
@@ -215,6 +220,7 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("degree-one roundtrip proof should verify");
 }
@@ -276,6 +282,7 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap_err();
     assert!(matches!(err, AkitaError::InvalidProof));
@@ -331,6 +338,7 @@ fn monomial_basis_prove_verify_round_trip() {
         )],
         &mut prover_transcript,
         BasisMode::Monomial,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -347,6 +355,7 @@ fn monomial_basis_prove_verify_round_trip() {
             },
         )],
         BasisMode::Monomial,
+        akita_types::SetupContributionMode::Direct,
     );
 
     assert!(
@@ -403,6 +412,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -434,6 +444,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 }

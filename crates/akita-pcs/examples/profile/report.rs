@@ -2,7 +2,7 @@ use akita_field::FieldCore;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, AkitaSchedulePlan,
-    DirectWitnessProof, LevelParams, Schedule, Step, TerminalLevelProof,
+    DirectWitnessProof, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -156,6 +156,14 @@ fn extension_opening_reduction_sizes<L: FieldCore + AkitaSerialize>(
     })
 }
 
+fn stage3_sumcheck_size<L: FieldCore + AkitaSerialize>(
+    proof: Option<&SetupSumcheckProof<L>>,
+) -> usize {
+    proof.map_or(0, |proof| {
+        proof.claim.serialized_size(Compress::No) + proof.sumcheck.serialized_size(Compress::No)
+    })
+}
+
 fn print_akita_level_breakdown<FF, L, const D: usize>(
     label: &str,
     level_idx: usize,
@@ -211,6 +219,7 @@ where
     let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
     #[cfg(feature = "zk")]
     let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
+    let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof.as_ref());
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
     let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
     tracing::info!(
@@ -226,6 +235,7 @@ where
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
+        stage3_sumcheck_bytes = stage3_sumcheck_size,
         next_w_commitment_bytes = next_w_commitment_size,
         next_w_eval_bytes = next_w_eval_size,
         "proof fold level"
@@ -236,6 +246,7 @@ where
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
+    eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
         stage2.next_w_commitment.coeff_len(),
@@ -251,6 +262,7 @@ where
             + stage1_interstage_claims_size
             + stage1_s_claim_size
             + stage2_sumcheck_size
+            + stage3_sumcheck_size
             + next_w_commitment_size
             + next_w_eval_size
     );
@@ -282,6 +294,7 @@ where
                 .serialized_size(Compress::No)
         }
     };
+    let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof.as_ref());
     let final_witness_size = level.final_witness.serialized_size(Compress::No);
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
@@ -304,6 +317,7 @@ where
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
+        stage3_sumcheck_bytes = stage3_sumcheck_size,
         final_witness_bytes = final_witness_size,
         root_variant = root_variant,
         "proof fold level"
@@ -326,6 +340,7 @@ where
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
+    eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!("[{label}]     final_witness={final_witness_size} bytes (absorbed via transcript)");
     assert_eq!(
         full,
@@ -333,6 +348,7 @@ where
             + extension_opening_partials_size
             + extension_opening_sumcheck_size
             + stage2_sumcheck_size
+            + stage3_sumcheck_size
             + final_witness_size
     );
     total
@@ -398,6 +414,7 @@ where
     let stage2_sumcheck_size = stage2.sumcheck_proof.serialized_size(Compress::No);
     #[cfg(feature = "zk")]
     let stage2_sumcheck_size = stage2.sumcheck_proof_masked.serialized_size(Compress::No);
+    let stage3_sumcheck_size = stage3_sumcheck_size(fold.stage3_sumcheck_proof.as_ref());
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
     let next_w_eval_size = stage2.next_w_eval().serialized_size(Compress::No);
 
@@ -414,6 +431,7 @@ where
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_s_claim_bytes = stage1_s_claim_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
+        stage3_sumcheck_bytes = stage3_sumcheck_size,
         next_w_commitment_bytes = next_w_commitment_size,
         next_w_eval_bytes = next_w_eval_size,
         root_variant = "fold",
@@ -438,6 +456,7 @@ where
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
+    eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
         "[{label}]     next_w_commitment={next_w_commitment_size} bytes ({} coeffs)",
         stage2.next_w_commitment.coeff_len(),
@@ -453,6 +472,7 @@ where
             + stage1_interstage_claims_size
             + stage1_s_claim_size
             + stage2_sumcheck_size
+            + stage3_sumcheck_size
             + next_w_commitment_size
             + next_w_eval_size
     );

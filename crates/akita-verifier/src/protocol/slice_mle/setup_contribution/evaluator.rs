@@ -31,23 +31,23 @@ fn jolt_cycle_marker(marker_id_str: &str, event_type: u32) {
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 #[inline(always)]
-fn jolt_start_cycle_tracking(marker_id: &str) {
+pub(crate) fn jolt_start_cycle_tracking(marker_id: &str) {
     jolt_cycle_marker(marker_id, 1);
 }
 
 #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
 #[inline(always)]
-fn jolt_start_cycle_tracking(_marker_id: &str) {}
+pub(crate) fn jolt_start_cycle_tracking(_marker_id: &str) {}
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 #[inline(always)]
-fn jolt_end_cycle_tracking(marker_id: &str) {
+pub(crate) fn jolt_end_cycle_tracking(marker_id: &str) {
     jolt_cycle_marker(marker_id, 2);
 }
 
 #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
 #[inline(always)]
-fn jolt_end_cycle_tracking(_marker_id: &str) {}
+pub(crate) fn jolt_end_cycle_tracking(_marker_id: &str) {}
 
 /// Flat coefficient weights for `<S_{<=N}, omega_S>`.
 #[cfg(test)]
@@ -120,7 +120,7 @@ pub(crate) enum SetupEvaluation<E> {
     Recursive(E),
 }
 
-pub(crate) struct SetupEvaluator<'a, F: FieldCore, E: FieldCore> {
+pub struct SetupEvaluator<'a, F: FieldCore, E: FieldCore> {
     prepared: &'a RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &'a [E],
     eq_low: Option<&'a [E]>,
@@ -138,7 +138,7 @@ where
     E: ExtField<F>,
 {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub fn new(
         prepared: &'a RingSwitchDeferredRowEval<E>,
         full_vec_randomness: &'a [E],
         eq_low: Option<&'a [E]>,
@@ -195,7 +195,7 @@ where
         }
     }
 
-    fn prepare(&self) -> Result<SetupEvalPlan<E>, AkitaError> {
+    pub fn prepare(&self) -> Result<SetupEvalPlan<E>, AkitaError> {
         let prepared = self.prepared;
         if self.alpha_pows.is_empty() {
             return Err(AkitaError::InvalidSetup("alpha powers are empty".into()));
@@ -561,7 +561,7 @@ where
     }
 }
 
-struct SetupEvalPlan<E> {
+pub struct SetupEvalPlan<E> {
     required: usize,
     d_stride: usize,
     b_stride: usize,
@@ -590,30 +590,92 @@ impl<E: FieldCore> SetupEvalPlan<E> {
 
         jolt_start_cycle_tracking("setup_omega_s");
         let omega_len = checked_mul(bar_omega.len(), D, "omega_S length")?;
-        let mut omega_s = Vec::with_capacity(omega_len);
-        for &weight in &bar_omega {
-            for &alpha_pow in alpha_pows {
-                omega_s.push(weight * alpha_pow);
-            }
-        }
+        let mut omega_s = vec![E::zero(); omega_len];
+        cfg_chunks_mut!(&mut omega_s, D)
+            .enumerate()
+            .for_each(|(lambda, row)| {
+                let weight = bar_omega[lambda];
+                for (slot, &alpha_pow) in row.iter_mut().zip(alpha_pows) {
+                    *slot = weight * alpha_pow;
+                }
+            });
         jolt_end_cycle_tracking("setup_omega_s");
 
         Ok(MaterializedSetupOmega { bar_omega, omega_s })
     }
 
-    #[cfg(test)]
-    fn materialize_bar_omega(&self) -> Vec<E> {
+    pub fn required(&self) -> usize {
+        self.required
+    }
+
+    pub fn materialize_bar_omega(&self) -> Vec<E> {
+        let segments = self.segments();
+        let segment_values = cfg_into_iter!(segments)
+            .map(|segment| {
+                let values = cfg_into_iter!(segment.lo..segment.hi)
+                    .map(|lambda| self.weight_at(lambda, &segment))
+                    .collect::<Vec<_>>();
+                (segment.lo, values)
+            })
+            .collect::<Vec<_>>();
         let mut bar_omega = vec![E::zero(); self.required];
-        for segment in self.segments() {
-            for (offset, slot) in bar_omega[segment.lo..segment.hi].iter_mut().enumerate() {
-                let lambda = segment.lo + offset;
-                *slot = self.weight_at(lambda, &segment);
+        for (lo, values) in segment_values {
+            for (offset, value) in values.into_iter().enumerate() {
+                bar_omega[lo + offset] = value;
             }
         }
         bar_omega
     }
 
-    #[cfg(test)]
+    pub(crate) fn evaluate_bar_omega_with_eq(&self, eq_lambda: &[E]) -> Result<E, AkitaError> {
+        let lambda_len = self
+            .required
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("setup omega lambda length overflow".into()))?;
+        if eq_lambda.len() != lambda_len {
+            return Err(AkitaError::InvalidSize {
+                expected: lambda_len,
+                actual: eq_lambda.len(),
+            });
+        }
+
+        let segments = self.segments();
+        let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
+            .map(|idx| {
+                let segment = &segments[idx];
+                macro_rules! segment_sum {
+                    ($has_d:literal, $has_b:literal, $has_a:literal) => {
+                        bar_omega_segment_eval::<E, $has_d, $has_b, $has_a>(
+                            segment.lo..segment.hi,
+                            eq_lambda,
+                            segment.d_start_abs,
+                            segment.d_weight,
+                            &self.w_eq_slice,
+                            segment.b_start_abs,
+                            segment.b_weights,
+                            &self.t_eq_slice_per_group,
+                            segment.a_start_abs,
+                            segment.a_weight,
+                            &self.z_eq_slice,
+                        )
+                    };
+                }
+
+                match (segment.has_d, segment.has_b, segment.has_a) {
+                    (true, true, true) => segment_sum!(true, true, true),
+                    (true, true, false) => segment_sum!(true, true, false),
+                    (true, false, true) => segment_sum!(true, false, true),
+                    (false, true, true) => segment_sum!(false, true, true),
+                    (true, false, false) => segment_sum!(true, false, false),
+                    (false, true, false) => segment_sum!(false, true, false),
+                    (false, false, true) => segment_sum!(false, false, true),
+                    (false, false, false) => E::zero(),
+                }
+            })
+            .collect();
+        Ok(segment_sums.into_iter().sum())
+    }
+
     fn weight_at(&self, lambda: usize, segment: &SetupSegment<'_, E>) -> E {
         let mut weight = E::zero();
         if segment.has_d {
@@ -808,6 +870,50 @@ where
             }
             if !weight.is_zero() {
                 acc += eval_ring_at_pows(&setup_flat[lambda], alpha_pows) * weight;
+            }
+            acc
+        },
+        |lhs, rhs| lhs + rhs
+    )
+}
+
+/// Evaluate `<bar_omega, eq_lambda>` over a contiguous packed setup segment.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn bar_omega_segment_eval<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
+    range: std::ops::Range<usize>,
+    eq_lambda: &[E],
+    d_start: usize,
+    d_weight: E,
+    w_eq: &[E],
+    b_start: usize,
+    b_weights: &[E],
+    t_eq_per_group: &[Vec<E>],
+    a_start: usize,
+    a_weight: E,
+    z_eq: &[E],
+) -> E
+where
+    E: FieldCore,
+{
+    cfg_fold_reduce!(
+        range,
+        E::zero,
+        |mut acc, lambda| {
+            let mut weight = E::zero();
+            if HAS_D {
+                weight += d_weight * w_eq[lambda - d_start];
+            }
+            if HAS_B {
+                for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
+                    weight += b_weights[g] * t_eq_slice[lambda - b_start];
+                }
+            }
+            if HAS_A {
+                weight += a_weight * z_eq[lambda - a_start];
+            }
+            if !weight.is_zero() {
+                acc += eq_lambda[lambda] * weight;
             }
             acc
         },

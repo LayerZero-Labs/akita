@@ -1176,6 +1176,7 @@ mod tests {
                 #[cfg(feature = "zk")]
                 next_w_eval_masked: F::zero(),
             },
+            stage3_sumcheck_proof: None,
         };
         Ok(proof.serialized_size(Compress::No))
     }

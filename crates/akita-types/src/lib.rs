@@ -16,7 +16,7 @@ pub mod transcript;
 #[cfg(feature = "zk")]
 pub mod zk;
 
-pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
+pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams, SetupContributionMode};
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
@@ -67,9 +67,9 @@ pub use proof::{
     IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits, PreparedRecursiveOpeningPoint,
     PreparedRootOpeningPoint, PublicMatrixSeed, PublicOpeningRow, RelationOnlyStage2Inputs,
     RingCommitment, RingMultiplierOpeningPoint, RingSliceSerializer, SetupMatrixEnvelope,
-    TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts, VerifierClaims, EXTENSION_OPENING_REDUCTION_DEGREE,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SetupProductSumcheckShape, SetupSumcheckProof, TerminalLevelProof, TerminalLevelProofShape,
+    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts, VerifierClaims,
+    EXTENSION_OPENING_REDUCTION_DEGREE, MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_SUMCHECK_DEGREE,
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};

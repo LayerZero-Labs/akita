@@ -94,6 +94,59 @@ where
     }))
 }
 
+fn serialize_stage3_sumcheck<L, W>(
+    stage3_sumcheck: Option<&SetupSumcheckProof<L>>,
+    mut writer: W,
+    compress: Compress,
+) -> Result<(), SerializationError>
+where
+    L: FieldCore + AkitaSerialize,
+    W: Write,
+{
+    if let Some(stage3_sumcheck) = stage3_sumcheck {
+        stage3_sumcheck
+            .claim
+            .serialize_with_mode(&mut writer, compress)?;
+        stage3_sumcheck
+            .sumcheck
+            .serialize_with_mode(&mut writer, compress)?;
+    }
+    Ok(())
+}
+
+fn stage3_sumcheck_serialized_size<L>(
+    stage3_sumcheck: Option<&SetupSumcheckProof<L>>,
+    compress: Compress,
+) -> usize
+where
+    L: FieldCore + AkitaSerialize,
+{
+    stage3_sumcheck.map_or(0, |stage3_sumcheck| {
+        stage3_sumcheck.claim.serialized_size(compress)
+            + stage3_sumcheck.sumcheck.serialized_size(compress)
+    })
+}
+
+fn deserialize_stage3_sumcheck<L, R>(
+    mut reader: R,
+    compress: Compress,
+    validate: Validate,
+    shape: Option<&SetupProductSumcheckShape>,
+) -> Result<Option<SetupSumcheckProof<L>>, SerializationError>
+where
+    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    R: Read,
+{
+    let Some(shape) = shape else {
+        return Ok(None);
+    };
+    shape.check()?;
+    let claim = L::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let sumcheck =
+        SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
+    Ok(Some(SetupSumcheckProof { claim, sumcheck }))
+}
+
 impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
     for AkitaLevelProof<F, L>
 {
@@ -133,6 +186,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         self.stage2
             .sumcheck_proof_masked
             .serialize_with_mode(&mut writer, compress)?;
+        serialize_stage3_sumcheck(self.stage3_sumcheck_proof.as_ref(), &mut writer, compress)?;
         self.stage2
             .next_w_commitment
             .serialize_with_mode(&mut writer, compress)?;
@@ -179,6 +233,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                     self.stage2.sumcheck_proof_masked.serialized_size(compress)
                 }
             })
+            + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval().serialized_size(compress)
     }
@@ -212,6 +267,10 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
         self.stage2.sumcheck_proof.check()?;
         #[cfg(feature = "zk")]
         self.stage2.sumcheck_proof_masked.check()?;
+        if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
+            stage3_sumcheck.claim.check()?;
+            stage3_sumcheck.sumcheck.check()?;
+        }
         self.stage2.next_w_commitment.check()?;
         self.stage2.next_w_eval().check()
     }
@@ -282,21 +341,31 @@ impl<
             stages: stage1_stages,
             s_claim: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
+        #[cfg(not(feature = "zk"))]
+        let stage2_sumcheck_proof = SumcheckProof::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &ctx.stage2_sumcheck_proof,
+        )?;
+        #[cfg(feature = "zk")]
+        let stage2_sumcheck_proof_masked = SumcheckProofMasked::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &ctx.stage2_sumcheck_proof,
+        )?;
+        let stage3_sumcheck_proof = deserialize_stage3_sumcheck(
+            &mut reader,
+            compress,
+            validate,
+            ctx.stage3_sumcheck.as_ref(),
+        )?;
         let stage2 = AkitaStage2Proof {
             #[cfg(not(feature = "zk"))]
-            sumcheck_proof: SumcheckProof::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &ctx.stage2_sumcheck_proof,
-            )?,
+            sumcheck_proof: stage2_sumcheck_proof,
             #[cfg(feature = "zk")]
-            sumcheck_proof_masked: SumcheckProofMasked::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &ctx.stage2_sumcheck_proof,
-            )?,
+            sumcheck_proof_masked: stage2_sumcheck_proof_masked,
             next_w_commitment: FlatRingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -314,6 +383,7 @@ impl<
             v,
             stage1,
             stage2,
+            stage3_sumcheck_proof,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -342,6 +412,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         #[cfg(feature = "zk")]
         self.stage2_sumcheck_proof_masked
             .serialize_with_mode(&mut writer, compress)?;
+        serialize_stage3_sumcheck(self.stage3_sumcheck_proof.as_ref(), &mut writer, compress)?;
         self.final_witness
             .serialize_with_mode(&mut writer, compress)
     }
@@ -362,6 +433,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                     self.stage2_sumcheck_proof_masked.serialized_size(compress)
                 }
             }
+            + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + self.final_witness.serialized_size(compress)
     }
 }
@@ -385,6 +457,10 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for TerminalLevelProof<F,
         self.stage2_sumcheck.check()?;
         #[cfg(feature = "zk")]
         self.stage2_sumcheck_proof_masked.check()?;
+        if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
+            stage3_sumcheck.claim.check()?;
+            stage3_sumcheck.sumcheck.check()?;
+        }
         self.final_witness.check()
     }
 }
@@ -427,6 +503,12 @@ impl<
             validate,
             &ctx.stage2_sumcheck,
         )?;
+        let stage3_sumcheck_proof = deserialize_stage3_sumcheck(
+            &mut reader,
+            compress,
+            validate,
+            ctx.stage3_sumcheck.as_ref(),
+        )?;
         let final_witness = DirectWitnessProof::deserialize_with_mode(
             &mut reader,
             compress,
@@ -440,6 +522,7 @@ impl<
             stage2_sumcheck,
             #[cfg(feature = "zk")]
             stage2_sumcheck_proof_masked,
+            stage3_sumcheck_proof,
             final_witness,
         };
         if matches!(validate, Validate::Yes) {
@@ -547,6 +630,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         self.stage2
             .sumcheck_proof_masked
             .serialize_with_mode(&mut writer, compress)?;
+        serialize_stage3_sumcheck(self.stage3_sumcheck_proof.as_ref(), &mut writer, compress)?;
         self.stage2
             .next_w_commitment
             .serialize_with_mode(&mut writer, compress)?;
@@ -594,6 +678,7 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                     self.stage2.sumcheck_proof_masked.serialized_size(compress)
                 }
             })
+            + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval().serialized_size(compress)
     }
@@ -622,6 +707,10 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<
         self.stage2.sumcheck_proof.check()?;
         #[cfg(feature = "zk")]
         self.stage2.sumcheck_proof_masked.check()?;
+        if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
+            stage3_sumcheck.claim.check()?;
+            stage3_sumcheck.sumcheck.check()?;
+        }
         self.stage2.next_w_commitment.check()?;
         self.stage2.next_w_eval().check()
     }
@@ -692,21 +781,31 @@ impl<
             stages: stage1_stages,
             s_claim: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
+        #[cfg(not(feature = "zk"))]
+        let stage2_sumcheck_proof = SumcheckProof::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &ctx.stage2_sumcheck_proof,
+        )?;
+        #[cfg(feature = "zk")]
+        let stage2_sumcheck_proof_masked = SumcheckProofMasked::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &ctx.stage2_sumcheck_proof,
+        )?;
+        let stage3_sumcheck_proof = deserialize_stage3_sumcheck(
+            &mut reader,
+            compress,
+            validate,
+            ctx.stage3_sumcheck.as_ref(),
+        )?;
         let stage2 = AkitaStage2Proof {
             #[cfg(not(feature = "zk"))]
-            sumcheck_proof: SumcheckProof::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &ctx.stage2_sumcheck_proof,
-            )?,
+            sumcheck_proof: stage2_sumcheck_proof,
             #[cfg(feature = "zk")]
-            sumcheck_proof_masked: SumcheckProofMasked::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &ctx.stage2_sumcheck_proof,
-            )?,
+            sumcheck_proof_masked: stage2_sumcheck_proof_masked,
             next_w_commitment: FlatRingVec::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -724,6 +823,7 @@ impl<
             v,
             stage1,
             stage2,
+            stage3_sumcheck_proof,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

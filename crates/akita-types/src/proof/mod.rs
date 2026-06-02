@@ -44,7 +44,7 @@ pub use incidence::{
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
     AkitaProofStep, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    ExtensionOpeningReductionProof, TerminalLevelProof,
+    ExtensionOpeningReductionProof, SetupSumcheckProof, TerminalLevelProof,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
@@ -57,7 +57,8 @@ pub use setup::{
 pub use setup::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use shapes::{
     AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
-    ExtensionOpeningReductionShape, LevelProofShape, TerminalLevelProofShape,
+    ExtensionOpeningReductionShape, LevelProofShape, SetupProductSumcheckShape,
+    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
@@ -77,10 +78,11 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
+#[cfg(not(feature = "zk"))]
+use akita_sumcheck::EqFactoredSumcheckProof;
+use akita_sumcheck::SumcheckProof;
 pub use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_sumcheck::{uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProofShape};
-#[cfg(not(feature = "zk"))]
-use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
 #[cfg(feature = "zk")]
 use akita_sumcheck::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 use akita_transcript::Transcript;
