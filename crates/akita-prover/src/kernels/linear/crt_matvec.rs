@@ -107,6 +107,7 @@ pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     let params = select_crt_ntt_params::<F, D>()?;
     let out = match &params {
+        ProtocolCrtNttParams::Q16(p) => mat_vec_mul_dense_with_params(mat, vec, p),
         ProtocolCrtNttParams::Q32(p) => mat_vec_mul_dense_with_params(mat, vec, p),
         ProtocolCrtNttParams::Q64(p) => mat_vec_mul_dense_with_params(mat, vec, p),
         ProtocolCrtNttParams::Q128(p) => mat_vec_mul_dense_with_params(mat, vec, p),
@@ -121,6 +122,7 @@ pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: u
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     let params = select_crt_ntt_params::<F, D>()?;
     let out = match &params {
+        ProtocolCrtNttParams::Q16(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
         ProtocolCrtNttParams::Q32(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
         ProtocolCrtNttParams::Q64(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),
         ProtocolCrtNttParams::Q128(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),

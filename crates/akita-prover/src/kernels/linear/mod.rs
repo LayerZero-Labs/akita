@@ -1,5 +1,7 @@
 //! Linear algebra helpers for ring commitment.
 
+#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "parallel"))]
+use akita_algebra::ntt::avx::{self, AvxNttMode};
 #[cfg(all(target_arch = "aarch64", feature = "parallel"))]
 use akita_algebra::ntt::neon;
 use akita_algebra::ntt::MontCoeff;
@@ -33,6 +35,7 @@ mod tests;
 
 use block_parallel::*;
 use capacity::*;
+pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use chunked_matvec::*;
 use common::*;
 #[cfg(all(test, not(feature = "zk")))]
@@ -47,6 +50,7 @@ use digits::*;
 pub(crate) use fused_quotients::fused_split_eq_quotients;
 pub(crate) use fused_quotients::fused_split_eq_quotients_prover_bounds;
 use i8_matvec::*;
+pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8_trusted;
 pub use ntt_matvec::{
     mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_digits_i8_strided,
     mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
