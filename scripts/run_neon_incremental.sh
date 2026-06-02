@@ -44,8 +44,8 @@ case "$MODE" in
       # ext4: ring_subfield (rs) first, then tower (tw), power (pw); short labels fit Criterion 64-char dirs
       'field_arith/ext4/latency_chain/.*_rs_fp4'
       'field_arith/ext4/throughput_stream/.*_rs_fp4'
-      'field_arith/ext4/latency_chain/.*_[tw]_fp4'
-      'field_arith/ext4/throughput_stream/.*_[tw]_fp4'
+      'field_arith/ext4/latency_chain/.*_tw_fp4'
+      'field_arith/ext4/throughput_stream/.*_tw_fp4'
       'field_arith/ext4/latency_chain/.*_pw_fp4'
       'field_arith/ext4/throughput_stream/.*_pw_fp4'
       'field_arith/ext5/latency_chain'
@@ -56,8 +56,8 @@ case "$MODE" in
     CHUNKS=(
       'field_arith/ext4/latency_chain/.*_rs_fp4'
       'field_arith/ext4/throughput_stream/.*_rs_fp4'
-      'field_arith/ext4/latency_chain/.*_[tw]_fp4'
-      'field_arith/ext4/throughput_stream/.*_[tw]_fp4'
+      'field_arith/ext4/latency_chain/.*_tw_fp4'
+      'field_arith/ext4/throughput_stream/.*_tw_fp4'
       'field_arith/ext4/latency_chain/.*_pw_fp4'
       'field_arith/ext4/throughput_stream/.*_pw_fp4'
     )

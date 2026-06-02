@@ -267,18 +267,18 @@ def parse_label(label: str) -> tuple[str, str, str, str]:
     elif field.endswith("_ext5"):
         ext_degree = "5"
         field = field.removesuffix("_ext5")
-    elif "_tower_fp4" in label:
+    elif "_tower_fp4" in field:
         ext_degree = "4"
         basis = "tower"
-        field = label.removesuffix("_tower_fp4")
-    elif "_power_fp4" in label:
+        field = field.removesuffix("_tower_fp4")
+    elif "_power_fp4" in field:
         ext_degree = "4"
         basis = "power"
-        field = label.removesuffix("_power_fp4")
-    elif "_ring_subfield_fp4" in label:
+        field = field.removesuffix("_power_fp4")
+    elif "_ring_subfield_fp4" in field:
         ext_degree = "4"
         basis = "ring_subfield"
-        field = label.removesuffix("_ring_subfield_fp4")
+        field = field.removesuffix("_ring_subfield_fp4")
     elif label.endswith("_rs_fp4"):
         ext_degree = "4"
         basis = "ring_subfield"
