@@ -1,3 +1,9 @@
+//! Degree-4 extension microbenches.
+//!
+//! Criterion directory names are capped at 64 characters (`MAX_DIRECTORY_NAME_LEN`).
+//! Use the short `label` strings below (≤ 12 chars before `_w{width}`) so groups are not
+//! truncated. **Ring-subfield is the default Akita fp4 basis**; tower/power are secondary.
+
 use akita_field::fields::packed_ext::{PackedPowerBasisFp4, PackedTowerBasisFp4};
 use akita_field::{
     HasPacking, PowerBasisFp4, Prime31Offset19, Prime32Offset99, RingSubfieldFp4, TowerBasisFp4,
@@ -39,68 +45,72 @@ pub(crate) fn bench_ext4_matrix(c: &mut Criterion) {
 
     let params = ArithmeticBenchParams::from_env("AKITA_BENCH_EXT4_ARITH", 512, 128);
 
+    // Mersenne31 (2^31 - 1): ring_subfield first (production default), then secondary bases.
+    bench_arithmetic_case::<F31MersenneRingSubfieldFp4, PF31MersenneRingSubfieldFp4>(
+        c,
+        "ext4",
+        "m31_rs_fp4",
+        0xe400_3031_00a1,
+        params,
+    );
     bench_arithmetic_case::<F31MersenneTowerFp4, PF31MersenneTowerFp4>(
         c,
         "ext4",
-        "mersenne31_tower_fp4",
+        "m31_tw_fp4",
         0xe400_1031_00a1,
         params,
     );
     bench_arithmetic_case::<F31MersennePowerFp4, PF31MersennePowerFp4>(
         c,
         "ext4",
-        "mersenne31_power_fp4",
+        "m31_pw_fp4",
         0xe400_2031_00a1,
         params,
     );
-    bench_arithmetic_case::<F31MersenneRingSubfieldFp4, PF31MersenneRingSubfieldFp4>(
+
+    // Prime31Offset19 (2^31 - 19).
+    bench_arithmetic_case::<F31RingSubfieldFp4, PF31RingSubfieldFp4>(
         c,
         "ext4",
-        "mersenne31_ring_subfield_fp4",
-        0xe400_3031_00a1,
+        "p31o19_rs_fp4",
+        0xe400_3031,
         params,
     );
-
     bench_arithmetic_case::<F31TowerFp4, PF31TowerFp4>(
         c,
         "ext4",
-        "prime31_offset19_tower_fp4",
+        "p31o19_tw_fp4",
         0xe400_1031,
         params,
     );
     bench_arithmetic_case::<F31PowerFp4, PF31PowerFp4>(
         c,
         "ext4",
-        "prime31_offset19_power_fp4",
+        "p31o19_pw_fp4",
         0xe400_2031,
         params,
     );
-    bench_arithmetic_case::<F31RingSubfieldFp4, PF31RingSubfieldFp4>(
+
+    // Prime32Offset99 (2^32 - 99).
+    bench_arithmetic_case::<F32RingSubfieldFp4, PF32RingSubfieldFp4>(
         c,
         "ext4",
-        "prime31_offset19_ring_subfield_fp4",
-        0xe400_3031,
+        "p32o99_rs_fp4",
+        0xe400_3032,
         params,
     );
     bench_arithmetic_case::<F32TowerFp4, PF32TowerFp4>(
         c,
         "ext4",
-        "prime32_offset99_tower_fp4",
+        "p32o99_tw_fp4",
         0xe400_1032,
         params,
     );
     bench_arithmetic_case::<F32PowerFp4, PF32PowerFp4>(
         c,
         "ext4",
-        "prime32_offset99_power_fp4",
+        "p32o99_pw_fp4",
         0xe400_2032,
-        params,
-    );
-    bench_arithmetic_case::<F32RingSubfieldFp4, PF32RingSubfieldFp4>(
-        c,
-        "ext4",
-        "prime32_offset99_ring_subfield_fp4",
-        0xe400_3032,
         params,
     );
 }

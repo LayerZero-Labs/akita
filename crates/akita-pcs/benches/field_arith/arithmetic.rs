@@ -420,8 +420,7 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
                 for _ in 0..iters {
                     for _ in 0..params.throughput_iters {
                         for acc_i in acc.iter_mut() {
-                            let x = *acc_i;
-                            *acc_i = x * x;
+                            *acc_i = acc_i.square();
                         }
                     }
                 }

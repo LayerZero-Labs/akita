@@ -18,6 +18,40 @@ where
     ]
 }
 
+/// Square ring-subfield quartic coefficient arrays in `[1, e1, e2, e3]` basis.
+#[inline]
+pub(crate) fn ring_subfield_fp4_square_coeffs<F, A>(a: [A; 4]) -> [A; 4]
+where
+    F: FieldCore,
+    A: ExtensionCoeff<F>,
+{
+    let [a0, a1, a2, a3] = a;
+    let x0 = a0;
+    let x1 = a2;
+    let y0 = a1 - a3;
+    let y1 = a3;
+
+    let x0x1 = x0 * x1;
+    let y0y1 = y0 * y1;
+    let x1_square = x1 * x1;
+    let y1_square = y1 * y1;
+    let aa = (x0 * x0 + x1_square + x1_square, x0x1 + x0x1);
+    let bb = (y0 * y0 + y1_square + y1_square, y0y1 + y0y1);
+
+    let v0 = x0 * y0;
+    let v1 = x1 * y1;
+    let ab = (v0 + v1 + v1, (x0 + x1) * (y0 + y1) - v0 - v1);
+    let constant = (bb.0 + bb.0 + bb.1 + bb.1, bb.0 + bb.1 + bb.1);
+    let coeff_e1 = (ab.0 + ab.0, ab.1 + ab.1);
+
+    [
+        aa.0 + constant.0,
+        coeff_e1.0 + coeff_e1.1,
+        aa.1 + constant.1,
+        coeff_e1.1,
+    ]
+}
+
 /// Backend hook for scalar ring-subfield quartic multiplication.
 ///
 /// The default is the generic coefficient formula. Concrete base fields can
@@ -28,6 +62,12 @@ pub trait RingSubfieldFp4MulBackend: FieldCore {
     #[inline(always)]
     fn ring_subfield_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
         ring_subfield_fp4_mul_coeffs::<Self, Self>(a, b)
+    }
+
+    /// Square one ring-subfield coefficient array in `[1, e1, e2, e3]` basis.
+    #[inline(always)]
+    fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
+        ring_subfield_fp4_square_coeffs::<Self, Self>(a)
     }
 }
 
@@ -79,6 +119,11 @@ impl<const P: u32> RingSubfieldFp4MulBackend for Fp32<P> {
                     - product(a3, b2),
             ),
         ]
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
+        Self::ring_subfield_fp4_mul(a, a)
     }
 }
 
@@ -358,20 +403,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
 impl<F: FieldCore + Valid + RingSubfieldFp4MulBackend> RingCore for RingSubfieldFp4<F> {
     #[inline(always)]
     fn square(&self) -> Self {
-        let [a0, a1, a2, a3] = self.coeffs;
-        let a = (a0, a2);
-        let b = (a1 - a3, a3);
-        let aa = Self::fp2_square_by_e2_nr(a);
-        let bb = Self::fp2_square_by_e2_nr(b);
-        let ab = Self::fp2_mul_by_e2_nr(a, b);
-        let constant = Self::fp2_mul_by_e1_nr(bb);
-        let coeff_e1 = (ab.0 + ab.0, ab.1 + ab.1);
-        Self::new([
-            aa.0 + constant.0,
-            coeff_e1.0 + coeff_e1.1,
-            aa.1 + constant.1,
-            coeff_e1.1,
-        ])
+        Self::new(F::ring_subfield_fp4_square(self.coeffs))
     }
 }
 

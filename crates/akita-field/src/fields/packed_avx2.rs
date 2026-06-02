@@ -769,51 +769,55 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
 
     #[inline(always)]
     fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
-        unsafe {
-            let [a0, a1, a2, a3] = a.map(Self::to_vec);
-            let x0 = a0;
-            let x1 = a2;
-            let y0 = Self::sub_vec(a1, a3);
-            let y1 = a3;
+        if Self::BITS == 31 && Self::C == 1 {
+            unsafe {
+                let [a0, a1, a2, a3] = a.map(Self::to_vec);
+                let x0 = a0;
+                let x1 = a2;
+                let y0 = Self::sub_vec(a1, a3);
+                let y1 = a3;
 
-            let x0x1 = Self::mul_vec(x0, x1);
-            let y0y1 = Self::mul_vec(y0, y1);
-            let x1_square = Self::mul_vec(x1, x1);
-            let y1_square = Self::mul_vec(y1, y1);
-            let aa = (
-                Self::add_vec(Self::mul_vec(x0, x0), Self::add_vec(x1_square, x1_square)),
-                Self::add_vec(x0x1, x0x1),
-            );
-            let bb = (
-                Self::add_vec(Self::mul_vec(y0, y0), Self::add_vec(y1_square, y1_square)),
-                Self::add_vec(y0y1, y0y1),
-            );
+                let x0x1 = Self::mul_vec(x0, x1);
+                let y0y1 = Self::mul_vec(y0, y1);
+                let x1_square = Self::mul_vec(x1, x1);
+                let y1_square = Self::mul_vec(y1, y1);
+                let aa = (
+                    Self::add_vec(Self::mul_vec(x0, x0), Self::add_vec(x1_square, x1_square)),
+                    Self::add_vec(x0x1, x0x1),
+                );
+                let bb = (
+                    Self::add_vec(Self::mul_vec(y0, y0), Self::add_vec(y1_square, y1_square)),
+                    Self::add_vec(y0y1, y0y1),
+                );
 
-            let v0 = Self::mul_vec(x0, y0);
-            let v1 = Self::mul_vec(x1, y1);
-            let ab = (
-                Self::add_vec(v0, Self::add_vec(v1, v1)),
-                Self::sub_vec(
+                let v0 = Self::mul_vec(x0, y0);
+                let v1 = Self::mul_vec(x1, y1);
+                let ab = (
+                    Self::add_vec(v0, Self::add_vec(v1, v1)),
                     Self::sub_vec(
-                        Self::mul_vec(Self::add_vec(x0, x1), Self::add_vec(y0, y1)),
-                        v0,
+                        Self::sub_vec(
+                            Self::mul_vec(Self::add_vec(x0, x1), Self::add_vec(y0, y1)),
+                            v0,
+                        ),
+                        v1,
                     ),
-                    v1,
-                ),
-            );
-            let constant = (
-                Self::add_vec(Self::add_vec(bb.0, bb.0), Self::add_vec(bb.1, bb.1)),
-                Self::add_vec(bb.0, Self::add_vec(bb.1, bb.1)),
-            );
-            let coeff_e1 = (Self::add_vec(ab.0, ab.0), Self::add_vec(ab.1, ab.1));
+                );
+                let constant = (
+                    Self::add_vec(Self::add_vec(bb.0, bb.0), Self::add_vec(bb.1, bb.1)),
+                    Self::add_vec(bb.0, Self::add_vec(bb.1, bb.1)),
+                );
+                let coeff_e1 = (Self::add_vec(ab.0, ab.0), Self::add_vec(ab.1, ab.1));
 
-            [
-                Self::from_vec(Self::add_vec(aa.0, constant.0)),
-                Self::from_vec(Self::add_vec(coeff_e1.0, coeff_e1.1)),
-                Self::from_vec(Self::add_vec(aa.1, constant.1)),
-                Self::from_vec(coeff_e1.1),
-            ]
+                return [
+                    Self::from_vec(Self::add_vec(aa.0, constant.0)),
+                    Self::from_vec(Self::add_vec(coeff_e1.0, coeff_e1.1)),
+                    Self::from_vec(Self::add_vec(aa.1, constant.1)),
+                    Self::from_vec(coeff_e1.1),
+                ];
+            }
         }
+
+        Self::ring_subfield_fp4_mul(a, a)
     }
 
     #[inline(always)]

@@ -11,20 +11,38 @@ import sys
 from pathlib import Path
 
 # Criterion 0.5 WallTime stores estimate point values in nanoseconds (see `WallTime::to_f64`).
+# Criterion truncates each path component to 64 chars (`MAX_DIRECTORY_NAME_LEN`).
 
-# Criterion 0.5 flattens `/` in group and bench ids into `_`.
 # group dir: field_arith_{family}_{latency_chain|throughput_stream}_{label}_w{width}
 GROUP_RE = re.compile(
     r"^field_arith_(?P<family>[^_]+)_(?P<kind_path>latency_chain|throughput_stream)_(?P<label>.+)_w(?P<width>\d+)$"
 )
-# bench dir: scalar_add_chain_2048_ns_per_op or packed_mul_chain_512x4_ns_lane
 BENCH_RE = re.compile(
     r"^(?P<kind>scalar|packed)_(?P<op>[a-z_]+)_(?:chain|stream)_"
 )
 
+# Short ext4 labels (see crates/akita-pcs/benches/field_arith/ext4.rs). rs = ring_subfield (default).
+AKITA_FP4_SHORT: dict[str, tuple[str, str, str]] = {
+    "m31_rs_fp4": ("mersenne31", "4", "ring_subfield"),
+    "m31_tw_fp4": ("mersenne31", "4", "tower"),
+    "m31_pw_fp4": ("mersenne31", "4", "power"),
+    "p31o19_rs_fp4": ("prime31_offset19", "4", "ring_subfield"),
+    "p31o19_tw_fp4": ("prime31_offset19", "4", "tower"),
+    "p31o19_pw_fp4": ("prime31_offset19", "4", "power"),
+    "p32o99_rs_fp4": ("prime32_offset99", "4", "ring_subfield"),
+    "p32o99_tw_fp4": ("prime32_offset99", "4", "tower"),
+    "p32o99_pw_fp4": ("prime32_offset99", "4", "power"),
+}
+
+BASIS_RANK = {"ring_subfield": 0, "tower": 1, "power": 2, "": 3}
+
 
 def parse_label(label: str) -> tuple[str, str, str, str]:
     """Return (library, field, ext_degree, basis)."""
+    if label in AKITA_FP4_SHORT:
+        field, ext_degree, basis = AKITA_FP4_SHORT[label]
+        return "akita", field, ext_degree, basis
+
     library = "plonky3" if label.startswith("p3_") else "akita"
     if label.startswith("p3_"):
         field = label.removeprefix("p3_")
@@ -51,6 +69,10 @@ def parse_label(label: str) -> tuple[str, str, str, str]:
         ext_degree = "4"
         basis = "ring_subfield"
         field = label.removesuffix("_ring_subfield_fp4")
+    elif label.endswith("_rs_fp4"):
+        ext_degree = "4"
+        basis = "ring_subfield"
+        field = label.removesuffix("_rs_fp4")
 
     return library, field, ext_degree, basis
 
@@ -68,10 +90,10 @@ def median_ns(estimates_path: Path) -> tuple[float, float, float]:
 
 def collect_rows(criterion_root: Path, baseline: str, arch: str, simd: str) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
+    skipped_groups: list[str] = []
     pattern = f"**/{baseline}/estimates.json"
     for est_path in criterion_root.glob(pattern):
         rel = est_path.relative_to(criterion_root)
-        # {group_dir}/{bench_dir}/{baseline}/estimates.json
         parts = rel.parts
         if len(parts) < 4:
             continue
@@ -79,6 +101,8 @@ def collect_rows(criterion_root: Path, baseline: str, arch: str, simd: str) -> l
         group_dir = parts[-4]
         gm = GROUP_RE.match(group_dir)
         if gm is None:
+            if group_dir.startswith("field_arith_"):
+                skipped_groups.append(group_dir)
             continue
         bm = BENCH_RE.match(bench_id)
         if bm is None:
@@ -91,8 +115,6 @@ def collect_rows(criterion_root: Path, baseline: str, arch: str, simd: str) -> l
         op = bm.group("op")
         kind = bm.group("kind")
 
-        # Criterion benches already normalize packed rows to ns/lane via
-        # duration_per_logical_op(..., iters * WIDTH).
         mean_ns, lower_ns, upper_ns = median_ns(est_path)
 
         rows.append(
@@ -114,6 +136,14 @@ def collect_rows(criterion_root: Path, baseline: str, arch: str, simd: str) -> l
                 "group": group_dir,
                 "bench_id": bench_id,
             }
+        )
+
+    if skipped_groups:
+        unique = sorted(set(skipped_groups))
+        print(
+            f"warning: {len(unique)} group dirs did not match (often Criterion 64-char truncation). "
+            f"Re-bench with short ext4 labels. Example: {unique[0]}",
+            file=sys.stderr,
         )
     return rows
 
@@ -147,6 +177,7 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
                 key=lambda r: (
                     r["library"],
                     r["field"],
+                    BASIS_RANK.get(r["basis"], 9),
                     r["op"],
                     r["workload"],
                     r["vectorization"],
@@ -169,10 +200,10 @@ def write_markdown(path: Path, rows: list[dict[str, str]]) -> None:
     lines = [
         "# Field microbench (packed extension, headline ops)",
         "",
-        "Highlighted rows: Akita degree-4 (`ext4`, `mersenne31_*_fp4`) vs Plonky3 degree-5 (`ext5`).",
+        "Akita fp4 rows use **ring_subfield** as the default basis (tower/power are secondary).",
+        "Highlighted: Akita ext4 ring_subfield vs Plonky3 ext5 (128-bit-equivalent over 31-bit base).",
         "",
-        "`workload`: `latency_chain` is a dependent op chain (critical-path latency); "
-        "`throughput_stream` is parallel streams with independent ops.",
+        "`workload`: `latency_chain` = dependent critical path; `throughput_stream` = parallel streams.",
         "",
         "| library | field | ext | basis | op | workload | arch | simd | w | ns/lane |",
         "|---------|-------|-----|-------|----|----------|------|------|---|--------:|",
@@ -184,11 +215,12 @@ def write_markdown(path: Path, rows: list[dict[str, str]]) -> None:
             x["workload"],
             x["library"],
             x["field"],
+            BASIS_RANK.get(x["basis"], 9),
             x["op"],
         ),
     ):
         highlight = ""
-        if r["library"] == "akita" and r["ext_degree"] == "4":
+        if r["library"] == "akita" and r["ext_degree"] == "4" and r["basis"] == "ring_subfield":
             highlight = " **"
         if r["library"] == "plonky3" and r["ext_degree"] == "5":
             highlight = " **"
