@@ -423,7 +423,6 @@ impl RingRelationProver {
             .iter()
             .map(|ring| ring.coefficients()[0])
             .collect::<Vec<_>>();
-        let _num_public_rows = opening_points.len();
 
         let w_hat = {
             let _span = tracing::info_span!("decompose_batched_w_hat").entered();
