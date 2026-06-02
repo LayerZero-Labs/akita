@@ -352,7 +352,8 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?
     };
     let terminal_replay = if let FoldProofView::Terminal(terminal_proof) = &proof {
-        let layout = terminal_witness_segment_layout(lp, num_claims, num_claims)?;
+        let layout =
+            terminal_witness_segment_layout(lp, num_claims, num_claims, F::modulus_bits())?;
         Some(prepare_terminal_witness_replay::<F, T>(
             transcript,
             &terminal_proof.final_witness,

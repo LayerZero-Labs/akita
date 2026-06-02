@@ -1118,13 +1118,16 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
                 f"planned/proof D mismatch at L{planned_level}: "
                 f"planned={planned_d}, proof={proof_d}"
             )
-        planned_bytes = int(planned["level_bytes"])
-        proof_bytes = int(proof["total_bytes"])
-        if planned_bytes != proof_bytes:
-            raise ValueError(
-                f"planned/proof byte mismatch at L{planned_level}: "
-                f"planned={planned_bytes}, proof={proof_bytes}"
-            )
+        # Intentionally no per-level `level_bytes` vs `total_bytes` comparison.
+        # The header-stripped planner estimate is only a conservative upper bound
+        # in *aggregate*: it can over- or under-attribute bytes to any individual
+        # level (e.g. dense_fp32_d32 nv26 has levels where the runtime proof
+        # exceeds the per-level estimate while the total stays under it). The
+        # total-overcount invariant is asserted in the profile binary itself
+        # (`ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` in
+        # `crates/akita-pcs/examples/profile/workload.rs`), and absolute proof
+        # growth is guarded by the proof-size regression threshold in CI. Here we
+        # only enforce the structural level shape (count / index / D) above.
 
 
 def render_report(args: argparse.Namespace) -> int:

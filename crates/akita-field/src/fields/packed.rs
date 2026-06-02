@@ -1,7 +1,8 @@
 //! Packed field abstractions and architecture-specific SIMD backends.
 
 use crate::fields::ext::{
-    power_basis_fp4_mul_coeffs, Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
+    power_basis_fp4_mul_coeffs, ring_subfield_fp8_mul_schedule, ring_subfield_fp8_square_schedule,
+    Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
 };
 use crate::fields::{Fp128, Fp16, Fp32, Fp64};
 use crate::{FieldCore, Invertible};
@@ -232,6 +233,31 @@ pub trait PackedField:
 
         Some([constant.0, e1_coeff.0 + e1_coeff.1, constant.1, e1_coeff.1])
     }
+
+    /// Backend hook for multiplying packed ring-subfield degree-8 elements.
+    #[inline(always)]
+    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        ring_subfield_fp8_mul_schedule(
+            a,
+            b,
+            Self::broadcast(Self::Scalar::zero()),
+            |x, y| x + y,
+            |x, y| x - y,
+            |x, y| x * y,
+        )
+    }
+
+    /// Backend hook for squaring packed ring-subfield degree-8 elements.
+    #[inline(always)]
+    fn ring_subfield_fp8_square(a: [Self; 8]) -> [Self; 8] {
+        ring_subfield_fp8_square_schedule(
+            a,
+            Self::broadcast(Self::Scalar::zero()),
+            |x, y| x + y,
+            |x, y| x - y,
+            |x, y| x * y,
+        )
+    }
 }
 
 /// Scalar fallback packed type with one lane.
@@ -353,6 +379,30 @@ impl<const P: u128> HasPacking for Fp128<P> {
 }
 
 /// Selected packed backend for `Fp16`.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+pub type Fp16Packing<const P: u32> = super::packed_neon::PackedFp16Neon<P>;
+
+/// Selected packed backend for `Fp16`.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512dq"
+))]
+pub type Fp16Packing<const P: u32> = super::packed_avx512::PackedFp16Avx512<P>;
+
+/// Selected packed backend for `Fp16`.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
+))]
+pub type Fp16Packing<const P: u32> = super::packed_avx2::PackedFp16Avx2<P>;
+
+/// Scalar fallback packed backend for `Fp16`.
+#[cfg(not(any(
+    all(target_arch = "aarch64", target_feature = "neon"),
+    all(target_arch = "x86_64", target_feature = "avx2")
+)))]
 pub type Fp16Packing<const P: u32> = NoPacking<Fp16<P>>;
 
 impl<const P: u32> HasPacking for Fp16<P> {
