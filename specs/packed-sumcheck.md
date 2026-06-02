@@ -23,9 +23,11 @@ SIMD representation that already exists in `akita-field`
 This spec threads the packed representation through the **data-parallel prover loops**.
 EOR is the pilot (its fold-dominated rounds and its newly-streamed witness path are the
 cleanest target); the same recipe then rolls out to the stage1 (eq-factored) and stage2
-(standard) sum-check provers. The design follows two production references that solved
-exactly this: **Plonky3 `p3-sumcheck`** and **leanMultisig `mt-field`** (paths in
-References).
+(standard) sum-check provers. The committed direction includes a **packed unreduced
+accumulator** (`PackedHasUnreducedOps`, D1) so the *accumulate*, not just the fold, is
+lane-parallel without giving up akita's deferred-reduction win. The design follows two
+production references that solved exactly this: **Plonky3 `p3-sumcheck`** and
+**leanMultisig `mt-field`** (see References).
 
 The pack representation is a **byte-identical, field-exact** representation change, not a
 protocol or algorithm change. It is **orthogonal to and composable with**
@@ -123,27 +125,38 @@ Both converge on the same five moves; copy them.
 
 ## Key design decisions (the hard parts — resolve these first)
 
-### D1 — Delayed reduction vs SIMD do not currently compose
+### D1 — Packed unreduced accumulator (DECIDED: build it)
 
 Akita's EOR/sum-check speed rests on the **wide scalar** `HasUnreducedOps::ProductAccum`
 (defer modular reduction across a sum, e.g. `MulBaseUnreduced::mul_base_to_product_accum`
 added in PR #136). Plonky3/leanMultisig get their speed from Montgomery + SIMD, **not**
-delayed reduction. The two strategies do not compose out of the box: a packed
-`add_constant_product` needs a **packed unreduced accumulator** (lane-wise wide type), or
-the packed path must drop delayed reduction.
+delayed reduction — so out of the box the two strategies do not compose: a packed
+`add_constant_product` needs a **packed unreduced accumulator** (a lane-wise wide type).
 
-Options (decide, then build):
-- **(a) Packed `ProductAccum`.** Add a `PackedHasUnreducedOps` (lane-wise wide accumulator,
-  `[wide; WIDTH]` or arch-native) and a packed `mul_base_to_product_accum`. Keeps both wins.
-  Most work, biggest payoff, lands on the field crate.
-- **(b) Stage it: pack the fold first (no `ProductAccum`), keep accumulate scalar.** The
-  linear-interp fold `a + r·(b−a)` needs only packed add/sub/mul-by-broadcast — **no**
-  unreduced accumulator. Since akita's EOR is **fold-dominated**, packing *only* the fold
-  already captures most of the measured win and **side-steps D1 entirely**. Then add
-  packed accumulate (option a) as a follow-on. **Recommended first cut.**
-- **(c) Per-lane reduce.** Accumulate packed-multiply results with eager per-round
-  reduction (no deferral). Simpler than (a), loses the delayed-reduction win on the packed
-  path; measure whether SIMD throughput offsets the extra reductions.
+**Decision (locked): build the packed unreduced accumulator and keep both wins** — SIMD
+lanes *and* deferred reduction. This is the end-state; do **not** settle for a packed path
+that drops delayed reduction. Concretely:
+
+- Add a **`PackedHasUnreducedOps`** with a lane-wise wide `ProductAccum` (an arch-native
+  wide vector, transposed the same way `PackedRingSubfieldFp4` packs the reduced element),
+  plus packed `mul_base_to_product_accum` / `add_constant_product` / `add_quadratic_product`
+  that honor the same `DELAYED_PRODUCT_SUM_IS_EXACT` bound as the scalar path. One
+  horizontal reduce per round turns the packed accumulator into the scalar round message.
+- This is the highest-payoff piece: it makes the *accumulate* (not just the fold)
+  lane-parallel while **preserving the deferred-reduction win that makes akita's scalar EOR
+  fast in the first place**. The pseudo-Mersenne reductions akita already vectorizes
+  (`mul_pmersenne31_vec`, PR #142) are the building blocks for the packed wide reduce.
+
+**Sequencing (de-risk; not a re-litigation of the decision):** land the packed *fold*
+first (Slice 1) — the linear interpolation `a + r·(b−a)` needs only packed
+add/sub/mul-by-broadcast and **no** accumulator, so it captures the fold-dominated bulk of
+the measured win immediately and validates the packed-table plumbing. Then land the packed
+accumulator (Slice 2) for the univariate accumulate. Packing the fold first is a stepping
+stone *toward* the packed accumulator, not an alternative to it.
+
+**Rejected:** an eager per-lane reduce on the packed path (reduce every product instead of
+deferring). Simpler, but it throws away the delayed-reduction win akita already depends on;
+the packed unreduced accumulator is strictly better and is the committed path.
 
 ### D2 — Fold order / lane alignment
 
@@ -178,9 +191,9 @@ from SIMD, but the kernels are arch-sensitive and are designed in a later slice:
 ## Pilot: EOR (all of it)
 
 Order within the pilot:
-1. **Dense fold** (`fused_fold_and_accumulate` fold half) — D1 option (b), no
-   `ProductAccum`. Highest-confidence win.
-2. **Dense accumulate** — packed `ProductAccum` (D1 option a) once chosen.
+1. **Dense fold** (`fused_fold_and_accumulate` fold half) — packed fold, no accumulator
+   yet. Highest-confidence win; validates the plumbing.
+2. **Dense accumulate** — packed unreduced accumulator (D1, the committed end-state).
 3. **Factor fold** of the materialized residual — same packed fold; free after step 1.
 4. **Partials** (`tensor_column_partials_split_fold`) — packed base×ext contraction; the
    `SplitEqEvals` tables become packed-aware (`Vec<PackedRingSubfieldFp4>` views).
@@ -200,10 +213,10 @@ Same recipe applied to `compute_norm_round_eq_poly_from_s*` (stage1),
   scalar tail, mirroring `PackedValue::pack_slice_with_suffix`. (akita-field already has
   the packed types; add the slice-cast helpers if missing.)
 - A **packed fold** primitive: `E::Packing` linear interpolation with `broadcast(r)`
-  (D1(b) needs only this).
-- **(D1(a), follow-on)** a packed unreduced accumulator
-  (`PackedHasUnreducedOps::ProductAccum`) + packed `mul_base_to_product_accum` /
-  `add_constant_product` / `add_quadratic_product`.
+  (the Slice 1 fold needs only this).
+- A **packed unreduced accumulator** (`PackedHasUnreducedOps::ProductAccum`) + packed
+  `mul_base_to_product_accum` / `add_constant_product` / `add_quadratic_product`, honoring
+  the scalar `DELAYED_PRODUCT_SUM_IS_EXACT` bound — the committed D1 end-state.
 - A **horizontal reduce** at round boundary (`to_ext`-style lane sum); no persistent
   trait method needed, just a helper.
 - **`NoPacking` (WIDTH = 1) fallback** must keep non-SIMD builds and `fp128` byte-identical
@@ -217,9 +230,8 @@ Same recipe applied to `compute_norm_round_eq_poly_from_s*` (stage1),
   preserve the field-exact sum — verify with the equality oracle.
 - **Verifier untouched.** Prover-only. No storage-permutation (D2) leaks to the wire.
 - **`NoPacking` parity.** `WIDTH = 1` builds reproduce today's scalar path bit-for-bit.
-- **Delayed-reduction exactness preserved** on whichever D1 path is chosen (packed
-  `ProductAccum` must honor the same `DELAYED_PRODUCT_SUM_IS_EXACT` bound; per-lane reduce
-  must reduce within the modulus).
+- **Delayed-reduction exactness preserved.** The packed `ProductAccum` (D1) must honor the
+  same `DELAYED_PRODUCT_SUM_IS_EXACT` bound as the scalar path.
 - **Composable with `eor-streamed-prover.md`.** The streamed witness round-0 fold and the
   budget-driven factor fold are *the same loops* this spec packs; they must be implemented
   in packed-ready shape (see that spec's "Packing readiness" note).
@@ -227,7 +239,7 @@ Same recipe applied to `compute_norm_round_eq_poly_from_s*` (stage1),
 ## Non-Goals
 
 - No protocol, soundness, degree, schedule, or transcript change.
-- No GPU / Metal path (separate workstream; see `akita-metal-field-kernels`).
+- No GPU / Metal path (separate workstream).
 - No claim of base-field-like (8×) speedup on extension multiplies.
 - No new extension field; reuse `PackedRingSubfieldFp4` and friends.
 
@@ -237,9 +249,10 @@ Same recipe applied to `compute_norm_round_eq_poly_from_s*` (stage1),
 
 - [ ] Packed table view + packed fold in `akita-field`/`akita-algebra`, with `NoPacking`
   fallback; `WIDTH = 1` builds byte-identical to today.
-- [ ] EOR dense fold runs packed (D1(b)); proof bytes byte-identical on `dense_fp32_d32`,
+- [ ] EOR dense fold runs packed (Slice 1); proof bytes byte-identical on `dense_fp32_d32`,
   `onehot_fp32_d32`, `onehot_fp16_d32`, `onehot_fp64_d32`; `fp128` unaffected.
-- [ ] EOR dense accumulate + factor fold + partials packed (D1(a) chosen and implemented).
+- [ ] Packed unreduced accumulator (`PackedHasUnreducedOps`) implemented and exact; EOR
+  dense accumulate + factor fold + partials run packed through it.
 - [ ] stage1 + stage2 folds packed; full byte-identical proof/transcript suite.
 - [ ] Sparse one-hot: factor fold packed; accumulate/query packed where the target arch
   supports it (gated), scalar fallback otherwise; byte-identical either way.
@@ -268,26 +281,26 @@ on mul-heavy univariate; net EOR prove-time reduction concentrated in the measur
 
 ## Implementation plan (sliced for review)
 
-- **Slice 0 — D1 decision + packed table view.** Choose (a)/(b)/(c) (recommend start with
-  (b)); add the `pack_slice`-style table view + packed fold primitive + `NoPacking`
-  parity test. No behavior change yet.
-- **Slice 1 — EOR dense fold (D1(b)).** Pack the fold half of `fused_fold_and_accumulate`;
-  scalar accumulate. Byte-identical proofs; first measured win.
-- **Slice 2 — EOR dense accumulate + factor fold + partials.** Packed `ProductAccum`
-  (D1(a)); packed `SplitEqEvals`/partials.
+- **Slice 0 — packed table view + fold primitive.** Add the `pack_slice`-style table view,
+  the packed fold primitive, and the `NoPacking` parity test. No behavior change yet.
+- **Slice 1 — EOR dense fold.** Pack the fold half of `fused_fold_and_accumulate`; scalar
+  accumulate for now. Byte-identical proofs; first measured win; validates the plumbing.
+- **Slice 2 — packed unreduced accumulator (D1) + EOR dense accumulate + factor fold +
+  partials.** Build `PackedHasUnreducedOps`; route the univariate accumulate, the factor
+  fold, and the `SplitEqEvals`/partials contraction through it.
 - **Slice 3 — stage1 / stage2 folds.** Roll the recipe into stage1/stage2 round+fold.
 - **Slice 4 — sparse one-hot (D4).** Packed factor fold (free), then arch-gated packed
   accumulate/query with gather; scalar fallback on NEON.
 - **Slice 5 — fold-order / lane alignment (D2), if measured to matter.** Storage
   permutation to keep early rounds lane-aligned; only if Slice 1-3 show lane-drop overhead.
 
-First risk to retire: confirm D1(b) (packed fold without `ProductAccum`) gives a real win
-on the measured `sumcheck_round_fold` span before committing to the heavier D1(a) work.
+First milestone: confirm the Slice 1 packed fold moves the measured `sumcheck_round_fold`
+span, then build the packed unreduced accumulator (Slice 2) for the univariate accumulate.
 
 ## References
 
-- **Plonky3** (`/Users/quang.dao/Documents/SNARKs/plonky3`, main): `p3-sumcheck`
-  `sumcheck/src/product_polynomial.rs` (packed round + horizontal reduce `:335-387`,
+- **Plonky3** ([github.com/Plonky3/Plonky3](https://github.com/Plonky3/Plonky3), main):
+  `p3-sumcheck` `sumcheck/src/product_polynomial.rs` (packed round + horizontal reduce `:335-387`,
   `:354-358`; transition `:283-300`), `sumcheck/src/strategy.rs` (`mixed_dot_product`
   tiles `:52-68`, `:116-173`); packed traits `field/src/packed/packed_traits.rs`
   (`PackedValue` `:19`, `PackedField` `:275`, `PackedFieldExtension` `:364`, layout
@@ -296,7 +309,9 @@ on the measured `sumcheck_round_fold` span before committing to the heavier D1(a
   `dft/src/butterflies.rs:52-62`; multilinear pack/fold `multilinear-util/src/poly.rs`
   (`:476-479`, `:513-537`, `:611-624`); split-eq packed kernel
   `multilinear-util/src/split_eq/packed_kernel.rs`.
-- **leanMultisig** (`/Users/quang.dao/Documents/SNARKs/leanMultisig`, main): field crate
+- **leanMultisig**
+  ([github.com/leanEthereum/leanMultisig](https://github.com/leanEthereum/leanMultisig),
+  main): field crate
   `crates/backend/field/src/packed/packed_traits.rs` (`PackedField` `:220`,
   `PackedFieldExtension` `:329`); sum-check `crates/backend/sumcheck/src/prove.rs`
   (round loop `:117-144`), `sc_computation.rs` (packed univariate `:428-474`, fold+compute

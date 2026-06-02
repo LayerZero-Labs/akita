@@ -39,12 +39,12 @@ the big tables; stream/stage from the structured inputs — plus a cap fix:
    prover shapes at large `num_vars`.
 
 The math, notation, and the streamed staged-prover construction are taken directly
-from the project writeup: `Research/lattice-jolt/sections/akita/b_implementation_details.tex`,
-paragraphs "Dense packing versus the intended streamed path", "Tensor weight as a
-prefix-suffix table", "Multilinear-extension caveat", "Small-space staged prover",
-and "Arithmetic tradeoff", building on the prefix-suffix inner-product method of
-`streamingjolt` (ePrint 2025/611, Appendix A) and the eq-poly optimizations of
-`eqpolyeprint` (ePrint 2024/1210).
+from the Akita implementation-details writeup (paragraphs "Dense packing versus the
+intended streamed path", "Tensor weight as a prefix-suffix table",
+"Multilinear-extension caveat", "Small-space staged prover", and "Arithmetic tradeoff"),
+building on the prefix-suffix inner-product method of the streaming-Jolt prover
+(ePrint [2025/611](https://eprint.iacr.org/2025/611), Appendix A) and the eq-poly
+sum-check optimizations (ePrint [2024/1210](https://eprint.iacr.org/2024/1210)).
 
 The streaming primitive (`MulBaseUnreduced::mul_base_to_product_accum`), the
 column-source pattern (`akita_types::TensorColumnSource` / `FlatColumnSource` /
@@ -179,7 +179,7 @@ packed witness is **coordinate** packing in the implementation basis `(γ_v)`:
 `g(w) = Σ_v f(v,w)·γ_v`. Small balanced representatives of `f` are the `K`-
 coordinates of `g(w)`; after packing the dense prover sees one opaque `L` element,
 losing that structure. The row-batching functional is
-`τ_η(Σ_u a_u γ_u) := Σ_u η_u a_u` with `η_u = eq(u,η)` (`2_preliminaries.tex:487`),
+`τ_η(Σ_u a_u γ_u) := Σ_u η_u a_u` with `η_u = eq(u,η)`,
 and the transparent weight is `A_η(w) = Σ_u η_u·coord_u(eq(r_tail, w))`.
 
 ### The `d_ext`-term prefix-suffix weight (Eq. `eor-prefix-suffix-weight`)
@@ -521,7 +521,7 @@ abstractions in **packing-ready shape**:
   (`NoPacking`, `WIDTH = 1`) path, so this is a *shape* constraint, not extra work now.
 - Keep the round-0 streamed fold expressed as the linear interpolation
   `even + r₀·(odd − even)` over contiguous lanes — that maps directly onto the packed
-  fold primitive (`packed-sumcheck.md` D1(b)) with no `ProductAccum` involvement.
+  fold primitive (`packed-sumcheck.md`, Slice 1) with no `ProductAccum` involvement.
 - The delayed-reduction primitive used here (`mul_base_to_product_accum`) is the one the
   packing spec must reconcile with SIMD (`packed-sumcheck.md` D1); do not assume the
   scalar `ProductAccum` is the final shape on the packed path.
@@ -612,14 +612,14 @@ Risks to resolve first:
 
 ## References
 
-- Writeup (math + construction): `Research/lattice-jolt/sections/akita/b_implementation_details.tex`
+- Writeup (math + construction): the Akita implementation-details writeup,
   §§"Dense packing versus the intended streamed path", "Tensor weight as a
   prefix-suffix table" (Eq. `eor-prefix-suffix-weight`), "Multilinear-extension
-  caveat", "Small-space staged prover", "Arithmetic tradeoff"; notation in
-  `2_preliminaries.tex:404-540` (`sec:prelim-ext-opening`, `τ_η`, `η_u`).
-- Prior art: `streamingjolt` (ePrint 2025/611, Appendix A, prefix-suffix
-  inner-product / small-space staged prover); `eqpolyeprint` (ePrint 2024/1210,
-  eq-poly sum-check optimizations).
+  caveat", "Small-space staged prover", "Arithmetic tradeoff"; preliminaries
+  §"Extension opening" (`τ_η`, `η_u`).
+- Prior art: streaming-Jolt prover (ePrint [2025/611](https://eprint.iacr.org/2025/611),
+  Appendix A, prefix-suffix inner-product / small-space staged prover); eq-poly
+  sum-check optimizations (ePrint [2024/1210](https://eprint.iacr.org/2024/1210)).
 - Parent spec (landed PR #136): `specs/eor-sumcheck-prover-acceleration.md`.
 - Landed primitives: `MulBaseUnreduced::mul_base_to_product_accum`
   (`akita-field/src/fields/lift.rs`); `TensorColumnSource` / `FlatColumnSource`
