@@ -24,7 +24,7 @@ mod core;
 mod mul;
 mod primes;
 mod reduce;
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests;
 mod traits;
 mod wide;

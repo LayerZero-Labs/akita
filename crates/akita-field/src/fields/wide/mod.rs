@@ -793,7 +793,7 @@ impl<const P: u128> HasWide for Fp128<P> {
     type Wide = Fp128x8i32;
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::fields::{Prime128Offset275, Prime24Offset3, Prime40Offset195};

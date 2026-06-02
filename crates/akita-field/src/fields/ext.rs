@@ -4,7 +4,7 @@ mod fp_ext2;
 mod power_fp_ext4;
 mod ring_subfield_fp_ext4;
 mod ring_subfield_fp_ext8;
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests;
 mod tower_fp_ext4;
 

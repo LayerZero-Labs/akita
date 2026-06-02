@@ -786,7 +786,7 @@ pub fn rs_extend_fft<F: FieldCore + FromPrimitiveInt + Invertible + std::fmt::De
     domain_k.rs_extend_batch(evals, omega_n, blowup)
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod test_support {
     //! Prime-agnostic helpers shared by per-prime FFT parity tests.
     //!
@@ -893,7 +893,7 @@ mod test_support {
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod prime_2355_tests {
     //! `Prime128Offset2355` (`p = 2^128 - 2355`) has smooth multiplicative
     //! subgroup of order `14_700 = 2^2 * 3 * 5^2 * 7^2`, drawing sizes from
@@ -971,7 +971,7 @@ mod prime_2355_tests {
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod prime_a7f7_tests {
     //! `Prime128OffsetA7F7` (`p = 2^128 - 2^32 + 22537`) has smooth
     //! multiplicative subgroup of order `2^3 * 3^7 = 17_496`, with a pure

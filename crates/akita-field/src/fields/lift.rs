@@ -592,7 +592,7 @@ where
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Fp32, NegOneNr, UnitNr};

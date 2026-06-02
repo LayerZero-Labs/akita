@@ -30,7 +30,6 @@ rand = "0.8"
 [features]
 default = []
 parallel = ["dep:rayon"]
-zk = []
 
 [lints]
 workspace = true
