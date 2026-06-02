@@ -537,14 +537,13 @@ impl<const P: u32> Mul for PackedFp32Avx512<P> {
             };
             let odd_f2 = _mm512_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
 
-            // Recombine even/odd
-            let odd_shifted = _mm512_slli_epi64::<32>(odd_f2);
-            let combined = _mm512_mask_blend_epi32(0b1010101010101010, evn_f2, odd_shifted);
-
-            // Conditional subtract P
-            let p_vec = _mm512_set1_epi32(P as i32);
-            let reduced = _mm512_sub_epi32(combined, p_vec);
-            Self::from_vec(_mm512_min_epu32(combined, reduced))
+            // Recombine + canonicalize. For `BITS == 32` the two-fold residue
+            // can land in `[2^32, 2*P)` (up to `2^32 + C^2`), so the subtract
+            // must happen on the full 64-bit lanes before packing; a 32-bit
+            // recombine would drop bit 32. `pack_and_canonicalize` does the
+            // 64-bit subtract for `BITS == 32` and is identical to the inline
+            // 32-bit recombine for `BITS < 32`.
+            Self::from_vec(Self::pack_and_canonicalize(evn_f2, odd_f2))
         }
     }
 }

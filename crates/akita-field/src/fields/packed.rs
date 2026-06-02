@@ -757,6 +757,37 @@ mod tests {
         check_packed_add_sub_mul::<F, PF>(0xaa32_bb32_cc32_dd32);
     }
 
+    /// Regression guard for the 32-bit (`BITS == 32`) packed base multiply.
+    ///
+    /// For these primes the two-fold Solinas residue can land in `[2^32, 2*P)`
+    /// (up to `2^32 + C^2`). The packed `Mul` recombine must subtract `P` on the
+    /// full 64-bit lanes before packing; a 32-bit recombine drops bit 32 and
+    /// returns a result that is `C` too small. The probability of hitting this
+    /// window with uniform random inputs is `~C/2^32 ≈ 2e-6`, so the random
+    /// parity sweep misses it; these vectors hit it deterministically. They were
+    /// found by exhaustively comparing the truncating recombine to the true
+    /// modular product (all land in the overflow window on `Prime32Offset99`).
+    #[test]
+    fn packed_fp32_32b_mul_two_fold_overflow_window() {
+        type F = Prime32Offset99;
+        type PF = <F as HasPacking>::Packing;
+        const VECTORS: [(u32, u32); 7] = [
+            (3136721438, 3536064673),
+            (2498152412, 1827148629),
+            (2062525777, 3207684599),
+            (4027016701, 3739597742),
+            (2476582663, 3902052967),
+            (4161561975, 3109742861),
+            (1924659530, 1057556213),
+        ];
+        for (x, y) in VECTORS {
+            let a = F::from_canonical_u32(x);
+            let b = F::from_canonical_u32(y);
+            let got = (PF::broadcast(a) * PF::broadcast(b)).extract(0);
+            assert_eq!(got, a * b, "packed 32b mul mismatch for {x} * {y}");
+        }
+    }
+
     #[test]
     fn fp32_broadcast_and_extract_roundtrip() {
         type F = Prime24Offset3;
