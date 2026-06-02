@@ -28,6 +28,7 @@ where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
     B: RingSwitchComputeBackend<F>,
 {
+    let num_claims = quad_eq.claim_to_point().len();
     {
         let x: u8 = 0;
         tracing::trace!(
@@ -110,6 +111,7 @@ where
             &z_pre.centered_coeffs,
             &r,
             lp,
+            num_claims,
         )
     };
     Ok(w)
@@ -250,6 +252,7 @@ fn emit_z_pre_block_inner<const D: usize>(
 /// Panics if the caller supplies digit blocks whose plane counts do not match
 /// the fold layout in `lp`, or if ZK blinding digit counts do not match the
 /// configured blinding columns.
+#[allow(clippy::too_many_arguments)]
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
@@ -258,9 +261,10 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     z_pre_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
+    num_claims: usize,
 ) -> RecursiveWitnessFlat {
     let log_basis = lp.log_basis;
-    let num_digits_fold = lp.num_digits_fold;
+    let num_digits_fold = lp.num_digits_fold(num_claims, F::modulus_bits());
     let depth_open = lp.num_digits_open;
     let depth_commit = lp.num_digits_commit;
     let block_len = lp.block_len;

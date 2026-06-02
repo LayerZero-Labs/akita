@@ -1,40 +1,57 @@
 //! [`CommitmentConfig`] — the single `<Cfg>` parameter used by
 //! `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`.
 //!
-//! `get_params_for_prove` / `get_params_for_batched_commitment` are
-//! table-only by default: schedule-table hit ⇒ materialize via
-//! [`akita_derive::schedule_plan_from_table`]; miss ⇒
-//! [`AkitaError::InvalidSetup`].
+//! `get_params_for_prove` / `get_params_for_batched_commitment` resolve a
+//! schedule for **any** lookup key via [`CommitmentConfig::runtime_schedule`]:
+//! a schedule-table hit expands the compact entry through the planner's
+//! canonical walker [`akita_planner::schedule_from_entry`]; a table miss
+//! regenerates the schedule with the offline DP search
+//! [`akita_planner::find_schedule`], driven by the `Cfg`-derived
+//! [`policy_of`] bridge. Fallback is the default for every preset.
 //!
 //! [`WCommitmentConfig`] is the derived recursive-w config used by
 //! `<Cfg>`-generic ring-degree dispatch helpers.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::generated::GeneratedScheduleTable;
 use akita_types::{
-    AjtaiRole, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
-    ClaimIncidenceSummary, CommitmentEnvelope, DecompositionParams, LevelParams, Schedule,
-    SetupMatrixEnvelope, SisModulusFamily,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ClaimIncidenceSummary, DecompositionParams,
+    LevelParams, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
 use std::marker::PhantomData;
 
+pub mod generated_families;
 pub mod proof_optimized;
 pub mod tensor_verifier;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 mod transcript_binding;
 pub use proof_optimized::{
-    matrix_envelope_for_schedule, setup_level_params_from_plan,
-    setup_level_params_from_runtime_schedule, worst_case_grouped_incidence_for_shape,
+    matrix_envelope_for_schedule, setup_level_params_from_runtime_schedule,
+    worst_case_grouped_incidence_for_shape,
 };
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
-pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookupKey) -> AkitaError {
-    AkitaError::InvalidSetup(format!(
-        "{context} requires a generated schedule entry for key {key:?}; \
-         override the relevant `CommitmentConfig` default and call \
-         `akita_planner::find_optimal_schedule` to enable an offline DP fallback"
-    ))
+/// Derive the `Cfg`-free [`PlannerPolicy`] the planner DP consumes from a
+/// preset.
+///
+/// This is the single bridge between a [`CommitmentConfig`] preset and
+/// [`akita_planner::find_schedule`]: every brute-force input is *derived*
+/// from the `Cfg` impl, so the `Cfg` impl stays the one source of truth for
+/// each preset's `(D, decomposition, sis_family, …)`. Never hand-write a
+/// `PlannerPolicy` literal per preset.
+pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
+    PlannerPolicy {
+        ring_dimension: Cfg::D,
+        decomposition: Cfg::decomposition(),
+        sis_family: Cfg::sis_modulus_family(),
+        ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+        claim_ext_degree: Cfg::CLAIM_EXT_DEGREE,
+        chal_ext_degree: Cfg::CHAL_EXT_DEGREE,
+        basis_range: Cfg::basis_range(),
+    }
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -125,16 +142,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// SIS modulus family used by security-floor lookups.
     fn sis_modulus_family() -> SisModulusFamily;
 
-    /// Offline schedule table backing this config (preset only).
-    fn schedule_table() -> Option<GeneratedScheduleTable>;
-
-    /// Materialized plan for `key`, or `None` on table miss.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidSetup` if the table entry fails materialization.
-    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError>;
-
     /// Infinity-norm expansion introduced when claim-field coordinates are
     /// embedded into the ring subfield via `psi`.
     ///
@@ -150,14 +157,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         }
     }
 
-    /// Audited root-rank floor for one Ajtai role.
-    #[doc(hidden)]
-    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize;
-
-    /// Max matrix-row envelope across all runtime levels.
-    #[doc(hidden)]
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
-
     /// Packed capacity envelope for the shared setup matrix.
     ///
     /// # Errors
@@ -170,48 +169,73 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_points: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError>;
 
-    /// Inclusive `(min, max)` log-basis search range at one state.
+    /// Inclusive `(min, max)` log-basis search range.
     #[doc(hidden)]
-    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32);
+    fn basis_range() -> (u32, u32);
+
+    /// Build the runtime [`Schedule`] for `key`.
+    ///
+    /// Delegates entirely to the planner's cache-then-generate entry point
+    /// [`akita_planner::get_schedule`]: the planner owns the shipped tables,
+    /// so it selects the matching table from the `Cfg`-derived
+    /// [`policy_of::<Self>()`][policy_of] (and the level-0 fold shape),
+    /// expands the compact entry on a hit, and regenerates from scratch with
+    /// the offline DP on a miss. The result is deterministic in
+    /// `(policy, key)` plus this config's `stage1` / `fold_shape` hooks, so
+    /// prover and verifier resolve identical schedules and the Fiat-Shamir
+    /// `PlanSection` digest stays consistent. Any lookup key is supported
+    /// with no reliance on a pre-shipped table.
+    ///
+    /// # Errors
+    ///
+    /// Propagates expansion / SIS-bucket failures or DP-search failures
+    /// (invalid key dimensions, witness overflow). Never panics — this is
+    /// verifier-reachable.
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+        akita_planner::get_schedule(
+            key,
+            &policy_of::<Self>(),
+            Self::stage1_challenge_config,
+            Self::fold_challenge_shape_at_level,
+        )
+    }
 
     /// Schedule consumed by the prove/verify root path.
-    /// Default: materialize the table entry; error on miss.
+    /// Default: expand the resolved table entry; error on miss.
     ///
     /// # Errors
     ///
     /// `InvalidSetup` if no schedule-table entry exists for `incidence`.
     fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
         let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
-        if let Some(plan) = Self::schedule_plan(key)? {
-            let schedule =
-                akita_types::schedule_from_plan(&plan, Self::decomposition().field_bits());
-            return Ok(schedule);
-        }
-        Err(missing_generated_schedule("prove schedule", key))
+        Self::runtime_schedule(key)
     }
 
     /// Root commit layout the `batched_prove` flow uses for `incidence`,
-    /// read straight off the schedule's first step (Fold params or
-    /// root-direct `commit_params`). Same layout per-point commits use,
+    /// read off the runtime schedule's first step (the root Fold params or
+    /// the root-direct's commit slot). Same layout per-point commits use,
     /// so they stay compatible with the batched prove root.
+    ///
+    /// Reading the schedule's first step (rather than re-resolving the compact
+    /// entry directly) keeps this coupled to whatever
+    /// [`Self::get_params_for_prove`] / [`Self::runtime_schedule`] produce,
+    /// so config overrides (synthetic fixtures, DP fallback) stay honored.
     ///
     /// # Errors
     ///
-    /// Propagates `get_params_for_prove`; errors if the root-direct
-    /// schedule lacks `commit_params`.
+    /// Propagates [`Self::get_params_for_prove`]; errors if the root-direct
+    /// schedule lacks a commit (the uncommittable edge case).
     fn get_params_for_batched_commitment(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<LevelParams, AkitaError> {
         let schedule = Self::get_params_for_prove(incidence)?;
         match schedule.steps.first() {
-            Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            Some(akita_types::Step::Direct(direct)) => {
-                direct.commit_params.clone().ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "root-direct schedule is missing commit params".to_string(),
-                    )
-                })
-            }
+            Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+            Some(Step::Direct(direct)) => direct.params.clone().ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "root-direct schedule is missing commit params".to_string(),
+                )
+            }),
             None => Err(AkitaError::InvalidSetup(
                 "schedule has no steps".to_string(),
             )),
@@ -259,22 +283,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::sis_modulus_family()
     }
 
-    fn schedule_table() -> Option<GeneratedScheduleTable> {
-        Cfg::schedule_table()
-    }
-
-    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-        Cfg::schedule_plan(key)
-    }
-
-    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
-        Cfg::audited_root_rank(role, max_num_vars)
-    }
-
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        Cfg::envelope(max_num_vars)
-    }
-
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -283,8 +291,23 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
-    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-        Cfg::log_basis_search_range(inputs)
+    fn basis_range() -> (u32, u32) {
+        Cfg::basis_range()
+    }
+
+    /// Resolve schedules through the parent `Cfg`, not this derived config.
+    ///
+    /// `WCommitmentConfig` is a layout-derivation helper: its real interface
+    /// is [`Self::decomposition`], consumed by
+    /// `akita_types::recursive_level_layout_from_params` to size recursive-w
+    /// openings. It is never the top-level config that drives prove/verify, so
+    /// this override is defensive. Like every other hook here, it defers to
+    /// `Cfg` (matching the previous `schedule_table` delegation) rather than
+    /// resolving against this config's synthetic balanced-digit policy
+    /// (`policy_of::<Self>()`), which would select a different table / DP
+    /// schedule than the parent.
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+        Cfg::runtime_schedule(key)
     }
 }
 
@@ -335,28 +358,6 @@ mod tests {
             SisModulusFamily::Q32
         }
 
-        fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-            None
-        }
-
-        fn schedule_plan(
-            _key: AkitaScheduleLookupKey,
-        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-            Ok(None)
-        }
-
-        fn audited_root_rank(_role: AjtaiRole, _max_num_vars: usize) -> usize {
-            1
-        }
-
-        fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-            CommitmentEnvelope {
-                max_n_a: 1,
-                max_n_b: 1,
-                max_n_d: 1,
-            }
-        }
-
         fn max_setup_matrix_size(
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
@@ -371,7 +372,7 @@ mod tests {
             })
         }
 
-        fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+        fn basis_range() -> (u32, u32) {
             (3, 3)
         }
     }
@@ -453,7 +454,7 @@ mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
     #[cfg(not(feature = "zk"))]
-    use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+    use akita_types::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 
     #[cfg(not(feature = "zk"))]
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
@@ -462,111 +463,102 @@ mod fp128_policy_tests {
     ) {
         let d = Cfg::D as u32;
         for num_vars in min_num_vars..=max_num_vars {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars))
-                .unwrap()
-                .expect("audited config should have a schedule");
+            let schedule =
+                Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(num_vars)).unwrap();
 
-            for level in plan.fold_levels() {
+            for (level_idx, fold) in schedule.fold_steps().enumerate() {
+                let lp = &fold.params;
                 let a_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.a_key.collision_inf())
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.a_key.collision_inf())
                         .unwrap_or_else(|| {
                             panic!(
-                                "missing audited A-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
-                                level.inputs.level,
-                                level.lp.log_basis,
-                                level.lp.a_key.collision_inf(),
+                                "missing audited A-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
+                                lp.log_basis,
+                                lp.a_key.collision_inf(),
                             )
                         });
                 let a_rank = min_rank_for_secure_width(
                     Cfg::sis_modulus_family(),
                     d,
                     a_collision,
-                    u64::try_from(level.lp.inner_width())
+                    u64::try_from(lp.inner_width())
                         .expect("inner width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
                     panic!(
-                        "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={}, lb={}, width={}",
-                        level.inputs.level,
-                        level.lp.log_basis,
-                        level.lp.inner_width()
+                        "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
+                        lp.log_basis,
+                        lp.inner_width()
                     )
                 });
                 assert!(
-                    a_rank <= level.lp.a_key.row_len(),
-                    "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
-                    level.inputs.level,
-                    level.lp.log_basis,
-                    level.lp.inner_width(),
-                    level.lp.a_key.row_len(),
+                    a_rank <= lp.a_key.row_len(),
+                    "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
+                    lp.log_basis,
+                    lp.inner_width(),
+                    lp.a_key.row_len(),
                 );
 
                 let b_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.b_key.collision_inf())
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.b_key.collision_inf())
                         .unwrap_or_else(|| {
                             panic!(
-                                "missing audited B-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
-                                level.inputs.level,
-                                level.lp.log_basis,
-                                level.lp.b_key.collision_inf(),
+                                "missing audited B-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
+                                lp.log_basis,
+                                lp.b_key.collision_inf(),
                             )
                         });
                 let b_rank = min_rank_for_secure_width(
                     Cfg::sis_modulus_family(),
                     d,
                     b_collision,
-                    u64::try_from(level.lp.outer_width())
+                    u64::try_from(lp.outer_width())
                         .expect("outer width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
                     panic!(
-                        "missing audited B-row SIS width for D={d}, num_vars={num_vars}, level={}, lb={}, width={}",
-                        level.inputs.level,
-                        level.lp.log_basis,
-                        level.lp.outer_width()
+                        "missing audited B-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
+                        lp.log_basis,
+                        lp.outer_width()
                     )
                 });
                 assert!(
-                    b_rank <= level.lp.b_key.row_len(),
-                    "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
-                    level.inputs.level,
-                    level.lp.log_basis,
-                    level.lp.outer_width(),
-                    level.lp.b_key.row_len(),
+                    b_rank <= lp.b_key.row_len(),
+                    "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
+                    lp.log_basis,
+                    lp.outer_width(),
+                    lp.b_key.row_len(),
                 );
 
                 let d_collision =
-                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.d_key.collision_inf())
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, lp.d_key.collision_inf())
                         .unwrap_or_else(|| {
                             panic!(
-                                "missing audited D-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
-                                level.inputs.level,
-                                level.lp.log_basis,
-                                level.lp.d_key.collision_inf(),
+                                "missing audited D-row SIS collision bucket for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, collision={}",
+                                lp.log_basis,
+                                lp.d_key.collision_inf(),
                             )
                         });
                 let d_rank = min_rank_for_secure_width(
                     Cfg::sis_modulus_family(),
                     d,
                     d_collision,
-                    u64::try_from(level.lp.d_matrix_width())
+                    u64::try_from(lp.d_matrix_width())
                         .expect("d-matrix width should fit in u64"),
                 )
                 .unwrap_or_else(|| {
                     panic!(
-                        "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={}, lb={}, width={}",
-                        level.inputs.level,
-                        level.lp.log_basis,
-                        level.lp.d_matrix_width()
+                        "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
+                        lp.log_basis,
+                        lp.d_matrix_width()
                     )
                 });
                 assert!(
-                    d_rank <= level.lp.d_key.row_len(),
-                    "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
-                    level.inputs.level,
-                    level.lp.log_basis,
-                    level.lp.d_matrix_width(),
-                    level.lp.d_key.row_len(),
+                    d_rank <= lp.d_key.row_len(),
+                    "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
+                    lp.log_basis,
+                    lp.d_matrix_width(),
+                    lp.d_key.row_len(),
                 );
             }
         }
@@ -575,8 +567,7 @@ mod fp128_policy_tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
-        // B-row rank=1 at num_vars>=46 level=1 lb=2 — needs SIS floor fix
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 45);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 50);
     }
 
     #[test]
@@ -588,15 +579,13 @@ mod fp128_policy_tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn current_d32_full_schedule_stays_within_audited_sis_widths() {
-        // D-row rank=1 at num_vars>=30 level=2 lb=2 — needs SIS floor fix
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 29);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 50);
     }
 
     #[test]
     #[cfg(not(feature = "zk"))]
     fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
-        // D-row rank=1 at num_vars>=36 level=2 lb=2 — needs SIS floor fix
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 35);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 50);
     }
 
     #[test]
@@ -630,14 +619,14 @@ mod fp128_policy_tests {
         let key = AkitaScheduleLookupKey::singleton(32);
 
         let full = fp128::best_full_schedule(key)
-            .expect("selector should parse generated full schedules")
+            .expect("selector should resolve full schedules")
             .expect("selector should find a generated full schedule");
         let onehot = fp128::best_onehot_schedule(key)
-            .expect("selector should parse generated onehot schedules")
+            .expect("selector should resolve onehot schedules")
             .expect("selector should find a generated onehot schedule");
 
         for selection in [&full, &onehot] {
-            assert_eq!(selection.plan.initial_state().current_w_len, 1usize << 32);
+            assert_eq!(selection.schedule.initial_w_len(), Some(1usize << 32));
         }
         assert!(!full.preset.is_onehot());
         assert!(onehot.preset.is_onehot());
@@ -649,10 +638,10 @@ mod fp128_policy_tests {
         let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
 
         let selection = fp128::best_onehot_schedule(key)
-            .expect("selector should parse generated batched onehot schedules")
+            .expect("selector should resolve batched onehot schedules")
             .expect("selector should find a generated batched onehot schedule");
 
         assert!(selection.preset.is_onehot());
-        assert_eq!(selection.plan.initial_state().current_w_len, 1usize << 30);
+        assert_eq!(selection.schedule.initial_w_len(), Some(1usize << 30));
     }
 }

@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn ring_multiplier_root_rows_match_direct_relation_claim() {
         type F = fp128::Field;
-        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
+        type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn full_root_rows_match_direct_relation_claim() {
         type F = fp128::Field;
-        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
+        type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
@@ -559,7 +559,7 @@ mod tests {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
-        type Cfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
+        type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
