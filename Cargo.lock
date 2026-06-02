@@ -196,7 +196,6 @@ dependencies = [
  "akita-r1cs",
  "akita-serialization",
  "akita-transcript",
- "rayon",
  "tracing",
 ]
 
