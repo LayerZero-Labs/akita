@@ -6,11 +6,11 @@ use akita_field::{
     TranscriptChallenge,
 };
 use akita_prover::protocol::extension_opening_reduction::{
-    tensor_opening_split, ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
-    SparseExtensionOpeningWitness,
+    ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
 };
 use akita_sumcheck::SumcheckInstanceProverExt;
 use akita_transcript::{labels, sample_ext_challenge, AkitaTranscript, Transcript};
+use akita_types::tensor_opening_split;
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
@@ -110,10 +110,7 @@ where
     SparseExtensionOpeningWitness::from_sorted_unique_entries(table_len, entries).unwrap()
 }
 
-fn sparse_tensor_term<F, E>(
-    num_vars: usize,
-    num_polys: usize,
-) -> ExtensionOpeningReductionTerm<E>
+fn sparse_tensor_term<F, E>(num_vars: usize, num_polys: usize) -> ExtensionOpeningReductionTerm<E>
 where
     F: CanonicalField + CanonicalBytes + TranscriptChallenge,
     E: ExtField<F>,
@@ -150,8 +147,7 @@ where
     let num_polys = env_usize("AKITA_EOR_NUM_POLYS", DEFAULT_NUM_POLYS);
     let term = sparse_tensor_term::<F, E>(num_vars, num_polys);
     let terms = vec![term];
-    let input_claim =
-        ExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap();
+    let input_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap();
 
     let mut group = c.benchmark_group(format!(
         "extension_opening_reduction/{label}/onehot_nv{num_vars}_np{num_polys}"

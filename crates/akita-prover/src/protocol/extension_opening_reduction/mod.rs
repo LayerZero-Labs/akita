@@ -13,20 +13,11 @@ use akita_field::{AkitaError, ExtField, FieldCore, Zero};
 use akita_sumcheck::SumcheckInstanceProver;
 use akita_types::{
     checked_table_len, extension_opening_reduction_claim, num_rounds_from_table_len,
-    project_tensor_factor_value, validate_reduction_tables, EXTENSION_OPENING_REDUCTION_DEGREE,
+    project_tensor_factor_value, tensor_opening_split, validate_reduction_tables,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-
-pub use akita_types::{
-    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
-    extension_opening_reduction_eval_at_point, tensor_column_partials_from_base_evals,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
-    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
-    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, ExtensionOpeningFactorTerm, ExtensionOpeningReductionFactor,
-    ExtensionOpeningReductionRoundResult, ExtensionOpeningTensorPartials,
-};
 
 /// Maximum number of sparse low-index rounds to keep in the lazy tensor factor.
 ///

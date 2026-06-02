@@ -293,8 +293,8 @@ throughout.
 - [x] `cargo clippy --all-targets -p akita-sumcheck -p akita-types -p akita-prover -p akita-verifier -- -D warnings`
 - [x] `cargo clippy --all-targets -p akita-sumcheck -p akita-types -p akita-prover -p akita-verifier --features zk -- -D warnings`
 - [x] `cargo test -p akita-prover --test extension_opening_reduction`
-- [ ] `cargo doc -q --no-deps --all-features`
-- [ ] Byte-identical: proof bytes and transcript bytes unchanged for the benchmarked modes.
+- [x] `cargo doc -q --no-deps --all-features`
+- [x] Byte-identical: proof bytes and transcript bytes unchanged for the benchmarked modes.
 
 Risk notes: the only correctness-sensitive surface is the wide accumulators
 (`DELAYED_PRODUCT_SUM_IS_EXACT`) and the fold matrices.
