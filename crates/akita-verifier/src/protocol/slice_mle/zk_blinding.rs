@@ -151,7 +151,7 @@ mod tests {
                 nonzero_coeffs: vec![1],
             },
         )
-        .with_decomp(2, 3, 1, 26, 4, 512 * 8)
+        .with_decomp(2, 3, 1, 26, 512 * 8)
         .expect("zk blinding fixture lp")
     }
 

@@ -375,7 +375,7 @@ mod tests {
 
     fn test_level_params() -> LevelParams {
         LevelParams::params_only(crate::SisModulusFamily::Q32, D, 2, 1, 1, 1, stage1_config())
-            .with_decomp(2, 1, 1, 2, 1, 0)
+            .with_decomp(2, 1, 1, 2, 0)
             .expect("test params")
     }
 
@@ -482,11 +482,25 @@ mod tests {
         .expect("same-axis relation");
 
         let layout = instance.segment_layout(&lp).expect("layout");
+        assert!(ring_column_z_first(&lp));
         assert_eq!(layout.offset_z, 0);
-        assert_eq!(layout.offset_w, 8);
-        assert_eq!(layout.offset_t, 20);
+        let num_t_vectors = instance
+            .commitment_routing()
+            .num_polys_per_commitment_group()
+            .iter()
+            .sum::<usize>();
+        let depth_fold = lp.num_digits_fold(num_t_vectors, F::modulus_bits());
+        let num_points = instance.incidence().num_points();
+        let num_claims = instance.incidence().num_claims();
+        let z_len = depth_fold * lp.num_digits_commit * num_points * lp.block_len;
+        let w_len = lp.num_digits_open * lp.num_blocks * num_claims;
+        assert_eq!(layout.offset_w, z_len);
+        assert_eq!(layout.offset_t, z_len + w_len);
         #[cfg(not(feature = "zk"))]
-        assert_eq!(layout.offset_r, 32);
+        {
+            let t_len = lp.num_digits_open * lp.a_key.row_len() * lp.num_blocks * num_t_vectors;
+            assert_eq!(layout.offset_r, z_len + w_len + t_len);
+        }
         instance
             .check_v_shape_for_level(&lp)
             .expect("v rows match layout");
