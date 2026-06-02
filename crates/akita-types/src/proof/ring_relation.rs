@@ -196,12 +196,6 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
         }
         let depth_open = lp.num_digits_open;
         let depth_commit = lp.num_digits_commit;
-        let depth_fold = lp.num_digits_fold;
-        if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "prepared ring-switch layout has zero width".to_string(),
-            ));
-        }
 
         let num_claims = self.incidence.num_claims();
         let total_blocks = num_blocks
@@ -215,6 +209,12 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
                 acc.checked_add(count)
                     .ok_or_else(|| AkitaError::InvalidSetup("t-vector count overflow".to_string()))
             })?;
+        let depth_fold = lp.num_digits_fold(num_t_vectors, F::modulus_bits());
+        if depth_open == 0 || depth_commit == 0 || depth_fold == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "prepared ring-switch layout has zero width".to_string(),
+            ));
+        }
         let t_total_blocks = num_blocks
             .checked_mul(num_t_vectors)
             .ok_or_else(|| AkitaError::InvalidSetup("T block count overflow".to_string()))?;

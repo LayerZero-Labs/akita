@@ -205,6 +205,7 @@ pub fn terminal_witness_segment_layout(
     lp: &LevelParams,
     num_w_vectors: usize,
     num_public_rows: usize,
+    field_bits: u32,
 ) -> Result<TerminalWitnessSegmentLayout, AkitaError> {
     if lp.ring_dimension == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -217,7 +218,7 @@ pub fn terminal_witness_segment_layout(
         .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat width overflow".to_string()))?;
     let z_folded_ring_count = num_public_rows
         .checked_mul(lp.inner_width())
-        .and_then(|n| n.checked_mul(lp.num_digits_fold))
+        .and_then(|n| n.checked_mul(lp.num_digits_fold(num_w_vectors, field_bits)))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal z-folded width overflow".to_string()))?;
     terminal_witness_segment_layout_from_counts(
         lp.ring_dimension,
@@ -246,18 +247,18 @@ mod tests {
                 nonzero_coeffs: vec![-1, 1],
             },
         )
-        .with_decomp(m_vars, r_vars, 2, 3, 4, 0)
+        .with_decomp(m_vars, r_vars, 2, 3, 0)
         .expect("segment test params")
     }
 
     #[test]
     fn terminal_witness_segment_layout_places_w_hat_after_z_when_z_first() {
         let lp = segment_test_params(3, 2);
-        let layout = terminal_witness_segment_layout(&lp, 5, 2).unwrap();
+        let layout = terminal_witness_segment_layout(&lp, 5, 2, 128).unwrap();
 
         assert_eq!(
             layout.w_hat_digit_offset,
-            2 * lp.inner_width() * lp.num_digits_fold * lp.ring_dimension
+            2 * lp.inner_width() * lp.num_digits_fold(5, 128) * lp.ring_dimension
         );
         assert_eq!(
             layout.w_hat_digit_count,
@@ -268,7 +269,7 @@ mod tests {
     #[test]
     fn terminal_witness_segment_layout_places_w_hat_first_when_w_first() {
         let lp = segment_test_params(1, 3);
-        let layout = terminal_witness_segment_layout(&lp, 5, 2).unwrap();
+        let layout = terminal_witness_segment_layout(&lp, 5, 2, 128).unwrap();
 
         assert_eq!(layout.w_hat_digit_offset, 0);
         assert_eq!(

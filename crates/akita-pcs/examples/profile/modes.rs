@@ -2,6 +2,7 @@ use crate::report::print_layout;
 use crate::workload::{onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot};
 use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
 use akita_config::tensor_verifier;
+use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
 use akita_field::{
@@ -10,7 +11,6 @@ use akita_field::{
 };
 use akita_field::{ExtField, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_planner::test_utils::akita_batched_root_layout;
 use akita_prover::{AkitaProverSetup, CommitmentProver};
 use akita_serialization::AkitaSerialize;
 use akita_types::{
@@ -39,10 +39,10 @@ fn run_dense_mode<
     nv: usize,
 ) {
     let layout = resolve_layout::<F, Cfg>(nv);
-    let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
+    let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
     tracing::info!("{}", title);
-    print_layout(&layout);
-    run_dense_for::<F, D, Cfg>(label, nv, &layout, plan.as_ref());
+    print_layout(&layout, 1, Cfg::decomposition().field_bits());
+    run_dense_for::<F, D, Cfg>(label, nv, &layout, Some(&plan));
 }
 
 fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -103,10 +103,10 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         num_w_vectors,
         num_z_vectors,
     );
-    let plan = Cfg::schedule_plan(schedule_key).expect("schedule plan");
+    let plan = Cfg::runtime_schedule(schedule_key).expect("schedule plan");
     tracing::info!("{}", title);
-    print_layout(&layout);
-    run_dense_for::<FF, D, Cfg>(label, nv, &layout, plan.as_ref());
+    print_layout(&layout, num_t_vectors, Cfg::decomposition().field_bits());
+    run_dense_for::<FF, D, Cfg>(label, nv, &layout, Some(&plan));
 }
 
 fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
@@ -160,14 +160,12 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             );
         }
         let plan =
-            Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
-        print_layout(&layout);
-        run_onehot::<FF, D, Cfg>(label, nv, &layout, plan.as_ref());
+            Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
+        print_layout(&layout, 1, Cfg::decomposition().field_bits());
+        run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan));
     } else {
         let schedule_key = AkitaScheduleLookupKey::new(nv, num_polys, num_polys, 1);
-        let plan = Cfg::schedule_plan(schedule_key)
-            .expect("schedule plan")
-            .expect("batched onehot schedule should be generated");
+        let plan = Cfg::runtime_schedule(schedule_key).expect("schedule plan");
         let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
@@ -182,7 +180,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                 "[{label}] fixed batched onehot profile requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
             );
         }
-        print_layout(&layout);
+        print_layout(&layout, num_polys, Cfg::decomposition().field_bits());
         run_batched_onehot::<FF, D, Cfg>(label, nv, num_polys, &layout, Some(&plan));
     }
 }

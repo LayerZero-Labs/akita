@@ -5,6 +5,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 mod common;
 
+use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -299,8 +300,8 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
             BasisMode::Lagrange,
         )
         .expect("prove");
-        let terminal_layout =
-            terminal_witness_segment_layout(&layout, 1, 1).expect("terminal layout");
+        let terminal_layout = terminal_witness_segment_layout(&layout, 1, 1, F::modulus_bits())
+            .expect("terminal layout");
 
         tamper.apply(final_witness_mut(&mut proof), terminal_layout);
 

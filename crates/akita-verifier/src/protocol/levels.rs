@@ -683,6 +683,7 @@ where
             batched_lp,
             num_claims,
             incidence_summary.num_public_rows(),
+            F::modulus_bits(),
         )?;
         Some(prepare_terminal_witness_replay::<F, T>(
             transcript,

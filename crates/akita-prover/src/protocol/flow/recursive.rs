@@ -424,6 +424,7 @@ where
         lp,
         instance.claim_to_point().len(),
         instance.num_public_rows(),
+        F::modulus_bits(),
     )?;
     let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     let final_witness = CleartextWitnessProof::PackedDigits(

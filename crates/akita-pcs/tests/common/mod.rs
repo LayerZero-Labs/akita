@@ -19,14 +19,14 @@ use std::sync::Once;
 pub(super) type F = fp128::Field;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 
-// Wrap presets in `PlannerCfg` so test-only multipoint / non-singleton
-// batched incidences fall through to the offline DP planner on table miss
-// (production presets never reach DP at runtime; tests do).
-pub(super) type OneHotCfg = akita_planner::test_utils::PlannerCfg<fp128::D64OneHot>;
+// Bare presets: test-only multipoint / non-singleton batched incidences
+// fall through to the offline DP planner on table miss via the default
+// `runtime_schedule` fallback.
+pub(super) type OneHotCfg = fp128::D64OneHot;
 pub(super) const ONEHOT_D: usize = OneHotCfg::D;
 pub(super) const ONEHOT_K: usize = ONEHOT_D;
 
-pub(super) type DenseCfg = akita_planner::test_utils::PlannerCfg<fp128::D128Full>;
+pub(super) type DenseCfg = fp128::D128Full;
 pub(super) const DENSE_D: usize = DenseCfg::D;
 
 static INIT_RAYON: Once = Once::new();

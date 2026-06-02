@@ -115,7 +115,7 @@ where
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
-    let depth_fold = lp.num_digits_fold;
+    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits());
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
     let num_t_vectors = num_polys_per_commitment_group

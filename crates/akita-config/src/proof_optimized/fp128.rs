@@ -30,32 +30,12 @@ pub struct D32OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
-impl_fp128_preset!(D128Full, 128, 128, None);
-impl_fp128_preset!(D128OneHot, 128, 1, None);
-impl_fp128_preset!(
-    D64Full,
-    64,
-    128,
-    Some(akita_types::generated::fp128_d64_full_table())
-);
-impl_fp128_preset!(
-    D64OneHot,
-    64,
-    1,
-    Some(akita_types::generated::fp128_d64_onehot_table())
-);
-impl_fp128_preset!(
-    D32Full,
-    32,
-    128,
-    Some(akita_types::generated::fp128_d32_full_table())
-);
-impl_fp128_preset!(
-    D32OneHot,
-    32,
-    1,
-    Some(akita_types::generated::fp128_d32_onehot_table())
-);
+impl_fp128_preset!(D128Full, 128, 128);
+impl_fp128_preset!(D128OneHot, 128, 1);
+impl_fp128_preset!(D64Full, 64, 128);
+impl_fp128_preset!(D64OneHot, 64, 1);
+impl_fp128_preset!(D32Full, 32, 128);
+impl_fp128_preset!(D32OneHot, 32, 1);
 
 /// Concrete fp128 preset selected by a schedule-family query.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,20 +75,26 @@ impl Fp128Preset {
     }
 }
 
-/// Best generated-schedule plan for one fp128 preset family.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Best generated schedule for one fp128 preset family.
+#[derive(Clone, Debug)]
 pub struct Fp128ScheduleSelection {
     /// Selected concrete preset.
     pub preset: Fp128Preset,
-    /// Generated schedule plan selected for the supplied lookup key.
-    pub plan: AkitaSchedulePlan,
+    /// Runtime schedule selected for the supplied lookup key.
+    pub schedule: Schedule,
 }
 
 fn candidate<Cfg: CommitmentConfig>(
     preset: Fp128Preset,
     key: AkitaScheduleLookupKey,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    Ok(Cfg::schedule_plan(key)?.map(|plan| Fp128ScheduleSelection { preset, plan }))
+    // A genuine planner failure (invalid key shape, witness overflow,
+    // SIS-floor gap) propagates rather than being swallowed into a missing
+    // candidate. For any valid key the DP always yields a schedule (it falls
+    // back to a root-direct cleartext schedule), so no preset is silently
+    // dropped — the caller only ever sees `Err` on a real error.
+    let schedule = Cfg::runtime_schedule(key)?;
+    Ok(Some(Fp128ScheduleSelection { preset, schedule }))
 }
 
 fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>
@@ -117,7 +103,7 @@ where
 {
     candidates.into_iter().flatten().min_by_key(|selection| {
         (
-            selection.plan.exact_proof_bytes,
+            selection.schedule.total_bytes,
             selection.preset.ring_dimension(),
         )
     })
@@ -127,13 +113,14 @@ where
 ///
 /// The key carries singleton, grouped, and multipoint batch shape data, so
 /// this helper can be used by profile tooling without manually comparing
-/// typed preset schedule tables. Missing generated rows are ignored; the
-/// returned value is `None` only when no full-field preset has a generated
-/// entry for the key.
+/// typed preset schedule tables. A genuine planner failure propagates as an
+/// error; for any valid key every preset yields a schedule (the DP falls back
+/// to a root-direct cleartext schedule), so the best one is always returned.
 ///
 /// # Errors
 ///
-/// Returns an error if a generated table entry is malformed.
+/// Propagates a planner / runtime-schedule failure (invalid key shape,
+/// witness overflow, or an uncovered SIS-floor width).
 pub fn best_full_schedule(
     key: AkitaScheduleLookupKey,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
@@ -145,12 +132,13 @@ pub fn best_full_schedule(
 
 /// Select the best onehot fp128 preset for a schedule lookup key.
 ///
-/// Missing generated rows are ignored; the returned value is `None` only
-/// when no onehot preset has a generated entry for the key.
+/// A genuine planner failure propagates as an error; for any valid key every
+/// preset yields a schedule, so the best one is always returned.
 ///
 /// # Errors
 ///
-/// Returns an error if a generated table entry is malformed.
+/// Propagates a planner / runtime-schedule failure (invalid key shape,
+/// witness overflow, or an uncovered SIS-floor width).
 pub fn best_onehot_schedule(
     key: AkitaScheduleLookupKey,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
