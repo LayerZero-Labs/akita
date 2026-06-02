@@ -451,6 +451,25 @@ fn packed_ring_subfield_fp4_square_prime32() {
 }
 
 #[test]
+fn packed_ring_subfield_fp4_square_mersenne31() {
+    let mut rng = StdRng::seed_from_u64(367);
+    type R4M31 = RingSubfieldFp4<Mersenne31>;
+    let width = <PR4Mersenne31 as PackedValue>::WIDTH;
+    let elems: Vec<R4M31> = (0..width).map(|_| R4M31::random(&mut rng)).collect();
+
+    let packed = PR4Mersenne31::from_fn(|i| elems[i]);
+    let squared = packed.square();
+
+    for (i, elem) in elems.iter().enumerate() {
+        assert_eq!(
+            squared.extract(i),
+            elem.square(),
+            "Mersenne31 packed RingSubfieldFp4 square mismatch at lane {i}"
+        );
+    }
+}
+
+#[test]
 fn packed_ring_subfield_fp4_inverse() {
     let mut rng = StdRng::seed_from_u64(367);
     let width = <PR4 as PackedValue>::WIDTH;
