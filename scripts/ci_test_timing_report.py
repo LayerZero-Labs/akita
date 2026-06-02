@@ -7,7 +7,6 @@ import html
 import json
 import os
 import pathlib
-import re
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
