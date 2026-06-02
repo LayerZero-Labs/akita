@@ -728,10 +728,11 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
     /// power of two — 4 here — far below the accumulator's >= 2^63 headroom), so
     /// the result is byte-identical to `eval_state_at_suffix`.
     ///
-    /// Fields whose wide accumulator is lossy versus `Mul` (e.g. the
-    /// `Fp2<Fp64>` schoolbook product, which wraps mod 2^128) leave
+    /// Fields whose wide accumulator is lossy versus `Mul` leave
     /// `DELAYED_PRODUCT_SUM_IS_EXACT` at `false` and take the per-term path, so
-    /// the emitted factor — and the proof — stays unchanged.
+    /// the emitted factor, and the proof, stay unchanged. `Fp2<Fp64>` opts into
+    /// the exact path only because its accumulator keeps the carry above bit
+    /// 128 explicitly.
     ///
     /// The two factor values `a0` (state `low_zero`) and `a1` (state `low_one`)
     /// always share the same `suffix_index`, so both inner products read the

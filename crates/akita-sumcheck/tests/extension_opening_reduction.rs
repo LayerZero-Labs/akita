@@ -15,6 +15,7 @@ use akita_sumcheck::{
     ExtensionOpeningReductionSumcheck, ExtensionOpeningReductionVerifier,
     SparseExtensionOpeningWitness, SumcheckInstanceProver, SumcheckInstanceProverExt,
     SumcheckInstanceVerifierExt, EXTENSION_OPENING_REDUCTION_DEGREE,
+    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{AkitaTranscript, Transcript};
@@ -392,6 +393,111 @@ fn sparse_tensor_factor_matches_dense_factor_rounds() {
         let challenge = E::from_base_slice(&[
             B::from_u64(83 + 2 * round as u64),
             B::from_u64(89 + 3 * round as u64),
+        ]);
+        claim = dense_round.evaluate(&challenge);
+        dense_prover.ingest_challenge(round, challenge);
+        lazy_prover.ingest_challenge(round, challenge);
+    }
+
+    assert_eq!(lazy_prover.final_terms(), dense_prover.final_terms());
+}
+
+#[test]
+fn sparse_tensor_factor_matches_dense_factor_rounds_at_production_lazy_depth() {
+    type B = Prime32Offset99;
+    type E = RingSubfieldFp4<B>;
+
+    let tail_point = (0..14)
+        .map(|idx| {
+            E::from_base_slice(&[
+                B::from_u64(3 * idx as u64 + 7),
+                B::from_u64(5 * idx as u64 + 11),
+                B::from_u64(2 * idx as u64 + 1),
+                B::from_u64(7 * idx as u64 + 3),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let eta = vec![
+        E::from_base_slice(&[
+            B::from_u64(17),
+            B::from_u64(19),
+            B::from_u64(4),
+            B::from_u64(6),
+        ]),
+        E::from_base_slice(&[
+            B::from_u64(8),
+            B::from_u64(2),
+            B::from_u64(13),
+            B::from_u64(5),
+        ]),
+    ];
+    let coeff = E::from_base_slice(&[
+        B::from_u64(23),
+        B::from_u64(29),
+        B::from_u64(9),
+        B::from_u64(15),
+    ]);
+    let entries = [1usize, 2, 3, 5, 20, 25, 127, 4096, 8191, 10_000, 16_000]
+        .into_iter()
+        .enumerate()
+        .map(|(entry_idx, table_idx)| {
+            (
+                table_idx,
+                E::from_base_slice(&[
+                    B::from_u64(31 + 2 * entry_idx as u64),
+                    B::from_u64(37 + 3 * entry_idx as u64),
+                    B::from_u64(5 + entry_idx as u64),
+                    B::from_u64(11 + 4 * entry_idx as u64),
+                ]),
+            )
+        })
+        .collect::<Vec<_>>();
+    let sparse_witness =
+        SparseExtensionOpeningWitness::new(1usize << tail_point.len(), entries).unwrap();
+
+    let dense_factor = tensor_equality_factor_evals::<B, E>(&tail_point, &eta).unwrap();
+    let dense_term = BatchedExtensionOpeningReductionTerm::new_sparse(
+        sparse_witness.clone(),
+        dense_factor,
+        coeff,
+    )
+    .unwrap();
+    let lazy_term = BatchedExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
+        sparse_witness,
+        tail_point.clone(),
+        eta,
+        coeff,
+        SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+    )
+    .unwrap();
+
+    let expected_claim = BatchedExtensionOpeningReductionProver::input_claim_from_terms(
+        std::slice::from_ref(&dense_term),
+    )
+    .unwrap();
+    assert_eq!(
+        BatchedExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
+            &lazy_term,
+        ))
+        .unwrap(),
+        expected_claim
+    );
+
+    let mut dense_prover =
+        BatchedExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
+    let mut lazy_prover =
+        BatchedExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
+    let mut claim = expected_claim;
+    for round in 0..tail_point.len() {
+        let dense_round = dense_prover.compute_round_univariate(round, claim);
+        let lazy_round = lazy_prover.compute_round_univariate(round, claim);
+        assert_eq!(lazy_round, dense_round);
+
+        let challenge = E::from_base_slice(&[
+            B::from_u64(83 + 2 * round as u64),
+            B::from_u64(89 + 3 * round as u64),
+            B::from_u64(5 + round as u64),
+            B::from_u64(11 + round as u64),
         ]);
         claim = dense_round.evaluate(&challenge);
         dense_prover.ingest_challenge(round, challenge);

@@ -217,19 +217,26 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             .map(|(jstart, jend)| {
                 let mut bucket = vec![zero; onehot_k];
                 let mut scratch = vec![zero; onehot_k];
+                let mut touched = vec![false; onehot_k];
+                let mut touched_raws = Vec::with_capacity(inner_len.min(onehot_k));
                 for (jrel, &hj) in high_eq[jstart..jend].iter().enumerate() {
                     let base = (jstart + jrel) << inner_bits;
                     let block = &self.indices[base..base + inner_len];
                     for (hot, &le) in block.iter().copied().zip(low_eq.iter()) {
                         if let Some(raw) = hot {
-                            scratch[raw.as_usize()] += le;
+                            let raw = raw.as_usize();
+                            if !touched[raw] {
+                                touched[raw] = true;
+                                touched_raws.push(raw);
+                            }
+                            scratch[raw] += le;
                         }
                     }
-                    for (slot, acc) in scratch.iter_mut().zip(bucket.iter_mut()) {
-                        if *slot != zero {
-                            *acc += hj * *slot;
-                            *slot = zero;
-                        }
+                    for raw in touched_raws.drain(..) {
+                        let slot = &mut scratch[raw];
+                        bucket[raw] += hj * *slot;
+                        *slot = zero;
+                        touched[raw] = false;
                     }
                 }
                 bucket

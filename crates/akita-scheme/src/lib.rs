@@ -624,11 +624,8 @@ where
         + AkitaSerialize,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ClaimField: RingSubfieldEncoding<F>,
-    Cfg::ChallengeField: RingSubfieldEncoding<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + HasUnreducedOps
-        + AkitaSerialize,
+    Cfg::ChallengeField:
+        RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
