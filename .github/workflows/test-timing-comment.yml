@@ -10,12 +10,10 @@ permissions:
   contents: read
   issues: write
   pull-requests: write
-  checks: write
 
 env:
   AKITA_TEST_TIMING_ARTIFACT_NAME: ci-test-timing-data
   AKITA_TEST_TIMING_MARKER: "<!-- akita-ci-test-timing -->"
-  AKITA_TEST_TIMING_WALL_RATIO_THRESHOLD: "1.35"
 
 jobs:
   comment:
@@ -226,82 +224,4 @@ jobs:
               });
               core.info(`Created timing PR comment: ${response.data.html_url}`);
             }
-
-      - name: Create non-blocking wall-time regression check
-        if: steps.pr.outputs.issue-number != '' && steps.baselines.outputs.main-run-id != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        env:
-          AKITA_TEST_TIMING_CURRENT_SUMMARY: ${{ runner.temp }}/ci-test-timing-current/summary.json
-          AKITA_TEST_TIMING_MAIN_SUMMARY: ${{ runner.temp }}/ci-test-timing-main-baseline/summary.json
-          AKITA_TEST_TIMING_THRESHOLD: ${{ env.AKITA_TEST_TIMING_WALL_RATIO_THRESHOLD }}
-          AKITA_TEST_TIMING_HEAD_SHA: ${{ steps.pr.outputs.head-sha }}
-        with:
-          script: |
-            const fs = require('fs');
-            const currentPath = process.env.AKITA_TEST_TIMING_CURRENT_SUMMARY;
-            const mainPath = process.env.AKITA_TEST_TIMING_MAIN_SUMMARY;
-            if (!fs.existsSync(currentPath) || !fs.existsSync(mainPath)) {
-              core.info('Missing summary.json for current or main baseline; skipping check.');
-              return;
-            }
-            const current = JSON.parse(fs.readFileSync(currentPath, 'utf8'));
-            const main = JSON.parse(fs.readFileSync(mainPath, 'utf8'));
-            const threshold = Number(process.env.AKITA_TEST_TIMING_THRESHOLD || '1.35');
-
-            function wallSeconds(summary, passName) {
-              const passObj = summary?.passes?.[passName];
-              if (!passObj) return null;
-              const value = passObj.wall_s;
-              if (value === null || value === undefined) return null;
-              const f = Number(value);
-              return Number.isFinite(f) ? f : null;
-            }
-
-            const passes = ['non-zk', 'all-features'];
-            const rows = [];
-            let crossed = false;
-            for (const passName of passes) {
-              const cur = wallSeconds(current, passName);
-              const base = wallSeconds(main, passName);
-              let ratio = null;
-              if (cur !== null && base !== null && base !== 0) {
-                ratio = cur / base;
-                if (ratio > threshold) crossed = true;
-              }
-              rows.push({ passName, cur, base, ratio });
-            }
-
-            if (!crossed) {
-              core.info('No wall-time ratio crossed threshold; skipping neutral check.');
-              return;
-            }
-
-            const summaryLines = [];
-            summaryLines.push('Wall-time ratio vs main exceeded threshold (non-blocking).');
-            summaryLines.push('');
-            summaryLines.push('| Pass | Current wall s | Main wall s | Ratio |');
-            summaryLines.push('| --- | ---: | ---: | ---: |');
-            for (const row of rows) {
-              const ratioStr = row.ratio === null ? 'n/a' : `${row.ratio.toFixed(2)}x`;
-              summaryLines.push(`| ${row.passName} | ${row.cur ?? 'n/a'} | ${row.base ?? 'n/a'} | ${ratioStr} |`);
-            }
-
-            const { owner, repo } = context.repo;
-            const headSha = String(process.env.AKITA_TEST_TIMING_HEAD_SHA || '');
-            if (!headSha) {
-              core.warning('Missing head sha for check run; skipping.');
-              return;
-            }
-            await github.rest.checks.create({
-              owner,
-              repo,
-              name: 'Akita CI test timing',
-              head_sha: headSha,
-              status: 'completed',
-              conclusion: 'neutral',
-              output: {
-                title: 'Test pass wall time above main (non-blocking)',
-                summary: summaryLines.join('\n'),
-              },
-            });
 

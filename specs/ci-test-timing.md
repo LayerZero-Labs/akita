@@ -70,8 +70,8 @@ Protected by existing tests:
 ### Non-Goals
 
 - **Blocking** CI on test-duration regression (hosted-runner jitter is too noisy).
-  A **non-blocking** check annotation when pass wall time exceeds main × **1.35**
-  is in scope (see Design).
+- Posting a GitHub check-run annotation for wall-time regression.
+  This is deferred follow-up work once timing comment shape has stabilized.
 - Merging test timing into the profile-bench PR comment.
 - Replacing `cargo nextest` with a custom test runner.
 - Tracking clippy/fmt job times (Test job only).
@@ -141,11 +141,6 @@ iterating on DP before `gen_schedule_tables`.
   executing PR-controlled code.
 - [ ] PR comment includes: pass wall-time table vs **main** baseline, top 20
   slowest tests per pass, largest per-test regressions vs main, new tests ≥30s.
-- [ ] When a main baseline exists and any pass has `wall_s > main_wall_s × 1.35`,
-  `test-timing-comment.yml` posts a **non-blocking** GitHub check
-  (`conclusion: neutral`) on `workflow_run.head_sha` summarizing which pass(es)
-  crossed the threshold. The workflow declares `checks: write`. PR comment also
-  calls out the flag in pass summary.
 - [ ] The renderer escapes Markdown/HTML for test ids, failure messages, branch
   names, commit subjects, and baseline labels before inserting artifact data into
   `comment.md`.
@@ -402,7 +397,7 @@ HTML marker: `<!-- akita-ci-test-timing -->`
 Sections:
 
 1. **Pass summary** — wall time this PR vs main, delta %, test count delta.
-   Mark passes with `wall_s > main × 1.35` as **⚠ pass regression (non-blocking)**.
+   Mark passes with unusually high ratios as regressions (non-blocking).
 2. **Slowest tests** — top 20 per pass (table: rank, duration, test id).
 3. **Regressions vs main** — tests where `delta_s >= max(5s, 10% of baseline)`;
    cap 15 rows.
@@ -470,7 +465,6 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
-  checks: write
 
 env:
   AKITA_TEST_TIMING_ARTIFACT_NAME: ci-test-timing-data
@@ -498,21 +492,8 @@ Do not read `comment.md` from the current PR artifact for the posted PR comment.
 The artifact may include a debug render for the CI summary, but the posted body is
 always generated in this trusted workflow.
 
-**Pass wall-time annotation (non-blocking):** after `render`, if main baseline
-exists and any pass satisfies `wall_s > main_wall_s × 1.35`, create a check run
-via `github.rest.checks.create`:
-
-| Field | Value |
-|-------|--------|
-| `name` | `Akita CI test timing` |
-| `head_sha` | `workflow_run.head_sha` |
-| `status` | `completed` |
-| `conclusion` | `neutral` |
-| `output.title` | e.g. `Test pass wall time above main (non-blocking)` |
-| `output.summary` | Per-pass table: this PR wall_s, main wall_s, ratio |
-
-Do **not** fail the comment job or the PR when the threshold is crossed. Omit the
-check when main baseline is missing.
+**Deferred follow-up:** add a non-blocking check-run annotation for wall-time
+regressions once the comment format has stabilized.
 
 ### Spec and doc updates
 
@@ -529,7 +510,7 @@ check when main baseline is missing.
 | Merge into profile-bench comment | Different cadence, failure modes, and metrics; comment becomes huge |
 | Keep `proof_size_comparison` but `#[ignore]` | Still confuses contributors; weaker invariant has no long-term role |
 | Log-parse nextest stdout | Fragile under ANSI/format changes |
-| Fail CI if Test job > baseline × 1.2 | Runner jitter; use neutral check at ×1.35 instead |
+| Fail CI if Test job > baseline × 1.2 | Runner jitter; keep regressions visible via PR comments instead |
 | `cargo test -- -Z unstable-options` timing | Nextest is already canonical in CI |
 | Post `comment.md` rendered by the PR run | Lets PR-controlled code choose the privileged bot comment body |
 | `#[cfg(not(feature = "zk"))]` the drift guard | Removes local and CI coverage for zk generated tables |
@@ -545,8 +526,8 @@ check when main baseline is missing.
 4. Add `.config/nextest.toml` `ci-non-zk` / `ci-all-features` profiles + update
    `ci.yml` Test job.
 5. Add `scripts/ci_test_timing_report.py`.
-6. Add `.github/workflows/test-timing-comment.yml` with default-branch checkout,
-   `checks: write`, and no PR-head checkout.
+6. Add `.github/workflows/test-timing-comment.yml` with default-branch checkout
+   and no PR-head checkout.
 7. Update `specs/planner-owns-schedule-expansion.md` testing list.
 8. Update `AGENTS.md`.
 9. Open PR with body linking this spec; paste first timing comment screenshot.
@@ -578,9 +559,8 @@ check when main baseline is missing.
 - Dry-run the trusted `workflow_run` renderer after the workflow is present on
   `main`, because a newly added `workflow_run` file usually cannot self-test
   fully on the PR that introduces it.
-- Verify `github.rest.checks.create` behavior on the repo with `checks: write`,
-  especially whether repeated threshold crossings should create one check per run
-  or update the newest check with the same name.
+- If later adding a wall-time regression check-run annotation, verify the
+  `github.rest.checks.create` behavior and update semantics.
 - Build script fixtures from real artifacts for run `26798445379` and
   `26796574529` so baseline matching and rendered deltas are checked against
   observed CI data, not synthetic-only XML.
