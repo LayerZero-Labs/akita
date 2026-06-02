@@ -8,6 +8,13 @@ use super::params::ArithmeticBenchParams;
 pub(crate) fn bench_base_field_matrix(c: &mut Criterion) {
     let params = ArithmeticBenchParams::from_env("AKITA_BENCH_BASE_ARITH", 2048, 256);
 
+    bench_arithmetic_case::<Prime16Offset99, P16O99>(
+        c,
+        "base",
+        PRIME16_OFFSET99,
+        0xba5e_0016,
+        params,
+    );
     bench_arithmetic_case::<Prime31Offset19, P31O19>(
         c,
         "base",
