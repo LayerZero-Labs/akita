@@ -487,8 +487,15 @@ fn fp16_static_dense_round_trip() {
         type Cfg = fp16::D32Full;
         const D: usize = Cfg::D;
 
+        // The corrected weak-binding collision (`2·ω̄·β̄·ν`, see
+        // `specs/weak-binding-norm-fix.md`) raises the dense root A-rank above
+        // what the 16-bit modulus admits, so `fp16::D32Full` ships a cleartext
+        // (`commit: None`) schedule for `num_vars >= 6` and only commits at the
+        // single-block size `num_vars = 5`. Use that committing size so the
+        // round-trip still exercises a real SIS commitment.
+        const FP16_DENSE_COMMIT_NV: usize = 5;
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<FSmall, D, Cfg>(SMALL_FIELD_TEST_NV, b"akita_e2e/fp16-static");
+            make_dense_fixture::<FSmall, D, Cfg>(FP16_DENSE_COMMIT_NV, b"akita_e2e/fp16-static");
 
         let commitments = [commitment];
         let openings = [opening];

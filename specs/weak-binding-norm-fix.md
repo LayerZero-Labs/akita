@@ -36,6 +36,78 @@ regenerating the SIS-floor security tables and one deferred follow-up:
   `single_poly_tensor_e2e::*dense_tensor*` tests are `#[ignore]`d pending a
   follow-up (the tensor + dense-witness β interaction).
 
+## Follow-up fix (2026-06-02): root-dense witness L∞ off-by-one
+
+While reviewing the consolidated `akita_types::sis` module, a second, smaller
+soundness bug surfaced in the *same* A-role collision norm — this one
+resolves the spec's Open Question 3 below.
+
+### The bug
+
+The committed witness `s` is shared by two prices: the A-role weak-binding
+collision (`collision_A = 2·ω̄·β̄·ν`) and the fold bound
+(`β = num_claims·2^r·β̄`). Both consume `(||s||_inf, ||s||_1)`, and per the
+"clean symmetry" note above they **must** use the same witness norms. They
+did not:
+
+| level / encoding | fold (`fold_witness_norms`) | A-role (`a_role_witness_infinity_norm`) |
+|---|---|---|
+| one-hot | `1` | `1` ✅ |
+| recursive dense | `2^(lb−1) = b/2` | `2^(lb−1) = b/2` ✅ |
+| **root dense** | `2^(lb−1) = b/2` | `2^(lb−1) − 1 = b/2 − 1` ❌ |
+
+`a_role_witness_infinity_norm` modelled the *root* dense witness as a
+*symmetric* range `[−(b/2−1), b/2−1]` (the opening half-range `β`), dropping
+the most-negative balanced digit `−b/2`.
+
+### Why `b/2` is correct (not `b/2 − 1`)
+
+The committed witness is a balanced base-`b = 2^lb` gadget decomposition whose
+digits the prover bounds by `b/2`, identically at every level (no root
+special-case):
+
+```text
+crates/akita-prover/src/kernels/linear/common.rs
+  balanced_digit_abs_bound(log_basis) = 1 << (log_basis - 1) = b/2
+```
+
+`balanced_digit_max` documents the digit range as `[−b/2, b/2 − 1]`, so the max
+*absolute* value (the L∞ norm) is `b/2` even though the max *positive* value is
+`b/2 − 1`. The spec's own B/D paragraph already states the same:
+`γ̄ = ||t̂||_inf = b/2` for a "balanced digit in `[−b/2, b/2)`". So the true
+`||s||_inf` is `b/2 = 2^(lb−1)` at every level; the root-dense `b/2 − 1` is an
+off-by-one **under-estimate**. For the A-role binding collision, under-estimating
+`||s||_inf` is the **unsafe** direction (it under-prices the SIS collision and
+can select a sub-128-bit rank), so this is a (small) soundness gap, not just a
+cosmetic inconsistency.
+
+### The fix
+
+Make the A-role binding reuse `fold_witness_norms` as the single source of truth
+for `(||s||_inf, ||s||_1)` (`1` one-hot / `b/2` dense, with
+`||s||_1 = nonzeros·||s||_inf`), and **delete** `a_role_witness_infinity_norm`
+and its root/recursive split. The spec's stated symmetry — "both binding and
+fold feed the same un-doubled witness norms into the same helper" — now actually
+holds in code.
+
+### Consequences
+
+- **Only dense families shift.** One-hot `||s||_inf = 1` was already correct, so
+  every `*_onehot*` schedule table is byte-identical; only the dense
+  (`*_full`, `fp{32,64}_d{32,64}`) families' root collision rises one notch
+  (`b/2−1 → b/2` on the `min` side), occasionally bumping the root A-rank.
+- **`fp16::D32Full` now ships fully cleartext (`commit: None`) for
+  `num_vars >= 6`.** Previously it root-committed (`commit: Some`); the one-notch
+  collision bump pushes the dense root A-rank above the 16-bit modulus's secure
+  ceiling, so the DP drops even the root commitment. It still commits at the
+  single-block size `num_vars = 5`. The `akita_e2e::fp16_static_dense_round_trip`
+  test was retargeted from `num_vars = 8` to `5` so it keeps exercising a real
+  SIS commitment. fp32/fp64 dense are unaffected at the tested sizes.
+- **SIS-floor tables unchanged.** The lattice-estimator security tables
+  (`sis/generated_sis_table.rs`) do not depend on the witness norm — only the
+  collision *bucket* we look them up with — so they are not regenerated; only
+  `crates/akita-planner/src/generated/*.rs` is.
+
 ## Summary
 
 Two changes to how Akita prices ring-element products `c · s` in the
@@ -504,11 +576,14 @@ re-pins the tables.
 2. **Multi-chunk presets today.** Are any shipped one-hot presets multi-chunk
    (`K < D`)? If all are single-chunk, `nonzeros = 1` covers shipped configs,
    but `K` plumbing is still required to stay sound for future presets.
-3. **Recursive un-doubled witness L∞.** `a_role_base_norm` returns `2^lb − 1`
+3. **Recursive un-doubled witness L∞.** ~~`a_role_base_norm` returns `2^lb − 1`
    for recursive levels and `2β` for the root. Confirm the un-doubled witness
-   L∞ used by the new `a_role_witness_infinity_norm` at recursive levels (so
-   `2 · ||s||_inf` reproduces the intended doubled value and the factor of 2 is
-   genuinely present at recursive levels too, not just root).
+   L∞ used by the new `a_role_witness_infinity_norm` at recursive levels.~~
+   **Resolved (2026-06-02)** — see "Follow-up fix" above. The committed witness
+   is `||s||_inf = b/2 = 2^(lb−1)` at *every* level (the prover's
+   `balanced_digit_abs_bound`), so the root/recursive split was wrong: the
+   root-dense `b/2 − 1` under-counted the `−b/2` digit. The A-role now reuses
+   `fold_witness_norms` and the split is deleted.
 
 ## References
 

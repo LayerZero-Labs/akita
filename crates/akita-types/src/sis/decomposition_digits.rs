@@ -1,11 +1,6 @@
-//! Gadget-decomposition digit counts and per-role committed widths.
-//!
-//! Two layers:
-//! - digit primitives (`num_digits_for_bound`, `compute_num_digits*`) that turn
-//!   a magnitude bound + field width + gadget base into a balanced-digit count;
-//! - per-role helpers that name the Akita witness roles directly
-//!   (`num_digits_{s_commit,open,fold}`, `decomposed_{s_block,t,w}_ring_count`).
+//! Gadget-decomposition digit counts.
 
+use super::norm_bound::{fold_witness_beta, FoldChallengeNorms, FoldWitnessNorms};
 use crate::DecompositionParams;
 
 /// Maximum positive value representable by `num_digits` balanced base-`b`
@@ -126,9 +121,21 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
     num_digits_for_bound(bound, field_bits, decomposition.log_basis)
 }
 
-/// `δ_fold`: digits per coefficient of the folded witness `z`, from its L∞
-/// bound `beta` (see [`super::norm_bound::rounded_up_norm_z`]).
-pub fn num_digits_fold(beta: u128, field_bits: u32, log_basis: u32) -> usize {
+/// `δ_fold`: digits per coefficient of the folded witness `z = Σ c_i·s_i`.
+///
+/// Computes the folded-witness L∞ bound
+/// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
+/// (via [`fold_witness_beta`]) from the per-level fold challenge and witness
+/// norms, then returns the balanced-digit count needed to represent `[-β, β]`.
+pub fn num_digits_fold(
+    r_vars: usize,
+    num_claims: usize,
+    field_bits: u32,
+    log_basis: u32,
+    challenge: FoldChallengeNorms,
+    witness: FoldWitnessNorms,
+) -> usize {
+    let beta = fold_witness_beta(r_vars, num_claims, challenge, witness);
     if beta == 0 {
         return 1;
     }
@@ -211,5 +218,30 @@ mod tests {
         assert_eq!(decomposed_t_ring_count(2, 3, 4, 5), Some(120));
         assert_eq!(decomposed_w_ring_count(3, 4, 5), Some(60));
         assert_eq!(decomposed_s_block_ring_count(usize::MAX, 2), None);
+    }
+
+    #[test]
+    fn num_digits_fold_derives_beta() {
+        // Dense witness (||s||_inf = b/2, ||s||_1 = D·b/2) picks the
+        // ||c||_1·||s||_inf side; one-hot (||s||_1 = 1) picks ||c||_inf and
+        // needs strictly fewer digits.
+        let challenge = FoldChallengeNorms {
+            infinity_norm: 8,
+            l1_norm: 54,
+        };
+        let dense = FoldWitnessNorms {
+            infinity_norm: 4,
+            l1_norm: 4 * 64,
+        };
+        let onehot = FoldWitnessNorms {
+            infinity_norm: 1,
+            l1_norm: 1,
+        };
+        let dense_digits = num_digits_fold(8, 1, 128, 3, challenge, dense);
+        let onehot_digits = num_digits_fold(8, 1, 128, 3, challenge, onehot);
+        assert!(dense_digits > 0 && onehot_digits > 0);
+        assert!(onehot_digits < dense_digits);
+        // More claims never reduce the digit count.
+        assert!(num_digits_fold(8, 4, 128, 3, challenge, dense) >= dense_digits);
     }
 }

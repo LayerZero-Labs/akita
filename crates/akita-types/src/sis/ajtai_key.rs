@@ -4,11 +4,11 @@
 //! This is the single home for "given a width and a rounded-up collision
 //! bound, what is the minimum SIS-secure module rank, and what audited
 //! `AjtaiKeyParams` does it yield". The generated SIS-floor tables it consults
-//! live in the private sibling `super::floor`.
+//! live in the private sibling `super::generated_sis_table`.
 
 use akita_field::AkitaError;
 
-use super::floor::sis_max_widths;
+use super::generated_sis_table::sis_max_widths;
 use crate::descriptor_bytes::{push_u32, push_usize, sis_family_tag};
 
 /// SIS modulus family used to select generated security floors.

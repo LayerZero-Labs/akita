@@ -9,8 +9,8 @@
 use akita_field::{CanonicalField, FieldCore};
 
 use crate::sis::{
-    min_secure_rank, num_digits_fold, num_digits_for_bound, ring_product_infinity_norm_bound,
-    FoldChallengeNorms, FoldWitnessNorms, SisModulusFamily,
+    min_secure_rank, num_digits_fold, num_digits_for_bound, FoldChallengeNorms, FoldWitnessNorms,
+    SisModulusFamily,
 };
 
 /// Return the row gadget scalars `1, b, b^2, ...` for `b = 2^log_basis`.
@@ -113,15 +113,10 @@ pub fn optimal_m_r_split(
         };
         let n_a_u32 = n_a as u32;
 
-        // δ_fold grows with r: β = 2^r · min(||c||_inf·||s||_1, ||c||_1·||s||_inf).
-        let beta = ring_product_infinity_norm_bound(
-            fold_challenge.infinity_norm,
-            fold_challenge.l1_norm,
-            fold_witness.infinity_norm,
-            fold_witness.l1_norm,
-        )
-        .saturating_mul(1u128 << r);
-        let delta_fold = num_digits_fold(beta, field_bits, log_basis) as u64;
+        // δ_fold grows with r: num_digits_fold derives β = 2^r ·
+        // min(||c||_inf·||s||_1, ||c||_1·||s||_inf) internally (num_claims = 1).
+        let delta_fold =
+            num_digits_fold(r, 1, field_bits, log_basis, fold_challenge, fold_witness) as u64;
 
         let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
         let opening_cost = per_block_cost.saturating_mul(num_blocks);

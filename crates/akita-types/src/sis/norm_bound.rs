@@ -95,29 +95,6 @@ pub fn fold_witness_norms(
     }
 }
 
-/// Single-opening A-role witness infinity norm `||s||_inf` (un-doubled).
-///
-/// The Lemma-7 factor of 2 is applied explicitly by
-/// [`a_role_collision_infinity_norm`]:
-/// - root one-hot (`log_commit_bound == 1`): `1`
-/// - root dense: `2^(lb−1) − 1` (balanced-digit half-range `β`)
-/// - recursive: `2^(lb−1)` (balanced-digit max magnitude `b/2`)
-fn a_role_witness_infinity_norm(
-    log_basis: u32,
-    log_commit_bound: u32,
-    is_root: bool,
-) -> Option<u32> {
-    if is_root {
-        if log_commit_bound == 1 {
-            Some(1)
-        } else {
-            1u32.checked_shl(log_basis.checked_sub(1)?)?.checked_sub(1)
-        }
-    } else {
-        1u32.checked_shl(log_basis.checked_sub(1)?)
-    }
-}
-
 /// Hachi Lemma 7 A-role weak-binding collision infinity norm
 /// `collision_A = 2 · ω̄ · β̄ · ν` with
 /// `β̄ = min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`. The factor of 2 is the
@@ -145,6 +122,12 @@ fn a_role_collision_infinity_norm(
 /// A-role (committed witness `s`) rounded-up SIS collision bucket
 /// `ceil(2·ω̄·β̄·ν)`. `decomposition.log_basis` is the level's gadget base.
 ///
+/// The committed-witness norms `(||s||_inf, ||s||_1)` come from the single
+/// source of truth [`fold_witness_norms`] — `||s||_inf = 1` for one-hot and
+/// `2^(lb−1) = b/2` for dense balanced digits at *every* level (root and
+/// recursive alike, matching the prover's `balanced_digit_abs_bound`). The
+/// binding collision and the fold bound therefore price the *same* witness `s`.
+///
 /// Returns `None` on norm overflow or when the collision exceeds every audited
 /// bucket for `(sis_family, d)`.
 #[allow(clippy::too_many_arguments)]
@@ -158,26 +141,15 @@ pub fn rounded_up_norm_s(
     onehot_chunk_size: usize,
     ring_subfield_norm_bound: u32,
 ) -> Option<u32> {
-    let witness_inf = a_role_witness_infinity_norm(
-        decomposition.log_basis,
-        decomposition.log_commit_bound,
-        is_root,
-    )?;
+    let is_onehot = is_root && decomposition.log_commit_bound == 1;
+    let witness = fold_witness_norms(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
     let challenge_inf = fold_shape.effective_infinity_norm(stage1_config) as u128;
     let challenge_l1 = fold_shape.effective_l1_mass(stage1_config) as u128;
-    // One-hot sparsity applies only to a root level committing a one-hot
-    // witness; recursive and dense levels use the full `nonzeros = D` (`K = 1`).
-    let nonzeros_chunk = if is_root && decomposition.log_commit_bound == 1 {
-        onehot_chunk_size
-    } else {
-        1
-    };
-    let witness_l1 = witness_block_l1_norm(u128::from(witness_inf), d, nonzeros_chunk);
     let collision = a_role_collision_infinity_norm(
         challenge_inf,
         challenge_l1,
-        u128::from(witness_inf),
-        witness_l1,
+        witness.infinity_norm,
+        witness.l1_norm,
         u128::from(ring_subfield_norm_bound),
     )?;
     ceil_supported_collision(sis_family, d as u32, collision)
@@ -196,13 +168,41 @@ pub fn rounded_up_norm_w(sis_family: SisModulusFamily, d: usize, log_basis: u32)
     rounded_up_norm_t(sis_family, d, log_basis)
 }
 
-/// Folded witness `z = Σ c_i·s_i` L∞ bound
-/// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`.
+/// Folded-witness `z = Σ c_i·s_i` L∞ bound from precomputed per-level norms:
 ///
-/// `z` is decomposed (not Ajtai-committed), so this returns the raw L∞ bound;
-/// feed it to [`super::decomposition_digits::num_digits_fold`]. Saturates to
-/// `u128::MAX` on overflow (which `num_digits_fold` maps to the field-width
-/// ceiling).
+/// ```text
+/// β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf).
+/// ```
+///
+/// Saturates to `u128::MAX` on overflow (which
+/// [`super::decomposition_digits::num_digits_fold`] maps to the field-width
+/// ceiling). This is the single home of the `β` formula — both
+/// [`rounded_up_norm_z`] and `num_digits_fold` derive `β` through here.
+#[inline]
+#[must_use]
+pub fn fold_witness_beta(
+    r_vars: usize,
+    num_claims: usize,
+    challenge: FoldChallengeNorms,
+    witness: FoldWitnessNorms,
+) -> u128 {
+    if r_vars >= 127 {
+        return u128::MAX;
+    }
+    ring_product_infinity_norm_bound(
+        challenge.infinity_norm,
+        challenge.l1_norm,
+        witness.infinity_norm,
+        witness.l1_norm,
+    )
+    .saturating_mul(num_claims as u128)
+    .saturating_mul(1u128 << r_vars)
+}
+
+/// Folded witness `z = Σ c_i·s_i` L∞ bound `β` from high-level level inputs
+/// (resolves the per-block challenge/witness norms, then [`fold_witness_beta`]).
+///
+/// `z` is decomposed (not Ajtai-committed), so this returns the raw L∞ bound.
 #[allow(clippy::too_many_arguments)]
 pub fn rounded_up_norm_z(
     decomposition: DecompositionParams,
@@ -214,22 +214,13 @@ pub fn rounded_up_norm_z(
     onehot_chunk_size: usize,
     is_root: bool,
 ) -> u128 {
-    if r_vars >= 127 {
-        return u128::MAX;
-    }
     let is_onehot = is_root && decomposition.log_commit_bound == 1;
     let witness = fold_witness_norms(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-    let challenge_inf = fold_shape.effective_infinity_norm(stage1_config) as u128;
-    let challenge_l1 = fold_shape.effective_l1_mass(stage1_config) as u128;
-    let beta_block = ring_product_infinity_norm_bound(
-        challenge_inf,
-        challenge_l1,
-        witness.infinity_norm,
-        witness.l1_norm,
-    );
-    beta_block
-        .saturating_mul(num_claims as u128)
-        .saturating_mul(1u128 << r_vars)
+    let challenge = FoldChallengeNorms {
+        infinity_norm: fold_shape.effective_infinity_norm(stage1_config) as u128,
+        l1_norm: fold_shape.effective_l1_mass(stage1_config) as u128,
+    };
+    fold_witness_beta(r_vars, num_claims, challenge, witness)
 }
 
 #[cfg(test)]
@@ -250,10 +241,14 @@ mod tests {
     }
 
     #[test]
-    fn a_role_witness_norm_levels() {
-        assert_eq!(a_role_witness_infinity_norm(3, 1, true), Some(1)); // root one-hot
-        assert_eq!(a_role_witness_infinity_norm(3, 32, true), Some(3)); // root dense: 2^2 - 1
-        assert_eq!(a_role_witness_infinity_norm(3, 3, false), Some(4)); // recursive: 2^2
+    fn fold_witness_norm_levels() {
+        // One-hot: ||s||_inf = 1. Dense: ||s||_inf = b/2 = 2^(lb-1), the same
+        // at root and recursive (the committed witness is a balanced base-b
+        // decomposition with digits in [-b/2, b/2-1] at every level).
+        assert_eq!(fold_witness_norms(3, 64, 64, true).infinity_norm, 1);
+        assert_eq!(fold_witness_norms(3, 64, 1, false).infinity_norm, 4); // 2^2
+                                                                          // No root/recursive split: dense is b/2 regardless of `is_onehot=false`.
+        assert_eq!(fold_witness_norms(5, 64, 1, false).infinity_norm, 16); // 2^4
     }
 
     #[test]

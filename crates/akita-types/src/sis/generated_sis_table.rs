@@ -26,6 +26,27 @@
 //   in log-space to avoid a float overflow at high rank / large `q`; this is
 //   an exact reformulation of its `min(term1, term2)`, not an approximation.
 // Source: `scripts/gen_sis_table.py`, verified with lattice-estimator.
+//
+// ---------------------------------------------------------------------------
+// Terminology / how to read the table
+// ---------------------------------------------------------------------------
+//
+// `sis_max_widths(family, d, collision_inf)` returns one `&[u64]` per
+// `(family, d, collision_inf)` cell. Entry `widths[rank - 1]` is the **maximum
+// number of ring-element columns** (the SIS message width, in ring elements)
+// that is still 128-bit secure at module rank `rank` for that modulus family,
+// ring dimension `d`, and collision bound `collision_inf`. `min_secure_rank`
+// scans this slice for the first rank whose `max_width >= needed_width`.
+//
+// * A width of `0` means *no* positive width is 128-bit secure at that rank.
+//
+// * Trailing **repeated** values (e.g. `…, 682_696, 682_696, 682_696`) are
+//   conservative lower bounds, not tight cutoffs, and come from two effects:
+//   (1) the per-`D` binary-search cap (`10^10` for `D = 32/64`, `5·10^10` for
+//   `D = 128`): a width that would exceed the cap is reported *as* the cap;
+//   (2) q-ary saturation: once the lattice is bounded by the modulus `q`
+//   rather than by the rank, the largest secure width plateaus, so raising the
+//   rank further no longer increases it and the value repeats.
 
 use super::SisModulusFamily;
 

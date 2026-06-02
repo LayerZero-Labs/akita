@@ -191,23 +191,23 @@ impl LevelParams {
 
     /// Gadget decomposition depth for the folded witness (δ_fold / τ).
     ///
-    /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`,
-    /// then [`crate::sis::num_digits_fold`].
+    /// Delegates to [`crate::sis::num_digits_fold`], which derives
+    /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
+    /// from this level's fold challenge and witness norms.
     #[inline]
     pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> usize {
-        if self.r_vars >= 127 {
-            return crate::sis::num_digits_fold(u128::MAX, field_bits, self.log_basis);
-        }
-        let witness = self.fold_witness_norms();
-        let beta = crate::sis::ring_product_infinity_norm_bound(
-            self.challenge_infinity_norm() as u128,
-            self.challenge_l1_mass() as u128,
-            witness.infinity_norm,
-            witness.l1_norm,
+        let challenge = crate::sis::FoldChallengeNorms {
+            infinity_norm: self.challenge_infinity_norm() as u128,
+            l1_norm: self.challenge_l1_mass() as u128,
+        };
+        crate::sis::num_digits_fold(
+            self.r_vars,
+            num_claims,
+            field_bits,
+            self.log_basis,
+            challenge,
+            self.fold_witness_norms(),
         )
-        .saturating_mul(num_claims as u128)
-        .saturating_mul(1u128 << self.r_vars);
-        crate::sis::num_digits_fold(beta, field_bits, self.log_basis)
     }
 
     /// Set the one-hot chunk size `K`, returning the updated params.
