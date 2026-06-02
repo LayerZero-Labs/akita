@@ -60,8 +60,8 @@ fn beta_linf_fold_bound_with_num_claims(
     let beta_block = akita_types::sis::ring_product_infinity_norm_bound(
         lp.challenge_infinity_norm() as u128,
         lp.challenge_l1_mass() as u128,
-        witness.infinity_norm,
-        witness.l1_norm,
+        witness.infinity_norm(),
+        witness.l1_norm(),
     );
     beta_block
         .checked_mul(1u128 << lp.r_vars)

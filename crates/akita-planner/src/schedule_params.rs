@@ -14,8 +14,9 @@ use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_norm_s, rounded_up_norm_t,
-    rounded_up_norm_w, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessNorms,
+    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s,
+    rounded_up_collision_norm_t, rounded_up_collision_norm_w, AjtaiKeyParams, FoldChallengeNorms,
+    FoldWitnessNorms,
 };
 use akita_types::{
     decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
@@ -84,7 +85,7 @@ fn derive_candidate_level_params(
         };
         let delta_commit = num_digits_s_commit(decomp, false);
         let delta_open = num_digits_open(decomp);
-        let Some(norm_s) = rounded_up_norm_s(
+        let Some(norm_s) = rounded_up_collision_norm_s(
             family,
             d,
             decomp,
@@ -103,7 +104,7 @@ fn derive_candidate_level_params(
             continue;
         };
         let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
-        let Some(norm_t) = rounded_up_norm_t(family, d, log_basis) else {
+        let Some(norm_t) = rounded_up_collision_norm_t(family, d, log_basis) else {
             continue;
         };
         let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, num_blocks, 1) else {
@@ -113,7 +114,7 @@ fn derive_candidate_level_params(
             continue;
         };
         let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
-        let Some(norm_w) = rounded_up_norm_w(family, d, log_basis) else {
+        let Some(norm_w) = rounded_up_collision_norm_w(family, d, log_basis) else {
             continue;
         };
         let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
@@ -486,7 +487,7 @@ fn compute_root_direct_level_params(
     let (m_vars, r_vars) = if num_vars > alpha {
         // The `(m, r)` split is scored against the flat L1 mass (the root fold
         // shape disambiguates the committed table, not the split search).
-        let Some(a_collision) = rounded_up_norm_s(
+        let Some(a_collision) = rounded_up_collision_norm_s(
             sis_family,
             d,
             level_decomp,
@@ -535,7 +536,7 @@ fn compute_root_direct_level_params(
     // norm -> width -> tight SIS-secure rank -> key. `t_vectors = num_claims`
     // folds the batched-root scaling into the B/D widths (the root commits
     // `num_claims` polynomials) — no separate per-claim-then-scale pass.
-    let Some(norm_s) = rounded_up_norm_s(
+    let Some(norm_s) = rounded_up_collision_norm_s(
         sis_family,
         d,
         level_decomp,
@@ -554,7 +555,7 @@ fn compute_root_direct_level_params(
         return Ok(None);
     };
     let a_key = AjtaiKeyParams::try_new(sis_family, n_a, width_s, norm_s, d)?;
-    let Some(norm_t) = rounded_up_norm_t(sis_family, d, log_basis) else {
+    let Some(norm_t) = rounded_up_collision_norm_t(sis_family, d, log_basis) else {
         return Ok(None);
     };
     let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, num_blocks, num_claims) else {
@@ -564,7 +565,7 @@ fn compute_root_direct_level_params(
         return Ok(None);
     };
     let b_key = AjtaiKeyParams::try_new(sis_family, n_b, width_t, norm_t, d)?;
-    let Some(norm_w) = rounded_up_norm_w(sis_family, d, log_basis) else {
+    let Some(norm_w) = rounded_up_collision_norm_w(sis_family, d, log_basis) else {
         return Ok(None);
     };
     let Some(width_w) = decomposed_w_ring_count(depth_open, num_blocks, num_claims) else {
@@ -715,7 +716,7 @@ pub fn find_schedule(
             // primitives: norm -> width -> tight rank -> key.
             let family = policy.sis_family;
             let d = policy.ring_dimension;
-            let Some(norm_s) = rounded_up_norm_s(
+            let Some(norm_s) = rounded_up_collision_norm_s(
                 family,
                 d,
                 level_decomp,
@@ -734,7 +735,7 @@ pub fn find_schedule(
                 continue;
             };
             let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
-            let Some(norm_t) = rounded_up_norm_t(family, d, candidate_log_basis) else {
+            let Some(norm_t) = rounded_up_collision_norm_t(family, d, candidate_log_basis) else {
                 continue;
             };
             let Some(width_t) =
@@ -746,7 +747,7 @@ pub fn find_schedule(
                 continue;
             };
             let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
-            let Some(norm_w) = rounded_up_norm_w(family, d, candidate_log_basis) else {
+            let Some(norm_w) = rounded_up_collision_norm_w(family, d, candidate_log_basis) else {
                 continue;
             };
             let Some(width_w) = decomposed_w_ring_count(num_digits_open, num_blocks, t_vectors)

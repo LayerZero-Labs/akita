@@ -1,35 +1,34 @@
 //! Weak-binding collision norms (Hachi paper, Lemma 7) and the folded-witness
 //! bound, per witness role.
 //!
-//! `rounded_up_norm_{s,t,w}` return the audited SIS collision *bucket* ready to
-//! feed [`super::ajtai_key::min_secure_rank`]; `rounded_up_norm_z` returns the
-//! folded-witness L∞ bound `β` (which `z` decomposes against — `z` is not
-//! Ajtai-committed, so it has no SIS bucket).
+//! `rounded_up_collision_norm_{s,t,w}` return the audited SIS collision *bucket*
+//! ready to feed [`super::ajtai_key::min_secure_rank`]. The folded witness `z`
+//! is decomposed (not Ajtai-committed), so it has no SIS bucket.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 
 use super::ajtai_key::{ceil_supported_collision, SisModulusFamily};
 use crate::DecompositionParams;
 
-/// Worst-case `||c · s||_inf` of a negacyclic ring product, from the per-element
-/// L1/L∞ bounds:
+/// Worst-case `||lhs · rhs||_inf` of a negacyclic ring product, from the
+/// per-operand L1/L∞ bounds:
 ///
 /// ```text
-/// ||c · s||_inf  <=  min( ||c||_inf · ||s||_1 ,  ||c||_1 · ||s||_inf ).
+/// ||lhs · rhs||_inf  <=  min( ||lhs||_inf · ||rhs||_1 ,  ||lhs||_1 · ||rhs||_inf ).
 /// ```
 ///
 /// Saturating arithmetic keeps this panic-free on the verifier-reachable path.
 #[inline]
 #[must_use]
 pub fn ring_product_infinity_norm_bound(
-    challenge_infinity_norm: u128,
-    challenge_l1_norm: u128,
-    witness_infinity_norm: u128,
-    witness_l1_norm: u128,
+    lhs_infinity_norm: u128,
+    lhs_l1_norm: u128,
+    rhs_infinity_norm: u128,
+    rhs_l1_norm: u128,
 ) -> u128 {
-    challenge_infinity_norm
-        .saturating_mul(witness_l1_norm)
-        .min(challenge_l1_norm.saturating_mul(witness_infinity_norm))
+    lhs_infinity_norm
+        .saturating_mul(rhs_l1_norm)
+        .min(lhs_l1_norm.saturating_mul(rhs_infinity_norm))
 }
 
 /// Effective fold-round challenge `(||c||_inf, ||c||_1)` for one level,
@@ -46,12 +45,26 @@ pub struct FoldChallengeNorms {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldWitnessNorms {
     /// Witness L∞ norm `||s||_inf` (1 for one-hot, `b/2` for dense digits).
-    pub infinity_norm: u128,
+    infinity_norm: u128,
     /// Witness L1 norm `||s||_1 = nonzeros · ||s||_inf`.
-    pub l1_norm: u128,
+    l1_norm: u128,
 }
 
 impl FoldWitnessNorms {
+    /// Witness L∞ norm `||s||_inf`.
+    #[inline]
+    #[must_use]
+    pub fn infinity_norm(&self) -> u128 {
+        self.infinity_norm
+    }
+
+    /// Witness L1 norm `||s||_1 = nonzeros · ||s||_inf`.
+    #[inline]
+    #[must_use]
+    pub fn l1_norm(&self) -> u128 {
+        self.l1_norm
+    }
+
     /// Per-block committed-witness `(||s||_inf, ||s||_1)` for the folded witness.
     ///
     /// `||s||_inf` is `1` for one-hot or `b/2 = 2^(log_basis-1)` for dense
@@ -82,48 +95,15 @@ impl FoldWitnessNorms {
     }
 }
 
-/// Hachi Lemma 7 A-role weak-binding collision infinity norm
-/// `collision_A = 2 · ω̄ · β̄ · ν` with
-/// `β̄ = min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`. The factor of 2 is the
-/// lemma's two-term cross-multiplication factor (witness norms are un-doubled).
-///
-/// The effective challenge norms `(||c||_inf, ω̄ = ||c||_1)` are resolved from
-/// the fold-challenge shape here so callers pass only the witness norms and the
-/// shape.
-fn a_role_collision_infinity_norm(
-    witness_norm: FoldWitnessNorms,
-    fold_shape: TensorChallengeShape,
-    stage1_config: &SparseChallengeConfig,
-    ring_subfield_norm_bound: u128,
-) -> Option<u32> {
-    let challenge_infinity_norm = fold_shape.effective_infinity_norm(stage1_config) as u128;
-    let challenge_l1_norm = fold_shape.effective_l1_mass(stage1_config) as u128;
-    let beta = ring_product_infinity_norm_bound(
-        challenge_infinity_norm,
-        challenge_l1_norm,
-        witness_norm.infinity_norm,
-        witness_norm.l1_norm,
-    );
-    let collision = 2u128
-        .checked_mul(challenge_l1_norm)?
-        .checked_mul(beta)?
-        .checked_mul(ring_subfield_norm_bound)?;
-    u32::try_from(collision).ok()
-}
-
 /// A-role (committed witness `s`) rounded-up SIS collision bucket
-/// `ceil(2·ω̄·β̄·ν)`. `decomposition.log_basis` is the level's gadget base.
-///
-/// The committed-witness norms `(||s||_inf, ||s||_1)` come from the single
-/// source of truth [`FoldWitnessNorms::new`] — `||s||_inf = 1` for one-hot and
-/// `2^(lb−1) = b/2` for dense balanced digits at *every* level (root and
-/// recursive alike, matching the prover's `balanced_digit_abs_bound`). The
-/// binding collision and the fold bound therefore price the *same* witness `s`.
+/// `ceil(2·ω̄·β̄·ν)` per Hachi Lemma 7, with
+/// `β̄ = min(||c||_inf·||s||_1, ||c||_1·||s||_inf)` and
+/// `ω̄ = ||c||_1` and `ν = ring_subfield_norm_bound`.
 ///
 /// Returns `None` on norm overflow or when the collision exceeds every audited
 /// bucket for `(sis_family, d)`.
 #[allow(clippy::too_many_arguments)]
-pub fn rounded_up_norm_s(
+pub fn rounded_up_collision_norm_s(
     sis_family: SisModulusFamily,
     d: usize,
     decomposition: DecompositionParams,
@@ -136,26 +116,41 @@ pub fn rounded_up_norm_s(
     let is_onehot = is_root && decomposition.log_commit_bound == 1;
     let witness_norm =
         FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-    let collision = a_role_collision_infinity_norm(
-        witness_norm,
-        fold_shape,
-        stage1_config,
-        u128::from(ring_subfield_norm_bound),
-    )?;
-    ceil_supported_collision(sis_family, d as u32, collision)
+    // β̄ = ||c·s||_inf; collision_A = 2·ω̄·β̄·ν with ω̄ = ||c||_1.
+    let beta = ring_product_infinity_norm_bound(
+        fold_shape.effective_infinity_norm(stage1_config) as u128,
+        fold_shape.effective_l1_mass(stage1_config) as u128,
+        witness_norm.infinity_norm,
+        witness_norm.l1_norm,
+    );
+    let collision = 2u128
+        .checked_mul(fold_shape.effective_l1_mass(stage1_config) as u128)?
+        .checked_mul(beta)?
+        .checked_mul(u128::from(ring_subfield_norm_bound))?;
+    ceil_supported_collision(sis_family, d as u32, u32::try_from(collision).ok()?)
 }
 
 /// B-role (`t̂`) rounded-up SIS collision bucket. The collision is the direct
-/// difference of two balanced-digit openings, `2γ̄ = 2^lb − 1` (no challenge
-/// multiplication).
-pub fn rounded_up_norm_t(sis_family: SisModulusFamily, d: usize, log_basis: u32) -> Option<u32> {
+/// difference of two balanced-digit openings (no challenge multiplication).
+/// Each balanced digit lies in `[−b/2, b/2 − 1]` with `b = 2^lb`, so the
+/// largest difference of two such digits is
+/// `(b/2 − 1) − (−b/2) = b − 1 = 2^lb − 1 = 2γ̄`.
+pub fn rounded_up_collision_norm_t(
+    sis_family: SisModulusFamily,
+    d: usize,
+    log_basis: u32,
+) -> Option<u32> {
     let collision = 1u32.checked_shl(log_basis)?.checked_sub(1)?;
     ceil_supported_collision(sis_family, d as u32, collision)
 }
 
 /// D-role (`ŵ`) rounded-up SIS collision bucket. Identical bound to the B role.
-pub fn rounded_up_norm_w(sis_family: SisModulusFamily, d: usize, log_basis: u32) -> Option<u32> {
-    rounded_up_norm_t(sis_family, d, log_basis)
+pub fn rounded_up_collision_norm_w(
+    sis_family: SisModulusFamily,
+    d: usize,
+    log_basis: u32,
+) -> Option<u32> {
+    rounded_up_collision_norm_t(sis_family, d, log_basis)
 }
 
 /// Folded-witness `z = Σ c_i·s_i` L∞ bound from precomputed per-level norms:
@@ -165,9 +160,7 @@ pub fn rounded_up_norm_w(sis_family: SisModulusFamily, d: usize, log_basis: u32)
 /// ```
 ///
 /// Saturates to `u128::MAX` on overflow (which
-/// [`super::decomposition_digits::num_digits_fold`] maps to the field-width
-/// ceiling). This is the single home of the `β` formula — both
-/// [`rounded_up_norm_z`] and `num_digits_fold` derive `β` through here.
+/// [`super::decomposition_digits::num_digits_fold`] maps to the field-width ceiling).
 #[inline]
 #[must_use]
 pub fn fold_witness_beta(
@@ -187,30 +180,6 @@ pub fn fold_witness_beta(
     )
     .saturating_mul(num_claims as u128)
     .saturating_mul(1u128 << r_vars)
-}
-
-/// Folded witness `z = Σ c_i·s_i` L∞ bound `β` from high-level level inputs
-/// (resolves the per-block challenge/witness norms, then [`fold_witness_beta`]).
-///
-/// `z` is decomposed (not Ajtai-committed), so this returns the raw L∞ bound.
-#[allow(clippy::too_many_arguments)]
-pub fn rounded_up_norm_z(
-    decomposition: DecompositionParams,
-    stage1_config: &SparseChallengeConfig,
-    fold_shape: TensorChallengeShape,
-    r_vars: usize,
-    num_claims: usize,
-    d: usize,
-    onehot_chunk_size: usize,
-    is_root: bool,
-) -> u128 {
-    let is_onehot = is_root && decomposition.log_commit_bound == 1;
-    let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-    let challenge = FoldChallengeNorms {
-        infinity_norm: fold_shape.effective_infinity_norm(stage1_config) as u128,
-        l1_norm: fold_shape.effective_l1_mass(stage1_config) as u128,
-    };
-    fold_witness_beta(r_vars, num_claims, challenge, witness)
 }
 
 #[cfg(test)]
@@ -242,44 +211,5 @@ mod tests {
         assert_eq!(FoldWitnessNorms::new(3, 64, 1, false).infinity_norm, 4); // 2^2
                                                                              // No root/recursive split: dense is b/2 regardless of `is_onehot=false`.
         assert_eq!(FoldWitnessNorms::new(5, 64, 1, false).infinity_norm, 16); // 2^4
-    }
-
-    #[test]
-    fn rounded_up_norm_z_onehot_smaller_than_dense() {
-        let stage1 = SparseChallengeConfig::Uniform {
-            weight: 8,
-            nonzero_coeffs: vec![-1, 1],
-        };
-        let dense = DecompositionParams {
-            log_basis: 3,
-            log_commit_bound: 32,
-            log_open_bound: Some(128),
-        };
-        let onehot = DecompositionParams {
-            log_basis: 3,
-            log_commit_bound: 1,
-            log_open_bound: Some(128),
-        };
-        let beta_dense = rounded_up_norm_z(
-            dense,
-            &stage1,
-            TensorChallengeShape::Flat,
-            8,
-            1,
-            64,
-            64,
-            true,
-        );
-        let beta_onehot = rounded_up_norm_z(
-            onehot,
-            &stage1,
-            TensorChallengeShape::Flat,
-            8,
-            1,
-            64,
-            64,
-            true,
-        );
-        assert!(beta_onehot < beta_dense);
     }
 }

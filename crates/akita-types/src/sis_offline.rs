@@ -7,8 +7,8 @@
 //! never panics on malformed input.
 
 use crate::sis::{
-    decomposed_t_ring_count, min_secure_rank, rounded_up_norm_s, rounded_up_norm_t, AjtaiKeyParams,
-    SisModulusFamily,
+    decomposed_t_ring_count, min_secure_rank, rounded_up_collision_norm_s,
+    rounded_up_collision_norm_t, AjtaiKeyParams, SisModulusFamily,
 };
 use crate::{AkitaScheduleInputs, DecompositionParams, LevelParams};
 use akita_challenges::SparseChallengeConfig;
@@ -101,13 +101,14 @@ pub fn sis_derived_root_params_for_layout(
         log_basis: lp.log_basis,
         ..decomp
     };
-    let bd_collision = rounded_up_norm_t(sis_family, d, lp.log_basis).ok_or_else(|| {
-        AkitaError::InvalidSetup(format!(
-            "root B/D collision bucket miss for family={sis_family:?} D={d} lb={}",
-            lp.log_basis
-        ))
-    })?;
-    let a_collision = rounded_up_norm_s(
+    let bd_collision =
+        rounded_up_collision_norm_t(sis_family, d, lp.log_basis).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "root B/D collision bucket miss for family={sis_family:?} D={d} lb={}",
+                lp.log_basis
+            ))
+        })?;
+    let a_collision = rounded_up_collision_norm_s(
         sis_family,
         d,
         level_decomp,

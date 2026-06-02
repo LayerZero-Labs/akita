@@ -22,7 +22,8 @@ use crate::generated::{
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_open, num_digits_s_commit, rounded_up_norm_s, rounded_up_norm_t, rounded_up_norm_w,
+    num_digits_open, num_digits_s_commit, rounded_up_collision_norm_s, rounded_up_collision_norm_t,
+    rounded_up_collision_norm_w,
 };
 use akita_types::{AjtaiKeyParams, DecompositionParams, LevelParams};
 
@@ -116,7 +117,7 @@ impl GeneratedFoldStep {
         let num_digits_commit = num_digits_s_commit(decomp, is_root);
         let num_digits_open_val = num_digits_open(decomp);
 
-        let a_bucket = rounded_up_norm_s(
+        let a_bucket = rounded_up_collision_norm_s(
             sis_family,
             ring_d,
             decomp,
@@ -130,8 +131,8 @@ impl GeneratedFoldStep {
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
             .ok_or_else(|| no_layout("A"))?;
 
-        let b_bucket =
-            rounded_up_norm_t(sis_family, ring_d, log_basis).ok_or_else(|| no_layout("B"))?;
+        let b_bucket = rounded_up_collision_norm_t(sis_family, ring_d, log_basis)
+            .ok_or_else(|| no_layout("B"))?;
         let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
             num_digits_open_val,
@@ -140,8 +141,8 @@ impl GeneratedFoldStep {
         )
         .ok_or_else(|| no_layout("B"))?;
 
-        let d_bucket =
-            rounded_up_norm_w(sis_family, ring_d, log_basis).ok_or_else(|| no_layout("D"))?;
+        let d_bucket = rounded_up_collision_norm_w(sis_family, ring_d, log_basis)
+            .ok_or_else(|| no_layout("D"))?;
         let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
             .ok_or_else(|| no_layout("D"))?;
 

@@ -99,69 +99,21 @@ pub struct AjtaiKeyParams {
 }
 
 impl AjtaiKeyParams {
-    /// Create a new SIS-secure `AjtaiKeyParams`.
+    /// Create a new SIS-secure `AjtaiKeyParams`, auditing the
+    /// `(row_len, col_len, collision_inf)` triple against the generated 128-bit
+    /// SIS-floor tables for `(sis_family, ring_dimension)`.
     ///
-    /// Audits the `(row_len, col_len, collision_inf)` triple against the
-    /// generated 128-bit SIS-floor tables for `(sis_family,
-    /// ring_dimension)`. The check is strict and has no
-    /// silent-permissive fallback: any zero field, an unsupported
-    /// collision bucket, a `col_len` outside the audited range, or a
-    /// `row_len` below the audited floor is a panic.
-    ///
-    /// # Panics
-    ///
-    /// Panics if any of `row_len`, `col_len`, or `collision_inf` is zero,
-    /// if the SIS-floor tables do not cover the configuration, or if
-    /// `row_len` is below the audited SIS-secure floor.
-    pub fn new(
-        sis_family: SisModulusFamily,
-        row_len: usize,
-        col_len: usize,
-        collision_inf: u32,
-        ring_dimension: usize,
-    ) -> Self {
-        assert!(row_len > 0, "AjtaiKeyParams: row_len = 0");
-        assert!(col_len > 0, "AjtaiKeyParams: col_len = 0");
-        assert!(collision_inf > 0, "AjtaiKeyParams: collision_inf = 0");
-        let floor = min_secure_rank(
-            sis_family,
-            ring_dimension as u32,
-            collision_inf,
-            col_len as u64,
-        )
-        .unwrap_or_else(|| {
-            panic!(
-                "AjtaiKeyParams: no audited SIS rank for \
-                     family={sis_family:?} d={ring_dimension} \
-                     collision_inf={collision_inf} col_len={col_len}"
-            )
-        });
-        assert!(
-            row_len >= floor,
-            "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
-             (family={sis_family:?}, d={ring_dimension}, \
-             collision_inf={collision_inf}, col_len={col_len})"
-        );
-        Self {
-            row_len,
-            col_len,
-            collision_inf,
-            sis_family,
-        }
-    }
-
-    /// Fallible sibling of [`new`](Self::new).
-    ///
-    /// Same audit, but reports failures as
-    /// `AkitaError::InvalidSetup(message)` instead of panicking. Used by
-    /// callers that need to gracefully reject SIS-insecure candidates
-    /// (e.g. the planner's outer loop).
+    /// The check is strict and has no silent-permissive fallback: a zero field,
+    /// an unsupported collision bucket, a `col_len` outside the audited range,
+    /// or a `row_len` below the audited SIS-secure floor is reported as
+    /// `AkitaError::InvalidSetup(message)`. Used by callers that must gracefully
+    /// reject SIS-insecure candidates (e.g. the planner's outer loop).
     ///
     /// # Errors
     ///
-    /// Returns an error under the same conditions [`new`](Self::new)
-    /// panics: a zero field, an unsupported configuration, or
-    /// `row_len` below the audited floor.
+    /// Returns an error if any of `row_len`, `col_len`, or `collision_inf` is
+    /// zero, if the SIS-floor tables do not cover the configuration, or if
+    /// `row_len` is below the audited floor.
     pub fn try_new(
         sis_family: SisModulusFamily,
         row_len: usize,
@@ -169,15 +121,20 @@ impl AjtaiKeyParams {
         collision_inf: u32,
         ring_dimension: usize,
     ) -> Result<Self, AkitaError> {
-        let invalid = |msg: String| AkitaError::InvalidSetup(msg);
         if row_len == 0 {
-            return Err(invalid("AjtaiKeyParams: row_len = 0".to_string()));
+            return Err(AkitaError::InvalidSetup(
+                "AjtaiKeyParams: row_len = 0".to_string(),
+            ));
         }
         if col_len == 0 {
-            return Err(invalid("AjtaiKeyParams: col_len = 0".to_string()));
+            return Err(AkitaError::InvalidSetup(
+                "AjtaiKeyParams: col_len = 0".to_string(),
+            ));
         }
         if collision_inf == 0 {
-            return Err(invalid("AjtaiKeyParams: collision_inf = 0".to_string()));
+            return Err(AkitaError::InvalidSetup(
+                "AjtaiKeyParams: collision_inf = 0".to_string(),
+            ));
         }
         let floor = min_secure_rank(
             sis_family,
@@ -186,14 +143,14 @@ impl AjtaiKeyParams {
             col_len as u64,
         )
         .ok_or_else(|| {
-            invalid(format!(
+            AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: no audited SIS rank for \
                      family={sis_family:?} d={ring_dimension} \
                      collision_inf={collision_inf} col_len={col_len}"
             ))
         })?;
         if row_len < floor {
-            return Err(invalid(format!(
+            return Err(AkitaError::InvalidSetup(format!(
                 "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
                  (family={sis_family:?}, d={ring_dimension}, \
                  collision_inf={collision_inf}, col_len={col_len})"
@@ -212,9 +169,8 @@ impl AjtaiKeyParams {
     /// Use this only for intermediate construction steps that carry
     /// incomplete data (`params_only` placeholders with `col_len = 0` or
     /// `collision_inf = 0`, iterative SIS fixed-point loops, etc.).
-    /// Production-facing layouts must reach
-    /// [`new`](Self::new)/[`try_new`](Self::try_new) before they're
-    /// emitted into a schedule or setup.
+    /// Production-facing layouts must reach [`try_new`](Self::try_new) before
+    /// they're emitted into a schedule or setup.
     pub fn new_unchecked(
         sis_family: SisModulusFamily,
         row_len: usize,

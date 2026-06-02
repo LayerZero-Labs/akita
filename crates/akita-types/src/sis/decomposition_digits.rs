@@ -229,14 +229,10 @@ mod tests {
             infinity_norm: 8,
             l1_norm: 54,
         };
-        let dense = FoldWitnessNorms {
-            infinity_norm: 4,
-            l1_norm: 4 * 64,
-        };
-        let onehot = FoldWitnessNorms {
-            infinity_norm: 1,
-            l1_norm: 1,
-        };
+        // dense: log_basis=3 ⇒ ||s||_inf = b/2 = 4, ||s||_1 = D·b/2 = 64·4.
+        let dense = FoldWitnessNorms::new(3, 64, 1, false);
+        // one-hot single-chunk: ||s||_inf = 1, ||s||_1 = 1.
+        let onehot = FoldWitnessNorms::new(3, 64, 64, true);
         let dense_digits = num_digits_fold(8, 1, 128, 3, challenge, dense);
         let onehot_digits = num_digits_fold(8, 1, 128, 3, challenge, onehot);
         assert!(dense_digits > 0 && onehot_digits > 0);

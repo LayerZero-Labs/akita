@@ -44,7 +44,8 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 /// `n_A` is the per-`r` minimum SIS-secure A-rank for the candidate's
 /// `inner_width(r) = block_len(r) · δ_commit` (via [`min_secure_rank`]).
 /// `a_collision` must already be a rounded-up SIS bucket
-/// ([`crate::sis::ceil_supported_collision`] / [`crate::sis::rounded_up_norm_s`]).
+/// ([`crate::sis::ceil_supported_collision`] /
+/// [`crate::sis::rounded_up_collision_norm_s`]).
 ///
 /// As `r` grows, the opening term grows `~2^r` while the folding term shrinks
 /// with `m_eff`; `δ_fold` also grows with `r`. There is no closed form, so all
