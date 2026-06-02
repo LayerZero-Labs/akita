@@ -51,6 +51,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         claim_ext_degree: Cfg::CLAIM_EXT_DEGREE,
         chal_ext_degree: Cfg::CHAL_EXT_DEGREE,
         basis_range: Cfg::basis_range(),
+        onehot_chunk_size: Cfg::onehot_chunk_size(),
     }
 }
 
@@ -172,6 +173,23 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Inclusive `(min, max)` log-basis search range.
     #[doc(hidden)]
     fn basis_range() -> (u32, u32);
+
+    /// One-hot chunk size `K` of the committed witnesses under this config.
+    ///
+    /// Bounds the committed one-hot witness L1 mass per ring element as
+    /// `nonzeros = ceil(D / K)`, which feeds the Hachi Lemma 7 weak-binding
+    /// collision norm and the folded-witness digit count. The value must be a
+    /// true worst case (the smallest `K`, i.e. the largest `nonzeros`, any
+    /// instance under this config may commit). It is only consulted for a root
+    /// level whose `log_commit_bound == 1` (one-hot commitment); dense configs
+    /// always use `nonzeros = D` regardless of this hook.
+    ///
+    /// The default `Self::D` is the single-chunk one-hot case (`K >= D`,
+    /// `nonzeros = 1`); a multi-chunk one-hot preset must override it with its
+    /// committed chunk size `K < D`.
+    fn onehot_chunk_size() -> usize {
+        Self::D
+    }
 
     /// Build the runtime [`Schedule`] for `key`.
     ///
@@ -454,7 +472,7 @@ mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
     #[cfg(not(feature = "zk"))]
-    use akita_types::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+    use akita_types::sis::{ceil_supported_collision, min_secure_rank};
 
     #[cfg(not(feature = "zk"))]
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
@@ -477,7 +495,7 @@ mod fp128_policy_tests {
                                 lp.a_key.collision_inf(),
                             )
                         });
-                let a_rank = min_rank_for_secure_width(
+                let a_rank = min_secure_rank(
                     Cfg::sis_modulus_family(),
                     d,
                     a_collision,
@@ -508,7 +526,7 @@ mod fp128_policy_tests {
                                 lp.b_key.collision_inf(),
                             )
                         });
-                let b_rank = min_rank_for_secure_width(
+                let b_rank = min_secure_rank(
                     Cfg::sis_modulus_family(),
                     d,
                     b_collision,
@@ -539,7 +557,7 @@ mod fp128_policy_tests {
                                 lp.d_key.collision_inf(),
                             )
                         });
-                let d_rank = min_rank_for_secure_width(
+                let d_rank = min_secure_rank(
                     Cfg::sis_modulus_family(),
                     d,
                     d_collision,

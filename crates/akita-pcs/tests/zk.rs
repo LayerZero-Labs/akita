@@ -394,14 +394,14 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
 
 #[test]
 fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
-    // The fp32 D32Full zk schedule transitions from a one-fold (Terminal)
-    // root to a multi-fold root early in the supported range. After the
-    // planner DP refactor that eagerly costs terminal-direct successors and
-    // exposes per-`log_basis` fold options to the parent, `nv = 13` is the
-    // largest singleton key that still picks a 1-fold root for this preset;
-    // `nv = 14` is the first that escalates to a 2-fold root and is the
-    // matching `Fold`-root fixture below.
-    run_zk_fp32_extension_opening_reduction::<12>(
+    // The fp32 D32Full zk schedule transitions from a cleartext (`ZeroFold`)
+    // root, through a one-fold (`Terminal`) root, to a multi-fold (`Fold`)
+    // root as `num_vars` grows. Under the corrected weak-binding collision
+    // norm + regenerated SIS floor, `nv <= 12` are cleartext (`ZeroFold`),
+    // `nv = 13` is the single 1-fold (`Terminal`) root, and `nv >= 14`
+    // escalate to multi-fold (`Fold`) roots (the matching `Fold`-root fixture
+    // below uses `nv = 14`).
+    run_zk_fp32_extension_opening_reduction::<13>(
         b"zk/fp32-extension-root-terminal",
         ExpectedRoot::Terminal,
     );
@@ -827,7 +827,12 @@ where
 fn run_zk_dense_batched_shape_cases() {
     type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
-    const NV: usize = 14;
+    // Under the corrected weak-binding collision norm + regenerated SIS floor,
+    // the multipoint (2-point) dense fp128 D32 batched root first folds at
+    // `nv = 15` (it ships a cleartext `ZeroFold` root for `nv <= 14`). The
+    // same-point 3-poly case folds from `nv = 14`; `nv = 15` keeps both shapes
+    // on a folded root, which is what this fixture exercises.
+    const NV: usize = 15;
 
     init_rayon_pool();
     run_on_large_stack(|| {

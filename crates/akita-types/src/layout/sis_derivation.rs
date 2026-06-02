@@ -1,23 +1,14 @@
 //! Pure layout helpers shared by config, scheme, and planner code.
 //!
-//! The verifier-reachable layout helpers
-//! (`level_layout_from_params`, `recursive_level_layout_from_params`,
-//! `decomp_depths`) live here.
-//! Search and SIS-derivation loops live in [`crate::sis_offline`].
+//! The verifier-reachable layout builders (`level_layout_from_params`,
+//! `recursive_level_layout_from_params`) live here. They compose the SIS/Ajtai
+//! leaf primitives in [`crate::sis`] (digit counts, collision norms, secure
+//! ranks) — they contain no SIS formula of their own.
 
-use crate::layout::digit_math::{num_digits_for_bound, optimal_m_r_split};
-use crate::layout::params::AjtaiKeyParams;
+use crate::layout::digit_math::optimal_m_r_split;
+use crate::sis::{decomp_depths, fold_witness_norms, AjtaiKeyParams, FoldChallengeNorms};
 use crate::{DecompositionParams, LevelParams};
 use akita_field::AkitaError;
-
-/// Compute `(depth_commit, depth_open)` for one decomposition.
-pub fn decomp_depths(decomp: DecompositionParams) -> (usize, usize) {
-    let field_bits = decomp.field_bits();
-    let depth_commit = num_digits_for_bound(decomp.log_commit_bound, field_bits, decomp.log_basis);
-    let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let depth_open = num_digits_for_bound(open_bound, field_bits, decomp.log_basis);
-    (depth_commit, depth_open)
-}
 
 /// Apply layout coordinates and decomposition depths to a parameter-only level.
 ///
@@ -76,11 +67,20 @@ pub fn recursive_level_layout_from_params(
     // forms with `collision_inf = 0` would land on the symmetric-split
     // fallback inside `optimal_m_r_split` — those seeds should be
     // populated with the audited bucket before calling here.
+    // Recursive levels always commit a dense balanced-digit witness
+    // (`||s||_inf = b/2`, `nonzeros = D`), never one-hot, so the fold-witness
+    // sparsity is dense regardless of the root config.
+    let fold_challenge = FoldChallengeNorms {
+        infinity_norm: lp.challenge_infinity_norm() as u128,
+        l1_norm: lp.challenge_l1_mass() as u128,
+    };
+    let fold_witness = fold_witness_norms(decomp.log_basis, lp.ring_dimension, 1, false);
     let (m_vars, r_vars, n_a) = optimal_m_r_split(
         lp.a_key.sis_family(),
         lp.ring_dimension as u32,
         lp.a_key.collision_inf(),
-        lp.challenge_l1_mass(),
+        fold_challenge,
+        fold_witness,
         decomp.log_commit_bound,
         decomp.log_basis,
         reduced_vars,

@@ -16,14 +16,15 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
-use crate::ajtai_params::{
-    ajtai_a_width_bucket, ajtai_b_width_bucket, ajtai_d_width_bucket, WitnessType,
-};
 use crate::generated::{
     GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::PlannerPolicy;
-use akita_types::{AjtaiKeyParams, LevelParams};
+use akita_types::sis::{
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    num_digits_open, num_digits_s_commit, rounded_up_norm_s, rounded_up_norm_t, rounded_up_norm_w,
+};
+use akita_types::{AjtaiKeyParams, DecompositionParams, LevelParams};
 
 impl GeneratedFoldStep {
     /// Expand this compact fold step into the full committed
@@ -96,36 +97,63 @@ impl GeneratedFoldStep {
             (current_w_len / ring_d).div_ceil(num_blocks)
         };
 
-        // Per-role widths + audited buckets via the canonical planner helpers.
-        // The B/D widths carry the `num_claims` batch factor (the root commits
-        // `num_claims` polynomials); the stored `n_a` sizes the B-role width,
-        // matching `compute_ajtai_key_params_b`'s use of the A-rank.
+        // Per-role rounded-up collision buckets + committed widths, via the
+        // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
+        // batch factor (the root commits `num_claims` polynomials); the stored
+        // `n_a` sizes the B-role width. Unlike the planner DP, expansion audits
+        // the *shipped* ranks against these (norm, width) via `try_new`.
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated schedule \
                  (family={sis_family:?}, d={ring_d}, log_basis={log_basis})"
             ))
         };
-        let (inner_width, a_bucket) =
-            ajtai_a_width_bucket(policy, &stage1, block_len, log_basis, is_root)?
-                .ok_or_else(|| no_layout("A"))?;
-        let (outer_width, b_bucket) = ajtai_b_width_bucket(
-            policy,
-            &stage1,
+        let decomp = DecompositionParams {
+            log_basis,
+            ..policy.decomposition
+        };
+        let stage1_cfg = stage1(ring_d)?;
+        let num_digits_commit = num_digits_s_commit(decomp, is_root);
+        let num_digits_open_val = num_digits_open(decomp);
+
+        let a_bucket = rounded_up_norm_s(
+            sis_family,
+            ring_d,
+            decomp,
+            &stage1_cfg,
+            fold_shape,
+            is_root,
+            policy.onehot_chunk_size,
+            policy.ring_subfield_norm_bound,
+        )
+        .ok_or_else(|| no_layout("A"))?;
+        let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
+            .ok_or_else(|| no_layout("A"))?;
+
+        let b_bucket =
+            rounded_up_norm_t(sis_family, ring_d, log_basis).ok_or_else(|| no_layout("B"))?;
+        let outer_width = decomposed_t_ring_count(
             self.n_a as usize,
+            num_digits_open_val,
             num_blocks,
             num_claims,
-            log_basis,
-        )?
+        )
         .ok_or_else(|| no_layout("B"))?;
-        let (d_matrix_width, d_bucket) =
-            ajtai_d_width_bucket(policy, &stage1, num_blocks, num_claims, log_basis)?
-                .ok_or_else(|| no_layout("D"))?;
 
-        // Digit depths for the `LevelParams` fields, from the same
-        // `WitnessType` rule the width helpers use.
-        let num_digits_commit = WitnessType::S.decomposed_num_digits(policy, log_basis, is_root);
-        let num_digits_open = WitnessType::T.decomposed_num_digits(policy, log_basis, true);
+        let d_bucket =
+            rounded_up_norm_w(sis_family, ring_d, log_basis).ok_or_else(|| no_layout("D"))?;
+        let d_matrix_width = decomposed_w_ring_count(num_digits_open_val, num_blocks, num_claims)
+            .ok_or_else(|| no_layout("D"))?;
+
+        let num_digits_open = num_digits_open_val;
+
+        // A one-hot root (`log_commit_bound == 1`) commits a sparse witness;
+        // recursive and dense levels are dense (`onehot_chunk_size = 0`).
+        let onehot_chunk_size = if is_root && policy.decomposition.log_commit_bound == 1 {
+            policy.onehot_chunk_size
+        } else {
+            0
+        };
 
         // Audit each shipped rank against its width + bucket as we build the
         // key (verifier-reachable, so the fallible `try_new` is used instead
@@ -158,10 +186,11 @@ impl GeneratedFoldStep {
             block_len,
             m_vars,
             r_vars,
-            stage1_config: stage1(ring_d)?,
+            stage1_config: stage1_cfg,
             fold_challenge_shape: fold_shape,
             num_digits_commit,
             num_digits_open,
+            onehot_chunk_size,
         })
     }
 }

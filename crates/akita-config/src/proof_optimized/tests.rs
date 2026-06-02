@@ -657,9 +657,13 @@ fn generated_batched_roots_restore_scaled_widths() {
     assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
     assert_generated_batched_roots_are_scaled::<fp128::D64Full>(fp128_d64_full_table());
     assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
-    assert_generated_batched_roots_are_scaled::<fp16::D32Full>(fp16_d32_full_table());
+    // Q16 (16-bit modulus) dense presets ship cleartext-only schedules under
+    // the corrected Hachi Lemma 7 weak-binding collision norm: the SIS-secure
+    // commitment widths the small modulus admits are below the dense
+    // fold-witness widths, so the DP never folds. There are therefore no
+    // folded batched roots to scale-check for `fp16::*Full`. The one-hot Q16
+    // presets keep folding (small collision) and are still checked.
     assert_generated_batched_roots_are_scaled::<fp16::D32OneHot>(fp16_d32_onehot_table());
-    assert_generated_batched_roots_are_scaled::<fp16::D64Full>(fp16_d64_full_table());
     assert_generated_batched_roots_are_scaled::<fp16::D64OneHot>(fp16_d64_onehot_table());
 }
 

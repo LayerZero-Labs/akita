@@ -4,8 +4,37 @@
 |-----------|--------------------------------|
 | Author(s) | Omid Bodaghi, Cursor agent draft |
 | Created   | 2026-06-01                     |
-| Status    | proposed                       |
+| Status    | implemented                    |
 | PR        |                                |
+
+## Implementation outcome (2026-06-02)
+
+The fix is implemented as specified, with one consequence that required
+regenerating the SIS-floor security tables and one deferred follow-up:
+
+- **SIS-floor tables regenerated.** The corrected collision norm
+  `collision_A = 2·ω̄·β̄·ν` reaches ~10^6 for the densest high-`ω` levels —
+  far above the old maximum tabulated collision bucket (`2047`). The
+  `akita_types::sis_floor` tables were regenerated with
+  `scripts/gen_sis_table.py` (lattice-estimator, BDGL16 + lgsa) for **all
+  families and dimensions (D = 32/64/128/256), ranks 1..=20, and collision
+  buckets `2 … 1_048_575` (`2^k − 1` up to `2^20 − 1`)**. `ceil_supported_collision`
+  was extended to the same bucket list. The estimator's
+  `sis_lattice.cost_euclidean` trivial-easy bound is evaluated in log-space to
+  avoid a float overflow at high rank / large `q` (an exact reformulation of
+  its `min(term1, term2)`); all pre-existing table values are reproduced
+  bit-for-bit.
+- **Q16 dense presets ship cleartext-only.** The 16-bit modulus cannot
+  securely commit the dense fold-witness widths at the corrected collision
+  norms (the SIS-secure widths it admits are too small), so `fp16::*Full`
+  schedules degrade to cleartext (`Direct`) — sound, but non-succinct. Q16
+  one-hot and all fp32/fp64/fp128 families keep folding.
+- **Deferred: dense poly under a one-hot tensor config.** `D64OneHotTensor`
+  has `log_commit_bound == 1`, so the corrected fold `β` sizes against one-hot
+  witness sparsity. Committing a *dense* poly under it folds to a larger
+  `||z||_inf` than that `β`, so the prover aborts. The affected
+  `single_poly_tensor_e2e::*dense_tensor*` tests are `#[ignore]`d pending a
+  follow-up (the tensor + dense-witness β interaction).
 
 ## Summary
 

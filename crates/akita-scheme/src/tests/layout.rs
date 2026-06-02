@@ -41,6 +41,7 @@ fn same_point_batched_root_preserves_opening_geometry() {
             OneHotCfg::decomposition(),
             OneHotCfg::stage1_challenge_config(OneHotCfg::D).unwrap(),
             OneHotCfg::ring_subfield_embedding_norm_bound(),
+            OneHotCfg::onehot_chunk_size(),
             root_inputs,
             level_lp,
         )

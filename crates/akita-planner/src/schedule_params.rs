@@ -12,7 +12,11 @@ use std::collections::{BTreeMap, HashMap};
 use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
-use akita_types::sis_floor::ceil_supported_collision;
+use akita_types::sis::{
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    fold_witness_norms, min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_norm_s,
+    rounded_up_norm_t, rounded_up_norm_w, AjtaiKeyParams, FoldChallengeNorms,
+};
 use akita_types::{
     decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
     level_proof_bytes, root_extension_opening_partials,
@@ -21,8 +25,11 @@ use akita_types::{
     Schedule, Step,
 };
 
-use crate::ajtai_params::{compute_all_ajtai_keys_params, Stage1Fn, WitnessType};
 use crate::PlannerPolicy;
+
+/// Stage-1 sparse-challenge closure shared by the planner entry points.
+pub(crate) type Stage1Fn<'a> =
+    &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>;
 
 /// Stage-1 fold-round challenge-shape closure (`level 0` root shape).
 type FoldShapeFn<'a> = &'a dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape;
@@ -66,12 +73,56 @@ fn derive_candidate_level_params(
         };
         let block_len = num_ring_elems.div_ceil(num_blocks);
 
-        let Some((a_key, b_key, d_key)) = compute_all_ajtai_keys_params(
-            policy, stage1, block_len, num_blocks, 1, log_basis, false,
-        )?
-        else {
+        // Recursive levels commit a dense balanced-digit witness (`is_root =
+        // false`, flat fold). Compose the three SIS-secure keys from the
+        // `akita_types::sis` primitives: norm -> width -> rank -> key.
+        let family = policy.sis_family;
+        let d = policy.ring_dimension;
+        let decomp = DecompositionParams {
+            log_basis,
+            ..policy.decomposition
+        };
+        let delta_commit = num_digits_s_commit(decomp, false);
+        let delta_open = num_digits_open(decomp);
+        let Some(norm_s) = rounded_up_norm_s(
+            family,
+            d,
+            decomp,
+            &stage1_config,
+            TensorChallengeShape::Flat,
+            false,
+            policy.onehot_chunk_size,
+            policy.ring_subfield_norm_bound,
+        ) else {
             continue;
         };
+        let Some(width_s) = decomposed_s_block_ring_count(block_len, delta_commit) else {
+            continue;
+        };
+        let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
+            continue;
+        };
+        let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
+        let Some(norm_t) = rounded_up_norm_t(family, d, log_basis) else {
+            continue;
+        };
+        let Some(width_t) = decomposed_t_ring_count(n_a, delta_open, num_blocks, 1) else {
+            continue;
+        };
+        let Some(n_b) = min_secure_rank(family, d as u32, norm_t, width_t as u64) else {
+            continue;
+        };
+        let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
+        let Some(norm_w) = rounded_up_norm_w(family, d, log_basis) else {
+            continue;
+        };
+        let Some(width_w) = decomposed_w_ring_count(delta_open, num_blocks, 1) else {
+            continue;
+        };
+        let Some(n_d) = min_secure_rank(family, d as u32, norm_w, width_w as u64) else {
+            continue;
+        };
+        let d_key = AjtaiKeyParams::try_new(family, n_d, width_w, norm_w, d)?;
 
         let candidate_params = LevelParams {
             ring_dimension: policy.ring_dimension,
@@ -85,8 +136,10 @@ fn derive_candidate_level_params(
             r_vars: r,
             stage1_config: stage1_config.clone(),
             fold_challenge_shape: TensorChallengeShape::Flat,
-            num_digits_commit: WitnessType::S.decomposed_num_digits(policy, log_basis, false),
-            num_digits_open: WitnessType::T.decomposed_num_digits(policy, log_basis, false),
+            num_digits_commit: delta_commit,
+            num_digits_open: delta_open,
+            // Recursive levels commit dense balanced-digit witnesses.
+            onehot_chunk_size: 0,
         };
 
         let next_witness_len = w_ring_element_count_with_counts_for_layout_bits(
@@ -431,16 +484,35 @@ fn compute_root_direct_level_params(
     // single-block `(0, 0)` for a tiny root (`num_vars <= log2(d)`). The
     // optimizer needs the audited A-role collision bucket to score each `r`.
     let (m_vars, r_vars) = if num_vars > alpha {
-        let a_inf = WitnessType::S.binding_norm(policy, stage1, log_basis, true)?;
-        let Some(a_collision) = ceil_supported_collision(sis_family, d as u32, a_inf) else {
+        // The `(m, r)` split is scored against the flat L1 mass (the root fold
+        // shape disambiguates the committed table, not the split search).
+        let Some(a_collision) = rounded_up_norm_s(
+            sis_family,
+            d,
+            level_decomp,
+            &stage1_config,
+            TensorChallengeShape::Flat,
+            true,
+            policy.onehot_chunk_size,
+            policy.ring_subfield_norm_bound,
+        ) else {
             return Ok(None);
         };
-        let challenge_l1_mass = TensorChallengeShape::Flat.effective_l1_mass(&stage1_config);
+        let fold_challenge = FoldChallengeNorms {
+            infinity_norm: TensorChallengeShape::Flat.effective_infinity_norm(&stage1_config)
+                as u128,
+            l1_norm: TensorChallengeShape::Flat.effective_l1_mass(&stage1_config) as u128,
+        };
+        // One-hot root commits a sparse witness (`||s||_inf = 1`,
+        // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
+        let is_onehot = decomp.log_commit_bound == 1;
+        let fold_witness = fold_witness_norms(log_basis, d, policy.onehot_chunk_size, is_onehot);
         let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
             sis_family,
             d as u32,
             a_collision,
-            challenge_l1_mass,
+            fold_challenge,
+            fold_witness,
             decomp.log_commit_bound,
             log_basis,
             num_vars - alpha,
@@ -459,16 +531,57 @@ fn compute_root_direct_level_params(
         return Ok(None);
     };
 
-    // The A/B/D keys (widths + tight SIS-secure ranks + audited buckets) are
-    // exactly what every fold level derives, so reuse the shared helper.
-    // `t_vectors = num_claims` folds the batched-root scaling directly into
-    // the B/D widths — the root commits `num_claims` polynomials — so there
-    // is no separate per-claim-then-scale pass.
-    let Some((a_key, b_key, d_key)) = compute_all_ajtai_keys_params(
-        policy, stage1, block_len, num_blocks, num_claims, log_basis, true,
-    )?
-    else {
+    // The A/B/D keys, composed from the `akita_types::sis` primitives:
+    // norm -> width -> tight SIS-secure rank -> key. `t_vectors = num_claims`
+    // folds the batched-root scaling into the B/D widths (the root commits
+    // `num_claims` polynomials) — no separate per-claim-then-scale pass.
+    let Some(norm_s) = rounded_up_norm_s(
+        sis_family,
+        d,
+        level_decomp,
+        &stage1_config,
+        fold_challenge_shape,
+        true,
+        policy.onehot_chunk_size,
+        policy.ring_subfield_norm_bound,
+    ) else {
         return Ok(None);
+    };
+    let Some(width_s) = decomposed_s_block_ring_count(block_len, depth_commit) else {
+        return Ok(None);
+    };
+    let Some(n_a) = min_secure_rank(sis_family, d as u32, norm_s, width_s as u64) else {
+        return Ok(None);
+    };
+    let a_key = AjtaiKeyParams::try_new(sis_family, n_a, width_s, norm_s, d)?;
+    let Some(norm_t) = rounded_up_norm_t(sis_family, d, log_basis) else {
+        return Ok(None);
+    };
+    let Some(width_t) = decomposed_t_ring_count(n_a, depth_open, num_blocks, num_claims) else {
+        return Ok(None);
+    };
+    let Some(n_b) = min_secure_rank(sis_family, d as u32, norm_t, width_t as u64) else {
+        return Ok(None);
+    };
+    let b_key = AjtaiKeyParams::try_new(sis_family, n_b, width_t, norm_t, d)?;
+    let Some(norm_w) = rounded_up_norm_w(sis_family, d, log_basis) else {
+        return Ok(None);
+    };
+    let Some(width_w) = decomposed_w_ring_count(depth_open, num_blocks, num_claims) else {
+        return Ok(None);
+    };
+    let Some(n_d) = min_secure_rank(sis_family, d as u32, norm_w, width_w as u64) else {
+        return Ok(None);
+    };
+    let d_key = AjtaiKeyParams::try_new(sis_family, n_d, width_w, norm_w, d)?;
+
+    // A one-hot root (`log_commit_bound == 1`) commits a sparse witness; record
+    // its chunk size so `num_digits_fold` and the binding norm size the folded
+    // witness against `nonzeros = ceil(D/K)` instead of `D`.
+    let onehot_chunk_size = if decomp.log_commit_bound == 1 {
+        policy.onehot_chunk_size
+    } else {
+        0
     };
 
     Ok(Some(LevelParams {
@@ -485,6 +598,7 @@ fn compute_root_direct_level_params(
         fold_challenge_shape,
         num_digits_commit: depth_commit,
         num_digits_open: depth_open,
+        onehot_chunk_size,
     }))
 }
 
@@ -580,10 +694,12 @@ pub fn find_schedule(
 
     let (min_log_basis, max_log_basis) = policy.basis_range;
     for candidate_log_basis in min_log_basis..=max_log_basis {
-        let num_digits_commit =
-            WitnessType::S.decomposed_num_digits(policy, candidate_log_basis, true);
-        let num_digits_open =
-            WitnessType::T.decomposed_num_digits(policy, candidate_log_basis, true);
+        let level_decomp = DecompositionParams {
+            log_basis: candidate_log_basis,
+            ..policy.decomposition
+        };
+        let num_digits_commit = num_digits_s_commit(level_decomp, true);
+        let num_digits_open = num_digits_open(level_decomp);
 
         for r_vars in min_r_vars..=max_r_vars {
             let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
@@ -595,19 +711,58 @@ pub fn find_schedule(
                 continue;
             };
 
-            let Some((a_key, b_key, d_key)) = compute_all_ajtai_keys_params(
-                policy,
-                stage1,
-                block_len,
-                num_blocks,
-                t_vectors,
-                candidate_log_basis,
+            // Compose the three SIS-secure keys from the `akita_types::sis`
+            // primitives: norm -> width -> tight rank -> key.
+            let family = policy.sis_family;
+            let d = policy.ring_dimension;
+            let Some(norm_s) = rounded_up_norm_s(
+                family,
+                d,
+                level_decomp,
+                &stage1_config,
+                fold_challenge_shape,
                 true,
-            )?
+                policy.onehot_chunk_size,
+                policy.ring_subfield_norm_bound,
+            ) else {
+                continue;
+            };
+            let Some(width_s) = decomposed_s_block_ring_count(block_len, num_digits_commit) else {
+                continue;
+            };
+            let Some(n_a) = min_secure_rank(family, d as u32, norm_s, width_s as u64) else {
+                continue;
+            };
+            let a_key = AjtaiKeyParams::try_new(family, n_a, width_s, norm_s, d)?;
+            let Some(norm_t) = rounded_up_norm_t(family, d, candidate_log_basis) else {
+                continue;
+            };
+            let Some(width_t) =
+                decomposed_t_ring_count(n_a, num_digits_open, num_blocks, t_vectors)
             else {
                 continue;
             };
+            let Some(n_b) = min_secure_rank(family, d as u32, norm_t, width_t as u64) else {
+                continue;
+            };
+            let b_key = AjtaiKeyParams::try_new(family, n_b, width_t, norm_t, d)?;
+            let Some(norm_w) = rounded_up_norm_w(family, d, candidate_log_basis) else {
+                continue;
+            };
+            let Some(width_w) = decomposed_w_ring_count(num_digits_open, num_blocks, t_vectors)
+            else {
+                continue;
+            };
+            let Some(n_d) = min_secure_rank(family, d as u32, norm_w, width_w as u64) else {
+                continue;
+            };
+            let d_key = AjtaiKeyParams::try_new(family, n_d, width_w, norm_w, d)?;
 
+            let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
+                policy.onehot_chunk_size
+            } else {
+                0
+            };
             let candidate_params = LevelParams {
                 ring_dimension: policy.ring_dimension,
                 log_basis: candidate_log_basis,
@@ -622,6 +777,7 @@ pub fn find_schedule(
                 fold_challenge_shape,
                 num_digits_commit,
                 num_digits_open,
+                onehot_chunk_size,
             };
 
             let next_withness_len_impl = |layout| -> Result<usize, AkitaError> {

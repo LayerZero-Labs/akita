@@ -7,9 +7,9 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
-use crate::descriptor_bytes::{push_i8, push_u32, push_usize, sis_family_tag};
+use crate::descriptor_bytes::{push_i8, push_u32, push_usize};
 
-pub use crate::sis_floor::SisModulusFamily;
+pub use crate::sis::{AjtaiKeyParams, SisModulusFamily};
 
 /// Per-level M-matrix row layout selector.
 ///
@@ -30,184 +30,6 @@ pub enum MRowLayout {
     /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
     /// the terminal fold level where `final_witness` ships on the wire.
     WithoutDBlock,
-}
-
-/// Parameters for a single Ajtai commitment matrix.
-///
-/// Each matrix in the protocol (A, B, D) is characterised by its row count
-/// (security rank), column count (message width), and the worst-case L∞
-/// collision bound used for SIS security sizing.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AjtaiKeyParams {
-    row_len: usize,
-    col_len: usize,
-    collision_inf: u32,
-    sis_family: SisModulusFamily,
-}
-
-impl AjtaiKeyParams {
-    /// Create a new SIS-secure `AjtaiKeyParams`.
-    ///
-    /// Audits the `(row_len, col_len, collision_inf)` triple against the
-    /// generated 128-bit SIS-floor tables for `(sis_family,
-    /// ring_dimension)`. The check is strict and has no
-    /// silent-permissive fallback: any zero field, an unsupported
-    /// collision bucket, a `col_len` outside the audited range, or a
-    /// `row_len` below the audited floor is a panic.
-    ///
-    /// # Panics
-    ///
-    /// Panics if any of `row_len`, `col_len`, or `collision_inf` is zero,
-    /// if the SIS-floor tables do not cover the configuration, or if
-    /// `row_len` is below the audited SIS-secure floor.
-    pub fn new(
-        sis_family: SisModulusFamily,
-        row_len: usize,
-        col_len: usize,
-        collision_inf: u32,
-        ring_dimension: usize,
-    ) -> Self {
-        assert!(row_len > 0, "AjtaiKeyParams: row_len = 0");
-        assert!(col_len > 0, "AjtaiKeyParams: col_len = 0");
-        assert!(collision_inf > 0, "AjtaiKeyParams: collision_inf = 0");
-        let floor = crate::sis_floor::min_rank_for_secure_width(
-            sis_family,
-            ring_dimension as u32,
-            collision_inf,
-            col_len as u64,
-        )
-        .unwrap_or_else(|| {
-            panic!(
-                "AjtaiKeyParams: no audited SIS rank for \
-                 family={sis_family:?} d={ring_dimension} \
-                 collision_inf={collision_inf} col_len={col_len}"
-            )
-        });
-        assert!(
-            row_len >= floor,
-            "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
-             (family={sis_family:?}, d={ring_dimension}, \
-             collision_inf={collision_inf}, col_len={col_len})"
-        );
-        Self {
-            row_len,
-            col_len,
-            collision_inf,
-            sis_family,
-        }
-    }
-
-    /// Fallible sibling of [`new`](Self::new).
-    ///
-    /// Same audit, but reports failures as
-    /// `AkitaError::InvalidSetup(message)` instead of panicking. Used by
-    /// callers that need to gracefully reject SIS-insecure candidates
-    /// (e.g. the planner's outer loop).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error under the same conditions [`new`](Self::new)
-    /// panics: a zero field, an unsupported configuration, or
-    /// `row_len` below the audited floor.
-    pub fn try_new(
-        sis_family: SisModulusFamily,
-        row_len: usize,
-        col_len: usize,
-        collision_inf: u32,
-        ring_dimension: usize,
-    ) -> Result<Self, AkitaError> {
-        let invalid = |msg: String| AkitaError::InvalidSetup(msg);
-        if row_len == 0 {
-            return Err(invalid("AjtaiKeyParams: row_len = 0".to_string()));
-        }
-        if col_len == 0 {
-            return Err(invalid("AjtaiKeyParams: col_len = 0".to_string()));
-        }
-        if collision_inf == 0 {
-            return Err(invalid("AjtaiKeyParams: collision_inf = 0".to_string()));
-        }
-        let floor = crate::sis_floor::min_rank_for_secure_width(
-            sis_family,
-            ring_dimension as u32,
-            collision_inf,
-            col_len as u64,
-        )
-        .ok_or_else(|| {
-            invalid(format!(
-                "AjtaiKeyParams: no audited SIS rank for \
-                 family={sis_family:?} d={ring_dimension} \
-                 collision_inf={collision_inf} col_len={col_len}"
-            ))
-        })?;
-        if row_len < floor {
-            return Err(invalid(format!(
-                "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
-                 (family={sis_family:?}, d={ring_dimension}, \
-                 collision_inf={collision_inf}, col_len={col_len})"
-            )));
-        }
-        Ok(Self {
-            row_len,
-            col_len,
-            collision_inf,
-            sis_family,
-        })
-    }
-
-    /// Create a new `AjtaiKeyParams` without enforcing SIS security.
-    ///
-    /// Use this only for intermediate construction steps that carry
-    /// incomplete data (`params_only` placeholders with `col_len = 0` or
-    /// `collision_inf = 0`, iterative SIS fixed-point loops, etc.).
-    /// Production-facing layouts must reach
-    /// [`new`](Self::new)/[`try_new`](Self::try_new) before they're
-    /// emitted into a schedule or setup.
-    pub fn new_unchecked(
-        sis_family: SisModulusFamily,
-        row_len: usize,
-        col_len: usize,
-        collision_inf: u32,
-        ring_dimension: usize,
-    ) -> Self {
-        let _ = ring_dimension;
-        Self {
-            row_len,
-            col_len,
-            collision_inf,
-            sis_family,
-        }
-    }
-
-    /// Number of rows.
-    #[inline]
-    pub fn row_len(&self) -> usize {
-        self.row_len
-    }
-
-    /// Number of columns.
-    #[inline]
-    pub fn col_len(&self) -> usize {
-        self.col_len
-    }
-
-    /// Worst-case L∞ collision bound for SIS security sizing.
-    #[inline]
-    pub fn collision_inf(&self) -> u32 {
-        self.collision_inf
-    }
-
-    /// SIS modulus family used to validate this key.
-    #[inline]
-    pub fn sis_family(&self) -> SisModulusFamily {
-        self.sis_family
-    }
-
-    fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(sis_family_tag(self.sis_family()));
-        push_usize(bytes, self.row_len());
-        push_usize(bytes, self.col_len());
-        push_u32(bytes, self.collision_inf());
-    }
 }
 
 /// Unified per-level parameters for one Akita recursion level.
@@ -250,6 +72,15 @@ pub struct LevelParams {
     pub num_digits_commit: usize,
     /// Gadget decomposition depth for opening evaluations (δ_open).
     pub num_digits_open: usize,
+    /// One-hot chunk size `K` of the committed witness at this level, used to
+    /// derive the per-block witness L1 mass `nonzeros = ceil(D/K)` for the
+    /// folded-witness `min(||c||_inf·||s||_1, ||c||_1·||s||_inf)` bound.
+    ///
+    /// `0` means the level commits a dense witness (balanced gadget digits:
+    /// `||s||_inf = b/2`, `nonzeros = D`). A non-zero value `K` means the level
+    /// commits a one-hot witness (`||s||_inf = 1`, `nonzeros = ceil(D/K)`);
+    /// this is only ever set on a root level whose `log_commit_bound == 1`.
+    pub onehot_chunk_size: usize,
 }
 
 impl LevelParams {
@@ -282,6 +113,7 @@ impl LevelParams {
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
+            onehot_chunk_size: 0,
         }
     }
 
@@ -325,6 +157,7 @@ impl LevelParams {
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
+            onehot_chunk_size: 0,
         }
     }
 
@@ -335,16 +168,54 @@ impl LevelParams {
             .effective_l1_mass(&self.stage1_config)
     }
 
+    /// Per-block committed-witness `(||s||_inf, ||s||_1)` for the folded
+    /// witness at this level (one-hot vs dense, see [`Self::onehot_chunk_size`]).
+    #[inline]
+    pub fn fold_witness_norms(&self) -> crate::sis::FoldWitnessNorms {
+        let is_onehot = self.onehot_chunk_size > 0;
+        crate::sis::fold_witness_norms(
+            self.log_basis,
+            self.ring_dimension,
+            if is_onehot { self.onehot_chunk_size } else { 1 },
+            is_onehot,
+        )
+    }
+
+    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level,
+    /// accounting for the challenge shape (flat vs tensor).
+    #[inline]
+    pub fn challenge_infinity_norm(&self) -> usize {
+        self.fold_challenge_shape
+            .effective_infinity_norm(&self.stage1_config)
+    }
+
     /// Gadget decomposition depth for the folded witness (δ_fold / τ).
+    ///
+    /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`,
+    /// then [`crate::sis::num_digits_fold`].
     #[inline]
     pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> usize {
-        crate::layout::digit_math::compute_num_digits_fold_with_claims(
-            self.r_vars,
-            self.challenge_l1_mass(),
-            self.log_basis,
-            num_claims,
-            field_bits,
+        if self.r_vars >= 127 {
+            return crate::sis::num_digits_fold(u128::MAX, field_bits, self.log_basis);
+        }
+        let witness = self.fold_witness_norms();
+        let beta = crate::sis::ring_product_infinity_norm_bound(
+            self.challenge_infinity_norm() as u128,
+            self.challenge_l1_mass() as u128,
+            witness.infinity_norm,
+            witness.l1_norm,
         )
+        .saturating_mul(num_claims as u128)
+        .saturating_mul(1u128 << self.r_vars);
+        crate::sis::num_digits_fold(beta, field_bits, self.log_basis)
+    }
+
+    /// Set the one-hot chunk size `K`, returning the updated params.
+    #[inline]
+    #[must_use]
+    pub fn with_onehot_chunk_size(mut self, onehot_chunk_size: usize) -> Self {
+        self.onehot_chunk_size = onehot_chunk_size;
+        self
     }
 
     /// Replace the fold-round challenge shape, returning the updated params.
@@ -391,6 +262,7 @@ impl LevelParams {
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         push_usize(bytes, self.num_digits_commit);
         push_usize(bytes, self.num_digits_open);
+        push_usize(bytes, self.onehot_chunk_size);
     }
 
     /// Width of outer matrix B (column count of the B-key).
@@ -548,6 +420,7 @@ impl LevelParams {
             fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
             num_digits_open,
+            onehot_chunk_size: self.onehot_chunk_size,
         })
     }
 
@@ -599,6 +472,7 @@ impl LevelParams {
             fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
+            onehot_chunk_size: other.onehot_chunk_size,
         }
     }
 }

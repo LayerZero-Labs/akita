@@ -57,6 +57,23 @@ impl ChallengeShape {
             Self::Tensor => cfg.l1_norm().saturating_mul(cfg.l1_norm()),
         }
     }
+
+    /// Effective per-logical-block integer L∞ norm for this shape.
+    ///
+    /// Flat folds inherit the configured per-challenge L∞ norm directly;
+    /// tensor folds materialize the negacyclic product `α_p · β_q`, whose
+    /// coefficients are bounded by `||α||_1 · ||β||_inf <= l1 · inf` (the
+    /// ring-product L∞ inequality). This is the challenge `||c||_inf` used by
+    /// the `min(||c||_inf·||s||_1, ||c||_1·||s||_inf)` folded-witness bound.
+    #[inline]
+    #[must_use]
+    pub fn effective_infinity_norm(&self, cfg: &SparseChallengeConfig) -> usize {
+        let inf = cfg.infinity_norm() as usize;
+        match self {
+            Self::Flat => inf,
+            Self::Tensor => cfg.l1_norm().saturating_mul(inf),
+        }
+    }
 }
 
 /// Factored tensor sparse challenges for one folding round.
