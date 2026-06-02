@@ -120,9 +120,17 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
 ) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
     let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
 
-    // `runtime_schedule` serves the shipped table on a hit and regenerates
-    // via the planner DP on a miss, so every shape resolves to a schedule.
-    let schedule = Cfg::runtime_schedule(cached_key)?;
+    // Setup-matrix sizing scans many candidate sub-shapes. `runtime_schedule`
+    // serves the shipped table on a hit and regenerates via the planner DP on
+    // a miss; a shape the planner cannot schedule (infeasible — e.g. a witness
+    // too large for this preset's SIS floor) can never be committed, so it
+    // needs no setup capacity. Skip it (returning `Ok(None)`) and let the
+    // caller's `saw_supported_shape` guard error only if *no* shape is
+    // feasible. Genuine bugs in incidence-key or envelope construction still
+    // propagate via `?`.
+    let Ok(schedule) = Cfg::runtime_schedule(cached_key) else {
+        return Ok(None);
+    };
 
     Ok(Some(matrix_envelope_for_schedule::<Cfg>(
         &schedule, incidence,
