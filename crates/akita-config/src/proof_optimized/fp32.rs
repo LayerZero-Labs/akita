@@ -39,14 +39,6 @@ pub struct D256Full;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
-/// Full-field `D=512` preset for planner-backed fp32 experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D512Full;
-
-/// Onehot `D=512` preset for planner-backed fp32 experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D512OneHot;
-
 impl_small_field_preset!(
     D32Full,
     Field,
@@ -144,32 +136,6 @@ impl_small_field_preset!(
     ExtensionField,
     akita_types::SisModulusFamily::Q32,
     256,
-    32,
-    1,
-    3,
-    8,
-    vec![-1, 1],
-    None
-);
-impl_small_field_preset!(
-    D512Full,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusFamily::Q32,
-    512,
-    32,
-    32,
-    3,
-    8,
-    vec![-1, 1],
-    None
-);
-impl_small_field_preset!(
-    D512OneHot,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusFamily::Q32,
-    512,
     32,
     1,
     3,
