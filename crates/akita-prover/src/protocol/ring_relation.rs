@@ -827,6 +827,14 @@ impl RingRelationProver {
         )?;
         let w_folded = pre_folded_by_claim.into_iter().flatten().collect();
 
+        // True recursive multipoint (one commitment opened at k > 1 points) is
+        // a deferred feature. The routing types and the row-evaluation on both
+        // sides can already express split routing, but the contract is kept
+        // single-point because that path is unspecified and unproven, and both
+        // callers produce exactly one opening point. `RingRelationInstance::new`
+        // enforces the same restriction via `check_matches_incidence`; this
+        // guard states it earlier with a clearer message. See
+        // specs/core-protocol-naming-cleanup.md (Design > Deferred).
         if num_claims != 1 {
             return Err(AkitaError::InvalidInput(
                 "recursive split opening/commitment routing is not supported".to_string(),

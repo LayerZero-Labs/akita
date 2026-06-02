@@ -141,6 +141,7 @@ Include them only if review agrees; otherwise they move to a follow-up.
   Both crates continue to depend on `akita-types`; `akita-prover` does not gain a dependency on `akita-verifier`, and the `akita-types` shared layer is not collapsed.
   Restructuring the dependency graph is a separate investigation, deliberately excluded from this PR.
 - Do not unify the ring-switch Fiat-Shamir sampling, the fold-challenge wrapper, or the M-table evaluation between prover and verifier beyond the segment-layout sharing described in Design; deeper unification is a follow-up.
+- Do not enable true recursive multipoint (one commitment opened at multiple points); the routing contract is deliberately kept single-point pending a soundness argument and a row-eval spec entry, see the Deferred note in Design.
 
 ## Evaluation
 
@@ -311,6 +312,15 @@ This is the deduplication that earns `RingRelationInstance` its place in `akita-
 **Deferred (enabled but not in this PR).**
 Unifying the ring-switch Fiat-Shamir sampling blocks (prover `finalize.rs` versus verifier `ring_switch_verifier_core`) and the fold-challenge wrapper (`derive_stage1_challenges` versus the prover inline path) is enabled by the shared instance but is left to a follow-up to keep this PR's review surface bounded.
 Unifying the prover's materialized M-table build with the verifier's deferred slice-MLE evaluators is explicitly not pursued; they are intentionally different cost models.
+
+**True recursive multipoint (one commitment opened at many points): deferred.**
+`CommitmentRouting` is shaped to express split routing, where the evaluation axis is per-claim and the commitment axis collapses every claim to bundle 0.
+That is exactly the shape needed to open a single recursive witness at `k > 1` points, and the row-evaluation math on both sides already separates the two axes: the prover sizes the B-block by commitment groups (`num_polys_per_commitment_group.len()`) and the public rows by opening points (`relation_quotient.rs`), and the verifier routes T-vectors by `claim_to_commitment_group` and W-rows by `claim_to_point` (`ring_switch.rs`).
+This PR deliberately does not enable it.
+`RingRelationProver::new_recursive_multipoint` keeps an explicit `num_claims != 1` guard, and `RingRelationInstance::new` enforces `CommitmentRouting::check_matches_incidence` (which requires `claim_to_commitment_group == claim_to_point`), so the only routing shape accepted today is the one the current callers produce: a single opening point per recursive level.
+Both recursive call sites build a single-element opening-point set (`flow/recursive.rs`), so no behavior is lost by the guard.
+Enabling true multipoint is a follow-up that requires three things: relaxing `check_matches_incidence` to validate split routing rather than require axis equality (and dropping the `num_claims != 1` guard); a caller that actually produces multiple opening points for one recursive witness, with the matching Fiat-Shamir absorbs and identical verifier replay order; and a soundness argument plus a `specs/optimized_verifier.md` row-eval entry for the `k`-public-row layout.
+Until that analysis exists the contract stays single-point.
 
 **Why `akita-types`, not a dependency flip.**
 `RingRelationInstance` goes in `akita-types`, the existing lowest common dependency of both prover and verifier, next to `relation_claim_from_rows_extension` and `LevelParams::m_row_count_for` which already live there.
