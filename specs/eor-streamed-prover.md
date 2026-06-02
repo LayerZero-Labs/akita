@@ -24,11 +24,15 @@ the big tables; stream/stage from the structured inputs — plus a cap fix:
 1. **Witness side (`g`):** stream `g` from the base-field slots `f(v,·)` so the
    fold never allocates the full packed `Vec<C>`, and pack at most once across the
    EOR sum-check and the ring-switch transform (today dense packs `g` twice).
-2. **Factor side (`A_η`):** keep the current single-cutoff `d_ext`-term
-   prefix-suffix factor but make its cutoff **budget-driven** (replacing the fixed
-   `materialize_at = 12`), so no path materializes a `width × 2^suffix` (or flat
-   `2^tail`) factor table that exceeds the budget at any `num_vars`. The recursive
-   `O(√)`-space prover is an escape hatch, not the default (see "Operating point").
+2. **Factor side (`A_η`):** make the cutoff **budget-driven against a RAM-scale
+   budget** (replacing the fixed `materialize_at = 12`). When the flat `2^tail`
+   factor fits the budget — the common case at realistic `num_vars` (≈ through nv32-
+   33 on 64 GB) — the cutoff is **`m = 0`: materialize and use the dense / flat
+   O(1) path** (no prefix-suffix). Only when the flat table exceeds the budget
+   (≈ nv34+ on 64 GB) does the single `d_ext`-term prefix-suffix cutoff kick in, so
+   no path materializes a `width × 2^suffix` (or flat `2^tail`) table over budget at
+   any `num_vars`. The recursive `O(√)`-space prover is an escape hatch, not the
+   default (see "Operating point").
 3. **Cap:** retarget `MAX_MATERIALIZED_EQ_TABLE_BYTES` (`eq_poly.rs:25`) to a
    verifier-only allocation ceiling so it no longer guards the wrong quantity, no
    longer pins the prover to a bad operating point, and no longer hard-fails valid
@@ -57,12 +61,16 @@ trades *more* loop-level work for *less* space (`O(C·d_ext·N^{1/C})`). So:
 
 - The **witness-side** streaming is a genuine time *and* memory win, because it
   removes a redundant full pack and fuses round 0 into the fold.
-- The **factor-side** staging is primarily a **memory / robustness / cap** win
-  (and a cache-locality win when the materialized table would not fit cache). It is
-  **not** a field-work reduction; the one-hot EOR univariate plateau (below) is the
-  irreducible `O(d_ext)`-per-query structured-weight cost and will not collapse to
-  dense-like `O(1)` without materializing the flat table (16 GiB at nv32). Do not
-  promise dense-like univariate from the factor-side change.
+- The **factor side** has two regimes. When the flat `A_η` fits the RAM budget
+  (`m = 0`, ≈ through nv32-33 on 64 GB: 16 GiB at nv32), materializing it gives the
+  one-hot path **O(1) factor reads → dense-like univariate**, collapsing the
+  plateau; the counterweight is the full-factor fold (bandwidth-bound when RAM- but
+  not cache-resident), so net time is the writeup's memory-hierarchy tradeoff, not a
+  guaranteed speedup. When the flat table exceeds the budget (`m > 0`, only nv34+ on
+  64 GB), the single cutoff is a **memory / robustness / cap** win, **not** a
+  field-work reduction: those `m` prefix rounds pay the irreducible `O(d_ext)`-per-
+  query plateau. So: do not promise dense-like univariate *from staging* (`m > 0`),
+  but `m = 0` (the default at realistic nv on this box) does deliver it.
 
 ### Operating point: one cutoff by default, not √-space
 
@@ -73,18 +81,33 @@ trades *more* loop-level work for *less* space (`O(C·d_ext·N^{1/C})`). So:
   ordinary per-round folding on the half-size folded table. After round 0 the
   witness is no longer a base packing, so there is nothing to stage; one round is
   sufficient (and for one-hot the witness is already sparse — a non-issue).
-- **Factor `A_η`:** keep the prefix-suffix (prefix-coords + suffix) form for a
-  **bounded number of early rounds** — a *single cutoff* `m` — until the residual
-  `A_η` table fits a cache/memory budget, then **materialize the residual once and
-  fold per-round** like the dense path. This is `C = 1` (the current
-  `TensorEqualityFactor` shape), not recursive staging. At small tail, `m = 0`
-  (materialize immediately); at nv32, `m ≈ 12`; the cutoff is chosen from the
-  budget, never recursed.
+- **Factor `A_η`:** the cutoff `m` is chosen from a **real memory budget (a
+  fraction of available RAM), not the 1 GiB cap.** When the flat `A_η`
+  (`2^{tail} × sizeof(C)`) fits the budget, **`m = 0`: materialize it outright and
+  use the dense / `SparseFactor::Dense` fast path** (O(1) factor reads, no lazy
+  query). Only when the flat table exceeds the budget do we keep the prefix-suffix
+  form for a *single cutoff* of `m` early rounds, then materialize the residual once
+  and fold per-round. This is `C = 1`, never recursive staging.
+
+**Concrete budget (fp32_d32, `C = 16 B`):** flat `A_η` = `2^{tail} × 16 B`, so
+16 GiB at nv32 (tail 30), 64 GiB at nv34 (tail 32). On a **64 GB** machine the
+factor fits RAM with headroom through **≈ nv32-33** ⇒ `m = 0` is the default there
+(materialize, fast O(1) queries — this is also what removes the one-hot univariate
+plateau). A single small cutoff only starts to matter at **≈ nv34+**, where the
+flat table approaches whole-RAM. The 1 GiB cap that previously forced `m ≈ 12` at
+nv32 was the artificial blocker, not the table size.
+
+Two distinct axes (don't conflate, as an earlier draft did):
+- **Fits RAM = feasibility.** Sets the hard `m = 0` boundary (≈ nv33 on 64 GB).
+- **Fits cache = speed.** The writeup's "Arithmetic tradeoff" is about *cache*:
+  materializing wins cleanly when the table is cache-resident (one mul per tail
+  point). A 16 GiB factor is RAM-resident but not cache-resident, so its full fold
+  is memory-bandwidth-bound — a perf wash vs the lazy query, not a feasibility
+  issue.
 
 The full `C`-stage prover (`O(C·d_ext·N^{1/C})` space, streamingjolt App A) is an
-**escape hatch only**, for tails so large that even one cutoff's residual
-(`d_ext × 2^{tail−m}` during the prefix block, or `2^{tail−m}` after materializing)
-will not fit a generous budget for any acceptable `m`. It is documented for
+**escape hatch only**, for tails so large that even one cutoff's residual will not
+fit RAM for any acceptable `m` (well beyond nv34 on 64 GB). It is documented for
 completeness; it is **not** the default and should not be built unless a concrete
 nv target forces it.
 
@@ -380,13 +403,20 @@ Run release + native, all cores; also `--features zk` (the ZK prove loop in
   the round-0 packing into the round-0 fold; lower peak RSS, fewer memory writes;
   measurable prove-time + RSS improvement on the EOR-dominated small-field modes,
   no regression on `fp128`.
-- **Factor side:** with the budget-driven single cutoff, the prefix-block suffix
-  and the materialized residual both stay `≤ budget` at every nv (vs the fixed
-  `width × 2^(tail−12)`: 16 MB at nv32, **4 GiB at nv40, hard-fail beyond**); the
-  9.8 s `TensorEqualityFactor::new` corner is structurally impossible. Time is a
-  memory-hierarchy tradeoff (writeup "Arithmetic tradeoff"): expect neutral-to-modest
-  on the one-hot univariate, **not** dense-like. Small tails materialize immediately
-  (cache win, `m = 0`); large tails use a longer prefix block (`m` from budget).
+- **Factor side:** with the budget-driven cutoff, the materialized residual (and
+  the prefix-block suffix when `m > 0`) stays `≤ budget` at every nv (vs the fixed
+  `width × 2^(tail−12)`); the 9.8 s `TensorEqualityFactor::new` corner is
+  structurally impossible. Two regimes:
+  - **`m = 0` (flat factor fits the RAM budget — through ≈ nv32-33 on 64 GB).**
+    The one-hot path queries a flat `SparseFactor::Dense` table with **O(1) reads**,
+    so the univariate **collapses to dense-like** (the 1.2 s plateau disappears).
+    The counterweight is the full-factor fold (`2^{tail}`/round, memory-bandwidth-
+    bound when the table is RAM- but not cache-resident, as at nv32's 16 GiB), so
+    net wall-clock is a memory-hierarchy tradeoff (writeup "Arithmetic tradeoff"):
+    a clear win when the table is cache-resident, ~neutral when only RAM-resident.
+  - **`m > 0` (flat factor exceeds the budget — only ≈ nv34+ on 64 GB).** A single
+    small cutoff keeps the residual within budget; the prefix block pays the
+    `O(d_ext)`-per-query floor for `m` rounds, then rejoins the flat O(1) path.
 - No proof-size, schedule, or transcript effect (byte-identical).
 
 Validate with the profile harness (`sumcheck_round_{univariate,fold}` per-round
