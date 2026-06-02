@@ -209,6 +209,38 @@ Candidate areas to examine (the data decides which are worth pursuing; this list
 
 Each candidate follows the same loop: measure baseline on the Phase 1 benches, implement under the Phase 2 invariants (canonical Solinas representation, parity, no format/transcript/API change, no Montgomery cutover), re-measure on the affected arch(es), and keep only on a clear win. Findings (kept and rejected, with numbers) are written up so the paper and a follow-up retrospective spec can cite them; this mirrors the structure of `specs/fp31-field-optimization-retrospective.md`.
 
+### Phase 2 Findings
+
+This section records the Phase 2 candidates investigated against the committed Phase 1 baselines, with measured keep / defer / reject decisions under the Phase 2 invariants.
+
+**Landed: Mersenne31 ring-subfield fp4 `square` via the fused dot-product path.**
+The packed NEON / AVX2 / AVX-512 `ring_subfield_fp4_square` kernels special-cased Mersenne31 (`BITS == 31, C == 1`) onto an older fp2-tower square that issued many separate `mul_vec` reductions.
+Every other 31/32-bit prime already used the fused `dot_product_4/3` square with a single `solinas_reduce` per output coefficient.
+Dropping the special case so Mersenne31 shares the fused path is a clear benchmark-gated win on all three backends, with no regression to `mul` or `mul_self` (measured as controls) and parity preserved by the existing edge-lane test plus a new random-input Mersenne31 packed-square parity test.
+
+| backend | square latency before -> after | square throughput before -> after |
+|---|---|---|
+| AVX-512 | 0.921 -> 0.541 ns/lane (-42%) | 0.767 -> 0.442 ns/lane (-42%) |
+| AVX2 | 1.842 -> 1.170 ns/lane (-36%) | 1.551 -> 1.011 ns/lane (-35%) |
+| NEON | 2.844 -> 2.494 ns/lane (-12%) | 1.733 -> 1.574 ns/lane (-9%) |
+
+Square now matches `mul` (for example AVX-512 0.541 vs 0.530 ns/lane), which is the intended outcome.
+
+**Deferred follow-up: fused `mul_add` for the ring-subfield extension.**
+The prover's hot multiply-accumulate sites are the extension-opening reduction inner loops in `crates/akita-sumcheck/src/extension_opening_reduction/{dense,sparse}.rs`, written as `acc += a * b` over operators.
+That pays a full multiply-and-reduce followed by a separate add-and-conditional-reduce, so folding the addend into the solinas accumulator before the single reduce would save one conditional subtract per output coefficient.
+It is deferred rather than landed because `mul_add` is not currently a field primitive: the only `mul_add` in the tree is inherent to `Fp128` and used only in its own tests, and `RingSubfieldFp4` has none.
+Realizing the win therefore requires adding a `mul_add` to the field ops trait (default `self * rhs + addend`), a fused override for `RingSubfieldFp4` and its packed type, and rewiring the verifier-reachable reduction call sites, gated on the `extension_opening_reduction` prover-level bench rather than the cross-repo `mul_add` row (which stays an expression on both libraries for parity).
+The expected win is modest, so it is recorded as a scoped follow-up rather than churned into the verifier-reachable path now.
+
+**Investigated, no straightforward win: SIMD multiply for the 128-bit field.**
+`Fp128` (`2^128 - c`, canonical Solinas) has no vectorized multiply on any backend: `PackedFp128{Neon,Avx2,Avx512}` hold a small array of `u128` lanes and call a scalar per-lane multiply, so packed `mul` and `square` throughput tracks scalar throughput, and on AVX-512 is slightly worse from register pressure.
+This is fundamental to a radix-2^32 schoolbook on commodity SIMD, which lacks both a 64x64 -> 128 vector multiply and a hardware carry flag, so the manual carry-propagation tree erases the lane-parallelism benefit; scalar wins because it uses hardware `mulx` plus `adcx`/`adox` carry chains (`adx` + `bmi2`).
+The only path that could change this is AVX-512 IFMA52 (`vpmadd52luq` / `vpmadd52huq`, present on the x86-64 server) with a redundant 52-bit-limb representation that defers carries, which collides with the canonical-representation invariant and is x86-only (NEON has no IFMA), so it is recorded as a separate higher-effort investigation rather than a Phase 2 candidate.
+
+**Data-quality note.**
+The committed Phase 1 NEON `square` rows for `prime31_offset19` (6.029 ns latency) and `prime32_offset99` (7.040 ns latency) are stale and noisy; a fresh capture shows 3.79 and 4.29 ns respectively (square approximately equal to mul, as expected), so these rows should be refreshed alongside the Mersenne31 square win when the Phase 1 baselines are regenerated.
+
 ### Alternatives Considered
 
 - New excluded sub-workspace (`bench/field-cross-repo/`), mirroring `profile/akita-recursion`. Rejected for this scope: Plonky3 0.5.3 is already in the main lock, `field_arith` already hosts a foreign field dev-dep, and an in-crate module reuses the existing harness and naming for free. The sub-workspace would only be justified to isolate a genuinely new heavy graph (e.g. Plonky2), which is out of scope.
