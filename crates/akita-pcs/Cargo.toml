@@ -49,7 +49,6 @@ disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 zk = [
   "akita-config/zk",
-  "akita-planner/zk",
   "akita-prover/zk",
   "akita-scheme/zk",
   "akita-setup/zk",
@@ -74,8 +73,11 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
-akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
-  "test-utils",
+# Test/example-only: pull in `akita-config`'s test-support layout helpers
+# (e.g. `test_support::akita_batched_root_layout`). Resolver-2 keeps this
+# feature out of production builds, which exclude dev-dependencies.
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
+  "test-support",
 ] }
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }

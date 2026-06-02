@@ -15,9 +15,11 @@ use akita_types::AkitaExpandedSetup;
 use akita_types::AkitaVerifierSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{
-    detect_field_modulus, planned_schedule_key_from_schedule, AkitaScheduleLookupKey,
-    AkitaSetupSeed, FlatMatrix,
+    detect_field_modulus, digest_effective_schedule, AkitaScheduleLookupKey, AkitaSetupSeed,
+    FlatMatrix,
 };
+#[cfg(feature = "disk-persistence")]
+use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
@@ -146,7 +148,6 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     max_num_batched_polys: usize,
     max_num_points: usize,
 ) -> String {
-    let envelope = Cfg::envelope(max_num_vars);
     let family = std::any::type_name::<Cfg>()
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
@@ -158,11 +159,27 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         max_num_points,
     );
     // Fingerprint the resolved schedule shape so cached setup files get
-    // invalidated when the planner's per-level (log_basis, level_count)
-    // outputs change for the same lookup key.
-    let raw_schedule = match Cfg::schedule_plan(schedule_lookup_key) {
-        Ok(Some(plan)) => planned_schedule_key_from_schedule(schedule_lookup_key, &plan),
-        _ => format!(
+    // invalidated when the planner's per-level layout (including the
+    // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
+    // key — the full per-level params are hashed by
+    // `digest_effective_schedule`.
+    let raw_schedule = match Cfg::runtime_schedule(schedule_lookup_key) {
+        Ok(schedule) => {
+            let digest = digest_effective_schedule(&schedule);
+            let mut hex = String::with_capacity(digest.len() * 2);
+            for byte in digest {
+                let _ = write!(hex, "{byte:02x}");
+            }
+            format!(
+                "planner_v6_nv{}_g{}_t{}_w{}_z{}_{hex}",
+                schedule_lookup_key.num_vars,
+                schedule_lookup_key.num_points,
+                schedule_lookup_key.num_t_vectors,
+                schedule_lookup_key.num_w_vectors,
+                schedule_lookup_key.num_z_vectors,
+            )
+        }
+        Err(_) => format!(
             "miss_nv{}_g{}_t{}_w{}_z{}",
             schedule_lookup_key.num_vars,
             schedule_lookup_key.num_points,
@@ -177,11 +194,8 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .collect::<String>();
     let modulus = detect_field_modulus::<Cfg::Field>();
     format!(
-        "akita_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
+        "akita_q{modulus:032x}_{family}_sched_{schedule}_d{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
         Cfg::D,
-        envelope.max_n_a,
-        envelope.max_n_b,
-        envelope.max_n_d,
     )
 }
 
@@ -470,11 +484,11 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        // D128Full has no schedule table at all; wrap in `PlannerCfg` so
-        // setup-matrix sizing falls through to DP. D32Full has a singleton
-        // table but the (max_num_vars=12, polys=1, points=1) iteration is a
-        // table hit so the inner Cfg suffices without DP.
-        new_prover_setup::<fp128::Field, 128, akita_planner::test_utils::PlannerCfg<fp128::D128Full>>(12, 1, 1)
+        // D128Full has no schedule table at all, so setup-matrix sizing
+        // falls through to the planner DP via the default `runtime_schedule`
+        // fallback. D32Full has a singleton table but the
+        // (max_num_vars=12, polys=1, points=1) iteration is a table hit.
+        new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
         new_prover_setup::<fp128::Field, 32, fp128::D32Full>(12, 1, 1)
             .expect("small-D fp128 preset should accept the default field");

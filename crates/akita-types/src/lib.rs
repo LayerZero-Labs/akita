@@ -7,16 +7,18 @@
 pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod field_reduction;
-pub mod generated;
 pub mod instance_descriptor;
 pub mod layout;
 pub mod proof;
+pub mod proof_size;
 pub mod schedule;
+pub mod sis_floor;
+pub mod sis_offline;
 pub mod transcript;
 #[cfg(feature = "zk")]
 pub mod zk;
 
-pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
+pub use config::DecompositionParams;
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
@@ -24,18 +26,18 @@ pub use field_reduction::{
     RingSubfieldEncoding, SubfieldParams,
 };
 pub use instance_descriptor::{
-    digest_effective_schedule, digest_incidence, digest_level_params, digest_serializable,
-    setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
-    ProtocolFeatureSet, SetupSection,
+    digest_effective_schedule, digest_incidence, digest_serializable, setup_seed_digest,
+    AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection, ProtocolFeatureSet,
+    SetupSection,
 };
 pub use layout::{
     basis_weights, decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
-    field_bytes, gadget_row_scalars, lagrange_weights, level_layout_from_params, level_proof_bytes,
-    monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
-    proof_ring_vec_bytes, recursive_level_layout_from_params, reduce_inner_opening_to_ring_element,
+    field_bytes, gadget_row_scalars, lagrange_weights, level_layout_from_params, monomial_weights,
+    packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
+    recursive_level_layout_from_params, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field, root_extension_opening_partials, sumcheck_rounds,
-    terminal_level_proof_bytes, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix, LevelParams,
-    MRowLayout, RingMatrixView, RingOpeningPoint, SisModulusFamily,
+    AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix, LevelParams, MRowLayout, RingMatrixView,
+    RingOpeningPoint, SisModulusFamily,
 };
 #[cfg(feature = "zk")]
 pub use proof::ZkHidingProof;
@@ -73,17 +75,18 @@ pub use proof::{
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
+pub use proof_size::level_proof_bytes;
 pub use schedule::{
-    detect_field_modulus, exact_planned_level_execution, generated_schedule_lookup_key,
-    planned_schedule_key_from_schedule, r_decomp_levels, root_current_w_len, root_direct_schedule,
-    scale_batched_root_layout, schedule_from_plan, schedule_is_root_direct,
-    schedule_num_fold_levels, schedule_root_fold_step, schedule_terminal_direct_witness_shape,
-    scheduled_fold_execution, scheduled_next_level_params, split_batched_root_params,
-    split_batched_root_params_from_schedule_plan, validate_opening_points_for_claims,
-    w_ring_element_count, w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
+    detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
+    scale_batched_root_layout_unchecked, schedule_is_root_direct, schedule_num_fold_levels,
+    schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_fold_execution,
+    scheduled_next_level_params, validate_opening_points_for_claims, w_ring_element_count,
+    w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState,
-    AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep,
-    FoldStep, Schedule, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step,
+};
+pub use sis_offline::{
+    a_role_base_norm, root_level_params_for_layout_with_log_basis,
+    sis_derived_root_params_for_layout, sis_secure_level_params, SisCollisionBounds, SisRoleWidths,
 };
 pub use transcript::AppendToTranscript;
