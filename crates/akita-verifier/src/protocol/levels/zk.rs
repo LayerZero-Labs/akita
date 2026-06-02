@@ -68,7 +68,6 @@ where
         0,
         root_params.num_digits_commit,
         root_params.num_digits_open,
-        root_params.num_digits_fold,
         num_ring,
     )?;
     let witness_rings = field_evals_to_rings::<F, D>(&evals)?;

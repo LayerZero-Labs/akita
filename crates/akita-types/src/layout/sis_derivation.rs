@@ -3,11 +3,10 @@
 //! The verifier-reachable layout helpers
 //! (`level_layout_from_params`, `recursive_level_layout_from_params`,
 //! `decomp_depths`) live here.
-//! Search and SIS-derivation loops moved to `akita_planner::derivation`.
+//! Search and SIS-derivation loops live in [`crate::sis_offline`].
 
-use crate::layout::digit_math::{
-    compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
-};
+use crate::layout::digit_math::{num_digits_for_bound, optimal_m_r_split};
+use crate::layout::params::AjtaiKeyParams;
 use crate::{DecompositionParams, LevelParams};
 use akita_field::AkitaError;
 
@@ -33,21 +32,7 @@ pub fn level_layout_from_params(
     num_ring: usize,
 ) -> Result<LevelParams, AkitaError> {
     let (depth_commit, depth_open) = decomp_depths(decomp);
-    let depth_fold = compute_num_digits_fold_with_claims(
-        r_vars,
-        lp.challenge_l1_mass(),
-        decomp.log_basis,
-        1,
-        decomp.field_bits(),
-    );
-    lp.with_decomp(
-        m_vars,
-        r_vars,
-        depth_commit,
-        depth_open,
-        depth_fold,
-        num_ring,
-    )
+    lp.with_decomp(m_vars, r_vars, depth_commit, depth_open, num_ring)
 }
 
 /// Derive a recursive `w`-opening layout from the active level params.
@@ -83,8 +68,18 @@ pub fn recursive_level_layout_from_params(
                 .unwrap_or(root_decomp.log_commit_bound),
         ),
     };
-    let (m_vars, r_vars) = optimal_m_r_split(
-        lp.a_key.row_len() as u32,
+    // `optimal_m_r_split` derives `n_a` per `r` from the SIS-floor table
+    // for `(sis_family, ring_dimension, a_collision)`. All three live on
+    // `lp.a_key` once `lp` has gone through `sis_secure_level_params`
+    // (or any planner / materializer code path that constructs a
+    // SIS-typed `LevelParams`). Seed-only `LevelParams::params_only`
+    // forms with `collision_inf = 0` would land on the symmetric-split
+    // fallback inside `optimal_m_r_split` — those seeds should be
+    // populated with the audited bucket before calling here.
+    let (m_vars, r_vars, n_a) = optimal_m_r_split(
+        lp.a_key.sis_family(),
+        lp.ring_dimension as u32,
+        lp.a_key.collision_inf(),
         lp.challenge_l1_mass(),
         decomp.log_commit_bound,
         decomp.log_basis,
@@ -92,7 +87,22 @@ pub fn recursive_level_layout_from_params(
         num_ring_elems,
         decomp.field_bits(),
     );
-    let layout = level_layout_from_params(m_vars, r_vars, lp, decomp, num_ring_elems)?;
+    // Sync the seed's A-row rank with the per-`r` SIS-secure rank
+    // chosen by `optimal_m_r_split` so `with_decomp`'s derived
+    // `b_key.col_len = n_a · δ_open · num_blocks` agrees with the
+    // cost the optimizer scored. No rank floor: the SIS-floor lookup
+    // inside `optimal_m_r_split` gives the tight secure minimum, and
+    // every caller now constructs layouts off that minimum (no
+    // envelope-driven bumps remain).
+    let mut layout_seed = lp.clone();
+    layout_seed.a_key = AjtaiKeyParams::new_unchecked(
+        lp.a_key.sis_family(),
+        n_a as usize,
+        lp.a_key.col_len(),
+        lp.a_key.collision_inf(),
+        lp.ring_dimension,
+    );
+    let layout = level_layout_from_params(m_vars, r_vars, &layout_seed, decomp, num_ring_elems)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
     Ok(layout)
 }

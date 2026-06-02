@@ -21,8 +21,7 @@ use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     lagrange_weights, relation_claim_from_rows_extension, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
-    AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary, CommitmentEnvelope,
+    AkitaCommitmentHint, AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary,
     DecompositionParams, FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
     SisModulusFamily,
 };
@@ -56,24 +55,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Cfg::sis_modulus_family()
     }
 
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-        Ok(None)
-    }
-
-    fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
-        Cfg::audited_root_rank(role, max_num_vars)
-    }
-
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        Cfg::envelope(max_num_vars)
-    }
-
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -82,8 +63,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
-    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-        Cfg::log_basis_search_range(inputs)
+    fn basis_range() -> (u32, u32) {
+        Cfg::basis_range()
     }
 }
 
@@ -417,10 +398,11 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
 #[test]
 fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
     // The fp32 D32Full zk schedule transitions from a one-fold (Terminal)
-    // root to a multi-fold root early in the supported range. After
-    // regenerating the schedule tables with an idempotent DP, `nv = 12` is
-    // the largest singleton key that still picks a 1-fold root for this
-    // preset; `nv = 13` already escalates to a 2-fold root and is the
+    // root to a multi-fold root early in the supported range. After the
+    // planner DP refactor that eagerly costs terminal-direct successors and
+    // exposes per-`log_basis` fold options to the parent, `nv = 13` is the
+    // largest singleton key that still picks a 1-fold root for this preset;
+    // `nv = 14` is the first that escalates to a 2-fold root and is the
     // matching `Fold`-root fixture below.
     run_zk_fp32_extension_opening_reduction::<12>(
         b"zk/fp32-extension-root-terminal",
@@ -430,7 +412,7 @@ fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
 
 #[test]
 fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
-    run_zk_fp32_extension_opening_reduction::<13>(
+    run_zk_fp32_extension_opening_reduction::<14>(
         b"zk/fp32-extension-root-fold",
         ExpectedRoot::Fold,
     );
@@ -439,9 +421,8 @@ fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
 fn run_zk_dense_commitment_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
     BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>:
-        CommitmentConfig<Field = F, ClaimField = F>,
-    Scheme<D, akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>>: CommitmentProver<
+    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
+    Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
@@ -459,7 +440,7 @@ where
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    type Cfg<Base> = akita_planner::test_utils::PlannerCfg<RuntimePlanned<Base>>;
+    type Cfg<Base> = RuntimePlanned<Base>;
 
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
@@ -565,7 +546,7 @@ where
 }
 
 fn run_zk_dense_cursor_binding_negatives() {
-    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
+    type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
     const NV: usize = 14;
     const LABEL: &[u8] = b"zk_cursor_binding_negatives";
@@ -715,9 +696,8 @@ fn run_zk_dense_cursor_binding_negatives() {
 fn run_zk_dense_v_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
     BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>:
-        CommitmentConfig<Field = F, ClaimField = F>,
-    Scheme<D, akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>>: CommitmentProver<
+    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
+    Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
@@ -735,7 +715,7 @@ where
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    type Cfg<Base> = akita_planner::test_utils::PlannerCfg<RuntimePlanned<Base>>;
+    type Cfg<Base> = RuntimePlanned<Base>;
 
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
@@ -848,7 +828,7 @@ where
 }
 
 fn run_zk_dense_batched_shape_cases() {
-    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
+    type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
     const NV: usize = 14;
 
@@ -1020,7 +1000,7 @@ fn run_zk_dense_batched_shape_cases() {
 
 #[test]
 fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
-    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
+    type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
     const NV: usize = 14;
     const NUM_POINTS: usize = 2;
