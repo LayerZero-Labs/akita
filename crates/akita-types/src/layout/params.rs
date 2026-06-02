@@ -173,7 +173,7 @@ impl LevelParams {
     #[inline]
     pub fn fold_witness_norms(&self) -> crate::sis::FoldWitnessNorms {
         let is_onehot = self.onehot_chunk_size > 0;
-        crate::sis::fold_witness_norms(
+        crate::sis::FoldWitnessNorms::new(
             self.log_basis,
             self.ring_dimension,
             if is_onehot { self.onehot_chunk_size } else { 1 },

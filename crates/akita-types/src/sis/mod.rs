@@ -31,7 +31,6 @@ pub use decomposition_digits::{
     num_digits_fold, num_digits_for_bound, num_digits_open, num_digits_s_commit,
 };
 pub use norm_bound::{
-    fold_witness_beta, fold_witness_norms, ring_product_infinity_norm_bound, rounded_up_norm_s,
-    rounded_up_norm_t, rounded_up_norm_w, rounded_up_norm_z, witness_block_l1_norm,
-    FoldChallengeNorms, FoldWitnessNorms,
+    fold_witness_beta, ring_product_infinity_norm_bound, rounded_up_norm_s, rounded_up_norm_t,
+    rounded_up_norm_w, rounded_up_norm_z, FoldChallengeNorms, FoldWitnessNorms,
 };

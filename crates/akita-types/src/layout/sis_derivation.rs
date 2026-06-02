@@ -6,7 +6,7 @@
 //! ranks) — they contain no SIS formula of their own.
 
 use crate::layout::digit_math::optimal_m_r_split;
-use crate::sis::{decomp_depths, fold_witness_norms, AjtaiKeyParams, FoldChallengeNorms};
+use crate::sis::{decomp_depths, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessNorms};
 use crate::{DecompositionParams, LevelParams};
 use akita_field::AkitaError;
 
@@ -74,7 +74,7 @@ pub fn recursive_level_layout_from_params(
         infinity_norm: lp.challenge_infinity_norm() as u128,
         l1_norm: lp.challenge_l1_mass() as u128,
     };
-    let fold_witness = fold_witness_norms(decomp.log_basis, lp.ring_dimension, 1, false);
+    let fold_witness = FoldWitnessNorms::new(decomp.log_basis, lp.ring_dimension, 1, false);
     let (m_vars, r_vars, n_a) = optimal_m_r_split(
         lp.a_key.sis_family(),
         lp.ring_dimension as u32,

@@ -32,23 +32,6 @@ pub fn ring_product_infinity_norm_bound(
         .min(challenge_l1_norm.saturating_mul(witness_infinity_norm))
 }
 
-/// Worst-case L1 mass of one committed witness ring element (block):
-/// `||s||_1 <= nonzeros · ||s||_inf` with `nonzeros = ceil(D / K)`:
-///
-/// - dense / full-field        : `K = 1`     ⇒ `nonzeros = D`
-/// - one-hot, chunk size `K ≥ D`: single-chunk ⇒ `nonzeros = 1`
-/// - one-hot, chunk size `K < D`: multi-chunk  ⇒ `nonzeros = D / K`
-#[inline]
-#[must_use]
-pub fn witness_block_l1_norm(
-    witness_infinity_norm: u128,
-    ring_dimension: usize,
-    onehot_chunk_size: usize,
-) -> u128 {
-    let nonzeros = (ring_dimension as u128).div_ceil((onehot_chunk_size.max(1)) as u128);
-    witness_infinity_norm.saturating_mul(nonzeros)
-}
-
 /// Effective fold-round challenge `(||c||_inf, ||c||_1)` for one level,
 /// already accounting for the fold-challenge shape (flat vs tensor).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,29 +51,33 @@ pub struct FoldWitnessNorms {
     pub l1_norm: u128,
 }
 
-/// Per-block committed-witness `(||s||_inf, ||s||_1)` for the folded witness.
-///
-/// - **one-hot** (`is_onehot`): `||s||_inf = 1`, `||s||_1 = ceil(D / K)`.
-/// - **dense**: `||s||_inf = b/2 = 2^(log_basis-1)`, `||s||_1 = D · b/2`.
-#[inline]
-#[must_use]
-pub fn fold_witness_norms(
-    log_basis: u32,
-    ring_dimension: usize,
-    onehot_chunk_size: usize,
-    is_onehot: bool,
-) -> FoldWitnessNorms {
-    if is_onehot {
-        let infinity_norm = 1u128;
-        FoldWitnessNorms {
+impl FoldWitnessNorms {
+    /// Per-block committed-witness `(||s||_inf, ||s||_1)` for the folded witness.
+    ///
+    /// `||s||_inf` is `1` for one-hot or `b/2 = 2^(log_basis-1)` for dense
+    /// balanced digits; `||s||_1 = nonzeros · ||s||_inf` with
+    /// `nonzeros = ceil(D / K)`:
+    ///
+    /// - dense / full-field        : `K = 1`     ⇒ `nonzeros = D`
+    /// - one-hot, chunk size `K ≥ D`: single-chunk ⇒ `nonzeros = 1`
+    /// - one-hot, chunk size `K < D`: multi-chunk  ⇒ `nonzeros = D / K`
+    #[inline]
+    #[must_use]
+    pub fn new(
+        log_basis: u32,
+        ring_dimension: usize,
+        onehot_chunk_size: usize,
+        is_onehot: bool,
+    ) -> Self {
+        let (infinity_norm, chunk) = if is_onehot {
+            (1u128, onehot_chunk_size)
+        } else {
+            (1u128 << (log_basis.saturating_sub(1)), 1)
+        };
+        let nonzeros = (ring_dimension as u128).div_ceil((chunk.max(1)) as u128);
+        Self {
             infinity_norm,
-            l1_norm: witness_block_l1_norm(infinity_norm, ring_dimension, onehot_chunk_size),
-        }
-    } else {
-        let infinity_norm = 1u128 << (log_basis.saturating_sub(1));
-        FoldWitnessNorms {
-            infinity_norm,
-            l1_norm: witness_block_l1_norm(infinity_norm, ring_dimension, 1),
+            l1_norm: infinity_norm.saturating_mul(nonzeros),
         }
     }
 }
@@ -99,18 +86,23 @@ pub fn fold_witness_norms(
 /// `collision_A = 2 · ω̄ · β̄ · ν` with
 /// `β̄ = min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`. The factor of 2 is the
 /// lemma's two-term cross-multiplication factor (witness norms are un-doubled).
+///
+/// The effective challenge norms `(||c||_inf, ω̄ = ||c||_1)` are resolved from
+/// the fold-challenge shape here so callers pass only the witness norms and the
+/// shape.
 fn a_role_collision_infinity_norm(
-    challenge_infinity_norm: u128,
-    challenge_l1_norm: u128,
-    witness_infinity_norm: u128,
-    witness_l1_norm: u128,
+    witness_norm: FoldWitnessNorms,
+    fold_shape: TensorChallengeShape,
+    stage1_config: &SparseChallengeConfig,
     ring_subfield_norm_bound: u128,
 ) -> Option<u32> {
+    let challenge_infinity_norm = fold_shape.effective_infinity_norm(stage1_config) as u128;
+    let challenge_l1_norm = fold_shape.effective_l1_mass(stage1_config) as u128;
     let beta = ring_product_infinity_norm_bound(
         challenge_infinity_norm,
         challenge_l1_norm,
-        witness_infinity_norm,
-        witness_l1_norm,
+        witness_norm.infinity_norm,
+        witness_norm.l1_norm,
     );
     let collision = 2u128
         .checked_mul(challenge_l1_norm)?
@@ -123,7 +115,7 @@ fn a_role_collision_infinity_norm(
 /// `ceil(2·ω̄·β̄·ν)`. `decomposition.log_basis` is the level's gadget base.
 ///
 /// The committed-witness norms `(||s||_inf, ||s||_1)` come from the single
-/// source of truth [`fold_witness_norms`] — `||s||_inf = 1` for one-hot and
+/// source of truth [`FoldWitnessNorms::new`] — `||s||_inf = 1` for one-hot and
 /// `2^(lb−1) = b/2` for dense balanced digits at *every* level (root and
 /// recursive alike, matching the prover's `balanced_digit_abs_bound`). The
 /// binding collision and the fold bound therefore price the *same* witness `s`.
@@ -142,14 +134,12 @@ pub fn rounded_up_norm_s(
     ring_subfield_norm_bound: u32,
 ) -> Option<u32> {
     let is_onehot = is_root && decomposition.log_commit_bound == 1;
-    let witness = fold_witness_norms(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-    let challenge_inf = fold_shape.effective_infinity_norm(stage1_config) as u128;
-    let challenge_l1 = fold_shape.effective_l1_mass(stage1_config) as u128;
+    let witness_norm =
+        FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
     let collision = a_role_collision_infinity_norm(
-        challenge_inf,
-        challenge_l1,
-        witness.infinity_norm,
-        witness.l1_norm,
+        witness_norm,
+        fold_shape,
+        stage1_config,
         u128::from(ring_subfield_norm_bound),
     )?;
     ceil_supported_collision(sis_family, d as u32, collision)
@@ -215,7 +205,7 @@ pub fn rounded_up_norm_z(
     is_root: bool,
 ) -> u128 {
     let is_onehot = is_root && decomposition.log_commit_bound == 1;
-    let witness = fold_witness_norms(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
+    let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
     let challenge = FoldChallengeNorms {
         infinity_norm: fold_shape.effective_infinity_norm(stage1_config) as u128,
         l1_norm: fold_shape.effective_l1_mass(stage1_config) as u128,
@@ -235,9 +225,12 @@ mod tests {
 
     #[test]
     fn witness_block_l1_norm_chunks() {
-        assert_eq!(witness_block_l1_norm(3, 64, 1), 3 * 64);
-        assert_eq!(witness_block_l1_norm(1, 64, 64), 1);
-        assert_eq!(witness_block_l1_norm(1, 64, 8), 8);
+        // dense (K=1): ||s||_1 = D · b/2 = 64 · 4.
+        assert_eq!(FoldWitnessNorms::new(3, 64, 1, false).l1_norm, 64 * 4);
+        // one-hot single-chunk (K >= D): nonzeros = 1.
+        assert_eq!(FoldWitnessNorms::new(3, 64, 64, true).l1_norm, 1);
+        // one-hot multi-chunk (K < D): nonzeros = ceil(D/K) = 8.
+        assert_eq!(FoldWitnessNorms::new(3, 64, 8, true).l1_norm, 8);
     }
 
     #[test]
@@ -245,10 +238,10 @@ mod tests {
         // One-hot: ||s||_inf = 1. Dense: ||s||_inf = b/2 = 2^(lb-1), the same
         // at root and recursive (the committed witness is a balanced base-b
         // decomposition with digits in [-b/2, b/2-1] at every level).
-        assert_eq!(fold_witness_norms(3, 64, 64, true).infinity_norm, 1);
-        assert_eq!(fold_witness_norms(3, 64, 1, false).infinity_norm, 4); // 2^2
-                                                                          // No root/recursive split: dense is b/2 regardless of `is_onehot=false`.
-        assert_eq!(fold_witness_norms(5, 64, 1, false).infinity_norm, 16); // 2^4
+        assert_eq!(FoldWitnessNorms::new(3, 64, 64, true).infinity_norm, 1);
+        assert_eq!(FoldWitnessNorms::new(3, 64, 1, false).infinity_norm, 4); // 2^2
+                                                                             // No root/recursive split: dense is b/2 regardless of `is_onehot=false`.
+        assert_eq!(FoldWitnessNorms::new(5, 64, 1, false).infinity_norm, 16); // 2^4
     }
 
     #[test]

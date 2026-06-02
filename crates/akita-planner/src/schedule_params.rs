@@ -14,8 +14,8 @@ use akita_field::AkitaError;
 use akita_types::layout::digit_math::optimal_m_r_split;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    fold_witness_norms, min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_norm_s,
-    rounded_up_norm_t, rounded_up_norm_w, AjtaiKeyParams, FoldChallengeNorms,
+    min_secure_rank, num_digits_open, num_digits_s_commit, rounded_up_norm_s, rounded_up_norm_t,
+    rounded_up_norm_w, AjtaiKeyParams, FoldChallengeNorms, FoldWitnessNorms,
 };
 use akita_types::{
     decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
@@ -506,7 +506,7 @@ fn compute_root_direct_level_params(
         // One-hot root commits a sparse witness (`||s||_inf = 1`,
         // `nonzeros = ceil(D/K)`); dense roots use the balanced-digit norms.
         let is_onehot = decomp.log_commit_bound == 1;
-        let fold_witness = fold_witness_norms(log_basis, d, policy.onehot_chunk_size, is_onehot);
+        let fold_witness = FoldWitnessNorms::new(log_basis, d, policy.onehot_chunk_size, is_onehot);
         let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
             sis_family,
             d as u32,
