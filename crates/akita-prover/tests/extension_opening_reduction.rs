@@ -8,8 +8,7 @@ use akita_field::{
     RingSubfieldFp8,
 };
 use akita_prover::protocol::extension_opening_reduction::{
-    BatchedExtensionOpeningReductionProver, BatchedExtensionOpeningReductionTerm,
-    ExtensionOpeningReductionProver, SparseExtensionOpeningWitness,
+    ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
@@ -328,16 +327,16 @@ fn batched_extension_opening_reduction_uses_one_common_rho() {
         + coeff_b * extension_opening_reduction_claim(&witness_b, &factor_b).unwrap();
 
     let terms = vec![
-        BatchedExtensionOpeningReductionTerm::new(witness_a.clone(), factor_a.clone(), coeff_a)
+        ExtensionOpeningReductionTerm::new(witness_a.clone(), factor_a.clone(), coeff_a)
             .unwrap(),
-        BatchedExtensionOpeningReductionTerm::new(witness_b.clone(), factor_b.clone(), coeff_b)
+        ExtensionOpeningReductionTerm::new(witness_b.clone(), factor_b.clone(), coeff_b)
             .unwrap(),
     ];
     assert_eq!(
-        BatchedExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap(),
+        ExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap(),
         expected_claim
     );
-    let mut prover = BatchedExtensionOpeningReductionProver::new(terms, expected_claim).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(terms, expected_claim).unwrap();
     assert_eq!(prover.input_claim(), expected_claim);
     assert_eq!(prover.degree_bound(), EXTENSION_OPENING_REDUCTION_DEGREE);
 
@@ -391,13 +390,13 @@ fn sparse_tensor_factor_matches_dense_factor_rounds() {
         SparseExtensionOpeningWitness::new(1usize << tail_point.len(), entries).unwrap();
 
     let dense_factor = tensor_equality_factor_evals::<B, E>(&tail_point, &eta).unwrap();
-    let dense_term = BatchedExtensionOpeningReductionTerm::new_sparse(
+    let dense_term = ExtensionOpeningReductionTerm::new_sparse(
         sparse_witness.clone(),
         dense_factor,
         coeff,
     )
     .unwrap();
-    let lazy_term = BatchedExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
+    let lazy_term = ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
         sparse_witness,
         tail_point.clone(),
         eta,
@@ -406,12 +405,12 @@ fn sparse_tensor_factor_matches_dense_factor_rounds() {
     )
     .unwrap();
 
-    let expected_claim = BatchedExtensionOpeningReductionProver::input_claim_from_terms(
+    let expected_claim = ExtensionOpeningReductionProver::input_claim_from_terms(
         std::slice::from_ref(&dense_term),
     )
     .unwrap();
     assert_eq!(
-        BatchedExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
+        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
             &lazy_term,
         ))
         .unwrap(),
@@ -419,9 +418,9 @@ fn sparse_tensor_factor_matches_dense_factor_rounds() {
     );
 
     let mut dense_prover =
-        BatchedExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
+        ExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
     let mut lazy_prover =
-        BatchedExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
+        ExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
     let mut claim = expected_claim;
     for round in 0..tail_point.len() {
         let dense_round = dense_prover.compute_round_univariate(round, claim);
@@ -494,13 +493,13 @@ fn sparse_tensor_factor_matches_dense_factor_rounds_at_production_lazy_depth() {
         SparseExtensionOpeningWitness::new(1usize << tail_point.len(), entries).unwrap();
 
     let dense_factor = tensor_equality_factor_evals::<B, E>(&tail_point, &eta).unwrap();
-    let dense_term = BatchedExtensionOpeningReductionTerm::new_sparse(
+    let dense_term = ExtensionOpeningReductionTerm::new_sparse(
         sparse_witness.clone(),
         dense_factor,
         coeff,
     )
     .unwrap();
-    let lazy_term = BatchedExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
+    let lazy_term = ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
         sparse_witness,
         tail_point.clone(),
         eta,
@@ -509,12 +508,12 @@ fn sparse_tensor_factor_matches_dense_factor_rounds_at_production_lazy_depth() {
     )
     .unwrap();
 
-    let expected_claim = BatchedExtensionOpeningReductionProver::input_claim_from_terms(
+    let expected_claim = ExtensionOpeningReductionProver::input_claim_from_terms(
         std::slice::from_ref(&dense_term),
     )
     .unwrap();
     assert_eq!(
-        BatchedExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
+        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
             &lazy_term,
         ))
         .unwrap(),
@@ -522,9 +521,9 @@ fn sparse_tensor_factor_matches_dense_factor_rounds_at_production_lazy_depth() {
     );
 
     let mut dense_prover =
-        BatchedExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
+        ExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
     let mut lazy_prover =
-        BatchedExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
+        ExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
     let mut claim = expected_claim;
     for round in 0..tail_point.len() {
         let dense_round = dense_prover.compute_round_univariate(round, claim);
@@ -651,13 +650,13 @@ macro_rules! sparse_tensor_factor_matches_dense_fp32_test {
                 SparseExtensionOpeningWitness::new(1usize << tail_point.len(), entries).unwrap();
 
             let dense_factor = tensor_equality_factor_evals::<B, E>(&tail_point, &eta).unwrap();
-            let dense_term = BatchedExtensionOpeningReductionTerm::new_sparse(
+            let dense_term = ExtensionOpeningReductionTerm::new_sparse(
                 sparse_witness.clone(),
                 dense_factor,
                 coeff,
             )
             .unwrap();
-            let lazy_term = BatchedExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
+            let lazy_term = ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
                 sparse_witness,
                 tail_point.clone(),
                 eta,
@@ -666,12 +665,12 @@ macro_rules! sparse_tensor_factor_matches_dense_fp32_test {
             )
             .unwrap();
 
-            let expected_claim = BatchedExtensionOpeningReductionProver::input_claim_from_terms(
+            let expected_claim = ExtensionOpeningReductionProver::input_claim_from_terms(
                 std::slice::from_ref(&dense_term),
             )
             .unwrap();
             assert_eq!(
-                BatchedExtensionOpeningReductionProver::input_claim_from_terms(
+                ExtensionOpeningReductionProver::input_claim_from_terms(
                     std::slice::from_ref(&lazy_term,)
                 )
                 .unwrap(),
@@ -679,10 +678,10 @@ macro_rules! sparse_tensor_factor_matches_dense_fp32_test {
             );
 
             let mut dense_prover =
-                BatchedExtensionOpeningReductionProver::new(vec![dense_term], expected_claim)
+                ExtensionOpeningReductionProver::new(vec![dense_term], expected_claim)
                     .unwrap();
             let mut lazy_prover =
-                BatchedExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim)
+                ExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim)
                     .unwrap();
             let mut claim = expected_claim;
             for round in 0..tail_point.len() {
@@ -875,13 +874,13 @@ fn sparse_tensor_factor_matches_dense_factor_rounds_fp8_fp16_prime16_offset99() 
         SparseExtensionOpeningWitness::new(1usize << tail_point.len(), entries).unwrap();
 
     let dense_factor = tensor_equality_factor_evals::<B, E>(&tail_point, &eta).unwrap();
-    let dense_term = BatchedExtensionOpeningReductionTerm::new_sparse(
+    let dense_term = ExtensionOpeningReductionTerm::new_sparse(
         sparse_witness.clone(),
         dense_factor,
         coeff,
     )
     .unwrap();
-    let lazy_term = BatchedExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
+    let lazy_term = ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
         sparse_witness,
         tail_point.clone(),
         eta,
@@ -890,12 +889,12 @@ fn sparse_tensor_factor_matches_dense_factor_rounds_fp8_fp16_prime16_offset99() 
     )
     .unwrap();
 
-    let expected_claim = BatchedExtensionOpeningReductionProver::input_claim_from_terms(
+    let expected_claim = ExtensionOpeningReductionProver::input_claim_from_terms(
         std::slice::from_ref(&dense_term),
     )
     .unwrap();
     assert_eq!(
-        BatchedExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
+        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
             &lazy_term,
         ))
         .unwrap(),
@@ -903,9 +902,9 @@ fn sparse_tensor_factor_matches_dense_factor_rounds_fp8_fp16_prime16_offset99() 
     );
 
     let mut dense_prover =
-        BatchedExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
+        ExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
     let mut lazy_prover =
-        BatchedExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
+        ExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
     let mut claim = expected_claim;
     for round in 0..tail_point.len() {
         let dense_round = dense_prover.compute_round_univariate(round, claim);
@@ -1422,13 +1421,13 @@ mod delayed_product_sum_contract {
         let entries = vec![(0, one), (2, one), (4, one), (6, one)];
         let sparse = SparseExtensionOpeningWitness::new(8, entries).unwrap();
         let term =
-            BatchedExtensionOpeningReductionTerm::new_sparse(sparse, factor.clone(), one).unwrap();
-        let input_claim = BatchedExtensionOpeningReductionProver::input_claim_from_terms(
+            ExtensionOpeningReductionTerm::new_sparse(sparse, factor.clone(), one).unwrap();
+        let input_claim = ExtensionOpeningReductionProver::input_claim_from_terms(
             std::slice::from_ref(&term),
         )
         .unwrap();
         let mut prover =
-            BatchedExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
+            ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
 
         let prover_poly = prover.compute_round_univariate(0, input_claim);
         for x in [zero, one, LossyField::from_u64(2), LossyField::from_u64(3)] {

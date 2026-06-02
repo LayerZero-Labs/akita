@@ -5,9 +5,8 @@ use crate::protocol::extension_opening_reduction::{
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
     tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
     tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, BatchedExtensionOpeningReductionProver,
-    BatchedExtensionOpeningReductionTerm, ExtensionOpeningReductionProver,
-    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+    tensor_row_partials_from_columns, ExtensionOpeningReductionProver,
+    ExtensionOpeningReductionTerm, SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,

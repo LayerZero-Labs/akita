@@ -1,15 +1,19 @@
 use super::*;
 
-/// Prover state for one batched degree-two extension-opening reduction.
+/// Prover state for a degree-two extension-opening reduction sumcheck.
+///
+/// Holds one or more terms `coeff_i * sum_x witness_i(x) * factor_i(x)` sharing
+/// a common Boolean domain and a single round challenge sequence. A single
+/// dense opening is the degenerate one-term case.
 #[derive(Debug, Clone)]
-pub struct BatchedExtensionOpeningReductionProver<E: FieldCore> {
-    terms: Vec<BatchedExtensionOpeningReductionTerm<E>>,
+pub struct ExtensionOpeningReductionProver<E: FieldCore> {
+    terms: Vec<ExtensionOpeningReductionTerm<E>>,
     input_claim: E,
     num_rounds: usize,
 }
 
-impl<E: FieldCore> BatchedExtensionOpeningReductionProver<E> {
-    /// Construct a batched prover from terms sharing one Boolean domain.
+impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
+    /// Construct a prover from terms sharing one Boolean domain.
     ///
     /// The caller supplies the claimed input sum. This avoids recomputing it
     /// in protocol paths that already derived the claim while preparing the
@@ -19,12 +23,12 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionProver<E> {
     ///
     /// Returns an error if there are no terms or their table lengths differ.
     pub fn new(
-        terms: Vec<BatchedExtensionOpeningReductionTerm<E>>,
+        terms: Vec<ExtensionOpeningReductionTerm<E>>,
         input_claim: E,
     ) -> Result<Self, AkitaError> {
         let first = terms.first().ok_or_else(|| {
             AkitaError::InvalidInput(
-                "batched extension-opening reduction requires at least one term".to_string(),
+                "extension-opening reduction requires at least one term".to_string(),
             )
         })?;
         let table_len = first.current_witness_evals.len();
@@ -49,7 +53,23 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionProver<E> {
         })
     }
 
-    /// Compute the input sum represented by a set of batched terms.
+    /// Construct a single-term prover from dense transformed-witness and
+    /// transparent-factor Boolean-hypercube evaluation tables.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tables do not have the same nonzero power-of-two
+    /// length.
+    pub fn from_dense_tables(
+        witness_evals: Vec<E>,
+        factor_evals: Vec<E>,
+    ) -> Result<Self, AkitaError> {
+        let input_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals)?;
+        let term = ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, E::one())?;
+        Self::new(vec![term], input_claim)
+    }
+
+    /// Compute the input sum represented by a set of terms.
     ///
     /// This is useful for tests and standalone callers that do not already
     /// have an independently derived input claim.
@@ -58,13 +78,23 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionProver<E> {
     ///
     /// Returns an error if any term has malformed witness/factor tables.
     pub fn input_claim_from_terms(
-        terms: &[BatchedExtensionOpeningReductionTerm<E>],
+        terms: &[ExtensionOpeningReductionTerm<E>],
     ) -> Result<E, AkitaError> {
         terms.iter().try_fold(E::zero(), |acc, term| {
             term.current_witness_evals
                 .claim_with_factor(&term.current_factor)
                 .map(|claim| acc + term.coeff * claim)
         })
+    }
+
+    /// Number of sumcheck rounds for this prover instance.
+    pub fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    /// Initial claim for this prover instance.
+    pub fn input_claim(&self) -> E {
+        self.input_claim
     }
 
     /// Final folded `(coeff, witness(rho), factor(rho))` tuples.
@@ -77,10 +107,21 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionProver<E> {
             })
             .collect()
     }
+
+    /// Final folded `(witness(rho), factor(rho))` for a single-term prover.
+    ///
+    /// Returns `None` for multi-term provers or before all challenges have been
+    /// ingested.
+    pub fn final_witness_and_factor_evals(&self) -> Option<(E, E)> {
+        match self.terms.as_slice() {
+            [term] => term.final_witness_and_factor_evals(),
+            _ => None,
+        }
+    }
 }
 
 impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
-    for BatchedExtensionOpeningReductionProver<E>
+    for ExtensionOpeningReductionProver<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -95,22 +136,15 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E
     }
 
     fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E> {
+        let expected_len = 1usize << (self.num_rounds - round);
         let mut constant = E::zero();
         let mut quadratic = E::zero();
 
-        for term in &self.terms {
-            debug_assert_eq!(
-                term.current_witness_evals.len(),
-                1usize << (self.num_rounds - round)
-            );
+        for term in &mut self.terms {
+            debug_assert_eq!(term.current_witness_evals.len(), expected_len);
             debug_assert_eq!(term.current_factor.len(), term.current_witness_evals.len());
 
-            term.current_witness_evals.accumulate_round(
-                &term.current_factor,
-                term.coeff,
-                &mut constant,
-                &mut quadratic,
-            );
+            term.accumulate_into(&mut constant, &mut quadratic);
         }
 
         let linear = previous_claim - constant - constant - quadratic;
@@ -119,10 +153,7 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
         for term in &mut self.terms {
-            if term.current_witness_evals.len() > 1 {
-                term.current_witness_evals
-                    .fold_with_factor_in_place(&mut term.current_factor, r_round);
-            }
+            term.ingest_challenge(r_round);
         }
     }
 }

@@ -147,12 +147,13 @@ impl<E: FieldCore + HasUnreducedOps> Deg2RoundAccum<E> for DirectDeg2<E> {
     }
 }
 
-mod batched;
 mod dense;
+mod prover;
 mod sparse;
 
-pub use batched::BatchedExtensionOpeningReductionProver;
-pub use dense::ExtensionOpeningReductionProver;
-pub use sparse::{BatchedExtensionOpeningReductionTerm, SparseExtensionOpeningWitness};
+pub use prover::ExtensionOpeningReductionProver;
+pub use sparse::{ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness};
 
-pub(crate) use dense::{accumulate_dense_round, fold_dense_reduction_tables_in_place};
+pub(crate) use dense::{
+    accumulate_dense_round, fold_dense_reduction_tables_in_place, fused_fold_and_accumulate,
+};

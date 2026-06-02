@@ -87,7 +87,7 @@ pub(crate) fn fold_dense_reduction_tables_in_place<E: HasUnreducedOps + HasOptim
 
 /// Fold both tables by one variable AND pre-compute the next round's
 /// `(constant, quadratic)` accumulation in a single pass over the data.
-fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
+pub(crate) fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
     witness_evals: &mut Vec<E>,
     factor_evals: &mut Vec<E>,
     r_round: E,
@@ -188,115 +188,4 @@ where
     witness_evals.truncate(half);
     factor_evals.truncate(half);
     acc.finish()
-}
-
-/// Prover state for the degree-two extension-opening reduction sumcheck.
-///
-/// Uses a fused fold+accumulate strategy: after each fold, the next round's
-/// accumulation is pre-computed in the same pass, avoiding a redundant read
-/// of the folded table.
-#[derive(Debug, Clone)]
-pub struct ExtensionOpeningReductionProver<E: FieldCore> {
-    current_witness_evals: Vec<E>,
-    current_factor_evals: Vec<E>,
-    cached_accumulate: Option<(E, E)>,
-    input_claim: E,
-    num_rounds: usize,
-}
-
-impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
-    /// Construct a prover from transformed-witness and transparent-factor
-    /// Boolean-hypercube evaluation tables.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the tables do not have the same nonzero power-of-two
-    /// length.
-    pub fn new(witness_evals: Vec<E>, factor_evals: Vec<E>) -> Result<Self, AkitaError> {
-        let input_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals)?;
-        let num_rounds = num_rounds_from_table_len(witness_evals.len())?;
-        Ok(Self {
-            current_witness_evals: witness_evals,
-            current_factor_evals: factor_evals,
-            cached_accumulate: None,
-            input_claim,
-            num_rounds,
-        })
-    }
-
-    /// Number of sumcheck rounds for this prover instance.
-    pub fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    /// Initial claim for this prover instance.
-    pub fn input_claim(&self) -> E {
-        self.input_claim
-    }
-
-    /// Return the final folded witness and factor evaluations after all
-    /// challenges have been ingested.
-    pub fn final_witness_and_factor_evals(&self) -> Option<(E, E)> {
-        (self.current_witness_evals.len() == 1 && self.current_factor_evals.len() == 1)
-            .then(|| (self.current_witness_evals[0], self.current_factor_evals[0]))
-    }
-}
-
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
-    for ExtensionOpeningReductionProver<E>
-{
-    fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    fn degree_bound(&self) -> usize {
-        EXTENSION_OPENING_REDUCTION_DEGREE
-    }
-
-    fn input_claim(&self) -> E {
-        self.input_claim
-    }
-
-    fn compute_round_univariate(&mut self, round: usize, previous_claim: E) -> UniPoly<E> {
-        debug_assert_eq!(
-            self.current_witness_evals.len(),
-            1usize << (self.num_rounds - round)
-        );
-        debug_assert_eq!(
-            self.current_factor_evals.len(),
-            self.current_witness_evals.len()
-        );
-
-        let (constant, quadratic) = self.cached_accumulate.take().unwrap_or_else(|| {
-            accumulate_dense_round(
-                &self.current_witness_evals,
-                &self.current_factor_evals,
-                E::one(),
-            )
-        });
-        let linear = previous_claim - constant - constant - quadratic;
-
-        UniPoly::from_coeffs(vec![constant, linear, quadratic])
-    }
-
-    fn ingest_challenge(&mut self, _round: usize, r_round: E) {
-        let current_len = self.current_witness_evals.len();
-        if current_len <= 1 {
-            return;
-        }
-        if current_len >= 4 {
-            let (constant, quadratic) = fused_fold_and_accumulate(
-                &mut self.current_witness_evals,
-                &mut self.current_factor_evals,
-                r_round,
-            );
-            self.cached_accumulate = Some((constant, quadratic));
-        } else {
-            fold_dense_reduction_tables_in_place(
-                &mut self.current_witness_evals,
-                &mut self.current_factor_evals,
-                r_round,
-            );
-        }
-    }
 }

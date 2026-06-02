@@ -650,7 +650,7 @@ where
         let _s = tracing::info_span!("eor_factor_evals").entered();
         tensor_equality_factor_evals::<F, L>(tail_point, &eta)?
     };
-    let prover = ExtensionOpeningReductionProver::new(packed_witness, factor_evals)?;
+    let prover = ExtensionOpeningReductionProver::from_dense_tables(packed_witness, factor_evals)?;
     if prover.input_claim() != true_input_claim {
         return Err(AkitaError::InvalidInput(
             "extension-opening reduction input claim mismatch".to_string(),
