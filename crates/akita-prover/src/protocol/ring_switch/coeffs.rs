@@ -1,7 +1,7 @@
 use super::*;
 use crate::validation::validate_i8_setup_log_basis;
 
-/// Build the witness vector `w` from the quadratic equation state.
+/// Build the witness vector `w` from the ring-relation witness.
 ///
 /// This is the first half of the ring switch: it computes `r` and assembles
 /// `w` as a flat recursive witness. The resulting `w` is D-agnostic and can be
@@ -9,7 +9,7 @@ use crate::validation::validate_i8_setup_log_basis;
 ///
 /// # Errors
 ///
-/// Returns an error if the quadratic equation is missing prover-side data.
+/// Returns an error if the ring-relation witness is missing prover-side data.
 ///
 /// # Panics
 ///
@@ -19,7 +19,8 @@ use crate::validation::validate_i8_setup_log_basis;
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_build_w<F, B, const D: usize>(
-    quad_eq: &mut QuadraticEquation<F, D>,
+    instance: &RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     lp: &LevelParams,
@@ -28,7 +29,7 @@ where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
     B: RingSwitchComputeBackend<F>,
 {
-    let num_claims = quad_eq.claim_to_point().len();
+    let num_claims = instance.claim_to_point().len();
     {
         let x: u8 = 0;
         tracing::trace!(
@@ -36,19 +37,14 @@ where
             "ring_switch_build_w"
         );
     }
-    let w_hat = quad_eq
-        .take_w_hat()
-        .ok_or_else(|| AkitaError::InvalidInput("missing w_hat in prover".to_string()))?;
-    #[cfg(feature = "zk")]
-    let d_blinding_digits = quad_eq.take_d_blinding_digits().ok_or_else(|| {
-        AkitaError::InvalidInput("missing D-blinding digits in prover".to_string())
-    })?;
-    let z_pre = quad_eq
-        .take_z_pre()
-        .ok_or_else(|| AkitaError::InvalidInput("missing centered z_pre in prover".to_string()))?;
-    let mut hint = quad_eq
-        .take_hint()
-        .ok_or_else(|| AkitaError::InvalidInput("missing hint in prover".to_string()))?;
+    let RingRelationWitness {
+        z_folded_rings,
+        w_hat,
+        w_folded,
+        mut hint,
+        #[cfg(feature = "zk")]
+        d_blinding_digits,
+    } = witness;
     validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
     hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
     #[cfg(feature = "zk")]
@@ -58,15 +54,13 @@ where
     let recomposed_inner_rows = recomposed_inner_rows.ok_or_else(|| {
         AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
     })?;
-    let w_folded = quad_eq
-        .take_w_folded()
-        .ok_or_else(|| AkitaError::InvalidInput("missing w_folded in prover".to_string()))?;
+    let routing = instance.commitment_routing();
 
-    let r = compute_r_split_eq::<F, B, D>(
+    let r = compute_relation_quotient::<F, B, D>(
         backend,
         prepared,
         lp,
-        &quad_eq.challenges,
+        &instance.challenges,
         w_hat.flat_digits(),
         #[cfg(feature = "zk")]
         &d_blinding_digits,
@@ -75,27 +69,27 @@ where
         &b_blinding_digits,
         &recomposed_inner_rows,
         &w_folded,
-        quad_eq.ring_multiplier_points(),
-        quad_eq.claim_to_point(),
-        quad_eq.claim_to_point_poly(),
-        quad_eq.claim_poly_indices(),
-        quad_eq.row_coefficient_rings(),
-        &z_pre.centered_coeffs,
-        z_pre.centered_inf_norm,
-        quad_eq.y(),
-        quad_eq.num_polys_per_point(),
-        quad_eq.num_public_rows(),
+        instance.ring_multiplier_points(),
+        instance.claim_to_point(),
+        routing.claim_to_commitment_group(),
+        routing.claim_poly_in_commitment_group(),
+        instance.row_coefficient_rings(),
+        &z_folded_rings.centered_coeffs,
+        z_folded_rings.centered_inf_norm,
+        instance.y(),
+        routing.num_polys_per_commitment_group(),
+        instance.num_public_rows(),
         lp.num_blocks,
         lp.inner_width(),
-        quad_eq.m_row_layout(),
+        instance.m_row_layout(),
     )?;
     // Terminal layout drops the D-block from M and from the witness; the
     // d-blinding column segment must also disappear so the prover witness
     // matches the verifier's column offsets.
     #[cfg(feature = "zk")]
-    let d_blinding_for_w: FlatDigitBlocks<D> = match quad_eq.m_row_layout() {
-        MRowLayout::Intermediate => d_blinding_digits,
-        MRowLayout::Terminal => {
+    let d_blinding_for_w: FlatDigitBlocks<D> = match instance.m_row_layout() {
+        MRowLayout::WithDBlock => d_blinding_digits,
+        MRowLayout::WithoutDBlock => {
             FlatDigitBlocks::zeroed(Vec::new()).expect("empty FlatDigitBlocks always valid")
         }
     };
@@ -108,7 +102,7 @@ where
             &decomposed_inner_rows,
             #[cfg(feature = "zk")]
             &b_blinding_digits,
-            &z_pre.centered_coeffs,
+            &z_folded_rings.centered_coeffs,
             &r,
             lp,
             num_claims,
@@ -182,33 +176,33 @@ fn emit_blinding_planes<const D: usize>(
     }
 }
 
-/// Decompose z_pre elements and emit in digit-major order.
+/// Decompose z_folded_rings elements and emit in digit-major order.
 ///
-/// z_pre has `num_points * block_len * depth_commit` elements indexed as
+/// z_folded_rings has `num_points * block_len * depth_commit` elements indexed as
 /// `z[point * inner_width + blk * depth_commit + dc]`. Each decomposes into
 /// `num_digits_fold` planes.
 ///
 /// Output order: for each `(dc, df)`, emit all `(point, blk)` pairs with
 /// the global block index `point * block_len + blk` innermost.
-fn emit_z_pre_block_inner<const D: usize>(
+fn emit_z_folded_block_inner<const D: usize>(
     out: &mut Vec<i8>,
-    z_pre_centered: &[[i32; D]],
+    z_folded_centered: &[[i32; D]],
     block_len: usize,
     depth_commit: usize,
     num_digits_fold: usize,
     log_basis: u32,
 ) {
-    let total_elems = z_pre_centered.len();
+    let total_elems = z_folded_centered.len();
     let inner_width = block_len * depth_commit;
     debug_assert_eq!(
         total_elems % inner_width,
         0,
-        "z_pre length {total_elems} not divisible by inner_width {inner_width}",
+        "z_folded_rings length {total_elems} not divisible by inner_width {inner_width}",
     );
     let num_points = total_elems / inner_width;
 
     let mut all_planes = vec![[0i8; D]; total_elems * num_digits_fold];
-    for (k, z_j) in z_pre_centered.iter().enumerate() {
+    for (k, z_j) in z_folded_centered.iter().enumerate() {
         balanced_decompose_centered_i32_i8_into(
             z_j,
             &mut all_planes[k * num_digits_fold..(k + 1) * num_digits_fold],
@@ -258,7 +252,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
-    z_pre_centered: &[[i32; D]],
+    z_folded_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
     num_claims: usize,
@@ -287,16 +281,16 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         + d_blinding_planes
         + t_hat_planes
         + b_blinding_planes
-        + z_pre_centered.len() * num_digits_fold;
+        + z_folded_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
-    let z_first = lp.m_vars >= lp.r_vars;
+    let z_first = akita_types::ring_column_z_first(lp);
     tracing::debug!(
         w_hat_planes,
         d_blinding_planes,
         t_hat_planes,
         b_blinding_planes,
-        z_pre_elems = z_pre_centered.len(),
-        z_pre_planes = z_pre_centered.len() * num_digits_fold,
+        z_folded_elems = z_folded_centered.len(),
+        z_folded_planes = z_folded_centered.len() * num_digits_fold,
         r_elems = r.len(),
         r_planes = r_hat_count,
         total_ring = z_count + r_hat_count,
@@ -328,9 +322,9 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     };
 
     if z_first {
-        emit_z_pre_block_inner(
+        emit_z_folded_block_inner(
             &mut out,
-            z_pre_centered,
+            z_folded_centered,
             block_len,
             depth_commit,
             num_digits_fold,
@@ -359,9 +353,9 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         emit_blinding_planes(&mut out, b_blinding_digits);
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
-        emit_z_pre_block_inner(
+        emit_z_folded_block_inner(
             &mut out,
-            z_pre_centered,
+            z_folded_centered,
             block_len,
             depth_commit,
             num_digits_fold,

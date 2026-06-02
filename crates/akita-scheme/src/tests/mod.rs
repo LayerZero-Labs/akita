@@ -23,7 +23,7 @@ use akita_types::{
     TerminalLevelProofShape,
 };
 use akita_types::{AkitaScheduleInputs, Step};
-use akita_verifier::direct_witness_opening_matches;
+use akita_verifier::cleartext_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -102,7 +102,7 @@ fn expected_same_point_batched_shape(
             y_rings_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
             extension_opening_reduction: None,
             stage2_sumcheck: vec![3; root_rounds],
-            final_witness: akita_types::DirectWitnessShape::PackedDigits((
+            final_witness: akita_types::CleartextWitnessShape::PackedDigits((
                 root_w_len,
                 terminal_next_params.log_basis,
             )),
@@ -187,7 +187,7 @@ fn expected_same_point_batched_shape(
         1,
         1,
         1,
-        akita_types::MRowLayout::Terminal,
+        akita_types::MRowLayout::WithoutDBlock,
     )
     .expect("terminal-layout witness count")
         * terminal_lp.ring_dimension;
@@ -196,7 +196,7 @@ fn expected_same_point_batched_shape(
         y_rings_coeffs: terminal_lp.ring_dimension,
         extension_opening_reduction: None,
         stage2_sumcheck: vec![3; terminal_rounds],
-        final_witness: akita_types::DirectWitnessShape::PackedDigits((
+        final_witness: akita_types::CleartextWitnessShape::PackedDigits((
             terminal_next_w_len,
             terminal_next_params.log_basis,
         )),

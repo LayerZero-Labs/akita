@@ -24,7 +24,7 @@ use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
     root_extension_opening_partials, w_ring_element_count_with_counts_bits,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DirectStep, DirectWitnessShape, FoldStep, MRowLayout, Schedule, Step,
+    CleartextWitnessShape, DirectStep, FoldStep, MRowLayout, Schedule, Step,
 };
 
 use crate::find_schedule;
@@ -310,11 +310,11 @@ pub fn schedule_from_entry(
                         nt,
                         nw,
                         nz,
-                        MRowLayout::Terminal,
+                        MRowLayout::WithoutDBlock,
                     )?;
                     let len = mul_d(ring)?;
                     terminal_witness_field_len = Some(len);
-                    (len, None, MRowLayout::Terminal)
+                    (len, None, MRowLayout::WithoutDBlock)
                 } else {
                     let ring =
                         w_ring_element_count_with_counts_bits(field_bits, &lp, np, nt, nw, nz)?;
@@ -335,7 +335,7 @@ pub fn schedule_from_entry(
                         fold_shape(next_inputs),
                         1,
                     )?;
-                    (len, Some(next_lp), MRowLayout::Intermediate)
+                    (len, Some(next_lp), MRowLayout::WithDBlock)
                 };
                 let num_claims_here = if fold_level == 0 {
                     key.num_z_vectors
@@ -399,7 +399,7 @@ pub fn schedule_from_entry(
                         None => None,
                     };
                     (
-                        DirectWitnessShape::FieldElements(expected_root_w_len),
+                        CleartextWitnessShape::FieldElements(expected_root_w_len),
                         expected_root_w_len,
                         params,
                     )
@@ -410,7 +410,7 @@ pub fn schedule_from_entry(
                         )
                     })?;
                     (
-                        DirectWitnessShape::PackedDigits((len, current_log_basis)),
+                        CleartextWitnessShape::PackedDigits((len, current_log_basis)),
                         len,
                         None,
                     )

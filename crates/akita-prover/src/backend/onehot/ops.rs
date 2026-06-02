@@ -544,7 +544,7 @@ where
         })
     }
 
-    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
             AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
         })?;
@@ -567,8 +567,8 @@ where
             }
             evals[field_pos] = F::one();
         }
-        Ok(DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
-            evals,
-        )))
+        Ok(CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(evals),
+        ))
     }
 }
