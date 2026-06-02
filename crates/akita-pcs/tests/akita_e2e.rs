@@ -162,7 +162,7 @@ fn batched_total_fold_levels<FF: CanonicalField, L: FieldCore>(
     use akita_types::{AkitaBatchedRootProof, AkitaProofStep};
     let root_fold = match proof.root {
         AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => 1,
-        AkitaBatchedRootProof::Direct { .. } => 0,
+        AkitaBatchedRootProof::ZeroFold { .. } => 0,
     };
     let suffix_fold = proof
         .steps
@@ -646,7 +646,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         assert_eq!(proof.size(), plan.total_bytes);
         let direct_witnesses = proof
             .root
-            .as_direct()
+            .as_zero_fold()
             .expect("root-direct batched proof should carry per-claim field witnesses");
         assert_eq!(direct_witnesses.len(), 1);
         let direct_field = direct_witnesses[0]
@@ -1101,15 +1101,15 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             }
             akita_types::AkitaBatchedRootProof::Terminal(ref mut terminal) => {
                 match &mut terminal.final_witness {
-                    akita_types::DirectWitnessProof::PackedDigits(packed) => {
+                    akita_types::CleartextWitnessProof::PackedDigits(packed) => {
                         packed.data[0] ^= 1;
                     }
-                    akita_types::DirectWitnessProof::FieldElements(_) => {
+                    akita_types::CleartextWitnessProof::FieldElements(_) => {
                         panic!("expected packed-digits final witness for tamper test");
                     }
                 }
             }
-            akita_types::AkitaBatchedRootProof::Direct { .. } => {
+            akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("root-direct batched proof has no folded root to tamper");
             }
         }

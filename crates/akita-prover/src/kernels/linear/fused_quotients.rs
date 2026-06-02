@@ -36,8 +36,8 @@ pub(super) fn fused_split_eq_quotients_with_params<
     n_a: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
-    z_pre: &[[i32; D]],
-    z_pre_max_abs: u32,
+    z_folded_rings: &[[i32; D]],
+    z_folded_max_abs: u32,
     w_digit_abs_bound: u64,
     t_digit_abs_bound: u64,
     params: &CrtNttParamSet<W, K, D>,
@@ -54,7 +54,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
     let a_width = a_cyc_rows.first().map_or(0, |r| r.len());
     let w_len = w_hat.len().min(d_width);
     let t_len = t_hat.len().min(b_width);
-    let z_len = z_pre.len().min(a_width);
+    let z_len = z_folded_rings.len().min(a_width);
     let max_col = w_len.max(t_len).max(z_len);
 
     if max_col == 0 {
@@ -67,9 +67,9 @@ pub(super) fn fused_split_eq_quotients_with_params<
 
     // CRT chunking keeps the caller's full-witness bound, while LUT sizing can
     // use the exact segment bound to avoid oversized centered tables.
-    let actual_z_abs_bound = centered_rows_abs_bound(z_pre, z_len);
+    let actual_z_abs_bound = centered_rows_abs_bound(z_folded_rings, z_len);
     let z_bounds = CenteredRhsBounds {
-        capacity: u64::from(z_pre_max_abs).max(actual_z_abs_bound),
+        capacity: u64::from(z_folded_max_abs).max(actual_z_abs_bound),
         lut: actual_z_abs_bound,
     };
     if !digit_rows_within_digit_bound::<D>(w_hat, w_len, w_digit_abs_bound) {
@@ -83,7 +83,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
         ));
     }
     debug_assert!(
-        centered_rows_within_bound(z_pre, z_len, z_bounds.capacity),
+        centered_rows_within_bound(z_folded_rings, z_len, z_bounds.capacity),
         "fused quotient centered RHS bound is smaller than the actual max"
     );
     let w_safe = w_len == 0
@@ -104,7 +104,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
             n_a,
             w_hat,
             t_hat,
-            z_pre,
+            z_folded_rings,
             z_bounds.lut,
             w_digit_abs_bound,
             t_digit_abs_bound,
@@ -121,7 +121,13 @@ pub(super) fn fused_split_eq_quotients_with_params<
     let b_result =
         accumulate_cyclic_i8_rows(b_cyc_rows, n_b, t_hat, t_len, t_digit_abs_bound, params);
     let a_result = accumulate_centered_quotient_rows(
-        neg_rows, a_cyc_rows, n_a, z_pre, z_len, z_bounds, params,
+        neg_rows,
+        a_cyc_rows,
+        n_a,
+        z_folded_rings,
+        z_len,
+        z_bounds,
+        params,
     );
 
     Ok((d_result, b_result, a_result))
@@ -143,7 +149,7 @@ fn fused_split_eq_quotients_one_shot<
     n_a: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
-    z_pre: &[[i32; D]],
+    z_folded_rings: &[[i32; D]],
     z_lut_abs_bound: u64,
     w_digit_abs_bound: u64,
     t_digit_abs_bound: u64,
@@ -202,15 +208,20 @@ fn fused_split_eq_quotients_one_shot<
                     }
                 }
 
-                if j < z_len && !is_zero_centered_row(&z_pre[j]) {
+                if j < z_len && !is_zero_centered_row(&z_folded_rings[j]) {
                     let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
                         unsafe {
                             CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
-                                &z_pre[j], params, lut,
+                                &z_folded_rings[j],
+                                params,
+                                lut,
                             )
                         }
                     } else {
-                        CyclotomicCrtNtt::from_centered_i32_pair_with_params(&z_pre[j], params)
+                        CyclotomicCrtNtt::from_centered_i32_pair_with_params(
+                            &z_folded_rings[j],
+                            params,
+                        )
                     };
                     for ((acc_neg, acc_cyc), (neg_row, cyc_row)) in accs
                         .2
@@ -377,7 +388,7 @@ fn accumulate_centered_quotient_rows<
     neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     num_rows: usize,
-    z_pre: &[[i32; D]],
+    z_folded_rings: &[[i32; D]],
     z_len: usize,
     z_bounds: CenteredRhsBounds,
     params: &CrtNttParamSet<W, K, D>,
@@ -396,7 +407,12 @@ fn accumulate_centered_quotient_rows<
     let Some(chunk_width) = safe_crt_chunk_width::<F, W, K, D>(params, z_len, z_bounds.capacity)
     else {
         return accumulate_centered_quotient_rows_field(
-            neg_rows, cyc_rows, num_rows, z_pre, z_len, params,
+            neg_rows,
+            cyc_rows,
+            num_rows,
+            z_folded_rings,
+            z_len,
+            params,
         );
     };
     if z_len <= chunk_width {
@@ -410,7 +426,7 @@ fn accumulate_centered_quotient_rows<
             num_rows,
             &[],
             &[],
-            z_pre,
+            z_folded_rings,
             z_bounds.lut,
             0,
             0,
@@ -437,17 +453,19 @@ fn accumulate_centered_quotient_rows<
             let mut cyc_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
 
             for j in chunk_start..chunk_end {
-                if is_zero_centered_row(&z_pre[j]) {
+                if is_zero_centered_row(&z_folded_rings[j]) {
                     continue;
                 }
                 let (ntt_z_neg, ntt_z_cyc) = if let Some(ref lut) = centered_lut {
                     unsafe {
                         CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
-                            &z_pre[j], params, lut,
+                            &z_folded_rings[j],
+                            params,
+                            lut,
                         )
                     }
                 } else {
-                    CyclotomicCrtNtt::from_centered_i32_pair_with_params(&z_pre[j], params)
+                    CyclotomicCrtNtt::from_centered_i32_pair_with_params(&z_folded_rings[j], params)
                 };
                 for ((neg_acc, cyc_acc), (neg_row, cyc_row)) in neg_accs
                     .iter_mut()
@@ -484,7 +502,7 @@ fn accumulate_centered_quotient_rows_field<
     neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
     num_rows: usize,
-    z_pre: &[[i32; D]],
+    z_folded_rings: &[[i32; D]],
     z_len: usize,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
@@ -492,10 +510,10 @@ fn accumulate_centered_quotient_rows_field<
         .map(|row_idx| {
             let mut out = CyclotomicRing::<F, D>::zero();
             for j in 0..z_len {
-                if is_zero_centered_row(&z_pre[j]) {
+                if is_zero_centered_row(&z_folded_rings[j]) {
                     continue;
                 }
-                let z = centered_i32_ring::<F, D>(&z_pre[j]);
+                let z = centered_i32_ring::<F, D>(&z_folded_rings[j]);
                 let neg_lhs: CyclotomicRing<F, D> =
                     neg_rows[row_idx][j].to_ring_with_params(params);
                 let cyc_lhs: CyclotomicRing<F, D> = cyc_rows[row_idx][j].to_ring_cyclic(params);
@@ -531,8 +549,8 @@ pub(crate) fn fused_split_eq_quotients<
     n_a: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
-    z_pre: &[[i32; D]],
-    z_pre_max_abs: u32,
+    z_folded_rings: &[[i32; D]],
+    z_folded_max_abs: u32,
 ) -> Result<
     (
         Vec<CyclotomicRing<F, D>>,
@@ -548,8 +566,8 @@ pub(crate) fn fused_split_eq_quotients<
         n_a,
         w_hat,
         t_hat,
-        z_pre,
-        z_pre_max_abs,
+        z_folded_rings,
+        z_folded_max_abs,
         balanced_digit_abs_bound(6),
         balanced_digit_abs_bound(6),
     )
@@ -566,8 +584,8 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     n_a: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
-    z_pre: &[[i32; D]],
-    z_pre_max_abs: u32,
+    z_folded_rings: &[[i32; D]],
+    z_folded_max_abs: u32,
     log_basis: u32,
 ) -> Result<
     (
@@ -586,8 +604,8 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
         n_a,
         w_hat,
         t_hat,
-        z_pre,
-        z_pre_max_abs,
+        z_folded_rings,
+        z_folded_max_abs,
         digit_bound,
         digit_bound,
     )
@@ -604,8 +622,8 @@ fn fused_split_eq_quotients_with_digit_bound<
     n_a: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
-    z_pre: &[[i32; D]],
-    z_pre_max_abs: u32,
+    z_folded_rings: &[[i32; D]],
+    z_folded_max_abs: u32,
     w_digit_abs_bound: u64,
     t_digit_abs_bound: u64,
 ) -> Result<
@@ -618,7 +636,7 @@ fn fused_split_eq_quotients_with_digit_bound<
 > {
     let d_width = w_hat.len();
     let b_width = t_hat.len();
-    let a_width = z_pre.len();
+    let a_width = z_folded_rings.len();
     match slot {
         NttSlotCache::Q16 {
             neg,
@@ -647,8 +665,8 @@ fn fused_split_eq_quotients_with_digit_bound<
                 n_a,
                 w_hat,
                 t_hat,
-                z_pre,
-                z_pre_max_abs,
+                z_folded_rings,
+                z_folded_max_abs,
                 w_digit_abs_bound,
                 t_digit_abs_bound,
                 p,
@@ -681,8 +699,8 @@ fn fused_split_eq_quotients_with_digit_bound<
                 n_a,
                 w_hat,
                 t_hat,
-                z_pre,
-                z_pre_max_abs,
+                z_folded_rings,
+                z_folded_max_abs,
                 w_digit_abs_bound,
                 t_digit_abs_bound,
                 p,
@@ -715,8 +733,8 @@ fn fused_split_eq_quotients_with_digit_bound<
                 n_a,
                 w_hat,
                 t_hat,
-                z_pre,
-                z_pre_max_abs,
+                z_folded_rings,
+                z_folded_max_abs,
                 w_digit_abs_bound,
                 t_digit_abs_bound,
                 p,
@@ -749,8 +767,8 @@ fn fused_split_eq_quotients_with_digit_bound<
                 n_a,
                 w_hat,
                 t_hat,
-                z_pre,
-                z_pre_max_abs,
+                z_folded_rings,
+                z_folded_max_abs,
                 w_digit_abs_bound,
                 t_digit_abs_bound,
                 p,

@@ -68,7 +68,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         })
     }
 
-    /// Return the fully folded virtual-polynomial claim `S(r_stage1)`.
+    /// Return the fully folded virtual-polynomial claim `S(stage1_point)`.
     ///
     /// # Panics
     ///

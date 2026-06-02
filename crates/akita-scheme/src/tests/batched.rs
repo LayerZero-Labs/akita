@@ -45,7 +45,7 @@ fn batched_commit_matches_individual_commits() {
 
 /// Exercise the batched root-direct fast path: for a layout/batch shape
 /// whose offline-planned schedule has zero fold levels, the prover must
-/// emit a [`AkitaBatchedRootProof::Direct`] variant with no recursive
+/// emit a [`AkitaBatchedRootProof::ZeroFold`] variant with no recursive
 /// suffix, and the verifier must accept it via the batched root-direct
 /// checks (per-claim opening + joint per-group re-commit).
 #[test]
@@ -123,7 +123,7 @@ fn batched_root_direct_fast_path_round_trip() {
     );
     let direct_witnesses = proof
         .root
-        .as_direct()
+        .as_zero_fold()
         .expect("root-direct variant must expose per-claim direct witnesses");
     assert_eq!(direct_witnesses.len(), NUM_POLYS);
     assert!(
@@ -133,7 +133,7 @@ fn batched_root_direct_fast_path_round_trip() {
 
     let mut bytes = Vec::new();
     let shape = proof.shape();
-    assert!(matches!(shape, AkitaBatchedProofShape::Direct { .. }));
+    assert!(matches!(shape, AkitaBatchedProofShape::ZeroFold { .. }));
     proof.serialize_uncompressed(&mut bytes).unwrap();
     let round_trip = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
     assert_eq!(round_trip, proof);
