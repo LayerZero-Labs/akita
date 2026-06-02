@@ -24,6 +24,30 @@
       "simd": "avx2",
       "target_cpu": "x86-64-v3"
     },
+    "avx512": {
+      "arch": "x86_64",
+      "baseline": "avx512",
+      "bench_command": "RUSTFLAGS=\"-Ctarget-cpu=native\" cargo +1.95 bench -p akita-pcs --bench field_arith -- --save-baseline avx512 field_arith/(base|ext4|ext5)/",
+      "bench_filter": "field_arith/(base|ext4|ext5)/",
+      "captured_at_utc": "2026-06-02T02:31:02+00:00",
+      "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+      "cpu_features": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx_vnni avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd cppc amd_ibpb_ret arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid bus_lock_detect movdiri movdir64b overflow_recov succor smca fsrm avx512_vp2intersect flush_l1d srso_user_kernel_no",
+      "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
+      "criterion_baseline": "avx512",
+      "criterion_dir": "target/criterion",
+      "git_branch": "quang/plonky3-field-microbench",
+      "git_commit": "6b8889fae3f3b033e5c54bf03c1f3cafca823b72",
+      "git_subject": "perf(field): optimize packed fp4 ring arithmetic",
+      "kernel": "Linux 6.8.0-111-generic #111-Ubuntu SMP PREEMPT_DYNAMIC Sat Apr 11 23:16:02 UTC 2026 x86_64 x86_64",
+      "machine_config": "amd-ryzen-9950x-avx512",
+      "notes": "x86_64 AVX-512 cell; target-cpu native; source commit stamped from local PR worktree because benchmark source copy has no .git metadata",
+      "os": "Linux-6.8.0-111-generic-x86_64-with-glibc2.39",
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+      "rustc_verbose": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2",
+      "rustflags": "-Ctarget-cpu=native",
+      "simd": "avx512",
+      "target_cpu": "native"
+    },
     "neon": {
       "arch": "aarch64",
       "baseline": "neon",
@@ -36,11 +60,11 @@
       "criterion_baseline": "neon",
       "criterion_dir": "target/criterion",
       "git_branch": "quang/plonky3-field-microbench",
-      "git_commit": "909eb7ecd8854d54864fbb2b00d347fc80497387",
-      "git_subject": "docs(spec): record Phase 2 field-microbench findings",
+      "git_commit": "5b0305bee7f53965dd2c9b68aed527a2c9b420e6",
+      "git_subject": "perf(field): reduce 31-bit pseudo-Mersenne packed mul in 32-bit NEON lanes",
       "kernel": "Darwin 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041 arm64 arm",
       "machine_config": "apple-m4-max-neon",
-      "notes": "",
+      "notes": "Captured with the 31-bit pseudo-Mersenne packed-mul NEON kernel applied; git_commit re-stamped to the commit that landed that kernel (the working tree HEAD at capture time was its parent 909eb7ec).",
       "os": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
       "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
       "rustc_verbose": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-apple-darwin\nrelease: 1.95.0\nLLVM version: 22.1.2",
@@ -49,7 +73,7 @@
       "target_cpu": "native"
     }
   },
-  "generated_at_utc": "2026-06-02T11:54:15+00:00",
-  "row_count": 1620,
+  "generated_at_utc": "2026-06-02T16:19:11+00:00",
+  "row_count": 2430,
   "warnings": []
 }
