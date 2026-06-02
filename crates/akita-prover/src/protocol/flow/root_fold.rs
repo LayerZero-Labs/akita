@@ -1206,6 +1206,16 @@ where
     #[cfg(feature = "zk")]
     let proof_w_eval = w_eval_masked;
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
+    #[cfg(feature = "zk")]
+    let carried_opening = {
+        let mut claim =
+            RecursiveCarriedOpening::recursive_witness(sumcheck_challenges, w_eval, expected_w_len);
+        claim.proof_opening = proof_w_eval;
+        claim
+    };
+    #[cfg(not(feature = "zk"))]
+    let carried_opening =
+        RecursiveCarriedOpening::recursive_witness(sumcheck_challenges, w_eval, expected_w_len);
 
     Ok(RootLevelRawOutput {
         #[cfg(feature = "zk")]
@@ -1231,11 +1241,7 @@ where
             commitment: committed_commitment,
             hint: committed_hint,
             log_basis: next_log_basis,
-            carried_openings: vec![RecursiveCarriedOpening::recursive_witness(
-                sumcheck_challenges,
-                w_eval,
-                expected_w_len,
-            )],
+            carried_openings: vec![carried_opening],
             extra_carried_sources: Vec::new(),
             #[cfg(feature = "zk")]
             zk_hiding,

@@ -113,6 +113,9 @@ pub struct RecursiveCarriedOpening<L: FieldCore> {
     pub opening_point: Vec<L>,
     /// Claimed value at `opening_point`.
     pub opening: L,
+    /// Proof-visible masked value bound into the transcript.
+    #[cfg(feature = "zk")]
+    pub proof_opening: L,
     /// Basis used to interpret `opening_point`.
     pub basis: BasisMode,
     /// Unpadded logical field length of the opened object.
@@ -130,10 +133,24 @@ impl<L: FieldCore> RecursiveCarriedOpening<L> {
             source_idx: 0,
             opening_point,
             opening,
+            #[cfg(feature = "zk")]
+            proof_opening: opening,
             basis: BasisMode::Lagrange,
             natural_len: w_len,
             padded_len: w_len.next_power_of_two(),
             kind: CarriedOpeningKind::RecursiveWitness,
+        }
+    }
+
+    /// Opening value that is visible to the verifier and bound to the transcript.
+    pub fn transcript_opening(&self) -> L {
+        #[cfg(not(feature = "zk"))]
+        {
+            self.opening
+        }
+        #[cfg(feature = "zk")]
+        {
+            self.proof_opening
         }
     }
 }
@@ -664,7 +681,7 @@ fn build_zk_hiding_context<F, E, L, B, const D: usize>(
     root_commit_params: &LevelParams,
     num_vars: usize,
     num_claims: usize,
-    num_root_points: usize,
+    num_root_public_rows: usize,
 ) -> Result<(ZkHidingCommitment<F>, ZkHidingProverState<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -692,9 +709,9 @@ where
             &mut rng,
         );
     }
-    // Root-level ring masks: one D-coefficient ring per requested opening point.
+    // Root-level ring masks: one D-coefficient ring per public y-row.
     // Later added to `y_rings` before the root ring-switch / sumcheck flow.
-    hiding_witness.extend((0..num_root_points * D).map(|_| F::random(&mut rng)));
+    hiding_witness.extend((0..num_root_public_rows * D).map(|_| F::random(&mut rng)));
     if let Some(root_step) = fold_steps.first() {
         // Terminal folds skip Stage 1 and consume only Stage 2 pads.
         let root_has_stage1 = fold_steps.len() > 1;

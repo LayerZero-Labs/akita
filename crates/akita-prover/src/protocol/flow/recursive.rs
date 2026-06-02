@@ -355,6 +355,22 @@ where
         None => (logical_w, None),
     };
     let committed_witness_len = committed_witness.len();
+    #[cfg(feature = "zk")]
+    let carried_opening = {
+        let mut claim = RecursiveCarriedOpening::recursive_witness(
+            sumcheck_challenges,
+            w_eval,
+            committed_witness_len,
+        );
+        claim.proof_opening = proof_w_eval;
+        claim
+    };
+    #[cfg(not(feature = "zk"))]
+    let carried_opening = RecursiveCarriedOpening::recursive_witness(
+        sumcheck_challenges,
+        w_eval,
+        committed_witness_len,
+    );
 
     Ok(ProveLevelOutput {
         level_proof,
@@ -364,11 +380,7 @@ where
             commitment: committed_commitment,
             hint: committed_hint,
             log_basis: next_log_basis,
-            carried_openings: vec![RecursiveCarriedOpening::recursive_witness(
-                sumcheck_challenges,
-                w_eval,
-                committed_witness_len,
-            )],
+            carried_openings: vec![carried_opening],
             extra_carried_sources: Vec::new(),
             #[cfg(feature = "zk")]
             zk_hiding,
@@ -764,7 +776,7 @@ where
         .map(|claim| CarriedOpeningClaim {
             source_idx: claim.source_idx,
             point: &claim.opening_point,
-            value: claim.opening,
+            value: claim.transcript_opening(),
             basis: claim.basis,
             natural_len: claim.natural_len,
             padded_len: claim.padded_len,
@@ -1058,7 +1070,7 @@ where
         .map(|claim| CarriedOpeningClaim {
             source_idx: claim.source_idx,
             point: &claim.opening_point,
-            value: claim.opening,
+            value: claim.transcript_opening(),
             basis: claim.basis,
             natural_len: claim.natural_len,
             padded_len: claim.padded_len,

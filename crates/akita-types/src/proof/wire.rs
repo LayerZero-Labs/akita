@@ -109,7 +109,9 @@ where
         claim
             .padded_len
             .serialize_with_mode(&mut writer, compress)?;
-        claim.point.serialize_with_mode(&mut writer, compress)?;
+        for coordinate in &claim.point {
+            coordinate.serialize_with_mode(&mut writer, compress)?;
+        }
         claim.value.serialize_with_mode(&mut writer, compress)?;
     }
     Ok(())
@@ -129,7 +131,11 @@ where
                 + 2
                 + claim.natural_len.serialized_size(compress)
                 + claim.padded_len.serialized_size(compress)
-                + claim.point.serialized_size(compress)
+                + claim
+                    .point
+                    .iter()
+                    .map(|coordinate| coordinate.serialized_size(compress))
+                    .sum::<usize>()
                 + claim.value.serialized_size(compress)
         })
         .sum()
@@ -1202,5 +1208,90 @@ impl<
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Fp64;
+
+    type F = Fp64<4294967197>;
+
+    #[cfg(not(feature = "zk"))]
+    fn empty_stage2_sumcheck() -> SumcheckProof<F> {
+        SumcheckProof {
+            round_polys: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    fn empty_stage2_sumcheck_masked() -> SumcheckProofMasked<F> {
+        SumcheckProofMasked {
+            masked_round_polys: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn carried_opening_wire_roundtrip_uses_shape_point_len() {
+        let proof = AkitaLevelProof {
+            y_ring: FlatRingVec::from_coeffs(vec![F::from_u64(1)]),
+            extension_opening_reduction: None,
+            v: FlatRingVec::from_coeffs(vec![F::from_u64(2)]),
+            stage1: AkitaStage1Proof {
+                stages: Vec::new(),
+                s_claim: F::from_u64(3),
+            },
+            stage2: AkitaStage2Proof {
+                #[cfg(not(feature = "zk"))]
+                sumcheck_proof: empty_stage2_sumcheck(),
+                #[cfg(feature = "zk")]
+                sumcheck_proof_masked: empty_stage2_sumcheck_masked(),
+                next_w_commitment: FlatRingVec::from_coeffs(vec![F::from_u64(4)]),
+                #[cfg(not(feature = "zk"))]
+                next_w_eval: F::from_u64(5),
+                #[cfg(feature = "zk")]
+                next_w_eval_masked: F::from_u64(5),
+                extra_carried_sources: vec![CarriedOpeningSourceProof {
+                    commitment: FlatRingVec::from_coeffs(vec![F::from_u64(6)]),
+                }],
+                extra_carried_openings: vec![CarriedOpeningProof {
+                    source_idx: 1,
+                    point: vec![F::from_u64(7), F::from_u64(8)],
+                    value: F::from_u64(9),
+                    basis: BasisMode::Lagrange,
+                    natural_len: 2,
+                    padded_len: 2,
+                    kind: CarriedOpeningKind::SetupPrefix,
+                }],
+            },
+        };
+        let shape = LevelProofShape {
+            y_ring_coeffs: 1,
+            extension_opening_reduction: None,
+            v_coeffs: 1,
+            stage1_stages: Vec::new(),
+            stage2_sumcheck_proof: Vec::new(),
+            next_commit_coeffs: 1,
+            extra_carried_sources: vec![CarriedOpeningSourceShape {
+                commitment_coeffs: 1,
+            }],
+            extra_carried_openings: vec![CarriedOpeningShape { point_len: 2 }],
+        };
+
+        let mut encoded = Vec::new();
+        proof
+            .serialize_with_mode(&mut encoded, Compress::No)
+            .expect("level proof serializes");
+
+        assert_eq!(encoded.len(), proof.serialized_size(Compress::No));
+        let decoded = AkitaLevelProof::<F, F>::deserialize_with_mode(
+            encoded.as_slice(),
+            Compress::No,
+            Validate::Yes,
+            &shape,
+        )
+        .expect("level proof deserializes");
+        assert_eq!(decoded, proof);
     }
 }

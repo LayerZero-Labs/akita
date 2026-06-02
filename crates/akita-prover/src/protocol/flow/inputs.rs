@@ -448,7 +448,7 @@ where
         &root_step.params,
         prepared_claims.incidence_summary.num_vars(),
         prepared_claims.incidence_summary.num_claims(),
-        prepared_claims.incidence_summary.num_points(),
+        prepared_claims.incidence_summary.num_public_rows(),
     )?;
     #[cfg(feature = "zk")]
     transcript.append_serde(ABSORB_ZK_HIDING_COMMITMENT, &zk_hiding_commitment.u_blind);

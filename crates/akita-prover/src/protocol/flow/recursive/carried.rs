@@ -104,6 +104,8 @@ where
                 source_idx: proof_source_idx,
                 opening_point: point.clone(),
                 opening,
+                #[cfg(feature = "zk")]
+                proof_opening: opening,
                 basis: BasisMode::Lagrange,
                 natural_len,
                 padded_len: common_padded_len,
