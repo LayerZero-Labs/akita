@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="all-features-suite" tests="2" failures="1" errors="0" skipped="0" time="5.0">
+  <testcase classname="bin_c" name="ok_test" time="1.5" />
+  <testcase classname="bin_c" name="fail_test" time="3.5">
+    <failure message="boom">boom</failure>
+  </testcase>
+</testsuite>
+

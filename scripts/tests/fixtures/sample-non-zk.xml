@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="non-zk-suite" tests="3" failures="0" errors="0" skipped="1" time="6.0">
+  <testcase classname="bin_a" name="t1" time="1.0" />
+  <testcase classname="bin_b" name="t2" time="2.0">
+    <skipped />
+  </testcase>
+  <testcase classname="bin_a" name="t1" time="3.0" />
+</testsuite>
+

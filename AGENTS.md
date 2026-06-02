@@ -14,6 +14,13 @@ cargo clippy --all --message-format=short -q -- -D warnings
 cargo test
 ```
 
+## CI test timing
+
+Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`)
+showing per-pass wall time vs a main baseline, plus per-test outliers from the
+nextest JUnit output. The CI test job uploads artifact `ci-test-timing-data`
+containing `summary.json` and the rendered comment/report.
+
 ## Crate Structure
 
 Workspace members under `crates/`:
