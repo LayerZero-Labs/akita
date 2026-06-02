@@ -6,4 +6,3 @@ path = "junit.xml"
 
 [profile.ci-all-features.junit]
 path = "junit.xml"
-
