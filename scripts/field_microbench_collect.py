@@ -501,6 +501,9 @@ def missing_headline_warnings(rows: list[dict[str, str]]) -> list[str]:
         ("akita", "prime32_offset99", "4", "ring_subfield"),
         ("plonky3", "baby_bear", "5", ""),
         ("plonky3", "koala_bear", "5", ""),
+        ("plonky3", "baby_bear", "", ""),
+        ("plonky3", "koala_bear", "", ""),
+        ("plonky3", "mersenne31", "", ""),
     ]
     missing: list[str] = []
     for baseline in baselines:
@@ -523,6 +526,54 @@ def missing_headline_warnings(rows: list[dict[str, str]]) -> list[str]:
                             f"{field} ext{ext_degree or '-'} {basis or 'default'} {op}"
                         )
     return missing
+
+
+def cross_baseline_parity_warnings(rows: list[dict[str, str]]) -> list[str]:
+    """Warn when a measurement key is captured in some baselines but not others.
+
+    Each baseline should cover the same (library, field, ext, basis, op, workload,
+    vectorization, family) keys. A partial or stale capture shows up here as a set
+    difference against the union of all baselines, which is how a missing cell is
+    caught even when every expected-field allowlist still passes.
+    """
+    keysets: dict[str, set[tuple[str, ...]]] = {}
+    for row in rows:
+        key = (
+            row["library"],
+            row["field"],
+            row["ext_degree"],
+            row["basis"],
+            row["op"],
+            row["workload"],
+            row["vectorization"],
+            row["family"],
+        )
+        keysets.setdefault(row["baseline"], set()).add(key)
+
+    baselines = sorted(keysets)
+    if len(baselines) < 2:
+        return []
+
+    union: set[tuple[str, ...]] = set().union(*keysets.values())
+    warnings: list[str] = []
+    for baseline in baselines:
+        missing = union - keysets[baseline]
+        if not missing:
+            continue
+        by_family: dict[str, int] = {}
+        for key in missing:
+            family, library = key[7], key[0]
+            by_family[f"{family}/{library}"] = by_family.get(f"{family}/{library}", 0) + 1
+        breakdown = ", ".join(f"{count} {tag}" for tag, count in sorted(by_family.items()))
+        warnings.append(
+            f"baseline {baseline!r} is missing {len(missing)} measurement keys "
+            f"present in other baselines ({breakdown})"
+        )
+    return warnings
+
+
+def derived_warnings(rows: list[dict[str, str]]) -> list[str]:
+    return [*missing_headline_warnings(rows), *cross_baseline_parity_warnings(rows)]
 
 
 def write_markdown(
@@ -550,7 +601,7 @@ def write_markdown(
         and r["field"] in ("mersenne31", "prime31_offset19", "prime32_offset99")
     ]
 
-    quality_warnings = [*warnings, *missing_headline_warnings(rows)]
+    quality_warnings = [*warnings, *derived_warnings(rows)]
     baseline_body = []
     for name in sorted(metadata):
         meta = metadata[name]
@@ -717,7 +768,7 @@ def write_metadata_json(
     payload = {
         "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "baselines": metadata,
-        "warnings": sorted(set([*warnings, *missing_headline_warnings(rows)])),
+        "warnings": sorted(set([*warnings, *derived_warnings(rows)])),
         "row_count": len(rows),
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -790,7 +841,7 @@ def collect_main(args: argparse.Namespace) -> int:
         all_rows.extend(rows)
 
     all_rows = dedupe_rows(all_rows, warnings)
-    all_warnings = [*warnings, *missing_headline_warnings(all_rows)]
+    all_warnings = [*warnings, *derived_warnings(all_rows)]
     write_csv(args.out_csv, all_rows)
     write_markdown(args.out_md, all_rows, metadata, warnings)
     write_metadata_json(args.out_meta, metadata, warnings, all_rows)
