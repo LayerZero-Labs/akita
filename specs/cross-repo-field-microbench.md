@@ -226,6 +226,29 @@ Dropping the special case so Mersenne31 shares the fused path is a clear benchma
 
 Square now matches `mul` (for example AVX-512 0.541 vs 0.530 ns/lane), which is the intended outcome.
 
+**Landed (NEON): 31-bit pseudo-Mersenne packed multiply via two `sqdmulh` Solinas folds.**
+The packed NEON `mul_vec` reduced every non-Mersenne 31-bit prime (`BITS == 31, C > 1`, e.g. `prime31_offset19`) through the 64-bit-widening `solinas_reduce` path: `vmull` to two `uint64x2_t` halves, then two-to-three Solinas folds at half lane width, while Mersenne31 (`C == 1`) already used a 32-bit-lane `vqdmulhq_s32` kernel.
+The new `mul_pmersenne31_vec` generalises the Mersenne kernel to any small `C` admitted by the `Fp32` invariant `C(C+1) < P`: it keeps all four lanes in `uint32x4_t` and performs two exact Solinas folds whose high words come from two `vqdmulhq_s32` high-multiplies, never forming a 64-bit intermediate.
+This is the Solinas analogue of Plonky3's NEON Montgomery kernel (which also reduces in 32-bit lanes via two `sqdmulh`), but Montgomery-free: values stay canonical in `[0, P)` and no Montgomery factor is introduced, so the canonical-representation invariant holds.
+
+Correctness is an exact integer derivation (no Barrett estimate, no off-by-one heuristic), recorded in full as a proof on the kernel in `crates/akita-field/src/fields/packed_neon/fp32.rs`.
+Every step is an equality; the only inequality used is the compile-time invariant `C(C+1) < P`, which bounds the second fold's output `t' < 2P` so a single conditional subtract canonicalises.
+A 65536-sample boundary-and-random parity test (`packed_fp32_31b_mul_matches_scalar_stress`) plus a standalone integer model confirm the proof, and the existing 31-bit edge-lane and random parity tests also exercise the new path.
+
+Base-field win for `prime31_offset19` (median ns/lane, old kernel vs new kernel, measured back-to-back on M4 Max NEON, `-Ctarget-cpu=native`):
+
+| op | latency before -> after | throughput before -> after |
+|---|---|---|
+| packed `mul` | 2.65 -> 1.81 ns/lane (-32%, 1.47x) | 0.50 -> 0.31 ns/lane (-39%, 1.63x) |
+| packed `square` | 2.75 -> 2.04 ns/lane (-26%, 1.35x) | 0.50 -> 0.29 ns/lane (-43%, 1.75x) |
+
+This realises the previously-projected ~1.5-2x base-mul headroom versus Plonky3's `sqdmulh` Montgomery kernel, closing the largest base-level gap behind KoalaBear / BabyBear.
+
+The change is NEON-only (the `mul_vec` dispatch in `packed_neon/fp32.rs`); AVX2 / AVX-512 have no 32-bit signed high-multiply equivalent to `sqdmulh` and keep the `vpmuludq`-based widening path, recorded as a separate lower-headroom follow-up.
+The production degree-4 basis (ring-subfield) is unaffected because `ring_subfield_fp4_mul` uses the fused `dot_product_4_vec` schedule rather than `mul_vec` (measured neutral, within +/-1%).
+The alternative power-basis and tower bases call `mul_vec` directly and inline it roughly sixteen times per fp4 multiply, so the larger kernel's register footprint regresses their packed-mul latency by about 6% (power) and 14% (tower) while their throughput stays within noise.
+This regression is accepted rather than blocking because those bases are non-production (the canonical basis is ring-subfield and the production field is `Fp128`), and it is removable by routing the power and tower fp4 multiplies through the same fused dot-product schedule the ring-subfield basis already uses, recorded as a scoped follow-up rather than folded into this change.
+
 **Deferred follow-up: fused `mul_add` for the ring-subfield extension.**
 The prover's hot multiply-accumulate sites are the extension-opening reduction inner loops in `crates/akita-sumcheck/src/extension_opening_reduction/{dense,sparse}.rs`, written as `acc += a * b` over operators.
 That pays a full multiply-and-reduce followed by a separate add-and-conditional-reduce, so folding the addend into the solinas accumulator before the single reduce would save one conditional subtract per output coefficient.

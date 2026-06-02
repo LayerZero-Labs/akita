@@ -684,6 +684,72 @@ mod tests {
         check_packed_fp32_edge_lanes::<{ (1u32 << 31) - 1 }, PF>();
     }
 
+    /// Stress the 31-bit pseudo-Mersenne (`C > 1`) packed multiply against the
+    /// scalar reference across boundary values and a large random sweep. This
+    /// confirms (does not justify) the exact correctness proof on
+    /// `mul_pmersenne31_vec`: the tightest cases are `z = (P-1)^2` and inputs
+    /// that drive the second fold's `t'` toward `2P`.
+    #[test]
+    fn packed_fp32_31b_mul_matches_scalar_stress() {
+        type F = Prime31Offset19;
+        type PF = <F as HasPacking>::Packing;
+        const P: u32 = crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS;
+
+        let boundary = [
+            0u32,
+            1,
+            2,
+            3,
+            19,
+            1 << 15,
+            1 << 30,
+            (1 << 30) + 1,
+            (P - 1) / 2,
+            P - 3,
+            P - 2,
+            P - 1,
+        ];
+
+        let mut inputs: Vec<F> = boundary.iter().map(|&v| F::from_canonical_u32(v)).collect();
+        let mut rng = StdRng::seed_from_u64(0x31be_19ca_fe00_1357);
+        for _ in 0..(1 << 16) {
+            inputs.push(F::from_canonical_u32(rng.next_u32() % P));
+        }
+
+        let lhs: Vec<F> = inputs.clone();
+        let rhs: Vec<F> = {
+            let mut r = inputs.clone();
+            r.rotate_left(1);
+            r
+        };
+
+        let (lhs_p, lhs_s) = PF::pack_slice_with_suffix(&lhs);
+        let (rhs_p, rhs_s) = PF::pack_slice_with_suffix(&rhs);
+        let mul_p: Vec<PF> = lhs_p
+            .iter()
+            .zip(rhs_p.iter())
+            .map(|(&a, &b)| a * b)
+            .collect();
+        let mut mul_out = PF::unpack_slice(&mul_p);
+        for (&a, &b) in lhs_s.iter().zip(rhs_s.iter()) {
+            mul_out.push(a * b);
+        }
+        for i in 0..lhs.len() {
+            assert_eq!(mul_out[i], lhs[i] * rhs[i], "packed mul mismatch at {i}");
+        }
+
+        // Full boundary x boundary cross product (every tight combination).
+        for &x in &boundary {
+            for &y in &boundary {
+                let a = PF::broadcast(F::from_canonical_u32(x));
+                let b = PF::broadcast(F::from_canonical_u32(y));
+                let got = (a * b).extract(0);
+                let want = F::from_canonical_u32(x) * F::from_canonical_u32(y);
+                assert_eq!(got, want, "boundary mul {x}*{y}");
+            }
+        }
+    }
+
     #[test]
     fn packed_fp32_32b_add_sub_mul() {
         type F = Prime32Offset99;
