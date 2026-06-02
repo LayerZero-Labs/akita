@@ -6,6 +6,7 @@ pub mod batch;
 pub mod commitment;
 pub mod incidence;
 pub mod relation;
+pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
 pub mod stage1;
@@ -34,12 +35,12 @@ pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 #[cfg(feature = "zk")]
 pub use containers::ZkHidingProof;
 pub use containers::{FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, RingSliceSerializer};
-pub use direct_witness::{DirectWitnessProof, DirectWitnessShape, PackedDigits};
+pub use direct_witness::{CleartextWitnessProof, CleartextWitnessShape, PackedDigits};
 pub use hints::AkitaCommitmentHint;
 pub use incidence::{
     append_claim_incidence_shape_to_transcript, sample_public_row_coefficients,
     verifier_claims_to_incidence, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    IncidenceClaim, PublicOpeningRow,
+    CommitmentRouting, IncidenceClaim, PublicOpeningRow,
 };
 pub use levels::{
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof,
@@ -47,6 +48,10 @@ pub use levels::{
     ExtensionOpeningReductionProof, TerminalLevelProof,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
+pub use ring_relation::{
+    ring_column_z_first, ring_relation_segment_layout_for_opening_shape, RingRelationInstance,
+    RingRelationSegmentLayout,
+};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,

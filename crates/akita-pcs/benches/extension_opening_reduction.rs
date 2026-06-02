@@ -6,8 +6,8 @@ use akita_field::{
     TranscriptChallenge,
 };
 use akita_prover::protocol::extension_opening_reduction::{
-    tensor_opening_split, BatchedExtensionOpeningReductionProver,
-    BatchedExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
+    tensor_opening_split, ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
+    SparseExtensionOpeningWitness,
 };
 use akita_sumcheck::SumcheckInstanceProverExt;
 use akita_transcript::{labels, sample_ext_challenge, AkitaTranscript, Transcript};
@@ -113,7 +113,7 @@ where
 fn sparse_tensor_term<F, E>(
     num_vars: usize,
     num_polys: usize,
-) -> BatchedExtensionOpeningReductionTerm<E>
+) -> ExtensionOpeningReductionTerm<E>
 where
     F: CanonicalField + CanonicalBytes + TranscriptChallenge,
     E: ExtField<F>,
@@ -131,7 +131,7 @@ where
     let lazy_rounds = tail_vars.min(
         akita_prover::protocol::extension_opening_reduction::SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
     );
-    BatchedExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
+    ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
         witness,
         tail_point,
         eta,
@@ -151,7 +151,7 @@ where
     let term = sparse_tensor_term::<F, E>(num_vars, num_polys);
     let terms = vec![term];
     let input_claim =
-        BatchedExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap();
+        ExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap();
 
     let mut group = c.benchmark_group(format!(
         "extension_opening_reduction/{label}/onehot_nv{num_vars}_np{num_polys}"
@@ -162,8 +162,7 @@ where
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let mut prover =
-                    BatchedExtensionOpeningReductionProver::new(terms.clone(), input_claim)
-                        .unwrap();
+                    ExtensionOpeningReductionProver::new(terms.clone(), input_claim).unwrap();
                 let mut transcript = <AkitaTranscript<F> as Transcript<F>>::new(b"bench/eor");
                 let start = Instant::now();
                 let proof = prover

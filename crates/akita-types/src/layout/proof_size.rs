@@ -3,7 +3,7 @@
 use akita_field::{AkitaError, CanonicalField};
 
 use crate::layout::digit_math::compute_num_digits_full_field;
-use crate::{DirectWitnessShape, LevelParams, EXTENSION_OPENING_REDUCTION_DEGREE};
+use crate::{CleartextWitnessShape, LevelParams, EXTENSION_OPENING_REDUCTION_DEGREE};
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {
@@ -29,12 +29,12 @@ pub fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
 }
 
 /// Serialized byte size for a terminal direct witness shape.
-pub fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
+pub fn direct_witness_bytes(field_bits: u32, shape: &CleartextWitnessShape) -> usize {
     match shape {
-        DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
+        CleartextWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
             packed_digits_bytes(*num_elems, *bits_per_elem)
         }
-        DirectWitnessShape::FieldElements(num_coeffs) => {
+        CleartextWitnessShape::FieldElements(num_coeffs) => {
             num_coeffs.saturating_mul(field_bytes(field_bits))
         }
     }

@@ -1,25 +1,25 @@
-//! Verifier helpers for root-direct proof payloads.
+//! Verifier helpers for zero-fold proof payloads.
 
 use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, DirectWitnessProof};
+use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, CleartextWitnessProof};
 
-/// Borrow the field-element payload from a direct witness.
+/// Borrow the field-element payload from a cleartext witness.
 ///
 /// # Errors
 ///
 /// Returns an error if the witness is not encoded as field elements.
-pub(crate) fn direct_witness_field_elements<F: FieldCore>(
-    direct_witness: &DirectWitnessProof<F>,
+pub(crate) fn cleartext_witness_field_elements<F: FieldCore>(
+    cleartext_witness: &CleartextWitnessProof<F>,
 ) -> Result<&[F], AkitaError> {
-    direct_witness
+    cleartext_witness
         .as_field_elements()
         .map(|witness| witness.coeffs())
         .ok_or(AkitaError::InvalidProof)
 }
 
-/// Check one root-direct witness against one claimed opening.
+/// Check one zero-fold cleartext witness against one claimed opening.
 ///
-/// Root-direct witnesses are raw field-element tables. Under
+/// Zero-fold cleartext witnesses are raw field-element tables. Under
 /// [`BasisMode::Lagrange`] they are boolean-hypercube evaluations; under
 /// [`BasisMode::Monomial`] they are multilinear coefficients.
 ///
@@ -27,8 +27,8 @@ pub(crate) fn direct_witness_field_elements<F: FieldCore>(
 ///
 /// Returns an error if the witness length is not a power of two, does not
 /// match the opening-point dimension, or is not field-element encoded.
-pub fn direct_witness_opening_matches<F, E>(
-    direct_witness: &DirectWitnessProof<F>,
+pub fn cleartext_witness_opening_matches<F, E>(
+    cleartext_witness: &CleartextWitnessProof<F>,
     opening_point: &[E],
     opening: &E,
     basis: BasisMode,
@@ -37,7 +37,7 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let witness = direct_witness_field_elements(direct_witness)?;
+    let witness = cleartext_witness_field_elements(cleartext_witness)?;
     if !witness.len().is_power_of_two() {
         return Err(AkitaError::InvalidProof);
     }
@@ -58,14 +58,14 @@ where
     Ok(evaluation == *opening)
 }
 
-/// Verify all root-direct witness/opening claims using normalized incidence.
+/// Verify all zero-fold witness/opening claims using normalized incidence.
 ///
-/// Direct witnesses are stored once per committed polynomial in group order,
+/// Cleartext witnesses are stored once per committed polynomial in group order,
 /// while openings are stored once per claim. Multipoint openings of the same
 /// committed polynomial therefore reuse the same witness through the
 /// claim's `(group_idx, poly_idx)` route.
 ///
-/// This is the direct-root counterpart to incidence-driven schedule lookup:
+/// This is the zero-fold counterpart to incidence-driven schedule lookup:
 /// claim-to-point routing comes from [`ClaimIncidenceSummary`] rather than the
 /// temporary legacy batch-shape adapter.
 ///
@@ -74,8 +74,8 @@ where
 /// Returns an error if the incidence summary is inconsistent with the flattened
 /// witnesses/openings, routes a claim to a missing opening point, or any direct
 /// witness does not match its opening.
-pub(crate) fn verify_root_direct_openings_with_incidence<F, E>(
-    witnesses: &[DirectWitnessProof<F>],
+pub(crate) fn verify_zero_fold_openings_with_incidence<F, E>(
+    witnesses: &[CleartextWitnessProof<F>],
     opening_points: &[&[E]],
     openings: &[E],
     incidence_summary: &ClaimIncidenceSummary,
@@ -121,7 +121,7 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         let witness = witnesses.get(witness_idx).ok_or(AkitaError::InvalidProof)?;
         let opening_point = opening_points[point_idx];
-        if !direct_witness_opening_matches(witness, opening_point, opening, basis)? {
+        if !cleartext_witness_opening_matches(witness, opening_point, opening, basis)? {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -139,8 +139,8 @@ mod tests {
     type E = Fp2<F, NegOneNr>;
 
     #[test]
-    fn direct_witness_opening_matches_extension_claim() {
-        let witness = DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
+    fn cleartext_witness_opening_matches_extension_claim() {
+        let witness = CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(vec![
             F::from_u64(1),
             F::from_u64(2),
         ]));
@@ -148,22 +148,22 @@ mod tests {
         let opening = E::new(F::from_u64(4), F::from_u64(4));
 
         assert!(
-            direct_witness_opening_matches(&witness, &point, &opening, BasisMode::Lagrange)
+            cleartext_witness_opening_matches(&witness, &point, &opening, BasisMode::Lagrange)
                 .expect("extension-valued direct opening should verify")
         );
     }
 
     #[test]
     fn root_direct_openings_accept_incidence_summary() {
-        let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
-            vec![F::from_u64(1), F::from_u64(2)],
-        ))];
+        let witnesses = vec![CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(vec![F::from_u64(1), F::from_u64(2)]),
+        )];
         let point = [E::new(F::from_u64(3), F::from_u64(4))];
         let opening = [E::new(F::from_u64(4), F::from_u64(4))];
         let incidence_summary =
             ClaimIncidenceSummary::same_point(1, 1).expect("valid single-point incidence");
 
-        verify_root_direct_openings_with_incidence(
+        verify_zero_fold_openings_with_incidence(
             &witnesses,
             &[&point[..]],
             &opening,
@@ -179,8 +179,8 @@ mod tests {
         // contributes its own witness, even when the polynomial is identical.
         let raw_poly = vec![F::from_u64(1), F::from_u64(2)];
         let witnesses = vec![
-            DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly.clone())),
-            DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly)),
+            CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly.clone())),
+            CleartextWitnessProof::FieldElements(FlatRingVec::from_coeffs(raw_poly)),
         ];
         let point_a = [E::new(F::from_u64(3), F::from_u64(4))];
         let point_b = [E::new(F::from_u64(5), F::from_u64(6))];
@@ -191,7 +191,7 @@ mod tests {
         let incidence_summary = ClaimIncidenceSummary::from_point_polys(1, vec![1, 1])
             .expect("valid multipoint incidence");
 
-        verify_root_direct_openings_with_incidence(
+        verify_zero_fold_openings_with_incidence(
             &witnesses,
             &[&point_a[..], &point_b[..]],
             &openings,

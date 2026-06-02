@@ -228,7 +228,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     w_compact: &[i8],
     alpha_evals_y: &[E],
     m_evals_x: &[E],
-    r_stage1: &[E],
+    stage1_point: &[E],
     b: usize,
     live_x_cols: usize,
     col_bits: usize,
@@ -242,16 +242,16 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     assert_eq!(alpha_evals_y.len(), y_len);
     assert_eq!(w_compact.len(), live_x_cols * y_len);
     assert_eq!(m_evals_x.len(), 1usize << col_bits);
-    assert_eq!(r_stage1.len(), col_bits + ring_bits);
+    assert_eq!(stage1_point.len(), col_bits + ring_bits);
 
-    let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..ring_bits])
+    let eq_y_suffix = EqPolynomial::evals(&stage1_point[2..ring_bits])
         .expect("stage-2 two-round prefix dimensions are prevalidated");
-    let eq_x = EqPolynomial::evals(&r_stage1[ring_bits..])
+    let eq_x = EqPolynomial::evals(&stage1_point[ring_bits..])
         .expect("stage-2 x-prefix dimensions are prevalidated");
     let y_quads = y_len >> 2;
     debug_assert_eq!(eq_y_suffix.len(), y_quads);
     let norm_omitted_corner = default_stage2_norm_omitted_corner(
-        stage2_norm_corner_weights_from_taus(r_stage1[0], r_stage1[1]),
+        stage2_norm_corner_weights_from_taus(stage1_point[0], stage1_point[1]),
     );
     let norm_point_indices =
         &STAGE2_COMPRESSED_POINT_INDICES_BY_OMITTED_CORNER[norm_omitted_corner.boolean_index()];
@@ -372,16 +372,16 @@ pub(crate) struct Stage2BivariateSkipState<E: FieldCore> {
 impl<E: FieldCore> Stage2BivariateSkipState<E> {
     pub(crate) fn new(
         proof: &Stage2BivariateSkipProof<E>,
-        r_stage1: &[E],
+        stage1_point: &[E],
         s_claim: E,
         relation_claim: E,
         batching_coeff: E,
     ) -> Option<Self> {
-        if r_stage1.len() < 2 {
+        if stage1_point.len() < 2 {
             return None;
         }
-        let tau0 = r_stage1[0];
-        let tau1 = r_stage1[1];
+        let tau0 = stage1_point[0];
+        let tau1 = stage1_point[1];
         let norm_full_grid = recover_stage2_norm_grid_from_claim(
             &proof.norm,
             stage2_norm_corner_weights_from_taus(tau0, tau1),

@@ -6,7 +6,8 @@ use crate::api::commitment::{
 use crate::dispatch_ring_dim_result;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_blinding_digits;
-use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
+use crate::protocol::ring_relation::compute_relation_quotient;
+use crate::protocol::RingRelationWitness;
 use crate::{
     tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat, RingSwitchComputeBackend,
@@ -27,10 +28,11 @@ use akita_transcript::labels::{
     CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_types::RingRelationInstance;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup,
-    DirectWitnessProof, FlatDigitBlocks, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
+    CleartextWitnessProof, FlatDigitBlocks, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
     TerminalWitnessSegmentLayout,
 };

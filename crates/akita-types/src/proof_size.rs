@@ -74,10 +74,10 @@ pub fn level_proof_bytes(
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     match layout {
-        MRowLayout::Terminal => y_bytes + sumcheck,
-        MRowLayout::Intermediate => {
+        MRowLayout::WithoutDBlock => y_bytes + sumcheck,
+        MRowLayout::WithDBlock => {
             let next_lp = next_lp
-                .expect("level_proof_bytes(Intermediate) requires next_lp; caller must pass Some");
+                .expect("level_proof_bytes(WithDBlock) requires next_lp; caller must pass Some");
             let v_bytes =
                 proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
             let next_commit_bytes = proof_ring_vec_bytes(
@@ -114,7 +114,7 @@ mod tests {
 
     use crate::{
         direct_witness_bytes, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
-        AkitaStage2Proof, DirectWitnessProof, DirectWitnessShape, FlatRingVec, PackedDigits,
+        AkitaStage2Proof, CleartextWitnessProof, CleartextWitnessShape, FlatRingVec, PackedDigits,
         SisModulusFamily, TerminalLevelProof,
     };
 
@@ -277,7 +277,7 @@ mod tests {
                     Some(&next_lp),
                     next_w_len,
                     1,
-                    MRowLayout::Intermediate,
+                    MRowLayout::WithDBlock,
                 ),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
@@ -311,7 +311,7 @@ mod tests {
             .unwrap();
             let rounds = sumcheck_rounds(D, next_w_len);
 
-            let final_witness = DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
+            let final_witness = CleartextWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
                 &vec![0i8; final_w_num_elems],
                 final_w_bits,
             ));
@@ -337,7 +337,7 @@ mod tests {
                     None,
                     next_w_len,
                     num_claims,
-                    MRowLayout::Terminal,
+                    MRowLayout::WithoutDBlock,
                 ),
                 serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
@@ -347,7 +347,7 @@ mod tests {
             assert_eq!(
                 direct_witness_bytes(
                     128,
-                    &DirectWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
+                    &CleartextWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
                 ),
                 final_witness_bytes_runtime,
                 "direct_witness_bytes should match the serialized packed-digit \

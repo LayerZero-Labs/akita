@@ -21,7 +21,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
     // must not contribute to the FS-bound `setup_levels`. Only
     // the preceding Fold steps (which do commit) appear.
     use akita_challenges::SparseChallengeConfig;
-    use akita_types::{DirectStep, DirectWitnessShape, FoldStep, SisModulusFamily, Step};
+    use akita_types::{CleartextWitnessShape, DirectStep, FoldStep, SisModulusFamily, Step};
 
     let sparse = SparseChallengeConfig::Uniform {
         weight: 1,
@@ -38,7 +38,7 @@ fn setup_level_params_from_runtime_schedule_excludes_terminal_direct() {
         }),
         Step::Direct(DirectStep {
             current_w_len: 1 << 4,
-            witness_shape: DirectWitnessShape::PackedDigits((16, 3)),
+            witness_shape: CleartextWitnessShape::PackedDigits((16, 3)),
             direct_bytes: 0,
             params: None,
         }),
@@ -62,12 +62,12 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
     // contract is described on `DirectStep::params` and the
     // materializer comment that branches on it; this test locks
     // it in so neither side drifts.
-    use akita_types::{DirectStep, DirectWitnessShape, Schedule, Step};
+    use akita_types::{CleartextWitnessShape, DirectStep, Schedule, Step};
 
     let uncommittable = Schedule {
         steps: vec![Step::Direct(DirectStep {
             current_w_len: 1 << 10,
-            witness_shape: DirectWitnessShape::FieldElements(1 << 10),
+            witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
             direct_bytes: 0,
             params: None,
         })],
@@ -134,7 +134,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
             Ok(Schedule {
                 steps: vec![Step::Direct(DirectStep {
                     current_w_len: 1 << 10,
-                    witness_shape: DirectWitnessShape::FieldElements(1 << 10),
+                    witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
                     direct_bytes: 0,
                     params: None,
                 })],
@@ -423,9 +423,9 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Akita
         // intermediate-layout helper would report.
         let is_terminal_fold = idx + 1 == num_fold_levels;
         let layout = if is_terminal_fold {
-            akita_types::MRowLayout::Terminal
+            akita_types::MRowLayout::WithoutDBlock
         } else {
-            akita_types::MRowLayout::Intermediate
+            akita_types::MRowLayout::WithDBlock
         };
         // Root-level batched witnesses fan out over the key's vector
         // counts; recursive levels collapse back to singleton-by-construction.
@@ -733,7 +733,7 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
         "4x30 onehot schedule should keep a recursive suffix after the root fold"
     );
 
-    let akita_types::DirectWitnessShape::PackedDigits((num_elems, _bits)) =
+    let akita_types::CleartextWitnessShape::PackedDigits((num_elems, _bits)) =
         *akita_types::schedule_terminal_direct_witness_shape(&schedule)
             .expect("4x30 onehot schedule should end in a direct step")
     else {

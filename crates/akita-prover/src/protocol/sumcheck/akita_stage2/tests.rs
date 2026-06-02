@@ -7,7 +7,7 @@ type F = Prime128Offset275;
 
 #[derive(Clone, Copy)]
 struct Stage2Params<'a> {
-    r_stage1: &'a [F],
+    stage1_point: &'a [F],
     b: usize,
     live_x_cols: usize,
     col_bits: usize,
@@ -32,7 +32,7 @@ fn s_claim_from_compact_rows(w_compact: &[i8], params: &Stage2Params<'_>) -> F {
             w * (w + F::one())
         })
         .collect();
-    multilinear_eval(&s_evals, params.r_stage1).expect("valid stage-2 witness shape")
+    multilinear_eval(&s_evals, params.stage1_point).expect("valid stage-2 witness shape")
 }
 
 fn relation_claim_from_compact_rows(
@@ -65,7 +65,7 @@ fn new_stage2_test_prover(
     AkitaStage2Prover::new(
         batching_coeff,
         w_compact,
-        params.r_stage1,
+        params.stage1_point,
         s_claim,
         params.b,
         alpha_evals_y,
@@ -183,7 +183,7 @@ fn stage2_compact_round0_matches_unfused_reference() {
     let col_bits = 3usize;
     let ring_bits = 2usize;
     let n = 1usize << (col_bits + ring_bits);
-    let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((i as u64) + 2))
         .collect();
     let alpha_evals_y: Vec<F> = (0..(1usize << ring_bits))
@@ -202,7 +202,7 @@ fn stage2_compact_round0_matches_unfused_reference() {
             alpha_evals_y.clone(),
             m_evals_x.clone(),
             Stage2Params {
-                r_stage1: &r_stage1,
+                stage1_point: &stage1_point,
                 b,
                 live_x_cols: 1usize << col_bits,
                 col_bits,
@@ -238,7 +238,7 @@ fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
                 .map(|i| ((i * 7 + 5) % b) as i8 - half)
                 .collect();
             let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
-            let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+            let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
                 .map(|i| F::from_u64((i as u64) + 31))
                 .collect();
             let alpha_evals_y: Vec<F> = (0..y_len)
@@ -254,7 +254,7 @@ fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
                 alpha_evals_y.clone(),
                 m_evals_x.clone(),
                 Stage2Params {
-                    r_stage1: &r_stage1,
+                    stage1_point: &stage1_point,
                     b,
                     live_x_cols,
                     col_bits,
@@ -267,7 +267,7 @@ fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
                 alpha_evals_y.clone(),
                 m_evals_x.clone(),
                 Stage2Params {
-                    r_stage1: &r_stage1,
+                    stage1_point: &stage1_point,
                     b,
                     live_x_cols: 1usize << col_bits,
                     col_bits,
@@ -303,7 +303,7 @@ fn stage2_zero_gated_round0_matches_reference() {
     let col_bits = 3usize;
     let ring_bits = 1usize;
     let w_compact = vec![-1, 0, -1, 0, 0, -1, 0, -1, -1, 0, -1, 0, 0, -1, 0, -1];
-    let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((i as u64) + 41))
         .collect();
     let alpha_evals_y: Vec<F> = (0..(1usize << ring_bits))
@@ -319,7 +319,7 @@ fn stage2_zero_gated_round0_matches_reference() {
         alpha_evals_y.clone(),
         m_evals_x.clone(),
         Stage2Params {
-            r_stage1: &r_stage1,
+            stage1_point: &stage1_point,
             b: 8,
             live_x_cols: 1usize << col_bits,
             col_bits,
@@ -348,7 +348,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
         .map(|i| ((i * 11 + 7) % b) as i8 - half)
         .collect();
-    let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((i as u64) + 71))
         .collect();
     let alpha_evals_y: Vec<F> = (0..y_len)
@@ -358,7 +358,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
         .map(|i| F::from_u64((13 * i as u64) + 79))
         .collect();
     let params = Stage2Params {
-        r_stage1: &r_stage1,
+        stage1_point: &stage1_point,
         b,
         live_x_cols,
         col_bits,
@@ -436,7 +436,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
         .map(|i| ((i * 13 + 9) % b) as i8 - half)
         .collect();
-    let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((i as u64) + 101))
         .collect();
     let alpha_evals_y: Vec<F> = (0..y_len)
@@ -446,7 +446,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
         .map(|i| F::from_u64((17 * i as u64) + 107))
         .collect();
     let params = Stage2Params {
-        r_stage1: &r_stage1,
+        stage1_point: &stage1_point,
         b,
         live_x_cols,
         col_bits,
@@ -515,7 +515,7 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
     let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
         .map(|i| ((i * 9 + 7) % b) as i8 - half)
         .collect();
-    let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((i as u64) + 131))
         .collect();
     let alpha_evals_y: Vec<F> = (0..y_len)
@@ -525,7 +525,7 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
         .map(|i| F::from_u64((11 * i as u64) + 139))
         .collect();
     let params = Stage2Params {
-        r_stage1: &r_stage1,
+        stage1_point: &stage1_point,
         b,
         live_x_cols,
         col_bits,
@@ -605,7 +605,7 @@ fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
     let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
         .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
         .collect();
-    let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((3 * i as u64) + 167))
         .collect();
     let alpha_evals_y: Vec<F> = (0..y_len)
@@ -615,7 +615,7 @@ fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
         .map(|i| F::from_u64((7 * i as u64) + 179))
         .collect();
     let params = Stage2Params {
-        r_stage1: &r_stage1,
+        stage1_point: &stage1_point,
         b,
         live_x_cols,
         col_bits,
@@ -666,7 +666,7 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
         .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
         .collect();
     let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
-    let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((3 * i as u64) + 223))
         .collect();
     let alpha_evals_y: Vec<F> = (0..y_len)
@@ -682,7 +682,7 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
         alpha_evals_y.clone(),
         m_evals_x.clone(),
         Stage2Params {
-            r_stage1: &r_stage1,
+            stage1_point: &stage1_point,
             b,
             live_x_cols,
             col_bits,
@@ -695,7 +695,7 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
         alpha_evals_y,
         m_evals_x,
         Stage2Params {
-            r_stage1: &r_stage1,
+            stage1_point: &stage1_point,
             b,
             live_x_cols: 1usize << col_bits,
             col_bits,
@@ -736,7 +736,7 @@ fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
     let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
         .map(|i| ((i * 29 + 17) % b) as i8 - half)
         .collect();
-    let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((17 * i as u64) + 241))
         .collect();
     let alpha_evals_y: Vec<F> = (0..y_len)
@@ -746,7 +746,7 @@ fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
         .map(|i| F::from_u64((23 * i as u64) + 257))
         .collect();
     let params = Stage2Params {
-        r_stage1: &r_stage1,
+        stage1_point: &stage1_point,
         b,
         live_x_cols,
         col_bits,
@@ -808,7 +808,7 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
         .map(|i| ((i * 31 + 11) % b) as i8 - half)
         .collect();
     let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
-    let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| F::from_u64((31 * i as u64) + 271))
         .collect();
     let alpha_evals_y: Vec<F> = (0..y_len)
@@ -824,7 +824,7 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
         alpha_evals_y.clone(),
         m_evals_x.clone(),
         Stage2Params {
-            r_stage1: &r_stage1,
+            stage1_point: &stage1_point,
             b,
             live_x_cols,
             col_bits,
@@ -837,7 +837,7 @@ fn stage2_large_odd_dense_prefix_matches_padded_reference() {
         alpha_evals_y,
         m_evals_x,
         Stage2Params {
-            r_stage1: &r_stage1,
+            stage1_point: &stage1_point,
             b,
             live_x_cols: 1usize << col_bits,
             col_bits,

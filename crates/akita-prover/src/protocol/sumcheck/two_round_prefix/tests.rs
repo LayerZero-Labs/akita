@@ -235,7 +235,7 @@ fn build_stage2_bivariate_skip_proof_from_compact_reference(
     w_compact: &[i8],
     alpha_evals_y: &[F],
     m_evals_x: &[F],
-    r_stage1: &[F],
+    stage1_point: &[F],
     b: usize,
     live_x_cols: usize,
     col_bits: usize,
@@ -247,9 +247,9 @@ fn build_stage2_bivariate_skip_proof_from_compact_reference(
 
     let y_len = 1usize << ring_bits;
     assert_eq!(m_evals_x.len(), 1usize << col_bits);
-    let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..ring_bits])
+    let eq_y_suffix = EqPolynomial::evals(&stage1_point[2..ring_bits])
         .expect("stage-2 reference two-round prefix dimensions are prevalidated");
-    let eq_x = EqPolynomial::evals(&r_stage1[ring_bits..])
+    let eq_x = EqPolynomial::evals(&stage1_point[ring_bits..])
         .expect("stage-2 reference x-prefix dimensions are prevalidated");
     let points = stage2_full_prefix_points::<F>();
     let y_quads = y_len >> 2;
@@ -275,7 +275,7 @@ fn build_stage2_bivariate_skip_proof_from_compact_reference(
     }
 
     let norm_omitted_corner = default_stage2_norm_omitted_corner(
-        stage2_norm_corner_weights_from_taus(r_stage1[0], r_stage1[1]),
+        stage2_norm_corner_weights_from_taus(stage1_point[0], stage1_point[1]),
     );
     Some(Stage2BivariateSkipProof {
         norm: Stage2CompressedGrid::from_full_grid(norm_full, norm_omitted_corner),
@@ -427,7 +427,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
         F::from_u64(29),
         F::from_u64(31),
     ];
-    let r_stage1 = [
+    let stage1_point = [
         F::from_u64(3),
         F::from_u64(5),
         F::from_u64(7),
@@ -438,7 +438,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
-            &r_stage1,
+            &stage1_point,
             8,
             5,
             3,
@@ -448,7 +448,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
-            &r_stage1,
+            &stage1_point,
             8,
             5,
             3,
@@ -484,7 +484,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             )
         })
         .collect();
-    let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
         .map(|i| {
             F::from_u64(
                 (i as u64)
@@ -498,7 +498,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
-            &r_stage1,
+            &stage1_point,
             8,
             live_x_cols,
             col_bits,
@@ -508,7 +508,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             &w_compact,
             &alpha_evals_y,
             &m_evals_x,
-            &r_stage1,
+            &stage1_point,
             8,
             live_x_cols,
             col_bits,

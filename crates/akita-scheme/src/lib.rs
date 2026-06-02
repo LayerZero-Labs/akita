@@ -155,7 +155,7 @@ where
                         akita_types::recursive_level_layout_from_params(
                             params,
                             current_w_len,
-                            WCommitmentConfig::<{ D }, Cfg>::decomposition(),
+                            WCommitmentConfig::<D, Cfg>::decomposition(),
                         )
                     },
                     recursive_w_commit_layout_for_d::<Cfg>,
