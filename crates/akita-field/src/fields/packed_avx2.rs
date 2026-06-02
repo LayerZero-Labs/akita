@@ -273,6 +273,39 @@ impl<const P: u32> PackedFp32Avx2<P> {
         Self::solinas_reduce_with_carry(sum_evn, sum_odd, carry_evn, carry_odd)
     }
 
+    /// 3-way fused multiply-accumulate with a single end-reduction.
+    #[inline(always)]
+    unsafe fn dot_product_3_vec(a: [__m256i; 3], b: [__m256i; 3]) -> __m256i {
+        let mut sum_evn = _mm256_mul_epu32(a[0], b[0]);
+        let mut sum_odd = _mm256_mul_epu32(movehdup_epi32(a[0]), movehdup_epi32(b[0]));
+
+        if Self::BITS <= 31 {
+            for i in 1..3 {
+                let prod_evn = _mm256_mul_epu32(a[i], b[i]);
+                let prod_odd = _mm256_mul_epu32(movehdup_epi32(a[i]), movehdup_epi32(b[i]));
+                sum_evn = _mm256_add_epi64(sum_evn, prod_evn);
+                sum_odd = _mm256_add_epi64(sum_odd, prod_odd);
+            }
+            return Self::solinas_reduce(sum_evn, sum_odd);
+        }
+
+        let mut carry_evn = _mm256_setzero_si256();
+        let mut carry_odd = _mm256_setzero_si256();
+
+        for i in 1..3 {
+            let prod_evn = _mm256_mul_epu32(a[i], b[i]);
+            let prod_odd = _mm256_mul_epu32(movehdup_epi32(a[i]), movehdup_epi32(b[i]));
+            let (s_evn, c_evn) = Self::add_u64_with_carry(sum_evn, prod_evn, carry_evn);
+            let (s_odd, c_odd) = Self::add_u64_with_carry(sum_odd, prod_odd, carry_odd);
+            sum_evn = s_evn;
+            sum_odd = s_odd;
+            carry_evn = c_evn;
+            carry_odd = c_odd;
+        }
+
+        Self::solinas_reduce_with_carry(sum_evn, sum_odd, carry_evn, carry_odd)
+    }
+
     /// Multiply by an `Fp2` non-residue (used by `fp2_mul`). Recognizes the
     /// `nr == -1` and `nr == 2` fast paths to avoid full multiplies.
     /// Mirrors `PackedFp32Neon::mul_nr_vec`.
@@ -817,7 +850,33 @@ impl<const P: u32> PackedField for PackedFp32Avx2<P> {
             }
         }
 
-        Self::ring_subfield_fp4_mul(a, a)
+        unsafe {
+            let [a0, a1, a2, a3] = a.map(Self::to_vec);
+            let zero = _mm256_setzero_si256();
+            let two_a1 = Self::add_vec(a1, a1);
+            let two_a2 = Self::add_vec(a2, a2);
+            let two_a3 = Self::add_vec(a3, a3);
+            let neg_a3 = Self::sub_vec(zero, a3);
+            let neg_two_a3 = Self::sub_vec(zero, two_a3);
+            [
+                Self::from_vec(Self::dot_product_4_vec(
+                    [a0, a1, a2, a3],
+                    [a0, two_a1, two_a2, two_a3],
+                )),
+                Self::from_vec(Self::dot_product_3_vec(
+                    [a0, a1, a2],
+                    [two_a1, two_a2, two_a3],
+                )),
+                Self::from_vec(Self::dot_product_4_vec(
+                    [a0, a1, a1, a3],
+                    [two_a2, a1, two_a3, neg_a3],
+                )),
+                Self::from_vec(Self::dot_product_3_vec(
+                    [a0, a1, a2],
+                    [two_a3, two_a2, neg_two_a3],
+                )),
+            ]
+        }
     }
 
     #[inline(always)]

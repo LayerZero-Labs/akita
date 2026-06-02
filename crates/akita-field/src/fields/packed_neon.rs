@@ -521,6 +521,38 @@ impl<const P: u32> PackedFp32Neon<P> {
     }
 
     #[inline(always)]
+    fn dot_product_3_vec(a: [uint32x4_t; 3], b: [uint32x4_t; 3]) -> uint32x4_t {
+        unsafe {
+            let mut sum_lo = vmull_u32(vget_low_u32(a[0]), vget_low_u32(b[0]));
+            let mut sum_hi = vmull_high_u32(a[0], b[0]);
+
+            if Self::BITS <= 31 {
+                sum_lo = vaddq_u64(sum_lo, vmull_u32(vget_low_u32(a[1]), vget_low_u32(b[1])));
+                sum_hi = vaddq_u64(sum_hi, vmull_high_u32(a[1], b[1]));
+                sum_lo = vaddq_u64(sum_lo, vmull_u32(vget_low_u32(a[2]), vget_low_u32(b[2])));
+                sum_hi = vaddq_u64(sum_hi, vmull_high_u32(a[2], b[2]));
+
+                return Self::solinas_reduce(sum_lo, sum_hi);
+            }
+
+            let mut carry_lo = vdupq_n_u64(0);
+            let mut carry_hi = vdupq_n_u64(0);
+
+            let prod_lo_1 = vmull_u32(vget_low_u32(a[1]), vget_low_u32(b[1]));
+            let prod_hi_1 = vmull_high_u32(a[1], b[1]);
+            (sum_lo, carry_lo) = Self::add_u64_with_carry(sum_lo, prod_lo_1, carry_lo);
+            (sum_hi, carry_hi) = Self::add_u64_with_carry(sum_hi, prod_hi_1, carry_hi);
+
+            let prod_lo_2 = vmull_u32(vget_low_u32(a[2]), vget_low_u32(b[2]));
+            let prod_hi_2 = vmull_high_u32(a[2], b[2]);
+            (sum_lo, carry_lo) = Self::add_u64_with_carry(sum_lo, prod_lo_2, carry_lo);
+            (sum_hi, carry_hi) = Self::add_u64_with_carry(sum_hi, prod_hi_2, carry_hi);
+
+            Self::solinas_reduce_with_carry(sum_lo, sum_hi, carry_lo, carry_hi)
+        }
+    }
+
+    #[inline(always)]
     fn mul_nr_vec<C>(x: uint32x4_t) -> uint32x4_t
     where
         C: Fp2Config<Fp32<P>>,
@@ -1082,7 +1114,31 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
             ];
         }
 
-        Self::ring_subfield_fp4_mul(a, a)
+        let [a0, a1, a2, a3] = a.map(Self::to_vec);
+        let zero = unsafe { vdupq_n_u32(0) };
+        let two_a1 = Self::add_vec(a1, a1);
+        let two_a2 = Self::add_vec(a2, a2);
+        let two_a3 = Self::add_vec(a3, a3);
+        let neg_a3 = Self::sub_vec(zero, a3);
+        let neg_two_a3 = Self::sub_vec(zero, two_a3);
+        [
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a2, a3],
+                [a0, two_a1, two_a2, two_a3],
+            )),
+            Self::from_vec(Self::dot_product_3_vec(
+                [a0, a1, a2],
+                [two_a1, two_a2, two_a3],
+            )),
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a1, a3],
+                [two_a2, a1, two_a3, neg_a3],
+            )),
+            Self::from_vec(Self::dot_product_3_vec(
+                [a0, a1, a2],
+                [two_a3, two_a2, neg_two_a3],
+            )),
+        ]
     }
 
     #[inline(always)]

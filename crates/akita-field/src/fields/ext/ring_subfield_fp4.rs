@@ -52,6 +52,31 @@ where
     ]
 }
 
+#[inline(always)]
+fn fp32_product<const P: u32>(a: Fp32<P>, b: Fp32<P>) -> u128 {
+    ((a.to_limbs() as u64) * (b.to_limbs() as u64)) as u128
+}
+
+#[inline(always)]
+fn fp32_square_product<const P: u32>(a: Fp32<P>) -> u128 {
+    fp32_product(a, a)
+}
+
+#[inline(always)]
+fn fp32_reduce_accum<const P: u32>(x: u128) -> Fp32<P> {
+    Fp32::<P>::from_canonical_u128_reduced(x)
+}
+
+#[inline(always)]
+fn fp32_modulus_square<const P: u32>() -> u128 {
+    (P as u128) * (P as u128)
+}
+
+#[inline(always)]
+fn fp32_modulus_bits<const P: u32>() -> u32 {
+    32 - P.leading_zeros()
+}
+
 /// Backend hook for scalar ring-subfield quartic multiplication.
 ///
 /// The default is the generic coefficient formula. Concrete base fields can
@@ -77,53 +102,68 @@ impl<const P: u128> RingSubfieldFp4MulBackend for Fp128<P> {}
 impl<const P: u32> RingSubfieldFp4MulBackend for Fp32<P> {
     #[inline(always)]
     fn ring_subfield_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
-        #[inline(always)]
-        fn product<const P: u32>(a: Fp32<P>, b: Fp32<P>) -> u128 {
-            (a.to_limbs() as u128) * (b.to_limbs() as u128)
-        }
-
-        #[inline(always)]
-        fn reduce<const P: u32>(x: u128) -> Fp32<P> {
-            Fp32::<P>::from_canonical_u128_reduced(x)
-        }
-
         let [a0, a1, a2, a3] = a;
         let [b0, b1, b2, b3] = b;
-        let modulus_square = (P as u128) * (P as u128);
+        let modulus_square = fp32_modulus_square::<P>();
         [
-            reduce(product(a0, b0) + 2 * (product(a1, b1) + product(a2, b2) + product(a3, b3))),
-            reduce(
-                product(a0, b1)
-                    + product(a1, b0)
-                    + product(a1, b2)
-                    + product(a2, b1)
-                    + product(a2, b3)
-                    + product(a3, b2),
+            fp32_reduce_accum(
+                fp32_product(a0, b0)
+                    + 2 * (fp32_product(a1, b1) + fp32_product(a2, b2) + fp32_product(a3, b3)),
             ),
-            reduce(
-                product(a0, b2)
-                    + product(a2, b0)
-                    + product(a1, b1)
-                    + product(a1, b3)
-                    + product(a3, b1)
+            fp32_reduce_accum(
+                fp32_product(a0, b1)
+                    + fp32_product(a1, b0)
+                    + fp32_product(a1, b2)
+                    + fp32_product(a2, b1)
+                    + fp32_product(a2, b3)
+                    + fp32_product(a3, b2),
+            ),
+            fp32_reduce_accum(
+                fp32_product(a0, b2)
+                    + fp32_product(a2, b0)
+                    + fp32_product(a1, b1)
+                    + fp32_product(a1, b3)
+                    + fp32_product(a3, b1)
                     + modulus_square
-                    - product(a3, b3),
+                    - fp32_product(a3, b3),
             ),
-            reduce(
-                product(a0, b3)
-                    + product(a3, b0)
-                    + product(a1, b2)
-                    + product(a2, b1)
+            fp32_reduce_accum(
+                fp32_product(a0, b3)
+                    + fp32_product(a3, b0)
+                    + fp32_product(a1, b2)
+                    + fp32_product(a2, b1)
                     + 2 * modulus_square
-                    - product(a2, b3)
-                    - product(a3, b2),
+                    - fp32_product(a2, b3)
+                    - fp32_product(a3, b2),
             ),
         ]
     }
 
     #[inline(always)]
     fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
-        Self::ring_subfield_fp4_mul(a, a)
+        if fp32_modulus_bits::<P>() != 32 {
+            return Self::ring_subfield_fp4_mul(a, a);
+        }
+
+        let [a0, a1, a2, a3] = a;
+        let modulus_square = fp32_modulus_square::<P>();
+        let a0_square = fp32_square_product(a0);
+        let a1_square = fp32_square_product(a1);
+        let a2_square = fp32_square_product(a2);
+        let a3_square = fp32_square_product(a3);
+        let a0a1 = fp32_product(a0, a1);
+        let a0a2 = fp32_product(a0, a2);
+        let a0a3 = fp32_product(a0, a3);
+        let a1a2 = fp32_product(a1, a2);
+        let a1a3 = fp32_product(a1, a3);
+        let a2a3 = fp32_product(a2, a3);
+
+        [
+            fp32_reduce_accum(a0_square + 2 * (a1_square + a2_square + a3_square)),
+            fp32_reduce_accum(2 * (a0a1 + a1a2 + a2a3)),
+            fp32_reduce_accum(2 * a0a2 + a1_square + 2 * a1a3 + modulus_square - a3_square),
+            fp32_reduce_accum(2 * (a0a3 + a1a2 + modulus_square - a2a3)),
+        ]
     }
 }
 
