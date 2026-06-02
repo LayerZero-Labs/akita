@@ -221,7 +221,7 @@ pub fn prove_root_fold_with_params<F, E, C, T, P, B, const D: usize, CommitW>(
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
-    E: RingSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F>
         + ExtField<E>
         + ExtField<F>
@@ -598,7 +598,7 @@ pub fn prove_terminal_root_fold_with_params<F, E, C, T, P, B, const D: usize>(
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
-    E: RingSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F>
         + ExtField<E>
         + HasUnreducedOps

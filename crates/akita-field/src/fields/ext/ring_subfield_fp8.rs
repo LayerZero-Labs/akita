@@ -626,6 +626,8 @@ impl<const P: u32> HasUnreducedOps for RingSubfieldFp8<Fp16<P>> {
     }
 }
 
+impl<const P: u32> MulBaseUnreduced<Fp16<P>> for RingSubfieldFp8<Fp16<P>> {}
+
 impl<const P: u32> HasOptimizedFold for RingSubfieldFp8<Fp16<P>> {
     type FoldCtx = FoldMatrixFp16;
 
@@ -768,6 +770,8 @@ macro_rules! impl_ring_subfield_fp8_unreduced_identity {
                 accum
             }
         }
+
+        impl<const $p: $pty> MulBaseUnreduced<$base<$p>> for RingSubfieldFp8<$base<$p>> {}
     };
 }
 

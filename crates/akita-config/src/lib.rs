@@ -13,7 +13,7 @@
 //! `<Cfg>`-generic ring-degree dispatch helpers.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBaseUnreduced};
 use akita_planner::PlannerPolicy;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -69,10 +69,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     type Field: CanonicalField + FieldCore;
 
     /// Field used by public opening points and claimed evaluations.
-    type ClaimField: ExtField<Self::Field>;
+    type ClaimField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field>;
 
     /// Field used by Fiat-Shamir scalar challenges in sumcheck-style steps.
-    type ChallengeField: ExtField<Self::Field> + ExtField<Self::ClaimField>;
+    type ChallengeField: ExtField<Self::Field>
+        + ExtField<Self::ClaimField>
+        + MulBaseUnreduced<Self::Field>;
 
     /// Extension degree `K = [ClaimField : Field]`.
     ///

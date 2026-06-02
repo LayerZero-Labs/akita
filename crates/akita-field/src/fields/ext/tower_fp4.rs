@@ -423,3 +423,39 @@ impl<
     > BalancedDigitLookup for TowerBasisFp4<F, C2, C4>
 {
 }
+
+/// Identity-stub `HasUnreducedOps`: `ProductAccum = Self`, so every multiply
+/// reduces immediately. Same pattern as the `Fp2` / `RingSubfieldFp8` stubs.
+impl<F, C2, C4> HasUnreducedOps for TowerBasisFp4<F, C2, C4>
+where
+    F: FieldCore + Valid + FromPrimitiveInt + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
+{
+    type MulU64Accum = Self;
+    type ProductAccum = Self;
+
+    #[inline]
+    fn mul_u64_unreduced(self, small: u64) -> Self {
+        self * Self::from_u64(small)
+    }
+    #[inline]
+    fn mul_to_product_accum(self, other: Self) -> Self {
+        self * other
+    }
+    #[inline]
+    fn reduce_mul_u64_accum(accum: Self) -> Self {
+        accum
+    }
+    #[inline]
+    fn reduce_product_accum(accum: Self) -> Self {
+        accum
+    }
+}
+
+impl<F, C2> MulBaseUnreduced<F> for TowerBasisFp4<F, C2, UnitNr>
+where
+    F: FieldCore + Valid + FromPrimitiveInt + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+{
+}

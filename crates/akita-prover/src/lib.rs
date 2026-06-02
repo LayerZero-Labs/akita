@@ -14,7 +14,9 @@ mod validation;
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
+};
 use akita_types::{
     embed_ring_subfield_vector, CleartextWitnessProof, FlatDigitBlocks, OpeningPoints,
     RingSubfieldEncoding,
@@ -276,7 +278,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// invalid.
     fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let num_vars = self.num_vars();
         if logical_point.len() != num_vars {
@@ -311,7 +313,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         polys
             .iter()
@@ -607,7 +609,7 @@ where
 
     fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         <P as AkitaPolyOps<F, D>>::tensor_extension_column_partials::<E>(*self, logical_point)
     }
@@ -617,7 +619,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
         P::tensor_extension_column_partials_batch(&inner_refs, logical_point)

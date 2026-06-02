@@ -513,6 +513,46 @@ fn ring_subfield_fp4_fp32_accum_summation() {
     );
 }
 
+#[test]
+fn mul_base_to_product_accum_matches_mul_base_sum() {
+    use crate::{Fp32, MulBaseUnreduced};
+    use num_traits::Zero;
+
+    fn check<Base, Ext>(seed: u64)
+    where
+        Base: FieldCore + RandomSampling,
+        Ext: MulBaseUnreduced<Base> + Zero + RandomSampling,
+    {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let n = 1024;
+        let pairs: Vec<(Ext, Base)> = (0..n)
+            .map(|_| (Ext::random(&mut rng), Base::random(&mut rng)))
+            .collect();
+
+        let direct: Ext = pairs
+            .iter()
+            .map(|(w, x)| w.mul_base(*x))
+            .fold(Ext::zero(), |s, p| s + p);
+
+        let accum = pairs.iter().fold(
+            <Ext as HasUnreducedOps>::ProductAccum::zero(),
+            |s, (w, x)| s + w.mul_base_to_product_accum(*x),
+        );
+
+        assert_eq!(
+            direct,
+            Ext::reduce_product_accum(accum),
+            "delayed base-scaling mismatch over {n} terms"
+        );
+    }
+
+    // fp4/Fp32 takes the optimal coordinate-scaling override; fp2/Fp64 and
+    // fp8/Fp16 take the lifted default body. All three defer reduction.
+    check::<Fp32<251>, RingSubfieldFp4<Fp32<251>>>(0xB001);
+    check::<F, Ext2<F>>(0xB002);
+    check::<Prime16Offset99, R8Fp16>(0xB003);
+}
+
 // Regression guard for the `Fp2<Fp64>` delayed-reduction accumulator. The earlier
 // bug dropped the carry into bit 128 because each Fp2 coefficient (c0 up to ~2^130,
 // c1 up to ~2^129) was formed in a single `u128`. It only surfaces with near-`p`

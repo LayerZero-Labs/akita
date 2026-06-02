@@ -47,7 +47,7 @@ pub(in crate::protocol::flow) fn prepare_root_extension_opening_reduction<
 ) -> Result<PreparedRootExtensionOpeningReduction<E, C>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: RingSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F> + ExtField<E>,
     P: AkitaPolyOps<F, D>,
 {

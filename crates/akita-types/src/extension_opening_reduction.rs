@@ -5,8 +5,9 @@
 //! `akita-prover`.
 
 use akita_algebra::poly::multilinear_eval;
-use akita_algebra::EqPolynomial;
-use akita_field::{AkitaError, ExtField, FieldCore};
+use akita_algebra::{EqPolynomial, SplitEqEvals};
+use akita_field::{AkitaError, ExtField, FieldCore, HasUnreducedOps, MulBaseUnreduced};
+use num_traits::Zero;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -123,7 +124,7 @@ pub fn tensor_column_partials_from_base_evals<F, E>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
 {
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
     if split_bits > original_num_vars {
@@ -147,27 +148,76 @@ where
         });
     }
 
+    // Dao-Thaler / Gruen split of the tail equality table: contract
+    // `partials[head] = Σ_tail eq(tail_point, tail) · base_evals[tail*width + head]`
+    // as an outer loop over the high tail bits wrapping an inner loop over the low
+    // bits, instead of materializing the full `2^tail` equality table.
     let tail_point = &logical_point[split_bits..];
-    let tail_len = 1usize << tail_point.len();
-    let tail_eq = EqPolynomial::evals(tail_point)?;
+    let split = SplitEqEvals::new(tail_point)?;
+    let source = FlatColumnSource {
+        evals: base_evals,
+        width,
+    };
+    Ok(tensor_column_partials_split_fold::<F, E, _>(
+        &split, width, &source,
+    ))
+}
 
-    // `partials[head] = sum_tail eq(tail_point, tail) * base_evals[tail*width + head]`.
-    // Field addition is exact and associative, so a parallel chunk/reduce yields
-    // the identical canonical value as the serial fold below.
+/// Read-only source of the base-field column runs consumed by the
+/// extension-opening tensor partials fold.
+///
+/// `row(tail)` returns the contiguous `width`-length base-field run at flat tail
+/// index `tail`, where `tail` ranges over `0..2^tail_bits`. Implementing this
+/// lets a backend stream its base witness `f` in place during the partials fold
+/// instead of first copying it into a flat buffer.
+pub trait TensorColumnSource<F: FieldCore>: Sync {
+    /// The `width`-length base-field run at flat tail index `tail`.
+    fn row(&self, tail: usize) -> &[F];
+}
+
+/// Column source backed by a flat tail-major base-eval slice:
+/// `row(tail) = evals[tail*width .. (tail+1)*width]`.
+pub struct FlatColumnSource<'a, F: FieldCore> {
+    evals: &'a [F],
+    width: usize,
+}
+
+impl<F: FieldCore> TensorColumnSource<F> for FlatColumnSource<'_, F> {
+    #[inline]
+    fn row(&self, tail: usize) -> &[F] {
+        let base = tail * self.width;
+        &self.evals[base..base + self.width]
+    }
+}
+
+/// Contract the split tail equality table against a base-field column source.
+///
+/// Field addition is exact and associative, and the deferred inner sum is exact
+/// whenever [`HasUnreducedOps::DELAYED_PRODUCT_SUM_IS_EXACT`] holds, so the
+/// `(x_out, x_in)` reordering yields the identical canonical partials as a flat
+/// fold over `tail`.
+pub fn tensor_column_partials_split_fold<F, E, S>(
+    split: &SplitEqEvals<E>,
+    width: usize,
+    source: &S,
+) -> Vec<E>
+where
+    F: FieldCore,
+    E: MulBaseUnreduced<F>,
+    S: TensorColumnSource<F>,
+{
+    let out_len = split.out_len();
     #[cfg(feature = "parallel")]
-    let partials = {
+    {
         const PARALLEL_PARTIALS_THRESHOLD: usize = 1 << 14;
-        if tail_len >= PARALLEL_PARTIALS_THRESHOLD {
-            tail_eq[..tail_len]
-                .par_iter()
-                .zip(base_evals[..tail_len * width].par_chunks_exact(width))
+        if out_len.saturating_mul(split.in_len()) >= PARALLEL_PARTIALS_THRESHOLD {
+            return (0..out_len)
+                .into_par_iter()
                 .fold(
                     || vec![E::zero(); width],
-                    |mut acc, (&weight, chunk)| {
-                        for (slot, &coeff) in acc.iter_mut().zip(chunk.iter()) {
-                            *slot += weight.mul_base(coeff);
-                        }
-                        acc
+                    |mut out, x_out| {
+                        partials_out_contribution::<F, E, S>(split, source, width, x_out, &mut out);
+                        out
                     },
                 )
                 .reduce(
@@ -178,38 +228,56 @@ where
                         }
                         acc
                     },
-                )
-        } else {
-            tensor_column_partials_fold_serial::<F, E>(&tail_eq, base_evals, tail_len, width)
-        }
-    };
-    #[cfg(not(feature = "parallel"))]
-    let partials =
-        tensor_column_partials_fold_serial::<F, E>(&tail_eq, base_evals, tail_len, width);
-    Ok(partials)
-}
-
-/// Serial fold helper shared by the parallel and non-parallel
-/// [`tensor_column_partials_from_base_evals`] paths.
-#[inline]
-fn tensor_column_partials_fold_serial<F, E>(
-    tail_eq: &[E],
-    base_evals: &[F],
-    tail_len: usize,
-    width: usize,
-) -> Vec<E>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let mut partials = vec![E::zero(); width];
-    for (tail, &weight) in tail_eq.iter().enumerate().take(tail_len) {
-        let base = tail * width;
-        for head in 0..width {
-            partials[head] += weight.mul_base(base_evals[base + head]);
+                );
         }
     }
-    partials
+    let mut out = vec![E::zero(); width];
+    for x_out in 0..out_len {
+        partials_out_contribution::<F, E, S>(split, source, width, x_out, &mut out);
+    }
+    out
+}
+
+/// Accumulate one outer-index slab `e_out[x_out] · Σ_{x_in} e_in[x_in] · f(·)`
+/// into `out` (one entry per packed head). The inner sum over `x_in` defers
+/// reduction when the field opts in; otherwise it falls back to per-term
+/// `mul_base`.
+#[inline]
+fn partials_out_contribution<F, E, S>(
+    split: &SplitEqEvals<E>,
+    source: &S,
+    width: usize,
+    x_out: usize,
+    out: &mut [E],
+) where
+    F: FieldCore,
+    E: MulBaseUnreduced<F>,
+    S: TensorColumnSource<F>,
+{
+    let in_len = split.in_len();
+    let e_out = split.e_out[x_out];
+    let row_base = x_out * in_len;
+    if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        let mut inner = vec![<E as HasUnreducedOps>::ProductAccum::zero(); width];
+        for (x_in, &e_in) in split.e_in.iter().enumerate().take(in_len) {
+            for (slot, &coeff) in inner.iter_mut().zip(source.row(row_base + x_in)) {
+                *slot += e_in.mul_base_to_product_accum(coeff);
+            }
+        }
+        for (slot, acc) in out.iter_mut().zip(inner) {
+            *slot += e_out * E::reduce_product_accum(acc);
+        }
+    } else {
+        let mut inner = vec![E::zero(); width];
+        for (x_in, &e_in) in split.e_in.iter().enumerate().take(in_len) {
+            for (slot, &coeff) in inner.iter_mut().zip(source.row(row_base + x_in)) {
+                *slot += e_in.mul_base(coeff);
+            }
+        }
+        for (slot, value) in out.iter_mut().zip(inner) {
+            *slot += e_out * value;
+        }
+    }
 }
 
 /// Transpose the tensor partial object from column view to row view.
@@ -264,7 +332,7 @@ pub fn tensor_partials_from_base_evals<F, E>(
 ) -> Result<ExtensionOpeningTensorPartials<E>, AkitaError>
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
 {
     let column_partials = tensor_column_partials_from_base_evals::<F, E>(
         original_num_vars,

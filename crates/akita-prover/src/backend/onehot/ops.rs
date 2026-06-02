@@ -3,6 +3,7 @@ use super::fold::{
     fold_single_chunk_onehot_block, fold_single_chunk_onehot_block_ring,
 };
 use super::*;
+use akita_field::MulBaseUnreduced;
 
 /// Inner (low) coordinate count for the factorized one-hot column-partials
 /// fast path. The high opening coordinates split into `inner_bits` low bits
@@ -90,7 +91,7 @@ where
 
     fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         if logical_point.len() != self.num_vars {
             return Err(AkitaError::InvalidPointDimension {
@@ -154,7 +155,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let Some(first) = polys.first() else {
             return Ok(Vec::new());

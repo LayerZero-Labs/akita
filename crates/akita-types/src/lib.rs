@@ -25,12 +25,13 @@ pub use extension_opening_reduction::{
     checked_table_len, extension_opening_reduction_claim,
     extension_opening_reduction_eval_at_point, num_rounds_from_table_len,
     project_tensor_factor_value, tensor_column_partials_from_base_evals,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
-    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
-    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
+    tensor_column_partials_split_fold, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_logical_claim_from_partials, tensor_opening_split,
+    tensor_packed_witness_evals, tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
     tensor_row_partials_from_columns, validate_reduction_tables, ExtensionOpeningFactorTerm,
     ExtensionOpeningReductionFactor, ExtensionOpeningReductionRoundResult,
-    ExtensionOpeningTensorPartials, EXTENSION_OPENING_REDUCTION_DEGREE,
+    ExtensionOpeningTensorPartials, FlatColumnSource, TensorColumnSource,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,

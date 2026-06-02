@@ -386,6 +386,11 @@ macro_rules! impl_fp2_unreduced_identity {
                 accum
             }
         }
+
+        impl<const $p: $pty, C: Fp2Config<$base<$p>>> MulBaseUnreduced<$base<$p>>
+            for Fp2<$base<$p>, C>
+        {
+        }
     };
 }
 
@@ -552,6 +557,8 @@ impl<const P: u64, C: Fp2Config<Fp64<P>>> HasUnreducedOps for Fp2<Fp64<P>, C> {
         Self::new(c0, c1)
     }
 }
+
+impl<const P: u64, C: Fp2Config<Fp64<P>>> MulBaseUnreduced<Fp64<P>> for Fp2<Fp64<P>, C> {}
 
 /// Default quadratic extension used by Akita field tests and helpers.
 pub type Ext2<F> = Fp2<F, TwoNr>;

@@ -513,6 +513,23 @@ impl<const P: u32> HasUnreducedOps for RingSubfieldFp4<Fp32<P>> {
     }
 }
 
+impl<const P: u32> MulBaseUnreduced<Fp32<P>> for RingSubfieldFp4<Fp32<P>> {
+    #[inline]
+    fn mul_base_to_product_accum(self, x: Fp32<P>) -> Self::ProductAccum {
+        // E × F has no cross terms: scale each base coordinate into its own
+        // u128 slot. Each product is `< p² < 2^62`, so a summed batch reduces
+        // exactly (see `DELAYED_PRODUCT_SUM_IS_EXACT`).
+        let x = x.to_limbs() as u128;
+        let [a0, a1, a2, a3] = self.coeffs;
+        RingSubfieldFp4Fp32ProductAccum([
+            (a0.to_limbs() as u128) * x,
+            (a1.to_limbs() as u128) * x,
+            (a2.to_limbs() as u128) * x,
+            (a3.to_limbs() as u128) * x,
+        ])
+    }
+}
+
 impl<const P: u32> HasOptimizedFold for RingSubfieldFp4<Fp32<P>> {
     type FoldCtx = FoldMatrixFp32;
 
@@ -598,6 +615,8 @@ macro_rules! impl_ring_subfield_fp4_unreduced_identity {
                 accum
             }
         }
+
+        impl<const $p: $pty> MulBaseUnreduced<$base<$p>> for RingSubfieldFp4<$base<$p>> {}
     };
 }
 

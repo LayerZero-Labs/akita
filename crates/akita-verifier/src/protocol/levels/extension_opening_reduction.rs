@@ -17,8 +17,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
-    recover_ring_subfield_inner_product, tensor_equality_factor_eval_at_point, RingSubfieldEncoding,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    recover_ring_subfield_inner_product, tensor_equality_factor_eval_at_point,
+    RingSubfieldEncoding, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 
 /// Closure that recomputes the inner ring-slot reduction `v` at the sumcheck
@@ -36,7 +36,8 @@ struct EorRow<'a, F: FieldCore, C: FieldCore, const D: usize> {
 }
 
 /// EOR sumcheck verifier instance shared by the root and recursive levels.
-pub(crate) struct ExtensionOpeningReductionVerifier<'a, F: FieldCore, C: FieldCore, const D: usize> {
+pub(crate) struct ExtensionOpeningReductionVerifier<'a, F: FieldCore, C: FieldCore, const D: usize>
+{
     num_rounds: usize,
     input_claim: C,
     eta: Vec<C>,
@@ -44,7 +45,9 @@ pub(crate) struct ExtensionOpeningReductionVerifier<'a, F: FieldCore, C: FieldCo
     inner_reduction: InnerReductionFn<'a, F, C, D>,
 }
 
-impl<'a, F: FieldCore, C: FieldCore, const D: usize> ExtensionOpeningReductionVerifier<'a, F, C, D> {
+impl<'a, F: FieldCore, C: FieldCore, const D: usize>
+    ExtensionOpeningReductionVerifier<'a, F, C, D>
+{
     /// Build the instance from the per-row `(y_ring, point_tail)` data, the
     /// batch challenges `eta`, and the point-prep closure.
     pub(crate) fn new(

@@ -24,7 +24,7 @@ use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, Invertible, PseudoMersenneField, RandomSampling,
+    HalvingField, Invertible, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
 #[cfg(feature = "zk")]

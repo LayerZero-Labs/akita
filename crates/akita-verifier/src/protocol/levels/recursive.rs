@@ -248,18 +248,22 @@ where
                 input_claim,
                 eta,
                 vec![(&y_rings[0], tail_point.to_vec())],
-                Box::new(move |rho: &[L]| -> Result<CyclotomicRing<F, D>, AkitaError> {
-                    let protocol_point =
-                        ring_subfield_packed_extension_opening_point::<F, L, D>(rho.len(), rho)?;
-                    Ok(prepare_recursive_opening_point_ext::<F, L, D>(
-                        &protocol_point,
-                        basis,
-                        lp,
-                        alpha_bits,
-                        block_order,
-                    )?
-                    .inner_reduction)
-                }),
+                Box::new(
+                    move |rho: &[L]| -> Result<CyclotomicRing<F, D>, AkitaError> {
+                        let protocol_point = ring_subfield_packed_extension_opening_point::<F, L, D>(
+                            rho.len(),
+                            rho,
+                        )?;
+                        Ok(prepare_recursive_opening_point_ext::<F, L, D>(
+                            &protocol_point,
+                            basis,
+                            lp,
+                            alpha_bits,
+                            block_order,
+                        )?
+                        .inner_reduction)
+                    },
+                ),
             );
             let rho = eor_verifier.verify::<F, T, _>(&reduction.sumcheck, transcript, |tr| {
                 sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
@@ -331,8 +335,10 @@ where
                 residual,
             )?;
         } else {
-            let true_opening =
-                ZkRelationAccumulator::unmask_lc(current_state.opening, &current_state.opening_mask);
+            let true_opening = ZkRelationAccumulator::unmask_lc(
+                current_state.opening,
+                &current_state.opening_mask,
+            );
             let mut residual = y_opening;
             residual.add_scaled(-L::one(), &true_opening);
             zk_push_linear_zero(zk_relations, "recursive y-ring opening relation", residual)?;

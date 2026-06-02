@@ -397,7 +397,7 @@ where
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    E: RingSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F>
         + ExtField<E>
         + ExtField<F>

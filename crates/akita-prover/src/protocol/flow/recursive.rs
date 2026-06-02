@@ -578,7 +578,7 @@ pub(in crate::protocol::flow) fn prove_recursive_extension_opening_reduction<F, 
 ) -> Result<RecursiveExtensionOpeningReduction<L>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: ExtField<F> + HasUnreducedOps + HasOptimizedFold + AkitaSerialize,
+    L: ExtField<F> + HasUnreducedOps + HasOptimizedFold + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let num_vars = opening_point.len();
@@ -749,7 +749,8 @@ where
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
@@ -952,7 +953,8 @@ where
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
 {
@@ -1150,7 +1152,8 @@ where
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
@@ -1231,7 +1234,8 @@ where
         + HasUnreducedOps
         + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
