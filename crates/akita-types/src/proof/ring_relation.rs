@@ -83,9 +83,9 @@ impl<F: FieldCore + CanonicalField, const D: usize> RingRelationInstance<F, D> {
                 "ring relation opening points do not match public row count".to_string(),
             ));
         }
-        if y.len() != incidence.num_public_rows() {
+        if y.len() < incidence.num_public_rows() {
             return Err(AkitaError::InvalidInput(
-                "ring relation y rows do not match public row count".to_string(),
+                "ring relation y rows shorter than public row count".to_string(),
             ));
         }
         Ok(Self {
