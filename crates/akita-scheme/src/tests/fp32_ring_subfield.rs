@@ -20,7 +20,12 @@ struct Fp32RingSubfieldOuterFallbackCfg;
 fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
     use akita_types::AjtaiKeyParams;
     let sis_family = akita_types::SisModulusFamily::Q32;
-    let d: usize = 16;
+    // Commit ring dimension must equal the static `D` the scheme dispatches
+    // (`DensePoly::<SmallF, D>` / `validate_commit_level_params::<F, D>`); both
+    // fixtures pin `D = 32`. `ring_subfield = 2` below is `RingSubfieldFp4`'s
+    // embedding norm bound (a claim-field property), not `D / d`, so the
+    // collision buckets are independent of this dimension.
+    let d: usize = 32;
     let stage1 = akita_challenges::SparseChallengeConfig::Uniform {
         weight: 1,
         nonzero_coeffs: vec![-1, 1],
