@@ -31,18 +31,16 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
                 "extension-opening reduction requires at least one term".to_string(),
             )
         })?;
-        let table_len = first.current_witness_evals.len();
+        let table_len = first.tables.len();
         let num_rounds = num_rounds_from_table_len(table_len)?;
         for term in &terms {
-            if term.current_witness_evals.len() != table_len
-                || term.current_factor.len() != table_len
-            {
+            // Each term's witness/factor lengths agree by construction (the
+            // table pairing is built equal-length); only the cross-term domain
+            // needs checking here.
+            if term.tables.len() != table_len {
                 return Err(AkitaError::InvalidSize {
                     expected: table_len,
-                    actual: term
-                        .current_witness_evals
-                        .len()
-                        .max(term.current_factor.len()),
+                    actual: term.tables.len(),
                 });
             }
         }
@@ -81,9 +79,7 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
         terms: &[ExtensionOpeningReductionTerm<E>],
     ) -> Result<E, AkitaError> {
         terms.iter().try_fold(E::zero(), |acc, term| {
-            term.current_witness_evals
-                .claim_with_factor(&term.current_factor)
-                .map(|claim| acc + term.coeff * claim)
+            term.tables.claim().map(|claim| acc + term.coeff * claim)
         })
     }
 
@@ -141,8 +137,7 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E
         let mut quadratic = E::zero();
 
         for term in &mut self.terms {
-            debug_assert_eq!(term.current_witness_evals.len(), expected_len);
-            debug_assert_eq!(term.current_factor.len(), term.current_witness_evals.len());
+            debug_assert_eq!(term.tables.len(), expected_len);
 
             term.accumulate_into(&mut constant, &mut quadratic);
         }

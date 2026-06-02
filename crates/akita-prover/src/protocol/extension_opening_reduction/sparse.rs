@@ -6,8 +6,7 @@ use super::*;
 /// dense and batched paths uniformly.
 #[derive(Debug, Clone)]
 pub struct ExtensionOpeningReductionTerm<E: FieldCore> {
-    pub(super) current_witness_evals: ExtensionOpeningWitness<E>,
-    pub(super) current_factor: ExtensionOpeningFactor<E>,
+    pub(super) tables: ExtensionOpeningTables<E>,
     pub(super) coeff: E,
     /// `coeff`-scaled `(constant, quadratic)` for the next round, pre-computed
     /// by the fused fold in [`Self::ingest_challenge`] for the dense path.
@@ -785,53 +784,50 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
     }
 }
 
+/// Transparent factor for a sparse-witness term.
+///
+/// The lazy [`TensorEqualityFactor`] is only ever paired with a sparse witness,
+/// so it lives inside the sparse case rather than as a standalone factor. This
+/// is what makes the `(dense witness, tensor factor)` combination unrepresentable.
 #[derive(Debug, Clone)]
-pub(super) enum ExtensionOpeningWitness<E: FieldCore> {
-    Dense(Vec<E>),
-    Sparse(SparseExtensionOpeningWitness<E>),
-}
-
-#[derive(Debug, Clone)]
-pub(super) enum ExtensionOpeningFactor<E: FieldCore> {
+pub(super) enum SparseFactor<E: FieldCore> {
     Dense(Vec<E>),
     Tensor(TensorEqualityFactor<E>),
 }
 
-impl<E: FieldCore> ExtensionOpeningFactor<E> {
-    pub(super) fn len(&self) -> usize {
-        match self {
-            Self::Dense(evals) => evals.len(),
-            Self::Tensor(factor) => factor.len(),
-        }
-    }
+/// Paired witness/factor tables for one extension-opening reduction term.
+///
+/// Only the three valid combinations are representable: a dense witness always
+/// pairs with a dense factor, and the lazy tensor factor only ever pairs with a
+/// sparse witness (via [`SparseFactor`]). A `(dense witness, tensor factor)`
+/// pair cannot be constructed, so the prover never needs to reject or
+/// `unreachable!` on it.
+#[derive(Debug, Clone)]
+pub(super) enum ExtensionOpeningTables<E: FieldCore> {
+    Dense {
+        witness: Vec<E>,
+        factor: Vec<E>,
+    },
+    Sparse {
+        witness: SparseExtensionOpeningWitness<E>,
+        factor: SparseFactor<E>,
+    },
 }
 
-impl<E: FieldCore> ExtensionOpeningWitness<E> {
+impl<E: FieldCore> ExtensionOpeningTables<E> {
     pub(super) fn len(&self) -> usize {
         match self {
-            Self::Dense(evals) => evals.len(),
-            Self::Sparse(witness) => witness.table_len(),
+            Self::Dense { witness, .. } => witness.len(),
+            Self::Sparse { witness, .. } => witness.table_len(),
         }
     }
 
-    pub(super) fn claim_with_factor(
-        &self,
-        factor: &ExtensionOpeningFactor<E>,
-    ) -> Result<E, AkitaError> {
+    pub(super) fn claim(&self) -> Result<E, AkitaError> {
         match self {
-            Self::Dense(evals) => match factor {
-                ExtensionOpeningFactor::Dense(factor_evals) => {
-                    extension_opening_reduction_claim(evals, factor_evals)
-                }
-                ExtensionOpeningFactor::Tensor(_) => Err(AkitaError::InvalidInput(
-                    "lazy tensor extension-opening factor requires a sparse witness".to_string(),
-                )),
-            },
-            Self::Sparse(witness) => match factor {
-                ExtensionOpeningFactor::Dense(factor_evals) => {
-                    witness.claim_with_factor(factor_evals)
-                }
-                ExtensionOpeningFactor::Tensor(factor) => {
+            Self::Dense { witness, factor } => extension_opening_reduction_claim(witness, factor),
+            Self::Sparse { witness, factor } => match factor {
+                SparseFactor::Dense(factor_evals) => witness.claim_with_factor(factor_evals),
+                SparseFactor::Tensor(factor) => {
                     if witness.table_len() != factor.len() {
                         return Err(AkitaError::InvalidSize {
                             expected: witness.table_len(),
@@ -844,70 +840,61 @@ impl<E: FieldCore> ExtensionOpeningWitness<E> {
         }
     }
 
-    pub(super) fn final_eval(&self) -> Option<E> {
+    fn final_witness_and_factor_evals(&self) -> Option<(E, E)> {
         match self {
-            Self::Dense(evals) => (evals.len() == 1).then_some(evals[0]),
-            Self::Sparse(witness) => witness.final_eval(),
+            Self::Dense { witness, factor } => {
+                (factor.len() == 1 && witness.len() == 1).then(|| (witness[0], factor[0]))
+            }
+            Self::Sparse { witness, factor } => match factor {
+                SparseFactor::Dense(factor_evals) => (factor_evals.len() == 1)
+                    .then(|| witness.final_eval())
+                    .flatten()
+                    .map(|witness| (witness, factor_evals[0])),
+                SparseFactor::Tensor(_) => None,
+            },
         }
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningWitness<E> {
-    pub(super) fn accumulate_round(
-        &self,
-        factor: &ExtensionOpeningFactor<E>,
-        coeff: E,
-        constant: &mut E,
-        quadratic: &mut E,
-    ) {
-        match (self, factor) {
-            (Self::Dense(witness_evals), ExtensionOpeningFactor::Dense(factor_evals)) => {
+impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningTables<E> {
+    fn accumulate_round(&self, coeff: E, constant: &mut E, quadratic: &mut E) {
+        match self {
+            Self::Dense { witness, factor } => {
                 let (round_constant, round_quadratic) =
-                    accumulate_dense_round(witness_evals, factor_evals, coeff);
+                    accumulate_dense_round(witness, factor, coeff);
                 *constant += round_constant;
                 *quadratic += round_quadratic;
             }
-            (Self::Sparse(witness), ExtensionOpeningFactor::Dense(factor_evals)) => {
-                witness.accumulate_round(factor_evals, coeff, constant, quadratic);
-            }
-            (Self::Sparse(witness), ExtensionOpeningFactor::Tensor(factor)) => {
-                witness.accumulate_round_with_factor(coeff, constant, quadratic, |pair| {
-                    factor.factor_pair(pair)
-                });
-            }
-            (Self::Dense(_), ExtensionOpeningFactor::Tensor(_)) => {
-                unreachable!("lazy tensor factor is only constructed for sparse witnesses")
-            }
+            Self::Sparse { witness, factor } => match factor {
+                SparseFactor::Dense(factor_evals) => {
+                    witness.accumulate_round(factor_evals, coeff, constant, quadratic);
+                }
+                SparseFactor::Tensor(factor) => {
+                    witness.accumulate_round_with_factor(coeff, constant, quadratic, |pair| {
+                        factor.factor_pair(pair)
+                    });
+                }
+            },
         }
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningWitness<E> {
-    pub(super) fn fold_with_factor_in_place(
-        &mut self,
-        factor: &mut ExtensionOpeningFactor<E>,
-        r_round: E,
-    ) {
+impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningTables<E> {
+    fn fold_in_place(&mut self, r_round: E) {
         match self {
-            Self::Dense(witness_evals) => match factor {
-                ExtensionOpeningFactor::Dense(factor_evals) => {
-                    fold_dense_reduction_tables_in_place(witness_evals, factor_evals, r_round);
-                }
-                ExtensionOpeningFactor::Tensor(_) => {
-                    unreachable!("lazy tensor factor is only constructed for sparse witnesses")
-                }
-            },
-            Self::Sparse(witness) => {
+            Self::Dense { witness, factor } => {
+                fold_dense_reduction_tables_in_place(witness, factor, r_round);
+            }
+            Self::Sparse { witness, factor } => {
                 witness.fold_in_place(r_round);
                 match factor {
-                    ExtensionOpeningFactor::Dense(factor_evals) => {
+                    SparseFactor::Dense(factor_evals) => {
                         fold_evals_in_place(factor_evals, r_round);
                     }
-                    ExtensionOpeningFactor::Tensor(tensor_factor) => {
+                    SparseFactor::Tensor(tensor_factor) => {
                         tensor_factor.fold_in_place(r_round);
                         if tensor_factor.is_ready_to_materialize() {
-                            let dense = tensor_factor.materialize_dense();
-                            *factor = ExtensionOpeningFactor::Dense(dense);
+                            *factor = SparseFactor::Dense(tensor_factor.materialize_dense());
                         }
                     }
                 }
@@ -925,8 +912,10 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
     pub fn new(witness_evals: Vec<E>, factor_evals: Vec<E>, coeff: E) -> Result<Self, AkitaError> {
         validate_reduction_tables(&witness_evals, &factor_evals)?;
         Ok(Self {
-            current_witness_evals: ExtensionOpeningWitness::Dense(witness_evals),
-            current_factor: ExtensionOpeningFactor::Dense(factor_evals),
+            tables: ExtensionOpeningTables::Dense {
+                witness: witness_evals,
+                factor: factor_evals,
+            },
             coeff,
             cached_accumulate: None,
         })
@@ -949,8 +938,10 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
             });
         }
         Ok(Self {
-            current_witness_evals: ExtensionOpeningWitness::Sparse(witness_evals),
-            current_factor: ExtensionOpeningFactor::Dense(factor_evals),
+            tables: ExtensionOpeningTables::Sparse {
+                witness: witness_evals,
+                factor: SparseFactor::Dense(factor_evals),
+            },
             coeff,
             cached_accumulate: None,
         })
@@ -980,14 +971,16 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
                 actual: factor.len(),
             });
         }
-        let current_factor = if factor.is_ready_to_materialize() {
-            ExtensionOpeningFactor::Dense(factor.materialize_dense())
+        let factor = if factor.is_ready_to_materialize() {
+            SparseFactor::Dense(factor.materialize_dense())
         } else {
-            ExtensionOpeningFactor::Tensor(factor)
+            SparseFactor::Tensor(factor)
         };
         Ok(Self {
-            current_witness_evals: ExtensionOpeningWitness::Sparse(witness_evals),
-            current_factor,
+            tables: ExtensionOpeningTables::Sparse {
+                witness: witness_evals,
+                factor,
+            },
             coeff,
             cached_accumulate: None,
         })
@@ -1000,13 +993,7 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
 
     /// Return final folded witness/factor evaluations after all challenges.
     pub fn final_witness_and_factor_evals(&self) -> Option<(E, E)> {
-        match &self.current_factor {
-            ExtensionOpeningFactor::Dense(factor_evals) => (factor_evals.len() == 1)
-                .then(|| self.current_witness_evals.final_eval())
-                .flatten()
-                .map(|witness| (witness, factor_evals[0])),
-            ExtensionOpeningFactor::Tensor(_) => None,
-        }
+        self.tables.final_witness_and_factor_evals()
     }
 }
 
@@ -1024,12 +1011,8 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductio
                 *quadratic += cached_quadratic;
             }
             None => {
-                self.current_witness_evals.accumulate_round(
-                    &self.current_factor,
-                    self.coeff,
-                    constant,
-                    quadratic,
-                );
+                self.tables
+                    .accumulate_round(self.coeff, constant, quadratic);
             }
         }
     }
@@ -1041,14 +1024,12 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductio
     /// cache the `coeff`-scaled result. Every other shape folds in place and
     /// clears the cache.
     pub(super) fn ingest_challenge(&mut self, r_round: E) {
-        if self.current_witness_evals.len() <= 1 {
+        if self.tables.len() <= 1 {
             return;
         }
-        let fused = match (&mut self.current_witness_evals, &mut self.current_factor) {
-            (ExtensionOpeningWitness::Dense(witness_evals), ExtensionOpeningFactor::Dense(factor_evals))
-                if witness_evals.len() >= 4 =>
-            {
-                Some(fused_fold_and_accumulate(witness_evals, factor_evals, r_round))
+        let fused = match &mut self.tables {
+            ExtensionOpeningTables::Dense { witness, factor } if witness.len() >= 4 => {
+                Some(fused_fold_and_accumulate(witness, factor, r_round))
             }
             _ => None,
         };
@@ -1057,8 +1038,7 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductio
                 self.cached_accumulate = Some((self.coeff * constant, self.coeff * quadratic));
             }
             None => {
-                self.current_witness_evals
-                    .fold_with_factor_in_place(&mut self.current_factor, r_round);
+                self.tables.fold_in_place(r_round);
                 self.cached_accumulate = None;
             }
         }
