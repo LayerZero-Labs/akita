@@ -139,12 +139,16 @@ impl SetupContributionShape {
 impl SetupContributionFixture {
     pub fn from_shape(shape: &SetupContributionShape) -> Self {
         let num_points = shape.num_polys_per_point.len();
+        let num_t_vectors = shape.num_polys_per_point.iter().sum::<usize>();
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
         let rows = 1 + shape.num_public_rows + shape.n_d + shape.n_b * num_points + shape.n_a;
 
+        // Offsets must mirror `RingRelationInstance::segment_layout`: W spans all
+        // claim-blocks, but T spans t-vector (commitment-group) blocks, so its
+        // width scales with `num_t_vectors`, not `num_claims`.
         let w_len = shape.depth_open * total_blocks;
-        let t_len = shape.depth_open * shape.n_a * total_blocks;
+        let t_len = shape.depth_open * shape.n_a * shape.num_blocks * num_t_vectors;
         let z_len = shape.depth_fold * shape.depth_commit * num_points * shape.block_len;
         let (offset_w, offset_t, offset_z, total_len) = if shape.z_first {
             (z_len, z_len + w_len, 0usize, z_len + w_len + t_len)
@@ -212,7 +216,7 @@ impl SetupContributionFixture {
                     .collect(),
             ),
             eq_tau1,
-            num_t_vectors: shape.num_polys_per_point.iter().sum(),
+            num_t_vectors,
             num_blocks: shape.num_blocks,
             num_claims: shape.num_claims,
             depth_open: shape.depth_open,
