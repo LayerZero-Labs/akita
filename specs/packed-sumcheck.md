@@ -125,7 +125,7 @@ Both converge on the same five moves; copy them.
 
 ## Key design decisions (the hard parts — resolve these first)
 
-### D1 — Packed unreduced accumulator (DECIDED: build it)
+### D1 — Packed unreduced accumulator (DECIDED: build it; minimize in-loop reductions)
 
 Akita's EOR/sum-check speed rests on the **wide scalar** `HasUnreducedOps::ProductAccum`
 (defer modular reduction across a sum, e.g. `MulBaseUnreduced::mul_base_to_product_accum`,
@@ -140,29 +140,74 @@ products in a `u128` and applies **one** `monty_reduce_u128` (prior art below). 
 reduction needs pseudo-Mersenne" is **false**; akita's prime choice is incidental here, not
 enabling.
 
-**The real constraint is SIMD lane width, and it is identical for both field forms.** The
-full-sum accumulator is *wide* — products are ~`2^62`, and summing `2^k` of them needs a
-`u128` — and `u128` does not vectorize cleanly (a 128-bit NEON register is **one** `u128`
-lane, so a `u128`-per-lane accumulator gets no SIMD parallelism on the accumulate). So the
-packed accumulator must **not** be a `u128`-per-lane full-sum buffer. The practical packed
-form is **chunked delayed reduction in `u64` lanes**: accumulate `K` products per `u64`
-lane (`K` bounded by the lane headroom, ~2-4 for a 31-bit prime), reduce, repeat — exactly
-the `dot_product_2/4/5/8` fused kernels Plonky3/leanMultisig already ship, generalized and
-wired into the EOR/sumcheck accumulate loop.
+**What the measured cost actually is — reduction *frequency*, not lane width.** A directional
+microbench (Mersenne31, `p = 2^31−1`; 4 `u64`/`u128` lanes laid out lane-major to mimic the
+packed transpose; autovectorized `-C target-cpu=native -C opt-level=3` on the NEON dev
+machine; in-cache and out-of-cache runs identical, so **compute-bound**; all strategies
+return identical checksums) isolates the per-product accumulate cost:
 
-**Decision (locked): build the packed chunked-reduce accumulator.** Concretely:
+| strategy (per product)            | full-width `a,b < 2^31` | small `a < 2^8`, `b < 2^31` |
+|-----------------------------------|:----------------------:|:--------------------------:|
+| eager (reduce every product)      | 1.19 ns                | 1.54 ns                    |
+| chunked `u64`, reduce every 3     | 0.73 ns                | 0.80 ns                    |
+| `u128` lane, reduce once          | **0.29 ns**            | **0.29 ns**                |
+| `u64` lane, reduce once (deferred)| (overflows)            | **0.31 ns**                |
 
-- Add a **`PackedHasUnreducedOps`** whose `ProductAccum` holds `K`-bounded partial sums in
-  `F::Packing` `u64` lanes, with packed `mul_base_to_product_accum` / `add_constant_product`
-  / `add_quadratic_product` that reduce every `K` terms (a packed `mul_pmersenne31`-style
-  reduce, PR #142) and honor the scalar `DELAYED_PRODUCT_SUM_IS_EXACT` bound. One horizontal
-  reduce per round emits the scalar message.
+Two facts overturn the earlier "`u128` doesn't vectorize → avoid it" claim:
+
+1. **`u128`-per-lane single-reduce is the *fastest* full-width path** (0.29 ns; 2.5× over
+   chunked-`u64`, 4× over eager) — *even autovectorized on NEON*. On aarch64 the `u128`
+   multiply-accumulate is `mul`/`umulh` + `adds`/`adcs`, cheap and branch-free; it wins
+   because it carries **no modular reduction in the loop**. The earlier rejection was wrong.
+2. **The lever is reduction frequency, not lane type.** Both single-reduce strategies
+   (`u128` full-width; `u64` deferred small) land at ~0.3 ns; everything that reduces
+   in-loop is 2.5-4× slower. `u128`'s capacity is irrelevant for us: a per-lane sum of
+   `2^29` full-width products at nv32 is `< 2^91 ≪ 2^128` (safe past nv60).
+
+**Magnitude-aware chunk size (your round-0 point, quantified).** The safe number of products
+between reductions, `K`, is set by the operand *magnitudes*, not a fixed 2-4:
+
+- **Full × full** (rounds ≥1, folded by random challenges): product `< 2^62`, a `u64` lane
+  overflows after `K ≈ 3`. This is the expensive chunked regime → use a **`u128` lane**
+  (single reduce per round, fastest, capacity-safe).
+- **Small-balanced digit × full factor** (round-0 dense witness, `|d| < 2^b`): product
+  `< 2^(31+b)`, so `K < 2^(63−31−b) = 2^(32−b)`. At nv32 a lane sums ≈ `2^29` terms, so for
+  `b = 8` you reduce ≈ `2^29 / 2^24 = 32` times *per whole round* — negligible, effectively
+  a **`u64` single-reduce**.
+- **One-hot witness ∈ {0,1} × full factor** (round-0 one-hot): the accumulate is `Σ factor`
+  over the support; product `< 2^31`, a `2^29`-term lane sums to `< 2^60 < 2^64` → the
+  **entire round fits one `u64` reduce**, zero in-loop reductions.
+
+So the fold-/accumulate-heavy hotspots (round 0 + partials) run in cheap `u64` lanes with
+O(tens) reductions per round — exactly the small-magnitude advantage you flagged — and only
+the geometrically-smaller full-width tail rounds use `u128` lanes. Neither hits the slow
+"reduce every 3" regime.
+
+**Decision (locked): build a packed `ProductAccum` that reduces once per round (or per
+magnitude-bounded chunk), choosing lane width by regime.** `u64` lanes for the small-operand
+round-0/partials accumulate (reduce only when a lane nears overflow, `K ≈ 2^(32−b)`, or never
+for one-hot); `u128` lanes for the full-width later rounds (single reduce per round).
+Concretely:
+
+- `PackedHasUnreducedOps::ProductAccum` carries lane-wise partial sums plus a reduce
+  threshold; packed `mul_base_to_product_accum` / `add_constant_product` /
+  `add_quadratic_product` accumulate and reduce on threshold (a packed `mul_pmersenne31`-style
+  reduce, PR #142), honoring `DELAYED_PRODUCT_SUM_IS_EXACT`. One horizontal reduce per round
+  emits the scalar message.
 - Akita's edge over the references is twofold: (i) it already ships the scalar full-sum
-  accumulator and wires it into EOR (`mul_base_to_product_accum`), whereas leanMultisig
-  added trait hooks for *exactly this* (base×ext sumcheck delayed reduction) but left them
-  unwired (prior art below); (ii) pseudo-Mersenne `mod p` accepts a full `u64` input, so it
-  may afford a larger chunk `K` (more amortization per reduce) than the tighter standard
-  `monty_reduce` bound — verify, do not assume.
+  accumulator and wires it into EOR (`mul_base_to_product_accum`), whereas leanMultisig added
+  trait hooks for *exactly this* (base×ext sumcheck delayed reduction) but left them unwired
+  (prior art below); (ii) pseudo-Mersenne `mod p` accepts a full `u64` input, so the
+  small-operand regime gets the maximal `K` (more amortization than a tight `monty_reduce`
+  bound) — verify against the exact bound, do not assume.
+
+**Caveat (acceptance gate, not a re-litigation).** The table is autovectorized scalar, not
+hand-tuned NEON intrinsics. A `vmull_u32`-based `u64` kernel with a vectorized reduce could
+narrow the full-width chunked gap — but it cannot beat single-reduce, and `u128` also benefits
+from `vmull`. Slice 2 must re-measure `u128`-lane vs `u64`-chunked with the *real* packed
+types/intrinsics before locking the full-width-round lane choice; the round-0/partials `u64`
+single-reduce result is robust regardless. Microbench source and raw numbers ship with the
+slice so the colleague can re-run on AVX2/AVX-512.
 
 **Sequencing (de-risk; not a re-litigation of the decision):** land the packed *fold*
 first (Slice 1) — the linear interpolation `a + r·(b−a)` needs only packed
@@ -171,10 +216,12 @@ the measured win immediately and validates the packed-table plumbing. Then land 
 chunked-reduce accumulator (Slice 2) for the univariate accumulate. Packing the fold first
 is a stepping stone *toward* the accumulator, not an alternative to it.
 
-**Rejected:** (a) a `u128`-per-lane full-sum accumulator — it does not vectorize (one lane
-on a 128-bit register); (b) an eager per-product reduce — it throws away the deferred-
-reduction win akita already depends on. The chunked `u64`-lane reduce is the committed
-middle path.
+**Rejected:** an **eager per-product reduce** — it throws away the deferred-reduction win
+akita depends on and measured slowest (1.2-1.5 ns). **No longer rejected:** the
+`u128`-per-lane accumulator — it was the measured-*fastest* full-width option and is the
+committed full-width-round form (pending hand-intrinsic confirmation, above). The fixed
+"chunk every 2-4" is not a separate committed path; it is what the magnitude-aware `u64`
+threshold degenerates to only in the full-width regime, where `u128` lanes beat it.
 
 ### D1 prior art (delayed reduction, including in Montgomery form)
 
@@ -207,11 +254,13 @@ Montgomery composes cleanly with delayed reduction:
   - Broader delayed reduction is listed as open work:
     [`TODO.md#L8`](https://github.com/leanEthereum/leanMultisig/blob/a2efa4f35ccea70884ba77b417c1fd9ca2933559/TODO.md#L8).
 
-Takeaway: chunked `u64`-lane reduce is established prior art (Plonky3 fused dots); full-sum
-delayed reduction is clean in Montgomery (leanMultisig scalar `dot_product`); the base×ext
-sumcheck delayed reduction akita targets was prototyped by leanMultisig but not taken to the
-packed path. Akita's packed `ProductAccum` generalizes the fused-dot pattern into the
-EOR/sumcheck loop.
+Takeaway: chunked `u64`-lane reduce (Plonky3 fused dots `dot_product_2/4/5/8`) is the
+full-width fallback; full-sum single-reduce is clean in Montgomery (leanMultisig scalar
+`dot_product` over `u128`) and — per the microbench above — is the *faster* shape; the
+base×ext sumcheck delayed reduction akita targets was prototyped by leanMultisig but not
+taken to the packed path. Akita's packed `ProductAccum` picks the reduce frequency from the
+operand magnitude (single-reduce in round-0/partials and full-width tail; never the slow
+reduce-every-3) — that is the generalization the references stop short of.
 
 ### D2 — Fold order / lane alignment
 
@@ -271,7 +320,9 @@ Same recipe applied to `compute_norm_round_eq_poly_from_s*` (stage1),
   (the Slice 1 fold needs only this).
 - A **packed unreduced accumulator** (`PackedHasUnreducedOps::ProductAccum`) + packed
   `mul_base_to_product_accum` / `add_constant_product` / `add_quadratic_product`, honoring
-  the scalar `DELAYED_PRODUCT_SUM_IS_EXACT` bound — the committed D1 end-state.
+  the scalar `DELAYED_PRODUCT_SUM_IS_EXACT` bound, with a **magnitude-aware reduce threshold**
+  (`u64` lanes single-reduce for small-operand round-0/partials; `u128` lanes single-reduce
+  for full-width tail rounds) — the committed D1 end-state.
 - A **horizontal reduce** at round boundary (`to_ext`-style lane sum); no persistent
   trait method needed, just a helper.
 - **`NoPacking` (WIDTH = 1) fallback** must keep non-SIMD builds and `fp128` byte-identical
@@ -306,8 +357,11 @@ Same recipe applied to `compute_norm_round_eq_poly_from_s*` (stage1),
   fallback; `WIDTH = 1` builds byte-identical to today.
 - [ ] EOR dense fold runs packed (Slice 1); proof bytes byte-identical on `dense_fp32_d32`,
   `onehot_fp32_d32`, `onehot_fp16_d32`, `onehot_fp64_d32`; `fp128` unaffected.
-- [ ] Packed unreduced accumulator (`PackedHasUnreducedOps`) implemented and exact; EOR
-  dense accumulate + factor fold + partials run packed through it.
+- [ ] Packed unreduced accumulator (`PackedHasUnreducedOps`) implemented and exact, with the
+  magnitude-aware reduce threshold (D1); EOR dense accumulate + factor fold + partials run
+  packed through it. Re-run the D1 microbench with the real packed types/intrinsics on
+  NEON + AVX2 (+ AVX-512) and record whether `u128`-lane or `u64`-chunked wins the full-width
+  rounds before locking that lane choice.
 - [ ] stage1 + stage2 folds packed; full byte-identical proof/transcript suite.
 - [ ] Sparse one-hot: factor fold packed; accumulate/query packed where the target arch
   supports it (gated), scalar fallback otherwise; byte-identical either way.
@@ -380,4 +434,6 @@ span, then build the packed unreduced accumulator (Slice 2) for the univariate a
   (`PackedValue`, `PackedField`, `HasPacking`, `NoPacking` `:273`, arch select `:412-441`);
   packed extension `crates/akita-field/src/fields/packed_ext.rs` (`PackedRingSubfieldFp4`
   `:558-637`, `HasPacking` wiring `:702-710`, layout doc `:1-6`).
+- **D1 microbench**: `specs/packed-accumulator-microbench.rs` (standalone `rustc`; the
+  reduction-frequency-vs-lane-width numbers in D1; re-run on each target arch).
 - **Companion spec**: `specs/eor-streamed-prover.md` (the algorithm this packs).
