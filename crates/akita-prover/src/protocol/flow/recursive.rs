@@ -723,6 +723,7 @@ pub fn prove_recursive_fold_with_params<F, L, T, B, const D: usize, CommitW>(
     transcript: &mut T,
     witness: &RecursiveWitnessView<'_, F, D>,
     logical_w: &RecursiveWitnessFlat,
+    committed_w_len: usize,
     carried_openings: &[RecursiveCarriedOpening<L>],
     extra_carried_sources: &[RecursiveCarriedSource<F>],
     hint: AkitaCommitmentHint<F, D>,
@@ -788,7 +789,7 @@ where
     let mut source_views = Vec::with_capacity(extra_carried_sources.len() + 1);
     source_views.push(*witness);
     let mut source_logical_lens = Vec::with_capacity(extra_carried_sources.len() + 1);
-    source_logical_lens.push(logical_w.len());
+    source_logical_lens.push(committed_w_len);
     for source in extra_carried_sources {
         source_views.push(source.w.view::<F, D>()?);
         source_logical_lens.push(source.logical_w.as_ref().unwrap_or(&source.w).len());
@@ -796,7 +797,7 @@ where
     if carried_openings.is_empty()
         || carried_openings.iter().any(|claim| {
             (matches!(claim.kind, CarriedOpeningKind::RecursiveWitness)
-                && claim.natural_len != logical_w.len())
+                && claim.natural_len != committed_w_len)
                 || claim.natural_len > claim.padded_len
                 || source_logical_lens
                     .get(claim.source_idx)
@@ -1019,6 +1020,7 @@ pub fn prove_terminal_recursive_fold_with_params<F, L, T, B, const D: usize>(
     transcript: &mut T,
     witness: &RecursiveWitnessView<'_, F, D>,
     logical_w: &RecursiveWitnessFlat,
+    committed_w_len: usize,
     carried_openings: &[RecursiveCarriedOpening<L>],
     extra_carried_sources: &[RecursiveCarriedSource<F>],
     hint: AkitaCommitmentHint<F, D>,
@@ -1082,7 +1084,7 @@ where
     let mut source_views = Vec::with_capacity(extra_carried_sources.len() + 1);
     source_views.push(*witness);
     let mut source_logical_lens = Vec::with_capacity(extra_carried_sources.len() + 1);
-    source_logical_lens.push(logical_w.len());
+    source_logical_lens.push(committed_w_len);
     for source in extra_carried_sources {
         source_views.push(source.w.view::<F, D>()?);
         source_logical_lens.push(source.logical_w.as_ref().unwrap_or(&source.w).len());
@@ -1090,7 +1092,7 @@ where
     if carried_openings.is_empty()
         || carried_openings.iter().any(|claim| {
             (matches!(claim.kind, CarriedOpeningKind::RecursiveWitness)
-                && claim.natural_len != logical_w.len())
+                && claim.natural_len != committed_w_len)
                 || claim.natural_len > claim.padded_len
                 || source_logical_lens
                     .get(claim.source_idx)
@@ -1361,6 +1363,7 @@ where
         transcript,
         &w_view,
         logical_w,
+        current_w_len,
         &carried_openings,
         &extra_carried_sources,
         typed_hint,
@@ -1432,6 +1435,7 @@ where
         transcript,
         &w_view,
         logical_w,
+        current_w_len,
         &current_state.carried_openings,
         &current_state.extra_carried_sources,
         typed_hint,

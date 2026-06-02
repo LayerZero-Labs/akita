@@ -351,13 +351,37 @@ impl CommitmentRouting {
         &self,
         incidence: &ClaimIncidenceSummary,
     ) -> Result<(), AkitaError> {
+        let invalid_shape = || {
+            AkitaError::InvalidInput(
+                "commitment routing does not match ring relation claim shape".to_string(),
+            )
+        };
         if self.claim_to_commitment_group.len() != incidence.num_claims()
             || self.claim_poly_in_commitment_group.len() != incidence.num_claims()
             || self.num_polys_per_commitment_group.is_empty()
         {
-            return Err(AkitaError::InvalidInput(
-                "commitment routing does not match ring relation claim shape".to_string(),
-            ));
+            return Err(invalid_shape());
+        }
+        if self.claim_to_commitment_group == incidence.claim_to_point()
+            && self.claim_poly_in_commitment_group == incidence.claim_poly_indices()
+            && self.num_polys_per_commitment_group == incidence.num_polys_per_point()
+        {
+            return Ok(());
+        }
+        if !self.num_polys_per_commitment_group.iter().all(|&n| n == 1)
+            || !self.claim_poly_in_commitment_group.iter().all(|&n| n == 0)
+        {
+            return Err(invalid_shape());
+        }
+        let mut used_groups = vec![false; self.num_polys_per_commitment_group.len()];
+        for &group_idx in &self.claim_to_commitment_group {
+            let Some(used) = used_groups.get_mut(group_idx) else {
+                return Err(invalid_shape());
+            };
+            *used = true;
+        }
+        if used_groups.iter().any(|&used| !used) {
+            return Err(invalid_shape());
         }
         Ok(())
     }
@@ -1126,6 +1150,25 @@ mod tests {
         routing
             .check_matches_incidence(&summary)
             .expect("recursive split routing is supported");
+    }
+
+    #[test]
+    fn recursive_split_commitment_routing_rejects_malformed_source_shape() {
+        let summary =
+            ClaimIncidenceSummary::from_point_polys(8, vec![1, 1]).expect("valid incidence");
+        let unused_group = CommitmentRouting {
+            claim_to_commitment_group: vec![0, 0],
+            claim_poly_in_commitment_group: vec![0, 0],
+            num_polys_per_commitment_group: vec![1, 1],
+        };
+        assert!(unused_group.check_matches_incidence(&summary).is_err());
+
+        let multi_poly_group = CommitmentRouting {
+            claim_to_commitment_group: vec![0, 0],
+            claim_poly_in_commitment_group: vec![0, 1],
+            num_polys_per_commitment_group: vec![2],
+        };
+        assert!(multi_poly_group.check_matches_incidence(&summary).is_err());
     }
 
     #[test]
