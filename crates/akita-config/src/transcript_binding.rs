@@ -7,7 +7,6 @@
 //! it without crossing through `akita-scheme`, and so the descriptor
 //! construction is sourced from a single `Cfg`-driven implementation.
 
-use crate::proof_optimized::setup_level_params_from_runtime_schedule;
 use crate::CommitmentConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
@@ -20,17 +19,17 @@ use akita_types::{
 ///
 /// Both `prove_batched` (prover) and `verify_batched` (verifier) call this
 /// helper after schedule selection and before protocol replay. The function
-/// is `Cfg`-driven (algebra section, decomposition, SIS family, root-fold
-/// params for empty-fold schedules), so both sides produce byte-identical
-/// descriptor bytes for the same inputs and the transcript-determinism
-/// invariant holds.
+/// is `Cfg`-driven (algebra section, decomposition, SIS family), so both
+/// sides produce byte-identical descriptor bytes for the same inputs and the
+/// transcript-determinism invariant holds.
+///
+/// The per-proof effective `schedule` is digested into `PlanSection` and
+/// binds every expanded `LevelParams` — including the root-direct commit
+/// layout — so there is no separate setup-level digest to compute here.
 ///
 /// # Errors
 ///
 /// Returns an error when:
-/// - the schedule contains no folded levels and
-///   `Cfg::get_params_for_batched_commitment` fails for the supplied
-///   incidence,
 /// - the algebra section cannot be derived for the field tower, or
 /// - canonical descriptor serialization fails.
 pub fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
@@ -47,21 +46,12 @@ where
     Cfg::ClaimField: RingSubfieldEncoding<F>,
     Cfg::ChallengeField: RingSubfieldEncoding<F>,
 {
-    let mut setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
-    if setup_levels.is_empty() {
-        // Defensive fallback: empty schedules and root-direct edge entries
-        // with no `commit_params` go through the same `Cfg`-driven path
-        // setup uses to size the shared matrix.
-        setup_levels.push(Cfg::get_params_for_batched_commitment(incidence)?);
-    }
-
     let descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ClaimField, Cfg::ChallengeField, D>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_family(),
             setup.seed(),
-            &setup_levels,
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(schedule),

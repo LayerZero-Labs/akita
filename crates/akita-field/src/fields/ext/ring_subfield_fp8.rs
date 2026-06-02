@@ -1,42 +1,126 @@
 use super::*;
 
+/// Chebyshev `φ` fold-back for a degree-8 accumulator, using caller-supplied
+/// add/sub so the same routine serves scalar, `i64`, and SIMD lane types.
+///
+/// `φ(k)` maps a product onto the `[1, e1, ..., e7]` basis:
+/// `k = 0 → 2·constant`, `1 ≤ k ≤ 7 → +e_k`, `k = 8 → 0`,
+/// `9 ≤ k ≤ 15 → −e_{16−k}`.
 #[inline(always)]
-fn ring_subfield_fp8_add_phi<F: FieldCore>(out: &mut [F; 8], idx: usize, value: F) {
+fn fp8_add_phi<V: Copy>(
+    out: &mut [V; 8],
+    idx: usize,
+    value: V,
+    add: &impl Fn(V, V) -> V,
+    sub: &impl Fn(V, V) -> V,
+) {
     match idx {
-        0 => out[0] += value + value,
-        1..=7 => out[idx] += value,
+        0 => out[0] = add(out[0], add(value, value)),
+        1..=7 => out[idx] = add(out[idx], value),
         8 => {}
-        9..=15 => out[16 - idx] -= value,
+        9..=15 => out[16 - idx] = sub(out[16 - idx], value),
         _ => unreachable!("fp8 Chebyshev index out of range"),
     }
 }
 
+/// Karatsuba schedule for `RingSubfieldFp8` multiplication in the Chebyshev
+/// basis, generic over a lane type `V` and its add/sub/mul.
+///
+/// One schedule serves every backend: the scalar field default, the `i64`
+/// Fp16 path, and the NEON / AVX2 / AVX-512 SIMD kernels. The schedule is
+/// purely an additive combination of products, so callers that reduce per
+/// operation (field or intrinsic ops) and callers that defer reduction to the
+/// end (the `i64` Fp16 path) are both correct, provided the `i64` accumulator
+/// does not overflow — which holds because every product is bounded by
+/// `(2·P)² < 2^34` and at most a few dozen are summed per coefficient.
 #[inline(always)]
-fn ring_subfield_fp8_mul_coeffs<F: FieldCore>(a: [F; 8], b: [F; 8]) -> [F; 8] {
-    let mut out = [F::zero(); 8];
-
-    let diag = std::array::from_fn::<_, 8, _>(|i| a[i] * b[i]);
-    out[0] += diag[0];
+pub(crate) fn ring_subfield_fp8_mul_schedule<V, A, S, M>(
+    a: [V; 8],
+    b: [V; 8],
+    zero: V,
+    add: A,
+    sub: S,
+    mul: M,
+) -> [V; 8]
+where
+    V: Copy,
+    A: Fn(V, V) -> V,
+    S: Fn(V, V) -> V,
+    M: Fn(V, V) -> V,
+{
+    let diag: [V; 8] = std::array::from_fn(|i| mul(a[i], b[i]));
+    let mut out = [zero; 8];
+    out[0] = diag[0];
 
     for k in 1..8 {
-        let mixed = (a[0] + a[k]) * (b[0] + b[k]) - diag[0] - diag[k];
-        out[k] += mixed;
+        let mixed = sub(sub(mul(add(a[0], a[k]), add(b[0], b[k])), diag[0]), diag[k]);
+        out[k] = add(out[k], mixed);
     }
 
-    for (i, diag_i) in diag.iter().copied().enumerate().skip(1) {
-        out[0] += diag_i + diag_i;
-        ring_subfield_fp8_add_phi(&mut out, i + i, diag_i);
+    for (i, &diag_i) in diag.iter().enumerate().skip(1) {
+        out[0] = add(out[0], add(diag_i, diag_i));
+        fp8_add_phi(&mut out, i + i, diag_i, &add, &sub);
     }
 
     for i in 1..8 {
         for j in (i + 1)..8 {
-            let mixed = (a[i] + a[j]) * (b[i] + b[j]) - diag[i] - diag[j];
-            ring_subfield_fp8_add_phi(&mut out, i + j, mixed);
-            ring_subfield_fp8_add_phi(&mut out, j - i, mixed);
+            let mixed = sub(sub(mul(add(a[i], a[j]), add(b[i], b[j])), diag[i]), diag[j]);
+            fp8_add_phi(&mut out, i + j, mixed, &add, &sub);
+            fp8_add_phi(&mut out, j - i, mixed, &add, &sub);
         }
     }
 
     out
+}
+
+/// Squaring schedule for `RingSubfieldFp8`, generic over a lane type `V`.
+///
+/// Uses `(a_i + a_j)² − a_i² − a_j² = 2·a_i·a_j` to compute `a_i·a_j` directly
+/// and double, saving one add and two subs per cross-term versus the Karatsuba
+/// form. Shares `fp8_add_phi` with [`ring_subfield_fp8_mul_schedule`].
+#[inline(always)]
+pub(crate) fn ring_subfield_fp8_square_schedule<V, A, S, M>(
+    a: [V; 8],
+    zero: V,
+    add: A,
+    sub: S,
+    mul: M,
+) -> [V; 8]
+where
+    V: Copy,
+    A: Fn(V, V) -> V,
+    S: Fn(V, V) -> V,
+    M: Fn(V, V) -> V,
+{
+    let sq: [V; 8] = std::array::from_fn(|i| mul(a[i], a[i]));
+    let mut out = [zero; 8];
+    out[0] = sq[0];
+
+    for k in 1..8 {
+        let cross = mul(a[0], a[k]);
+        out[k] = add(out[k], add(cross, cross));
+    }
+
+    for (i, &sq_i) in sq.iter().enumerate().skip(1) {
+        out[0] = add(out[0], add(sq_i, sq_i));
+        fp8_add_phi(&mut out, i + i, sq_i, &add, &sub);
+    }
+
+    for i in 1..8 {
+        for j in (i + 1)..8 {
+            let cross = mul(a[i], a[j]);
+            let doubled = add(cross, cross);
+            fp8_add_phi(&mut out, i + j, doubled, &add, &sub);
+            fp8_add_phi(&mut out, j - i, doubled, &add, &sub);
+        }
+    }
+
+    out
+}
+
+#[inline(always)]
+fn ring_subfield_fp8_mul_coeffs<F: FieldCore>(a: [F; 8], b: [F; 8]) -> [F; 8] {
+    ring_subfield_fp8_mul_schedule(a, b, F::zero(), |x, y| x + y, |x, y| x - y, |x, y| x * y)
 }
 
 /// Backend hook for scalar ring-subfield degree-8 multiplication.
@@ -48,7 +132,20 @@ pub trait RingSubfieldFp8MulBackend: FieldCore {
     }
 }
 
-impl<const P: u32> RingSubfieldFp8MulBackend for Fp16<P> {}
+impl<const P: u32> RingSubfieldFp8MulBackend for Fp16<P> {
+    /// `Fp16` widens each `u16` coefficient to `i64` and runs the shared
+    /// Karatsuba schedule with raw integer ops, deferring a single
+    /// `rem_euclid` reduction per output coefficient. This avoids the `u16`
+    /// overflow that the field-op default would hit on Karatsuba subtractions.
+    #[inline(always)]
+    fn ring_subfield_fp8_mul(a: [Self; 8], b: [Self; 8]) -> [Self; 8] {
+        let al: [i64; 8] = std::array::from_fn(|i| a[i].to_limbs() as i64);
+        let bl: [i64; 8] = std::array::from_fn(|i| b[i].to_limbs() as i64);
+        let out =
+            ring_subfield_fp8_mul_schedule(al, bl, 0i64, |x, y| x + y, |x, y| x - y, |x, y| x * y);
+        std::array::from_fn(|i| Fp16::<P>::from_canonical_u16(out[i].rem_euclid(P as i64) as u16))
+    }
+}
 impl<const P: u32> RingSubfieldFp8MulBackend for Fp32<P> {}
 impl<const P: u64> RingSubfieldFp8MulBackend for Fp64<P> {}
 impl<const P: u128> RingSubfieldFp8MulBackend for Fp128<P> {}

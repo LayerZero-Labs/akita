@@ -1,41 +1,52 @@
 //! Offline schedule planner for the Akita polynomial commitment scheme.
 //!
-//! `<Cfg>`-generic API. The single production entry point is
-//! [`find_optimal_schedule`], which runs an exhaustive DP over
-//! `(level, w_len, log_basis)` to minimize proof size for the supplied
-//! schedule lookup key. The [`ScheduleSearchMode`] argument controls
-//! whether `Cfg::schedule_table()` is consulted before DP — production
-//! callers pass [`ScheduleSearchMode::RuntimeTableSeeded`]; the
-//! `gen_schedule_tables` binary passes
-//! [`ScheduleSearchMode::RegenerateFromScratch`] to regenerate table
-//! entries from DP without any feedback from the previously shipped
-//! table.
+//! This crate is a **pure, `Cfg`-free DP library**. The single entry point
+//! is [`find_schedule`], which runs an exhaustive dynamic program to
+//! minimize proof size for a schedule lookup key. Every per-preset input is
+//! carried by the plain-value [`PlannerPolicy`] plus a `stage1` /
+//! `fold_shape` closure pair, so the planner names no `CommitmentConfig`
+//! types and depends only on `akita-types` / `akita-challenges` /
+//! `akita-field`.
 //!
-//! Generator metadata (family list, per-family num_vars range, table
-//! lookup hook, DP regen entry point) is exposed through the
-//! [`generated_families`] module; both the binary and the cross-crate
-//! drift-guard test consume the same `ALL_GENERATED_FAMILIES` list so
-//! the two cannot drift apart.
-//!
-//! This crate sits *above* `akita-config` in the dependency graph and is
-//! deliberately excluded from the verifier dep tree: production verifier
-//! replay never reaches DP code, because preset `Cfg::schedule_plan` impls
-//! always materialize from the generated schedule tables that ship with the
-//! presets.
-//!
-//! Cross-crate test fixtures that need a runtime DP fallback (multipoint
-//! incidences, presets with `table = None`, setup-matrix sizing iteration)
-//! enable the `test-utils` feature and use `test_utils::PlannerCfg` — a
-//! `Cfg` wrapper that routes schedule-table misses through
-//! [`find_optimal_schedule`]. It is gated off by default so production
-//! builds never link it.
-//!
-//! SIS derivation, `(m, r)` split, and table materialization live in the
-//! sibling crate [`akita_derive`].
+//! The preset family list, the `gen_schedule_tables` binary, and the
+//! `policy_of::<Cfg>()` bridge that derives a [`PlannerPolicy`] from a preset
+//! live in `akita-config`, the only crate that can name the presets.
 
-pub mod generated_families;
+use akita_types::{DecompositionParams, SisModulusFamily};
+
+mod ajtai_params;
+pub mod generated;
+mod resolve;
 pub mod schedule_params;
-#[cfg(feature = "test-utils")]
-pub mod test_utils;
 
-pub use schedule_params::{find_optimal_schedule, ScheduleSearchMode};
+pub use akita_types::root_level_params_for_layout_with_log_basis;
+pub use generated::GeneratedScheduleTable;
+pub use resolve::{
+    estimate_proof_bytes, generated_schedule_lookup_key, get_schedule, schedule_from_entry,
+    shipped_table,
+};
+pub use schedule_params::find_schedule;
+
+/// Plain-value brute-force inputs the planner DP needs.
+///
+/// This is the `Cfg`-free projection of a `CommitmentConfig` preset that
+/// the DP and SIS sizing read. `akita-config` derives it from a preset via
+/// its `policy_of::<Cfg>()` bridge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlannerPolicy {
+    /// Ring degree `D` (`Cfg::D`).
+    pub ring_dimension: usize,
+    /// Gadget base + coefficient bounds (`Cfg::decomposition()`).
+    pub decomposition: DecompositionParams,
+    /// SIS modulus family (`Cfg::sis_modulus_family()`).
+    pub sis_family: SisModulusFamily,
+    /// `psi`-embedding infinity-norm expansion
+    /// (`Cfg::ring_subfield_embedding_norm_bound()`).
+    pub ring_subfield_norm_bound: u32,
+    /// Extension degree `[ClaimField : Field]` (`Cfg::CLAIM_EXT_DEGREE`).
+    pub claim_ext_degree: usize,
+    /// Extension degree `[ChallengeField : Field]` (`Cfg::CHAL_EXT_DEGREE`).
+    pub chal_ext_degree: usize,
+    /// Inclusive `(min, max)` log-basis search range (`Cfg::basis_range()`).
+    pub basis_range: (u32, u32),
+}

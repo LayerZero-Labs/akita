@@ -430,6 +430,7 @@ where
         lp,
         quad_eq.claim_to_point().len(),
         quad_eq.num_public_rows(),
+        F::modulus_bits(),
     )?;
     let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
     let final_witness = DirectWitnessProof::PackedDigits(

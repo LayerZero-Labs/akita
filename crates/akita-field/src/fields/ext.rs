@@ -28,6 +28,9 @@ pub use fp2::{Ext2, Fp2, Fp2Config, NegOneNr, TwoNr};
 pub(crate) use power_fp4::power_basis_fp4_mul_coeffs;
 pub use power_fp4::{PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend};
 pub use ring_subfield_fp4::{RingSubfieldFp4, RingSubfieldFp4MulBackend};
+pub(crate) use ring_subfield_fp8::{
+    ring_subfield_fp8_mul_schedule, ring_subfield_fp8_square_schedule,
+};
 pub use ring_subfield_fp8::{RingSubfieldFp8, RingSubfieldFp8MulBackend};
 pub use tower_fp4::{TowerBasisFp4, TowerBasisFp4Config, UnitNr};
 
