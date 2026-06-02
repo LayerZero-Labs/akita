@@ -11,7 +11,7 @@ use akita_algebra::{CyclotomicRing, EqPolynomial};
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_sumcheck::tensor_opening_split;
+use akita_types::tensor_opening_split;
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
@@ -699,7 +699,7 @@ mod tests {
     use super::*;
     use akita_field::fields::{TowerBasisFp4, TwoNr, UnitNr};
     use akita_field::Prime128OffsetA7F7 as F;
-    use akita_sumcheck::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
+    use akita_types::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
 
     fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
         CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {

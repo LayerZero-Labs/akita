@@ -364,6 +364,8 @@ where
         BatchedExtensionOpeningReductionProver::new(terms, true_input_claim)?
     };
     let mut prover = prover;
+    let _eor_sumcheck_span =
+        tracing::info_span!("extension_opening_reduction_sumcheck", path = "root").entered();
     #[cfg(not(feature = "zk"))]
     let (sumcheck, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
         sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)

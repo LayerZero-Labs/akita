@@ -40,6 +40,7 @@ parallel = [
   "akita-challenges/parallel",
   "akita-field/parallel",
   "akita-sumcheck/parallel",
+  "akita-types/parallel",
 ]
 zk = ["akita-sumcheck/zk", "akita-types/zk", "rand_core/getrandom"]
 

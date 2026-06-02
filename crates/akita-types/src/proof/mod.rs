@@ -71,13 +71,13 @@ pub use terminal_witness::{
     RelationOnlyStage2Inputs, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 
+use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
-pub use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_sumcheck::{uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProofShape};
 #[cfg(not(feature = "zk"))]
 use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};

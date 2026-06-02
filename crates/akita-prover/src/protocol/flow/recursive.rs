@@ -656,20 +656,19 @@ where
     }
     let mut prover = prover;
     drop(_eor_prep_span);
-    #[cfg(feature = "zk")]
-    let reduction_sumcheck =
-        ExtensionOpeningReductionSumcheck::new(input_claim, prover.num_rounds());
+    let _eor_sumcheck_span = tracing::info_span!(
+        "extension_opening_reduction_sumcheck",
+        path = "recursive",
+        num_rounds = prover.num_rounds()
+    )
+    .entered();
     #[cfg(not(feature = "zk"))]
-    let reduction_sumcheck =
-        ExtensionOpeningReductionSumcheck::new(prover.input_claim(), prover.num_rounds());
-    #[cfg(not(feature = "zk"))]
-    let (sumcheck, result) =
-        reduction_sumcheck.prove::<F, _, _>(&mut prover, transcript, |tr| {
-            sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-        })?;
+    let (sumcheck, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
+        sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+    })?;
     #[cfg(feature = "zk")]
-    let (sumcheck_proof_masked, result) = reduction_sumcheck.prove_zk::<F, _, _>(
-        &mut prover,
+    let (sumcheck_proof_masked, rho) = prover.prove_zk::<F, T, _>(
+        input_claim,
         transcript,
         |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         sumcheck_pads,
@@ -680,14 +679,15 @@ where
                 "extension-opening reduction has not reached a final point".to_string(),
             )
         })?;
-    let final_factor =
-        tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &result.challenges)?;
+    let final_factor = tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &rho)?;
     if final_factor != final_factor_from_table {
         return Err(AkitaError::InvalidInput(
             "extension-opening reduction transparent factor mismatch".to_string(),
         ));
     }
-    check_extension_opening_reduction_output(result.final_claim, final_witness, final_factor)?;
+    #[cfg(feature = "zk")]
+    let final_claim = final_witness * final_factor;
+    check_extension_opening_reduction_output(final_claim, final_witness, final_factor)?;
     Ok(RecursiveExtensionOpeningReduction {
         proof: ExtensionOpeningReductionProof {
             partials: proof_partials,
@@ -696,8 +696,8 @@ where
             #[cfg(feature = "zk")]
             sumcheck_proof_masked,
         },
-        rho: result.challenges,
-        final_claim: result.final_claim,
+        rho,
+        final_claim,
         final_factor,
     })
 }

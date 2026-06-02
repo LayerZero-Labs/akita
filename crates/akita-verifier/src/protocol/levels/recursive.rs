@@ -233,21 +233,25 @@ where
         };
         let tail_point = &current_state.opening_point[split_bits..];
         #[cfg(not(feature = "zk"))]
-        let result = ExtensionOpeningReductionSumcheck::new(input_claim, tail_point.len())
-            .verify::<F, _, _>(&reduction.sumcheck, transcript, |tr| {
-                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-            })?;
+        let result = verify_extension_opening_reduction_sumcheck::<F, L, T, _>(
+            input_claim,
+            tail_point.len(),
+            &reduction.sumcheck,
+            transcript,
+            |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+        )?;
         #[cfg(feature = "zk")]
         let (final_claim_lc, challenges) =
-            ExtensionOpeningReductionSumcheck::new(input_claim, tail_point.len())
-                .verify_zk::<F, _, _>(
-                    &reduction.sumcheck_proof_masked,
-                    input_claim_mask,
-                    transcript,
-                    |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-                    zk_relations,
-                    zk_hiding_cursor,
-                )?;
+            verify_zk_extension_opening_reduction_sumcheck::<F, L, T, _>(
+                input_claim,
+                tail_point.len(),
+                &reduction.sumcheck_proof_masked,
+                input_claim_mask,
+                transcript,
+                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                zk_relations,
+                zk_hiding_cursor,
+            )?;
         #[cfg(feature = "zk")]
         let result_challenges = challenges;
         #[cfg(not(feature = "zk"))]

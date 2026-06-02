@@ -98,7 +98,7 @@ where
                 actual: logical_point.len(),
             });
         }
-        let (split_bits, width) = akita_sumcheck::tensor_opening_split::<F, E>()?;
+        let (split_bits, width) = akita_types::tensor_opening_split::<F, E>()?;
         if split_bits > self.num_vars {
             return Err(AkitaError::InvalidInput(
                 "extension-opening tensor split exceeds polynomial arity".to_string(),
@@ -165,12 +165,21 @@ where
                 actual: logical_point.len(),
             });
         }
-        let (split_bits, width) = akita_sumcheck::tensor_opening_split::<F, E>()?;
+        let (split_bits, width) = akita_types::tensor_opening_split::<F, E>()?;
         if split_bits > first.num_vars {
             return Err(AkitaError::InvalidInput(
                 "extension-opening tensor split exceeds polynomial arity".to_string(),
             ));
         }
+        let _span = tracing::info_span!(
+            "onehot_tensor_extension_column_partials_batch",
+            num_polys = polys.len(),
+            num_vars = first.num_vars,
+            onehot_k = first.onehot_k,
+            split_bits,
+            width
+        )
+        .entered();
         let low_vars = first.onehot_k.trailing_zeros() as usize;
         let can_share_weights = split_bits <= low_vars
             && low_vars <= logical_point.len()

@@ -6,6 +6,7 @@
 
 pub mod config;
 pub(crate) mod descriptor_bytes;
+pub mod extension_opening_reduction;
 pub mod field_reduction;
 pub mod instance_descriptor;
 pub mod layout;
@@ -19,6 +20,18 @@ pub mod transcript;
 pub mod zk;
 
 pub use config::DecompositionParams;
+pub use extension_opening_reduction::{
+    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
+    checked_table_len, extension_opening_reduction_claim,
+    extension_opening_reduction_eval_at_point, num_rounds_from_table_len,
+    project_tensor_factor_value, tensor_column_partials_from_base_evals,
+    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
+    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
+    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, validate_reduction_tables, ExtensionOpeningFactorTerm,
+    ExtensionOpeningReductionFactor, ExtensionOpeningReductionRoundResult,
+    ExtensionOpeningTensorPartials, EXTENSION_OPENING_REDUCTION_DEGREE,
+};
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
@@ -70,8 +83,7 @@ pub use proof::{
     PreparedRootOpeningPoint, PublicMatrixSeed, PublicOpeningRow, RelationOnlyStage2Inputs,
     RingCommitment, RingMultiplierOpeningPoint, RingSliceSerializer, SetupMatrixEnvelope,
     TerminalLevelProof, TerminalLevelProofShape, TerminalWitnessSegmentLayout,
-    TerminalWitnessTranscriptParts, VerifierClaims, EXTENSION_OPENING_REDUCTION_DEGREE,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    TerminalWitnessTranscriptParts, VerifierClaims, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 #[cfg(feature = "zk")]
 pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};

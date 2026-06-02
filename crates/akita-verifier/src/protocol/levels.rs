@@ -19,26 +19,21 @@ use akita_field::{
 };
 #[cfg(feature = "zk")]
 use akita_r1cs::{
-    lift_hiding_witness, zk_base_mask_lcs, zk_ext_mask_lc, zk_ext_mask_lc_at, zk_push_linear_zero,
+    lift_hiding_witness, zk_base_mask_lcs, zk_ext_mask_lc, zk_ext_mask_lc_at,
+    zk_masked_compressed_round_claim_mask, zk_push_linear_zero,
     zk_relation_claim_mask_from_y_masks, zk_row_masks_from_column_masks, ZkR1csLinearCombination,
     ZkRelationAccumulator,
 };
 use akita_serialization::AkitaSerialize;
+use akita_sumcheck::SumcheckInstanceVerifier;
+#[cfg(not(feature = "zk"))]
+use akita_sumcheck::SumcheckInstanceVerifierExt;
 #[cfg(feature = "zk")]
 use akita_sumcheck::ZkSumcheckInstanceVerifierExt;
-#[cfg(not(feature = "zk"))]
-use akita_sumcheck::{
-    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
-    SumcheckInstanceVerifierExt,
-};
-use akita_sumcheck::{
-    tensor_equality_factor_eval_at_point, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, ExtensionOpeningReductionSumcheck, SumcheckInstanceVerifier,
-};
 #[cfg(feature = "zk")]
 use akita_transcript::labels::ABSORB_ZK_HIDING_COMMITMENT;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_CLAIM,
     ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_HAT, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
 };
@@ -53,12 +48,20 @@ use akita_types::{
     flatten_batched_commitment_rows, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
-    sample_public_row_coefficients, schedule_num_fold_levels, terminal_witness_segment_layout,
-    w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, MRowLayout, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule,
-    Step, TerminalLevelProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    sample_public_row_coefficients, schedule_num_fold_levels, tensor_equality_factor_eval_at_point,
+    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
+    terminal_witness_segment_layout, w_ring_element_count_with_counts, AkitaBatchedProof,
+    AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, BlockOrder, ClaimIncidenceSummary, DirectWitnessProof,
+    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
+    RingOpeningPoint, RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
+};
+#[cfg(not(feature = "zk"))]
+use akita_types::{
+    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
+    ExtensionOpeningReductionRoundResult,
 };
 #[cfg(feature = "zk")]
 use zk::{verify_zk_hiding_commitment, zk_recovered_y_ring_lc};
@@ -88,6 +91,93 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
 
 struct TerminalWitnessReplay {
     parts: TerminalWitnessTranscriptParts,
+}
+
+#[cfg(not(feature = "zk"))]
+fn verify_extension_opening_reduction_sumcheck<F, E, T, S>(
+    input_claim: E,
+    num_rounds: usize,
+    proof: &akita_sumcheck::SumcheckProof<E>,
+    transcript: &mut T,
+    sample_challenge: S,
+) -> Result<ExtensionOpeningReductionRoundResult<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + AkitaSerialize,
+    T: Transcript<F>,
+    S: FnMut(&mut T) -> E,
+{
+    transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &input_claim);
+    let (final_claim, challenges) = proof.verify::<F, T, _>(
+        input_claim,
+        num_rounds,
+        EXTENSION_OPENING_REDUCTION_DEGREE,
+        transcript,
+        sample_challenge,
+    )?;
+    Ok(ExtensionOpeningReductionRoundResult {
+        final_claim,
+        challenges,
+    })
+}
+
+#[cfg(feature = "zk")]
+#[allow(clippy::too_many_arguments)]
+fn verify_zk_extension_opening_reduction_sumcheck<F, E, T, S>(
+    input_claim: E,
+    num_rounds: usize,
+    proof: &akita_sumcheck::SumcheckProofMasked<E>,
+    input_claim_mask: ZkR1csLinearCombination<E>,
+    transcript: &mut T,
+    mut sample_challenge: S,
+    relations: &mut ZkRelationAccumulator<E>,
+    hiding_cursor: &mut usize,
+) -> Result<(ZkR1csLinearCombination<E>, Vec<E>), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + ExtField<F> + AkitaSerialize,
+    T: Transcript<F>,
+    S: FnMut(&mut T) -> E,
+{
+    if proof.masked_round_polys.len() != num_rounds {
+        return Err(AkitaError::InvalidSize {
+            expected: num_rounds,
+            actual: proof.masked_round_polys.len(),
+        });
+    }
+
+    transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &input_claim);
+    let mut masked_claim = input_claim;
+    let mut claim_mask = input_claim_mask;
+    let mut challenges = Vec::with_capacity(num_rounds);
+    for masked_poly in &proof.masked_round_polys {
+        if masked_poly.degree() > EXTENSION_OPENING_REDUCTION_DEGREE {
+            return Err(AkitaError::InvalidInput(format!(
+                "extension-opening reduction round poly exceeds degree bound {}",
+                EXTENSION_OPENING_REDUCTION_DEGREE
+            )));
+        }
+        transcript.append_serde(akita_transcript::labels::ABSORB_SUMCHECK_ROUND, masked_poly);
+        let r_i = sample_challenge(transcript);
+        challenges.push(r_i);
+        let next_claim_mask = zk_masked_compressed_round_claim_mask::<F, E>(
+            &claim_mask,
+            &masked_poly.coeffs_except_linear_term,
+            r_i,
+            hiding_cursor,
+        );
+        masked_claim = masked_poly.eval_from_hint(&masked_claim, &r_i);
+        claim_mask = next_claim_mask;
+    }
+
+    Ok((
+        relations.push_masked_claim_relation(
+            "extension-opening reduction final claim",
+            masked_claim,
+            &claim_mask,
+        ),
+        challenges,
+    ))
 }
 
 fn prepare_terminal_witness_replay<F, T>(
@@ -472,26 +562,25 @@ where
             }
         }
         #[cfg(not(feature = "zk"))]
-        let result = ExtensionOpeningReductionSumcheck::new(
+        let result = verify_extension_opening_reduction_sumcheck::<F, C, T, _>(
             input_claim,
             incidence_summary.num_vars() - split_bits,
-        )
-        .verify::<F, _, _>(&reduction.sumcheck, transcript, |tr| {
-            sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-        })?;
-        #[cfg(feature = "zk")]
-        let (final_claim_lc, challenges) = ExtensionOpeningReductionSumcheck::new(
-            input_claim,
-            incidence_summary.num_vars() - split_bits,
-        )
-        .verify_zk::<F, _, _>(
-            &reduction.sumcheck_proof_masked,
-            input_claim_mask,
+            &reduction.sumcheck,
             transcript,
             |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-            zk_relations,
-            zk_hiding_cursor,
         )?;
+        #[cfg(feature = "zk")]
+        let (final_claim_lc, challenges) =
+            verify_zk_extension_opening_reduction_sumcheck::<F, C, T, _>(
+                input_claim,
+                incidence_summary.num_vars() - split_bits,
+                &reduction.sumcheck_proof_masked,
+                input_claim_mask,
+                transcript,
+                |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+                zk_relations,
+                zk_hiding_cursor,
+            )?;
         #[cfg(feature = "zk")]
         let result_challenges = challenges;
         #[cfg(not(feature = "zk"))]

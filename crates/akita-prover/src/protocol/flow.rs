@@ -1,5 +1,14 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
+use crate::protocol::extension_opening_reduction::{
+    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
+    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
+    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
+    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, BatchedExtensionOpeningReductionProver,
+    BatchedExtensionOpeningReductionTerm, ExtensionOpeningReductionProver,
+    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+};
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
     ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
@@ -22,15 +31,6 @@ use akita_field::{
     HalvingField, Invertible, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{
-    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
-    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
-    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, BatchedExtensionOpeningReductionProver,
-    BatchedExtensionOpeningReductionTerm, ExtensionOpeningReductionProver,
-    ExtensionOpeningReductionSumcheck, SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
-};
 #[cfg(feature = "zk")]
 use akita_sumcheck::{
     CompressedUniPoly, EqFactoredUniPoly, SumcheckProofMasked, ZkSumcheckInstanceProverExt,
@@ -281,8 +281,8 @@ impl<F: FieldCore> ZkHidingProverState<F> {
         let partial_masks = (0..partials)
             .map(|_| self.take_ext_scalar())
             .collect::<Result<Vec<_>, _>>()?;
-        let round_pads = self
-            .take_compressed_rounds(rounds, akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE)?;
+        let round_pads =
+            self.take_compressed_rounds(rounds, akita_types::EXTENSION_OPENING_REDUCTION_DEGREE)?;
         Ok((partial_masks, round_pads))
     }
 }
@@ -557,7 +557,7 @@ fn append_zk_extension_reduction_slots<F, L>(
     F: FieldCore + RandomSampling,
     L: ExtField<F>,
 {
-    let round_coeffs = akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
+    let round_coeffs = akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
     for _ in 0..(partials + rounds * round_coeffs) {
         push_random_ext_scalar_slots::<F, L>(out, rng);
     }

@@ -5,10 +5,11 @@ use akita_field::{
     CanonicalBytes, CanonicalField, ExtField, HasOptimizedFold, HasUnreducedOps,
     TranscriptChallenge,
 };
-use akita_sumcheck::{
+use akita_prover::protocol::extension_opening_reduction::{
     tensor_opening_split, BatchedExtensionOpeningReductionProver,
-    BatchedExtensionOpeningReductionTerm, SparseExtensionOpeningWitness, SumcheckInstanceProverExt,
+    BatchedExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
 };
+use akita_sumcheck::SumcheckInstanceProverExt;
 use akita_transcript::{labels, sample_ext_challenge, AkitaTranscript, Transcript};
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, BenchmarkGroup, Criterion, SamplingMode};
@@ -127,7 +128,9 @@ where
         .map(|_| random_ext::<F, E>(&mut rng))
         .collect::<Vec<_>>();
     let witness = onehot_sparse_tensor_witness::<F, E>(num_vars, num_polys);
-    let lazy_rounds = tail_vars.min(akita_sumcheck::SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS);
+    let lazy_rounds = tail_vars.min(
+        akita_prover::protocol::extension_opening_reduction::SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+    );
     BatchedExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
         witness,
         tail_point,

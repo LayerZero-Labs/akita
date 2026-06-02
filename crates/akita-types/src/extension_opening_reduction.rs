@@ -1,45 +1,17 @@
-//! Extension-opening reduction sumcheck instances.
+//! Extension-opening-reduction tensor and output helpers.
 //!
-//! This module implements the degree-two reduction used to collapse a logical
-//! extension-field opening into one ordinary opening of the transformed
-//! committed witness. The dense-table instance here proves claims of the form
-//! `sum_x witness(x) * factor(x)`, where `factor` is the transparent
-//! extension-opening factor. Later small-digit folded-witness code should plug
-//! in at this boundary instead of treating the protocol as an arbitrary product
-//! gadget.
+//! These helpers are pure tensor algebra shared by prover and verifier code.
+//! The concrete EOR prover instance and its witness-bearing state live in
+//! `akita-prover`.
 
-use crate::drivers::SumcheckInstanceProverExt;
-#[cfg(feature = "zk")]
-use crate::drivers::ZkSumcheckInstanceProverExt;
-use crate::traits::{SumcheckInstanceProver, SumcheckInstanceVerifier};
-use crate::types::SumcheckProof;
-#[cfg(feature = "zk")]
-use crate::types::SumcheckProofMasked;
-use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
-#[cfg(feature = "zk")]
-use akita_algebra::uni_poly::CompressedUniPoly;
-use akita_algebra::uni_poly::UniPoly;
+use akita_algebra::poly::multilinear_eval;
 use akita_algebra::EqPolynomial;
-use akita_field::fields::wide::HasOptimizedFold;
-use akita_field::fields::HasUnreducedOps;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, Zero};
-#[cfg(feature = "zk")]
-use akita_r1cs::{
-    zk_masked_compressed_round_claim_mask, ZkR1csLinearCombination, ZkRelationAccumulator,
-};
-use akita_serialization::AkitaSerialize;
-use akita_transcript::{labels, Transcript};
+use akita_field::{AkitaError, ExtField, FieldCore};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 /// Degree bound for one witness factor times one transparent reduction factor.
 pub const EXTENSION_OPENING_REDUCTION_DEGREE: usize = 2;
-
-/// Maximum number of sparse low-index rounds to keep in the lazy tensor factor.
-///
-/// The lazy factor caches one small state per low-bit assignment, avoiding a
-/// full dense factor table while the sparse witness still has large support.
-pub const SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS: usize = 12;
 
 /// Tensor-algebra data for one extension-opening reduction instance.
 ///
@@ -393,7 +365,8 @@ where
         .fold(E::zero(), |acc, (weight, partial)| acc + weight * partial))
 }
 
-fn project_tensor_factor_value<F, E>(
+#[doc(hidden)]
+pub fn project_tensor_factor_value<F, E>(
     value: E,
     eta_weights: &[E],
     width: usize,
@@ -717,130 +690,52 @@ pub fn extension_opening_reduction_eval_at_point<E: FieldCore>(
     Ok(witness_eval * factor_eval)
 }
 
-/// Degree-two round-message accumulator that honors a field's delayed-reduction
-/// exactness contract (`HasUnreducedOps::DELAYED_PRODUCT_SUM_IS_EXACT`).
+/// Check the final extension-opening reduction equality.
 ///
-/// Every extension-opening reduction round needs two batch sums: the constant
-/// coefficient `Σ c0·c1` and the quadratic coefficient `Σ q0·q1`. This trait
-/// abstracts how those products are summed so the dense, fused-fold, and sparse
-/// accumulation paths can all pick the right policy from one place:
+/// # Errors
 ///
-/// - [`DelayedDeg2`] sums the wide `E::ProductAccum` products and reduces once
-///   per round. This is only sound when `DELAYED_PRODUCT_SUM_IS_EXACT` is set,
-///   i.e. the field's accumulator has been proven not to wrap for these batch
-///   sizes (e.g. `RingSubfieldFp4<Fp32>`, `RingSubfieldFp8<Fp16>`, `Fp2<Fp64>`).
-/// - [`DirectDeg2`] reduces every product immediately via `Mul`, so the summed
-///   coefficient is byte-identical to per-term reduction. This is the
-///   contract-safe path for fields that leave `DELAYED_PRODUCT_SUM_IS_EXACT` at
-///   its conservative `false` default.
-///
-/// Mirrors the same flag check already performed in
-/// [`sparse::TensorEqualityFactor::factor_pair`], so the entire EOR prover
-/// stays byte-identical to per-term `Mul` for any field whose delayed product
-/// sum is not exact.
-trait Deg2RoundAccum<E: FieldCore + HasUnreducedOps>: Sized + Send {
-    /// Empty accumulator (both coefficients zero).
-    fn zero() -> Self;
-    /// Accumulate `lhs·rhs` into the constant coefficient.
-    fn add_constant_product(&mut self, lhs: E, rhs: E);
-    /// Accumulate `lhs·rhs` into the quadratic coefficient.
-    fn add_quadratic_product(&mut self, lhs: E, rhs: E);
-    /// Combine two partial accumulators (for parallel reduction).
-    #[cfg(feature = "parallel")]
-    fn merge(self, other: Self) -> Self;
-    /// Reduce to the `(constant, quadratic)` round coefficients.
-    fn finish(self) -> (E, E);
+/// Returns [`AkitaError::InvalidProof`] if the final sumcheck claim does not
+/// match the product of the ordinary witness opening and transparent factor
+/// evaluation at the sumcheck challenge point.
+pub fn check_extension_opening_reduction_output<E: FieldCore>(
+    final_claim: E,
+    witness_eval: E,
+    factor_eval: E,
+) -> Result<(), AkitaError> {
+    if final_claim != witness_eval * factor_eval {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(())
 }
 
-/// Delayed-reduction accumulator. Sound only when the field's
-/// `DELAYED_PRODUCT_SUM_IS_EXACT` is `true`.
-struct DelayedDeg2<E: HasUnreducedOps> {
-    constant: E::ProductAccum,
-    quadratic: E::ProductAccum,
+pub fn validate_reduction_tables<E: FieldCore>(
+    witness_evals: &[E],
+    factor_evals: &[E],
+) -> Result<(), AkitaError> {
+    if witness_evals.len() != factor_evals.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: witness_evals.len(),
+            actual: factor_evals.len(),
+        });
+    }
+    num_rounds_from_table_len(witness_evals.len()).map(|_| ())
 }
 
-impl<E: FieldCore + HasUnreducedOps> Deg2RoundAccum<E> for DelayedDeg2<E> {
-    #[inline]
-    fn zero() -> Self {
-        Self {
-            constant: E::ProductAccum::zero(),
-            quadratic: E::ProductAccum::zero(),
-        }
+pub fn checked_table_len(num_vars: usize) -> Result<usize, AkitaError> {
+    if num_vars >= usize::BITS as usize {
+        return Err(AkitaError::InvalidInput(format!(
+            "extension-opening reduction table has too many variables: {num_vars}"
+        )));
     }
-    #[inline]
-    fn add_constant_product(&mut self, lhs: E, rhs: E) {
-        self.constant += lhs.mul_to_product_accum(rhs);
-    }
-    #[inline]
-    fn add_quadratic_product(&mut self, lhs: E, rhs: E) {
-        self.quadratic += lhs.mul_to_product_accum(rhs);
-    }
-    #[cfg(feature = "parallel")]
-    #[inline]
-    fn merge(self, other: Self) -> Self {
-        Self {
-            constant: self.constant + other.constant,
-            quadratic: self.quadratic + other.quadratic,
-        }
-    }
-    #[inline]
-    fn finish(self) -> (E, E) {
-        (
-            E::reduce_product_accum(self.constant),
-            E::reduce_product_accum(self.quadratic),
-        )
-    }
+    Ok(1usize << num_vars)
 }
 
-/// Per-term reduction accumulator: every product is reduced immediately, so the
-/// summed coefficient is byte-identical to per-term `Mul`. Contract-safe
-/// fallback for fields with `DELAYED_PRODUCT_SUM_IS_EXACT == false`.
-struct DirectDeg2<E> {
-    constant: E,
-    quadratic: E,
+pub fn num_rounds_from_table_len(len: usize) -> Result<usize, AkitaError> {
+    if len == 0 || !len.is_power_of_two() {
+        return Err(AkitaError::InvalidSize {
+            expected: len.max(1).next_power_of_two(),
+            actual: len,
+        });
+    }
+    Ok(len.trailing_zeros() as usize)
 }
-
-impl<E: FieldCore + HasUnreducedOps> Deg2RoundAccum<E> for DirectDeg2<E> {
-    #[inline]
-    fn zero() -> Self {
-        Self {
-            constant: E::zero(),
-            quadratic: E::zero(),
-        }
-    }
-    #[inline]
-    fn add_constant_product(&mut self, lhs: E, rhs: E) {
-        self.constant += lhs * rhs;
-    }
-    #[inline]
-    fn add_quadratic_product(&mut self, lhs: E, rhs: E) {
-        self.quadratic += lhs * rhs;
-    }
-    #[cfg(feature = "parallel")]
-    #[inline]
-    fn merge(self, other: Self) -> Self {
-        Self {
-            constant: self.constant + other.constant,
-            quadratic: self.quadratic + other.quadratic,
-        }
-    }
-    #[inline]
-    fn finish(self) -> (E, E) {
-        (self.constant, self.quadratic)
-    }
-}
-
-mod batched;
-mod dense;
-mod output;
-mod sparse;
-mod sumcheck;
-
-pub use batched::BatchedExtensionOpeningReductionProver;
-pub use dense::ExtensionOpeningReductionProver;
-pub use output::check_extension_opening_reduction_output;
-pub use sparse::{BatchedExtensionOpeningReductionTerm, SparseExtensionOpeningWitness};
-pub use sumcheck::{ExtensionOpeningReductionSumcheck, ExtensionOpeningReductionVerifier};
-
-pub(super) use dense::{accumulate_dense_round, fold_dense_reduction_tables_in_place};
-pub(super) use output::{checked_table_len, num_rounds_from_table_len, validate_reduction_tables};

@@ -303,20 +303,29 @@ where
             #[cfg(feature = "zk")]
             &mut zk_hiding,
         )?;
-        let protocol_point = ring_subfield_packed_extension_opening_point::<F, C, D>(
-            reduction.rho.len(),
-            &reduction.rho,
-        )?;
-        let prepared_protocol_point = prepare_root_opening_point_ext::<F, C, C, D>(
-            &protocol_point,
-            basis,
-            root_params,
-            alpha_bits,
-        )?;
+        let protocol_point = {
+            let _span = tracing::info_span!("root_extension_protocol_point").entered();
+            ring_subfield_packed_extension_opening_point::<F, C, D>(
+                reduction.rho.len(),
+                &reduction.rho,
+            )?
+        };
+        let prepared_protocol_point = {
+            let _span = tracing::info_span!("root_extension_prepare_protocol_point").entered();
+            prepare_root_opening_point_ext::<F, C, C, D>(
+                &protocol_point,
+                basis,
+                root_params,
+                alpha_bits,
+            )?
+        };
         prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
-        let transformed_polys = cfg_iter!(polys)
-            .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
-            .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?;
+        let transformed_polys = {
+            let _span = tracing::info_span!("root_extension_transform_polys", num_claims).entered();
+            cfg_iter!(polys)
+                .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
+                .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?
+        };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
 
         let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
@@ -668,21 +677,30 @@ where
             #[cfg(feature = "zk")]
             zk_hiding,
         )?;
-        let protocol_point = ring_subfield_packed_extension_opening_point::<F, C, D>(
-            reduction.rho.len(),
-            &reduction.rho,
-        )?;
-        let prepared_protocol_point = prepare_root_opening_point_ext::<F, C, C, D>(
-            &protocol_point,
-            basis,
-            root_params,
-            alpha_bits,
-        )?;
+        let protocol_point = {
+            let _span = tracing::info_span!("root_extension_protocol_point").entered();
+            ring_subfield_packed_extension_opening_point::<F, C, D>(
+                reduction.rho.len(),
+                &reduction.rho,
+            )?
+        };
+        let prepared_protocol_point = {
+            let _span = tracing::info_span!("root_extension_prepare_protocol_point").entered();
+            prepare_root_opening_point_ext::<F, C, C, D>(
+                &protocol_point,
+                basis,
+                root_params,
+                alpha_bits,
+            )?
+        };
         prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
-        let transformed_polys = polys
-            .iter()
-            .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
-            .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?;
+        let transformed_polys = {
+            let _span = tracing::info_span!("root_extension_transform_polys", num_claims).entered();
+            polys
+                .iter()
+                .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
+                .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?
+        };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
 
         let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(

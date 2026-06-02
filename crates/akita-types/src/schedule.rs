@@ -672,11 +672,11 @@ pub fn scheduled_fold_execution(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
     use crate::{extension_opening_reduction_proof_bytes, root_extension_opening_partials};
     use akita_field::FieldCore;
     use akita_field::Prime128OffsetA7F7;
     use akita_serialization::{AkitaSerialize, Compress};
-    use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
     #[cfg(not(feature = "zk"))]
     use akita_sumcheck::{CompressedUniPoly, SumcheckProof};
     #[cfg(feature = "zk")]

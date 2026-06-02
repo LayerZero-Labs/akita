@@ -11,10 +11,10 @@ pub mod kernels;
 pub mod protocol;
 mod validation;
 
+use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
-use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
     embed_ring_subfield_vector, DirectWitnessProof, FlatDigitBlocks, OpeningPoints,
     RingSubfieldEncoding,
@@ -290,7 +290,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
                 "root tensor partials require field-element root witness".to_string(),
             )
         })?;
-        akita_sumcheck::tensor_column_partials_from_base_evals::<F, E>(
+        akita_types::tensor_column_partials_from_base_evals::<F, E>(
             num_vars,
             field_elems.coeffs(),
             logical_point,
@@ -336,7 +336,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
                 "root tensor projection requires field-element root witness".to_string(),
             )
         })?;
-        akita_sumcheck::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
+        akita_types::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
     }
 
     /// Materialize a sparse tensor-packed root witness when the backend can

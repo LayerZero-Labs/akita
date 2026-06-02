@@ -4,33 +4,45 @@
 |-------------|--------------------------------|
 | Author(s)   | Taghi Badakhshan               |
 | Created     | 2026-05-30                     |
-| Status      | implemented                    |
+| Status      | in progress                    |
 | PR          | `taghi/perf/eor-sc` ([#136](https://github.com/LayerZero-Labs/akita/pull/136))     |
 
 ## Summary
 
-This PR accelerates the Akita prover for small-field, one-hot polynomial
-commitments without changing proofs. The work is concentrated in the
-extension-opening-reduction (EOR) sumcheck and its surrounding root/recursive
-prep, which the profile identified as the dominant prover cost for small fields:
-because a small base field (e.g. fp32) carries too little soundness on its own,
+This work accelerates the Akita prover for small-field, one-hot polynomial
+commitments without changing proofs.
+The work is concentrated in the extension-opening-reduction (EOR) sumcheck and
+its surrounding root and recursive prep, which the profile identified as the
+dominant prover cost for small fields.
+Because a small base field (e.g. fp32) carries too little soundness on its own,
 the protocol runs the EOR over a degree-`d` extension (`d = 4` for fp32, `8` for
 fp16, `2` for fp64, `1` for fp128), so the extension-heavy phases dominate prove
-time and scale with `d`. Every change is **byte-identical** (proof bytes,
-transcript, schedules, and setup artifacts are unchanged) and **prover-only**
-(the verifier is untouched). The net result is a large prover speedup that grows
-with field-extension degree: ~26% at nv32 for `onehot_fp32_d32` from the latest
-three commits alone, and ~2.5× at nv32 for `onehot_fp16_d32` once the same EOR
-fast paths are ported to the degree-8 field.
+time and scale with `d`.
+
+The PR also performs a crate-boundary cutover: EOR is an Akita protocol gadget,
+so its concrete prover state and instance implementation live in `akita-prover`,
+while `akita-sumcheck` stays protocol-independent.
+
+Every change is **byte-identical** (proof bytes, transcript bytes, schedules,
+and setup artifacts are unchanged).
+Verifier semantics are unchanged, but verifier code may be adjusted mechanically
+to consume the moved implementation.
+The net result is a large prover speedup that grows with field-extension degree:
+about 26% at nv32 for `onehot_fp32_d32` from the EOR-focused commits, and about
+2.5× at nv32 for `onehot_fp16_d32` once the same EOR fast paths are ported to the
+degree-8 field.
 
 ## Intent
 
 ### Goal
 
 Make the EOR sumcheck and its root/recursive prep faster for small-field one-hot
-modes in `akita-sumcheck`, `akita-prover`, and `akita-field`, without changing
-proof format, transcript bytes, schedules, setup artifacts, the verifier, or any
-public PCS API.
+modes, and enforce a clear crate boundary where protocol-specific prover code
+stays in `akita-prover` (not `akita-sumcheck`).
+
+Maintain byte-identical proof and transcript bytes.
+Do not change proof format, schedule search policy, transcript binding, setup
+artifacts, soundness, or any public PCS API.
 
 ### Invariants
 
@@ -38,8 +50,8 @@ public PCS API.
   `proof_size_bytes` and the full proof are unchanged versus the pre-PR baseline,
   and the proof verifies. Protected by
   `sparse_tensor_factor_matches_dense_factor_rounds` and its per-prime
-  instantiations (`..._fp32_*`, `..._fp8_fp16_*`) in
-  `crates/akita-sumcheck/tests/extension_opening_reduction.rs`, the EOR
+  instantiations (`..._fp32_*`, `..._fp8_fp16_*`) in the EOR test suite (moved
+  out of `akita-sumcheck` as part of the crate-boundary cutover), the EOR
   round-by-round equality tests, and the proof-size gate in the profile harness.
 - **Delayed-reduction exactness.** Where a field sets
   `HasUnreducedOps::DELAYED_PRODUCT_SUM_IS_EXACT = true`, the wide accumulator
@@ -55,9 +67,10 @@ public PCS API.
   mode is specialized (`RingSubfieldFp4<Fp32>`, `RingSubfieldFp8<Fp16>`,
   `Fp2<Fp64>`); all other base/extension types keep the existing generic paths
   via default-impl macros.
-- **Verifier no-panic contract unchanged.** No new verifier-reachable
-  `panic!`/unchecked indexing/shape assumptions; the EOR verifier and all
-  verifier paths are byte-for-byte unchanged.
+- **Verifier no-panic contract preserved.** No new verifier-reachable
+  `panic!`/unchecked indexing/shape assumptions.
+  Verifier code may move or be mechanically rewritten, but it must preserve the
+  same validation boundaries and reject malformed inputs with `AkitaError`.
 - **Parallel reductions are order-independent.** All newly parallelized folds,
   maps, and dot products reduce with associative/commutative field operations,
   so the result is identical to the serial form regardless of chunking.
@@ -70,10 +83,26 @@ public PCS API.
 - No proof layout, schedule search policy, transcript binding, or serialization
   change.
 - No verifier optimization.
-- No SIMD-packed EOR factor evaluation (evaluated and rejected — see
+- No SIMD-packed EOR factor evaluation (evaluated and rejected, see
   Alternatives).
 - The one-hot "multiply-by-basis shift" is **not** landed (evaluated and
-  rejected — see Alternatives).
+  rejected, see Alternatives).
+
+### Requirements and Guardrails
+
+- **Full cutover, no backward compatibility.**
+  When moving code, update all call sites in one pass.
+  Do not keep deprecated re-exports, shims, or parallel old and new APIs.
+- **`akita-sumcheck` stays protocol-independent.**
+  It may own generic sumcheck proof containers, traits, and transcript drivers.
+  It must not own Akita-specific prover state that carries witness tables.
+- **Prover-only performance paths must not leak verifier-side risk.**
+  Any verifier-reachable helper must be total over malformed input, return
+  `AkitaError`, and avoid unchecked indexing and overflow-prone arithmetic unless
+  earlier validation proves the invariant.
+- **No proof or transcript drift.**
+  Keep proof bytes and transcript bytes identical for existing modes.
+  Treat any drift as a blocker, not an acceptable behavior change.
 
 ## Evaluation
 
@@ -81,13 +110,15 @@ public PCS API.
 
 - [x] `cargo fmt -q`
 - [x] `cargo clippy --all --all-targets --message-format=short -q -- -D warnings`
-- [x] `cargo test` (notably `-p akita-field`, `-p akita-sumcheck`, `-p akita-prover`)
+- [x] `cargo test` (notably `-p akita-field`, `-p akita-prover`, `-p akita-sumcheck`, `-p akita-verifier`)
 - [x] `cargo doc -q --no-deps --all-features`
 - [x] Byte-identical: `proof_size_bytes` matches the pre-PR baseline for
   `onehot_fp32_d32` (34432/36048 @ nv26/28), `onehot_fp16_d32` (29808/30608),
   and `onehot_fp64_d32` (40808/41688), each with `exit_code 0`.
 - [x] Controlled, drift-canceled local A/B confirms the prover is faster than
   `origin/main` on every benchmarked mode (no regression on non-targeted modes).
+- [x] Crate-boundary cutover complete: EOR prover code lives in `akita-prover`, and `akita-sumcheck`
+  contains only protocol-independent sumcheck machinery.
 
 ### Testing Strategy
 
@@ -133,20 +164,38 @@ nv30/32): at degree 2 the generic Karatsuba fold is already cheap. `fp128`
 
 ## Design
 
+### Crate Boundary and Ownership
+
+This PR enforces a clean ownership split:
+
+- `akita-sumcheck` owns only protocol-independent sumcheck machinery.
+  Proof containers, traits (`SumcheckInstanceProver`, `SumcheckInstanceVerifier`,
+  eq-factored variants), and generic transcript drivers stay here.
+- `akita-prover` owns Akita protocol gadgets that compute sumcheck round
+  polynomials from witness data.
+  EOR is one such gadget, so its concrete prover state and instance
+  implementation live in `akita-prover`.
+- `akita-verifier` owns verifier replay and final checks.
+  Verifier semantics are unchanged, but the verification code may be rewritten
+  to call generic sumcheck drivers plus EOR-specific final checks.
+- `akita-types` may host pure EOR tensor and output helper functions if doing so
+  avoids duplicating logic across prover and verifier crates.
+  The concrete EOR prover instance and its witness-bearing mutable state must
+  stay in `akita-prover`.
+
 ### Architecture
 
-All changes live in three crates and are reachable only from prover paths.
+All performance-critical EOR prover logic lives under `akita-prover`, and field
+gated fast paths live under `akita-field`.
+`akita-sumcheck` remains a generic sumcheck crate, not a home for protocol
+gadgets.
 
-**`akita-sumcheck` — EOR sumcheck core** (`src/extension_opening_reduction/`):
-- Algorithmic: drop the redundant `c1` term and recover it from the claim; drop
-  the `w1 == 0` branch in sparse accumulation.
-- `TensorEqualityFactor`: lazy prefix/suffix tensor-equality factor that avoids
-  materializing the dense factor table and takes the delayed-reduction
-  `eval_state_at_suffix_fast` path when the field's accumulator is exact;
-  `factor_pair` fuses the `a0`/`a1` evaluations to share the suffix-table column
-  load.
-- Delayed-reduction accumulation in the round message: accumulate wide products
-  in `E::ProductAccum` and reduce once per round.
+**`akita-prover` — EOR prover gadget and prep**:
+- EOR prover state over witness and factor tables, plus sparse and batched EOR
+  terms.
+- Root and recursive EOR prep, including one-hot sparse root-extension column
+  partials and any threshold-gated parallel folds.
+- Call sites in `protocol/flow/{root_extension,recursive}.rs` and related paths.
 
 **`akita-field` — field-gated fast paths** (`src/fields/`):
 - `HasUnreducedOps`: wide `ProductAccum` types and `mul_to_product_accum` for
@@ -162,7 +211,7 @@ All changes live in three crates and are reachable only from prover paths.
 - `Fp64::reduce_sum_of_two_products` carry-correct reduction, and the
   `Fp2<Fp64>` accumulator carry fix that makes its delayed sum exact.
 
-**`akita-prover` — prep and kernels**:
+**`akita-prover` — kernels**:
 - One-hot sparse root-extension column partials
   (`backend/onehot/`, `tensor_extension_column_partials_batch`): tensor-factor
   the high eq-weights and scatter by head (per-chunk add instead of a dense
@@ -186,7 +235,7 @@ new field's fast path is a self-contained `akita-field` change.
   so even an inlined, byte-identical implementation was e2e-neutral to slightly
   negative, and the per-entry head detection scaled the wrong way. Not landed.
 - **NEON SIMD-packing of the EOR factor evaluation** (`PackedRingSubfieldFp4`
-  across lanes). Rejected: ~22% slower in the kernel — the sparse scattered
+  across lanes). Rejected: ~22% slower in the kernel, the sparse scattered
   gather dominates, the campaign prime takes the heavy per-product carry path,
   and NEON lacks lane-wise add-with-carry for the add-bound accumulation. The
   safe fallback (fuse `a0`/`a1` evals) was kept instead (`factor_pack`).
@@ -197,41 +246,62 @@ new field's fast path is a self-contained `akita-field` change.
 - **Specialized fold / delayed reduction for fp128 (degree 1)**. Skipped: the
   EOR is negligible at degree 1, so there is no payoff.
 
-## Documentation
+## Implementation Order and Checklist
 
-- This retrospective spec is the PR-specific spec artifact.
-- Benchmarks are reproduced with the committed harness `scripts/profile_bench_report.py`
-  and the canonical `cargo run --release --example profile` command (see References),
-  run drift-canceled and interleaved.
-- No README or profile-guide changes are required: the optimizations are
-  transparent (same modes, same proofs); the canonical profile command is
-  unchanged.
+This PR is intentionally a full cutover, not a transitional migration.
+The checklist is ordered to keep the proof and transcript invariants protected
+throughout.
 
-## Execution
+### Phase 0: Spec and worklog
 
-Implemented as a sequence of byte-identical commits on `taghi/perf/eor-sc`
-(see the branch git log for exact revisions):
+- [x] Update this spec to reflect the intended final architecture and crate boundary.
+- [x] Maintain a visible, untracked worklog at repo root: `WORKLOG-NEVER-COMMIT.md`.
 
-- Skip `c1` in EOR accumulation and recover it from the claim.
-- Remove the redundant `w1 == 0` branch in sparse EOR accumulation.
-- Delayed-reduction accumulators for EOR.
-- Precomputed dense fold (`FoldMatrixFp32`) + fused fold/accumulate.
-- Parallel fold, wider block-parallel NTT threshold, lazy tensor factor
-  (`TensorEqualityFactor`).
-- Preserve carry in the `Fp2<Fp64>` delayed-reduction accumulator (enables
-  fp64's delayed path).
-- One-hot sparse root-extension column partials.
-- Parallelize recursive EOR prep.
-- Fuse `a0`/`a1` tensor-factor evals in EOR accumulate.
-- fp16 EOR delayed-reduction + 8×8 specialized fold (`RingSubfieldFp8<Fp16>`).
-- fp64 specialized 2×2 fold (`Fp2<Fp64>`).
+### Phase 1: Move EOR out of `akita-sumcheck`
+
+- [x] Move `crates/akita-sumcheck/src/extension_opening_reduction/` to
+  `crates/akita-prover/src/protocol/extension_opening_reduction/`.
+- [x] Remove `extension_opening_reduction` from `akita-sumcheck/src/lib.rs` exports.
+- [x] Update all imports in prover, verifier, tests, benches, and examples to point to
+  the new module location.
+- [x] Ensure `akita-sumcheck` compiles without any EOR-specific modules.
+
+### Phase 2: Remove the EOR-specific sumcheck driver type
+
+- [x] Delete `ExtensionOpeningReductionSumcheck` and use generic sumcheck drivers instead.
+  - Prover: call `SumcheckInstanceProverExt::prove` (or ZK equivalent) on the EOR prover instance.
+  - Verifier: replay rounds via `SumcheckProof::verify` after absorbing the input claim.
+- [x] Keep transcript bytes identical by preserving the same absorb and challenge sampling order.
+
+### Phase 3: Place verifier-shared EOR helpers
+
+- [x] Identify EOR helper functions needed by both prover and verifier
+  (for example transparent tensor-factor evaluation at a point).
+- [x] Place those helpers in `akita-types` (or a lower crate) if that avoids duplication.
+  Verifier-used helpers must remain defensive and satisfy the verifier no-panic contract.
+  Prover table-materialization helpers may use the optional `parallel` feature.
+
+### Phase 4: Move tests and benches to match ownership
+
+- [x] Move EOR unit tests out of `akita-sumcheck` into `akita-prover` (or `akita-pcs` integration
+  tests if they require multiple crates).
+- [x] Update any benchmarks that import EOR types to use the new module location.
+
+### Phase 5: Verification gate
+
+- [x] `cargo fmt -q`
+- [x] `cargo clippy --all-targets -p akita-sumcheck -p akita-types -p akita-prover -p akita-verifier -- -D warnings`
+- [x] `cargo clippy --all-targets -p akita-sumcheck -p akita-types -p akita-prover -p akita-verifier --features zk -- -D warnings`
+- [x] `cargo test -p akita-prover --test extension_opening_reduction`
+- [ ] `cargo doc -q --no-deps --all-features`
+- [ ] Byte-identical: proof bytes and transcript bytes unchanged for the benchmarked modes.
 
 Risk notes: the only correctness-sensitive surface is the wide accumulators
-(`DELAYED_PRODUCT_SUM_IS_EXACT`) and the fold matrices; each is guarded by a
-direct-vs-generic unit test plus the end-to-end EOR byte-identicality guard and
-the profile proof-size gate. The `u64` lanes for the fp16 accumulator have ~2^28
-accumulation headroom; widening to `u128` is the safe fallback at extreme
-`num_vars` with very few threads.
+(`DELAYED_PRODUCT_SUM_IS_EXACT`) and the fold matrices.
+Each must be guarded by a direct-vs-generic unit test plus the end-to-end EOR
+byte-identicality guard and the profile proof-size gate.
+The `u64` lanes for the fp16 accumulator have about \(2^{28}\) accumulation headroom.
+Widening to `u128` is the safe fallback at extreme `num_vars` with very few threads.
 
 ## References
 

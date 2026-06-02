@@ -383,7 +383,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     where
         E: ExtField<F>,
     {
-        let (split_bits, width) = akita_sumcheck::tensor_opening_split::<F, E>()?;
+        let (split_bits, width) = akita_types::tensor_opening_split::<F, E>()?;
         if split_bits > self.num_vars {
             return Err(AkitaError::InvalidInput(
                 "extension-opening tensor split exceeds polynomial arity".to_string(),

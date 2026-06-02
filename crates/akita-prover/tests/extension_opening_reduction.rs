@@ -1,24 +1,29 @@
 #![allow(missing_docs)]
 #![cfg(not(feature = "zk"))]
 
+use akita_algebra::poly::multilinear_eval;
 use akita_field::{
-    Ext2, ExtField, FieldCore, Prime128Offset275, Prime16Offset99, Prime24Offset3, Prime30Offset35,
-    Prime31Offset19, Prime32Offset99, Prime64Offset59, RingSubfieldFp4, RingSubfieldFp8,
+    AkitaError, Ext2, ExtField, FieldCore, Prime128Offset275, Prime16Offset99, Prime24Offset3,
+    Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime64Offset59, RingSubfieldFp4,
+    RingSubfieldFp8,
 };
-use akita_sumcheck::{
-    check_extension_opening_reduction_output, extension_opening_reduction_claim,
-    extension_opening_reduction_eval_at_point, tensor_equality_factor_eval_at_point,
-    tensor_equality_factor_evals, tensor_logical_claim_from_partials, tensor_packed_witness_evals,
-    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
+use akita_prover::protocol::extension_opening_reduction::{
     BatchedExtensionOpeningReductionProver, BatchedExtensionOpeningReductionTerm,
-    ExtensionOpeningFactorTerm, ExtensionOpeningReductionFactor, ExtensionOpeningReductionProver,
-    ExtensionOpeningReductionSumcheck, ExtensionOpeningReductionVerifier,
-    SparseExtensionOpeningWitness, SumcheckInstanceProver, SumcheckInstanceProverExt,
-    SumcheckInstanceVerifierExt, EXTENSION_OPENING_REDUCTION_DEGREE,
+    ExtensionOpeningReductionProver, SparseExtensionOpeningWitness,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
+use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{AkitaTranscript, Transcript};
+use akita_types::{
+    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
+    extension_opening_reduction_claim, extension_opening_reduction_eval_at_point,
+    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
+    tensor_logical_claim_from_partials, tensor_packed_witness_evals,
+    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows, ExtensionOpeningFactorTerm,
+    ExtensionOpeningReductionFactor, ExtensionOpeningReductionRoundResult,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
+};
 
 type F = Prime128Offset275;
 
@@ -28,6 +33,47 @@ fn new_transcript() -> AkitaTranscript<F> {
 
 fn sample_round(tr: &mut AkitaTranscript<F>) -> F {
     tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND)
+}
+
+fn verify_eor_rounds(
+    input_claim: F,
+    num_rounds: usize,
+    proof: &SumcheckProof<F>,
+    transcript: &mut AkitaTranscript<F>,
+) -> Result<ExtensionOpeningReductionRoundResult<F>, AkitaError> {
+    transcript.append_serde(tr_labels::ABSORB_SUMCHECK_CLAIM, &input_claim);
+    let (final_claim, challenges) = proof.verify::<F, _, _>(
+        input_claim,
+        num_rounds,
+        EXTENSION_OPENING_REDUCTION_DEGREE,
+        transcript,
+        sample_round,
+    )?;
+    Ok(ExtensionOpeningReductionRoundResult {
+        final_claim,
+        challenges,
+    })
+}
+
+fn verify_eor_full(
+    witness_evals: &[F],
+    factor_evals: &[F],
+    proof: &SumcheckProof<F>,
+) -> Result<Vec<F>, AkitaError> {
+    let input_claim = extension_opening_reduction_claim(witness_evals, factor_evals)?;
+    let mut transcript = new_transcript();
+    let result = verify_eor_rounds(
+        input_claim,
+        witness_evals.len().trailing_zeros() as usize,
+        proof,
+        &mut transcript,
+    )?;
+    let expected =
+        extension_opening_reduction_eval_at_point(witness_evals, factor_evals, &result.challenges)?;
+    if result.final_claim != expected {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(result.challenges)
 }
 
 #[test]
@@ -115,15 +161,11 @@ fn tensor_partials_recompose_logical_extension_opening() {
     let logical_claim =
         tensor_logical_claim_from_partials::<B, E>(&point, &partials.column_partials).unwrap();
     assert_eq!(logical_claim, lifted_multilinear_eval(&base_evals, &point));
-    akita_sumcheck::check_tensor_extension_opening_claim::<B, E>(
-        &point,
-        logical_claim,
-        &partials.column_partials,
-    )
-    .unwrap();
+    check_tensor_extension_opening_claim::<B, E>(&point, logical_claim, &partials.column_partials)
+        .unwrap();
 
     assert!(matches!(
-        akita_sumcheck::check_tensor_extension_opening_claim::<B, E>(
+        check_tensor_extension_opening_claim::<B, E>(
             &point,
             logical_claim + E::one(),
             &partials.column_partials,
@@ -269,11 +311,7 @@ fn extension_opening_reduction_proves_witness_factor_claim() {
             .unwrap()
     );
 
-    let verifier = ExtensionOpeningReductionVerifier::new(witness_evals, factor_evals).unwrap();
-    let mut verifier_transcript = new_transcript();
-    let verified_challenges = verifier
-        .verify::<F, _, _>(&proof, &mut verifier_transcript, sample_round)
-        .unwrap();
+    let verified_challenges = verify_eor_full(&witness_evals, &factor_evals, &proof).unwrap();
     assert_eq!(verified_challenges, challenges);
 }
 
@@ -924,28 +962,15 @@ fn extension_opening_reduction_proves_transparent_factor_claim() {
     assert_eq!(prover.input_claim(), expected_claim);
 
     let mut prover_transcript = new_transcript();
-    let driver = ExtensionOpeningReductionSumcheck::new(prover.input_claim(), prover.num_rounds());
-    let (proof, prover_result) = driver
-        .prove::<F, _, _>(&mut prover, &mut prover_transcript, sample_round)
+    let (proof, challenges, final_claim) = prover
+        .prove::<F, _, _>(&mut prover_transcript, sample_round)
         .unwrap();
     let (final_witness, final_factor) = prover.final_witness_and_factor_evals().unwrap();
-    assert_eq!(
-        final_factor,
-        factor.evaluate(&prover_result.challenges).unwrap()
-    );
-    check_extension_opening_reduction_output(
-        prover_result.final_claim,
-        final_witness,
-        final_factor,
-    )
-    .unwrap();
+    assert_eq!(final_factor, factor.evaluate(&challenges).unwrap());
+    check_extension_opening_reduction_output(final_claim, final_witness, final_factor).unwrap();
 
-    let verifier = ExtensionOpeningReductionVerifier::new(witness_evals, factor_evals).unwrap();
-    let mut verifier_transcript = new_transcript();
-    let verified_challenges = verifier
-        .verify::<F, _, _>(&proof, &mut verifier_transcript, sample_round)
-        .unwrap();
-    assert_eq!(verified_challenges, prover_result.challenges);
+    let verified_challenges = verify_eor_full(&witness_evals, &factor_evals, &proof).unwrap();
+    assert_eq!(verified_challenges, challenges);
 }
 
 #[test]
@@ -963,19 +988,20 @@ fn detached_verifier_checks_transparent_factor_against_opened_witness() {
     let mut prover =
         ExtensionOpeningReductionProver::new(witness_evals.clone(), factor_evals).unwrap();
     let mut prover_transcript = new_transcript();
-    let driver = ExtensionOpeningReductionSumcheck::new(prover.input_claim(), prover.num_rounds());
-    let (proof, prover_result) = driver
-        .prove::<F, _, _>(&mut prover, &mut prover_transcript, sample_round)
+    let (proof, _challenges, _final_claim) = prover
+        .prove::<F, _, _>(&mut prover_transcript, sample_round)
         .unwrap();
 
     let mut verifier_transcript = new_transcript();
-    let verifier_result = ExtensionOpeningReductionSumcheck::new(input_claim, factor.num_vars())
-        .verify::<F, _, _>(&proof, &mut verifier_transcript, sample_round)
-        .unwrap();
-    assert_eq!(verifier_result, prover_result);
+    let verifier_result = verify_eor_rounds(
+        input_claim,
+        factor.num_vars(),
+        &proof,
+        &mut verifier_transcript,
+    )
+    .unwrap();
 
-    let opened_witness =
-        akita_sumcheck::multilinear_eval(&witness_evals, &verifier_result.challenges).unwrap();
+    let opened_witness = multilinear_eval(&witness_evals, &verifier_result.challenges).unwrap();
     let factor_eval = factor.evaluate(&verifier_result.challenges).unwrap();
     check_extension_opening_reduction_output(
         verifier_result.final_claim,
@@ -1007,11 +1033,7 @@ fn extension_opening_reduction_rejects_wrong_final_oracle() {
         .unwrap();
 
     let bad_factor_evals: Vec<F> = (0..8).map(|i| F::from_u64((2 * i + 10) as u64)).collect();
-    let verifier = ExtensionOpeningReductionVerifier::new(witness_evals, bad_factor_evals).unwrap();
-    let mut verifier_transcript = new_transcript();
-    let err = verifier
-        .verify::<F, _, _>(&proof, &mut verifier_transcript, sample_round)
-        .unwrap_err();
+    let err = verify_eor_full(&witness_evals, &bad_factor_evals, &proof).unwrap_err();
     assert!(matches!(err, akita_field::AkitaError::InvalidProof));
 }
 
@@ -1054,7 +1076,7 @@ fn extension_opening_reduction_rejects_malformed_table_lengths() {
 
     let witness_evals = vec![F::one(), F::from_u64(2)];
     let factor_evals = vec![F::one()];
-    assert!(ExtensionOpeningReductionVerifier::new(witness_evals, factor_evals).is_err());
+    assert!(extension_opening_reduction_claim(&witness_evals, &factor_evals).is_err());
 }
 
 fn proof_claim(witness_evals: &[F], factor_evals: &[F]) -> F {
