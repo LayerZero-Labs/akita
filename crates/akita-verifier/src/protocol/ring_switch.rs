@@ -23,9 +23,9 @@ use akita_types::{
 #[cfg(feature = "zk")]
 use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
-    compute_r_contribution, SetupEvaluation, SetupEvaluator, SetupEvaluatorMode,
-    StructuredSliceMleEvaluator, TStructuredSlicesEvaluator, WStructuredSlicesEvaluator,
-    ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
+    compute_r_contribution, SetupEvaluator, StructuredSliceMleEvaluator,
+    TStructuredSlicesEvaluator, WStructuredSlicesEvaluator, ZDenseSlicesEvaluator,
+    ZStructuredPow2SlicesEvaluator,
 };
 use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
@@ -798,7 +798,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- Fused D·ŵ + B·t̂ + A·ẑ ---------------------------------------
         let setup_contribution = {
             let _span = tracing::info_span!("setup_contribution").entered();
-            let evaluator = SetupEvaluator::new(
+            SetupEvaluator::new(
                 self,
                 x_challenges,
                 Some(&eq_low),
@@ -808,14 +808,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 layout.offset_w,
                 layout.offset_t,
                 layout.offset_z,
-            );
-            match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
-                SetupEvaluation::Direct(value) => Ok(value),
-                #[cfg(test)]
-                SetupEvaluation::Recursive(_) => Err(AkitaError::InvalidSetup(
-                    "setup evaluator returned recursive output for direct mode".into(),
-                )),
-            }?
+            )
+            .evaluate::<D>(setup)?
         };
 
         // ----- Z (consistency-row) ------------------------------------------

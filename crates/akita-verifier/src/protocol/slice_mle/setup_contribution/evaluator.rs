@@ -3,84 +3,11 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-#[cfg(test)]
-use akita_field::MulBase;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_types::AkitaExpandedSetup;
 
 use super::super::structured_slice::POSSIBLE_CARRIES;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-
-/// Flat coefficient weights for `<S_{<=N}, omega_S>`.
-#[cfg(test)]
-struct MaterializedSetupOmega<E> {
-    bar_omega: Vec<E>,
-    omega_s: Vec<E>,
-}
-
-#[cfg(test)]
-impl<E: FieldCore> MaterializedSetupOmega<E> {
-    fn coefficient_weight(
-        &self,
-        lambda: usize,
-        y: usize,
-        ring_dim: usize,
-    ) -> Result<E, AkitaError> {
-        let idx = checked_mul(lambda, ring_dim, "omega_S coefficient offset")?
-            .checked_add(y)
-            .ok_or_else(|| AkitaError::InvalidSetup("omega_S coefficient index overflow".into()))?;
-        self.omega_s.get(idx).copied().ok_or_else(|| {
-            AkitaError::InvalidSetup("omega_S coefficient index is out of bounds".into())
-        })
-    }
-
-    fn inner_product<F, const D: usize>(
-        &self,
-        setup_entries: &[CyclotomicRing<F, D>],
-    ) -> Result<E, AkitaError>
-    where
-        F: FieldCore,
-        E: ExtField<F> + MulBase<F>,
-    {
-        if setup_entries.len() < self.bar_omega.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: self.bar_omega.len(),
-                actual: setup_entries.len(),
-            });
-        }
-        let expected_omega_len = checked_mul(self.bar_omega.len(), D, "omega_S length")?;
-        if self.omega_s.len() != expected_omega_len {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_omega_len,
-                actual: self.omega_s.len(),
-            });
-        }
-
-        let mut total = E::zero();
-        for (lambda, ring) in setup_entries.iter().enumerate().take(self.bar_omega.len()) {
-            for (y, &coeff) in ring.coefficients().iter().enumerate() {
-                total += self.coefficient_weight(lambda, y, D)?.mul_base(coeff);
-            }
-        }
-        Ok(total)
-    }
-}
-
-pub(crate) enum SetupEvaluatorMode<'a, F: FieldCore> {
-    Direct {
-        setup: &'a AkitaExpandedSetup<F>,
-    },
-    #[cfg(test)]
-    Recursive {
-        setup: &'a AkitaExpandedSetup<F>,
-    },
-}
-
-pub(crate) enum SetupEvaluation<E> {
-    Direct(E),
-    #[cfg(test)]
-    Recursive(E),
-}
 
 pub(crate) struct SetupEvaluator<'a, F: FieldCore, E: FieldCore> {
     prepared: &'a RingSwitchDeferredRowEval<E>,
@@ -126,8 +53,8 @@ where
 
     pub(crate) fn evaluate<const D: usize>(
         &self,
-        mode: SetupEvaluatorMode<'_, F>,
-    ) -> Result<SetupEvaluation<E>, AkitaError> {
+        setup: &AkitaExpandedSetup<F>,
+    ) -> Result<E, AkitaError> {
         if self.alpha_pows.len() != D {
             return Err(AkitaError::InvalidSize {
                 expected: D,
@@ -135,26 +62,7 @@ where
             });
         }
         let plan = self.prepare()?;
-        match mode {
-            SetupEvaluatorMode::Direct { setup } => {
-                let value = plan.evaluate_direct::<F, D>(setup, self.alpha_pows)?;
-                Ok(SetupEvaluation::Direct(value))
-            }
-            #[cfg(test)]
-            SetupEvaluatorMode::Recursive { setup } => {
-                let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
-                if plan.required > setup_len {
-                    return Err(AkitaError::InvalidSetup(
-                        "shared matrix is too small for selected verifier layout".into(),
-                    ));
-                }
-                let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
-                let omega = plan.materialize::<D>(self.alpha_pows)?;
-                Ok(SetupEvaluation::Recursive(
-                    omega.inner_product(setup_view.as_slice())?,
-                ))
-            }
-        }
+        plan.evaluate_direct::<F, D>(setup, self.alpha_pows)
     }
 
     fn prepare(&self) -> Result<SetupEvalPlan<E>, AkitaError> {
@@ -532,53 +440,6 @@ struct SetupEvalPlan<E> {
 }
 
 impl<E: FieldCore> SetupEvalPlan<E> {
-    #[cfg(test)]
-    fn materialize<const D: usize>(
-        &self,
-        alpha_pows: &[E],
-    ) -> Result<MaterializedSetupOmega<E>, AkitaError> {
-        let bar_omega = self.materialize_bar_omega();
-
-        let omega_len = checked_mul(bar_omega.len(), D, "omega_S length")?;
-        let mut omega_s = Vec::with_capacity(omega_len);
-        for &weight in &bar_omega {
-            for &alpha_pow in alpha_pows {
-                omega_s.push(weight * alpha_pow);
-            }
-        }
-
-        Ok(MaterializedSetupOmega { bar_omega, omega_s })
-    }
-
-    #[cfg(test)]
-    fn materialize_bar_omega(&self) -> Vec<E> {
-        let mut bar_omega = vec![E::zero(); self.required];
-        for segment in self.segments() {
-            for (offset, slot) in bar_omega[segment.lo..segment.hi].iter_mut().enumerate() {
-                let lambda = segment.lo + offset;
-                *slot = self.weight_at(lambda, &segment);
-            }
-        }
-        bar_omega
-    }
-
-    #[cfg(test)]
-    fn weight_at(&self, lambda: usize, segment: &SetupSegment<'_, E>) -> E {
-        let mut weight = E::zero();
-        if segment.has_d {
-            weight += segment.d_weight * self.w_eq_slice[lambda - segment.d_start_abs];
-        }
-        if segment.has_b {
-            for (g, t_eq_slice) in self.t_eq_slice_per_group.iter().enumerate() {
-                weight += segment.b_weights[g] * t_eq_slice[lambda - segment.b_start_abs];
-            }
-        }
-        if segment.has_a {
-            weight += segment.a_weight * self.z_eq_slice[lambda - segment.a_start_abs];
-        }
-        weight
-    }
-
     fn segments(&self) -> Vec<SetupSegment<'_, E>> {
         (0..self.endpoints.len().saturating_sub(1))
             .filter_map(|idx| {

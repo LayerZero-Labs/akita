@@ -11,7 +11,8 @@ use akita_types::{
     RingRelationSegmentLayout,
 };
 
-use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
+use super::reference::materialized_setup_contribution;
+use super::SetupEvaluator;
 use crate::protocol::ring_switch::{PreparedChallengeEvals, RingSwitchDeferredRowEval};
 
 pub(crate) type TestField = Prime128OffsetA7F7;
@@ -269,8 +270,9 @@ impl SetupContributionFixture {
         }
     }
 
-    pub fn compute_contribution(&self) -> TestField {
-        let evaluator = SetupEvaluator::new(
+    /// Production packed direct scan (path under test).
+    pub fn direct_contribution(&self) -> TestField {
+        SetupEvaluator::new(
             &self.prepared,
             &self.full_vec_randomness,
             Some(&self.eq_low),
@@ -280,47 +282,29 @@ impl SetupContributionFixture {
             self.offset_w,
             self.offset_t,
             self.offset_z,
-        );
-        match evaluator
-            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Direct { setup: &self.setup })
-            .unwrap()
-        {
-            SetupEvaluation::Direct(value) => value,
-            SetupEvaluation::Recursive(_) => {
-                panic!("setup evaluator returned recursive output for direct mode")
-            }
-        }
+        )
+        .evaluate::<TEST_RING_DIM>(&self.setup)
+        .unwrap()
     }
 
-    pub fn recursive_contribution(&self) -> TestField {
-        let evaluator = SetupEvaluator::new(
+    /// Independent materialized `<S, omega_S>` reference oracle.
+    pub fn reference_contribution(&self) -> TestField {
+        materialized_setup_contribution::<TestField, TestField, TEST_RING_DIM>(
             &self.prepared,
             &self.full_vec_randomness,
-            None,
-            None,
             &self.alpha_pows,
             &self.fold_gadget,
-            self.offset_w,
-            self.offset_t,
-            self.offset_z,
-        );
-        match evaluator
-            .evaluate::<TEST_RING_DIM>(SetupEvaluatorMode::Recursive { setup: &self.setup })
-            .unwrap()
-        {
-            SetupEvaluation::Recursive(value) => value,
-            SetupEvaluation::Direct(_) => {
-                panic!("setup evaluator returned direct output for recursive mode")
-            }
-        }
+            &self.setup,
+        )
+        .unwrap()
     }
 
-    pub fn assert_direct_matches_recursive(&self) {
-        let got = self.compute_contribution();
-        let recursive = self.recursive_contribution();
+    pub fn assert_direct_matches_reference(&self) {
+        let direct = self.direct_contribution();
+        let reference = self.reference_contribution();
         assert_eq!(
-            got, recursive,
-            "packed setup contribution must equal recursive setup contribution"
+            direct, reference,
+            "packed direct setup contribution must equal the independent materialized oracle"
         );
     }
 }
