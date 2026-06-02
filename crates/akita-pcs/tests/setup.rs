@@ -32,8 +32,8 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, BasisMode};
 use akita_verifier::CommitmentVerifier;
 use common::{
-    init_rayon_pool, opening_from_poly, prove_input, random_point, run_on_large_stack,
-    verify_input, F,
+    dense_field_evals, init_rayon_pool, opening_from_poly, prove_input, random_point,
+    run_on_large_stack, verify_input, F,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -44,7 +44,10 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 // ---------------------------------------------------------------------------
 
 /// Number of variables for the polynomial we actually commit/prove/verify.
-const POLY_NV: usize = 18;
+///
+/// This is chosen to ensure these tests exercise a folded schedule (not the
+/// root-direct fast path) while keeping CI runtime reasonable.
+const POLY_NV: usize = 16;
 /// How many polynomials we actually commit in the "same size" tests.
 const USE_BATCH: usize = 1;
 
@@ -115,10 +118,7 @@ where
     )
     .expect("layout");
 
-    let mut rng = StdRng::seed_from_u64(0xdead_beef_0000 + poly_nv as u64);
-    let evals: Vec<F> = (0..1usize << poly_nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect();
+    let evals = dense_field_evals(poly_nv, 0xdead_beef_0000 + poly_nv as u64);
     let poly = DensePoly::<F, D>::from_field_evals(poly_nv, &evals).expect("dense poly");
 
     let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
@@ -478,7 +478,7 @@ macro_rules! preset_module {
             /// into a panic.
             #[test]
             #[should_panic(
-                expected = "commit received a polynomial with 18 variables but setup supports at most 17"
+                expected = "commit received a polynomial with 16 variables but setup supports at most 15"
             )]
             fn small_setup_nv_panics() {
                 init_rayon_pool();
