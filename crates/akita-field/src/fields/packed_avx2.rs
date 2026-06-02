@@ -238,9 +238,7 @@ impl<const P: u32> PackedFp32Avx2<P> {
     /// Mirrors `PackedFp32Neon::dot_product_4_vec`, including the
     /// `BITS <= 31` carry-free fast path: four `(2^31 - 1)^2` products sum
     /// to less than `2^64`, so partial sums never overflow a `u64` lane
-    /// and we can drop the `add_u64_with_carry` chain plus the trailing
-    /// `carry_correction`. The `if Self::BITS <= 31` is a const condition
-    /// and dead-code-eliminated at compile time.
+    /// and we can drop the carry chain. The `if Self::BITS <= 31` is a const condition.
     #[inline(always)]
     unsafe fn dot_product_4_vec(a: [__m256i; 4], b: [__m256i; 4]) -> __m256i {
         let mut sum_evn = _mm256_mul_epu32(a[0], b[0]);
