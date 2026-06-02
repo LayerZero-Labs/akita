@@ -4,7 +4,6 @@ import tempfile
 import unittest
 
 
-SCRIPT_DIR = pathlib.Path(__file__).resolve().parents[1]
 FIXTURES_DIR = pathlib.Path(__file__).resolve().parent / "fixtures"
 
 
