@@ -224,8 +224,7 @@ no behavior changes there.
 Must continue passing unchanged (proves byte-for-byte equivalence):
 
 - `akita-config/tests/generated_tables.rs` (drift guard, positional parity).
-- `akita-config/tests/proof_size_comparison.rs`,
-  `akita-config/tests/regen_diff.rs`, `akita-config/tests/runtime_fallback.rs`.
+- `akita-config/tests/regen_diff.rs`, `akita-config/tests/runtime_fallback.rs`.
 - `akita-types/src/proof_size.rs` byte-formula tests — these move with the walker
   into `akita-planner` (they exercise `level_proof_bytes` + the walker together;
   `level_proof_bytes` stays in types, so the tests that only touch it can stay,
