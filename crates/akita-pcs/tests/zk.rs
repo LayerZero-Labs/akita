@@ -295,7 +295,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
     label: &'static [u8],
     expected_root: ExpectedRoot,
 ) {
-    type Cfg = fp32::D32Full;
+    type Cfg = fp32::D64Full;
     const D: usize = Cfg::D;
 
     init_rayon_pool();
@@ -394,14 +394,15 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
 
 #[test]
 fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
-    // The fp32 D32Full zk schedule transitions from a cleartext (`ZeroFold`)
+    // The fp32 D64Full zk schedule transitions from a cleartext (`ZeroFold`)
     // root, through a one-fold (`Terminal`) root, to a multi-fold (`Fold`)
-    // root as `num_vars` grows. Under the corrected weak-binding collision
-    // norm + regenerated SIS floor, `nv <= 12` are cleartext (`ZeroFold`),
-    // `nv = 13` is the single 1-fold (`Terminal`) root, and `nv >= 14`
+    // root as `num_vars` grows. Under the shared >=128-bit ring-challenge
+    // policy + regenerated SIS floor, `nv <= 13` are cleartext (`ZeroFold`),
+    // `nv = 14` is the single 1-fold (`Terminal`) root, and `nv >= 15`
     // escalate to multi-fold (`Fold`) roots (the matching `Fold`-root fixture
-    // below uses `nv = 14`).
-    run_zk_fp32_extension_opening_reduction::<13>(
+    // below uses `nv = 15`). D32Full never ships a fold-root schedule in the
+    // generated table, so these fixtures pin D64.
+    run_zk_fp32_extension_opening_reduction::<14>(
         b"zk/fp32-extension-root-terminal",
         ExpectedRoot::Terminal,
     );
@@ -409,7 +410,7 @@ fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
 
 #[test]
 fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
-    run_zk_fp32_extension_opening_reduction::<14>(
+    run_zk_fp32_extension_opening_reduction::<15>(
         b"zk/fp32-extension-root-fold",
         ExpectedRoot::Fold,
     );
