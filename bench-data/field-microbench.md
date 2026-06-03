@@ -1,6 +1,6 @@
 # Field Microbench Reference
 
-Generated at `2026-06-02T16:19:11+00:00` by `scripts/field_microbench_collect.py` from Criterion saved baselines.
+Generated at `2026-06-03T01:29:06+00:00` by `scripts/field_microbench_collect.py` from Criterion saved baselines.
 
 This file is meant to be read as a benchmark reference, not just as a raw dump.
 The complete machine-readable table is `bench-data/field-microbench.csv`; this markdown highlights the rows most relevant to the 31-bit extension-field comparison.
@@ -17,8 +17,8 @@ The complete machine-readable table is `bench-data/field-microbench.csv`; this m
 
 | baseline | machine_config | arch | simd | target/RUSTFLAGS | CPU | rustc | git |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| avx2 | amd-ryzen-9950x-avx2 | x86_64 | avx2 | x86-64-v3 | AMD Ryzen 9 9950X 16-Core Processor | (unrecorded) | 909eb7ecd885 |
-| avx512 | amd-ryzen-9950x-avx512 | x86_64 | avx512 | native | AMD Ryzen 9 9950X 16-Core Processor | rustc 1.95.0 (59807616e 2026-04-14) | 6b8889fae3f3 |
+| avx2 | amd-ryzen-9950x-avx2 | x86_64 | avx2 | x86-64-v3 | AMD Ryzen 9 9950X 16-Core Processor | (unrecorded) | 2 commits |
+| avx512 | amd-ryzen-9950x-avx512 | x86_64 | avx512 | native | AMD Ryzen 9 9950X 16-Core Processor | rustc 1.95.0 (59807616e 2026-04-14) | 2 commits |
 | neon | apple-m4-max-neon | aarch64 | neon | native | Apple M4 Max; Mac16,5; 16 logical CPUs | rustc 1.95.0 (59807616e 2026-04-14) | 5b0305bee7f5 |
 
 ## Data Quality Notes
@@ -84,12 +84,12 @@ Akita degree-4 fp4 rows are the Akita security-equivalent extension-field compar
 | avx2 | akita | prime31_offset19 | 4 | tower | square | latency_chain | avx2 | 8 | 1.418 [1.417, 1.418] |
 | avx2 | akita | prime31_offset19 | 4 | power | mul | latency_chain | avx2 | 8 | 1.295 [1.295, 1.295] |
 | avx2 | akita | prime31_offset19 | 4 | power | square | latency_chain | avx2 | 8 | 1.436 [1.436, 1.436] |
-| avx2 | akita | prime32_offset99 | 4 | ring_subfield | mul | latency_chain | avx2 | 8 | 2.280 [2.280, 2.280] |
-| avx2 | akita | prime32_offset99 | 4 | ring_subfield | square | latency_chain | avx2 | 8 | 2.145 [2.145, 2.145] |
+| avx2 | akita | prime32_offset99 | 4 | ring_subfield | mul | latency_chain | avx2 | 8 | 2.263 [2.263, 2.263] |
+| avx2 | akita | prime32_offset99 | 4 | ring_subfield | square | latency_chain | avx2 | 8 | 2.171 [2.171, 2.172] |
 | avx2 | akita | prime32_offset99 | 4 | tower | mul | latency_chain | avx2 | 8 | 2.144 [2.143, 2.144] |
-| avx2 | akita | prime32_offset99 | 4 | tower | square | latency_chain | avx2 | 8 | 2.204 [2.204, 2.204] |
-| avx2 | akita | prime32_offset99 | 4 | power | mul | latency_chain | avx2 | 8 | 2.087 [2.087, 2.087] |
-| avx2 | akita | prime32_offset99 | 4 | power | square | latency_chain | avx2 | 8 | 2.203 [2.203, 2.204] |
+| avx2 | akita | prime32_offset99 | 4 | tower | square | latency_chain | avx2 | 8 | 2.045 [2.045, 2.045] |
+| avx2 | akita | prime32_offset99 | 4 | power | mul | latency_chain | avx2 | 8 | 2.095 [2.094, 2.110] |
+| avx2 | akita | prime32_offset99 | 4 | power | square | latency_chain | avx2 | 8 | 2.046 [2.046, 2.046] |
 | avx2 | plonky3 | baby_bear | 4 | default | mul | latency_chain | avx2 | 8 | 1.472 [1.472, 1.472] |
 | avx2 | plonky3 | baby_bear | 4 | default | square | latency_chain | avx2 | 8 | 1.418 [1.418, 1.418] |
 | avx2 | plonky3 | baby_bear | 5 | default | mul | latency_chain | avx2 | 8 | 3.147 [3.147, 3.147] |
@@ -110,12 +110,12 @@ Akita degree-4 fp4 rows are the Akita security-equivalent extension-field compar
 | avx2 | akita | prime31_offset19 | 4 | tower | square | throughput_stream | avx2 | 8 | 1.120 [1.120, 1.120] |
 | avx2 | akita | prime31_offset19 | 4 | power | mul | throughput_stream | avx2 | 8 | 1.221 [1.221, 1.222] |
 | avx2 | akita | prime31_offset19 | 4 | power | square | throughput_stream | avx2 | 8 | 1.130 [1.130, 1.130] |
-| avx2 | akita | prime32_offset99 | 4 | ring_subfield | mul | throughput_stream | avx2 | 8 | 2.341 [2.341, 2.341] |
-| avx2 | akita | prime32_offset99 | 4 | ring_subfield | square | throughput_stream | avx2 | 8 | 1.950 [1.949, 1.950] |
-| avx2 | akita | prime32_offset99 | 4 | tower | mul | throughput_stream | avx2 | 8 | 2.038 [2.037, 2.038] |
-| avx2 | akita | prime32_offset99 | 4 | tower | square | throughput_stream | avx2 | 8 | 1.905 [1.905, 1.905] |
-| avx2 | akita | prime32_offset99 | 4 | power | mul | throughput_stream | avx2 | 8 | 2.037 [2.037, 2.038] |
-| avx2 | akita | prime32_offset99 | 4 | power | square | throughput_stream | avx2 | 8 | 1.916 [1.916, 1.917] |
+| avx2 | akita | prime32_offset99 | 4 | ring_subfield | mul | throughput_stream | avx2 | 8 | 2.251 [2.251, 2.251] |
+| avx2 | akita | prime32_offset99 | 4 | ring_subfield | square | throughput_stream | avx2 | 8 | 2.016 [2.016, 2.017] |
+| avx2 | akita | prime32_offset99 | 4 | tower | mul | throughput_stream | avx2 | 8 | 2.073 [2.073, 2.073] |
+| avx2 | akita | prime32_offset99 | 4 | tower | square | throughput_stream | avx2 | 8 | 1.939 [1.939, 1.940] |
+| avx2 | akita | prime32_offset99 | 4 | power | mul | throughput_stream | avx2 | 8 | 2.069 [2.069, 2.069] |
+| avx2 | akita | prime32_offset99 | 4 | power | square | throughput_stream | avx2 | 8 | 1.951 [1.951, 1.951] |
 | avx2 | plonky3 | baby_bear | 4 | default | mul | throughput_stream | avx2 | 8 | 1.386 [1.386, 1.386] |
 | avx2 | plonky3 | baby_bear | 4 | default | square | throughput_stream | avx2 | 8 | 1.166 [1.166, 1.166] |
 | avx2 | plonky3 | baby_bear | 5 | default | mul | throughput_stream | avx2 | 8 | 2.235 [2.234, 2.235] |
@@ -136,12 +136,12 @@ Akita degree-4 fp4 rows are the Akita security-equivalent extension-field compar
 | avx512 | akita | prime31_offset19 | 4 | tower | square | latency_chain | avx512 | 16 | 0.530 [0.530, 0.530] |
 | avx512 | akita | prime31_offset19 | 4 | power | mul | latency_chain | avx512 | 16 | 0.554 [0.554, 0.554] |
 | avx512 | akita | prime31_offset19 | 4 | power | square | latency_chain | avx512 | 16 | 0.532 [0.532, 0.532] |
-| avx512 | akita | prime32_offset99 | 4 | ring_subfield | mul | latency_chain | avx512 | 16 | 0.906 [0.906, 0.906] |
-| avx512 | akita | prime32_offset99 | 4 | ring_subfield | square | latency_chain | avx512 | 16 | 0.902 [0.902, 0.903] |
-| avx512 | akita | prime32_offset99 | 4 | tower | mul | latency_chain | avx512 | 16 | 0.844 [0.844, 0.844] |
-| avx512 | akita | prime32_offset99 | 4 | tower | square | latency_chain | avx512 | 16 | 0.888 [0.888, 0.888] |
-| avx512 | akita | prime32_offset99 | 4 | power | mul | latency_chain | avx512 | 16 | 0.839 [0.839, 0.839] |
-| avx512 | akita | prime32_offset99 | 4 | power | square | latency_chain | avx512 | 16 | 0.885 [0.885, 0.885] |
+| avx512 | akita | prime32_offset99 | 4 | ring_subfield | mul | latency_chain | avx512 | 16 | 0.865 [0.865, 0.866] |
+| avx512 | akita | prime32_offset99 | 4 | ring_subfield | square | latency_chain | avx512 | 16 | 0.850 [0.850, 0.850] |
+| avx512 | akita | prime32_offset99 | 4 | tower | mul | latency_chain | avx512 | 16 | 0.817 [0.817, 0.817] |
+| avx512 | akita | prime32_offset99 | 4 | tower | square | latency_chain | avx512 | 16 | 0.792 [0.792, 0.792] |
+| avx512 | akita | prime32_offset99 | 4 | power | mul | latency_chain | avx512 | 16 | 0.816 [0.816, 0.816] |
+| avx512 | akita | prime32_offset99 | 4 | power | square | latency_chain | avx512 | 16 | 0.799 [0.799, 0.799] |
 | avx512 | plonky3 | baby_bear | 4 | default | mul | latency_chain | avx512 | 16 | 0.969 [0.969, 0.969] |
 | avx512 | plonky3 | baby_bear | 4 | default | square | latency_chain | avx512 | 16 | 0.891 [0.891, 0.891] |
 | avx512 | plonky3 | baby_bear | 5 | default | mul | latency_chain | avx512 | 16 | 2.022 [2.022, 2.022] |
@@ -162,12 +162,12 @@ Akita degree-4 fp4 rows are the Akita security-equivalent extension-field compar
 | avx512 | akita | prime31_offset19 | 4 | tower | square | throughput_stream | avx512 | 16 | 0.411 [0.411, 0.411] |
 | avx512 | akita | prime31_offset19 | 4 | power | mul | throughput_stream | avx512 | 16 | 0.458 [0.458, 0.458] |
 | avx512 | akita | prime31_offset19 | 4 | power | square | throughput_stream | avx512 | 16 | 0.413 [0.413, 0.413] |
-| avx512 | akita | prime32_offset99 | 4 | ring_subfield | mul | throughput_stream | avx512 | 16 | 0.861 [0.861, 0.861] |
-| avx512 | akita | prime32_offset99 | 4 | ring_subfield | square | throughput_stream | avx512 | 16 | 0.773 [0.773, 0.773] |
-| avx512 | akita | prime32_offset99 | 4 | tower | mul | throughput_stream | avx512 | 16 | 0.788 [0.788, 0.788] |
-| avx512 | akita | prime32_offset99 | 4 | tower | square | throughput_stream | avx512 | 16 | 0.748 [0.748, 0.748] |
-| avx512 | akita | prime32_offset99 | 4 | power | mul | throughput_stream | avx512 | 16 | 0.785 [0.785, 0.785] |
-| avx512 | akita | prime32_offset99 | 4 | power | square | throughput_stream | avx512 | 16 | 0.750 [0.750, 0.750] |
+| avx512 | akita | prime32_offset99 | 4 | ring_subfield | mul | throughput_stream | avx512 | 16 | 0.836 [0.836, 0.836] |
+| avx512 | akita | prime32_offset99 | 4 | ring_subfield | square | throughput_stream | avx512 | 16 | 0.739 [0.739, 0.739] |
+| avx512 | akita | prime32_offset99 | 4 | tower | mul | throughput_stream | avx512 | 16 | 0.767 [0.767, 0.767] |
+| avx512 | akita | prime32_offset99 | 4 | tower | square | throughput_stream | avx512 | 16 | 0.691 [0.691, 0.691] |
+| avx512 | akita | prime32_offset99 | 4 | power | mul | throughput_stream | avx512 | 16 | 0.763 [0.763, 0.763] |
+| avx512 | akita | prime32_offset99 | 4 | power | square | throughput_stream | avx512 | 16 | 0.691 [0.691, 0.692] |
 | avx512 | plonky3 | baby_bear | 4 | default | mul | throughput_stream | avx512 | 16 | 0.692 [0.692, 0.692] |
 | avx512 | plonky3 | baby_bear | 4 | default | square | throughput_stream | avx512 | 16 | 0.600 [0.600, 0.600] |
 | avx512 | plonky3 | baby_bear | 5 | default | mul | throughput_stream | avx512 | 16 | 1.174 [1.174, 1.174] |
@@ -257,14 +257,14 @@ These rows cover the Akita fp4 ring-subfield operations most relevant to the pac
 | avx2 | prime31_offset19 | square | throughput_stream | avx2 | 8 | 1.276 [1.276, 1.276] |
 | avx2 | prime32_offset99 | add | latency_chain | avx2 | 8 | 0.319 [0.319, 0.319] |
 | avx2 | prime32_offset99 | sub | latency_chain | avx2 | 8 | 0.185 [0.185, 0.185] |
-| avx2 | prime32_offset99 | mul | latency_chain | avx2 | 8 | 2.280 [2.280, 2.280] |
-| avx2 | prime32_offset99 | mul_self | latency_chain | avx2 | 8 | 2.732 [2.732, 2.733] |
-| avx2 | prime32_offset99 | square | latency_chain | avx2 | 8 | 2.145 [2.145, 2.145] |
+| avx2 | prime32_offset99 | mul | latency_chain | avx2 | 8 | 2.263 [2.263, 2.263] |
+| avx2 | prime32_offset99 | mul_self | latency_chain | avx2 | 8 | 2.311 [2.311, 2.311] |
+| avx2 | prime32_offset99 | square | latency_chain | avx2 | 8 | 2.171 [2.171, 2.172] |
 | avx2 | prime32_offset99 | add | throughput_stream | avx2 | 8 | 0.185 [0.185, 0.185] |
 | avx2 | prime32_offset99 | sub | throughput_stream | avx2 | 8 | 0.168 [0.168, 0.168] |
-| avx2 | prime32_offset99 | mul | throughput_stream | avx2 | 8 | 2.341 [2.341, 2.341] |
-| avx2 | prime32_offset99 | mul_self | throughput_stream | avx2 | 8 | 2.249 [2.249, 2.249] |
-| avx2 | prime32_offset99 | square | throughput_stream | avx2 | 8 | 1.950 [1.949, 1.950] |
+| avx2 | prime32_offset99 | mul | throughput_stream | avx2 | 8 | 2.251 [2.251, 2.251] |
+| avx2 | prime32_offset99 | mul_self | throughput_stream | avx2 | 8 | 2.250 [2.250, 2.250] |
+| avx2 | prime32_offset99 | square | throughput_stream | avx2 | 8 | 2.016 [2.016, 2.017] |
 | avx512 | mersenne31 | add | latency_chain | avx512 | 16 | 0.073 [0.073, 0.073] |
 | avx512 | mersenne31 | sub | latency_chain | avx512 | 16 | 0.073 [0.073, 0.073] |
 | avx512 | mersenne31 | mul | latency_chain | avx512 | 16 | 0.530 [0.530, 0.530] |
@@ -287,14 +287,14 @@ These rows cover the Akita fp4 ring-subfield operations most relevant to the pac
 | avx512 | prime31_offset19 | square | throughput_stream | avx512 | 16 | 0.445 [0.445, 0.445] |
 | avx512 | prime32_offset99 | add | latency_chain | avx512 | 16 | 0.167 [0.167, 0.167] |
 | avx512 | prime32_offset99 | sub | latency_chain | avx512 | 16 | 0.103 [0.103, 0.103] |
-| avx512 | prime32_offset99 | mul | latency_chain | avx512 | 16 | 0.906 [0.906, 0.906] |
-| avx512 | prime32_offset99 | mul_self | latency_chain | avx512 | 16 | 1.020 [1.020, 1.020] |
-| avx512 | prime32_offset99 | square | latency_chain | avx512 | 16 | 0.902 [0.902, 0.903] |
+| avx512 | prime32_offset99 | mul | latency_chain | avx512 | 16 | 0.865 [0.865, 0.866] |
+| avx512 | prime32_offset99 | mul_self | latency_chain | avx512 | 16 | 0.940 [0.935, 0.942] |
+| avx512 | prime32_offset99 | square | latency_chain | avx512 | 16 | 0.850 [0.850, 0.850] |
 | avx512 | prime32_offset99 | add | throughput_stream | avx512 | 16 | 0.104 [0.104, 0.104] |
 | avx512 | prime32_offset99 | sub | throughput_stream | avx512 | 16 | 0.099 [0.099, 0.099] |
-| avx512 | prime32_offset99 | mul | throughput_stream | avx512 | 16 | 0.861 [0.861, 0.861] |
-| avx512 | prime32_offset99 | mul_self | throughput_stream | avx512 | 16 | 0.878 [0.878, 0.878] |
-| avx512 | prime32_offset99 | square | throughput_stream | avx512 | 16 | 0.773 [0.773, 0.773] |
+| avx512 | prime32_offset99 | mul | throughput_stream | avx512 | 16 | 0.836 [0.836, 0.836] |
+| avx512 | prime32_offset99 | mul_self | throughput_stream | avx512 | 16 | 0.810 [0.810, 0.811] |
+| avx512 | prime32_offset99 | square | throughput_stream | avx512 | 16 | 0.739 [0.739, 0.739] |
 | neon | mersenne31 | add | latency_chain | neon | 4 | 0.364 [0.363, 0.365] |
 | neon | mersenne31 | sub | latency_chain | neon | 4 | 0.366 [0.366, 0.367] |
 | neon | mersenne31 | mul | latency_chain | neon | 4 | 2.044 [2.041, 2.048] |

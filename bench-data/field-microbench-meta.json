@@ -73,7 +73,35 @@
       "target_cpu": "native"
     }
   },
-  "generated_at_utc": "2026-06-02T16:19:11+00:00",
+  "generated_at_utc": "2026-06-03T01:29:06+00:00",
   "row_count": 2430,
+  "row_provenance": {
+    "avx2": {
+      "captured_at_max": "2026-06-03T01:26:34+00:00",
+      "captured_at_min": "2026-06-02T11:52:27+00:00",
+      "commit_row_counts": {
+        "1d3acd05c1f37a006c257216990181e8b191d0d8": 27,
+        "909eb7ecd8854d54864fbb2b00d347fc80497387": 783
+      },
+      "row_count": 810
+    },
+    "avx512": {
+      "captured_at_max": "2026-06-03T01:26:34+00:00",
+      "captured_at_min": "2026-06-02T02:31:02+00:00",
+      "commit_row_counts": {
+        "1d3acd05c1f37a006c257216990181e8b191d0d8": 28,
+        "6b8889fae3f3b033e5c54bf03c1f3cafca823b72": 782
+      },
+      "row_count": 810
+    },
+    "neon": {
+      "captured_at_max": "2026-06-02T11:46:29+00:00",
+      "captured_at_min": "2026-06-02T11:46:29+00:00",
+      "commit_row_counts": {
+        "5b0305bee7f53965dd2c9b68aed527a2c9b420e6": 810
+      },
+      "row_count": 810
+    }
+  },
   "warnings": []
 }

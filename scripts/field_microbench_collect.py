@@ -17,6 +17,7 @@ import platform
 import re
 import subprocess
 import sys
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +44,11 @@ AKITA_FP4_SHORT: dict[str, tuple[str, str, str]] = {
     "p32o99_tw_fp4": ("prime32_offset99", "4", "tower"),
     "p32o99_pw_fp4": ("prime32_offset99", "4", "power"),
 }
+
+# Per-row provenance columns. Each measurement carries the commit and capture
+# time of the run that produced *that row*, so individual benches can be
+# refreshed without re-running or misdating the rest of the table.
+PROV_FIELDS = ("git_commit", "captured_at_utc")
 
 BASIS_RANK = {"ring_subfield": 0, "tower": 1, "power": 2, "": 3}
 HEADLINE_OPS = ("mul", "square")
@@ -366,6 +372,77 @@ def collect_rows(
     return rows
 
 
+def row_key(row: dict[str, str]) -> tuple[str, ...]:
+    """Identity of a single measurement, stable across re-captures."""
+    return (
+        row["baseline"],
+        row["library"],
+        row["field"],
+        row["ext_degree"],
+        row["basis"],
+        row["op"],
+        row["workload"],
+        row["vectorization"],
+        row["arch"],
+        row["simd"],
+        row["width"],
+        row["family"],
+    )
+
+
+def measurement_value(row: dict[str, str]) -> tuple[str, str, str]:
+    return (row["ns_per_op_or_lane"], row["lower"], row["upper"])
+
+
+def load_existing_csv(path: Path) -> dict[tuple[str, ...], dict[str, str]]:
+    if not path.exists():
+        return {}
+    with path.open(newline="") as f:
+        return {row_key(row): row for row in csv.DictReader(f)}
+
+
+def load_existing_meta_baselines(path: Path) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    baselines = data.get("baselines") if isinstance(data, dict) else None
+    return baselines if isinstance(baselines, dict) else {}
+
+
+def stamp_provenance(
+    fresh_rows: list[dict[str, str]],
+    existing: dict[tuple[str, ...], dict[str, str]],
+    current_commit: str,
+    now: str,
+) -> tuple[list[dict[str, str]], int]:
+    """Assign per-row provenance and merge with carried-forward rows.
+
+    A freshly collected row keeps the prior commit/timestamp when its measured
+    value is byte-identical to the committed table (an un-rerun bench produces
+    the same Criterion estimate), and is stamped with the current commit/time
+    when the value changed or the key is new. Rows absent from this run
+    (other baselines, un-collected benches) are carried forward verbatim.
+    """
+    fresh_keys: set[tuple[str, ...]] = set()
+    restamped = 0
+    for row in fresh_rows:
+        key = row_key(row)
+        fresh_keys.add(key)
+        prev = existing.get(key)
+        if prev and measurement_value(prev) == measurement_value(row):
+            row["git_commit"] = prev.get("git_commit", "")
+            row["captured_at_utc"] = prev.get("captured_at_utc", "")
+        else:
+            row["git_commit"] = current_commit
+            row["captured_at_utc"] = now
+            restamped += 1
+    carried = [prev for key, prev in existing.items() if key not in fresh_keys]
+    return [*fresh_rows, *carried], restamped
+
+
 def dedupe_score(row: dict[str, str]) -> tuple[int, int]:
     label = row["label"]
     short_label = 1 if label in AKITA_FP4_SHORT else 0
@@ -443,9 +520,10 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         "label",
         "group",
         "bench_id",
+        *PROV_FIELDS,
     ]
     with path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(
             sorted(
@@ -602,6 +680,7 @@ def write_markdown(
     ]
 
     quality_warnings = [*warnings, *derived_warnings(rows)]
+    prov = provenance_summary(rows)
     baseline_body = []
     for name in sorted(metadata):
         meta = metadata[name]
@@ -609,6 +688,13 @@ def write_markdown(
         rustflags = meta.get("rustflags", "").replace("|", "\\|")
         target_cpu = meta.get("target_cpu", "").replace("|", "\\|")
         cpu_model = meta.get("cpu_model", "").replace("|", "\\|")
+        commit_counts = prov.get(name, {}).get("commit_row_counts", {}) or {}
+        if len(commit_counts) == 1:
+            git_cell = next(iter(commit_counts))[:12]
+        elif commit_counts:
+            git_cell = f"{len(commit_counts)} commits"
+        else:
+            git_cell = meta.get("git_commit", "")[:12]
         baseline_body.append(
             [
                 name,
@@ -618,7 +704,7 @@ def write_markdown(
                 target_cpu or rustflags or "(unspecified)",
                 cpu_model or "(unrecorded)",
                 rust or "(unrecorded)",
-                meta.get("git_commit", "")[:12],
+                git_cell,
             ]
         )
 
@@ -758,6 +844,33 @@ def write_markdown(
     path.write_text("\n".join(lines))
 
 
+def provenance_summary(rows: list[dict[str, str]]) -> dict[str, dict[str, object]]:
+    """Per-baseline summary of the per-row provenance actually present.
+
+    Replaces the misleading single whole-machine commit: a baseline can now
+    legitimately carry rows captured at several commits when only some benches
+    were refreshed.
+    """
+    commits: dict[str, Counter[str]] = defaultdict(Counter)
+    captured: dict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        baseline = row["baseline"]
+        commits[baseline][row.get("git_commit", "")] += 1
+        when = row.get("captured_at_utc", "")
+        if when:
+            captured[baseline].append(when)
+    summary: dict[str, dict[str, object]] = {}
+    for baseline, counts in commits.items():
+        when = captured[baseline]
+        summary[baseline] = {
+            "row_count": sum(counts.values()),
+            "commit_row_counts": dict(sorted(counts.items())),
+            "captured_at_min": min(when) if when else "",
+            "captured_at_max": max(when) if when else "",
+        }
+    return summary
+
+
 def write_metadata_json(
     path: Path,
     metadata: dict[str, dict[str, str]],
@@ -768,6 +881,7 @@ def write_metadata_json(
     payload = {
         "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "baselines": metadata,
+        "row_provenance": provenance_summary(rows),
         "warnings": sorted(set([*warnings, *derived_warnings(rows)])),
         "row_count": len(rows),
     }
@@ -798,6 +912,17 @@ def add_collect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--out-csv", type=Path, default=DEFAULT_OUT_CSV)
     parser.add_argument("--out-md", type=Path, default=DEFAULT_OUT_MD)
     parser.add_argument("--out-meta", type=Path, default=DEFAULT_OUT_META)
+    parser.add_argument(
+        "--git-commit",
+        default="",
+        help="Commit to stamp on freshly measured rows (default: current HEAD)",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Rebuild the table from collected rows only, discarding carried-forward "
+        "rows and their per-row provenance (default merges with the existing table)",
+    )
     parser.add_argument(
         "--strict",
         action="store_true",
@@ -841,15 +966,30 @@ def collect_main(args: argparse.Namespace) -> int:
         all_rows.extend(rows)
 
     all_rows = dedupe_rows(all_rows, warnings)
-    all_warnings = [*warnings, *derived_warnings(all_rows)]
-    write_csv(args.out_csv, all_rows)
-    write_markdown(args.out_md, all_rows, metadata, warnings)
-    write_metadata_json(args.out_meta, metadata, warnings, all_rows)
+
+    # Merge freshly collected rows over the committed table so a partial
+    # re-capture only restamps the benches it actually measured.
+    existing = {} if args.replace else load_existing_csv(args.out_csv)
+    current_commit = args.git_commit or run_text(["git", "rev-parse", "HEAD"], Path.cwd())
+    now = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+    merged_rows, restamped = stamp_provenance(all_rows, existing, current_commit, now)
+
+    # Preserve machine metadata for baselines not passed on this run.
+    if not args.replace:
+        carried_meta = load_existing_meta_baselines(args.out_meta)
+        metadata = {**carried_meta, **metadata}
+
+    all_warnings = [*warnings, *derived_warnings(merged_rows)]
+    write_csv(args.out_csv, merged_rows)
+    write_markdown(args.out_md, merged_rows, metadata, warnings)
+    write_metadata_json(args.out_meta, metadata, warnings, merged_rows)
 
     for warning in sorted(set(all_warnings)):
         print(f"warning: {warning}", file=sys.stderr)
     print(
-        f"wrote {len(all_rows)} rows to {args.out_csv}, {args.out_md}, and {args.out_meta}"
+        f"wrote {len(merged_rows)} rows ({restamped} freshly stamped at "
+        f"{current_commit[:12] or '(no commit)'}) to {args.out_csv}, "
+        f"{args.out_md}, and {args.out_meta}"
     )
     if args.strict and all_warnings:
         return 1
