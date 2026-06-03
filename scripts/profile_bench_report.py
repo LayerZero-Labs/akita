@@ -63,26 +63,26 @@ class CaseMetadata:
     config: str
 
 
+# Securable families under honest committed-fold A-role pricing, i.e. the ones
+# that ship a generated schedule table
+# (`akita_config::generated_families::ALL_GENERATED_FAMILIES`). Modes outside
+# this map still render via the `case_metadata` fallback below.
 CASE_METADATA: dict[str, CaseMetadata] = {
-    "dense_fp128_d32": CaseMetadata("fp128", "dense", "dense", "D32"),
-    "dense_fp128_d64": CaseMetadata("fp128", "dense", "dense", "D64"),
-    "onehot_fp128_d32": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
+    # fp128 ships dense + one-hot at D128 and one-hot at D64 (plus the D64
+    # one-hot tensor preset).
+    "dense_fp128_d128": CaseMetadata("fp128", "dense", "dense", "D128"),
     "onehot_fp128_d64": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    "onehot_fp128_d128": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
     "onehot_fp128_d64_tensor": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 tensor"
     ),
-    "onehot_fp32_d32": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
-    "onehot_fp32_d64": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
-    "dense_fp32_d32": CaseMetadata("fp32", "dense", "dense", "D32"),
-    "dense_fp32_d64": CaseMetadata("fp32", "dense", "dense", "D64"),
-    "onehot_fp16_d32": CaseMetadata("fp16", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
-    "onehot_fp16_d64": CaseMetadata("fp16", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
-    "dense_fp16_d32": CaseMetadata("fp16", "dense", "dense", "D32"),
-    "dense_fp16_d64": CaseMetadata("fp16", "dense", "dense", "D64"),
-    "onehot_fp64_d32": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
-    "onehot_fp64_d64": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
-    "dense_fp64_d32": CaseMetadata("fp64", "dense", "dense", "D32"),
-    "dense_fp64_d64": CaseMetadata("fp64", "dense", "dense", "D64"),
+    # Small fields fold securely only at D128/D256 under honest pricing; fp32
+    # ships no dense family.
+    "onehot_fp32_d128": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
+    "onehot_fp32_d256": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D256"),
+    "dense_fp64_d128": CaseMetadata("fp64", "dense", "dense", "D128"),
+    "onehot_fp64_d128": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
+    "onehot_fp64_d256": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D256"),
 }
 
 
@@ -90,7 +90,7 @@ def case_metadata(mode: str) -> CaseMetadata:
     if mode in CASE_METADATA:
         return CASE_METADATA[mode]
     field_family = "fp128"
-    for family in ("fp16", "fp32", "fp64", "fp128"):
+    for family in ("fp32", "fp64", "fp128"):
         if family in mode:
             field_family = family
             break
@@ -122,7 +122,7 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument(
         "--output-dir", required=True, help="Directory where logs and summary.json are written."
     )
-    run_parser.add_argument("--mode", default="onehot_fp128_d32", help="Benchmark mode.")
+    run_parser.add_argument("--mode", default="onehot_fp128_d128", help="Benchmark mode.")
     run_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     run_parser.add_argument(
         "--num-polys",
@@ -185,7 +185,7 @@ def parse_args() -> argparse.Namespace:
     failure_parser.add_argument(
         "--output-dir", required=True, help="Directory where summary files are written."
     )
-    failure_parser.add_argument("--mode", default="onehot_fp128_d32", help="Benchmark mode.")
+    failure_parser.add_argument("--mode", default="onehot_fp128_d128", help="Benchmark mode.")
     failure_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     failure_parser.add_argument(
         "--num-polys",
@@ -1121,12 +1121,12 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
         # Intentionally no per-level `level_bytes` vs `total_bytes` comparison.
         # The header-stripped planner estimate is only a conservative upper bound
         # in *aggregate*: it can over- or under-attribute bytes to any individual
-        # level (e.g. dense_fp32_d32 nv26 has levels where the runtime proof
+        # level (e.g. dense_fp128_d128 nv24 has levels where the runtime proof
         # exceeds the per-level estimate while the total stays under it). The
         # total-overcount invariant is asserted in the profile binary itself
         # (`ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` in
-        # `crates/akita-pcs/examples/profile/workload.rs`), and absolute proof
-        # growth is guarded by the proof-size regression threshold in CI. Here we
+        # `crates/akita-pcs/examples/profile/workload.rs`). Proof-size deltas vs
+        # baselines are reported in the PR comment but are not CI gates. Here we
         # only enforce the structural level shape (count / index / D) above.
 
 

@@ -216,9 +216,10 @@ pub fn terminal_witness_segment_layout(
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal w_hat width overflow".to_string()))?;
+    let num_digits_fold = lp.num_digits_fold(num_w_vectors, field_bits)?;
     let z_folded_ring_count = num_public_rows
         .checked_mul(lp.inner_width())
-        .and_then(|n| n.checked_mul(lp.num_digits_fold(num_w_vectors, field_bits)))
+        .and_then(|n| n.checked_mul(num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal z-folded width overflow".to_string()))?;
     terminal_witness_segment_layout_from_counts(
         lp.ring_dimension,
@@ -258,7 +259,7 @@ mod tests {
 
         assert_eq!(
             layout.w_hat_digit_offset,
-            2 * lp.inner_width() * lp.num_digits_fold(5, 128) * lp.ring_dimension
+            2 * lp.inner_width() * lp.num_digits_fold(5, 128).unwrap() * lp.ring_dimension
         );
         assert_eq!(
             layout.w_hat_digit_count,

@@ -10,8 +10,15 @@
 ## Summary
 
 This spec documents the implemented `SparseChallengeConfig::BoundedL1Norm`
-family for stage-1 sparse fold challenges. The first rollout is a fixed
-production preset for fp128 `D=32` only:
+family for the short witness-folding ring challenge.
+Despite the `Sparse*` type name, this family is a low-norm ball, not a sparse
+fixed-weight family: its challenges may be dense as long as `||c||_1 <= 121`
+and `||c||_inf <= 8`.
+The initial rollout targeted fp128 `D=32` only.
+It is now the shared ring-challenge family for every `D=32` proof-optimized
+profile (fp128 plus the small-field fp16/fp32/fp64 presets), selected by the
+dimension-keyed `proof_optimized_ring_challenge_config` helper.
+The fixed `D=32` preset is:
 
 ```text
 D = 32
@@ -76,9 +83,14 @@ digits, shrink recursive witnesses, and reduce proof size. The optimization is
 safe only because the configured `l1_norm()` remains a true worst-case bound;
 the analysis does not rely on average or typical challenge mass.
 
-## Current fp128 Policy
+## Current Proof-Optimized Policy
 
-The active fp128 stage-1 challenge policy is:
+The active ring-challenge policy is shared by every proof-optimized preset
+(fp128 and the small-field fp16/fp32/fp64 families) through
+`proof_optimized_ring_challenge_config`, keyed only on the ring degree `d`.
+fp128 reaches `d in {32, 64, 128}`; the small-field presets additionally reach
+`d = 256`.
+The per-dimension families are:
 
 ```text
 D=32:
@@ -101,8 +113,18 @@ D=128:
   }
   l1_norm()       = 31
   infinity_norm() = 1
+
+D=256:
+  SparseChallengeConfig::Uniform {
+      weight: 23,
+      nonzero_coeffs: [-1, 1],
+  }
+  l1_norm()       = 23
+  infinity_norm() = 1
 ```
 
+Each family is the minimal-mass shape whose challenge space has at least 128
+bits of Fiat-Shamir support at its ring degree.
 `BoundedL1Norm` validates only for `D=32`. It is intentionally not a generic
 `BoundedL1Ball { max_abs_coeff, l1_bound }` public configuration in this branch.
 
@@ -332,7 +354,7 @@ The implementation should keep these checks pinned:
 - A fixed transcript reference vector pins the byte order, bucket order, and canonical XOF stream behavior.
 - DP recurrence tests cover the compile-time suffix table.
 - A top-cell test proves `WAYS[32][121] > 2^128`.
-- Generated fp128 `D=32` schedules pin `challenge_l1_mass = 121` and validate against runtime `stage1_challenge_config(d).l1_norm()`.
+- Generated `D=32` proof-optimized schedules (fp128 and small-field fp16/fp32/fp64) pin `challenge_l1_mass = 121` and validate against runtime `ring_challenge_config(d).l1_norm()`.
 
 ## Non-Goals
 
