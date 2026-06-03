@@ -186,11 +186,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// level whose `log_commit_bound == 1` (one-hot commitment); dense configs
     /// always use `nonzeros = D` regardless of this hook.
     ///
-    /// The default `Self::D` is the single-chunk one-hot case (`K >= D`,
-    /// `nonzeros = 1`); a multi-chunk one-hot preset must override it with its
-    /// committed chunk size `K < D`.
+    /// The default `1` is the fully generic one-hot case: it safely covers every
+    /// valid chunking accepted by `OneHotPoly`, including `K < D` multi-chunk
+    /// roots. A config that publicly guarantees a larger minimum chunk size may
+    /// override this hook to recover tighter one-hot schedules.
     fn onehot_chunk_size() -> usize {
-        Self::D
+        1
     }
 
     /// Build the runtime [`Schedule`] for `key`.
