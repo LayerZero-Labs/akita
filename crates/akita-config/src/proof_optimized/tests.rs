@@ -829,7 +829,11 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
     // Fiat-Shamir support; the (l1, linf) pin guards the folded-witness norm
     // the schedules are generated against.
     let cases = [
-        (32usize, SparseChallengeConfig::BoundedL1Norm, (121usize, 8u32)),
+        (
+            32usize,
+            SparseChallengeConfig::BoundedL1Norm,
+            (121usize, 8u32),
+        ),
         (
             64,
             SparseChallengeConfig::ExactShell {
@@ -882,8 +886,8 @@ fn proof_optimized_ring_challenge_policy_pins_secure_families() {
     assert!(proof_optimized_ring_challenge_config(48).is_err());
 }
 
-/// Assert one preset delegates its ring challenge to the shared policy. The
-/// >=128-bit support of each shared family is proven once in
+/// Assert one preset delegates its ring challenge to the shared policy.
+/// Support for 128-bit-and-larger fields in each shared family is proven once in
 /// `proof_optimized_ring_challenge_policy_pins_secure_families`, so this only
 /// has to catch a preset that bypasses the shared helper with a weaker family.
 fn assert_preset_uses_shared_ring_challenge<Cfg: CommitmentConfig>() {
@@ -891,7 +895,10 @@ fn assert_preset_uses_shared_ring_challenge<Cfg: CommitmentConfig>() {
     let got = Cfg::ring_challenge_config(Cfg::D)
         .unwrap_or_else(|err| panic!("{name} ring_challenge_config(D) failed: {err}"));
     let want = proof_optimized_ring_challenge_config(Cfg::D).unwrap();
-    assert_eq!(got, want, "{name} bypassed the shared ring-challenge policy");
+    assert_eq!(
+        got, want,
+        "{name} bypassed the shared ring-challenge policy"
+    );
 }
 
 #[test]

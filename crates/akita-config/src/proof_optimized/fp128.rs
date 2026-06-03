@@ -30,12 +30,60 @@ pub struct D32OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
-impl_proof_optimized_preset!(D128Full, Field, Field, akita_types::SisModulusFamily::Q128, 128, 128, 128);
-impl_proof_optimized_preset!(D128OneHot, Field, Field, akita_types::SisModulusFamily::Q128, 128, 128, 1);
-impl_proof_optimized_preset!(D64Full, Field, Field, akita_types::SisModulusFamily::Q128, 64, 128, 128);
-impl_proof_optimized_preset!(D64OneHot, Field, Field, akita_types::SisModulusFamily::Q128, 64, 128, 1);
-impl_proof_optimized_preset!(D32Full, Field, Field, akita_types::SisModulusFamily::Q128, 32, 128, 128);
-impl_proof_optimized_preset!(D32OneHot, Field, Field, akita_types::SisModulusFamily::Q128, 32, 128, 1);
+impl_proof_optimized_preset!(
+    D128Full,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    128,
+    128,
+    128
+);
+impl_proof_optimized_preset!(
+    D128OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    128,
+    128,
+    1
+);
+impl_proof_optimized_preset!(
+    D64Full,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    64,
+    128,
+    128
+);
+impl_proof_optimized_preset!(
+    D64OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    64,
+    128,
+    1
+);
+impl_proof_optimized_preset!(
+    D32Full,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    32,
+    128,
+    128
+);
+impl_proof_optimized_preset!(
+    D32OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    32,
+    128,
+    1
+);
 
 /// Concrete fp128 preset selected by a schedule-family query.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
