@@ -28,19 +28,19 @@
 //!
 //! Stage 1 supplies the carried virtual claim
 //!
-//! `s_claim = w(r_stage1) * (w(r_stage1) + 1)`
-//! `        = sum_z eq(r_stage1, z) * w(z) * (w(z) + 1)`
+//! `s_claim = w(stage1_point) * (w(stage1_point) + 1)`
+//! `        = sum_z eq(stage1_point, z) * w(z) * (w(z) + 1)`
 //!
 //! for the same multilinear witness table. With `gamma = batching_coeff`, the
 //! exact identity established by this sumcheck is
 //!
 //! `gamma * s_claim + relation_claim =`
-//! `sum_{x,y} [ gamma * eq(r_stage1, (x, y)) * w(x, y) * (w(x, y) + 1)`
+//! `sum_{x,y} [ gamma * eq(stage1_point, (x, y)) * w(x, y) * (w(x, y) + 1)`
 //! `           + w(x, y) * a(y) * m_tau1(x) ]`.
 //!
 //! After all rounds, at `r_stage2 = (r_x, r_y)`, the verifier checks
 //!
-//! `gamma * eq(r_stage1, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
+//! `gamma * eq(stage1_point, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
 //! `  + w(r_stage2) * a(r_y) * m_tau1(r_x)`,
 //!
 //! exactly the oracle returned by `expected_output_claim()`. The prover fuses

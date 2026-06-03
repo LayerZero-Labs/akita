@@ -5,6 +5,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 mod common;
 
+use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -13,8 +14,8 @@ use akita_transcript::{
 };
 use akita_types::{
     terminal_witness_segment_layout, AkitaBatchedProof, AkitaBatchedProofShape,
-    AkitaBatchedRootProof, AkitaProofStep, DirectWitnessProof, DirectWitnessShape, PackedDigits,
-    TerminalWitnessSegmentLayout,
+    AkitaBatchedRootProof, AkitaProofStep, CleartextWitnessProof, CleartextWitnessShape,
+    PackedDigits, TerminalWitnessSegmentLayout,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -208,7 +209,7 @@ fn terminal_event_order_rejects_malformed_windows() {
     }
 }
 
-fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut DirectWitnessProof<F> {
+fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut CleartextWitnessProof<F> {
     match &mut proof.root {
         AkitaBatchedRootProof::Terminal(terminal) => &mut terminal.final_witness,
         AkitaBatchedRootProof::Fold(_) => proof
@@ -217,7 +218,7 @@ fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut DirectWitnessP
             .and_then(AkitaProofStep::as_terminal_mut)
             .map(|terminal| &mut terminal.final_witness)
             .expect("fold-rooted proof must end in a terminal step"),
-        AkitaBatchedRootProof::Direct { .. } => {
+        AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("terminal tamper test requires a folded terminal proof")
         }
     }
@@ -232,7 +233,7 @@ enum TerminalTamper {
 }
 
 impl TerminalTamper {
-    fn apply(self, witness: &mut DirectWitnessProof<F>, layout: TerminalWitnessSegmentLayout) {
+    fn apply(self, witness: &mut CleartextWitnessProof<F>, layout: TerminalWitnessSegmentLayout) {
         let packed = packed_digits_mut(witness);
         match self {
             Self::WHatDigit => mutate_packed_digit(packed, layout.w_hat_digit_offset),
@@ -302,8 +303,8 @@ fn assert_terminal_tamper_rejected_at_num_vars(num_vars: usize, tamper: Terminal
             akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
-        let terminal_layout =
-            terminal_witness_segment_layout(&layout, 1, 1).expect("terminal layout");
+        let terminal_layout = terminal_witness_segment_layout(&layout, 1, 1, F::modulus_bits())
+            .expect("terminal layout");
 
         tamper.apply(final_witness_mut(&mut proof), terminal_layout);
 
@@ -324,8 +325,8 @@ fn assert_terminal_tamper_rejected(tamper: TerminalTamper) {
     assert_terminal_tamper_rejected_at_num_vars(10, tamper);
 }
 
-fn packed_digits_mut(witness: &mut DirectWitnessProof<F>) -> &mut PackedDigits {
-    let DirectWitnessProof::PackedDigits(packed) = witness else {
+fn packed_digits_mut(witness: &mut CleartextWitnessProof<F>) -> &mut PackedDigits {
+    let CleartextWitnessProof::PackedDigits(packed) = witness else {
         panic!("terminal witness should use packed digits");
     };
     packed
@@ -352,7 +353,9 @@ fn terminal_final_witness_tamper_rejects() {
     }
 }
 
-fn terminal_shape_final_witness_mut(shape: &mut AkitaBatchedProofShape) -> &mut DirectWitnessShape {
+fn terminal_shape_final_witness_mut(
+    shape: &mut AkitaBatchedProofShape,
+) -> &mut CleartextWitnessShape {
     match shape {
         AkitaBatchedProofShape::Terminal(terminal) => &mut terminal.final_witness,
         AkitaBatchedProofShape::Fold { step_shapes, .. } => step_shapes
@@ -364,7 +367,7 @@ fn terminal_shape_final_witness_mut(shape: &mut AkitaBatchedProofShape) -> &mut 
                 }
             })
             .expect("fold-rooted proof must end in a terminal shape"),
-        AkitaBatchedProofShape::Direct { .. } => {
+        AkitaBatchedProofShape::ZeroFold { .. } => {
             panic!("terminal shape test requires a folded terminal proof")
         }
     }
@@ -412,7 +415,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             .serialize_compressed(&mut bytes)
             .expect("serialize proof");
         let mut bad_shape = proof.shape();
-        let DirectWitnessShape::PackedDigits((num_elems, _bits_per_elem)) =
+        let CleartextWitnessShape::PackedDigits((num_elems, _bits_per_elem)) =
             terminal_shape_final_witness_mut(&mut bad_shape)
         else {
             panic!("terminal witness should use packed digits");

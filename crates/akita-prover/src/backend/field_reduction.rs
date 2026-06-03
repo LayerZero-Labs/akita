@@ -207,7 +207,7 @@ where
         })
     }
 
-    fn direct_root_witness(&self) -> Result<akita_types::DirectWitnessProof<F>, AkitaError> {
+    fn direct_root_witness(&self) -> Result<akita_types::CleartextWitnessProof<F>, AkitaError> {
         dispatch_root_projection!(self, poly => poly.direct_root_witness())
     }
 }

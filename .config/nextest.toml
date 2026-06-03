@@ -1,0 +1,8 @@
+[store]
+dir = "target/nextest"
+
+[profile.ci-non-zk.junit]
+path = "junit.xml"
+
+[profile.ci-all-features.junit]
+path = "junit.xml"

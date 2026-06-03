@@ -12,7 +12,7 @@ pub use batched::{
     verify_batched_with_policy, verify_root_direct_commitments_with_params,
     RootDirectBlindingPayload,
 };
-pub use ring_switch::{prepare_ring_switch_row_eval, RingSwitchDeferredRowEval};
+pub use ring_switch::{prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay};
 pub use slice_mle::SetupEvaluator;
 pub(crate) use slice_mle::{jolt_end_cycle_tracking, jolt_start_cycle_tracking, SetupEvalPlan};
 

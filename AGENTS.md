@@ -14,6 +14,13 @@ cargo clippy --all --message-format=short -q -- -D warnings
 cargo test
 ```
 
+## CI test timing
+
+Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`)
+showing per-pass wall time vs a main baseline, plus per-test outliers from the
+nextest JUnit output. The CI test job uploads artifact `ci-test-timing-data`
+containing `summary.json` and the rendered comment/report.
+
 ## Crate Structure
 
 Workspace members under `crates/`:
@@ -24,14 +31,13 @@ Workspace members under `crates/`:
 - `akita-transcript` — spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks
 - `akita-challenges` — Fiat-Shamir challenge sampling helpers
 - `akita-sumcheck` — sumcheck proofs, drivers, compact folding, batching, accumulation
-- `akita-types` — proof, setup, schedule, layout, commitment, transcript-append, PRG shapes; verifier-reachable proof-size formulas; pure layout helpers (`level_layout_from_params`, `recursive_level_layout_from_params`, `decomp_depths`)
-- `akita-derive` — verifier-reachable parameter derivation: SIS-secure layout derivation (`sis_derived_root_params_for_layout`, `sis_derived_recursive_params_for_layout`, `derived_root_commitment_layout_from_params`, `sis_secure_level_params`) and schedule-table materialization (`schedule_plan_from_table`, `PlanPolicy`). Free-function API. Sits below `akita-config` in the dep graph
-- `akita-config` — runtime config presets, the single `CommitmentConfig` trait, `WCommitmentConfig`, config-backed schedule adapters, and the canonical `bind_transcript_instance_descriptor` helper consumed by both prover and verifier. Depends on `akita-derive`; does NOT depend on `akita-planner`. `Cfg` defaults are table-only and error on schedule-table miss; runtime DP fallback is opt-in for tests via `akita_planner::test_utils::PlannerCfg<Cfg>` (feature-gated)
+- `akita-types` — proof, setup, schedule, layout, commitment, transcript-append, PRG shapes; the verifier-reachable per-level proof-size formula (`level_proof_bytes`); the SIS security-floor tables (`akita_types::sis_floor`: `SisModulusFamily`, `min_rank_for_secure_width`, `ceil_supported_collision`); pure layout helpers (`level_layout_from_params`, `recursive_level_layout_from_params`, `decomp_depths`); SIS-secure layout derivation (`sis_derived_root_params_for_layout`, `sis_secure_level_params`). The generated schedule-table *representation*, shipped tables, and on-demand expansion live in `akita-planner` (not here)
+- `akita-config` — runtime config presets, the single `CommitmentConfig` trait, `WCommitmentConfig`, config-backed schedule adapters, the `policy_of::<Cfg>()` bridge, the generated-table family list (`generated_families`) + `gen_schedule_tables` binary, and the canonical `bind_transcript_instance_descriptor` helper consumed by both prover and verifier. **Depends on `akita-planner`.** `CommitmentConfig::runtime_schedule` is a one-line delegation to `akita_planner::get_schedule(key, &policy_of::<Self>(), …)`; the planner owns table selection (`shipped_table`), so the trait has **no** `schedule_table()` / `resolve_schedule()` hooks. Runtime DP fallback on a table miss is the default for every preset (no opt-in wrapper, no `test-utils` feature)
 - `akita-setup` — config-backed setup construction + optional setup cache
-- `akita-verifier` — verifier replay (no prover-only polynomial backends). Public surface is `<Cfg>`-generic: `verify_batched::<F, Cfg, T, D>` (lives in `protocol::batched`). Dep tree excludes `akita-planner`
-- `akita-prover` — commitment, proving, setup expansion, recursive/ring-switch witnesses, polynomial backends. Public surface is `<Cfg>`-generic: `prove_batched` (in `protocol::flow`), `commit` / `batched_commit` (in `api::commitment`), `recursive_w_commit_layout_for_d` (in `protocol::ring_switch`), and `bind_transcript_instance_descriptor` re-exported from `akita-config`. Multi-`D` dispatch helpers live here (not in scheme). Dep tree excludes `akita-planner`
-- `akita-scheme` — thin end-to-end `AkitaCommitmentScheme` glue; each `CommitmentProver`/`CommitmentVerifier` method is a one-line call into the prover/verifier `<Cfg>`-generic API. Dep tree excludes `akita-planner`
-- `akita-planner` — offline schedule search (`find_optimal_schedule::<Cfg>(key, ScheduleSearchMode)`) plus the `gen_schedule_tables` binary that emits the generated tables. The family list and key cross-product live in `akita_planner::generated_families` and are shared by the binary and the drift-guard test. The `test_utils::PlannerCfg<Cfg>` DP-routing wrapper is gated behind the `test-utils` feature so production callers never link it. Depends on `akita-config` (Cfg-generic API). Sits ABOVE `akita-config` and is excluded from the prover/verifier/scheme/setup dep tree
+- `akita-verifier` — verifier replay (no prover-only polynomial backends). Public surface is `<Cfg>`-generic: `verify_batched::<F, Cfg, T, D>` (lives in `protocol::batched`). Reaches `akita-planner` transitively via `akita-config` (DP fallback is verifier-reachable)
+- `akita-prover` — commitment, proving, setup expansion, recursive/ring-switch witnesses, polynomial backends. Public surface is `<Cfg>`-generic: `prove_batched` (in `protocol::flow`), `commit` / `batched_commit` (in `api::commitment`), `recursive_w_commit_layout_for_d` (in `protocol::ring_switch`), and `bind_transcript_instance_descriptor` re-exported from `akita-config`. Multi-`D` dispatch helpers live here (not in scheme)
+- `akita-scheme` — thin end-to-end `AkitaCommitmentScheme` glue; each `CommitmentProver`/`CommitmentVerifier` method is a one-line call into the prover/verifier `<Cfg>`-generic API
+- `akita-planner` — pure, **`Cfg`-free** schedule owner. It holds the generated schedule-table representation (`Generated*` types, `table_entry`, `generated_schedule_lookup_key`), the shipped `src/generated/*.rs` tables + `*_table()` constructors, the `policy → table` registry `shipped_table(&PlannerPolicy, root_fold_is_tensor)`, the on-demand compact→`LevelParams` expansion (`generated::expand`, `schedule_from_entry`), and the schedule-search DP `find_schedule(key, &PlannerPolicy, stage1, fold_shape)`. The single resolution entry point is `get_schedule(key, &PlannerPolicy, stage1, fold_shape)` — it selects the shipped table from the policy (and the level-0 fold shape, which disambiguates the tensor table), expands the compact entry on a hit, and runs the DP on a miss. It names no `CommitmentConfig` type and depends only on `akita-types` / `akita-challenges` / `akita-field`. Sits **BELOW** `akita-config` (the arrow is inverted): `akita-config::runtime_schedule` is a one-line delegation to `get_schedule`. The preset family list and the `gen_schedule_tables` binary live in `akita-config` (the only crate that can name presets); the binary writes its output into `crates/akita-planner/src/generated/`
 - `akita-pcs` — umbrella crate with examples, benches, integration tests, public re-exports
 
 ## Key Abstractions
@@ -40,8 +46,8 @@ Workspace members under `crates/`:
 - `CommitmentConfig` — single user-facing trait defining every per-config policy hook (algebra, SIS family, decomposition, layout, schedule table/key/plan, transcript bind, prove/commitment params). Replaces the previous `CommitmentConfig` + `ScheduleProvider` + `PlannerConfig` triad. Verifier-reachable hooks return `Result<_, AkitaError>` (`level_params_with_log_basis`, `log_basis_at_level`, `stage1_challenge_config`)
 - `WCommitmentConfig<const D: usize, Cfg>` — derived recursive-w `CommitmentConfig` for ring-degree dispatch
 - `LevelParams` — recursion schedule, layout, per-level config
-- `PlanPolicy` — value-typed inputs to `akita_derive::schedule_plan_from_table` (table materialization). Planner search is `<Cfg>`-generic — no separate `SearchOptions`-shaped input
-- `PlannerCfg<Cfg>` — test-only `Cfg` wrapper in `akita_planner::test_utils` (gated by the `test-utils` Cargo feature) that overrides the `CommitmentConfig` parameter accessors to route schedule-table misses through `find_optimal_schedule::<Self>`. Production presets do not need this wrapper and never link it
+- `PlanPolicy` — value-typed inputs to `akita_types::schedule_plan_from_table` (table materialization)
+- `PlannerPolicy` — the `Cfg`-free plain-value projection of a preset (`D`, decomposition, SIS family, norm bound, ext degrees, basis range) that `akita_planner::find_schedule` consumes. Derived from a preset via `akita_config::policy_of::<Cfg>()` — the single source of truth stays the `Cfg` impl, never hand-written literals
 - `DensePoly`, `OneHotPoly`, `AkitaPolyOps` — polynomial backends consumed by the scheme
 - `BlockOrder` — explicit root-vs-recursive opening split convention
 - `AkitaBatchedProof`, `AkitaBatchedRootProof`, `AkitaLevelProof`, `AkitaProofStep` — serialized proof structure (singleton openings are the 1x1 special case of the batched proof)
@@ -53,7 +59,7 @@ Workspace members under `crates/`:
 Verifier-reachable execution is a no-panic boundary.
 Any malformed verifier-facing proof, setup, schedule, public claim, opening point, commitment, direct witness, or transcript input must be rejected with `AkitaError` or `SerializationError`, not by panicking.
 
-This applies to `akita-verifier` and any verifier-reachable code in `akita-types`, `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `akita-field` paths, `akita-config` (every `CommitmentConfig` method reachable from `verify_batched`), and `akita-derive` (SIS derivation + table materialization). `akita-planner` (offline DP search) is not on the verifier path and is excluded from the verifier crate's dep graph.
+This applies to `akita-verifier` and any verifier-reachable code in `akita-types` (including SIS derivation + table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `akita-field` paths, `akita-config` (every `CommitmentConfig` method reachable from `verify_batched`), and `akita-planner` (the schedule-search DP). The DP is now verifier-reachable through `CommitmentConfig::runtime_schedule`'s table-miss fallback, so `find_schedule` and every helper it calls must reject malformed input with `AkitaError`, never panic. The verifier must still validate `key.num_vars` against setup capacity before invoking the DP so a malformed proof cannot blow up the search's bounded state space.
 Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing/slicing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier verifier boundary has clearly validated the invariant.
 
 Prefer strengthening existing validation at deserialization, setup construction, schedule selection, `LevelParams` construction, and verifier API entry points.
@@ -63,8 +69,6 @@ Prover-only panics are acceptable for now if they are not reachable from verifie
 ## Feature Flags
 
 - `parallel` — Rayon parallelization (default)
-- `planner` — opt-in dep on `akita-planner` (still defined on `akita-pcs`, `akita-scheme`, `akita-setup` for downstream callers that want the DP search at runtime; orthogonal to the `Cfg` trait defaults, which are always table-only)
-- `akita-planner/test-utils` — gates `akita_planner::test_utils::PlannerCfg`; enabled in dev-dependencies of `akita-pcs`, `akita-scheme`, `akita-setup` so their test fixtures can drive table-miss DP fallback. Never enabled in production builds
 - `disk-persistence` — disk-backed persistence paths used by some commitment flows
 - `logging-transcript` — enables `LoggingTranscript` schedule events and smell checks in transcript tests
 

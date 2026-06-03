@@ -7,7 +7,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     pub fn new(
         batching_coeff: E,
         w_evals_compact: Vec<i8>,
-        r_stage1: &[E],
+        stage1_point: &[E],
         s_claim: E,
         b: usize,
         alpha_evals_y: Vec<E>,
@@ -50,10 +50,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 actual: w_evals_compact.len(),
             });
         }
-        if r_stage1.len() != num_vars {
+        if stage1_point.len() != num_vars {
             return Err(AkitaError::InvalidSize {
                 expected: num_vars,
-                actual: r_stage1.len(),
+                actual: stage1_point.len(),
             });
         }
         if alpha_evals_y.len() != y_len {
@@ -75,7 +75,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             batching_coeff,
             s_claim,
             input_claim: batching_coeff * s_claim + relation_claim,
-            split_eq: GruenSplitEq::with_initial_scalar(r_stage1, batching_coeff)?,
+            split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
             live_x_cols,
@@ -85,7 +85,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
             prefix_r_stage1: can_use_stage2_two_round_prefix(ring_bits, b)
-                .then(|| r_stage1.to_vec()),
+                .then(|| stage1_point.to_vec()),
             two_round_prefix: None,
             cached_round_poly: None,
             scan_time_total: 0.0,
@@ -234,7 +234,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     pub(super) fn ensure_two_round_prefix(&mut self) -> &mut Stage2TwoRoundPrefix<E> {
         if self.two_round_prefix.is_none() {
-            let r_stage1 = self
+            let stage1_point = self
                 .prefix_r_stage1
                 .clone()
                 .expect("two-round prefix requested without cached stage-1 challenges");
@@ -247,7 +247,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 w_compact,
                 &self.alpha_compact,
                 &self.m_compact,
-                &r_stage1,
+                &stage1_point,
                 self.b,
                 self.live_x_cols,
                 self.col_bits,
@@ -256,7 +256,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             .expect("two-round prefix should be available");
             let skip_state = Stage2BivariateSkipState::new(
                 &proof,
-                &r_stage1,
+                &stage1_point,
                 self.s_claim,
                 self.relation_claim,
                 self.batching_coeff,

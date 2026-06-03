@@ -5,22 +5,47 @@ struct Fp32RingSubfieldRootFoldCfg;
 #[derive(Clone)]
 struct Fp32RingSubfieldOuterFallbackCfg;
 
+/// Synthetic root `LevelParams` for the two fp32 ring-subfield test
+/// fixtures.
+///
+/// Both fixtures share the same `(family, D, log_basis, log_commit_bound,
+/// stage1, ring_subfield)` setup and only differ in their
+/// `with_decomp` arguments. Constructs the placeholder via
+/// `params_only` and stamps the A and B/D collision buckets via
+/// `new_unchecked` so the layout carries real buckets instead of the
+/// `0` `params_only` default. This `(family, D)` is intentionally
+/// outside the audited SIS-floor tables, so the fixture scales via
+/// `akita_types::scale_batched_root_layout_unchecked` rather than the
+/// strict, table-audited expansion path.
+fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
+    use akita_types::AjtaiKeyParams;
+    let sis_family = akita_types::SisModulusFamily::Q32;
+    // Commit ring dimension must equal the static `D` the scheme dispatches
+    // (`DensePoly::<SmallF, D>` / `validate_commit_level_params::<F, D>`); both
+    // fixtures pin `D = 32`. `ring_subfield = 2` below is `RingSubfieldFp4`'s
+    // embedding norm bound (a claim-field property), not `D / d`, so the
+    // collision buckets are independent of this dimension.
+    let d: usize = 32;
+    let stage1 = akita_challenges::SparseChallengeConfig::Uniform {
+        weight: 1,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    // Match the verifier-reachable derivation for this fixture's
+    // `(log_basis=3, log_commit_bound=32, stage1.inf_norm=1, ring_subfield=2)`:
+    // `bd_raw = 7`, `a_collision_raw = 7 * 1 * 2 = 14` → bucket `15`,
+    // `bd_collision_raw = 7` → bucket `7`.
+    let a_bucket: u32 = 15;
+    let bd_bucket: u32 = 7;
+    let mut params = LevelParams::params_only(sis_family, d, 3, 1, 1, 1, stage1);
+    params.a_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, a_bucket, d);
+    params.b_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, bd_bucket, d);
+    params.d_key = AjtaiKeyParams::new_unchecked(sis_family, 1, 0, bd_bucket, d);
+    params.with_decomp(m_vars, 0, 12, 12, 0).unwrap()
+}
+
 impl Fp32RingSubfieldRootFoldCfg {
     fn root_lp() -> LevelParams {
-        LevelParams::params_only(
-            akita_types::SisModulusFamily::Q32,
-            Self::D,
-            3,
-            1,
-            1,
-            1,
-            akita_challenges::SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
-        )
-        .with_decomp(0, 0, 12, 12, 12, 0)
-        .unwrap()
+        fp32_ring_subfield_root_lp(0)
     }
 }
 
@@ -81,6 +106,12 @@ where
     })
 }
 
+/// Total-claim limit shared by both fp32 ring-subfield fixtures.
+///
+/// Setup sizing is driven by the maximum number of claims a single batched
+/// opening can carry, which is bounded by `max_num_batched_polys` (each
+/// point opens at most every committed polynomial). `max_num_points` may
+/// not exceed `max_num_batched_polys` for these fixtures.
 fn fp32_ring_subfield_max_claims(
     max_num_batched_polys: usize,
     max_num_points: usize,
@@ -108,7 +139,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     type ClaimField = akita_field::RingSubfieldFp4<Self::Field>;
     type ChallengeField = Self::ClaimField;
 
-    const D: usize = 16;
+    const D: usize = 32;
 
     fn decomposition() -> akita_types::DecompositionParams {
         akita_types::DecompositionParams {
@@ -131,28 +162,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         akita_types::SisModulusFamily::Q32
     }
 
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
-        Ok(None)
-    }
-
-    fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {
-        1
-    }
-
-    fn envelope(_max_num_vars: usize) -> akita_types::CommitmentEnvelope {
-        akita_types::CommitmentEnvelope {
-            max_n_a: 1,
-            max_n_b: 1,
-            max_n_d: 1,
-        }
-    }
-
     fn max_setup_matrix_size(
         _max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -163,20 +172,16 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
-    fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+    fn basis_range() -> (u32, u32) {
         (3, 3)
     }
 
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = akita_types::scale_batched_root_layout(
+        let lp = akita_types::scale_batched_root_layout_unchecked(
             &Self::root_lp(),
             incidence.num_claims(),
-            Self::stage1_challenge_config(Self::D)
-                .expect("stage1 challenge config")
-                .l1_norm(),
-            Self::decomposition().field_bits(),
         )?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
@@ -184,7 +189,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
             incidence.num_polynomials(),
             incidence.num_claims(),
             incidence.num_public_rows(),
-            akita_types::MRowLayout::Terminal,
+            akita_types::MRowLayout::WithoutDBlock,
         )?;
         let compact_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
@@ -192,24 +197,19 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                 Step::Fold(akita_types::FoldStep {
                     params: lp.clone(),
                     current_w_len: akita_types::root_current_w_len(&lp),
-                    delta_fold_per_poly: lp.num_digits_fold,
-                    w_ring,
                     next_w_len: compact_w_len,
                     level_bytes: 0,
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: compact_w_len,
-                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((
+                    witness_shape: akita_types::CleartextWitnessShape::PackedDigits((
                         compact_w_len,
                         3,
                     )),
                     direct_bytes: compact_w_len,
-                    commit_params: None,
                     // Stub fixture: terminal-direct level params equal the
-                    // fold's `lp` (matches the deleted
-                    // `Cfg::level_params_with_log_basis` override that
-                    // returned `Self::root_lp()`).
-                    level_params: Some(lp.clone()),
+                    // fold's `lp`.
+                    params: Some(lp.clone()),
                 }),
             ],
             total_bytes: 0,
@@ -219,20 +219,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
 
 impl Fp32RingSubfieldOuterFallbackCfg {
     fn root_lp() -> LevelParams {
-        LevelParams::params_only(
-            akita_types::SisModulusFamily::Q32,
-            Self::D,
-            3,
-            1,
-            1,
-            1,
-            akita_challenges::SparseChallengeConfig::Uniform {
-                weight: 1,
-                nonzero_coeffs: vec![-1, 1],
-            },
-        )
-        .with_decomp(1, 0, 12, 12, 12, 0)
-        .unwrap()
+        fp32_ring_subfield_root_lp(1)
     }
 }
 
@@ -241,7 +228,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     type ClaimField = akita_field::RingSubfieldFp4<Self::Field>;
     type ChallengeField = Self::ClaimField;
 
-    const D: usize = 16;
+    const D: usize = 32;
 
     fn decomposition() -> akita_types::DecompositionParams {
         akita_types::DecompositionParams {
@@ -264,28 +251,6 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         akita_types::SisModulusFamily::Q32
     }
 
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
-        Ok(None)
-    }
-
-    fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {
-        1
-    }
-
-    fn envelope(_max_num_vars: usize) -> akita_types::CommitmentEnvelope {
-        akita_types::CommitmentEnvelope {
-            max_n_a: 1,
-            max_n_b: 1,
-            max_n_d: 1,
-        }
-    }
-
     fn max_setup_matrix_size(
         _max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -296,23 +261,19 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
-    fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+    fn basis_range() -> (u32, u32) {
         (3, 3)
     }
 
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = akita_types::scale_batched_root_layout(
+        let lp = akita_types::scale_batched_root_layout_unchecked(
             &Self::root_lp(),
             incidence.num_claims(),
-            Self::stage1_challenge_config(Self::D)
-                .expect("stage1 challenge config")
-                .l1_norm(),
-            Self::decomposition().field_bits(),
         )?;
         // Single-fold schedule: the root IS the terminal fold, so its
-        // shipped `w` is built under MRowLayout::Terminal (no D-block in
+        // shipped `w` is built under MRowLayout::WithoutDBlock (no D-block in
         // the per-row `r` quotients). The schedule's `next_w_len` and the
         // following Direct step's witness shape must match that reduced
         // length.
@@ -322,7 +283,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             incidence.num_polynomials(),
             incidence.num_claims(),
             incidence.num_public_rows(),
-            akita_types::MRowLayout::Terminal,
+            akita_types::MRowLayout::WithoutDBlock,
         )?;
         let next_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
@@ -330,21 +291,18 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                 Step::Fold(akita_types::FoldStep {
                     params: lp.clone(),
                     current_w_len: akita_types::root_current_w_len(&lp),
-                    delta_fold_per_poly: lp.num_digits_fold,
-                    w_ring,
                     next_w_len,
                     level_bytes: 0,
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: next_w_len,
-                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
+                    witness_shape: akita_types::CleartextWitnessShape::PackedDigits((
+                        next_w_len, 3,
+                    )),
                     direct_bytes: next_w_len,
-                    commit_params: None,
                     // Stub fixture: terminal-direct level params equal the
-                    // fold's `lp` (matches the deleted
-                    // `Cfg::level_params_with_log_basis` override that
-                    // returned `Self::root_lp()`).
-                    level_params: Some(lp.clone()),
+                    // fold's `lp`.
+                    params: Some(lp.clone()),
                 }),
             ],
             total_bytes: 0,
@@ -440,7 +398,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
             terminal.extension_opening_reduction.as_ref()
         }
-        akita_types::AkitaBatchedRootProof::Direct { .. } => {
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("root-direct proof has no folded root extension-opening reduction")
         }
     };
@@ -591,7 +549,7 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
             terminal.extension_opening_reduction.as_ref()
         }
-        akita_types::AkitaBatchedRootProof::Direct { .. } => {
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("root-direct proof has no folded root extension-opening reduction")
         }
     };
@@ -737,7 +695,7 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
         akita_types::AkitaBatchedRootProof::Terminal(terminal) => {
             terminal.extension_opening_reduction.as_ref()
         }
-        akita_types::AkitaBatchedRootProof::Direct { .. } => {
+        akita_types::AkitaBatchedRootProof::ZeroFold { .. } => {
             panic!("root-direct proof has no folded root extension-opening reduction")
         }
     };

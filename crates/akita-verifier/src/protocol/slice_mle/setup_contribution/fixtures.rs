@@ -6,7 +6,10 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
-use akita_types::{gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout};
+use akita_types::{
+    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, FlatMatrix, MRowLayout,
+    RingRelationSegmentLayout,
+};
 
 use super::{SetupEvaluation, SetupEvaluator, SetupEvaluatorMode};
 use crate::protocol::ring_switch::{PreparedChallengeEvals, RingSwitchDeferredRowEval};
@@ -65,7 +68,7 @@ impl SetupContributionShape {
             n_b: 2,
             num_polys_per_point: vec![1],
             num_public_rows: 1,
-            m_row_layout: MRowLayout::Intermediate,
+            m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
             claim_to_point_poly: vec![(0, 0)],
             claim_to_point: vec![0],
@@ -86,7 +89,7 @@ impl SetupContributionShape {
             n_b: 2,
             num_polys_per_point: vec![2, 1],
             num_public_rows: 2,
-            m_row_layout: MRowLayout::Intermediate,
+            m_row_layout: MRowLayout::WithDBlock,
             z_first: false,
             claim_to_point_poly: vec![(0, 1), (1, 0), (0, 0)],
             claim_to_point: vec![1, 0, 1],
@@ -95,7 +98,7 @@ impl SetupContributionShape {
 
     pub fn terminal_relation_only() -> Self {
         let mut shape = Self::root_single_point();
-        shape.m_row_layout = MRowLayout::Terminal;
+        shape.m_row_layout = MRowLayout::WithoutDBlock;
         shape
     }
 
@@ -135,18 +138,20 @@ impl SetupContributionShape {
 impl SetupContributionFixture {
     pub fn from_shape(shape: &SetupContributionShape) -> Self {
         let num_points = shape.num_polys_per_point.len();
+        let num_t_vectors = shape.num_polys_per_point.iter().sum();
         let total_blocks = shape.num_blocks * shape.num_claims;
         let inner_width = shape.block_len * shape.depth_commit;
         let rows = 1 + shape.num_public_rows + shape.n_d + shape.n_b * num_points + shape.n_a;
 
         let w_len = shape.depth_open * total_blocks;
-        let t_len = shape.depth_open * shape.n_a * total_blocks;
+        let t_len = shape.depth_open * shape.n_a * shape.num_blocks * num_t_vectors;
         let z_len = shape.depth_fold * shape.depth_commit * num_points * shape.block_len;
         let (offset_w, offset_t, offset_z, total_len) = if shape.z_first {
             (z_len, z_len + w_len, 0usize, z_len + w_len + t_len)
         } else {
             (0usize, w_len, w_len + t_len, w_len + t_len + z_len)
         };
+        let offset_r: usize = total_len;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
         let stride_t = shape.n_a * shape.depth_open;
@@ -194,8 +199,7 @@ impl SetupContributionFixture {
                     .collect(),
             ),
             eq_tau1,
-            total_blocks,
-            num_t_vectors: shape.num_polys_per_point.iter().sum(),
+            num_t_vectors,
             num_blocks: shape.num_blocks,
             num_claims: shape.num_claims,
             depth_open: shape.depth_open,
@@ -216,12 +220,21 @@ impl SetupContributionFixture {
             n_b: shape.n_b,
             num_points,
             rows,
-            z_first: shape.z_first,
-            claim_to_point_poly: shape.claim_to_point_poly.clone(),
-            num_polys_per_point: shape.num_polys_per_point.clone(),
+            claim_to_commitment_group_poly: shape.claim_to_point_poly.clone(),
+            num_polys_per_commitment_group: shape.num_polys_per_point.clone(),
             num_public_rows: shape.num_public_rows,
             gamma: vec![TestField::one(); shape.num_claims],
             claim_to_point: shape.claim_to_point.clone(),
+            witness_segment_layout: RingRelationSegmentLayout {
+                offset_w,
+                offset_t,
+                offset_z,
+                offset_r,
+                #[cfg(feature = "zk")]
+                b_blinding_offset: offset_t + t_len,
+                #[cfg(feature = "zk")]
+                d_blinding_offset: offset_t + t_len,
+            },
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)

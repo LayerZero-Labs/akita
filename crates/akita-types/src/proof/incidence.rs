@@ -89,6 +89,105 @@ impl PublicOpeningRow {
     }
 }
 
+/// Commitment-side routing: which committed-polynomial bundle holds each claim's
+/// witness columns in the ring-switch `t`-segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitmentRouting {
+    claim_to_commitment_group: Vec<usize>,
+    claim_poly_in_commitment_group: Vec<usize>,
+    num_polys_per_commitment_group: Vec<usize>,
+}
+
+impl CommitmentRouting {
+    /// Build routing for the root path where each opening point has its own
+    /// commitment group (point index equals group index).
+    pub fn from_root_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
+        let num_claims = incidence.num_claims();
+        Self {
+            claim_to_commitment_group: incidence.claim_to_point().to_vec(),
+            claim_poly_in_commitment_group: incidence.claim_poly_indices().to_vec(),
+            num_polys_per_commitment_group: incidence.num_polys_per_point().to_vec(),
+        }
+        .check(num_claims)
+    }
+
+    /// Build routing for recursive multipoint: one shared commitment opened at
+    /// many points (all claims map to group 0).
+    pub fn from_recursive_multipoint(num_claims: usize) -> Result<Self, AkitaError> {
+        Self {
+            claim_to_commitment_group: vec![0; num_claims],
+            claim_poly_in_commitment_group: vec![0; num_claims],
+            num_polys_per_commitment_group: vec![1],
+        }
+        .check(num_claims)
+    }
+
+    /// Validate commitment routing tables.
+    pub fn check(self, num_claims: usize) -> Result<Self, AkitaError> {
+        if self.claim_to_commitment_group.len() != num_claims
+            || self.claim_poly_in_commitment_group.len() != num_claims
+        {
+            return Err(AkitaError::InvalidInput(
+                "commitment routing lengths do not match claim count".to_string(),
+            ));
+        }
+        if self.num_polys_per_commitment_group.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "commitment routing requires at least one group".to_string(),
+            ));
+        }
+        for (claim_idx, &group_idx) in self.claim_to_commitment_group.iter().enumerate() {
+            if group_idx >= self.num_polys_per_commitment_group.len() {
+                return Err(AkitaError::InvalidInput(format!(
+                    "commitment routing group index {group_idx} out of range for claim {claim_idx}"
+                )));
+            }
+            let poly_idx = self.claim_poly_in_commitment_group[claim_idx];
+            if poly_idx >= self.num_polys_per_commitment_group[group_idx] {
+                return Err(AkitaError::InvalidInput(format!(
+                    "commitment routing poly index {poly_idx} out of range for claim {claim_idx}"
+                )));
+            }
+        }
+        Ok(self)
+    }
+
+    /// Validate that commitment routing is the same as opening-point incidence.
+    ///
+    /// This is the only relation-routing shape supported by the current
+    /// ring-switch row-evaluation layout.
+    pub fn check_matches_incidence(
+        &self,
+        incidence: &ClaimIncidenceSummary,
+    ) -> Result<(), AkitaError> {
+        if self.claim_to_commitment_group.as_slice() != incidence.claim_to_point()
+            || self.claim_poly_in_commitment_group.as_slice() != incidence.claim_poly_indices()
+            || self.num_polys_per_commitment_group.as_slice() != incidence.num_polys_per_point()
+        {
+            return Err(AkitaError::InvalidInput(
+                "split opening/commitment routing is not supported by ring relation layout"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Flattened claim index to committed-bundle index.
+    pub fn claim_to_commitment_group(&self) -> &[usize] {
+        &self.claim_to_commitment_group
+    }
+
+    /// Polynomial index within the claim's committed bundle.
+    pub fn claim_poly_in_commitment_group(&self) -> &[usize] {
+        &self.claim_poly_in_commitment_group
+    }
+
+    /// Number of polynomials bundled in each commitment group.
+    pub fn num_polys_per_commitment_group(&self) -> &[usize] {
+        &self.num_polys_per_commitment_group
+    }
+}
+
 /// Derived routing and count data for a normalized incidence graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimIncidenceSummary {
@@ -590,6 +689,36 @@ mod tests {
         assert_eq!(summary.num_polys_per_point(), &[1, 1]);
         assert_eq!(summary.claim_to_point(), &[0, 1]);
         assert_eq!(summary.num_claims(), 2);
+    }
+
+    #[test]
+    fn root_commitment_routing_matches_incidence_axis() {
+        let summary =
+            ClaimIncidenceSummary::from_point_polys(8, vec![2, 1]).expect("valid incidence");
+        let routing = CommitmentRouting::from_root_incidence(&summary).expect("root routing");
+
+        assert_eq!(routing.claim_to_commitment_group(), &[0, 0, 1]);
+        assert_eq!(routing.claim_poly_in_commitment_group(), &[0, 1, 0]);
+        assert_eq!(routing.num_polys_per_commitment_group(), &[2, 1]);
+        routing
+            .check_matches_incidence(&summary)
+            .expect("root routing is same-axis");
+    }
+
+    #[test]
+    fn split_commitment_routing_is_rejected_by_same_axis_contract() {
+        let summary =
+            ClaimIncidenceSummary::from_point_polys(8, vec![1, 1]).expect("valid incidence");
+        let routing =
+            CommitmentRouting::from_recursive_multipoint(summary.num_claims()).expect("routing");
+
+        let err = routing
+            .check_matches_incidence(&summary)
+            .expect_err("split-axis routing must be rejected");
+        assert!(
+            format!("{err:?}").contains("split opening/commitment routing is not supported"),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

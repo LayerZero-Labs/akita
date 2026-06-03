@@ -220,10 +220,10 @@ where
                 actual: self.fold_gadget.len(),
             });
         }
-        if prepared.num_polys_per_point.len() != prepared.num_points {
+        if prepared.num_polys_per_commitment_group.len() != prepared.num_points {
             return Err(AkitaError::InvalidSize {
                 expected: prepared.num_points,
-                actual: prepared.num_polys_per_point.len(),
+                actual: prepared.num_polys_per_commitment_group.len(),
             });
         }
 
@@ -288,7 +288,7 @@ where
         let b_per_claim_w = checked_mul(prepared.num_blocks, prepared.depth_open, "W claim width")?;
         let n_cols_w = checked_mul(prepared.num_claims, b_per_claim_w, "W column width")?;
         let max_group_poly_count = prepared
-            .num_polys_per_point
+            .num_polys_per_commitment_group
             .iter()
             .copied()
             .max()
@@ -305,9 +305,9 @@ where
             ));
         }
 
-        let mut group_offsets = Vec::with_capacity(prepared.num_polys_per_point.len());
+        let mut group_offsets = Vec::with_capacity(prepared.num_polys_per_commitment_group.len());
         let mut next_offset = 0usize;
-        for &group_poly_count in &prepared.num_polys_per_point {
+        for &group_poly_count in &prepared.num_polys_per_commitment_group {
             group_offsets.push(next_offset);
             next_offset = checked_add(next_offset, group_poly_count, "T vector offset")?;
         }
@@ -360,7 +360,7 @@ where
             .collect();
         let t_eq_slice_per_group: Vec<Vec<E>> = (0..prepared.num_points)
             .map(|g| {
-                let group_size = prepared.num_polys_per_point[g];
+                let group_size = prepared.num_polys_per_commitment_group[g];
                 cfg_into_iter!(0..n_cols_t)
                     .map(|c| {
                         let poly_idx = c / cols_per_poly_t;

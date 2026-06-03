@@ -30,17 +30,6 @@ impl DecompositionParams {
     }
 }
 
-/// Maximum matrix row envelope needed across all runtime levels for a config.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommitmentEnvelope {
-    /// Maximum inner Ajtai rank needed by any supported level.
-    pub max_n_a: usize,
-    /// Maximum outer commitment rank needed by any supported level.
-    pub max_n_b: usize,
-    /// Maximum prover D-matrix rank needed by any supported level.
-    pub max_n_d: usize,
-}
-
 /// Verifier strategy for the public setup contribution in the ring-switch row
 /// evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,13 +38,4 @@ pub enum SetupContributionMode {
     Direct,
     /// Use the recursive setup-contribution path.
     Recursive,
-}
-
-/// Selects which Ajtai role the audited rank floor applies to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AjtaiRole {
-    /// Inner Ajtai matrix `A`.
-    Inner,
-    /// Outer commitment matrices `B` and `D` (sized together).
-    Outer,
 }

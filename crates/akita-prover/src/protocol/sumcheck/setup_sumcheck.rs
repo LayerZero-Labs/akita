@@ -5,7 +5,6 @@
 //! `S(lambda, y) * omega(lambda) * alpha(y)` without materializing the full
 //! `omega(lambda) * alpha(y)` table.
 
-use crate::QuadraticEquation;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
 use akita_algebra::CyclotomicRing;
@@ -15,9 +14,10 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, LevelParams, MRowLayout, RingSubfieldEncoding, SETUP_SUMCHECK_DEGREE,
+    gadget_row_scalars, LevelParams, RingRelationInstance, RingSubfieldEncoding,
+    SETUP_SUMCHECK_DEGREE,
 };
-use akita_verifier::{prepare_ring_switch_row_eval, SetupEvaluator};
+use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay, SetupEvaluator};
 
 /// Proves `sum_{l,r} table[l,r] * left_factor[l] * right_factor[r]`.
 pub struct SetupSumcheckProver<E: FieldCore> {
@@ -82,7 +82,7 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
     /// ring-switch row evaluation that determines the factored weights.
     ///
     /// Internally derives the `(required, bar_omega, alpha_pows)` factored
-    /// terms from the level parameters and quadratic equation, then builds the
+    /// terms from the level parameters and ring relation, then builds the
     /// `lambda * D + y` setup table (zero-padded up to the next power-of-two
     /// lambda dimension) and runs the product sumcheck.
     ///
@@ -95,13 +95,11 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
     pub fn prove<F, T, SampleRound, const D: usize>(
         setup_entries: &[CyclotomicRing<F, D>],
         lp: &LevelParams,
-        quad_eq: &QuadraticEquation<F, D>,
+        relation: &RingRelationInstance<F, D>,
         tau1: &[E],
         alpha: E,
         x_challenges: &[E],
-        gamma: &[E],
-        num_public_rows: usize,
-        m_row_layout: MRowLayout,
+        row_coefficients: &[E],
         transcript: &mut T,
         sample_round: SampleRound,
     ) -> Result<SetupSumcheckProverOutput<E>, AkitaError>
@@ -113,13 +111,11 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
     {
         let (required, mut bar_omega, alpha_pows) = prepare_setup_sumcheck_terms::<F, E, D>(
             lp,
-            quad_eq,
+            relation,
             tau1,
             alpha,
             x_challenges,
-            gamma,
-            num_public_rows,
-            m_row_layout,
+            row_coefficients,
         )?;
 
         if required > setup_entries.len() {
@@ -191,41 +187,40 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for SetupSumcheckProver<E> {
 }
 
 /// Derive the factored product-sumcheck terms `(required, bar_omega, alpha_pows)`
-/// from the level parameters and quadratic equation via the ring-switch row
+/// from the level parameters and ring relation via the ring-switch row
 /// evaluation.
-#[allow(clippy::too_many_arguments)]
 fn prepare_setup_sumcheck_terms<F, E, const D: usize>(
     lp: &LevelParams,
-    quad_eq: &QuadraticEquation<F, D>,
+    relation: &RingRelationInstance<F, D>,
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
-    gamma: &[E],
-    num_public_rows: usize,
-    m_row_layout: MRowLayout,
+    row_coefficients: &[E],
 ) -> Result<(usize, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
-    let prepared = prepare_ring_switch_row_eval::<F, E, D>(
-        &quad_eq.challenges,
-        alpha,
+    let replay = RingSwitchReplay {
+        relation,
+        row_coefficients,
         lp,
-        tau1,
-        quad_eq.num_polys_per_point(),
-        quad_eq.claim_to_point_poly(),
-        quad_eq.claim_poly_indices(),
-        gamma,
-        num_public_rows,
-        m_row_layout,
-        quad_eq.opening_points().len(),
-        quad_eq.ring_multiplier_points(),
-        quad_eq.claim_to_point(),
-    )?;
-    let fold_gadget = gadget_row_scalars::<F>(lp.num_digits_fold, lp.log_basis);
-    let layout = prepared.segment_layout()?;
+    };
+    let prepared = prepare_ring_switch_row_eval::<F, E, D>(&replay, alpha, tau1)?;
+    let num_t_vectors = relation
+        .commitment_routing()
+        .num_polys_per_commitment_group()
+        .iter()
+        .try_fold(0usize, |acc, &count| {
+            acc.checked_add(count)
+                .ok_or_else(|| AkitaError::InvalidSetup("t-vector count overflow".to_string()))
+        })?;
+    let fold_gadget = gadget_row_scalars::<F>(
+        lp.num_digits_fold(num_t_vectors, F::modulus_bits()),
+        lp.log_basis,
+    );
+    let layout = relation.segment_layout(lp)?;
     let evaluator = SetupEvaluator::new(
         &prepared,
         x_challenges,

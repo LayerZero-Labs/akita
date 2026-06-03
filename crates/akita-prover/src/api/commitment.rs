@@ -145,13 +145,25 @@ where
             params.a_key.col_len()
         )));
     }
-    if params.b_key.col_len() == 0 || params.d_key.col_len() == 0 {
+    if params.b_key.col_len() == 0 {
         return Err(AkitaError::InvalidSetup(format!(
-            "commit params require nonzero B and D widths, got B={} D={}",
-            params.b_key.col_len(),
-            params.d_key.col_len()
+            "commit params require nonzero B width, got B={}",
+            params.b_key.col_len()
         )));
     }
+    // TODO: re-enable this D-side nonzero check (or scope it to non-root-direct
+    // schedules) once root-direct commit params no longer carry a
+    // zero-width D-key placeholder. Root-direct schedules don't run
+    // the relation fold (which is what consumes D), so the planner
+    // deliberately emits `d_key.col_len = 0`. This check should
+    // eventually be gated on schedule shape (root-direct vs. fold-root)
+    // rather than disabled outright.
+    // if params.d_key.col_len() == 0 {
+    //     return Err(AkitaError::InvalidSetup(format!(
+    //         "commit params require nonzero D width, got D={}",
+    //         params.d_key.col_len()
+    //     )));
+    // }
     let setup_len = setup.shared_matrix.total_ring_elements_at::<D>()?;
     let a_required = params
         .a_key
@@ -638,7 +650,7 @@ mod tests {
                 nonzero_coeffs: vec![-1, 1],
             },
         )
-        .with_decomp(1, 1, 2, 2, 2, 0)
+        .with_decomp(1, 1, 2, 2, 0)
         .unwrap();
 
         assert!(matches!(

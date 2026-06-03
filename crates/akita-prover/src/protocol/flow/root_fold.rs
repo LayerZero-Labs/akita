@@ -128,7 +128,7 @@ where
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_prover(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
         ring_opening_points,
@@ -143,8 +143,8 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
-        MRowLayout::Intermediate,
-    )?);
+        MRowLayout::WithDBlock,
+    )?;
 
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
         None
@@ -156,7 +156,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    let mut raw = prove_root_fold_from_quadratic::<F, C, T, B, D, _>(
+    let mut raw = prove_root_fold_from_ring_relation::<F, C, T, B, D, _>(
         expanded,
         backend,
         prepared,
@@ -169,7 +169,8 @@ where
         zk_hiding_commitment,
         #[cfg(feature = "zk")]
         zk_hiding,
-        quad_eq,
+        instance,
+        witness,
         y_rings,
         #[cfg(feature = "zk")]
         y_rings_masked,
@@ -187,13 +188,13 @@ where
 /// The caller owns schedule/config selection and passes the expected next
 /// recursive witness length, next digit basis, and commitment policy for that
 /// witness. This function owns root polynomial folding, public root transcript
-/// setup, root quadratic-equation construction, and the folded-root prover
+/// setup, root ring-relation construction, and the folded-root prover
 /// mechanics.
 ///
 /// # Errors
 ///
 /// Returns an error if root inputs are malformed, polynomial folding or
-/// quadratic-equation construction fails, or the folded-root prover fails.
+/// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_root_fold_with_params<F, E, C, T, P, B, const D: usize, CommitW>(
@@ -500,7 +501,7 @@ where
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_prover(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
         ring_opening_points,
@@ -515,8 +516,8 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
-        MRowLayout::Intermediate,
-    )?);
+        MRowLayout::WithDBlock,
+    )?;
 
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
         None
@@ -528,7 +529,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    prove_root_fold_from_quadratic::<F, C, T, B, D, _>(
+    prove_root_fold_from_ring_relation::<F, C, T, B, D, _>(
         expanded,
         backend,
         prepared,
@@ -541,7 +542,8 @@ where
         zk_hiding_commitment,
         #[cfg(feature = "zk")]
         zk_hiding,
-        quad_eq,
+        instance,
+        witness,
         y_rings,
         #[cfg(feature = "zk")]
         y_rings_masked,
@@ -555,9 +557,9 @@ where
 /// schedule has exactly one fold level (the root is itself the terminal).
 ///
 /// Mirrors the intermediate-root path through claim-incidence absorbs,
-/// optional extension-opening reduction, and quadratic-equation setup, then
+/// optional extension-opening reduction, and ring-relation setup, then
 /// emits a [`TerminalLevelProof`] via
-/// [`prove_terminal_root_fold_from_quadratic`] instead of a
+/// [`prove_terminal_root_fold_from_ring_relation`] instead of a
 /// [`RootLevelRawOutput`].
 ///
 /// # Errors
@@ -859,7 +861,7 @@ where
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_prover(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
         ring_opening_points,
@@ -874,8 +876,8 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
-        MRowLayout::Terminal,
-    )?);
+        MRowLayout::WithoutDBlock,
+    )?;
 
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
         None
@@ -887,7 +889,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    prove_terminal_root_fold_from_quadratic::<F, C, T, B, D>(
+    prove_terminal_root_fold_from_ring_relation::<F, C, T, B, D>(
         expanded,
         backend,
         prepared,
@@ -896,7 +898,8 @@ where
         root_params,
         expected_w_len,
         final_log_basis,
-        quad_eq,
+        instance,
+        witness,
         y_rings,
         #[cfg(feature = "zk")]
         y_rings_masked,
@@ -959,7 +962,7 @@ where
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_prover(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         backend,
         prepared,
         ring_opening_points,
@@ -974,8 +977,8 @@ where
         commitments,
         &y_rings,
         row_coefficient_rings,
-        MRowLayout::Terminal,
-    )?);
+        MRowLayout::WithoutDBlock,
+    )?;
 
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
         None
@@ -987,7 +990,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    let mut terminal = prove_terminal_root_fold_from_quadratic::<F, C, T, B, D>(
+    let mut terminal = prove_terminal_root_fold_from_ring_relation::<F, C, T, B, D>(
         expanded,
         backend,
         prepared,
@@ -996,7 +999,8 @@ where
         root_params,
         expected_w_len,
         final_log_basis,
-        quad_eq,
+        instance,
+        witness,
         y_rings,
         #[cfg(feature = "zk")]
         y_rings_masked,
@@ -1009,7 +1013,7 @@ where
 }
 
 /// Prove the folded root level after root orchestration has built its
-/// quadratic equation and selected the next recursive commitment policy.
+/// ring relation and selected the next recursive commitment policy.
 ///
 /// The root caller owns transcript setup for public openings and gamma
 /// batching, schedule selection, and the commitment-row view used by the root
@@ -1024,7 +1028,7 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold_from_quadratic<F, C, T, B, const D: usize, CommitW>(
+pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -1035,7 +1039,8 @@ pub fn prove_root_fold_from_quadratic<F, C, T, B, const D: usize, CommitW>(
     next_log_basis: u32,
     #[cfg(feature = "zk")] zk_hiding_commitment: ZkHidingCommitment<F>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
-    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
+    instance: RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
@@ -1049,7 +1054,7 @@ where
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
-    let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
+    let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     if logical_w.len() != expected_w_len {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled root next-w length did not match runtime witness: expected={expected_w_len}, actual={}",
@@ -1067,21 +1072,21 @@ where
     } = next_commitment;
     let w_commitment_proof = committed_commitment.clone();
 
-    let rs = ring_switch_finalize_with_gamma::<F, C, T, { D }>(
-        &quad_eq,
+    let rs = ring_switch_finalize_with_gamma::<F, C, T, D>(
+        &instance,
         expanded,
         transcript,
         &logical_w,
         &w_commitment_proof,
         lp,
         &row_coefficients,
-        MRowLayout::Intermediate,
+        MRowLayout::WithDBlock,
     )?;
 
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
         &rs.tau1,
         rs.alpha,
-        &quad_eq.v,
+        &instance.v,
         commitment_rows,
         &y_rings,
     )?;
@@ -1089,7 +1094,7 @@ where
     let relation_claim_public = relation_claim_from_rows_extension::<F, C, D>(
         &rs.tau1,
         rs.alpha,
-        &quad_eq.v,
+        &instance.v,
         commitment_rows,
         &y_rings_masked,
     )?;
@@ -1109,7 +1114,7 @@ where
     #[cfg(feature = "zk")]
     let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
         zk_hiding.take_current_level_pads::<C>(col_bits + ring_bits, b)?;
-    let (stage1_proof, r_stage1, s_claim) = {
+    let (stage1_proof, stage1_point, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = AkitaStage1Prover::new(
             &w_evals_compact,
@@ -1125,9 +1130,9 @@ where
         }
         #[cfg(not(feature = "zk"))]
         {
-            let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+            let (stage1_proof, stage1_point) = stage1_prover.prove(transcript)?;
             let s_claim = stage1_proof.s_claim;
-            (stage1_proof, r_stage1, s_claim)
+            (stage1_proof, stage1_point, s_claim)
         }
     };
 
@@ -1139,7 +1144,7 @@ where
         let stage2_prover_result = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             s_claim,
             b,
             alpha_evals_y,
@@ -1177,7 +1182,7 @@ where
         let mut stage2_prover = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             s_claim,
             b,
             alpha_evals_y,
@@ -1215,13 +1220,11 @@ where
             let output = SetupSumcheckProver::prove::<F, T, _, D>(
                 setup_view.as_slice(),
                 lp,
-                &quad_eq,
+                &instance,
                 &tau1,
                 alpha,
                 &sumcheck_challenges[ring_bits..],
                 &row_coefficients,
-                quad_eq.num_public_rows(),
-                MRowLayout::Intermediate,
                 transcript,
                 |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
             )?;
@@ -1241,7 +1244,7 @@ where
         #[cfg(not(feature = "zk"))]
         y_rings,
         extension_opening_reduction: None,
-        v: quad_eq.v,
+        v: instance.v,
         stage1: stage1_proof,
         #[cfg(not(feature = "zk"))]
         stage2_sumcheck_proof,
@@ -1264,7 +1267,7 @@ where
     })
 }
 
-/// Terminal-root analogue of [`prove_root_fold_from_quadratic`] used when the
+/// Terminal-root analogue of [`prove_root_fold_from_ring_relation`] used when the
 /// schedule has exactly one fold level (the root is itself the terminal).
 ///
 /// Produces a [`TerminalLevelProof`] with cleartext `final_witness` instead
@@ -1278,7 +1281,7 @@ where
 /// fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_root_fold_from_quadratic<F, C, T, B, const D: usize>(
+pub fn prove_terminal_root_fold_from_ring_relation<F, C, T, B, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -1287,7 +1290,8 @@ pub fn prove_terminal_root_fold_from_quadratic<F, C, T, B, const D: usize>(
     lp: &akita_types::LevelParams,
     expected_w_len: usize,
     final_log_basis: u32,
-    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
+    instance: RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
@@ -1301,22 +1305,23 @@ where
 {
     let terminal_layout = terminal_witness_segment_layout(
         lp,
-        quad_eq.claim_to_point().len(),
-        quad_eq.num_public_rows(),
+        instance.claim_to_point().len(),
+        instance.num_public_rows(),
+        F::modulus_bits(),
     )?;
-    let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
+    let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     if logical_w.len() != expected_w_len {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled root next-w length did not match runtime witness: expected={expected_w_len}, actual={}",
             logical_w.len()
         )));
     }
-    let final_witness = DirectWitnessProof::PackedDigits(
+    let final_witness = CleartextWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
 
-    let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, { D }>(
-        &quad_eq,
+    let rs = ring_switch_finalize_terminal_with_gamma::<F, C, T, D>(
+        &instance,
         expanded,
         transcript,
         &logical_w,
@@ -1327,8 +1332,8 @@ where
     )?;
 
     // Terminal layout: the D-block is omitted, so the relation claim sums no
-    // `v` rows. `quad_eq.v` is constructed as an empty vector under
-    // `MRowLayout::Terminal`; pass `&[]` here for symmetry with the verifier.
+    // `v` rows. `instance.v` is constructed as an empty vector under
+    // `MRowLayout::WithoutDBlock`; pass `&[]` here for symmetry with the verifier.
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
         &rs.tau1,
         rs.alpha,
@@ -1358,7 +1363,7 @@ where
         alpha: _,
     } = rs;
 
-    let r_stage1 = vec![C::zero(); col_bits + ring_bits];
+    let stage1_point = vec![C::zero(); col_bits + ring_bits];
     #[cfg(feature = "zk")]
     let stage2_round_pads = zk_hiding.take_compressed_rounds::<C>(col_bits + ring_bits, 3)?;
     #[cfg(feature = "zk")]
@@ -1367,7 +1372,7 @@ where
         let mut stage2_prover = AkitaStage2Prover::new(
             C::zero(),
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             C::zero(),
             b,
             alpha_evals_y,
@@ -1392,7 +1397,7 @@ where
         let mut stage2_prover = AkitaStage2Prover::new(
             C::zero(),
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             C::zero(),
             b,
             alpha_evals_y,

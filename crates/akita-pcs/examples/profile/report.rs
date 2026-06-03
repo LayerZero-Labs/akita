@@ -1,8 +1,9 @@
 use akita_field::FieldCore;
+use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep, AkitaSchedulePlan,
-    DirectWitnessProof, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaLevelProof, AkitaProofStep,
+    CleartextWitnessProof, LevelParams, Schedule, SetupSumcheckProof, Step, TerminalLevelProof,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -32,51 +33,34 @@ pub(crate) fn report_setup_sizes(
     );
 }
 
-pub(crate) fn emit_planned_schedule_summary(label: &str, plan: &AkitaSchedulePlan) {
+pub(crate) fn report_crt_profile(label: &str, profile: PreparedCrtNttProfile) {
     tracing::info!(
         label,
-        levels = plan.num_fold_levels(),
-        exact_proof_bytes = plan.exact_proof_bytes,
-        no_wrapper_bytes = plan.no_wrapper_bytes,
-        "planned schedule"
+        crt_profile = profile.profile_id,
+        crt_num_primes = profile.num_primes,
+        crt_limb_bits = profile.limb_bits,
+        max_i8_log_basis = profile.max_i8_log_basis,
+        balanced_digit_safe_width = profile.balanced_digit_safe_width,
+        raw_i8_safe_width = profile.raw_i8_safe_width,
+        "CRT NTT profile"
     );
-
-    for level in plan.fold_levels() {
-        let next_w_len = level.next_inputs.current_w_len;
-        tracing::info!(
-            label,
-            level = level.inputs.level,
-            d = level.lp.ring_dimension,
-            n_a = level.lp.a_key.row_len(),
-            n_b = level.lp.b_key.row_len(),
-            n_d = level.lp.d_key.row_len(),
-            challenge_l1_mass = level.lp.challenge_l1_mass(),
-            log_basis = level.lp.log_basis,
-            m_vars = level.lp.m_vars,
-            r_vars = level.lp.r_vars,
-            num_blocks = level.lp.num_blocks,
-            block_len = level.lp.block_len,
-            delta_commit = level.lp.num_digits_commit,
-            delta_open = level.lp.num_digits_open,
-            delta_fold = level.lp.num_digits_fold,
-            current_w_len = level.inputs.current_w_len,
-            next_w_ring = next_w_len / level.lp.ring_dimension,
-            next_w_len,
-            level_bytes = level.level_bytes,
-            "planned fold level"
-        );
-    }
-
-    let terminal = plan.terminal_state();
-    tracing::info!(
-        label,
-        final_w_len = terminal.current_w_len,
-        final_log_basis = terminal.log_basis,
-        "planned terminal state"
+    eprintln!(
+        "[{label}] CRT NTT profile: profile={}, K={}, limb_bits={}, max_i8_log_basis={}, balanced_digit_safe_width={}, raw_i8_safe_width={}",
+        profile.profile_id,
+        profile.num_primes,
+        profile.limb_bits,
+        profile.max_i8_log_basis,
+        profile.balanced_digit_safe_width,
+        profile.raw_i8_safe_width
     );
 }
 
-pub(crate) fn emit_runtime_schedule_summary(label: &str, schedule: &Schedule, field_bits: u32) {
+pub(crate) fn emit_runtime_schedule_summary(
+    label: &str,
+    schedule: &Schedule,
+    root_num_claims: usize,
+    field_bits: u32,
+) {
     let levels = schedule
         .steps
         .iter()
@@ -99,6 +83,7 @@ pub(crate) fn emit_runtime_schedule_summary(label: &str, schedule: &Schedule, fi
         .enumerate()
     {
         let lp = &level.params;
+        let num_claims = if level_idx == 0 { root_num_claims } else { 1 };
         tracing::info!(
             label,
             level = level_idx,
@@ -114,9 +99,9 @@ pub(crate) fn emit_runtime_schedule_summary(label: &str, schedule: &Schedule, fi
             block_len = lp.block_len,
             delta_commit = lp.num_digits_commit,
             delta_open = lp.num_digits_open,
-            delta_fold = level.delta_fold_per_poly,
+            delta_fold = lp.num_digits_fold(num_claims, field_bits),
             current_w_len = level.current_w_len,
-            next_w_ring = level.w_ring,
+            next_w_ring = level.next_w_len / lp.ring_dimension,
             next_w_len = level.next_w_len,
             level_bytes = level.level_bytes,
             "planned fold level"
@@ -563,7 +548,7 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
 
 fn emit_observed_tail_summary<FF: FieldCore + AkitaSerialize>(
     label: &str,
-    final_w: &DirectWitnessProof<FF>,
+    final_w: &CleartextWitnessProof<FF>,
 ) {
     let tail_bytes = final_w.serialized_size(Compress::No);
     let num_elems = final_w.num_elems();
@@ -594,7 +579,7 @@ fn emit_observed_tail_summary<FF: FieldCore + AkitaSerialize>(
     }
 }
 
-pub(crate) fn print_layout(layout: &LevelParams) {
+pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: u32) {
     tracing::debug!(
         m_vars = layout.m_vars,
         r_vars = layout.r_vars,
@@ -602,7 +587,7 @@ pub(crate) fn print_layout(layout: &LevelParams) {
         block_len = layout.block_len,
         delta_commit = layout.num_digits_commit,
         delta_open = layout.num_digits_open,
-        delta_fold = layout.num_digits_fold,
+        delta_fold = layout.num_digits_fold(num_claims, field_bits),
         log_basis = layout.log_basis,
         "layout"
     );

@@ -114,12 +114,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use akita_algebra::offset_eq::eq_eval_at_index;
     use akita_algebra::CyclotomicRing;
+    use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::zk;
-    use akita_types::{AkitaSetupSeed, FlatMatrix, MRowLayout};
+    use akita_types::{
+        ring_relation_segment_layout_for_opening_shape, AkitaSetupSeed, FlatMatrix, LevelParams,
+        MRowLayout, SisModulusFamily,
+    };
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
@@ -129,12 +132,27 @@ mod tests {
         setup: AkitaExpandedSetup<F>,
         full_vec_randomness: Vec<F>,
         alpha: F,
-        w_len: usize,
-        t_len: usize,
     }
 
     fn f(value: u128) -> F {
         F::from_canonical_u128_reduced(value)
+    }
+
+    fn fixture_lp() -> LevelParams {
+        LevelParams::params_only(
+            SisModulusFamily::Q128,
+            D,
+            5,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![1],
+            },
+        )
+        .with_decomp(2, 3, 1, 26, 512 * 8)
+        .expect("zk blinding fixture lp")
     }
 
     fn fixture() -> ZkFixture {
@@ -158,15 +176,18 @@ mod tests {
         let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
 
         let w_len = depth_open * total_blocks;
-        let t_len = depth_open * n_a * total_blocks;
-        let z_len = depth_fold * depth_commit * num_points * block_len;
         let b_blinding_digit_planes_per_point =
             zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
         let b_blinding_segment_len = num_points * b_blinding_digit_planes_per_point;
         let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
-        let b_offset = w_len + t_len;
-        let d_offset = b_offset + b_blinding_segment_len;
-        let total_len = d_offset + d_blinding_segment_len + z_len;
+        let lp = fixture_lp();
+        let witness_segment_layout = ring_relation_segment_layout_for_opening_shape::<F, D>(
+            &lp,
+            MRowLayout::WithDBlock,
+            &num_polys_per_point,
+        )
+        .expect("witness segment layout");
+        let total_len = witness_segment_layout.offset_r;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
         let max_zk_b_len = n_b * b_blinding_digit_planes_per_point;
         let max_zk_d_len = n_d * d_blinding_segment_len;
@@ -227,7 +248,6 @@ mod tests {
             eq_tau1: (0..rows.next_power_of_two())
                 .map(|idx| f(3_000 + idx as u128))
                 .collect(),
-            total_blocks,
             num_t_vectors: num_polys_per_point.iter().sum(),
             num_blocks,
             num_claims,
@@ -242,24 +262,22 @@ mod tests {
             log_basis,
             n_a,
             n_d,
-            m_row_layout: MRowLayout::Intermediate,
+            m_row_layout: MRowLayout::WithDBlock,
             n_b,
             num_points,
             rows,
-            z_first: false,
-            claim_to_point_poly: vec![(0, 1), (1, 0), (0, 0)],
-            num_polys_per_point,
+            claim_to_commitment_group_poly: vec![(0, 1), (1, 0), (0, 0)],
+            num_polys_per_commitment_group: num_polys_per_point,
             num_public_rows,
             gamma: vec![F::one(); num_claims],
             claim_to_point: vec![1, 0, 1],
+            witness_segment_layout,
         };
         ZkFixture {
             prepared,
             setup,
             full_vec_randomness: (0..bits).map(|idx| f(4_000 + idx as u128)).collect(),
             alpha: f(5_000),
-            w_len,
-            t_len,
         }
     }
 
@@ -272,7 +290,7 @@ mod tests {
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
         let b_start = 1 + p.num_public_rows + p.n_d;
-        let b_offset = fx.w_len + fx.t_len;
+        let b_offset = p.segment_layout().unwrap().b_blinding_offset;
         let b_zk_view = fx
             .setup
             .zk_b_matrix()
@@ -306,7 +324,7 @@ mod tests {
             .collect();
         let alpha_pows = scalar_powers(fx.alpha, D);
         let d_start = 1 + p.num_public_rows;
-        let d_offset = fx.w_len + fx.t_len + p.b_blinding_segment_len;
+        let d_offset = p.segment_layout().unwrap().d_blinding_offset;
         let d_zk_view = fx
             .setup
             .zk_d_matrix()

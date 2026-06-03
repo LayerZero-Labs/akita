@@ -83,8 +83,8 @@ pub struct TerminalLevelProofShape {
     pub stage2_sumcheck: SumcheckProofShape,
     /// Shape of the optional stage-3 setup product-sumcheck payload.
     pub stage3_sumcheck: Option<SetupProductSumcheckShape>,
-    /// Shape of the terminal direct witness.
-    pub final_witness: DirectWitnessShape,
+    /// Shape of the terminal cleartext witness.
+    pub final_witness: CleartextWitnessShape,
 }
 
 /// Shape descriptor for deserializing a [`AkitaLevelProof`] without headers.
@@ -123,10 +123,10 @@ pub enum AkitaBatchedProofShape {
     /// Terminal-rooted batched proof (1-fold case): the root is itself the
     /// terminal fold level and no steps follow.
     Terminal(TerminalLevelProofShape),
-    /// Root-direct batched proof: one direct witness per claim.
-    Direct {
-        /// Per-claim direct witness shapes.
-        witness_shapes: Vec<DirectWitnessShape>,
+    /// Zero-fold batched proof: one cleartext witness per claim.
+    ZeroFold {
+        /// Per-claim cleartext witness shapes.
+        witness_shapes: Vec<CleartextWitnessShape>,
     },
 }
 
@@ -414,7 +414,7 @@ impl AkitaDeserialize for LevelProofShape {
     }
 }
 
-impl Valid for DirectWitnessShape {
+impl Valid for CleartextWitnessShape {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::PackedDigits((num_elems, bits_per_elem)) => {
@@ -431,7 +431,7 @@ impl Valid for DirectWitnessShape {
     }
 }
 
-impl AkitaSerialize for DirectWitnessShape {
+impl AkitaSerialize for CleartextWitnessShape {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -462,7 +462,7 @@ impl AkitaSerialize for DirectWitnessShape {
     }
 }
 
-impl AkitaDeserialize for DirectWitnessShape {
+impl AkitaDeserialize for CleartextWitnessShape {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -484,7 +484,7 @@ impl AkitaDeserialize for DirectWitnessShape {
             }
             other => {
                 return Err(SerializationError::InvalidData(format!(
-                    "unknown DirectWitnessShape tag {other}"
+                    "unknown CleartextWitnessShape tag {other}"
                 )))
             }
         };
@@ -604,7 +604,7 @@ impl AkitaDeserialize for TerminalLevelProofShape {
             None
         };
         let final_witness =
-            DirectWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            CleartextWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
         Ok(Self {
             y_rings_coeffs,
             extension_opening_reduction,
@@ -701,7 +701,7 @@ impl Valid for AkitaBatchedProofShape {
             Self::Terminal(terminal) => {
                 terminal.check()?;
             }
-            Self::Direct { witness_shapes } => {
+            Self::ZeroFold { witness_shapes } => {
                 checked_shape_len(witness_shapes.len())?;
                 witness_shapes.check()?;
             }
@@ -729,7 +729,7 @@ impl AkitaSerialize for AkitaBatchedProofShape {
                 1u8.serialize_with_mode(&mut writer, compress)?;
                 terminal_shape.serialize_with_mode(&mut writer, compress)?;
             }
-            Self::Direct { witness_shapes } => {
+            Self::ZeroFold { witness_shapes } => {
                 2u8.serialize_with_mode(&mut writer, compress)?;
                 witness_shapes.serialize_with_mode(&mut writer, compress)?;
             }
@@ -744,7 +744,7 @@ impl AkitaSerialize for AkitaBatchedProofShape {
                 step_shapes,
             } => root_shape.serialized_size(compress) + step_shapes.serialized_size(compress),
             Self::Terminal(terminal_shape) => terminal_shape.serialized_size(compress),
-            Self::Direct { witness_shapes } => witness_shapes.serialized_size(compress),
+            Self::ZeroFold { witness_shapes } => witness_shapes.serialized_size(compress),
         }
     }
 }
@@ -791,13 +791,13 @@ impl AkitaDeserialize for AkitaBatchedProofShape {
                 Ok(out)
             }
             2 => {
-                let witness_shapes = Vec::<DirectWitnessShape>::deserialize_with_mode(
+                let witness_shapes = Vec::<CleartextWitnessShape>::deserialize_with_mode(
                     &mut reader,
                     compress,
                     validate,
                     &(),
                 )?;
-                let out = Self::Direct { witness_shapes };
+                let out = Self::ZeroFold { witness_shapes };
                 if matches!(validate, Validate::Yes) {
                     out.check()?;
                 }

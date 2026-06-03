@@ -8,7 +8,7 @@
 use crate::descriptor_bytes::{push_usize, push_usize_vec, sis_family_tag};
 use crate::{
     detect_field_modulus, AkitaSetupSeed, BasisMode, ClaimIncidenceSummary, DecompositionParams,
-    LevelParams, Schedule, SisModulusFamily,
+    Schedule, SisModulusFamily,
 };
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
@@ -151,29 +151,30 @@ pub struct SetupSection {
     pub setup_seed_digest: DescriptorDigest,
     /// Protocol-affecting feature mode.
     pub protocol_features: ProtocolFeatureSet,
-    /// Digest of the full `Vec<LevelParams>` envelope.
-    pub level_params_digest: DescriptorDigest,
 }
 
 impl SetupSection {
     /// Build setup fields from existing setup/layout data.
     ///
+    /// The per-level `LevelParams` are intentionally *not* digested here: the
+    /// per-proof effective schedule (`PlanSection`) already binds every
+    /// expanded `LevelParams` — including the root-direct commit layout — and
+    /// `setup_seed_digest` pins the shared-matrix capacity, so a separate
+    /// setup-level digest would be redundant.
+    ///
     /// # Errors
     ///
-    /// Returns a serialization error if any canonical digest input fails to
-    /// serialize.
+    /// Returns a serialization error if the setup seed fails to serialize.
     pub fn from_parts(
         decomposition: DecompositionParams,
         sis_modulus_family: SisModulusFamily,
         setup_seed: &AkitaSetupSeed,
-        level_params: &[LevelParams],
     ) -> Result<Self, SerializationError> {
         Ok(Self {
             decomposition,
             sis_modulus_family,
             setup_seed_digest: setup_seed_digest(setup_seed)?,
             protocol_features: ProtocolFeatureSet::current(),
-            level_params_digest: digest_level_params(level_params),
         })
     }
 }
@@ -257,16 +258,6 @@ pub fn digest_incidence(summary: &ClaimIncidenceSummary) -> DescriptorDigest {
     for row in summary.public_rows() {
         push_usize(&mut bytes, row.point_idx());
         push_usize_vec(&mut bytes, row.claim_indices());
-    }
-    blake2b_256(&bytes)
-}
-
-/// Digest the full `LevelParams` vector used by a setup/config envelope.
-pub fn digest_level_params(levels: &[LevelParams]) -> DescriptorDigest {
-    let mut bytes = Vec::new();
-    push_usize(&mut bytes, levels.len());
-    for lp in levels {
-        lp.append_descriptor_bytes(&mut bytes);
     }
     blake2b_256(&bytes)
 }
@@ -486,7 +477,6 @@ impl AkitaSerialize for SetupSection {
         writer.write_all(&self.setup_seed_digest)?;
         self.protocol_features
             .serialize_with_mode(&mut writer, compress)?;
-        writer.write_all(&self.level_params_digest)?;
         Ok(())
     }
 
@@ -495,7 +485,6 @@ impl AkitaSerialize for SetupSection {
             + sis_family_size(compress)
             + 32
             + self.protocol_features.serialized_size(compress)
-            + 32
     }
 }
 
@@ -513,13 +502,11 @@ impl AkitaDeserialize for SetupSection {
         let setup_seed_digest = read_digest(&mut reader)?;
         let protocol_features =
             ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let level_params_digest = read_digest(&mut reader)?;
         let out = Self {
             decomposition,
             sis_modulus_family,
             setup_seed_digest,
             protocol_features,
-            level_params_digest,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -778,7 +765,7 @@ fn basis_mode_size(compress: Compress) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DirectWitnessShape, FoldStep, Step};
+    use crate::{CleartextWitnessShape, FoldStep, LevelParams, Step};
     use akita_challenges::SparseChallengeConfig;
     use akita_field::{Prime32Offset99, Prime64Offset59};
 
@@ -795,7 +782,7 @@ mod tests {
                 nonzero_coeffs: vec![-1, 1],
             },
         )
-        .with_decomp(2, 3, 2, 2, 3, 0)
+        .with_decomp(2, 3, 2, 2, 0)
         .expect("sample level params")
     }
 
@@ -807,17 +794,14 @@ mod tests {
                 Step::Fold(FoldStep {
                     params: sample_level_params(),
                     current_w_len: 256,
-                    delta_fold_per_poly: 3,
-                    w_ring: 8,
                     next_w_len: 256,
                     level_bytes: 123,
                 }),
                 Step::Direct(crate::DirectStep {
                     current_w_len: 256,
-                    witness_shape: DirectWitnessShape::PackedDigits((64, 3)),
+                    witness_shape: CleartextWitnessShape::PackedDigits((64, 3)),
                     direct_bytes: 32,
-                    commit_params: None,
-                    level_params: None,
+                    params: None,
                 }),
             ],
             total_bytes: 155,
@@ -835,7 +819,6 @@ mod tests {
                 sis_modulus_family: SisModulusFamily::Q32,
                 setup_seed_digest: [1; 32],
                 protocol_features: ProtocolFeatureSet::current(),
-                level_params_digest: digest_level_params(&[sample_level_params()]),
             },
             PlanSection::from_schedule(&schedule),
             CallSection::from_incidence(&incidence, BasisMode::Lagrange).expect("call"),
@@ -916,7 +899,6 @@ mod tests {
             max_zk_d_len: 1,
             public_matrix_seed: [7; 32],
         };
-        let level_params = [sample_level_params()];
         let section = SetupSection::from_parts(
             DecompositionParams {
                 log_basis: 3,
@@ -925,7 +907,6 @@ mod tests {
             },
             SisModulusFamily::Q32,
             &seed,
-            &level_params,
         )
         .expect("direct setup section");
 
@@ -940,22 +921,54 @@ mod tests {
         let schedule_a = Schedule {
             steps: vec![Step::Direct(crate::DirectStep {
                 current_w_len: 8,
-                witness_shape: DirectWitnessShape::FieldElements(8),
+                witness_shape: CleartextWitnessShape::FieldElements(8),
                 direct_bytes: 8,
-                commit_params: None,
-                level_params: None,
+                params: None,
             })],
             total_bytes: 8,
         };
         let schedule_b = Schedule {
             steps: vec![Step::Direct(crate::DirectStep {
                 current_w_len: 8,
-                witness_shape: DirectWitnessShape::PackedDigits((8, 3)),
+                witness_shape: CleartextWitnessShape::PackedDigits((8, 3)),
                 direct_bytes: 3,
-                commit_params: None,
-                level_params: None,
+                params: None,
             })],
             total_bytes: 3,
+        };
+
+        assert_ne!(
+            digest_effective_schedule(&schedule_a),
+            digest_effective_schedule(&schedule_b)
+        );
+    }
+
+    #[test]
+    fn effective_schedule_digest_binds_root_direct_commit_params() {
+        // Two root-direct schedules with identical witness shape but
+        // different commit `params` must hash to different preamble bytes.
+        // This is the binding the dropped `SetupSection::level_params_digest`
+        // used to provide; it now lives in the per-proof schedule digest.
+        let mut other_params = sample_level_params();
+        other_params.num_blocks += 1;
+
+        let schedule_a = Schedule {
+            steps: vec![Step::Direct(crate::DirectStep {
+                current_w_len: 8,
+                witness_shape: CleartextWitnessShape::FieldElements(8),
+                direct_bytes: 0,
+                params: Some(sample_level_params()),
+            })],
+            total_bytes: 0,
+        };
+        let schedule_b = Schedule {
+            steps: vec![Step::Direct(crate::DirectStep {
+                current_w_len: 8,
+                witness_shape: CleartextWitnessShape::FieldElements(8),
+                direct_bytes: 0,
+                params: Some(other_params),
+            })],
+            total_bytes: 0,
         };
 
         assert_ne!(

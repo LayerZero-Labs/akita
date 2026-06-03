@@ -44,7 +44,7 @@ fn setup_sumcheck_levels<FF: CanonicalField, L: FieldCore>(
 ) -> usize {
     let root_fold = match proof.root {
         AkitaBatchedRootProof::Fold(_) => 1,
-        AkitaBatchedRootProof::Terminal(_) | AkitaBatchedRootProof::Direct { .. } => 0,
+        AkitaBatchedRootProof::Terminal(_) | AkitaBatchedRootProof::ZeroFold { .. } => 0,
     };
     let suffix_fold = proof
         .steps
