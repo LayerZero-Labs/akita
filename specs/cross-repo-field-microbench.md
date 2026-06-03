@@ -303,6 +303,12 @@ Those four combinations are distinct and reused across the four output coefficie
 
 A small local A/B helper, `scripts/bench_ab.py`, reads criterion median point estimates for one saved baseline or diffs two baselines as percentage change, used for all the controlled measurements above.
 
+**Bench-data provenance is per row, refreshed per bench.**
+The collector previously stamped one `git_commit` per machine, so refreshing a single bench forced either a full re-run or a snapshot that lied about every other row.
+Provenance now lives in per-row `git_commit` / `captured_at_utc` columns, and `collect` merges with the committed table: a freshly measured row is restamped at the current commit only when its value actually changed, and every other row is carried forward verbatim.
+Using this, only the `prime32_offset99` packed rows changed by the correctness fix and the fold-then-sum dot product were refreshed (28 AVX-512 + 27 AVX2 rows restamped at the Path B commit); the remaining rows keep their original capture commit, and `field-microbench-meta.json`'s `row_provenance` reports the per-baseline commit breakdown.
+The committed AVX-512 / AVX2 tables are therefore intentionally mixed-commit, not a single snapshot.
+
 ### Alternatives Considered
 
 - New excluded sub-workspace (`bench/field-cross-repo/`), mirroring `profile/akita-recursion`. Rejected for this scope: Plonky3 0.5.3 is already in the main lock, `field_arith` already hosts a foreign field dev-dep, and an in-crate module reuses the existing harness and naming for free. The sub-workspace would only be justified to isolate a genuinely new heavy graph (e.g. Plonky2), which is out of scope.
@@ -359,7 +365,7 @@ cargo bench -p akita-pcs --bench field_arith -- 'field_arith/base/.*(mersenne31|
 cargo bench -p akita-pcs --bench field_arith -- 'field_arith/(ext4|ext5)/'
 ```
 
-9. Run `scripts/field_microbench_collect.py` against the three baselines; commit `bench-data/field-microbench.{csv,md}`. The `field_arith/base/` filter already includes the Akita `prime128_offset275` row, so the 128-bit numbers are captured by the same three runs; confirm they appear in the summary.
+9. Run `scripts/field_microbench_collect.py` against the three baselines; commit `bench-data/field-microbench.{csv,md}`. The `field_arith/base/` filter already includes the Akita `prime128_offset275` row, so the 128-bit numbers are captured by the same three runs; confirm they appear in the summary. `collect` merges with the committed table and stamps per-row provenance, so a later kernel change only needs the affected benches re-run into the saved baseline followed by a `collect` of that baseline (the merge restamps only the rows whose value moved); use `--replace` for a full re-capture (see `bench-data/README.md`).
 
 Phase 2 (after all Phase 1 data is committed):
 

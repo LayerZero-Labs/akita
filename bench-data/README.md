@@ -2,9 +2,9 @@
 
 The committed artifacts are generated from Criterion baselines under `target/criterion/`:
 
-- `field-microbench.csv`: complete machine-readable rows.
+- `field-microbench.csv`: complete machine-readable rows, each carrying its own capture provenance (`git_commit`, `captured_at_utc`).
 - `field-microbench.md`: reader-facing reference with workload definitions, anonymized machine configuration, coverage, headline rows, and ring-subfield focus rows.
-- `field-microbench-meta.json`: collector metadata, baseline provenance, and warnings.
+- `field-microbench-meta.json`: collector metadata, per-baseline machine metadata, a `row_provenance` summary (per-baseline `commit_row_counts` and captured-at range), and warnings.
 
 Do not hand-edit the generated files.
 Refresh them with `scripts/field_microbench_collect.py`.
@@ -24,9 +24,24 @@ Criterion `WallTime` stores those point estimates in nanoseconds.
 | `unit` | `ns/op` for scalar rows, `ns/lane` for packed rows |
 | `lower`, `upper` | Criterion confidence interval bounds for the median estimate |
 | `label` | Short bench label from the Criterion group name |
+| `git_commit`, `captured_at_utc` | Per-row provenance: the commit and UTC time that produced *this* measurement. Rows refreshed independently legitimately carry different commits, so the table is not assumed to be a single-commit snapshot. |
 
 Each `(baseline, library, field, ext_degree, basis, op, workload, vectorization)` tuple is intended to be one row.
 Duplicate rows usually mean an old long-label baseline is still present in `target/criterion/`; the collector resolves those in favor of the short labels and emits a warning.
+
+## Per-Row Provenance And Targeted Refresh
+
+Provenance is per row, not per machine: each measurement records the commit and time it was captured at.
+This lets a single bench be refreshed without re-running the whole suite or misdating every other row.
+
+`collect` merges with the existing table by default.
+A freshly measured row is restamped at the current commit (or `--git-commit`) only when its value actually changed; every other row (other baselines, un-rerun benches) is carried forward verbatim with its original provenance.
+So a targeted refresh is: re-run only the affected benches into the saved baseline, then `collect` for just that baseline; the merge updates only the rows whose value moved.
+
+- `--git-commit COMMIT` stamps freshly changed rows at `COMMIT` (default: current `HEAD`).
+- `--replace` rebuilds the table from collected rows only, discarding carried-forward rows and their provenance (use for a full re-capture).
+
+`field-microbench-meta.json`'s `row_provenance` reports, per baseline, how many rows sit at each commit and the captured-at range, so a mixed-commit table is auditable at a glance.
 
 ## Criterion Directory Names
 
