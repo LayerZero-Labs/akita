@@ -18,15 +18,18 @@ env:
   AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
   # The active benchmark path is pinned to explicit preset modes. It deliberately
   # does not use the old adaptive `full`/`onehot` selectors.
-  # Every cell is a family that folds securely under honest committed-fold
-  # A-role pricing, i.e. one that ships a generated schedule table
-  # (`akita_config::generated_families::ALL_GENERATED_FAMILIES`). Under that
-  # pricing the smallest secure small-field ring degree is D128, so the
-  # small-field cells use D128 one-hot; the D32/D64 small-field cells were
-  # removed because they degrade to a cleartext root-direct proof. A dense
-  # small-field cell is deferred (fp32 ships no dense family; fp64 dense ships
-  # only at D128 and its hosted-runner cost is not yet validated).
-  AKITA_BENCH_MODE: onehot_fp128_d128
+  # Every cell folds securely under honest committed-fold A-role pricing.
+  #
+  # Ring-degree choice differs by field:
+  # - Small prime fields (fp32/fp64): their D32/D64 schedules are non-securable
+  #   under the reprice (they degrade to a cleartext root-direct proof), so the
+  #   smallest secure ring degree is D128. Those cells use D128 one-hot.
+  # - fp128: D64 is the actual proof-size optimum for both dense and one-hot
+  #   (~20% smaller than D128 while still folding through 8-9 secure levels;
+  #   confirmed by `current_d64_onehot_schedule_stays_within_audited_sis_widths`
+  #   and the `best_full_schedule`/`best_onehot_schedule` selectors, which pick
+  #   D64 over D128). The fp128 cells therefore track D64, not D128.
+  AKITA_BENCH_MODE: onehot_fp128_d64
   AKITA_BENCH_RUNS: "3"
   # One warm-up run per case is discarded before the measured runs to
   # prime caches and lazily-initialized statics; cache misses on the
@@ -39,13 +42,13 @@ env:
   # 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling and the run aborts. nv=28
   # is the largest validated size that both fits that budget and still folds
   # through multiple recursive levels. The fp128 cells fold aggressively enough
-  # to stay at the production-default nv=32.
+  # to stay at nv=32.
   AKITA_BENCH_CASES: |
     onehot_fp32_d128:28:1
     onehot_fp64_d128:28:1
-    dense_fp128_d128:24:1
-    onehot_fp128_d128:32:1
-    onehot_fp128_d128:30:4
+    dense_fp128_d64:24:1
+    onehot_fp128_d64:32:1
+    onehot_fp128_d64:30:4
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

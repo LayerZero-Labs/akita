@@ -10,7 +10,11 @@
 > **Status note (2026-06-03, PR #146).** The committed-fold A-role reprice in
 > [`specs/weak-binding-norm-fix.md`](weak-binding-norm-fix.md) made the small-D
 > families non-securable (fp16 entirely; fp32/fp64 at D32/D64), so the **active**
-> benchmark matrix was re-pointed at securable D128 profiles. The current matrix
+> benchmark matrix was re-pointed at securable D128 profiles for the small prime
+> fields. A later follow-up re-pointed the **fp128** cells to D64 after measuring
+> that D64 is the fp128 proof-size optimum (~20% smaller than D128 for both
+> dense and one-hot, while still folding securely); the small-field fp32/fp64
+> cells remain at D128 because their D64 is non-securable. The current matrix
 > is the "Active Benchmark Matrix" section below. Everything else (this Summary,
 > and everything from "## Evaluation" onward: Acceptance Criteria, Validation,
 > Performance, Design, Alternatives, Follow-Up) is the original **PR #107
@@ -50,21 +54,31 @@ The checked-in workflow currently runs:
 | --- | --- | --- | ---: | ---: | --- | --- |
 | `onehot_fp32_d128` | fp32 | 1-of-256 one-hot | 28 | 1 | D128 | Smallest securable fp32 one-hot under honest pricing. Capped at nv=28: the ext-degree-4 challenge schedule keeps a large un-folded witness, so at nv>=30 the prover's eq-evaluation table exceeds the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling. |
 | `onehot_fp64_d128` | fp64 | 1-of-256 one-hot | 28 | 1 | D128 | Smallest securable fp64 one-hot under honest pricing. Capped at nv=28 for the same eq-table-budget reason as the fp32 cell. |
-| `dense_fp128_d128` | fp128 | dense | 24 | 1 | D128 | fp128 dense smoke at the production-default ring dimension. |
-| `onehot_fp128_d128` | fp128 | 1-of-256 one-hot | 32 | 1 | D128 | Explicit fp128 one-hot mode at the production-default ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
-| `onehot_fp128_d128` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D128 | Preserves same-point batched one-hot coverage. |
+| `dense_fp128_d64` | fp128 | dense | 24 | 1 | D64 | fp128 dense smoke at the proof-size-optimal ring dimension (D64 beats D128 by ~18-22%). |
+| `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | Explicit fp128 one-hot mode at the proof-size-optimal ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
+| `onehot_fp128_d64` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D64 | Preserves same-point batched one-hot coverage. |
 
-Every active cell is a family that folds securely under honest committed-fold
-A-role pricing, i.e. one that ships a generated schedule table
-(`akita_config::generated_families::ALL_GENERATED_FAMILIES`). Under that
-pricing the smallest secure small-field ring degree is D128, so the small-field
-cells use D128 one-hot; the earlier D32/D64 small-field cells (and all fp16
-cells) were removed because they degrade to a cleartext root-direct proof and
-no longer exercise a real folding commitment. The fp128 cells track the
-production-default ring dimension, which is also D128. D32/D64 profile modes
-still exist for direct local comparisons, and `main` adds a D64-only
-tensor-verifier profile mode, but neither the adaptive `full`/`onehot`
-selectors nor those non-securable comparison modes are part of the active
+Every active cell folds securely under honest committed-fold A-role pricing.
+The ring degree differs by field, for two distinct reasons:
+
+- **Small prime fields (fp32/fp64):** their D32/D64 schedules are no longer
+  securable under the reprice — they degrade to a cleartext root-direct proof
+  and stop exercising a real folding commitment — so the smallest secure ring
+  degree is D128. Those cells (and all fp16 cells) use D128 one-hot.
+- **fp128:** D64 is the actual proof-size optimum for both dense and one-hot.
+  Measured against the runtime schedule's `total_bytes`, D64 produces ~18-23%
+  smaller proofs than D128 across the matrix shapes (e.g. one-hot nv=32:
+  133,000 B at D64 vs 163,968 B at D128; dense nv=24: 131,656 B vs 160,080 B),
+  while still folding through 8-9 secure recursive levels. This is confirmed by
+  `current_d64_onehot_schedule_stays_within_audited_sis_widths` (securability)
+  and by the `best_full_schedule` / `best_onehot_schedule` selectors, which
+  pick D64 (or D32), never D128. The earlier D128 fp128 cells were *not*
+  proof-size optimal; the production-default ring dimension is D128, but the
+  benchmark matrix tracks the proof-size optimum.
+
+D32/D128 profile modes still exist for direct local comparisons, and `main`
+adds a D64-only tensor-verifier profile mode, but neither the adaptive
+`full`/`onehot` selectors nor those comparison modes are part of the active
 benchmark matrix.
 
 Deferred target cells:
@@ -78,8 +92,8 @@ The first successful 8-case candidate run identified the two cost offenders:
 6.2 GiB RSS, while `dense_fp128_d32:26:1` spent about 56 seconds in commit plus
 38 seconds in prove and peaked around 8.4 GiB RSS (those figures are the
 historical D32-era measurements). The always-on fp128 dense cell stays at
-`nv=24` to keep CI tractable, but now runs at the production-default
-`dense_fp128_d128:24:1`; D128 commit/prove cost is higher than the D32 numbers
+`nv=24` to keep CI tractable, and now runs at the proof-size-optimal
+`dense_fp128_d64:24:1`; D64 commit/prove cost differs from the D32 numbers
 above, so the timing baseline must be regenerated on the first post-swap run.
 
 ### Scope
