@@ -122,6 +122,24 @@ private Akita write-up and are not reproduced here.
   cells were removed. See
   [`specs/profile-bench-coverage-matrix.md`](profile-bench-coverage-matrix.md).
 
+### Related fix on this branch: small-field ring-challenge soundness
+
+This branch also ships a second, independent soundness fix that this spec does
+not own: a real ≥128-bit ring-challenge policy for 64-bit-and-lower fields. The
+historical small-field challenge was the toy `Uniform { weight: 8, [−1, 1] }`,
+which has only ~31 bits of Fiat-Shamir support at `D = 32`, far below 128-bit
+soundness. It is replaced by the shared, dimension-keyed family specified in
+[`specs/bounded-l1-sparse-challenge.md`](bounded-l1-sparse-challenge.md)
+("Current Proof-Optimized Policy"): `D=32` `BoundedL1Norm` (`||c||_1 = 121`,
+`||c||_inf = 8`), `D=64` `ExactShell{30,12}` (`54, 2`), `D=128` `Uniform{31}`
+(`31, 1`), `D=256` `Uniform{23}` (`23, 1`).
+
+The two fixes are coupled in the regenerated tables: those `(||c||_1, ||c||_inf)`
+values are exactly the challenge norms `fold_witness_beta` and the corrected
+A-role collision above are generated against. The challenge *family* is
+specified there, not here; this pointer exists so the norm reprice and the
+challenge-security fix are not read in isolation.
+
 ### Still valid from the original design
 
 Two pieces of the original spec are unaffected and remain in force:
@@ -133,18 +151,51 @@ Two pieces of the original spec are unaffected and remain in force:
   cheaper `||c||_inf` side, shrinking `δ_fold`) is unchanged; dense `δ_fold` is
   identical to before.
 
-### Deferred follow-up: tighter one-hot fold-response bound
+### Resolved follow-up (negative): the one-hot outer factor cannot drop to `||c||_inf`
 
 For a one-hot committed witness the per-block product `β̄ = ||c·s||_inf`
-already takes the `||c||_inf` side of the `min` (`||s||_inf = ||s||_1 = 1`),
+already takes the `||c||_inf` side of the inner `min` (`||s||_inf = ||s||_1 = 1`),
 but the A-role collision still pays the outer challenge-difference factor
-`κ̄ = 2·ω = 2·||c||_1`. The question is whether the one-hot structure lets the
-fold response `z = z^(ℓ,i) − z^0` be bounded more flexibly so the collision can
-use `||c||_inf` rather than `||c||_1` in that outer factor too, which would
-lower the one-hot A-rank (and thus one-hot proof size). This needs a soundness
-argument that the extracted kernel vector's norm is governed by `||c||_inf` for
-a one-hot witness, not just `||c||_1`; it is not done here. The shipped bound
-uses the conservative `||c||_1` factor everywhere. Tracked as a follow-up.
+`κ̄ = ||c − c'||_1 = 2·ω`. The open question was whether the one-hot structure
+lets the fold response `z = z^(ℓ,i) − z^0` be bounded flexibly enough for the
+collision to use `||c||_inf` rather than `||c||_1` in that outer factor too,
+which would cut the one-hot collision (and A-rank) by a factor of `ω`.
+
+It cannot, and lowering it would be unsound. The extractor's kernel vector is
+`z_A = c̄'·(c̄·s) − c̄·(c̄'·s')`, i.e. `c̄'·z − c̄·z'` in the two fold responses
+`z = c̄·s` and `z' = c̄'·s'`. The only norm the protocol certifies for a response
+is its L∞ bound `||z||_inf ≤ β^resp` (the verifier's range check is L∞-only).
+Each cross term obeys the ring-product `min`:
+
+```text
+||c̄'·z||_inf ≤ min( ||c̄'||_1·||z||_inf , ||c̄'||_inf·||z||_1 ).
+```
+
+The `||c||_inf` outer factor would have to come from the second side, which
+needs `||z||_1`. Two independent facts close that door:
+
+1. **No certified L1 mass.** The protocol bounds only `||z||_inf`. The single
+   generic bound the extractor can derive is `||z||_1 ≤ D·||z||_inf`, and since
+   any challenge has at most `D` nonzero coefficients, `D ≥ ||c||_1 / ||c||_inf`.
+   Hence `||c̄'||_inf·D·||z||_inf ≥ ||c̄'||_1·||z||_inf`: the `||c||_1` side always
+   wins the `min`, and the `||c||_inf` side never helps.
+2. **A tight L1 would only tie.** Even granting the structural bound
+   `||z||_1 ≤ T·||c||_1` (`T = num_claims·2^r_vars`; the one-hot fold response is a
+   sum of `T` rotated challenges), the second side is
+   `||c̄'||_inf·||z||_1 = ||c̄'||_inf·T·||c||_1`, while the first is
+   `||c̄'||_1·||z||_inf = ||c̄'||_1·T·||c||_inf`. The two challenges are drawn from
+   the same family (`||c||_1 = ||c'||_1`, `||c||_inf = ||c'||_inf`), so the two
+   sides are *equal*. The one-hot fold response inherits the challenge's
+   `||·||_1 / ||·||_inf` ratio, so the outer `min` is a no-op: there is no
+   `ω`-factor to recover, with or without an L1 range check.
+
+So the shipped `8·ω·fold_witness_beta·ν` bound is already the tight one for the
+one-hot case; replacing the outer `||c||_1` with `||c||_inf` would under-price
+`collision_inf` by a factor of `ω` and select sub-128-bit SIS ranks. No code
+change: the conservative `||c||_1` outer factor is also the correct one. The
+one-hot A-rank therefore cannot be lowered by this route; any further one-hot
+proof-size win has to come from the fold / digit side (already optimized via the
+`min`), not from the binding collision.
 
 ---
 

@@ -7,6 +7,19 @@
 | Status      | implemented, with long hosted-runner cells deferred   |
 | PR          | https://github.com/LayerZero-Labs/akita/pull/107      |
 
+> **Status note (2026-06-03, PR #146).** The committed-fold A-role reprice in
+> [`specs/weak-binding-norm-fix.md`](weak-binding-norm-fix.md) made the small-D
+> families non-securable (fp16 entirely; fp32/fp64 at D32/D64), so the **active**
+> benchmark matrix was re-pointed at securable D128 profiles. The current matrix
+> is the "Active Benchmark Matrix" section below. Everything else (this Summary,
+> and everything from "## Evaluation" onward: Acceptance Criteria, Validation,
+> Performance, Design, Alternatives, Follow-Up) is the original **PR #107
+> historical record**. Its fp16 / D32 / D64 cell references (e.g.
+> `onehot_fp16_d32`, `dense_fp64_d32`, `dense_fp128_d32`, the "fp128 D32" report
+> wording) describe the pre-reprice matrix and are superseded by the Active
+> Benchmark Matrix; they are retained as PR #107's completed acceptance record,
+> not the current shipping configuration.
+
 ## Summary
 
 This PR widens the profile benchmark workflow from a small fp128/fp32 sample
@@ -143,6 +156,12 @@ The test-coverage cleanup touches:
   re-enable pass.
 
 ## Evaluation
+
+> **PR #107 historical record below.** The acceptance criteria, validation, and
+> design notes that follow document what PR #107 shipped and tested (the D32 /
+> fp16 era matrix). They are superseded for the active matrix by the PR #146
+> re-point (see the top status note and "Active Benchmark Matrix" above); fp16 /
+> D32 / D64 cell mentions here are historical, not current targets.
 
 ### Acceptance Criteria
 
