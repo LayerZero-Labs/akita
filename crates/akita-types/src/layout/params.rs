@@ -194,8 +194,13 @@ impl LevelParams {
     /// Delegates to [`crate::sis::num_digits_fold`], which derives
     /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
     /// from this level's fold challenge and witness norms.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`crate::sis::num_digits_fold`]'s rejection of a degenerate
+    /// fold bound (`r_vars >= 127`, `β` overflow, or `β == 0`).
     #[inline]
-    pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> usize {
+    pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> Result<usize, AkitaError> {
         let challenge = crate::sis::FoldChallengeNorms {
             infinity_norm: self.challenge_infinity_norm() as u128,
             l1_norm: self.challenge_l1_mass() as u128,

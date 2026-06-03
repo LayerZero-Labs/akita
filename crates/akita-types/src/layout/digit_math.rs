@@ -116,8 +116,13 @@ pub fn optimal_m_r_split(
 
         // δ_fold grows with r: num_digits_fold derives β = 2^r ·
         // min(||c||_inf·||s||_1, ||c||_1·||s||_inf) internally (num_claims = 1).
-        let delta_fold =
-            num_digits_fold(r, 1, field_bits, log_basis, fold_challenge, fold_witness) as u64;
+        // An overflowing/degenerate β makes this `r` infeasible — skip it.
+        let Ok(delta_fold) =
+            num_digits_fold(r, 1, field_bits, log_basis, fold_challenge, fold_witness)
+        else {
+            continue;
+        };
+        let delta_fold = delta_fold as u64;
 
         let per_block_cost = delta_open.saturating_add((n_a as u64).saturating_mul(delta_open));
         let opening_cost = per_block_cost.saturating_mul(num_blocks);

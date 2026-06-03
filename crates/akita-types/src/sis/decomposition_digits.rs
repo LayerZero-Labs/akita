@@ -1,5 +1,7 @@
 //! Gadget-decomposition digit counts.
 
+use akita_field::AkitaError;
+
 use super::norm_bound::{fold_witness_beta, FoldChallengeNorms, FoldWitnessNorms};
 use crate::DecompositionParams;
 
@@ -127,6 +129,13 @@ pub fn num_digits_open(decomposition: DecompositionParams) -> usize {
 /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
 /// (via [`fold_witness_beta`]) from the per-level fold challenge and witness
 /// norms, then returns the balanced-digit count needed to represent `[-β, β]`.
+///
+/// # Errors
+///
+/// Returns `AkitaError::InvalidSetup` when [`fold_witness_beta`] rejects the
+/// inputs (`r_vars >= 127` or `β` overflow), or when `β == 0` (a zero
+/// challenge/witness norm or `num_claims == 0` — no well-formed level folds a
+/// zero witness).
 pub fn num_digits_fold(
     r_vars: usize,
     num_claims: usize,
@@ -134,18 +143,17 @@ pub fn num_digits_fold(
     log_basis: u32,
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
-) -> usize {
-    let beta = fold_witness_beta(r_vars, num_claims, challenge, witness);
+) -> Result<usize, AkitaError> {
+    let beta = fold_witness_beta(r_vars, num_claims, challenge, witness)?;
     if beta == 0 {
-        return 1;
-    }
-    if beta == u128::MAX {
-        return compute_num_digits_full_field(field_bits, log_basis);
+        return Err(AkitaError::InvalidSetup(
+            "num_digits_fold: folded-witness bound β = 0".to_string(),
+        ));
     }
     // `beta` bounds `|v|`, so `+beta` itself must be representable: add one bit
     // so the signed range's positive end covers `+beta`.
     let log_beta = (128 - beta.leading_zeros()).saturating_add(1);
-    num_digits_for_bound(log_beta, field_bits, log_basis)
+    Ok(num_digits_for_bound(log_beta, field_bits, log_basis))
 }
 
 /// A-matrix committed width (ring columns): `block_len · δ_commit`.
@@ -233,11 +241,24 @@ mod tests {
         let dense = FoldWitnessNorms::new(3, 64, 1, false);
         // one-hot single-chunk: ||s||_inf = 1, ||s||_1 = 1.
         let onehot = FoldWitnessNorms::new(3, 64, 64, true);
-        let dense_digits = num_digits_fold(8, 1, 128, 3, challenge, dense);
-        let onehot_digits = num_digits_fold(8, 1, 128, 3, challenge, onehot);
+        let dense_digits = num_digits_fold(8, 1, 128, 3, challenge, dense).unwrap();
+        let onehot_digits = num_digits_fold(8, 1, 128, 3, challenge, onehot).unwrap();
         assert!(dense_digits > 0 && onehot_digits > 0);
         assert!(onehot_digits < dense_digits);
         // More claims never reduce the digit count.
-        assert!(num_digits_fold(8, 4, 128, 3, challenge, dense) >= dense_digits);
+        assert!(num_digits_fold(8, 4, 128, 3, challenge, dense).unwrap() >= dense_digits);
+    }
+
+    #[test]
+    fn num_digits_fold_rejects_degenerate() {
+        let challenge = FoldChallengeNorms {
+            infinity_norm: 8,
+            l1_norm: 54,
+        };
+        let witness = FoldWitnessNorms::new(3, 64, 1, false);
+        // r_vars >= 127 is rejected.
+        assert!(num_digits_fold(127, 1, 128, 3, challenge, witness).is_err());
+        // num_claims == 0 ⇒ β = 0 is rejected.
+        assert!(num_digits_fold(8, 0, 128, 3, challenge, witness).is_err());
     }
 }

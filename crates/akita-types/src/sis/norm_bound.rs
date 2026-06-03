@@ -6,6 +6,7 @@
 //! is decomposed (not Ajtai-committed), so it has no SIS bucket.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_field::AkitaError;
 
 use super::ajtai_key::{ceil_supported_collision, SisModulusFamily};
 use crate::DecompositionParams;
@@ -134,7 +135,7 @@ pub fn rounded_up_collision_norm_s(
 /// difference of two balanced-digit openings (no challenge multiplication).
 /// Each balanced digit lies in `[−b/2, b/2 − 1]` with `b = 2^lb`, so the
 /// largest difference of two such digits is
-/// `(b/2 − 1) − (−b/2) = b − 1 = 2^lb − 1 = 2γ̄`.
+/// `(b/2 − 1) − (−b/2) = b − 1 = 2^lb − 1`.
 pub fn rounded_up_collision_norm_t(
     sis_family: SisModulusFamily,
     d: usize,
@@ -159,18 +160,21 @@ pub fn rounded_up_collision_norm_w(
 /// β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf).
 /// ```
 ///
-/// Saturates to `u128::MAX` on overflow (which
-/// [`super::decomposition_digits::num_digits_fold`] maps to the field-width ceiling).
+/// # Errors
+///
+/// Returns `AkitaError::InvalidSetup` when `r_vars >= 127` (a `2^r_vars` fold
+/// arity no well-formed level reaches) or when the product overflows `u128`.
 #[inline]
-#[must_use]
 pub fn fold_witness_beta(
     r_vars: usize,
     num_claims: usize,
     challenge: FoldChallengeNorms,
     witness: FoldWitnessNorms,
-) -> u128 {
+) -> Result<u128, AkitaError> {
     if r_vars >= 127 {
-        return u128::MAX;
+        return Err(AkitaError::InvalidSetup(format!(
+            "fold_witness_beta: r_vars = {r_vars} >= 127"
+        )));
     }
     ring_product_infinity_norm_bound(
         challenge.infinity_norm,
@@ -178,8 +182,9 @@ pub fn fold_witness_beta(
         witness.infinity_norm,
         witness.l1_norm,
     )
-    .saturating_mul(num_claims as u128)
-    .saturating_mul(1u128 << r_vars)
+    .checked_mul(num_claims as u128)
+    .and_then(|t| t.checked_mul(1u128 << r_vars))
+    .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
 #[cfg(test)]
