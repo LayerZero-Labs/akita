@@ -94,11 +94,23 @@ use akita_transcript::Transcript;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 
+pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;
+
 pub(super) fn checked_shape_len(len: usize) -> Result<(), SerializationError> {
     if len > DEFAULT_MAX_SEQUENCE_LEN {
         return Err(SerializationError::LengthLimitExceeded {
             len: u64::try_from(len).unwrap_or(u64::MAX),
             max: DEFAULT_MAX_SEQUENCE_LEN,
+        });
+    }
+    Ok(())
+}
+
+pub(super) fn checked_shape_sequence_len(len: usize) -> Result<(), SerializationError> {
+    if len > MAX_PROOF_SHAPE_SEQUENCE_LEN {
+        return Err(SerializationError::LengthLimitExceeded {
+            len: u64::try_from(len).unwrap_or(u64::MAX),
+            max: MAX_PROOF_SHAPE_SEQUENCE_LEN,
         });
     }
     Ok(())

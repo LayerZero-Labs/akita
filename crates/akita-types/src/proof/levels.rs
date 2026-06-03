@@ -385,8 +385,6 @@ pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
     pub stage2_sumcheck: SumcheckProof<L>,
     #[cfg(feature = "zk")]
     pub stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
-    /// Optional stage-3 setup product-sumcheck proof.
-    pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
     /// Terminal witness, absorbed via `ABSORB_SUMCHECK_W` in place of
     /// `next_w_commitment`.
     pub final_witness: CleartextWitnessProof<F>,
@@ -411,7 +409,6 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
             stage2_sumcheck,
             #[cfg(feature = "zk")]
             stage2_sumcheck_proof_masked,
-            stage3_sumcheck_proof: None,
             final_witness,
         }
     }
@@ -446,10 +443,6 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
                     sumcheck_proof_masked_shape(&self.stage2_sumcheck_proof_masked)
                 }
             },
-            stage3_sumcheck: self
-                .stage3_sumcheck_proof
-                .as_ref()
-                .map(SetupSumcheckProof::shape),
             final_witness: self.final_witness.shape(),
         }
     }

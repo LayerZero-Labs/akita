@@ -228,7 +228,6 @@ pub(crate) fn verify_terminal_root_level<F, E, C, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     #[cfg(not(feature = "zk"))] stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
     #[cfg(feature = "zk")] stage2_sumcheck_masked: &akita_sumcheck::SumcheckProofMasked<C>,
-    stage3_sumcheck_proof: Option<&SetupSumcheckProof<C>>,
     final_witness: &CleartextWitnessProof<F>,
     final_w_len: usize,
     setup: &AkitaVerifierSetup<F>,
@@ -238,7 +237,6 @@ pub(crate) fn verify_terminal_root_level<F, E, C, T, const D: usize>(
     commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
     root_lp: &LevelParams,
@@ -255,8 +253,6 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
 {
-    let stage3_sumcheck_proof =
-        stage3_sumcheck_proof_for_mode(setup_contribution_mode, stage3_sumcheck_proof)?;
     verify_root_level_inner::<F, E, C, T, D>(
         y_rings_flat,
         extension_opening_reduction,
@@ -266,7 +262,7 @@ where
         stage2_sumcheck,
         #[cfg(feature = "zk")]
         stage2_sumcheck_masked,
-        stage3_sumcheck_proof,
+        None,
         setup,
         transcript,
         claim_points,

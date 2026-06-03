@@ -296,7 +296,6 @@ where
                 level,
                 level_params,
                 final_log_basis,
-                setup_contribution_mode,
             )
             .map(akita_prover::SuffixLevelOutput::Terminal),
         },
@@ -316,7 +315,6 @@ fn dispatch_prove_terminal_level<F, T, B, const D: usize, Cfg>(
     level: usize,
     level_params: &LevelParams,
     final_log_basis: u32,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<akita_types::TerminalLevelProof<F, Cfg::ChallengeField>, AkitaError>
 where
     F: FieldCore
@@ -346,7 +344,6 @@ where
             level,
             level_params,
             final_log_basis,
-            setup_contribution_mode,
             |params, current_w_len| {
                 akita_types::recursive_level_layout_from_params(
                     params,
@@ -374,7 +371,6 @@ where
                 level,
                 level_params,
                 final_log_basis,
-                setup_contribution_mode,
                 |params, current_w_len| {
                     akita_types::recursive_level_layout_from_params(
                         params,

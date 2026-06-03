@@ -433,7 +433,6 @@ pub fn prove_terminal_fold_level_from_ring_relation<F, L, T, B, const D: usize>(
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
-    setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, L>, AkitaError>
 where
@@ -494,9 +493,9 @@ where
         col_bits,
         ring_bits,
         tau0: _,
-        tau1,
+        tau1: _,
         b,
-        alpha,
+        alpha: _,
     } = rs;
 
     // Relation-only stage-2: batching_coeff = 0 zeros the virtual-claim
@@ -506,7 +505,7 @@ where
     #[cfg(feature = "zk")]
     let stage2_round_pads = zk_hiding.take_compressed_rounds::<L>(col_bits + ring_bits, 3)?;
     #[cfg(feature = "zk")]
-    let (stage2_sumcheck_proof_masked, sumcheck_challenges) = {
+    let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
             L::zero(),
@@ -521,17 +520,17 @@ where
             ring_bits,
             relation_claim,
         )?;
-        let (stage2_sumcheck_proof_masked, sumcheck_challenges) = stage2_prover
+        let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = stage2_prover
             .prove_zk::<F, T, _>(
                 relation_claim_public,
                 transcript,
                 |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
                 stage2_round_pads,
             )?;
-        (stage2_sumcheck_proof_masked, sumcheck_challenges)
+        (stage2_sumcheck_proof_masked, _sumcheck_challenges)
     };
     #[cfg(not(feature = "zk"))]
-    let (stage2_sumcheck, sumcheck_challenges) = {
+    let (stage2_sumcheck, _sumcheck_challenges) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
             L::zero(),
@@ -546,42 +545,13 @@ where
             ring_bits,
             relation_claim,
         )?;
-        let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim) = stage2_prover
+        let (stage2_sumcheck, _sumcheck_challenges, _stage2_final_claim) = stage2_prover
             .prove::<F, T, _>(transcript, |tr| {
                 sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
-        (stage2_sumcheck, sumcheck_challenges)
+        (stage2_sumcheck, _sumcheck_challenges)
     };
-    let stage3_sumcheck_proof = match setup_contribution_mode {
-        SetupContributionMode::Recursive => {
-            let row_coefficients = instance
-                .gamma()
-                .iter()
-                .copied()
-                .map(L::lift_base)
-                .collect::<Vec<_>>();
-            let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
-            let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_len)?;
-            let output = SetupSumcheckProver::prove::<F, T, _, D>(
-                setup_view.as_slice(),
-                lp,
-                &instance,
-                &tau1,
-                alpha,
-                &sumcheck_challenges[ring_bits..],
-                &row_coefficients,
-                transcript,
-                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
-            )?;
-            Some(SetupSumcheckProof {
-                claim: output.claim,
-                sumcheck: output.sumcheck,
-            })
-        }
-        SetupContributionMode::Direct => None,
-    };
-
-    let mut proof = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
+    let proof = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
         #[cfg(not(feature = "zk"))]
         y_rings,
         #[cfg(feature = "zk")]
@@ -593,7 +563,6 @@ where
         stage2_sumcheck_proof_masked,
         final_witness,
     );
-    proof.stage3_sumcheck_proof = stage3_sumcheck_proof;
     Ok(proof)
 }
 
@@ -973,7 +942,6 @@ pub fn prove_terminal_recursive_fold_with_params<F, L, T, B, const D: usize>(
     level: usize,
     level_params: &LevelParams,
     final_log_basis: u32,
-    setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, L>, AkitaError>
 where
@@ -1143,7 +1111,6 @@ where
         y_rings,
         #[cfg(feature = "zk")]
         y_rings_masked,
-        setup_contribution_mode,
         #[cfg(feature = "zk")]
         zk_hiding,
     )
@@ -1256,7 +1223,6 @@ pub fn prove_terminal_recursive_level_with_policy<F, L, T, B, const D: usize, Cu
     level: usize,
     level_params: &LevelParams,
     final_log_basis: u32,
-    setup_contribution_mode: SetupContributionMode,
     current_layout: CurrentLayout,
 ) -> Result<TerminalLevelProof<F, L>, AkitaError>
 where
@@ -1300,7 +1266,6 @@ where
         level,
         &w_lp,
         final_log_basis,
-        setup_contribution_mode,
         #[cfg(feature = "zk")]
         &mut current_state.zk_hiding,
     )

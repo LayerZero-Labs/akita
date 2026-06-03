@@ -475,11 +475,12 @@ where
     };
     let stage2_input_claim = batching_coeff * s_claim + relation_claim;
     let stage3_sumcheck_proof = match &proof {
-        FoldProofView::Intermediate(level_proof) => level_proof.stage3_sumcheck_proof.as_ref(),
-        FoldProofView::Terminal(terminal_proof) => terminal_proof.stage3_sumcheck_proof.as_ref(),
+        FoldProofView::Intermediate(level_proof) => stage3_sumcheck_proof_for_mode(
+            setup_contribution_mode,
+            level_proof.stage3_sumcheck_proof.as_ref(),
+        )?,
+        FoldProofView::Terminal(_) => None,
     };
-    let stage3_sumcheck_proof =
-        stage3_sumcheck_proof_for_mode(setup_contribution_mode, stage3_sumcheck_proof)?;
     let setup_prepared_row_eval = stage3_sumcheck_proof.map(|_| rs.prepared_row_eval.clone());
     let row_eval_source = if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
         Stage2RowEvalSource::new_with_setup_claim(rs.prepared_row_eval, stage3_sumcheck_proof.claim)
@@ -990,7 +991,6 @@ where
                 &terminal.stage2_sumcheck,
                 #[cfg(feature = "zk")]
                 &terminal.stage2_sumcheck_proof_masked,
-                terminal.stage3_sumcheck_proof.as_ref(),
                 &terminal.final_witness,
                 root_step.next_w_len,
                 setup,
@@ -1000,7 +1000,6 @@ where
                 commitments,
                 incidence_summary,
                 basis,
-                setup_contribution_mode,
                 #[cfg(feature = "zk")]
                 &mut zk_hiding_cursor,
                 #[cfg(feature = "zk")]

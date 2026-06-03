@@ -279,7 +279,6 @@ where
                 .serialized_size(Compress::No)
         }
     };
-    let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof.as_ref());
     let final_witness_size = level.final_witness.serialized_size(Compress::No);
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes `final_witness` to mirror the planner's
@@ -290,9 +289,9 @@ where
     // Only the fields structurally present in `TerminalLevelProof` are
     // emitted: `y_rings`, optional extension-opening reduction, the
     // stage-2 sumcheck, and `final_witness`. The intermediate-level
-    // fields (`v`, `stage1_*`, `next_w_*`) are absent at terminal and
-    // therefore omitted from the tracing payload; downstream parsers
-    // default missing keys to zero.
+    // fields (`v`, `stage1_*`, `stage3_sumcheck`, `next_w_*`) are absent at
+    // terminal and therefore omitted from the tracing payload; downstream
+    // parsers default missing keys to zero.
     tracing::info!(
         label,
         level = level_idx,
@@ -302,7 +301,6 @@ where
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
-        stage3_sumcheck_bytes = stage3_sumcheck_size,
         final_witness_bytes = final_witness_size,
         root_variant = root_variant,
         "proof fold level"
@@ -325,7 +323,6 @@ where
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
-    eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!("[{label}]     final_witness={final_witness_size} bytes (absorbed via transcript)");
     assert_eq!(
         full,
@@ -333,7 +330,6 @@ where
             + extension_opening_partials_size
             + extension_opening_sumcheck_size
             + stage2_sumcheck_size
-            + stage3_sumcheck_size
             + final_witness_size
     );
     total

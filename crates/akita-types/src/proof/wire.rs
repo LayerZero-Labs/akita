@@ -412,7 +412,6 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         #[cfg(feature = "zk")]
         self.stage2_sumcheck_proof_masked
             .serialize_with_mode(&mut writer, compress)?;
-        serialize_stage3_sumcheck(self.stage3_sumcheck_proof.as_ref(), &mut writer, compress)?;
         self.final_witness
             .serialize_with_mode(&mut writer, compress)
     }
@@ -433,7 +432,6 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                     self.stage2_sumcheck_proof_masked.serialized_size(compress)
                 }
             }
-            + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + self.final_witness.serialized_size(compress)
     }
 }
@@ -457,10 +455,6 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for TerminalLevelProof<F,
         self.stage2_sumcheck.check()?;
         #[cfg(feature = "zk")]
         self.stage2_sumcheck_proof_masked.check()?;
-        if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
-            stage3_sumcheck.claim.check()?;
-            stage3_sumcheck.sumcheck.check()?;
-        }
         self.final_witness.check()
     }
 }
@@ -503,12 +497,6 @@ impl<
             validate,
             &ctx.stage2_sumcheck,
         )?;
-        let stage3_sumcheck_proof = deserialize_stage3_sumcheck(
-            &mut reader,
-            compress,
-            validate,
-            ctx.stage3_sumcheck.as_ref(),
-        )?;
         let final_witness = CleartextWitnessProof::deserialize_with_mode(
             &mut reader,
             compress,
@@ -522,7 +510,6 @@ impl<
             stage2_sumcheck,
             #[cfg(feature = "zk")]
             stage2_sumcheck_proof_masked,
-            stage3_sumcheck_proof,
             final_witness,
         };
         if matches!(validate, Validate::Yes) {

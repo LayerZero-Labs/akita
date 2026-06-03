@@ -102,7 +102,6 @@ fn expected_same_point_batched_shape(
             y_rings_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
             extension_opening_reduction: None,
             stage2_sumcheck: vec![3; root_rounds],
-            stage3_sumcheck: None,
             final_witness: akita_types::CleartextWitnessShape::PackedDigits((
                 root_w_len,
                 terminal_next_params.log_basis,
@@ -199,7 +198,6 @@ fn expected_same_point_batched_shape(
         y_rings_coeffs: terminal_lp.ring_dimension,
         extension_opening_reduction: None,
         stage2_sumcheck: vec![3; terminal_rounds],
-        stage3_sumcheck: None,
         final_witness: akita_types::CleartextWitnessShape::PackedDigits((
             terminal_next_w_len,
             terminal_next_params.log_basis,
