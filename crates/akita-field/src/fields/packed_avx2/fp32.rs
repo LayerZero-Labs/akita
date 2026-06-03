@@ -35,8 +35,8 @@ impl<const P: u32> PackedFp32Avx2<P> {
     /// Whether two Solinas folds suffice to bring the sum of four
     /// `(P-1)^2` products into `[0, 2*P)` for the final canonicalize step.
     /// Mirrors `PackedFp32Neon::TWO_FOLD_FOUR_PRODUCT_OK`. When `false`,
-    /// `solinas_reduce` / `solinas_reduce_with_carry` must do a third fold
-    /// before handing off to `pack_and_canonicalize`.
+    /// `solinas_reduce` must do a third fold before handing off to
+    /// `pack_and_canonicalize`.
     const TWO_FOLD_FOUR_PRODUCT_OK: bool = {
         let c = Self::C as u64;
         4 * c * c + 3 * c <= (1u64 << Self::BITS)
@@ -73,6 +73,19 @@ impl<const P: u32> PackedFp32Avx2<P> {
         let lo_part = _mm256_mul_epu32(x, c_vec);
         let hi_part = _mm256_mul_epu32(_mm256_srli_epi64::<32>(x), c_vec);
         _mm256_add_epi64(lo_part, _mm256_slli_epi64::<32>(hi_part))
+    }
+
+    /// One Solinas fold of a single 64-bit product lane (BITS == 32 only):
+    /// `(x & (2^32-1)) + C*(x >> 32)`. For a single product `x < 2^64` the
+    /// high word `x >> 32 < 2^32`, so the result is `< 2^40`. Lets the
+    /// `BITS == 32` dot-product sum up to four folded terms (each `< 2^40`)
+    /// below `2^42` without `u64` overflow, removing the per-product carry
+    /// tracking. Mirrors `PackedFp32Avx512::fold_product_once`.
+    #[inline(always)]
+    unsafe fn fold_product_once(x: __m256i) -> __m256i {
+        let lo = _mm256_and_si256(x, _mm256_set1_epi64x(Self::MASK_U64 as i64));
+        let hi = _mm256_srli_epi64::<32>(x);
+        _mm256_add_epi64(lo, Self::mul_c_u64(hi))
     }
 
     /// Plonky3-style Mersenne31 multiply (P = 2^31 - 1). Specialized fold
@@ -156,39 +169,16 @@ impl<const P: u32> PackedFp32Avx2<P> {
         Self::solinas_reduce(prod_evn, prod_odd)
     }
 
-    /// `(sum + rhs, carry + overflow_bit)`: 4-lane `u64` accumulating add with
-    /// per-lane carry tracking. Mirrors `PackedFp32Neon::add_u64_with_carry`.
-    #[inline(always)]
-    unsafe fn add_u64_with_carry(sum: __m256i, rhs: __m256i, carry: __m256i) -> (__m256i, __m256i) {
-        let next = _mm256_add_epi64(sum, rhs);
-        // unsigned compare next < sum: equivalent to "an overflow happened".
-        let sign = _mm256_set1_epi64x(i64::MIN);
-        let sum_s = _mm256_xor_si256(sum, sign);
-        let next_s = _mm256_xor_si256(next, sign);
-        let overflow_mask = _mm256_cmpgt_epi64(sum_s, next_s);
-        let one = _mm256_set1_epi64x(1);
-        let overflow_bit = _mm256_and_si256(overflow_mask, one);
-        (next, _mm256_add_epi64(carry, overflow_bit))
-    }
-
-    /// Multiply each lane's low 32 bits by `Fp32::<P>::SHIFT64_MOD_P`. Used
-    /// to fold accumulated overflow count back into the Solinas reduction.
-    /// Mirrors `PackedFp32Neon::carry_correction`.
-    #[inline(always)]
-    unsafe fn carry_correction(carry: __m256i) -> __m256i {
-        let shift = _mm256_set1_epi64x(Fp32::<P>::SHIFT64_MOD_P as i64);
-        _mm256_mul_epu32(carry, shift)
-    }
-
     /// 4-way fused multiply-accumulate with a single end-reduction.
     /// Computes `sum_i a[i] * b[i]` lane-wise and canonicalizes. The key
     /// fused operation for `RingSubfieldFp4` and power-basis Fp4 multiply.
-    /// Mirrors `PackedFp32Neon::dot_product_4_vec`, including the
-    /// `BITS <= 31` carry-free fast path: four `(2^31 - 1)^2` products sum
-    /// to less than `2^64`, so partial sums never overflow a `u64` lane
-    /// and we can drop the `add_u64_with_carry` chain plus the trailing
-    /// `carry_correction`. The `if Self::BITS <= 31` is a const condition
-    /// and dead-code-eliminated at compile time.
+    /// Mirrors `PackedFp32Neon::dot_product_4_vec`. For `BITS <= 31`, four
+    /// `(2^31 - 1)^2` products sum below `2^64`, so the raw products
+    /// accumulate without overflow. For `BITS == 32`, each product is
+    /// pre-folded once (`< 2^40`) so four folds sum below `2^42`, again
+    /// overflow-free. Both branches end in a single carry-free
+    /// `solinas_reduce`; the `if` is a const condition resolved at compile
+    /// time.
     #[inline(always)]
     unsafe fn dot_product_4_vec(a: [__m256i; 4], b: [__m256i; 4]) -> __m256i {
         let mut sum_evn = _mm256_mul_epu32(a[0], b[0]);
@@ -204,21 +194,19 @@ impl<const P: u32> PackedFp32Avx2<P> {
             return Self::solinas_reduce(sum_evn, sum_odd);
         }
 
-        let mut carry_evn = _mm256_setzero_si256();
-        let mut carry_odd = _mm256_setzero_si256();
-
+        // BITS == 32: four 32-bit products overflow a `u64` sum, so pre-fold each
+        // product once (`< 2^40`) and accumulate the folds (`< 4*2^40 < 2^42`),
+        // which is carry-free, then a single carry-free `solinas_reduce`.
+        let mut sum_evn = Self::fold_product_once(sum_evn);
+        let mut sum_odd = Self::fold_product_once(sum_odd);
         for i in 1..4 {
-            let prod_evn = _mm256_mul_epu32(a[i], b[i]);
-            let prod_odd = _mm256_mul_epu32(movehdup_epi32(a[i]), movehdup_epi32(b[i]));
-            let (s_evn, c_evn) = Self::add_u64_with_carry(sum_evn, prod_evn, carry_evn);
-            let (s_odd, c_odd) = Self::add_u64_with_carry(sum_odd, prod_odd, carry_odd);
-            sum_evn = s_evn;
-            sum_odd = s_odd;
-            carry_evn = c_evn;
-            carry_odd = c_odd;
+            let prod_evn = Self::fold_product_once(_mm256_mul_epu32(a[i], b[i]));
+            let prod_odd =
+                Self::fold_product_once(_mm256_mul_epu32(movehdup_epi32(a[i]), movehdup_epi32(b[i])));
+            sum_evn = _mm256_add_epi64(sum_evn, prod_evn);
+            sum_odd = _mm256_add_epi64(sum_odd, prod_odd);
         }
-
-        Self::solinas_reduce_with_carry(sum_evn, sum_odd, carry_evn, carry_odd)
+        Self::solinas_reduce(sum_evn, sum_odd)
     }
 
     /// 3-way fused multiply-accumulate with a single end-reduction.
@@ -237,21 +225,17 @@ impl<const P: u32> PackedFp32Avx2<P> {
             return Self::solinas_reduce(sum_evn, sum_odd);
         }
 
-        let mut carry_evn = _mm256_setzero_si256();
-        let mut carry_odd = _mm256_setzero_si256();
-
+        // BITS == 32: pre-fold (see `dot_product_4_vec`).
+        let mut sum_evn = Self::fold_product_once(sum_evn);
+        let mut sum_odd = Self::fold_product_once(sum_odd);
         for i in 1..3 {
-            let prod_evn = _mm256_mul_epu32(a[i], b[i]);
-            let prod_odd = _mm256_mul_epu32(movehdup_epi32(a[i]), movehdup_epi32(b[i]));
-            let (s_evn, c_evn) = Self::add_u64_with_carry(sum_evn, prod_evn, carry_evn);
-            let (s_odd, c_odd) = Self::add_u64_with_carry(sum_odd, prod_odd, carry_odd);
-            sum_evn = s_evn;
-            sum_odd = s_odd;
-            carry_evn = c_evn;
-            carry_odd = c_odd;
+            let prod_evn = Self::fold_product_once(_mm256_mul_epu32(a[i], b[i]));
+            let prod_odd =
+                Self::fold_product_once(_mm256_mul_epu32(movehdup_epi32(a[i]), movehdup_epi32(b[i])));
+            sum_evn = _mm256_add_epi64(sum_evn, prod_evn);
+            sum_odd = _mm256_add_epi64(sum_odd, prod_odd);
         }
-
-        Self::solinas_reduce_with_carry(sum_evn, sum_odd, carry_evn, carry_odd)
+        Self::solinas_reduce(sum_evn, sum_odd)
     }
 
     /// Multiply by an `Fp2` non-residue (used by `fp2_mul`). Recognizes the
@@ -340,84 +324,6 @@ impl<const P: u32> PackedFp32Avx2<P> {
 
         // Optional third fold for large-C primes (e.g. Generic31Offset32787)
         // where two folds leave residue > 2*P.
-        let (evn_final, odd_final) = if Self::TWO_FOLD_FOUR_PRODUCT_OK {
-            (evn_f2, odd_f2)
-        } else {
-            let evn_f2_lo = _mm256_and_si256(evn_f2, mask);
-            let evn_f2_hi = if Self::BITS == 31 {
-                _mm256_srli_epi64::<31>(evn_f2)
-            } else {
-                _mm256_srl_epi64(evn_f2, shift)
-            };
-            let odd_f2_lo = _mm256_and_si256(odd_f2, mask);
-            let odd_f2_hi = if Self::BITS == 31 {
-                _mm256_srli_epi64::<31>(odd_f2)
-            } else {
-                _mm256_srl_epi64(odd_f2, shift)
-            };
-            (
-                _mm256_add_epi64(evn_f2_lo, Self::mul_c_u64(evn_f2_hi)),
-                _mm256_add_epi64(odd_f2_lo, Self::mul_c_u64(odd_f2_hi)),
-            )
-        };
-
-        Self::pack_and_canonicalize(evn_final, odd_final)
-    }
-
-    /// Same as `solinas_reduce` but with extra carry counts to fold in. Used
-    /// by `dot_product_4_vec` when accumulating multiple `u64` products.
-    /// Mirrors `PackedFp32Neon::solinas_reduce_with_carry`.
-    #[inline(always)]
-    unsafe fn solinas_reduce_with_carry(
-        prod_evn: __m256i,
-        prod_odd: __m256i,
-        carry_evn: __m256i,
-        carry_odd: __m256i,
-    ) -> __m256i {
-        let mask = _mm256_set1_epi64x(Self::MASK_U64 as i64);
-        let shift = _mm_set_epi64x(0, Self::BITS as i64);
-
-        // Fold 1 with carry correction
-        let evn_lo = _mm256_and_si256(prod_evn, mask);
-        let evn_hi = if Self::BITS == 31 {
-            _mm256_srli_epi64::<31>(prod_evn)
-        } else {
-            _mm256_srl_epi64(prod_evn, shift)
-        };
-        let evn_f1 = _mm256_add_epi64(
-            _mm256_add_epi64(evn_lo, Self::mul_c_u64(evn_hi)),
-            Self::carry_correction(carry_evn),
-        );
-
-        let odd_lo = _mm256_and_si256(prod_odd, mask);
-        let odd_hi = if Self::BITS == 31 {
-            _mm256_srli_epi64::<31>(prod_odd)
-        } else {
-            _mm256_srl_epi64(prod_odd, shift)
-        };
-        let odd_f1 = _mm256_add_epi64(
-            _mm256_add_epi64(odd_lo, Self::mul_c_u64(odd_hi)),
-            Self::carry_correction(carry_odd),
-        );
-
-        // Fold 2
-        let evn_f1_lo = _mm256_and_si256(evn_f1, mask);
-        let evn_f1_hi = if Self::BITS == 31 {
-            _mm256_srli_epi64::<31>(evn_f1)
-        } else {
-            _mm256_srl_epi64(evn_f1, shift)
-        };
-        let evn_f2 = _mm256_add_epi64(evn_f1_lo, Self::mul_c_u64(evn_f1_hi));
-
-        let odd_f1_lo = _mm256_and_si256(odd_f1, mask);
-        let odd_f1_hi = if Self::BITS == 31 {
-            _mm256_srli_epi64::<31>(odd_f1)
-        } else {
-            _mm256_srl_epi64(odd_f1, shift)
-        };
-        let odd_f2 = _mm256_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
-
-        // Optional third fold (see `solinas_reduce`).
         let (evn_final, odd_final) = if Self::TWO_FOLD_FOUR_PRODUCT_OK {
             (evn_f2, odd_f2)
         } else {

@@ -264,6 +264,45 @@ The only path that could change this is AVX-512 IFMA52 (`vpmadd52luq` / `vpmadd5
 **Data-quality note.**
 The committed Phase 1 NEON `square` rows for `prime31_offset19` (6.029 ns latency) and `prime32_offset99` (7.040 ns latency) are stale and noisy; a fresh capture shows 3.79 and 4.29 ns respectively (square approximately equal to mul, as expected), so these rows should be refreshed alongside the Mersenne31 square win when the Phase 1 baselines are regenerated.
 
+**Correctness bug found and fixed: AVX2 / AVX-512 packed base multiply for 32-bit primes (`ae328e1e`).**
+The packed `Mul` impls for `PackedFp32Avx2` / `PackedFp32Avx512` inlined a 32-bit even/odd recombine after the two Solinas folds.
+For `BITS == 32` primes the two-fold residue can land in `[2^32, 2*P)` (up to `2^32 + C^2`), so that recombine dropped bit 32 and returned a value exactly `C` too small.
+This is reachable from real code: `crates/akita-config/src/proof_optimized/fp32.rs` sets the base field to `Prime32Offset99`, a `BITS == 32` prime.
+The bug was x86-only because NEON's base `Mul` already delegates to `mul_vec -> solinas_reduce -> pack_and_canonicalize`, which subtracts `P` on the full 64-bit lanes before packing, so local NEON test runs never exercised the broken path.
+The hit probability under uniform random inputs is about `C / 2^32` (around `2e-6`), so the 275-sample parity sweep passed; a deterministic regression test (`packed_fp32_32b_mul_two_fold_overflow_window`) with vectors that land in the overflow window now guards it.
+The fix routes both AVX base `Mul` impls through the existing `pack_and_canonicalize`, which is byte-identical to the inline recombine for `BITS < 32` (so 31-bit primes are unaffected) and correct for `BITS == 32`; verified green on AVX-512 (Ryzen 9 9950X) and AVX2.
+
+**AVX-512 / AVX2 base reduction: investigated, no benchmark-gated win (the projected gap was a measurement artifact).**
+The committed `avx512` CSV showed `prime31_offset19` base `mul` / `square` throughput around 0.083 ns/lane against KoalaBear's 0.073, suggesting a ~15% reduction gap to close by replacing the wide C-multiply (`vpmullq` on AVX-512, a multi-op split on AVX2) with a single `vpmuludq` in the single-product folds.
+Under controlled back-to-back measurement (`-Ctarget-cpu=native`, identical criterion settings, Mersenne31 as a flat control) the premise did not reproduce: pre-change `prime31_offset19` base `mul` throughput is 0.0723 ns/lane and `square` is 0.0705, both already at parity with KoalaBear.
+The narrow-`vpmuludq` change then regressed `prime31_offset19` by +6.6% / +8.0% (`mul` latency / throughput) and +5.6% / +6.8% (`square`), left `prime32_offset99` unchanged (its cost is the `BITS == 32` 64-bit canonicalize, not the C-multiply), and left the Mersenne31 control flat, so it was reverted.
+The takeaway is that the committed `avx512` sub-15% deltas are not reliable for A/B decisions; they were captured under different conditions from the kernel they describe, and Akita's AVX-512 base field is already at parity with the Plonky3 Montgomery kernels rather than behind them.
+
+**`prime32_offset99` (`BITS == 32`) base `add` / `sub` penalties: real but structural to the modulus.**
+Controlled measurement confirms the gaps: base `add` latency 0.182 ns/lane vs `prime31_offset19` 0.0845 (2.16x) and base `sub` 0.118 vs 0.084 (1.40x).
+The base `add` penalty is the genuine `2^32` carry handling (detect wrap, add `C`, conditional subtract `P`), a five-operation sequence that the 31-bit primes avoid because their spare top bit lets `add` be `add` then `sub` then `min`.
+No representation-preserving win exists here without changing the field's bit width.
+
+**Landed (AVX-512 + AVX2): fold-then-sum `BITS == 32` dot product removes the fp4 carry path.**
+The `prime32_offset99` fp4 penalty was the dot-product carry path: four products of 32-bit values overflow a `u64`, so `dot_product_{3,4}_vec` tracked per-accumulation carries (`add_u64_with_carry` plus a trailing `carry_correction`), whereas 31-bit primes sum four products carry-free.
+Folding each product once before summing (a single Solinas fold drops each product below `2^40`, so up to four folds sum below `2^42` without `u64` overflow, then one carry-free `solinas_reduce`) was implemented for `BITS == 32` on both AVX backends and measured as a clear win, contrary to the earlier op-count guess.
+On AVX-512 (Ryzen 9 9950X) it improved `prime32_offset99` fp4 by 2.0-10.2% latency and 1.9-7.5% throughput across all three bases (rs / tw / pw, `square` benefiting most), with the `prime31_offset19` control flat (within +/-0.8%).
+The win is because the removed carry machinery (an unsigned compare, two adds, and a carry extract per product, repeated three times) costs more than the three-operation fold; both the `BITS <= 31` and `BITS == 32` dot-product paths now end in the same carry-free `solinas_reduce`, so `add_u64_with_carry` / `carry_correction` / `solinas_reduce_with_carry` are dead on the AVX backends and were removed (NEON still uses them).
+The `BITS == 32` overflow window is guarded by the new `packed_ring_subfield_fp4_prime32_edge_lanes` test, whose edge values include `P - 1` and so drive the maximal `(P-1)^2` partial products through the fold-then-sum path.
+
+**Rejected: cheaper `BITS == 32` base recombine to recover the correctness-fix throughput cost.**
+The correctness fix routed `BITS == 32` base `mul` / `square` through `pack_and_canonicalize` (two 64-bit `vpminuq`), which cost about 10% throughput on `prime32_offset99` versus the old (incorrect) inline recombine.
+Because the two-fold residue is `< 2*P < 2^33`, the carry is a single bit and `2^32 = P + C`, so a single masked `+C` correction plus one 32-bit `vpminud` is correct (proven for the full `< 2*P` contract), replacing the two 64-bit minimums.
+Measured on AVX-512 it instead regressed `prime32_offset99` base `mul` by 45.5% latency / 13.2% throughput and fp4 by 5-10%, with the 31-bit control flat, because the longer dependency chain (shift, blend, blend, sub, and, add, sub, min) outweighs the two cheap `vpminuq`.
+The existing two-`vpminuq` recombine is already near-optimal, so the correctness fix's throughput cost is the genuine price of correctness rather than recoverable overhead; the change was reverted.
+
+**Production ring-subfield fp4 vs power / tower basis on AVX-512: real ~10% throughput gap, algebraically fixed.**
+The production ring-subfield basis is about 5% slower in latency and 10% slower in throughput than the non-production power and tower bases for `prime31_offset19` fp4 (`mul` 0.574 / 0.500 vs 0.548 / 0.454; `square` 0.579 / 0.445 vs 0.531 / 0.412).
+All three already use the fused four-product `dot_product_4_vec` schedule (sixteen products, four reductions), so products and reductions are equal; the entire difference is the four extra precompute add/subs the ring-subfield multiply formula needs (`b0 +/- b2`, `b1 +/- b3`) that the power basis `w = 2` schedule does not.
+Those four combinations are distinct and reused across the four output coefficients, so they cannot be removed without a different multiplication algorithm, which is a larger change than an instruction-schedule tweak and is recorded here rather than attempted.
+
+A small local A/B helper, `scripts/bench_ab.py`, reads criterion median point estimates for one saved baseline or diffs two baselines as percentage change, used for all the controlled measurements above.
+
 ### Alternatives Considered
 
 - New excluded sub-workspace (`bench/field-cross-repo/`), mirroring `profile/akita-recursion`. Rejected for this scope: Plonky3 0.5.3 is already in the main lock, `field_arith` already hosts a foreign field dev-dep, and an in-crate module reuses the existing harness and naming for free. The sub-workspace would only be justified to isolate a genuinely new heavy graph (e.g. Plonky2), which is out of scope.

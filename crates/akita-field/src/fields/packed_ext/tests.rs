@@ -400,6 +400,17 @@ fn packed_ring_subfield_fp4_mersenne31_edge_lanes() {
 }
 
 #[test]
+fn packed_ring_subfield_fp4_prime32_edge_lanes() {
+    // Exercises the `BITS == 32` fold-then-sum dot-product path at the
+    // overflow window: the edge values include `P - 1`, so the dot product
+    // sees maximal `(P-1)^2` partial products where carry handling matters.
+    check_packed_ring_subfield_fp4_edge::<
+        { crate::fields::pseudo_mersenne::PRIME32_OFFSET99_MODULUS },
+        PR4Prime32,
+    >();
+}
+
+#[test]
 fn packed_ring_subfield_fp4_generic31_edge_lanes() {
     check_packed_ring_subfield_fp4_edge::<{ (1u32 << 31) - 61 }, PR4Generic31Offset61>();
 }
