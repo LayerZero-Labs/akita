@@ -32,9 +32,17 @@ env:
   # prime caches and lazily-initialized statics; cache misses on the
   # first run otherwise distort the median across only 3 samples.
   AKITA_BENCH_WARMUPS: "1"
+  # The small-field (fp32/fp64) D128 one-hot cells run at nv=28, not nv=32.
+  # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
+  # than the fp128 cells (the fp32 nv=32 setup vector is ~2.6 GiB vs ~270 MiB
+  # for fp128), so at nv>=30 the prover's eq-evaluation table exceeds the
+  # 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling and the run aborts. nv=28
+  # is the largest validated size that both fits that budget and still folds
+  # through multiple recursive levels. The fp128 cells fold aggressively enough
+  # to stay at the production-default nv=32.
   AKITA_BENCH_CASES: |
-    onehot_fp32_d128:32:1
-    onehot_fp64_d128:32:1
+    onehot_fp32_d128:28:1
+    onehot_fp64_d128:28:1
     dense_fp128_d128:24:1
     onehot_fp128_d128:32:1
     onehot_fp128_d128:30:4

@@ -48,10 +48,10 @@ The checked-in workflow currently runs:
 
 | Mode | Field | Workload | Variables | Polys | Config | Notes |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| `onehot_fp32_d128` | fp32 | 1-of-256 one-hot | 32 | 1 | D128 | Smallest securable fp32 one-hot under honest pricing. |
-| `onehot_fp64_d128` | fp64 | 1-of-256 one-hot | 32 | 1 | D128 | Smallest securable fp64 one-hot under honest pricing. |
+| `onehot_fp32_d128` | fp32 | 1-of-256 one-hot | 28 | 1 | D128 | Smallest securable fp32 one-hot under honest pricing. Capped at nv=28: the ext-degree-4 challenge schedule keeps a large un-folded witness, so at nv>=30 the prover's eq-evaluation table exceeds the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling. |
+| `onehot_fp64_d128` | fp64 | 1-of-256 one-hot | 28 | 1 | D128 | Smallest securable fp64 one-hot under honest pricing. Capped at nv=28 for the same eq-table-budget reason as the fp32 cell. |
 | `dense_fp128_d128` | fp128 | dense | 24 | 1 | D128 | fp128 dense smoke at the production-default ring dimension. |
-| `onehot_fp128_d128` | fp128 | 1-of-256 one-hot | 32 | 1 | D128 | Explicit fp128 one-hot mode at the production-default ring dimension. |
+| `onehot_fp128_d128` | fp128 | 1-of-256 one-hot | 32 | 1 | D128 | Explicit fp128 one-hot mode at the production-default ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
 | `onehot_fp128_d128` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D128 | Preserves same-point batched one-hot coverage. |
 
 Every active cell is a family that folds securely under honest committed-fold
