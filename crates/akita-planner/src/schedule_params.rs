@@ -94,6 +94,8 @@ fn derive_candidate_level_params(
             false,
             policy.onehot_chunk_size,
             policy.ring_subfield_norm_bound,
+            r,
+            1,
         ) else {
             continue;
         };
@@ -483,22 +485,12 @@ fn compute_root_direct_level_params(
 
     // Outer/inner variable split: brute-force the optimum for a normal root,
     // single-block `(0, 0)` for a tiny root (`num_vars <= log2(d)`). The
-    // optimizer needs the audited A-role collision bucket to score each `r`.
+    // optimizer recomputes the fold-priced A collision per `r` internally
+    // (it grows with the fold arity `num_claims · 2^r`), so it needs the
+    // batch factor and ring-subfield norm, not a single pre-baked bucket.
     let (m_vars, r_vars) = if num_vars > alpha {
         // The `(m, r)` split is scored against the flat L1 mass (the root fold
         // shape disambiguates the committed table, not the split search).
-        let Some(a_collision) = rounded_up_collision_norm_s(
-            sis_family,
-            d,
-            level_decomp,
-            &stage1_config,
-            TensorChallengeShape::Flat,
-            true,
-            policy.onehot_chunk_size,
-            policy.ring_subfield_norm_bound,
-        ) else {
-            return Ok(None);
-        };
         let fold_challenge = FoldChallengeNorms {
             infinity_norm: TensorChallengeShape::Flat.effective_infinity_norm(&stage1_config)
                 as u128,
@@ -511,7 +503,8 @@ fn compute_root_direct_level_params(
         let (m_vars, r_vars, _scoring_n_a) = optimal_m_r_split(
             sis_family,
             d as u32,
-            a_collision,
+            num_claims,
+            policy.ring_subfield_norm_bound,
             fold_challenge,
             fold_witness,
             decomp.log_commit_bound,
@@ -545,6 +538,8 @@ fn compute_root_direct_level_params(
         true,
         policy.onehot_chunk_size,
         policy.ring_subfield_norm_bound,
+        r_vars,
+        num_claims,
     ) else {
         return Ok(None);
     };
@@ -725,6 +720,8 @@ pub fn find_schedule(
                 true,
                 policy.onehot_chunk_size,
                 policy.ring_subfield_norm_bound,
+                r_vars,
+                t_vectors,
             ) else {
                 continue;
             };

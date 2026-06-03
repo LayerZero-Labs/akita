@@ -3,11 +3,11 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::{CanonicalField, One};
 #[cfg(not(feature = "zk"))]
 use akita_planner::generated::{
-    fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
+    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_onehot_table,
 };
 use akita_planner::generated::{
-    fp32_d64_onehot_table, fp32_d64_table, fp64_d32_onehot_table, fp64_d32_table,
-    fp64_d64_onehot_table, fp64_d64_table, GeneratedScheduleTable,
+    fp32_d128_onehot_table, fp32_d256_onehot_table, fp64_d128_onehot_table, fp64_d128_table,
+    fp64_d256_onehot_table, GeneratedScheduleTable,
 };
 use akita_types::SisModulusFamily;
 
@@ -169,7 +169,7 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
     // would bind singleton-sized params while verification ran
     // against batched ones.
     use akita_types::{digest_effective_schedule, root_direct_schedule};
-    type Cfg = fp128::D32Full;
+    type Cfg = fp128::D128Full;
     let real_incidence =
         ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
     let real_params =
@@ -211,11 +211,11 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
 #[test]
 fn setup_matrix_envelope_covers_grouped_batch_schedules() {
     let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
-    let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence)
+    let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&incidence)
         .unwrap()
         .expect("grouped same-point shape should resolve to a setup envelope");
 
-    let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D128Full>(30, 4, 1)
         .expect("setup envelope should cover generated grouped batch schedules");
     assert!(setup_envelope.max_setup_len >= grouped_same_point.max_setup_len);
 }
@@ -235,7 +235,7 @@ fn expected_runtime_root_setup_len(lp: &LevelParams, incidence: &ClaimIncidenceS
 
 #[test]
 fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
-    type Cfg = fp128::D32Full;
+    type Cfg = fp128::D128Full;
     let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
     let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
@@ -255,7 +255,7 @@ fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
 fn setup_matrix_envelope_covers_skewed_multipoint_root_widths() {
     use akita_types::root_direct_schedule;
 
-    type Cfg = fp128::D32Full;
+    type Cfg = fp128::D128Full;
     let incidence =
         ClaimIncidenceSummary::from_point_polys(30, vec![3, 1]).expect("skewed incidence");
     let commit_incidence =
@@ -283,7 +283,7 @@ fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
     use akita_challenges::SparseChallengeConfig;
     use akita_types::SisModulusFamily;
 
-    type Cfg = fp128::D32Full;
+    type Cfg = fp128::D128Full;
     let sparse = SparseChallengeConfig::Uniform {
         weight: 1,
         nonzero_coeffs: vec![-1, 1],
@@ -322,7 +322,7 @@ fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
 #[test]
 #[cfg(feature = "zk")]
 fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
-    type Cfg = fp32::D64Full;
+    type Cfg = fp128::D128Full;
     let incidence = ClaimIncidenceSummary::same_point(26, 1).expect("singleton incidence");
     let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
@@ -560,58 +560,53 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_fp128_schedule_tables_match_cfg_schedule() {
-    assert_every_table_entry_materializes::<fp128::D32Full>(fp128_d32_full_table());
-    assert_every_table_entry_materializes::<fp128::D32OneHot>(fp128_d32_onehot_table());
-    assert_every_table_entry_materializes::<fp128::D64Full>(fp128_d64_full_table());
+    assert_every_table_entry_materializes::<fp128::D128Full>(fp128_d128_full_table());
+    assert_every_table_entry_materializes::<fp128::D128OneHot>(fp128_d128_onehot_table());
     assert_every_table_entry_materializes::<fp128::D64OneHot>(fp128_d64_onehot_table());
 }
 
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_small_field_schedule_tables_match_cfg_schedule() {
-    assert_every_table_entry_materializes::<fp32::D64Full>(fp32_d64_table());
-    assert_every_table_entry_materializes::<fp32::D64OneHot>(fp32_d64_onehot_table());
-    assert_every_table_entry_materializes::<fp64::D32Full>(fp64_d32_table());
-    assert_every_table_entry_materializes::<fp64::D32OneHot>(fp64_d32_onehot_table());
-    assert_every_table_entry_materializes::<fp64::D64Full>(fp64_d64_table());
-    assert_every_table_entry_materializes::<fp64::D64OneHot>(fp64_d64_onehot_table());
+    assert_every_table_entry_materializes::<fp32::D128OneHot>(fp32_d128_onehot_table());
+    assert_every_table_entry_materializes::<fp32::D256OneHot>(fp32_d256_onehot_table());
+    assert_every_table_entry_materializes::<fp64::D128Full>(fp64_d128_table());
+    assert_every_table_entry_materializes::<fp64::D128OneHot>(fp64_d128_onehot_table());
+    assert_every_table_entry_materializes::<fp64::D256OneHot>(fp64_d256_onehot_table());
 }
 
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64Full>(fp32_d64_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64OneHot>(fp32_d64_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32Full>(fp64_d32_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32OneHot>(fp64_d32_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64Full>(fp64_d64_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64OneHot>(fp64_d64_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D128OneHot>(fp32_d128_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D256OneHot>(fp32_d256_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D128Full>(fp64_d128_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D128OneHot>(fp64_d128_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D256OneHot>(fp64_d256_onehot_table());
 }
 
 #[test]
 #[cfg(feature = "zk")]
 fn generated_zk_small_field_schedule_tables_have_crt_i8_capacity() {
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64Full>(fp32_d64_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64OneHot>(fp32_d64_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32Full>(fp64_d32_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32OneHot>(fp64_d32_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64Full>(fp64_d64_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64OneHot>(fp64_d64_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D128OneHot>(fp32_d128_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D256OneHot>(fp32_d256_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D128Full>(fp64_d128_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D128OneHot>(fp64_d128_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D256OneHot>(fp64_d256_onehot_table());
 }
 
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_batched_roots_restore_scaled_widths() {
-    assert_generated_batched_roots_are_scaled::<fp128::D32Full>(fp128_d32_full_table());
-    assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
-    assert_generated_batched_roots_are_scaled::<fp128::D64Full>(fp128_d64_full_table());
+    assert_generated_batched_roots_are_scaled::<fp128::D128Full>(fp128_d128_full_table());
+    assert_generated_batched_roots_are_scaled::<fp128::D128OneHot>(fp128_d128_onehot_table());
     assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
 }
 
 #[test]
 #[cfg(not(feature = "zk"))]
-fn generated_d64_full_table_materializes_valid_plans() {
-    let table = fp128_d64_full_table();
+fn generated_d128_full_table_materializes_valid_plans() {
+    let table = fp128_d128_full_table();
     for entry in table.entries {
         let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
@@ -619,7 +614,7 @@ fn generated_d64_full_table_materializes_valid_plans() {
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
         );
-        <fp128::D64Full as CommitmentConfig>::runtime_schedule(key)
+        <fp128::D128Full as CommitmentConfig>::runtime_schedule(key)
             .expect("config schedule should succeed");
     }
 }
@@ -684,8 +679,12 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
     else {
         panic!("4x30 onehot schedule should end in packed digits");
     };
+    // Bound reflects the committed-fold A-role SIS pricing: honest pricing
+    // lifts the per-level rank, widening the terminal witness, but the
+    // byte-aware schedule still keeps folding rather than dumping a huge
+    // cleartext root.
     assert!(
-        num_elems <= 245_888,
+        num_elems <= 375_104,
         "expected byte-aware batched schedule to keep folding, got final_w with {num_elems} elems"
     );
 }

@@ -142,6 +142,7 @@ fn expected_same_point_batched_shape(
             &level_params,
             current_w_len,
             OneHotCfg::decomposition(),
+            OneHotCfg::ring_subfield_embedding_norm_bound(),
         )
         .expect("recursive layout");
         let next_w_len =
@@ -176,6 +177,7 @@ fn expected_same_point_batched_shape(
         &terminal_params,
         current_w_len,
         OneHotCfg::decomposition(),
+        OneHotCfg::ring_subfield_embedding_norm_bound(),
     )
     .expect("terminal layout");
     // The terminal recursive fold ships its `w` in cleartext under
@@ -193,10 +195,19 @@ fn expected_same_point_batched_shape(
     .expect("terminal-layout witness count")
         * terminal_lp.ring_dimension;
     let terminal_rounds = batched_shape_rounds(terminal_lp.ring_dimension, terminal_next_w_len);
+    // Under the terminal MRowLayout::WithoutDBlock (D-block omitted), the first
+    // stage-2 round polynomial's leading cubic coefficient is structurally zero,
+    // so it compresses to degree 2; the remaining rounds keep the full degree-3
+    // fused shape. (Root/intermediate folds carry the D-block and stay degree-3
+    // in every round.)
+    let mut terminal_stage2 = vec![3; terminal_rounds];
+    if let Some(first) = terminal_stage2.first_mut() {
+        *first = 2;
+    }
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         y_rings_coeffs: terminal_lp.ring_dimension,
         extension_opening_reduction: None,
-        stage2_sumcheck: vec![3; terminal_rounds],
+        stage2_sumcheck: terminal_stage2,
         final_witness: akita_types::CleartextWitnessShape::PackedDigits((
             terminal_next_w_len,
             terminal_next_params.log_basis,

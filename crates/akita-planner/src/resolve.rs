@@ -29,11 +29,11 @@ use akita_types::{
 
 use crate::find_schedule;
 use crate::generated::{
-    fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
-    fp128_d64_onehot_tensor_table, fp32_d64_onehot_table,
-    fp32_d64_table, fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
-    table_entry, GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry,
-    GeneratedStep, SisModulusFamily,
+    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_onehot_table,
+    fp128_d64_onehot_tensor_table, fp32_d128_onehot_table, fp32_d256_onehot_table,
+    fp64_d128_onehot_table, fp64_d128_table, fp64_d256_onehot_table, table_entry,
+    GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
+    SisModulusFamily,
 };
 use crate::PlannerPolicy;
 
@@ -65,55 +65,40 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
 ///   tensor-shaped, which is the *only* discriminator between the otherwise
 ///   identical `fp128_d64_onehot` and `fp128_d64_onehot_tensor` policies.
 ///
-/// `(family, ring_degree)` combinations with no shipped table (e.g. `D=128`
-/// experimental presets, or any recursive-w derived policy whose
-/// `log_commit_bound` is its `log_basis`) return `None`, so the caller
-/// regenerates from scratch.
+/// Under the committed-fold A-role SIS pricing, `D=128` is the proof-size
+/// optimum and the shipped production dimension for every field; the small
+/// primes ship one-hot only (full-field small primes exceed the small-modulus
+/// SIS floor at realistic `num_vars`). `(family, ring_degree, onehot)`
+/// combinations with no shipped table (full-field small primes, the retired
+/// `D<=64` small-prime / full-field-`fp128` presets, or any recursive-w
+/// derived policy whose `log_commit_bound` is its `log_basis`) return `None`,
+/// so the caller regenerates from scratch.
 pub fn shipped_table(
     policy: &PlannerPolicy,
     root_fold_is_tensor: bool,
 ) -> Option<GeneratedScheduleTable> {
     let onehot = policy.decomposition.log_commit_bound == 1;
-    Some(match (policy.sis_family, policy.ring_dimension) {
-        (SisModulusFamily::Q128, 32) => {
-            if onehot {
-                fp128_d32_onehot_table()
+    Some(match (policy.sis_family, policy.ring_dimension, onehot) {
+        (SisModulusFamily::Q128, 128, true) => fp128_d128_onehot_table(),
+        (SisModulusFamily::Q128, 128, false) => fp128_d128_full_table(),
+        (SisModulusFamily::Q128, 64, true) => {
+            if root_fold_is_tensor {
+                fp128_d64_onehot_tensor_table()
             } else {
-                fp128_d32_full_table()
+                fp128_d64_onehot_table()
             }
         }
-        (SisModulusFamily::Q128, 64) => {
-            if onehot {
-                if root_fold_is_tensor {
-                    fp128_d64_onehot_tensor_table()
-                } else {
-                    fp128_d64_onehot_table()
-                }
-            } else {
-                fp128_d64_full_table()
-            }
-        }
-        (SisModulusFamily::Q32, 64) => {
-            if onehot {
-                fp32_d64_onehot_table()
-            } else {
-                fp32_d64_table()
-            }
-        }
-        (SisModulusFamily::Q64, 32) => {
-            if onehot {
-                fp64_d32_onehot_table()
-            } else {
-                fp64_d32_table()
-            }
-        }
-        (SisModulusFamily::Q64, 64) => {
-            if onehot {
-                fp64_d64_onehot_table()
-            } else {
-                fp64_d64_table()
-            }
-        }
+        // Full-field fp128 D=64 was retired in favour of D=128; let it
+        // regenerate from scratch.
+        (SisModulusFamily::Q128, 64, false) => return None,
+        (SisModulusFamily::Q32, 128, true) => fp32_d128_onehot_table(),
+        // Full-field fp32 is unsecurable at any audited D (small-modulus SIS
+        // floor), so there is no shipped table.
+        (SisModulusFamily::Q32, 128, false) => return None,
+        (SisModulusFamily::Q32, 256, true) => fp32_d256_onehot_table(),
+        (SisModulusFamily::Q64, 128, true) => fp64_d128_onehot_table(),
+        (SisModulusFamily::Q64, 128, false) => fp64_d128_table(),
+        (SisModulusFamily::Q64, 256, true) => fp64_d256_onehot_table(),
         _ => return None,
     })
 }

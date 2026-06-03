@@ -81,6 +81,7 @@ where
             commit_params,
             current_w_len,
             Cfg::decomposition(),
+            Cfg::ring_subfield_embedding_norm_bound(),
         )
     })
 }
@@ -152,6 +153,7 @@ where
                     params,
                     current_w_len,
                     Cfg::decomposition(),
+                    Cfg::ring_subfield_embedding_norm_bound(),
                 )
             },
             |w| {
@@ -166,6 +168,7 @@ where
                             params,
                             current_w_len,
                             Cfg::decomposition(),
+                            Cfg::ring_subfield_embedding_norm_bound(),
                         )
                     },
                     recursive_w_commit_layout_for_d::<Cfg>,
@@ -189,6 +192,7 @@ where
                         params,
                         current_w_len,
                         Cfg::decomposition(),
+                        Cfg::ring_subfield_embedding_norm_bound(),
                     )
                 },
                 |w| {
@@ -210,6 +214,7 @@ where
                                 params,
                                 current_w_len,
                                 Cfg::decomposition(),
+                                Cfg::ring_subfield_embedding_norm_bound(),
                             )
                         },
                         recursive_w_commit_layout_for_d::<Cfg>,
@@ -348,6 +353,7 @@ where
                     params,
                     current_w_len,
                     Cfg::decomposition(),
+                    Cfg::ring_subfield_embedding_norm_bound(),
                 )
             },
         )
@@ -375,6 +381,7 @@ where
                         params,
                         current_w_len,
                         Cfg::decomposition(),
+                        Cfg::ring_subfield_embedding_norm_bound(),
                     )
                 },
             )
@@ -595,6 +602,7 @@ where
                                         params,
                                         current_w_len,
                                         Cfg::decomposition(),
+                                        Cfg::ring_subfield_embedding_norm_bound(),
                                     )
                                 },
                                 recursive_w_commit_layout_for_d::<Cfg>,

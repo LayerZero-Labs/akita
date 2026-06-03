@@ -108,6 +108,9 @@ pub fn sis_derived_root_params_for_layout(
                 lp.log_basis
             ))
         })?;
+    // Singleton-root derivation (the B/D widths below are sized with
+    // `t_vectors = 1`); the A collision is fold-priced at the root split
+    // `lp.r_vars` with `num_claims = 1`.
     let a_collision = rounded_up_collision_norm_s(
         sis_family,
         d,
@@ -117,6 +120,8 @@ pub fn sis_derived_root_params_for_layout(
         is_root,
         onehot_chunk_size,
         ring_subfield_embedding_norm_bound,
+        lp.r_vars,
+        1,
     )
     .ok_or_else(|| {
         AkitaError::InvalidSetup(format!(

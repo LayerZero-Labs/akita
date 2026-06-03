@@ -285,16 +285,7 @@ fn dense_fp32_extension_opening(
         })
 }
 
-#[derive(Clone, Copy)]
-enum ExpectedRoot {
-    Terminal,
-    Fold,
-}
-
-fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
-    label: &'static [u8],
-    expected_root: ExpectedRoot,
-) {
+fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]) {
     type Cfg = fp32::D64Full;
     const D: usize = Cfg::D;
 
@@ -333,23 +324,14 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
         )
         .expect("zk fp32 prove");
 
-        match (expected_root, &proof.root) {
-            (ExpectedRoot::Terminal, AkitaBatchedRootProof::Terminal(root)) => {
-                assert!(
-                    root.extension_opening_reduction.is_some(),
-                    "fixture must exercise root extension-opening reduction"
-                );
-            }
-            (ExpectedRoot::Fold, AkitaBatchedRootProof::Fold(root)) => {
+        match &proof.root {
+            AkitaBatchedRootProof::Fold(root) => {
                 assert!(
                     root.extension_opening_reduction.is_some(),
                     "fixture must exercise folded-root extension-opening reduction"
                 );
             }
-            (ExpectedRoot::Terminal, other) => {
-                panic!("expected terminal root extension-reduction proof, got {other:?}");
-            }
-            (ExpectedRoot::Fold, other) => {
+            other => {
                 panic!("expected folded root extension-reduction proof, got {other:?}");
             }
         }
@@ -393,27 +375,16 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
 }
 
 #[test]
-fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
-    // The fp32 D64Full zk schedule transitions from a cleartext (`ZeroFold`)
-    // root, through a one-fold (`Terminal`) root, to a multi-fold (`Fold`)
-    // root as `num_vars` grows. Under the shared >=128-bit ring-challenge
-    // policy + regenerated SIS floor, `nv <= 13` are cleartext (`ZeroFold`),
-    // `nv = 14` is the single 1-fold (`Terminal`) root, and `nv >= 15`
-    // escalate to multi-fold (`Fold`) roots (the matching `Fold`-root fixture
-    // below uses `nv = 15`). D32Full never ships a fold-root schedule in the
-    // generated table, so these fixtures pin D64.
-    run_zk_fp32_extension_opening_reduction::<14>(
-        b"zk/fp32-extension-root-terminal",
-        ExpectedRoot::Terminal,
-    );
-}
-
-#[test]
 fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
-    run_zk_fp32_extension_opening_reduction::<15>(
-        b"zk/fp32-extension-root-fold",
-        ExpectedRoot::Fold,
-    );
+    // Under honest committed-fold pricing the small Q32 modulus has no 1-fold
+    // (`Terminal`) root regime: a singleton fp32 D64Full commitment is a
+    // cleartext (`ZeroFold`) root for `nv <= 14`, jumps straight to a
+    // multi-fold (`Fold`) root at `nv = 15`, and saturates back to `ZeroFold`
+    // for `nv >= 22` (the modulus can no longer securely commit the folded
+    // witness). So extension-opening reduction is exercised on the `Fold` root
+    // at `nv = 15`. D32Full never ships a fold-root schedule, so this fixture
+    // pins D64.
+    run_zk_fp32_extension_opening_reduction::<15>(b"zk/fp32-extension-root-fold");
 }
 
 fn run_zk_dense_commitment_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])

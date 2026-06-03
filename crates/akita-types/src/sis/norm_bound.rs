@@ -96,35 +96,61 @@ impl FoldWitnessNorms {
     }
 }
 
-/// A-role (committed witness `s`) rounded-up SIS collision bucket
-/// `ceil(2·ω̄·β̄·ν)` per Hachi Lemma 7, with
-/// `β̄ = min(||c||_inf·||s||_1, ||c||_1·||s||_inf)` and
-/// `ω̄ = ||c||_1` and `ν = ring_subfield_norm_bound`.
+/// A-role committed-level weak-binding SIS collision bucket, computed from
+/// already-derived per-level fold norms.
 ///
-/// # Precondition (inner-witness shortness)
+/// Every Ajtai-committed level (the dense root and all recursive fold levels)
+/// is priced at the *fold-response* norm — the only norm the weak-binding
+/// extractor certifies for the kernel vector `z_A = c̄'(c̄·s) − c̄(c̄'·s')`:
 ///
-/// The per-block `β̄ = ||c·s||_inf` is the *anchored* price: it is sound only
-/// when the committed inner witness L∞ is independently enforced at the
-/// `||s||_inf` recorded by [`FoldWitnessNorms`]. The weak-binding extractor only
-/// ever sees `||c̄·s||_inf = ||z^(ℓ,i) − z^(0)||_inf`, bounded generically by the
-/// *fold response* `2·β^resp` (which carries the fold arity `2^r` and the
-/// batched-claim count); dividing by the unit `c̄` does not recover `||s||_inf`.
-/// The anchored price replaces `2·β^resp` by `ω̄·||s||_inf`, and is justified at:
-///   - every recursive level (`is_root == false`): the witness is committed at
-///     `δ_commit = 1` ([`crate::sis::num_digits_s_commit`]), i.e. it *is* the
-///     previous level's range-checked extended witness (`||s||_inf ≤ b/2`) with
-///     no gadget gap — see the per-level inner-witness bound proposition;
-///   - one-hot roots (`is_root == true` and `log_commit_bound == 1`): also
-///     committed at `δ_commit = 1`, so `s = f` and `||s||_inf ≤ 1` *provided the
-///     caller proves the committed vector is one-hot* (in Jolt, the booleanity +
-///     Hamming-weight checks on the same commitment);
-///   - cleartext-digit roots: range-bounded by construction.
+/// ```text
+/// collision_A = 2 · κ̄ · β̄ · ν
+///   κ̄ = ||c − c'||_1 = 2·ω           (challenge difference; ω = ||c||_1)
+///   β̄ = 2 · β^resp                   (extractor bound ||z^(ℓ,i) − z^0||_inf ≤ 2·β^resp)
+///   β^resp = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
+/// ```
 ///
-/// For an UNCONSTRAINED dense root (`δ_commit > 1`, no structural guarantee) the
-/// extracted `s` is bounded only by `2·β^resp`, so this per-block bucket is
-/// UNSOUND there: such a root must be priced via the fold bound
-/// ([`fold_witness_beta`]) instead. Callers select the regime via the schedule's
-/// root-witness-bound policy; this function only computes the anchored bucket.
+/// so `collision_A = 8 · ω · fold_witness_beta · ν`, where `fold_witness_beta`
+/// is exactly [`fold_witness_beta`]. The `num_claims · 2^r_vars` factor is the
+/// fold arity an *anchored* per-block price would unsoundly drop: dividing the
+/// fold response by the ring unit `c̄` does not recover `||s||_inf`, and the
+/// range / booleanity checks bind the honest committed table, not the extracted
+/// quotient. One-hotness only shrinks `β^resp` (it sets `||s||_inf = 1`); it
+/// does not remove the fold arity, so it is folded into `witness`, not into a
+/// regime switch.
+///
+/// Returns `None` on norm overflow or when the collision exceeds every audited
+/// bucket for `(sis_family, d)`.
+#[must_use]
+pub fn committed_fold_collision_s(
+    sis_family: SisModulusFamily,
+    d: u32,
+    challenge: FoldChallengeNorms,
+    witness: FoldWitnessNorms,
+    r_vars: usize,
+    num_claims: usize,
+    ring_subfield_norm_bound: u32,
+) -> Option<u32> {
+    let fold_beta = fold_witness_beta(r_vars, num_claims, challenge, witness).ok()?;
+    // 2·κ̄·β̄·ν = 2·(2·ω)·(2·fold_beta)·ν = 8·ω·fold_beta·ν.
+    let collision = 8u128
+        .checked_mul(challenge.l1_norm)?
+        .checked_mul(fold_beta)?
+        .checked_mul(u128::from(ring_subfield_norm_bound))?;
+    ceil_supported_collision(sis_family, d, u32::try_from(collision).ok()?)
+}
+
+/// A-role (committed witness `s`) rounded-up SIS collision bucket for one
+/// committed fold level, per the corrected Hachi Lemma 7 weak-binding bound.
+///
+/// Builds the level's effective challenge `(||c||_inf, ||c||_1)` and witness
+/// `(||s||_inf, ||s||_1)` norms — one-hot roots commit a sparse witness
+/// (`||s||_inf = 1`), dense roots and every recursive level commit balanced
+/// digits (`||s||_inf = b/2`) — then prices the A collision at the fold response
+/// via [`committed_fold_collision_s`]. `r_vars` is the level's fold-arity
+/// exponent (`num_blocks = 2^r_vars`); `num_claims` is the batch factor, which
+/// is `> 1` only at a batched root and `1` at a singleton root and every
+/// recursive level.
 ///
 /// Returns `None` on norm overflow or when the collision exceeds every audited
 /// bucket for `(sis_family, d)`.
@@ -138,22 +164,24 @@ pub fn rounded_up_collision_norm_s(
     is_root: bool,
     onehot_chunk_size: usize,
     ring_subfield_norm_bound: u32,
+    r_vars: usize,
+    num_claims: usize,
 ) -> Option<u32> {
     let is_onehot = is_root && decomposition.log_commit_bound == 1;
-    let witness_norm =
-        FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
-    // β̄ = ||c·s||_inf; collision_A = 2·ω̄·β̄·ν with ω̄ = ||c||_1.
-    let beta = ring_product_infinity_norm_bound(
-        fold_shape.effective_infinity_norm(stage1_config) as u128,
-        fold_shape.effective_l1_mass(stage1_config) as u128,
-        witness_norm.infinity_norm,
-        witness_norm.l1_norm,
-    );
-    let collision = 2u128
-        .checked_mul(fold_shape.effective_l1_mass(stage1_config) as u128)?
-        .checked_mul(beta)?
-        .checked_mul(u128::from(ring_subfield_norm_bound))?;
-    ceil_supported_collision(sis_family, d as u32, u32::try_from(collision).ok()?)
+    let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
+    let challenge = FoldChallengeNorms {
+        infinity_norm: fold_shape.effective_infinity_norm(stage1_config) as u128,
+        l1_norm: fold_shape.effective_l1_mass(stage1_config) as u128,
+    };
+    committed_fold_collision_s(
+        sis_family,
+        d as u32,
+        challenge,
+        witness,
+        r_vars,
+        num_claims,
+        ring_subfield_norm_bound,
+    )
 }
 
 /// B-role (`t̂`) rounded-up SIS collision bucket. The collision is the direct

@@ -126,6 +126,8 @@ impl GeneratedFoldStep {
             is_root,
             policy.onehot_chunk_size,
             policy.ring_subfield_norm_bound,
+            r_vars,
+            num_claims,
         )
         .ok_or_else(|| no_layout("A"))?;
         let inner_width = decomposed_s_block_ring_count(block_len, num_digits_commit)
