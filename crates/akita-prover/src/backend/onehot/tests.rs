@@ -552,6 +552,107 @@ fn tensor_packed_sparse_linear_combination_matches_individual_witnesses() {
     assert_eq!(got.entries(), expected.entries());
 }
 
+/// Diagnostic for the EOR `np = 1` plateau: dump the within-chunk hot-position
+/// distribution (`raw >> lw`, equivalently `tail % stride`) read off a *real*
+/// tensor-packed witness, and show the fold plateau is `log2(stride)` rounds
+/// long *regardless* of how that distribution looks.
+///
+/// The hot positions are uniformly spread (random `raw`, exactly like
+/// `examples/profile/workload.rs`: seed `0xbeef_cafe`, `gen_range(0..onehot_k)`,
+/// every chunk active), yet `entries_len` is provably flat for `log2(stride)`
+/// rounds. So the plateau comes from the one-entry-per-power-of-two-window
+/// layout, not from any "alignment" of the hot positions.
+///
+/// `onehot_k = 256` and `width = [E:F] = 4` reproduce the `fp32 onehot_d32`
+/// shape (`stride = 64`, expected plateau `log2(64) = 6`). The arity is
+/// downscaled (2^14 chunks) purely for test speed; the per-chunk structure is
+/// identical to the profiled run.
+///
+/// See the histogram with:
+///   cargo test -p akita-prover np1_offset_distribution_and_plateau -- --nocapture
+#[test]
+fn np1_offset_distribution_and_plateau() {
+    use rand::Rng;
+    type F = Prime24Offset3;
+    type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+    const D: usize = 16;
+
+    let onehot_k = 256usize;
+    let log_chunks = 14usize;
+    let num_chunks = 1usize << log_chunks;
+
+    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
+    let indices: Vec<Option<usize>> = (0..num_chunks)
+        .map(|_| Some(rng.gen_range(0..onehot_k)))
+        .collect();
+    let poly = OneHotPoly::<F, D>::new(onehot_k, indices).unwrap();
+
+    let witness = poly.tensor_packed_sparse_witness::<E>().unwrap();
+
+    let (lw, width) = akita_types::tensor_opening_split::<F, E>().unwrap();
+    assert!(onehot_k.is_multiple_of(width));
+    let stride = onehot_k / width;
+    assert!(stride.is_power_of_two() && stride >= 2);
+    let s = stride.trailing_zeros() as usize;
+
+    // (a) offset = raw >> lw, recovered from the real witness as tail % stride
+    //     because tail = chunk_idx * stride + (raw >> lw).
+    let tails: Vec<usize> = witness.entries().iter().map(|&(t, _)| t).collect();
+    assert_eq!(
+        tails.len(),
+        num_chunks,
+        "all chunks active => one entry each"
+    );
+    let mut hist = vec![0usize; stride];
+    for &t in &tails {
+        hist[t % stride] += 1;
+    }
+    let occupied = hist.iter().filter(|&&c| c > 0).count();
+    let min = *hist.iter().min().unwrap();
+    let max = *hist.iter().max().unwrap();
+    eprintln!(
+        "np=1 offset (raw>>lw) distribution: onehot_k={onehot_k} width={width} lw={lw} \
+         stride={stride} entries={} occupied_buckets={occupied}/{stride} \
+         per-bucket min={min} max={max} mean={}",
+        tails.len(),
+        tails.len() / stride,
+    );
+    eprintln!("  histogram[offset 0..{stride}] = {hist:?}");
+    assert!(
+        occupied > stride / 2,
+        "hot positions are spread, not aligned (occupied {occupied}/{stride})"
+    );
+
+    // (b) entries_len after r folds == #distinct(tail >> r): flat for r=0..=s,
+    //     then halves at r=s+1 — independent of the spread distribution above.
+    let distinct_after = |r: usize| -> usize {
+        let mut v: Vec<usize> = tails.iter().map(|&t| t >> r).collect();
+        v.sort_unstable();
+        v.dedup();
+        v.len()
+    };
+    eprintln!("plateau (expected entries_len flat for r=0..={s}):");
+    for r in 0..=(s + 2) {
+        eprintln!(
+            "  round r={r:2}: table_len=2^{:<2} entries_len={}",
+            log_chunks + s - r,
+            distinct_after(r),
+        );
+    }
+    for r in 0..=s {
+        assert_eq!(
+            distinct_after(r),
+            num_chunks,
+            "entries_len must stay flat across the log2(stride) plateau (round {r})",
+        );
+    }
+    assert_eq!(
+        distinct_after(s + 1),
+        num_chunks / 2,
+        "first merge halves entries_len exactly one round after the plateau",
+    );
+}
+
 #[test]
 fn wide_matches_reference() {
     type F = Fp64<4294967197>;

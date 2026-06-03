@@ -18,6 +18,12 @@ pub struct ExtensionOpeningReductionTerm<E: FieldCore> {
 pub struct SparseExtensionOpeningWitness<E: FieldCore> {
     table_len: usize,
     entries: Vec<(usize, E)>,
+    /// Number of upcoming folds guaranteed to leave at most one entry per pair
+    /// (no merges). While positive, the merge-free fast path is exact: the round
+    /// message has a closed form and the witness folds in place without
+    /// reallocating. Derived once at construction from the entry spacing; see
+    /// [`Self::leading_merge_free_rounds`].
+    merge_free_rounds_left: usize,
 }
 
 #[cfg(feature = "parallel")]
@@ -98,9 +104,11 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
             }
             combined.push((idx, value));
         }
+        let merge_free_rounds_left = Self::leading_merge_free_rounds(table_len, &combined);
         Ok(Self {
             table_len,
             entries: combined,
+            merge_free_rounds_left,
         })
     }
 
@@ -149,7 +157,35 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
             }
             previous_idx = Some(idx);
         }
-        Ok(Self { table_len, entries })
+        let merge_free_rounds_left = Self::leading_merge_free_rounds(table_len, &entries);
+        Ok(Self {
+            table_len,
+            entries,
+            merge_free_rounds_left,
+        })
+    }
+
+    /// Number of leading folds guaranteed to be merge-free (every pair keeps at
+    /// most one entry).
+    ///
+    /// Two adjacent entries `tᵢ < tⱼ` first land in the same folded index at fold
+    /// `bit_length(tᵢ ⊕ tⱼ)`, so the minimum over neighbors is the first merging
+    /// fold and the guaranteed merge-free run is that minus one. With fewer than
+    /// two entries nothing ever merges, so the whole reduction stays merge-free.
+    fn leading_merge_free_rounds(table_len: usize, entries: &[(usize, E)]) -> usize {
+        let total = table_len.trailing_zeros() as usize;
+        if entries.len() < 2 {
+            return total;
+        }
+        let mut first_merge = usize::BITS;
+        for window in entries.windows(2) {
+            let diff = window[0].0 ^ window[1].0;
+            let bit_length = usize::BITS - diff.leading_zeros();
+            if bit_length < first_merge {
+                first_merge = bit_length;
+            }
+        }
+        (first_merge as usize).saturating_sub(1).min(total)
     }
 
     /// Dense table length represented by this sparse witness.
@@ -270,13 +306,17 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
     }
 
     #[cfg(feature = "parallel")]
+    fn parallel_chunk_size(len: usize) -> usize {
+        let target_chunks = rayon::current_num_threads() * SPARSE_PARALLEL_CHUNKS_PER_THREAD;
+        len.div_ceil(target_chunks)
+            .max(SPARSE_PARALLEL_ENTRY_THRESHOLD)
+    }
+
+    #[cfg(feature = "parallel")]
     fn pair_aligned_ranges(&self) -> Vec<(usize, usize)> {
         let len = self.entries.len();
-        let target_chunks = rayon::current_num_threads() * SPARSE_PARALLEL_CHUNKS_PER_THREAD;
-        let chunk_size = len
-            .div_ceil(target_chunks)
-            .max(SPARSE_PARALLEL_ENTRY_THRESHOLD);
-        let mut ranges = Vec::with_capacity(target_chunks.min(len.div_ceil(chunk_size)));
+        let chunk_size = Self::parallel_chunk_size(len);
+        let mut ranges = Vec::with_capacity(len.div_ceil(chunk_size));
         let mut start = 0;
         while start < len {
             let mut end = (start + chunk_size).min(len);
@@ -297,6 +337,7 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
     fn accumulate_entries_with_factor<P>(
         entries: &[(usize, E)],
         coeff: E,
+        merge_free: bool,
         factor_pair: &P,
     ) -> (E, E)
     where
@@ -306,10 +347,24 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
         // once for fields whose accumulator is proven exact; otherwise reduce per
         // term so the coefficients stay byte-identical to `Mul`, matching the
         // dense round and `TensorEqualityFactor::factor_pair`.
-        let (constant, quadratic) = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
-            Self::accumulate_entries_with_factor_using::<DelayedDeg2<E>, P>(entries, factor_pair)
-        } else {
-            Self::accumulate_entries_with_factor_using::<DirectDeg2<E>, P>(entries, factor_pair)
+        //
+        // `merge_free` selects the closed-form pass valid while every pair has at
+        // most one entry; it accumulates the identical products in the identical
+        // order, so both paths agree bit-for-bit.
+        let (constant, quadratic) = match (E::DELAYED_PRODUCT_SUM_IS_EXACT, merge_free) {
+            (true, false) => Self::accumulate_entries_with_factor_using::<DelayedDeg2<E>, P>(
+                entries,
+                factor_pair,
+            ),
+            (false, false) => {
+                Self::accumulate_entries_with_factor_using::<DirectDeg2<E>, P>(entries, factor_pair)
+            }
+            (true, true) => {
+                Self::accumulate_entries_merge_free_using::<DelayedDeg2<E>, P>(entries, factor_pair)
+            }
+            (false, true) => {
+                Self::accumulate_entries_merge_free_using::<DirectDeg2<E>, P>(entries, factor_pair)
+            }
         };
         (coeff * constant, coeff * quadratic)
     }
@@ -348,8 +403,42 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
         acc.finish()
     }
 
-    fn accumulate_entries(entries: &[(usize, E)], factor_evals: &[E], coeff: E) -> (E, E) {
-        Self::accumulate_entries_with_factor(entries, coeff, &|pair| {
+    /// Closed-form merge-free specialization of
+    /// [`Self::accumulate_entries_with_factor_using`].
+    ///
+    /// Valid only while every pair holds at most one entry (the leading
+    /// `merge_free_rounds_left` rounds). It is the grouped loop with the inner
+    /// pair-grouping `while` removed: each pair contributes exactly its single
+    /// child, placed at `w0` or `w1` by parity, so the products, their order, and
+    /// the `Deg2RoundAccum` calls are byte-identical to the general path.
+    fn accumulate_entries_merge_free_using<A, P>(entries: &[(usize, E)], factor_pair: &P) -> (E, E)
+    where
+        A: Deg2RoundAccum<E>,
+        P: Fn(usize) -> (E, E) + Sync,
+    {
+        let mut acc = A::zero();
+        for &(idx, value) in entries {
+            let (a0, a1) = factor_pair(idx >> 1);
+            let da = a1 - a0;
+            if idx & 1 == 0 {
+                // even child: w0 = value, w1 = 0.
+                acc.add_constant_product(value, a0);
+                acc.add_quadratic_product(E::zero() - value, da);
+            } else {
+                // odd child: w0 = 0, w1 = value.
+                acc.add_quadratic_product(value, da);
+            }
+        }
+        acc.finish()
+    }
+
+    fn accumulate_entries(
+        entries: &[(usize, E)],
+        factor_evals: &[E],
+        coeff: E,
+        merge_free: bool,
+    ) -> (E, E) {
+        Self::accumulate_entries_with_factor(entries, coeff, merge_free, &|pair| {
             (factor_evals[2 * pair], factor_evals[2 * pair + 1])
         })
     }
@@ -361,24 +450,41 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
             entries_len = self.entries.len()
         )
         .entered();
+        let merge_free = self.merge_free_rounds_left > 0;
         #[cfg(feature = "parallel")]
         let (round_constant, round_quadratic) =
             if self.entries.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
-                self.pair_aligned_ranges()
-                    .into_par_iter()
-                    .map(|(start, end)| {
-                        Self::accumulate_entries(&self.entries[start..end], factor_evals, coeff)
-                    })
-                    .reduce(
-                        || (E::zero(), E::zero()),
-                        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
-                    )
+                if merge_free {
+                    let chunk_size = Self::parallel_chunk_size(self.entries.len());
+                    self.entries
+                        .par_chunks(chunk_size)
+                        .map(|entries| Self::accumulate_entries(entries, factor_evals, coeff, true))
+                        .reduce(
+                            || (E::zero(), E::zero()),
+                            |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
+                        )
+                } else {
+                    self.pair_aligned_ranges()
+                        .into_par_iter()
+                        .map(|(start, end)| {
+                            Self::accumulate_entries(
+                                &self.entries[start..end],
+                                factor_evals,
+                                coeff,
+                                false,
+                            )
+                        })
+                        .reduce(
+                            || (E::zero(), E::zero()),
+                            |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
+                        )
+                }
             } else {
-                Self::accumulate_entries(&self.entries, factor_evals, coeff)
+                Self::accumulate_entries(&self.entries, factor_evals, coeff, merge_free)
             };
         #[cfg(not(feature = "parallel"))]
         let (round_constant, round_quadratic) =
-            Self::accumulate_entries(&self.entries, factor_evals, coeff);
+            Self::accumulate_entries(&self.entries, factor_evals, coeff, merge_free);
         *constant += round_constant;
         *quadratic += round_quadratic;
     }
@@ -398,28 +504,43 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
             entries_len = self.entries.len()
         )
         .entered();
+        let merge_free = self.merge_free_rounds_left > 0;
         #[cfg(feature = "parallel")]
         let (round_constant, round_quadratic) =
             if self.entries.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
-                self.pair_aligned_ranges()
-                    .into_par_iter()
-                    .map(|(start, end)| {
-                        Self::accumulate_entries_with_factor(
-                            &self.entries[start..end],
-                            coeff,
-                            &factor_pair,
+                if merge_free {
+                    let chunk_size = Self::parallel_chunk_size(self.entries.len());
+                    self.entries
+                        .par_chunks(chunk_size)
+                        .map(|entries| {
+                            Self::accumulate_entries_with_factor(entries, coeff, true, &factor_pair)
+                        })
+                        .reduce(
+                            || (E::zero(), E::zero()),
+                            |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
                         )
-                    })
-                    .reduce(
-                        || (E::zero(), E::zero()),
-                        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
-                    )
+                } else {
+                    self.pair_aligned_ranges()
+                        .into_par_iter()
+                        .map(|(start, end)| {
+                            Self::accumulate_entries_with_factor(
+                                &self.entries[start..end],
+                                coeff,
+                                false,
+                                &factor_pair,
+                            )
+                        })
+                        .reduce(
+                            || (E::zero(), E::zero()),
+                            |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1),
+                        )
+                }
             } else {
-                Self::accumulate_entries_with_factor(&self.entries, coeff, &factor_pair)
+                Self::accumulate_entries_with_factor(&self.entries, coeff, merge_free, &factor_pair)
             };
         #[cfg(not(feature = "parallel"))]
         let (round_constant, round_quadratic) =
-            Self::accumulate_entries_with_factor(&self.entries, coeff, &factor_pair);
+            Self::accumulate_entries_with_factor(&self.entries, coeff, merge_free, &factor_pair);
         *constant += round_constant;
         *quadratic += round_quadratic;
     }
@@ -434,6 +555,15 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         )
         .entered();
         if self.table_len <= 1 {
+            return;
+        }
+        // Merge-free regime: no pair merges this fold, so each entry just drops
+        // its low tail bit and scales by the matching challenge weight. Fold in
+        // place — no reallocation, no dedup, no pair-range scan.
+        if self.merge_free_rounds_left > 0 {
+            self.fold_in_place_merge_free(r_round);
+            self.table_len /= 2;
+            self.merge_free_rounds_left -= 1;
             return;
         }
         #[cfg(feature = "parallel")]
@@ -456,6 +586,38 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         let folded = Self::fold_entries(&self.entries, r_round);
         self.table_len /= 2;
         self.entries = folded;
+    }
+
+    /// Alloc-free in-place fold for the merge-free regime.
+    ///
+    /// No pair has two entries, so folding never combines values: each entry
+    /// `(idx, value)` becomes `(idx >> 1, value · weight)` with `weight` the
+    /// even/odd challenge factor. Byte-identical to [`Self::fold_entries`] when
+    /// every occupied pair holds one entry, and trivially parallel (no cross-entry
+    /// dependency, no merges).
+    fn fold_in_place_merge_free(&mut self, r_round: E) {
+        let one_minus = E::one() - r_round;
+        let fold_one = |entry: &mut (usize, E)| {
+            let (idx, value) = *entry;
+            let folded = if idx & 1 == 0 {
+                value * one_minus
+            } else {
+                value * r_round
+            };
+            *entry = (idx >> 1, folded);
+        };
+        #[cfg(feature = "parallel")]
+        {
+            let len = self.entries.len();
+            if len >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
+                let chunk_size = Self::parallel_chunk_size(len);
+                self.entries
+                    .par_chunks_mut(chunk_size)
+                    .for_each(|chunk| chunk.iter_mut().for_each(fold_one));
+                return;
+            }
+        }
+        self.entries.iter_mut().for_each(fold_one);
     }
 }
 
@@ -1041,6 +1203,106 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductio
                 self.tables.fold_in_place(r_round);
                 self.cached_accumulate = None;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod merge_free_fast_path_tests {
+    use super::*;
+    use akita_field::fields::{Prime24Offset3, TowerBasisFp4, TwoNr, UnitNr};
+    use akita_field::RandomSampling;
+    use rand::rngs::StdRng;
+    use rand::{RngCore, SeedableRng};
+
+    type F = Prime24Offset3;
+    type E = TowerBasisFp4<F, TwoNr, UnitNr>;
+
+    /// One entry per stride-window at a random within-window offset — the real
+    /// `np = 1` EOR witness shape (`stride = onehot_k / width = 2^s`).
+    fn build_np1_witness(
+        log_chunks: usize,
+        s: usize,
+        rng: &mut StdRng,
+    ) -> SparseExtensionOpeningWitness<E> {
+        let stride = 1usize << s;
+        let num_chunks = 1usize << log_chunks;
+        let table_len = num_chunks * stride;
+        let mut entries = Vec::with_capacity(num_chunks);
+        for chunk in 0..num_chunks {
+            let off = (rng.next_u32() as usize) & (stride - 1);
+            entries.push((chunk * stride + off, E::random(rng)));
+        }
+        SparseExtensionOpeningWitness::new(table_len, entries).unwrap()
+    }
+
+    /// Standard multilinear fold of a dense factor table: `A'[p] = (1-r)·A[2p] +
+    /// r·A[2p+1]`. Keeps the factor in lock-step with the folding witness.
+    fn fold_dense(factor: &mut Vec<E>, r: E) {
+        let one_minus = E::one() - r;
+        let half = factor.len() / 2;
+        for p in 0..half {
+            factor[p] = factor[2 * p] * one_minus + factor[2 * p + 1] * r;
+        }
+        factor.truncate(half);
+    }
+
+    /// The closed-form merge-free path must produce byte-identical round messages
+    /// and byte-identical folded entries vs the general grouped/realloc path, in
+    /// both the sequential and the parallel (`>= SPARSE_PARALLEL_ENTRY_THRESHOLD`,
+    /// 2^14 entries) regimes.
+    #[test]
+    fn merge_free_matches_general_round_by_round() {
+        for (log_chunks, s) in [(8usize, 4usize), (14usize, 4usize)] {
+            let mut rng = StdRng::seed_from_u64(0x1234_5678 ^ ((log_chunks as u64) << 8));
+            let coeff = E::random(&mut rng);
+
+            let mut fast = build_np1_witness(log_chunks, s, &mut rng);
+            // Reference: the identical witness with the fast path disabled.
+            let mut reference = fast.clone();
+            reference.merge_free_rounds_left = 0;
+
+            // The guaranteed plateau is exactly log2(stride) = s, independent of
+            // the random within-window offsets.
+            assert_eq!(fast.merge_free_rounds_left, s, "unexpected plateau length");
+
+            let mut factor: Vec<E> = (0..fast.table_len()).map(|_| E::random(&mut rng)).collect();
+
+            let rounds = fast.table_len().trailing_zeros() as usize;
+            for round in 0..rounds {
+                let (mut c_fast, mut q_fast) = (E::zero(), E::zero());
+                fast.accumulate_round(&factor, coeff, &mut c_fast, &mut q_fast);
+                let (mut c_ref, mut q_ref) = (E::zero(), E::zero());
+                reference.accumulate_round(&factor, coeff, &mut c_ref, &mut q_ref);
+                assert_eq!(
+                    c_fast, c_ref,
+                    "constant mismatch (log_chunks={log_chunks}, round={round})"
+                );
+                assert_eq!(
+                    q_fast, q_ref,
+                    "quadratic mismatch (log_chunks={log_chunks}, round={round})"
+                );
+
+                if round < s {
+                    assert!(
+                        fast.merge_free_rounds_left > 0,
+                        "fast path disengaged during plateau (round={round})"
+                    );
+                }
+
+                let r = E::random(&mut rng);
+                fast.fold_in_place(r);
+                reference.fold_in_place(r);
+                assert_eq!(fast.table_len(), reference.table_len());
+                assert_eq!(
+                    fast.entries(),
+                    reference.entries(),
+                    "folded entries mismatch (log_chunks={log_chunks}, round={round})"
+                );
+                fold_dense(&mut factor, r);
+            }
+            assert_eq!(fast.table_len(), 1);
+            assert_eq!(fast.merge_free_rounds_left, 0);
         }
     }
 }
