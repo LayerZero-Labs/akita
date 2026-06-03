@@ -59,126 +59,7 @@ pub(crate) fn bench_p3_base_case<F>(
         "field_arith/{family}/latency_chain/{label}_w{width}"
     ));
 
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "add",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| acc + x,
-        F::ZERO,
-    );
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "sub",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| acc - x,
-        F::ZERO,
-    );
-    p3_bench_scalar_unary_latency(
-        &mut latency_group,
-        "neg",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc| -acc,
-    );
-    p3_bench_scalar_unary_latency(
-        &mut latency_group,
-        "double",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc| acc.double(),
-    );
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "add_neg",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| -(acc + x),
-        F::ZERO,
-    );
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "double_add",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| acc + acc + x,
-        F::ZERO,
-    );
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "mul",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| acc * x,
-        F::ONE,
-    );
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "mul_add",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| acc * x + acc,
-        F::ONE,
-    );
-
-    latency_group.throughput(Throughput::Elements(1));
-    latency_group.bench_function(
-        format!("scalar_square_chain/{}_ns_per_op", params.latency_iters),
-        |b| {
-            b.iter_custom(|iters| {
-                let mut acc = black_box(scalar_latency_inputs[0]);
-                let start = Instant::now();
-                for _ in 0..iters {
-                    for _ in 0..params.latency_iters {
-                        acc = acc.square();
-                    }
-                }
-                black_box(acc);
-                duration_per_logical_op(start.elapsed(), params.latency_iters as u64)
-            })
-        },
-    );
-
-    latency_group.throughput(Throughput::Elements(1));
-    latency_group.bench_function(
-        format!("scalar_mul_self_chain/{}_ns_per_op", params.latency_iters),
-        |b| {
-            b.iter_custom(|iters| {
-                let mut acc = black_box(scalar_latency_inputs[0]);
-                let start = Instant::now();
-                for _ in 0..iters {
-                    for _ in 0..params.latency_iters {
-                        acc = acc * acc;
-                    }
-                }
-                black_box(acc);
-                duration_per_logical_op(start.elapsed(), params.latency_iters as u64)
-            })
-        },
-    );
-
-    latency_group.throughput(Throughput::Elements(1));
-    latency_group.bench_function(
-        format!(
-            "scalar_inverse_chain/{}_ns_per_op",
-            params.inverse_latency_iters
-        ),
-        |b| {
-            b.iter_custom(|iters| {
-                let inputs = black_box(&scalar_latency_inputs[..params.inverse_latency_iters]);
-                let mut acc = F::ONE;
-                let start = Instant::now();
-                for _ in 0..iters {
-                    for x in inputs {
-                        acc = (acc + *x).inverse();
-                    }
-                }
-                black_box(acc);
-                duration_per_logical_op(start.elapsed(), params.inverse_latency_iters as u64)
-            })
-        },
-    );
+    p3_bench_scalar_suite_latency(&mut latency_group, params, &scalar_latency_inputs);
 
     let packed_zero = F::Packing::broadcast(F::ZERO);
     let packed_one = F::Packing::broadcast(F::ONE);
@@ -304,65 +185,7 @@ pub(crate) fn bench_p3_base_case<F>(
         "field_arith/{family}/throughput_stream/{label}_w{width}"
     ));
 
-    p3_bench_scalar_throughput(
-        &mut throughput_group,
-        "add",
-        params,
-        &scalar_stream_lanes,
-        |acc, x| acc + x,
-        |a, b| a + b,
-    );
-    p3_bench_scalar_throughput(
-        &mut throughput_group,
-        "sub",
-        params,
-        &scalar_stream_lanes,
-        |acc, x| acc - x,
-        |a, b| a - b,
-    );
-    p3_bench_scalar_throughput(
-        &mut throughput_group,
-        "mul",
-        params,
-        &scalar_stream_lanes,
-        |acc, x| acc * x,
-        |a, b| a * b,
-    );
-    p3_bench_scalar_throughput(
-        &mut throughput_group,
-        "square",
-        params,
-        &scalar_stream_lanes,
-        |acc, _| acc.square(),
-        |a, _| a.square(),
-    );
-
-    throughput_group.throughput(Throughput::Elements(1));
-    throughput_group.bench_function(
-        format!(
-            "scalar_inverse_stream/{}x{}_ns_per_op",
-            params.streams, params.inverse_throughput_iters
-        ),
-        |b| {
-            b.iter_custom(|iters| {
-                let lanes = black_box(&scalar_stream_lanes);
-                let mut acc: Vec<F> = lanes.iter().map(|(a, _)| *a).collect();
-                let start = Instant::now();
-                for _ in 0..iters {
-                    for _ in 0..params.inverse_throughput_iters {
-                        for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
-                            *acc_i = (*acc_i + lane.0).inverse();
-                        }
-                    }
-                }
-                black_box(acc[0]);
-                duration_per_logical_op(
-                    start.elapsed(),
-                    (params.streams * params.inverse_throughput_iters) as u64,
-                )
-            })
-        },
-    );
+    p3_bench_scalar_suite_throughput(&mut throughput_group, params, &scalar_stream_lanes);
 
     p3_bench_packed_throughput(
         &mut throughput_group,
@@ -484,126 +307,7 @@ pub(crate) fn bench_p3_ext_case<Base, EF>(
         "field_arith/{family}/latency_chain/{label}_w{width}"
     ));
 
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "add",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| acc + x,
-        EF::ZERO,
-    );
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "sub",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| acc - x,
-        EF::ZERO,
-    );
-    p3_bench_scalar_unary_latency(
-        &mut latency_group,
-        "neg",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc| -acc,
-    );
-    p3_bench_scalar_unary_latency(
-        &mut latency_group,
-        "double",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc| acc.double(),
-    );
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "add_neg",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| -(acc + x),
-        EF::ZERO,
-    );
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "double_add",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| acc + acc + x,
-        EF::ZERO,
-    );
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "mul",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| acc * x,
-        EF::ONE,
-    );
-    p3_bench_scalar_latency(
-        &mut latency_group,
-        "mul_add",
-        params.latency_iters,
-        &scalar_latency_inputs,
-        |acc, x| acc * x + acc,
-        EF::ONE,
-    );
-
-    latency_group.throughput(Throughput::Elements(1));
-    latency_group.bench_function(
-        format!("scalar_square_chain/{}_ns_per_op", params.latency_iters),
-        |b| {
-            b.iter_custom(|iters| {
-                let mut acc = black_box(scalar_latency_inputs[0]);
-                let start = Instant::now();
-                for _ in 0..iters {
-                    for _ in 0..params.latency_iters {
-                        acc = acc.square();
-                    }
-                }
-                black_box(acc);
-                duration_per_logical_op(start.elapsed(), params.latency_iters as u64)
-            })
-        },
-    );
-
-    latency_group.throughput(Throughput::Elements(1));
-    latency_group.bench_function(
-        format!("scalar_mul_self_chain/{}_ns_per_op", params.latency_iters),
-        |b| {
-            b.iter_custom(|iters| {
-                let mut acc = black_box(scalar_latency_inputs[0]);
-                let start = Instant::now();
-                for _ in 0..iters {
-                    for _ in 0..params.latency_iters {
-                        acc = acc * acc;
-                    }
-                }
-                black_box(acc);
-                duration_per_logical_op(start.elapsed(), params.latency_iters as u64)
-            })
-        },
-    );
-
-    latency_group.throughput(Throughput::Elements(1));
-    latency_group.bench_function(
-        format!(
-            "scalar_inverse_chain/{}_ns_per_op",
-            params.inverse_latency_iters
-        ),
-        |b| {
-            b.iter_custom(|iters| {
-                let inputs = black_box(&scalar_latency_inputs[..params.inverse_latency_iters]);
-                let mut acc = EF::ONE;
-                let start = Instant::now();
-                for _ in 0..iters {
-                    for x in inputs {
-                        acc = (acc + *x).inverse();
-                    }
-                }
-                black_box(acc);
-                duration_per_logical_op(start.elapsed(), params.inverse_latency_iters as u64)
-            })
-        },
-    );
+    p3_bench_scalar_suite_latency(&mut latency_group, params, &scalar_latency_inputs);
 
     let packed_zero = broadcast_ext::<Base, EF>(EF::ZERO, width);
     let packed_one = broadcast_ext::<Base, EF>(EF::ONE, width);
@@ -701,65 +405,7 @@ pub(crate) fn bench_p3_ext_case<Base, EF>(
         "field_arith/{family}/throughput_stream/{label}_w{width}"
     ));
 
-    p3_bench_scalar_throughput(
-        &mut throughput_group,
-        "add",
-        params,
-        &scalar_stream_lanes,
-        |acc, x| acc + x,
-        |a, b| a + b,
-    );
-    p3_bench_scalar_throughput(
-        &mut throughput_group,
-        "sub",
-        params,
-        &scalar_stream_lanes,
-        |acc, x| acc - x,
-        |a, b| a - b,
-    );
-    p3_bench_scalar_throughput(
-        &mut throughput_group,
-        "mul",
-        params,
-        &scalar_stream_lanes,
-        |acc, x| acc * x,
-        |a, b| a * b,
-    );
-    p3_bench_scalar_throughput(
-        &mut throughput_group,
-        "square",
-        params,
-        &scalar_stream_lanes,
-        |acc, _| acc.square(),
-        |a, _| a.square(),
-    );
-
-    throughput_group.throughput(Throughput::Elements(1));
-    throughput_group.bench_function(
-        format!(
-            "scalar_inverse_stream/{}x{}_ns_per_op",
-            params.streams, params.inverse_throughput_iters
-        ),
-        |b| {
-            b.iter_custom(|iters| {
-                let lanes = black_box(&scalar_stream_lanes);
-                let mut acc: Vec<EF> = lanes.iter().map(|(a, _)| *a).collect();
-                let start = Instant::now();
-                for _ in 0..iters {
-                    for _ in 0..params.inverse_throughput_iters {
-                        for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
-                            *acc_i = (*acc_i + lane.0).inverse();
-                        }
-                    }
-                }
-                black_box(acc[0]);
-                duration_per_logical_op(
-                    start.elapsed(),
-                    (params.streams * params.inverse_throughput_iters) as u64,
-                )
-            })
-        },
-    );
+    p3_bench_scalar_suite_throughput(&mut throughput_group, params, &scalar_stream_lanes);
 
     p3_bench_packed_ext_throughput(
         &mut throughput_group,
@@ -854,6 +500,171 @@ pub(crate) fn bench_p3_ext5_matrix(c: &mut Criterion) {
         "p3_koala_bear_ext5",
         0xe500_c0a1_a005,
         params,
+    );
+}
+
+/// Full scalar latency-chain op set, shared by the base and extension matrices
+/// (both operate on a `Field`, only the concrete type differs).
+fn p3_bench_scalar_suite_latency<S: Field + Copy>(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    params: ArithmeticBenchParams,
+    inputs: &[S],
+) {
+    p3_bench_scalar_latency(
+        group,
+        "add",
+        params.latency_iters,
+        inputs,
+        |acc, x| acc + x,
+        S::ZERO,
+    );
+    p3_bench_scalar_latency(
+        group,
+        "sub",
+        params.latency_iters,
+        inputs,
+        |acc, x| acc - x,
+        S::ZERO,
+    );
+    p3_bench_scalar_unary_latency(group, "neg", params.latency_iters, inputs, |acc| -acc);
+    p3_bench_scalar_unary_latency(group, "double", params.latency_iters, inputs, |acc| {
+        acc.double()
+    });
+    p3_bench_scalar_latency(
+        group,
+        "add_neg",
+        params.latency_iters,
+        inputs,
+        |acc, x| -(acc + x),
+        S::ZERO,
+    );
+    p3_bench_scalar_latency(
+        group,
+        "double_add",
+        params.latency_iters,
+        inputs,
+        |acc, x| acc + acc + x,
+        S::ZERO,
+    );
+    p3_bench_scalar_latency(
+        group,
+        "mul",
+        params.latency_iters,
+        inputs,
+        |acc, x| acc * x,
+        S::ONE,
+    );
+    p3_bench_scalar_latency(
+        group,
+        "mul_add",
+        params.latency_iters,
+        inputs,
+        |acc, x| acc * x + acc,
+        S::ONE,
+    );
+
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(
+        format!("scalar_square_chain/{}_ns_per_op", params.latency_iters),
+        |b| {
+            b.iter_custom(|iters| {
+                let mut acc = black_box(inputs[0]);
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..params.latency_iters {
+                        acc = acc.square();
+                    }
+                }
+                black_box(acc);
+                duration_per_logical_op(start.elapsed(), params.latency_iters as u64)
+            })
+        },
+    );
+
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(
+        format!("scalar_mul_self_chain/{}_ns_per_op", params.latency_iters),
+        |b| {
+            b.iter_custom(|iters| {
+                let mut acc = black_box(inputs[0]);
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..params.latency_iters {
+                        acc = acc * acc;
+                    }
+                }
+                black_box(acc);
+                duration_per_logical_op(start.elapsed(), params.latency_iters as u64)
+            })
+        },
+    );
+
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(
+        format!(
+            "scalar_inverse_chain/{}_ns_per_op",
+            params.inverse_latency_iters
+        ),
+        |b| {
+            b.iter_custom(|iters| {
+                let inputs = black_box(&inputs[..params.inverse_latency_iters]);
+                let mut acc = S::ONE;
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for x in inputs {
+                        acc = (acc + *x).inverse();
+                    }
+                }
+                black_box(acc);
+                duration_per_logical_op(start.elapsed(), params.inverse_latency_iters as u64)
+            })
+        },
+    );
+}
+
+/// Full scalar throughput-stream op set, shared by the base and extension matrices.
+fn p3_bench_scalar_suite_throughput<S: Field + Copy>(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    params: ArithmeticBenchParams,
+    lanes: &[(S, S)],
+) {
+    p3_bench_scalar_throughput(group, "add", params, lanes, |acc, x| acc + x, |a, b| a + b);
+    p3_bench_scalar_throughput(group, "sub", params, lanes, |acc, x| acc - x, |a, b| a - b);
+    p3_bench_scalar_throughput(group, "mul", params, lanes, |acc, x| acc * x, |a, b| a * b);
+    p3_bench_scalar_throughput(
+        group,
+        "square",
+        params,
+        lanes,
+        |acc, _| acc.square(),
+        |a, _| a.square(),
+    );
+
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(
+        format!(
+            "scalar_inverse_stream/{}x{}_ns_per_op",
+            params.streams, params.inverse_throughput_iters
+        ),
+        |b| {
+            b.iter_custom(|iters| {
+                let lanes = black_box(lanes);
+                let mut acc: Vec<S> = lanes.iter().map(|(a, _)| *a).collect();
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..params.inverse_throughput_iters {
+                        for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                            *acc_i = (*acc_i + lane.0).inverse();
+                        }
+                    }
+                }
+                black_box(acc[0]);
+                duration_per_logical_op(
+                    start.elapsed(),
+                    (params.streams * params.inverse_throughput_iters) as u64,
+                )
+            })
+        },
     );
 }
 

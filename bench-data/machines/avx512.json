@@ -9,7 +9,6 @@
   "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
   "criterion_baseline": "avx512",
   "criterion_dir": "target/criterion",
-  "git_branch": "quang/plonky3-field-microbench",
   "git_commit": "6b8889fae3f3b033e5c54bf03c1f3cafca823b72",
   "git_subject": "perf(field): optimize packed fp4 ring arithmetic",
   "kernel": "Linux 6.8.0-111-generic #111-Ubuntu SMP PREEMPT_DYNAMIC Sat Apr 11 23:16:02 UTC 2026 x86_64 x86_64",

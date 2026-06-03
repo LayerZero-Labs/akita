@@ -9,7 +9,6 @@
   "cpu_model": "Apple M4 Max; Mac16,5; 16 logical CPUs",
   "criterion_baseline": "neon",
   "criterion_dir": "target/criterion",
-  "git_branch": "quang/plonky3-field-microbench",
   "git_commit": "5b0305bee7f53965dd2c9b68aed527a2c9b420e6",
   "git_subject": "perf(field): reduce 31-bit pseudo-Mersenne packed mul in 32-bit NEON lanes",
   "kernel": "Darwin 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041 arm64 arm",

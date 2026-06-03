@@ -175,7 +175,6 @@ def capture_machine_metadata(args: argparse.Namespace) -> dict[str, str]:
         "criterion_dir": str(args.criterion_dir),
         "bench_filter": args.bench_filter,
         "bench_command": args.bench_command,
-        "git_branch": run_text(["git", "branch", "--show-current"], cwd),
         "git_commit": run_text(["git", "rev-parse", "HEAD"], cwd),
         "git_subject": run_text(["git", "log", "-1", "--format=%s"], cwd),
         "notes": args.notes,
@@ -225,7 +224,6 @@ def baseline_metadata(
             "criterion_dir": "",
             "bench_filter": "",
             "bench_command": "",
-            "git_branch": "",
             "git_commit": "",
             "git_subject": "",
             "captured_at_utc": "",
@@ -454,20 +452,7 @@ def dedupe_rows(rows: list[dict[str, str]], warnings: list[str]) -> list[dict[st
     keyed: dict[tuple[str, ...], dict[str, str]] = {}
     duplicate_count = 0
     for row in rows:
-        key = (
-            row["baseline"],
-            row["library"],
-            row["field"],
-            row["ext_degree"],
-            row["basis"],
-            row["op"],
-            row["workload"],
-            row["vectorization"],
-            row["arch"],
-            row["simd"],
-            row["width"],
-            row["family"],
-        )
+        key = row_key(row)
         previous = keyed.get(key)
         if previous is None:
             keyed[key] = row
