@@ -35,27 +35,30 @@ The checked-in workflow currently runs:
 
 | Mode | Field | Workload | Variables | Polys | Config | Notes |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| `dense_fp16_d32` | fp16 | dense | 26 | 1 | D32 | Small-field dense smoke. |
-| `onehot_fp32_d32` | fp32 | 1-of-256 one-hot | 32 | 1 | D32 | Small-field one-hot smoke. |
-| `dense_fp32_d32` | fp32 | dense | 26 | 1 | D32 | Small-field dense smoke. |
-| `onehot_fp64_d32` | fp64 | 1-of-256 one-hot | 32 | 1 | D32 | Small-field one-hot smoke. |
+| `onehot_fp32_d128` | fp32 | 1-of-256 one-hot | 32 | 1 | D128 | Smallest securable fp32 one-hot under honest pricing. |
+| `onehot_fp64_d128` | fp64 | 1-of-256 one-hot | 32 | 1 | D128 | Smallest securable fp64 one-hot under honest pricing. |
 | `dense_fp128_d128` | fp128 | dense | 24 | 1 | D128 | fp128 dense smoke at the production-default ring dimension. |
 | `onehot_fp128_d128` | fp128 | 1-of-256 one-hot | 32 | 1 | D128 | Explicit fp128 one-hot mode at the production-default ring dimension. |
 | `onehot_fp128_d128` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D128 | Preserves same-point batched one-hot coverage. |
 
-The small-field cells stay at D32/D64, but the fp128 cells track the production
-default ring dimension, which is now D128 under honest committed-fold pricing
-(D32/D64 fp128 schedules no longer fold securely at these sizes).
-D64 profile modes still exist for direct local comparisons, and `main` adds a
-D64-only tensor-verifier profile mode, but neither the adaptive `full`/`onehot`
-selectors nor the tensor mode are part of the active benchmark matrix.
+Every active cell is a family that folds securely under honest committed-fold
+A-role pricing, i.e. one that ships a generated schedule table
+(`akita_config::generated_families::ALL_GENERATED_FAMILIES`). Under that
+pricing the smallest secure small-field ring degree is D128, so the small-field
+cells use D128 one-hot; the earlier D32/D64 small-field cells (and all fp16
+cells) were removed because they degrade to a cleartext root-direct proof and
+no longer exercise a real folding commitment. The fp128 cells track the
+production-default ring dimension, which is also D128. D32/D64 profile modes
+still exist for direct local comparisons, and `main` adds a D64-only
+tensor-verifier profile mode, but neither the adaptive `full`/`onehot`
+selectors nor those non-securable comparison modes are part of the active
+benchmark matrix.
 
 Deferred target cells:
 
 | Mode | Field | Workload | Variables | Polys | Config | Re-enable condition |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| `onehot_fp16_d32` | fp16 | 1-of-256 one-hot | 32 | 1 | D32 | Re-enable after small-field one-hot prover cost is reduced or CI budget changes. |
-| `dense_fp64_d32` | fp64 | dense | 25 | 1 | D32 | Re-enable after separate dense fp64 validation and hosted-runner budget review. |
+| `dense_fp64_d128` | fp64 | dense | 24 | 1 | D128 | Re-enable after dense small-field hosted-runner cost is validated (fp32 ships no dense family, so fp64 D128 is the only securable dense small-field cell). |
 
 The first successful 8-case candidate run identified the two cost offenders:
 `onehot_fp16_d32:32:1` spent about 210 seconds in proving and peaked around

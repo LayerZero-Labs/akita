@@ -46,7 +46,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 /// A collision is itself recomputed per `r` via
 /// [`crate::sis::committed_fold_collision_s`], because the committed-level
 /// weak-binding norm grows with the fold arity `num_claims · 2^r`; scoring
-/// every split against a single bucket would mis-rank the larger-`r` splits.
+/// every split against a single bucket would rank the larger-`r` splits wrong.
 ///
 /// As `r` grows, the opening term grows `~2^r` while the folding term shrinks
 /// with `m_eff`; `δ_fold` and the A collision (hence `n_A`) also grow with `r`.
@@ -130,12 +130,17 @@ pub fn optimal_m_r_split(
         };
         let n_a_u32 = n_a as u32;
 
-        // δ_fold grows with r: num_digits_fold derives β = 2^r ·
-        // min(||c||_inf·||s||_1, ||c||_1·||s||_inf) internally (num_claims = 1).
+        // δ_fold grows with r and num_claims: num_digits_fold derives
+        // β = num_claims · 2^r · min(||c||_inf·||s||_1, ||c||_1·||s||_inf).
         // An overflowing/degenerate β makes this `r` infeasible — skip it.
-        let Ok(delta_fold) =
-            num_digits_fold(r, 1, field_bits, log_basis, fold_challenge, fold_witness)
-        else {
+        let Ok(delta_fold) = num_digits_fold(
+            r,
+            num_claims,
+            field_bits,
+            log_basis,
+            fold_challenge,
+            fold_witness,
+        ) else {
             continue;
         };
         let delta_fold = delta_fold as u64;
@@ -158,5 +163,50 @@ pub fn optimal_m_r_split(
             let r = reduced_vars / 2;
             (reduced_vars - r, r, 1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sis::FoldWitnessNorms;
+
+    #[test]
+    fn optimal_m_r_split_uses_num_claims_in_fold_digit_scoring() {
+        let fold_challenge = FoldChallengeNorms {
+            infinity_norm: 8,
+            l1_norm: 54,
+        };
+        let fold_witness = FoldWitnessNorms::new(3, 64, 64, true);
+        let singleton = optimal_m_r_split(
+            SisModulusFamily::Q32,
+            64,
+            1,
+            1,
+            fold_challenge,
+            fold_witness,
+            128,
+            3,
+            20,
+            0,
+            32,
+        );
+        let batched = optimal_m_r_split(
+            SisModulusFamily::Q32,
+            64,
+            4,
+            1,
+            fold_challenge,
+            fold_witness,
+            128,
+            3,
+            20,
+            0,
+            32,
+        );
+        assert_ne!(
+            singleton, batched,
+            "batched roots must not score fold digits as singleton"
+        );
     }
 }

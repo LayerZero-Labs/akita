@@ -286,16 +286,27 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp64_d64",
         run: run_profile_onehot_fp64_d64,
     },
+    // Smallest securable fp64 one-hot family under honest committed-fold
+    // pricing (fp64 ships generated tables only at D128/D256; D32/D64 no
+    // longer fold securely). This is the fp64 cell the profile-bench matrix
+    // tracks.
+    ProfileMode {
+        name: "onehot_fp64_d128",
+        run: run_profile_onehot_fp64_d128,
+    },
 ];
 
 /// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_tensor",
-    // D128+ presets use runtime DP only; keep them out of the default sweep.
+    // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
+    // default `all` smoke sweep (they are still selectable by explicit
+    // `AKITA_MODE=` and drive the profile-bench matrix).
     "dense_fp128_d128",
     "onehot_fp128_d128",
     "dense_fp32_d128",
     "onehot_fp32_d128",
+    "onehot_fp64_d128",
 ];
 
 fn assert_singleton_mode(mode: &str, num_polys: usize) {
@@ -461,6 +472,12 @@ fn run_profile_onehot_fp64_d64_with_label(label: &str, nv: usize, num_polys: usi
     type Cfg = fp64::D64OneHot;
     let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
     run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>(label, &title, nv, num_polys);
+}
+
+fn run_profile_onehot_fp64_d128(nv: usize, num_polys: usize) {
+    type Cfg = fp64::D128OneHot;
+    let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
+    run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64_d128", &title, nv, num_polys);
 }
 
 fn run_profile_dense_fp64_d32(nv: usize, num_polys: usize) {

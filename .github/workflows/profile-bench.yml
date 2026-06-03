@@ -18,9 +18,14 @@ env:
   AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
   # The active benchmark path is pinned to explicit preset modes. It deliberately
   # does not use the old adaptive `full`/`onehot` selectors.
-  # Long hosted-runner configs are deferred from this PR's active matrix.
-  # fp32 cells use D64 (D32 schedules are root-direct/cleartext-heavy under the
-  # shared ring-challenge policy). dense_fp64_d32:25:1 remains deferred.
+  # Every cell is a family that folds securely under honest committed-fold
+  # A-role pricing, i.e. one that ships a generated schedule table
+  # (`akita_config::generated_families::ALL_GENERATED_FAMILIES`). Under that
+  # pricing the smallest secure small-field ring degree is D128, so the
+  # small-field cells use D128 one-hot; the D32/D64 small-field cells were
+  # removed because they degrade to a cleartext root-direct proof. A dense
+  # small-field cell is deferred (fp32 ships no dense family; fp64 dense ships
+  # only at D128 and its hosted-runner cost is not yet validated).
   AKITA_BENCH_MODE: onehot_fp128_d128
   AKITA_BENCH_RUNS: "3"
   # One warm-up run per case is discarded before the measured runs to
@@ -28,9 +33,8 @@ env:
   # first run otherwise distort the median across only 3 samples.
   AKITA_BENCH_WARMUPS: "1"
   AKITA_BENCH_CASES: |
-    dense_fp32_d64:26:1
-    onehot_fp32_d64:32:1
-    onehot_fp64_d32:32:1
+    onehot_fp32_d128:32:1
+    onehot_fp64_d128:32:1
     dense_fp128_d128:24:1
     onehot_fp128_d128:32:1
     onehot_fp128_d128:30:4

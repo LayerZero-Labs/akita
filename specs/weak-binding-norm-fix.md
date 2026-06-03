@@ -2,10 +2,158 @@
 
 | Field     | Value                          |
 |-----------|--------------------------------|
-| Author(s) | Omid Bodaghi, Cursor agent draft |
+| Author(s) | Omid Bodaghi, Quang Dao, Cursor agent draft |
 | Created   | 2026-06-01                     |
-| Status    | implemented                    |
-| PR        |                                |
+| Status    | implemented (the original anchored A-role bound is superseded by the committed-fold reprice below) |
+| PR        | https://github.com/LayerZero-Labs/akita/pull/146 |
+
+> **Status note (2026-06-03).** The A-role weak-binding price that first
+> shipped on this branch (`collision_A = 2·ω̄·β̄·ν` with a single-block `β̄`,
+> the "anchored" bound described under "Superseded design" below) was itself
+> still under-priced at every committed level. It has been replaced by the
+> **committed-fold reprice** (`collision_A = 8·ω·num_claims·2^r·β̄·ν`). The
+> corrected derivation, the new formula, and the schedule / preset fallout are
+> in the two sections immediately below. Everything from "Implementation
+> outcome (2026-06-02)" onward is retained as historical / superseded context.
+
+## Correction (2026-06-03): committed-fold A-role reprice
+
+### What was still wrong
+
+The original fix priced the A-role (inner committed witness `s`) weak-binding
+collision at the *anchored* per-block bound
+
+```text
+collision_A = 2 · ω̄ · β̄ · ν,   β̄ = min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
+```
+
+i.e. one short ring product `||c·s||_inf` for a single opened block. The
+weak-binding extractor does not certify that quantity for the committed witness
+at a folded level. From two distinct weak openings it produces the kernel
+vector
+
+```text
+z_A = c̄'·(c̄·s) − c̄·(c̄'·s'),
+```
+
+whose size is governed by the **fold-response** difference
+`||z^(ℓ,i) − z^0||_inf`, not by a single per-block product. The only norm the
+extractor certifies for that difference is the fold bound `2·β^resp`, and
+`β^resp` sums one short product over **every** folded block, so it carries the
+fold arity `num_claims · 2^r_vars`. Dividing the response by the ring unit `c̄`
+does not recover `||s||_inf` (negacyclic division is not norm-preserving), and
+the range / one-hot / booleanity checks bind the *honest committed table*, not
+the *extracted* quotient. The anchored bound is therefore unsound at every
+Ajtai-committed level (the dense root and all recursive fold levels). Only the
+**terminal cleartext level** is genuinely anchored: its witness is revealed and
+read directly at `||w^(t)||_inf ≤ b/2`, with no commitment and no quotient.
+
+One-hotness does not rescue anchoring. It sets `||s||_inf = 1`, which shrinks
+`β^resp`, but it does not remove the `num_claims · 2^r_vars` fold factor. The
+old `is_root` / `is_onehot` regime axis was the wrong axis; the correct split
+is *committed (folded)* vs *terminal (cleartext)*, and one-hotness only enters
+through the witness norm.
+
+### The corrected bound
+
+Every committed level is priced at the fold response:
+
+```text
+collision_A = 2 · κ̄ · β̄ · ν
+  κ̄ = ||c − c'||_1 = 2·ω            (challenge difference; ω = ||c||_1)
+  β̄ = 2 · β^resp                    (extractor: ||z^(ℓ,i) − z^0||_inf ≤ 2·β^resp)
+  β^resp = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
+        = fold_witness_beta(...)
+=> collision_A = 8 · ω · fold_witness_beta · ν.
+```
+
+This is implemented in
+[`crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs):
+`committed_fold_collision_s` computes the `8·ω·fold_witness_beta·ν` form, and
+the public entry point `rounded_up_collision_norm_s` builds the level's
+`FoldChallengeNorms` and `FoldWitnessNorms` and threads `r_vars`,
+`num_claims`, and `ring_subfield_norm_bound` from each call site (the planner
+DP in `schedule_params.rs`, the runtime expansion, and the verifier-reachable
+layout derivation in `layout/sis_derivation.rs`). The A-role price and the
+fold bound now share `fold_witness_beta` and `FoldWitnessNorms`, so the binding
+rank and the digit count cannot drift.
+
+### Public-paper basis
+
+This is the batched-soundness form of Hachi's weak-binding lemma (Hachi,
+Lemma 7), specialized to a recursive random-linear-combination fold. The
+fold-as-relaxed-binding view (the fold response is the quantity SIS binding is
+proven against, at a norm proportional to the fold width) follows
+Nguyen and Setty's SuperNeo interactive-reductions framework (ePrint 2026/242,
+Theorem 4 plus the decomposition-reduction extractor): a random-linear fold is
+a *weak* reduction whose relaxed binding is Module-SIS at norm `4·T·B`, with
+`T = num_claims · 2^r` the fold width and `B` the response-difference bound
+(Akita's `z^(ℓ,i) − z^0`); a norm check is a *strong* reduction that makes the
+output witness short for the next input but does not lower the current fold's
+binding norm. The Akita-specific batched statement and proof live in the
+private Akita write-up and are not reproduced here.
+
+### Consequences
+
+- **Proof size rises at committed levels.** The `num_claims · 2^r` factor lifts
+  the A-collision into higher SIS buckets, so committed levels need a larger
+  A-rank. This is the cost of matching the proven security.
+- **SIS collision ladder extended `2^20−1 → 2^26−1`.** Under the heavier norm a
+  fp128 D128 batched dense root folds to a collision above the old `2^20−1`
+  ceiling; without the extension it fell back to a cleartext root-direct proof.
+  `ceil_supported_collision` and the generated SIS-floor tables now cover
+  buckets up to `2^26−1`.
+- **All shipped schedule tables regenerated** against the corrected norm.
+- **Small-D families pruned (no longer securable).** fp32 D32 was dropped
+  entirely, fp16 was removed from the production and profile paths, and the
+  small-D fp128 / fp32 / fp64 families that cannot fold securely under honest
+  pricing were removed. The shipping families are now fp128 D128 (plus the D64
+  one-hot and D64 one-hot tensor), fp64 D128 / D256, and fp32 D128 / D256
+  one-hot (see `akita_config::generated_families::ALL_GENERATED_FAMILIES`); fp32
+  ships no dense family, and the smallest secure small-field ring degree is now
+  `D = 128`.
+- **Fixtures retargeted.** The terminal recursive fold's first stage-2 round is
+  now degree-2; the zk setup-envelope test moves to fp128 D128; the impossible
+  fp32 Terminal-root extension-reduction fixture is retired (fp32 has no 1-fold
+  regime under honest pricing).
+- **CI profile benchmarks re-pointed at securable profiles.** The benchmark
+  matrix now benches only families that fold securely (fp128 D128 plus the
+  small-field D128 one-hot families); the non-securable D32 / D64 small-field
+  cells were removed. See
+  [`specs/profile-bench-coverage-matrix.md`](profile-bench-coverage-matrix.md).
+
+### Still valid from the original design
+
+Two pieces of the original spec are unaffected and remain in force:
+
+- The negacyclic ring-product inequality
+  `||c·s||_inf ≤ min(||c||_inf·||s||_1, ||c||_1·||s||_inf)` is still the kernel
+  of both `fold_witness_beta` and the A-role price.
+- The folded-witness digit optimization (a sparse one-hot witness takes the
+  cheaper `||c||_inf` side, shrinking `δ_fold`) is unchanged; dense `δ_fold` is
+  identical to before.
+
+### Deferred follow-up: tighter one-hot fold-response bound
+
+For a one-hot committed witness the per-block product `β̄ = ||c·s||_inf`
+already takes the `||c||_inf` side of the `min` (`||s||_inf = ||s||_1 = 1`),
+but the A-role collision still pays the outer challenge-difference factor
+`κ̄ = 2·ω = 2·||c||_1`. The question is whether the one-hot structure lets the
+fold response `z = z^(ℓ,i) − z^0` be bounded more flexibly so the collision can
+use `||c||_inf` rather than `||c||_1` in that outer factor too, which would
+lower the one-hot A-rank (and thus one-hot proof size). This needs a soundness
+argument that the extracted kernel vector's norm is governed by `||c||_inf` for
+a one-hot witness, not just `||c||_1`; it is not done here. The shipped bound
+uses the conservative `||c||_1` factor everywhere. Tracked as a follow-up.
+
+---
+
+> **Everything below this line is superseded / historical.** It documents the
+> original anchored A-role design (`collision_A = 2·ω̄·β̄·ν` with a single-block
+> `β̄`) and its 2026-06-02 follow-ups. Where it prices the A-role at a single
+> block, read the "Correction (2026-06-03)" section above instead. The
+> `min(...)` ring-product bound and the one-hot fold optimization it describes
+> are still correct.
 
 ## Implementation outcome (2026-06-02)
 
