@@ -35,8 +35,8 @@ impl<const P: u32> PackedFp32Avx512<P> {
     /// Whether two Solinas folds suffice to bring the sum of four
     /// `(P-1)^2` products into `[0, 2*P)` for the final canonicalize step.
     /// Mirrors `PackedFp32Neon::TWO_FOLD_FOUR_PRODUCT_OK`. When `false`,
-    /// `solinas_reduce` / `solinas_reduce_with_carry` must do a third fold
-    /// before handing off to `pack_and_canonicalize`.
+    /// `solinas_reduce` must do a third fold before handing off to
+    /// `pack_and_canonicalize`.
     const TWO_FOLD_FOUR_PRODUCT_OK: bool = {
         let c = Self::C as u64;
         4 * c * c + 3 * c <= (1u64 << Self::BITS)
@@ -70,6 +70,19 @@ impl<const P: u32> PackedFp32Avx512<P> {
             let c_vec = _mm512_set1_epi64(Self::C as i64);
             _mm512_mullo_epi64(x, c_vec)
         }
+    }
+
+    /// One Solinas fold of a single 64-bit product lane (BITS == 32 only):
+    /// `(x & (2^32-1)) + C*(x >> 32)`. For a single product `x < 2^64` the
+    /// high word `x >> 32 < 2^32`, so the result is `< 2^32 + C*2^32 < 2^40`.
+    /// Used by the `BITS == 32` dot-product path to pre-fold each product so
+    /// that up to four folded terms (each `< 2^40`) sum below `2^42` without
+    /// overflowing a `u64`, removing the per-product carry tracking.
+    #[inline(always)]
+    unsafe fn fold_product_once(x: __m512i) -> __m512i {
+        let lo = _mm512_and_si512(x, _mm512_set1_epi64(Self::MASK_U64 as i64));
+        let hi = _mm512_srli_epi64::<32>(x);
+        _mm512_add_epi64(lo, Self::mul_c_u64(hi))
     }
 
     /// Plonky3-style Mersenne31 multiply (P = 2^31 - 1). Specialized using
@@ -145,32 +158,14 @@ impl<const P: u32> PackedFp32Avx512<P> {
         Self::solinas_reduce(prod_evn, prod_odd)
     }
 
-    /// `(sum + rhs, carry + overflow_bit)`: 8-lane `u64` accumulating add with
-    /// per-lane carry tracking. AVX-512 uses native unsigned mask compare.
-    #[inline(always)]
-    unsafe fn add_u64_with_carry(sum: __m512i, rhs: __m512i, carry: __m512i) -> (__m512i, __m512i) {
-        let next = _mm512_add_epi64(sum, rhs);
-        let overflow = _mm512_cmplt_epu64_mask(next, sum);
-        let one = _mm512_set1_epi64(1);
-        let new_carry = _mm512_mask_add_epi64(carry, overflow, carry, one);
-        (next, new_carry)
-    }
-
-    /// Multiply each lane's low 32 bits by `Fp32::<P>::SHIFT64_MOD_P`. Used
-    /// to fold accumulated overflow count back into the Solinas reduction.
-    #[inline(always)]
-    unsafe fn carry_correction(carry: __m512i) -> __m512i {
-        let shift = _mm512_set1_epi64(Fp32::<P>::SHIFT64_MOD_P as i64);
-        _mm512_mul_epu32(carry, shift)
-    }
-
     /// 4-way fused multiply-accumulate with a single end-reduction.
-    /// Mirrors `PackedFp32Avx2::dot_product_4_vec` at 16 lanes, including
-    /// the `BITS <= 31` carry-free fast path (four `(2^31 - 1)^2` products
-    /// sum to less than `2^64`, so partial sums never overflow a `u64`
-    /// lane and the `add_u64_with_carry` / `carry_correction` chain drops
-    /// out). The `if Self::BITS <= 31` is a const condition and
-    /// dead-code-eliminated at compile time.
+    /// Mirrors `PackedFp32Avx2::dot_product_4_vec` at 16 lanes. For
+    /// `BITS <= 31`, four `(2^31 - 1)^2` products sum below `2^64`, so the
+    /// raw products accumulate without overflow. For `BITS == 32`, each
+    /// product is pre-folded once (`< 2^40`) so four folds sum below `2^42`,
+    /// again overflow-free. Both branches end in a single carry-free
+    /// `solinas_reduce`; the `if` is a const condition resolved at compile
+    /// time.
     #[inline(always)]
     unsafe fn dot_product_4_vec(a: [__m512i; 4], b: [__m512i; 4]) -> __m512i {
         let mut sum_evn = _mm512_mul_epu32(a[0], b[0]);
@@ -186,21 +181,52 @@ impl<const P: u32> PackedFp32Avx512<P> {
             return Self::solinas_reduce(sum_evn, sum_odd);
         }
 
-        let mut carry_evn = _mm512_setzero_si512();
-        let mut carry_odd = _mm512_setzero_si512();
-
+        // BITS == 32: four 32-bit products overflow a `u64` sum, so pre-fold each
+        // product once (`< 2^40`) and accumulate the folds (`< 4*2^40 < 2^42`),
+        // which is carry-free, then a single carry-free `solinas_reduce`.
+        let mut sum_evn = Self::fold_product_once(sum_evn);
+        let mut sum_odd = Self::fold_product_once(sum_odd);
         for i in 1..4 {
-            let prod_evn = _mm512_mul_epu32(a[i], b[i]);
-            let prod_odd = _mm512_mul_epu32(movehdup_epi32_512(a[i]), movehdup_epi32_512(b[i]));
-            let (s_evn, c_evn) = Self::add_u64_with_carry(sum_evn, prod_evn, carry_evn);
-            let (s_odd, c_odd) = Self::add_u64_with_carry(sum_odd, prod_odd, carry_odd);
-            sum_evn = s_evn;
-            sum_odd = s_odd;
-            carry_evn = c_evn;
-            carry_odd = c_odd;
+            let prod_evn = Self::fold_product_once(_mm512_mul_epu32(a[i], b[i]));
+            let prod_odd = Self::fold_product_once(_mm512_mul_epu32(
+                movehdup_epi32_512(a[i]),
+                movehdup_epi32_512(b[i]),
+            ));
+            sum_evn = _mm512_add_epi64(sum_evn, prod_evn);
+            sum_odd = _mm512_add_epi64(sum_odd, prod_odd);
+        }
+        Self::solinas_reduce(sum_evn, sum_odd)
+    }
+
+    /// 3-way fused multiply-accumulate with a single end-reduction.
+    #[inline(always)]
+    unsafe fn dot_product_3_vec(a: [__m512i; 3], b: [__m512i; 3]) -> __m512i {
+        let mut sum_evn = _mm512_mul_epu32(a[0], b[0]);
+        let mut sum_odd = _mm512_mul_epu32(movehdup_epi32_512(a[0]), movehdup_epi32_512(b[0]));
+
+        if Self::BITS <= 31 {
+            for i in 1..3 {
+                let prod_evn = _mm512_mul_epu32(a[i], b[i]);
+                let prod_odd = _mm512_mul_epu32(movehdup_epi32_512(a[i]), movehdup_epi32_512(b[i]));
+                sum_evn = _mm512_add_epi64(sum_evn, prod_evn);
+                sum_odd = _mm512_add_epi64(sum_odd, prod_odd);
+            }
+            return Self::solinas_reduce(sum_evn, sum_odd);
         }
 
-        Self::solinas_reduce_with_carry(sum_evn, sum_odd, carry_evn, carry_odd)
+        // BITS == 32: pre-fold (see `dot_product_4_vec`).
+        let mut sum_evn = Self::fold_product_once(sum_evn);
+        let mut sum_odd = Self::fold_product_once(sum_odd);
+        for i in 1..3 {
+            let prod_evn = Self::fold_product_once(_mm512_mul_epu32(a[i], b[i]));
+            let prod_odd = Self::fold_product_once(_mm512_mul_epu32(
+                movehdup_epi32_512(a[i]),
+                movehdup_epi32_512(b[i]),
+            ));
+            sum_evn = _mm512_add_epi64(sum_evn, prod_evn);
+            sum_odd = _mm512_add_epi64(sum_odd, prod_odd);
+        }
+        Self::solinas_reduce(sum_evn, sum_odd)
     }
 
     /// Multiply by an `Fp2` non-residue. Recognizes `nr == -1` and `nr == 2`
@@ -286,82 +312,6 @@ impl<const P: u32> PackedFp32Avx512<P> {
 
         // Optional third fold for large-C primes (e.g. Generic31Offset32787)
         // where two folds leave residue > 2*P.
-        let (evn_final, odd_final) = if Self::TWO_FOLD_FOUR_PRODUCT_OK {
-            (evn_f2, odd_f2)
-        } else {
-            let evn_f2_lo = _mm512_and_si512(evn_f2, mask);
-            let evn_f2_hi = if Self::BITS == 31 {
-                _mm512_srli_epi64::<31>(evn_f2)
-            } else {
-                _mm512_srl_epi64(evn_f2, shift)
-            };
-            let odd_f2_lo = _mm512_and_si512(odd_f2, mask);
-            let odd_f2_hi = if Self::BITS == 31 {
-                _mm512_srli_epi64::<31>(odd_f2)
-            } else {
-                _mm512_srl_epi64(odd_f2, shift)
-            };
-            (
-                _mm512_add_epi64(evn_f2_lo, Self::mul_c_u64(evn_f2_hi)),
-                _mm512_add_epi64(odd_f2_lo, Self::mul_c_u64(odd_f2_hi)),
-            )
-        };
-
-        Self::pack_and_canonicalize(evn_final, odd_final)
-    }
-
-    /// Same as `solinas_reduce` but with extra carry counts to fold in.
-    #[inline(always)]
-    unsafe fn solinas_reduce_with_carry(
-        prod_evn: __m512i,
-        prod_odd: __m512i,
-        carry_evn: __m512i,
-        carry_odd: __m512i,
-    ) -> __m512i {
-        let mask = _mm512_set1_epi64(Self::MASK_U64 as i64);
-        let shift = _mm_set_epi64x(0, Self::BITS as i64);
-
-        // Fold 1 with carry correction
-        let evn_lo = _mm512_and_si512(prod_evn, mask);
-        let evn_hi = if Self::BITS == 31 {
-            _mm512_srli_epi64::<31>(prod_evn)
-        } else {
-            _mm512_srl_epi64(prod_evn, shift)
-        };
-        let evn_f1 = _mm512_add_epi64(
-            _mm512_add_epi64(evn_lo, Self::mul_c_u64(evn_hi)),
-            Self::carry_correction(carry_evn),
-        );
-
-        let odd_lo = _mm512_and_si512(prod_odd, mask);
-        let odd_hi = if Self::BITS == 31 {
-            _mm512_srli_epi64::<31>(prod_odd)
-        } else {
-            _mm512_srl_epi64(prod_odd, shift)
-        };
-        let odd_f1 = _mm512_add_epi64(
-            _mm512_add_epi64(odd_lo, Self::mul_c_u64(odd_hi)),
-            Self::carry_correction(carry_odd),
-        );
-
-        // Fold 2
-        let evn_f1_lo = _mm512_and_si512(evn_f1, mask);
-        let evn_f1_hi = if Self::BITS == 31 {
-            _mm512_srli_epi64::<31>(evn_f1)
-        } else {
-            _mm512_srl_epi64(evn_f1, shift)
-        };
-        let evn_f2 = _mm512_add_epi64(evn_f1_lo, Self::mul_c_u64(evn_f1_hi));
-
-        let odd_f1_lo = _mm512_and_si512(odd_f1, mask);
-        let odd_f1_hi = if Self::BITS == 31 {
-            _mm512_srli_epi64::<31>(odd_f1)
-        } else {
-            _mm512_srl_epi64(odd_f1, shift)
-        };
-        let odd_f2 = _mm512_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
-
-        // Optional third fold (see `solinas_reduce`).
         let (evn_final, odd_final) = if Self::TWO_FOLD_FOUR_PRODUCT_OK {
             (evn_f2, odd_f2)
         } else {
@@ -504,14 +454,13 @@ impl<const P: u32> Mul for PackedFp32Avx512<P> {
             };
             let odd_f2 = _mm512_add_epi64(odd_f1_lo, Self::mul_c_u64(odd_f1_hi));
 
-            // Recombine even/odd
-            let odd_shifted = _mm512_slli_epi64::<32>(odd_f2);
-            let combined = _mm512_mask_blend_epi32(0b1010101010101010, evn_f2, odd_shifted);
-
-            // Conditional subtract P
-            let p_vec = _mm512_set1_epi32(P as i32);
-            let reduced = _mm512_sub_epi32(combined, p_vec);
-            Self::from_vec(_mm512_min_epu32(combined, reduced))
+            // Recombine + canonicalize. For `BITS == 32` the two-fold residue
+            // can land in `[2^32, 2*P)` (up to `2^32 + C^2`), so the subtract
+            // must happen on the full 64-bit lanes before packing; a 32-bit
+            // recombine would drop bit 32. `pack_and_canonicalize` does the
+            // 64-bit subtract for `BITS == 32` and is identical to the inline
+            // 32-bit recombine for `BITS < 32`.
+            Self::from_vec(Self::pack_and_canonicalize(evn_f2, odd_f2))
         }
     }
 }
@@ -704,47 +653,29 @@ impl<const P: u32> PackedField for PackedFp32Avx512<P> {
     fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
         unsafe {
             let [a0, a1, a2, a3] = a.map(Self::to_vec);
-            let x0 = a0;
-            let x1 = a2;
-            let y0 = Self::sub_vec(a1, a3);
-            let y1 = a3;
-
-            let x0x1 = Self::mul_vec(x0, x1);
-            let y0y1 = Self::mul_vec(y0, y1);
-            let x1_square = Self::mul_vec(x1, x1);
-            let y1_square = Self::mul_vec(y1, y1);
-            let aa = (
-                Self::add_vec(Self::mul_vec(x0, x0), Self::add_vec(x1_square, x1_square)),
-                Self::add_vec(x0x1, x0x1),
-            );
-            let bb = (
-                Self::add_vec(Self::mul_vec(y0, y0), Self::add_vec(y1_square, y1_square)),
-                Self::add_vec(y0y1, y0y1),
-            );
-
-            let v0 = Self::mul_vec(x0, y0);
-            let v1 = Self::mul_vec(x1, y1);
-            let ab = (
-                Self::add_vec(v0, Self::add_vec(v1, v1)),
-                Self::sub_vec(
-                    Self::sub_vec(
-                        Self::mul_vec(Self::add_vec(x0, x1), Self::add_vec(y0, y1)),
-                        v0,
-                    ),
-                    v1,
-                ),
-            );
-            let constant = (
-                Self::add_vec(Self::add_vec(bb.0, bb.0), Self::add_vec(bb.1, bb.1)),
-                Self::add_vec(bb.0, Self::add_vec(bb.1, bb.1)),
-            );
-            let coeff_e1 = (Self::add_vec(ab.0, ab.0), Self::add_vec(ab.1, ab.1));
-
+            let zero = _mm512_setzero_si512();
+            let two_a1 = Self::add_vec(a1, a1);
+            let two_a2 = Self::add_vec(a2, a2);
+            let two_a3 = Self::add_vec(a3, a3);
+            let neg_a3 = Self::sub_vec(zero, a3);
+            let neg_two_a3 = Self::sub_vec(zero, two_a3);
             [
-                Self::from_vec(Self::add_vec(aa.0, constant.0)),
-                Self::from_vec(Self::add_vec(coeff_e1.0, coeff_e1.1)),
-                Self::from_vec(Self::add_vec(aa.1, constant.1)),
-                Self::from_vec(coeff_e1.1),
+                Self::from_vec(Self::dot_product_4_vec(
+                    [a0, a1, a2, a3],
+                    [a0, two_a1, two_a2, two_a3],
+                )),
+                Self::from_vec(Self::dot_product_3_vec(
+                    [a0, a1, a2],
+                    [two_a1, two_a2, two_a3],
+                )),
+                Self::from_vec(Self::dot_product_4_vec(
+                    [a0, a1, a1, a3],
+                    [two_a2, a1, two_a3, neg_a3],
+                )),
+                Self::from_vec(Self::dot_product_3_vec(
+                    [a0, a1, a2],
+                    [two_a3, two_a2, neg_two_a3],
+                )),
             ]
         }
     }

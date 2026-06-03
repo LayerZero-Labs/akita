@@ -684,11 +684,108 @@ mod tests {
         check_packed_fp32_edge_lanes::<{ (1u32 << 31) - 1 }, PF>();
     }
 
+    /// Stress the 31-bit pseudo-Mersenne (`C > 1`) packed multiply against the
+    /// scalar reference across boundary values and a large random sweep. This
+    /// confirms (does not justify) the exact correctness proof on
+    /// `mul_pmersenne31_vec`: the tightest cases are `z = (P-1)^2` and inputs
+    /// that drive the second fold's `t'` toward `2P`.
+    #[test]
+    fn packed_fp32_31b_mul_matches_scalar_stress() {
+        type F = Prime31Offset19;
+        type PF = <F as HasPacking>::Packing;
+        const P: u32 = crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS;
+
+        let boundary = [
+            0u32,
+            1,
+            2,
+            3,
+            19,
+            1 << 15,
+            1 << 30,
+            (1 << 30) + 1,
+            (P - 1) / 2,
+            P - 3,
+            P - 2,
+            P - 1,
+        ];
+
+        let mut inputs: Vec<F> = boundary.iter().map(|&v| F::from_canonical_u32(v)).collect();
+        let mut rng = StdRng::seed_from_u64(0x31be_19ca_fe00_1357);
+        for _ in 0..(1 << 16) {
+            inputs.push(F::from_canonical_u32(rng.next_u32() % P));
+        }
+
+        let lhs: Vec<F> = inputs.clone();
+        let rhs: Vec<F> = {
+            let mut r = inputs.clone();
+            r.rotate_left(1);
+            r
+        };
+
+        let (lhs_p, lhs_s) = PF::pack_slice_with_suffix(&lhs);
+        let (rhs_p, rhs_s) = PF::pack_slice_with_suffix(&rhs);
+        let mul_p: Vec<PF> = lhs_p
+            .iter()
+            .zip(rhs_p.iter())
+            .map(|(&a, &b)| a * b)
+            .collect();
+        let mut mul_out = PF::unpack_slice(&mul_p);
+        for (&a, &b) in lhs_s.iter().zip(rhs_s.iter()) {
+            mul_out.push(a * b);
+        }
+        for i in 0..lhs.len() {
+            assert_eq!(mul_out[i], lhs[i] * rhs[i], "packed mul mismatch at {i}");
+        }
+
+        // Full boundary x boundary cross product (every tight combination).
+        for &x in &boundary {
+            for &y in &boundary {
+                let a = PF::broadcast(F::from_canonical_u32(x));
+                let b = PF::broadcast(F::from_canonical_u32(y));
+                let got = (a * b).extract(0);
+                let want = F::from_canonical_u32(x) * F::from_canonical_u32(y);
+                assert_eq!(got, want, "boundary mul {x}*{y}");
+            }
+        }
+    }
+
     #[test]
     fn packed_fp32_32b_add_sub_mul() {
         type F = Prime32Offset99;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa32_bb32_cc32_dd32);
+    }
+
+    /// Regression guard for the 32-bit (`BITS == 32`) packed base multiply.
+    ///
+    /// For these primes the two-fold Solinas residue can land in `[2^32, 2*P)`
+    /// (up to `2^32 + C^2`). The packed `Mul` recombine must subtract `P` on the
+    /// full 64-bit lanes before packing; a 32-bit recombine drops bit 32 and
+    /// returns a result that is `C` too small. The probability of hitting this
+    /// window with uniform random inputs is `~C/2^32 ≈ 2e-6`, so the random
+    /// parity sweep misses it; these vectors hit it deterministically. They were
+    /// found by exhaustively comparing the truncating recombine to the true
+    /// modular product (all land in the overflow window on `Prime32Offset99`).
+    #[test]
+    fn packed_fp32_32b_mul_two_fold_overflow_window() {
+        type F = Prime32Offset99;
+        type PF = <F as HasPacking>::Packing;
+        const VECTORS: [(u32, u32); 7] = [
+            (3136721438, 3536064673),
+            (2498152412, 1827148629),
+            (2062525777, 3207684599),
+            (4027016701, 3739597742),
+            (2476582663, 3902052967),
+            (4161561975, 3109742861),
+            (1924659530, 1057556213),
+        ];
+        for (x, y) in VECTORS {
+            let a = F::from_canonical_u32(x);
+            let b = F::from_canonical_u32(y);
+            let got = (PF::broadcast(a) * PF::broadcast(b)).extract(0);
+            assert_eq!(got, a * b, "packed 32b mul mismatch for {x} * {y}");
+        }
     }
 
     #[test]

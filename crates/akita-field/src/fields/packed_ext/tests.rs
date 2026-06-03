@@ -400,6 +400,17 @@ fn packed_ring_subfield_fp4_mersenne31_edge_lanes() {
 }
 
 #[test]
+fn packed_ring_subfield_fp4_prime32_edge_lanes() {
+    // Exercises the `BITS == 32` fold-then-sum dot-product path at the
+    // overflow window: the edge values include `P - 1`, so the dot product
+    // sees maximal `(P-1)^2` partial products where carry handling matters.
+    check_packed_ring_subfield_fp4_edge::<
+        { crate::fields::pseudo_mersenne::PRIME32_OFFSET99_MODULUS },
+        PR4Prime32,
+    >();
+}
+
+#[test]
 fn packed_ring_subfield_fp4_generic31_edge_lanes() {
     check_packed_ring_subfield_fp4_edge::<{ (1u32 << 31) - 61 }, PR4Generic31Offset61>();
 }
@@ -446,6 +457,25 @@ fn packed_ring_subfield_fp4_square_prime32() {
             squared.extract(i),
             elem.square(),
             "Prime32 packed RingSubfieldFp4 square mismatch at lane {i}"
+        );
+    }
+}
+
+#[test]
+fn packed_ring_subfield_fp4_square_mersenne31() {
+    let mut rng = StdRng::seed_from_u64(367);
+    type R4M31 = RingSubfieldFp4<Mersenne31>;
+    let width = <PR4Mersenne31 as PackedValue>::WIDTH;
+    let elems: Vec<R4M31> = (0..width).map(|_| R4M31::random(&mut rng)).collect();
+
+    let packed = PR4Mersenne31::from_fn(|i| elems[i]);
+    let squared = packed.square();
+
+    for (i, elem) in elems.iter().enumerate() {
+        assert_eq!(
+            squared.extract(i),
+            elem.square(),
+            "Mersenne31 packed RingSubfieldFp4 square mismatch at lane {i}"
         );
     }
 }

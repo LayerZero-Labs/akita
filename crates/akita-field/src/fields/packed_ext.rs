@@ -645,7 +645,9 @@ where
     type Output = Self;
     #[inline(always)]
     fn add(self, rhs: Self) -> Self {
-        Self::new(std::array::from_fn(|i| self.coeffs[i] + rhs.coeffs[i]))
+        let [a0, a1, a2, a3] = self.coeffs;
+        let [b0, b1, b2, b3] = rhs.coeffs;
+        Self::new([a0 + b0, a1 + b1, a2 + b2, a3 + b3])
     }
 }
 
@@ -657,7 +659,9 @@ where
     type Output = Self;
     #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
-        Self::new(std::array::from_fn(|i| self.coeffs[i] - rhs.coeffs[i]))
+        let [a0, a1, a2, a3] = self.coeffs;
+        let [b0, b1, b2, b3] = rhs.coeffs;
+        Self::new([a0 - b0, a1 - b1, a2 - b2, a3 - b3])
     }
 }
 
