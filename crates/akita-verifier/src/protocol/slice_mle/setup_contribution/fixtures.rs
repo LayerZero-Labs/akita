@@ -267,8 +267,9 @@ impl SetupContributionFixture {
     }
 
     pub fn compute_contribution(&self) -> TestField {
+        let setup_contribution = self.prepared.create_setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
-            &self.prepared,
+            &setup_contribution,
             &self.full_vec_randomness,
             Some(&self.eq_low),
             Some(&self.z_block_low_eq),
@@ -290,8 +291,9 @@ impl SetupContributionFixture {
     }
 
     pub fn recursive_contribution(&self) -> TestField {
+        let setup_contribution = self.prepared.create_setup_contribution_inputs();
         let evaluator = SetupEvaluator::new(
-            &self.prepared,
+            &setup_contribution,
             &self.full_vec_randomness,
             None,
             None,

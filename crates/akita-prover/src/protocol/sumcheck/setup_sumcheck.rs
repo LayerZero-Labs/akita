@@ -5,6 +5,7 @@
 //! `S(lambda, y) * omega(lambda) * alpha(y)` without materializing the full
 //! `omega(lambda) * alpha(y)` table.
 
+use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
 use akita_algebra::CyclotomicRing;
@@ -15,9 +16,8 @@ use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, Sumcheck
 use akita_transcript::Transcript;
 use akita_types::{
     gadget_row_scalars, LevelParams, RingRelationInstance, RingSubfieldEncoding,
-    SETUP_SUMCHECK_DEGREE,
+    SetupContributionPlan, SetupContributionPlanInputs, SETUP_SUMCHECK_DEGREE,
 };
-use akita_verifier::{prepare_ring_switch_row_eval, RingSwitchReplay, SetupEvaluator};
 
 /// Proves `sum_{l,r} table[l,r] * left_factor[l] * right_factor[r]`.
 pub struct SetupSumcheckProver<E: FieldCore> {
@@ -195,19 +195,14 @@ fn prepare_setup_sumcheck_terms<F, E, const D: usize>(
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
-    row_coefficients: &[E],
+    _row_coefficients: &[E],
 ) -> Result<(usize, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt + LiftBase<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
-    let replay = RingSwitchReplay {
-        relation,
-        row_coefficients,
-        lp,
-    };
-    let prepared = prepare_ring_switch_row_eval::<F, E, D>(&replay, alpha, tau1)?;
+    let inputs = create_setup_contribution_inputs::<F, E, D>(relation, lp, tau1)?;
     let num_t_vectors = relation
         .commitment_routing()
         .num_polys_per_commitment_group()
@@ -221,21 +216,124 @@ where
         lp.log_basis,
     );
     let layout = relation.segment_layout(lp)?;
-    let evaluator = SetupEvaluator::new(
-        &prepared,
+    let plan = SetupContributionPlan::prepare(
+        &inputs,
         x_challenges,
         None,
         None,
-        &alpha_pows,
         &fold_gadget,
         layout.offset_w,
         layout.offset_t,
         layout.offset_z,
-    );
-    let plan = evaluator.prepare()?;
+    )?;
     let required = plan.required();
     let bar_omega = plan.materialize_bar_omega();
     Ok((required, bar_omega, alpha_pows.to_vec()))
+}
+
+/// Build the setup-contribution artifact from prover-owned relation data.
+fn create_setup_contribution_inputs<F, E, const D: usize>(
+    relation: &RingRelationInstance<F, D>,
+    lp: &LevelParams,
+    tau1: &[E],
+) -> Result<SetupContributionPlanInputs<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore,
+{
+    let routing = relation.commitment_routing();
+    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
+    let num_claims = relation.claim_to_point().len();
+    let num_points = num_polys_per_commitment_group.len();
+    if relation.opening_points().len() != num_points {
+        return Err(AkitaError::InvalidProof);
+    }
+    if relation
+        .claim_to_point()
+        .iter()
+        .any(|&point_idx| point_idx >= num_points)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    let depth_commit = lp.num_digits_commit;
+    let depth_open = lp.num_digits_open;
+    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits());
+    if lp.num_blocks == 0 || !lp.num_blocks.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "num_blocks must be a non-zero power of two".to_string(),
+        ));
+    }
+    if lp.block_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "block_len must be non-zero".to_string(),
+        ));
+    }
+    if depth_commit == 0 || depth_open == 0 || depth_fold == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "digit depths must be non-zero".to_string(),
+        ));
+    }
+
+    let num_t_vectors = num_polys_per_commitment_group
+        .iter()
+        .try_fold(0usize, |acc, &count| acc.checked_add(count))
+        .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
+    let inner_width = lp
+        .block_len
+        .checked_mul(depth_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
+    if lp.a_key.col_len() < inner_width {
+        return Err(AkitaError::InvalidSetup(
+            "A-key column width is too small for setup contribution layout".to_string(),
+        ));
+    }
+    let max_point_poly_count = num_polys_per_commitment_group
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0);
+    let expected_b_width = max_point_poly_count
+        .checked_mul(lp.a_key.row_len())
+        .and_then(|width| width.checked_mul(depth_open))
+        .and_then(|width| width.checked_mul(lp.num_blocks))
+        .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".to_string()))?;
+    if lp.b_key.col_len() < expected_b_width {
+        return Err(AkitaError::InvalidSetup(
+            "B-key column width is too small for setup contribution layout".to_string(),
+        ));
+    }
+
+    let m_row_layout = relation.m_row_layout();
+    let num_public_rows = relation.num_public_rows();
+    let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout)?;
+    let eq_tau1 = EqPolynomial::evals(tau1)?;
+    if eq_tau1.len() < rows {
+        return Err(AkitaError::InvalidSize {
+            expected: rows,
+            actual: eq_tau1.len(),
+        });
+    }
+
+    Ok(SetupContributionPlanInputs {
+        eq_tau1,
+        num_t_vectors,
+        num_blocks: lp.num_blocks,
+        num_claims,
+        depth_open,
+        depth_commit,
+        depth_fold,
+        block_len: lp.block_len,
+        inner_width,
+        n_a: lp.a_key.row_len(),
+        n_d: lp.d_key.row_len(),
+        m_row_layout,
+        n_b: lp.b_key.row_len(),
+        num_points,
+        rows,
+        num_polys_per_commitment_group: num_polys_per_commitment_group.to_vec(),
+        num_public_rows,
+    })
 }
 
 fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {

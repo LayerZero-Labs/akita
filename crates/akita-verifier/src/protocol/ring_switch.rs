@@ -17,7 +17,7 @@ use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams, MRowLayout,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingRelationSegmentLayout,
-    RingSubfieldEncoding, TerminalWitnessTranscriptParts,
+    RingSubfieldEncoding, SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
 };
 
 #[cfg(feature = "zk")]
@@ -636,6 +636,28 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         Ok(self.witness_segment_layout)
     }
 
+    pub(crate) fn create_setup_contribution_inputs(&self) -> SetupContributionPlanInputs<E> {
+        SetupContributionPlanInputs {
+            eq_tau1: self.eq_tau1.clone(),
+            num_t_vectors: self.num_t_vectors,
+            num_blocks: self.num_blocks,
+            num_claims: self.num_claims,
+            depth_open: self.depth_open,
+            depth_commit: self.depth_commit,
+            depth_fold: self.depth_fold,
+            block_len: self.block_len,
+            inner_width: self.inner_width,
+            n_a: self.n_a,
+            n_d: self.n_d,
+            m_row_layout: self.m_row_layout,
+            n_b: self.n_b,
+            num_points: self.num_points,
+            rows: self.rows,
+            num_polys_per_commitment_group: self.num_polys_per_commitment_group.clone(),
+            num_public_rows: self.num_public_rows,
+        }
+    }
+
     /// Evaluate the prepared ring-switch row table at the supplied point.
     ///
     /// # Errors
@@ -842,8 +864,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             let result = if let Some(claim) = setup_claim {
                 Ok(claim)
             } else {
+                let setup_contribution_inputs = self.create_setup_contribution_inputs();
                 let evaluator = SetupEvaluator::new(
-                    self,
+                    &setup_contribution_inputs,
                     x_challenges,
                     Some(&eq_low),
                     Some(&z_block_low_eq),

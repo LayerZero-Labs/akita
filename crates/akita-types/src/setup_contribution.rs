@@ -1,0 +1,810 @@
+//! Shared setup-contribution planning for prover and verifier.
+//!
+//! This module owns the pure layout/weight derivation for the stage-3 setup
+//! product. The prover consumes the materialized `bar_omega` vector, while the
+//! verifier can evaluate the same plan directly against the packed setup.
+
+use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::offset_eq::eq_eval_at_index;
+use akita_algebra::ring::eval_ring_at_pows;
+use akita_algebra::CyclotomicRing;
+use akita_field::parallel::*;
+use akita_field::{AkitaError, ExtField, FieldCore, MulBase};
+
+use crate::layout::MRowLayout;
+use crate::proof::AkitaExpandedSetup;
+
+const POSSIBLE_CARRIES: usize = 2;
+
+/// Minimal setup-contribution data needed to derive `bar_omega`.
+#[derive(Clone)]
+pub struct SetupContributionPlanInputs<E: FieldCore> {
+    pub eq_tau1: Vec<E>,
+    pub num_t_vectors: usize,
+    pub num_blocks: usize,
+    pub num_claims: usize,
+    pub depth_open: usize,
+    pub depth_commit: usize,
+    pub depth_fold: usize,
+    pub block_len: usize,
+    pub inner_width: usize,
+    pub n_a: usize,
+    pub n_d: usize,
+    pub m_row_layout: MRowLayout,
+    pub n_b: usize,
+    pub num_points: usize,
+    pub rows: usize,
+    pub num_polys_per_commitment_group: Vec<usize>,
+    pub num_public_rows: usize,
+}
+
+/// Prepared setup-contribution weights.
+pub struct SetupContributionPlan<E> {
+    required: usize,
+    d_stride: usize,
+    b_stride: usize,
+    z_range: usize,
+    d_required: usize,
+    b_required: usize,
+    a_required: usize,
+    w_eq_slice: Vec<E>,
+    t_eq_slice_per_group: Vec<Vec<E>>,
+    z_eq_slice: Vec<E>,
+    d_weights: Vec<E>,
+    b_weights_by_row: Vec<Vec<E>>,
+    a_weights: Vec<E>,
+    endpoints: Vec<usize>,
+}
+
+impl<E: FieldCore> SetupContributionPlan<E> {
+    pub fn required(&self) -> usize {
+        self.required
+    }
+
+    pub fn materialize_bar_omega(&self) -> Vec<E> {
+        let segments = self.segments();
+        let segment_values = cfg_into_iter!(segments)
+            .map(|segment| {
+                let values = cfg_into_iter!(segment.lo..segment.hi)
+                    .map(|lambda| self.weight_at(lambda, &segment))
+                    .collect::<Vec<_>>();
+                (segment.lo, values)
+            })
+            .collect::<Vec<_>>();
+        let mut bar_omega = vec![E::zero(); self.required];
+        for (lo, values) in segment_values {
+            for (offset, value) in values.into_iter().enumerate() {
+                bar_omega[lo + offset] = value;
+            }
+        }
+        bar_omega
+    }
+
+    pub fn evaluate_bar_omega_with_eq(&self, eq_lambda: &[E]) -> Result<E, AkitaError> {
+        let lambda_len = self
+            .required
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("setup omega lambda length overflow".into()))?;
+        if eq_lambda.len() != lambda_len {
+            return Err(AkitaError::InvalidSize {
+                expected: lambda_len,
+                actual: eq_lambda.len(),
+            });
+        }
+
+        let segments = self.segments();
+        let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
+            .map(|idx| {
+                let segment = &segments[idx];
+                macro_rules! segment_sum {
+                    ($has_d:literal, $has_b:literal, $has_a:literal) => {
+                        bar_omega_segment_eval::<E, $has_d, $has_b, $has_a>(
+                            segment.lo..segment.hi,
+                            eq_lambda,
+                            segment.d_start_abs,
+                            segment.d_weight,
+                            &self.w_eq_slice,
+                            segment.b_start_abs,
+                            segment.b_weights,
+                            &self.t_eq_slice_per_group,
+                            segment.a_start_abs,
+                            segment.a_weight,
+                            &self.z_eq_slice,
+                        )
+                    };
+                }
+
+                match (segment.has_d, segment.has_b, segment.has_a) {
+                    (true, true, true) => segment_sum!(true, true, true),
+                    (true, true, false) => segment_sum!(true, true, false),
+                    (true, false, true) => segment_sum!(true, false, true),
+                    (false, true, true) => segment_sum!(false, true, true),
+                    (true, false, false) => segment_sum!(true, false, false),
+                    (false, true, false) => segment_sum!(false, true, false),
+                    (false, false, true) => segment_sum!(false, false, true),
+                    (false, false, false) => E::zero(),
+                }
+            })
+            .collect();
+        Ok(segment_sums.into_iter().sum())
+    }
+
+    pub fn evaluate_direct<F, const D: usize>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        alpha_pows: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        let setup_len = setup.shared_matrix().total_ring_elements_at::<D>()?;
+        if self.required > setup_len {
+            return Err(AkitaError::InvalidSetup(
+                "shared matrix is too small for selected verifier layout".into(),
+            ));
+        }
+        let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_len)?;
+        let setup_flat = setup_view.as_slice();
+
+        let segments = self.segments();
+        let segment_sums: Vec<E> = cfg_into_iter!(0..segments.len())
+            .map(|idx| -> Result<E, AkitaError> {
+                let segment = &segments[idx];
+                macro_rules! segment_sum {
+                    ($has_d:literal, $has_b:literal, $has_a:literal) => {
+                        packed_slice_inner_sum::<F, E, D, $has_d, $has_b, $has_a>(
+                            segment.lo..segment.hi,
+                            setup_flat,
+                            alpha_pows,
+                            segment.d_start_abs,
+                            segment.d_weight,
+                            &self.w_eq_slice,
+                            segment.b_start_abs,
+                            segment.b_weights,
+                            &self.t_eq_slice_per_group,
+                            segment.a_start_abs,
+                            segment.a_weight,
+                            &self.z_eq_slice,
+                        )
+                    };
+                }
+
+                Ok(match (segment.has_d, segment.has_b, segment.has_a) {
+                    (true, true, true) => segment_sum!(true, true, true),
+                    (true, true, false) => segment_sum!(true, true, false),
+                    (true, false, true) => segment_sum!(true, false, true),
+                    (false, true, true) => segment_sum!(false, true, true),
+                    (true, false, false) => segment_sum!(true, false, false),
+                    (false, true, false) => segment_sum!(false, true, false),
+                    (false, false, true) => segment_sum!(false, false, true),
+                    (false, false, false) => E::zero(),
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+
+        Ok(segment_sums.into_iter().sum())
+    }
+
+    fn weight_at(&self, lambda: usize, segment: &SetupSegment<'_, E>) -> E {
+        let mut weight = E::zero();
+        if segment.has_d {
+            weight += segment.d_weight * self.w_eq_slice[lambda - segment.d_start_abs];
+        }
+        if segment.has_b {
+            for (g, t_eq_slice) in self.t_eq_slice_per_group.iter().enumerate() {
+                weight += segment.b_weights[g] * t_eq_slice[lambda - segment.b_start_abs];
+            }
+        }
+        if segment.has_a {
+            weight += segment.a_weight * self.z_eq_slice[lambda - segment.a_start_abs];
+        }
+        weight
+    }
+
+    fn segments(&self) -> Vec<SetupSegment<'_, E>> {
+        (0..self.endpoints.len().saturating_sub(1))
+            .filter_map(|idx| {
+                let lo = self.endpoints[idx];
+                let hi = self.endpoints[idx + 1];
+                if lo == hi {
+                    return None;
+                }
+
+                let has_d = self.d_stride != 0 && lo < self.d_required;
+                let d_row = if has_d { lo / self.d_stride } else { 0 };
+                let d_start_abs = if has_d { d_row * self.d_stride } else { 0 };
+                let d_weight = if has_d {
+                    self.d_weights[d_row]
+                } else {
+                    E::zero()
+                };
+
+                let has_b = self.b_stride != 0 && lo < self.b_required;
+                let b_row = if has_b { lo / self.b_stride } else { 0 };
+                let b_start_abs = if has_b { b_row * self.b_stride } else { 0 };
+                let b_weights: &[E] = if has_b {
+                    &self.b_weights_by_row[b_row]
+                } else {
+                    &[]
+                };
+
+                let has_a = self.z_range != 0 && lo < self.a_required;
+                let a_row = if has_a { lo / self.z_range } else { 0 };
+                let a_start_abs = if has_a { a_row * self.z_range } else { 0 };
+                let a_weight = if has_a {
+                    self.a_weights[a_row]
+                } else {
+                    E::zero()
+                };
+
+                Some(SetupSegment {
+                    lo,
+                    hi,
+                    has_d,
+                    d_start_abs,
+                    d_weight,
+                    has_b,
+                    b_start_abs,
+                    b_weights,
+                    has_a,
+                    a_start_abs,
+                    a_weight,
+                })
+            })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare<F>(
+        inputs: &SetupContributionPlanInputs<E>,
+        full_vec_randomness: &[E],
+        eq_low: Option<&[E]>,
+        z_block_low_eq: Option<&[E]>,
+        fold_gadget: &[F],
+        offset_w: usize,
+        offset_t: usize,
+        offset_z: usize,
+    ) -> Result<Self, AkitaError>
+    where
+        F: FieldCore,
+        E: MulBase<F>,
+    {
+        if inputs.num_blocks == 0 || !inputs.num_blocks.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "num_blocks must be a non-zero power of two".into(),
+            ));
+        }
+        if inputs.block_len == 0
+            || inputs.depth_open == 0
+            || inputs.depth_commit == 0
+            || inputs.depth_fold == 0
+        {
+            return Err(AkitaError::InvalidSetup(
+                "setup evaluator layout has zero width".into(),
+            ));
+        }
+        if fold_gadget.len() < inputs.depth_fold {
+            return Err(AkitaError::InvalidSize {
+                expected: inputs.depth_fold,
+                actual: fold_gadget.len(),
+            });
+        }
+        if inputs.num_polys_per_commitment_group.len() != inputs.num_points {
+            return Err(AkitaError::InvalidSize {
+                expected: inputs.num_points,
+                actual: inputs.num_polys_per_commitment_group.len(),
+            });
+        }
+
+        let block_bits = inputs.num_blocks.trailing_zeros() as usize;
+        if block_bits > full_vec_randomness.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: block_bits,
+                actual: full_vec_randomness.len(),
+            });
+        }
+        let block_mask = inputs.num_blocks - 1;
+        let block_offset_low = offset_w & block_mask;
+        let w_offset_high = offset_w >> block_bits;
+        let t_offset_high = offset_t >> block_bits;
+        let high_challenges = &full_vec_randomness[block_bits..];
+        let eq_low_storage;
+        let eq_low = if let Some(eq_low) = eq_low {
+            eq_low
+        } else {
+            eq_low_storage = EqPolynomial::evals(&full_vec_randomness[..block_bits])?;
+            &eq_low_storage
+        };
+        if eq_low.len() < inputs.num_blocks {
+            return Err(AkitaError::InvalidSize {
+                expected: inputs.num_blocks,
+                actual: eq_low.len(),
+            });
+        }
+
+        let z_offset_low_bits = inputs.block_len.trailing_zeros() as usize;
+        if z_offset_low_bits > full_vec_randomness.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: z_offset_low_bits,
+                actual: full_vec_randomness.len(),
+            });
+        }
+        let z_offset_low = offset_z & inputs.block_len.saturating_sub(1);
+        let z_range = inputs.inner_width;
+        let expected_z_range = checked_mul(inputs.block_len, inputs.depth_commit, "Z width")?;
+        if z_range != expected_z_range {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_z_range,
+                actual: z_range,
+            });
+        }
+        let z_dims_pow2 = inputs.block_len.is_power_of_two();
+
+        let n_d_active = match inputs.m_row_layout {
+            MRowLayout::WithDBlock => inputs.n_d,
+            MRowLayout::WithoutDBlock => 0,
+        };
+        let d_start = checked_add(1, inputs.num_public_rows, "D row start")?;
+        let b_start = checked_add(d_start, n_d_active, "B row start")?;
+        let b_rows = checked_mul(inputs.n_b, inputs.num_points, "B row count")?;
+        let a_start = checked_add(b_start, b_rows, "A row start")?;
+        let a_end = checked_add(a_start, inputs.n_a, "A row end")?;
+        if a_end > inputs.rows || inputs.rows > inputs.eq_tau1.len() {
+            return Err(AkitaError::InvalidSetup(
+                "M-row weights are inconsistent with setup evaluator layout".into(),
+            ));
+        }
+
+        let stride_t = checked_mul(inputs.n_a, inputs.depth_open, "T stride")?;
+        let cols_per_poly_t = checked_mul(stride_t, inputs.num_blocks, "T polynomial width")?;
+        let b_per_claim_w = checked_mul(inputs.num_blocks, inputs.depth_open, "W claim width")?;
+        let n_cols_w = checked_mul(inputs.num_claims, b_per_claim_w, "W column width")?;
+        let max_group_poly_count = inputs
+            .num_polys_per_commitment_group
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0);
+        let n_cols_t = checked_mul(max_group_poly_count, cols_per_poly_t, "T column width")?;
+
+        let d_required = checked_mul(n_d_active, n_cols_w, "D setup footprint")?;
+        let b_required = checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?;
+        let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
+        let required = d_required.max(b_required).max(a_required);
+        if required == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup evaluator requires a non-empty packed footprint".into(),
+            ));
+        }
+
+        let mut group_offsets = Vec::with_capacity(inputs.num_polys_per_commitment_group.len());
+        let mut next_offset = 0usize;
+        for &group_poly_count in &inputs.num_polys_per_commitment_group {
+            group_offsets.push(next_offset);
+            next_offset = checked_add(next_offset, group_poly_count, "T vector offset")?;
+        }
+        if next_offset != inputs.num_t_vectors {
+            return Err(AkitaError::InvalidSetup(
+                "T vector count is inconsistent with point polynomial counts".into(),
+            ));
+        }
+
+        let w_eq_slice: Vec<E> = if n_d_active == 0 {
+            Vec::new()
+        } else {
+            let w_hi_len = checked_mul(inputs.num_claims, inputs.depth_open, "W high-eq width")?;
+            let eq_hi_w_table: Vec<E> = (0..=w_hi_len)
+                .map(|k| eq_eval_at_index(high_challenges, w_offset_high + k))
+                .collect();
+            cfg_into_iter!(0..n_cols_w)
+                .map(|current_index| {
+                    let (low_eq_idx, high_eq_idx) = get_eq_indices_for_d(
+                        current_index,
+                        inputs.depth_open,
+                        inputs.num_blocks,
+                        inputs.num_claims,
+                        b_per_claim_w,
+                        block_offset_low,
+                        block_mask,
+                        block_bits,
+                    );
+                    eq_low[low_eq_idx] * eq_hi_w_table[high_eq_idx]
+                })
+                .collect()
+        };
+
+        let t_hi_len = checked_mul(
+            checked_mul(inputs.num_t_vectors, inputs.depth_open, "T high-eq width")?,
+            inputs.n_a,
+            "T high-eq width",
+        )?;
+        let eq_hi_t_table: Vec<E> = (0..=t_hi_len)
+            .map(|k| eq_eval_at_index(high_challenges, t_offset_high + k))
+            .collect();
+        let t_eq_slice_per_group: Vec<Vec<E>> = (0..inputs.num_points)
+            .map(|g| {
+                let group_size = inputs.num_polys_per_commitment_group[g];
+                cfg_into_iter!(0..n_cols_t)
+                    .map(|c| {
+                        let poly_idx = c / cols_per_poly_t;
+                        if poly_idx >= group_size {
+                            return E::zero();
+                        }
+                        let flat_t_vector = group_offsets[g] + poly_idx;
+                        let (low_eq_idx, high_eq_idx) = get_eq_indices_for_b(
+                            c,
+                            flat_t_vector,
+                            inputs.depth_open,
+                            inputs.n_a,
+                            inputs.num_blocks,
+                            inputs.num_t_vectors,
+                            stride_t,
+                            block_offset_low,
+                            block_mask,
+                            block_bits,
+                        );
+                        eq_low[low_eq_idx] * eq_hi_t_table[high_eq_idx]
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let z_eq_slice = if z_dims_pow2 {
+            let z_block_low_storage;
+            let z_block_low_eq = if let Some(z_block_low_eq) = z_block_low_eq {
+                z_block_low_eq
+            } else {
+                z_block_low_storage =
+                    EqPolynomial::evals(&full_vec_randomness[..z_offset_low_bits])?;
+                &z_block_low_storage
+            };
+            if z_block_low_eq.len() < inputs.block_len {
+                return Err(AkitaError::InvalidSize {
+                    expected: inputs.block_len,
+                    actual: z_block_low_eq.len(),
+                });
+            }
+
+            let z_offset_high = offset_z >> z_offset_low_bits;
+            let z_block_mask = inputs.block_len.wrapping_sub(1);
+            let z_high_challenges = &full_vec_randomness[z_offset_low_bits..];
+            let num_q_z = checked_mul(
+                checked_mul(inputs.num_points, inputs.depth_fold, "Z high-eq width")?,
+                inputs.depth_commit,
+                "Z high-eq width",
+            )?;
+            let eq_hi_z_table: Vec<E> = (0..=num_q_z)
+                .map(|k| eq_eval_at_index(z_high_challenges, z_offset_high + k))
+                .collect();
+            let s_per_dc_per_carry: Vec<[E; POSSIBLE_CARRIES]> = (0..inputs.depth_commit)
+                .map(|dc| {
+                    let mut s = [E::zero(); POSSIBLE_CARRIES];
+                    for (carry_slot, slot) in s.iter_mut().enumerate() {
+                        let mut acc = E::zero();
+                        for (df, &fg) in fold_gadget.iter().enumerate().take(inputs.depth_fold) {
+                            for pt in 0..inputs.num_points {
+                                let k = pt
+                                    + inputs.num_points * df
+                                    + inputs.num_points * inputs.depth_fold * dc
+                                    + carry_slot;
+                                acc += eq_hi_z_table[k].mul_base(fg);
+                            }
+                        }
+                        *slot = -acc;
+                    }
+                    s
+                })
+                .collect();
+            cfg_into_iter!(0..z_range)
+                .map(|c| {
+                    let (low_eq_idx, depth_commit_idx, block_carry) = get_eq_indices_for_a(
+                        c,
+                        inputs.depth_commit,
+                        z_offset_low,
+                        z_block_mask,
+                        z_offset_low_bits,
+                    );
+                    z_block_low_eq[low_eq_idx] * s_per_dc_per_carry[depth_commit_idx][block_carry]
+                })
+                .collect()
+        } else {
+            let z_total_blocks_dense =
+                checked_mul(inputs.block_len, inputs.num_points, "dense Z block width")?;
+            let z_len_dense = checked_mul(
+                checked_mul(inputs.depth_fold, inputs.depth_commit, "dense Z length")?,
+                z_total_blocks_dense,
+                "dense Z length",
+            )?;
+            let n_rand = full_vec_randomness.len();
+            let k = z_len_dense
+                .saturating_sub(1)
+                .checked_next_power_of_two()
+                .map(|p| p.trailing_zeros() as usize)
+                .unwrap_or(0)
+                .max(1)
+                .min(n_rand);
+            let mask = 1usize
+                .checked_shl(u32::try_from(k).map_err(|_| AkitaError::InvalidSize {
+                    expected: usize::BITS as usize,
+                    actual: k,
+                })?)
+                .ok_or_else(|| AkitaError::InvalidSetup("dense Z eq width overflow".into()))?
+                - 1;
+            let offset_z_dense_low = offset_z & mask;
+            let offset_z_dense_high = offset_z >> k;
+            let eq_low_z_dense = EqPolynomial::evals(&full_vec_randomness[..k])?;
+            let max_high = offset_z
+                .checked_add(z_len_dense)
+                .and_then(|end| end.checked_sub(1))
+                .ok_or_else(|| AkitaError::InvalidSetup("dense Z high-eq bound overflow".into()))?
+                >> k;
+            let n_high = max_high - offset_z_dense_high + 1;
+            let eq_high_z_dense: Vec<E> = (0..n_high)
+                .map(|h| eq_eval_at_index(&full_vec_randomness[k..], offset_z_dense_high + h))
+                .collect();
+
+            cfg_into_iter!(0..z_range)
+                .map(|c| {
+                    let dc = c % inputs.depth_commit;
+                    let blk = c / inputs.depth_commit;
+                    let mut acc = E::zero();
+                    for pt in 0..inputs.num_points {
+                        for (df, &fg) in fold_gadget.iter().enumerate().take(inputs.depth_fold) {
+                            let x = blk
+                                + inputs.block_len * pt
+                                + inputs.block_len * inputs.num_points * df
+                                + inputs.block_len * inputs.num_points * inputs.depth_fold * dc;
+                            let sum = offset_z_dense_low + x;
+                            let low_idx = sum & mask;
+                            let high_idx = sum >> k;
+                            let eq_val = eq_low_z_dense[low_idx] * eq_high_z_dense[high_idx];
+                            acc += eq_val.mul_base(fg);
+                        }
+                    }
+                    -acc
+                })
+                .collect()
+        };
+
+        let b_weights_by_row: Vec<Vec<E>> = (0..inputs.n_b)
+            .map(|row| {
+                (0..inputs.num_points)
+                    .map(|g| inputs.eq_tau1[b_start + g * inputs.n_b + row])
+                    .collect()
+            })
+            .collect();
+
+        let mut endpoints = Vec::with_capacity(n_d_active + inputs.n_b + inputs.n_a + 2);
+        endpoints.push(0);
+        endpoints.push(required);
+        push_role_boundaries(&mut endpoints, n_d_active, n_cols_w, "D")?;
+        push_role_boundaries(&mut endpoints, inputs.n_b, n_cols_t, "B")?;
+        push_role_boundaries(&mut endpoints, inputs.n_a, z_range, "A")?;
+        endpoints.sort_unstable();
+        endpoints.dedup();
+
+        Ok(Self {
+            required,
+            d_stride: n_cols_w,
+            b_stride: n_cols_t,
+            z_range,
+            d_required,
+            b_required,
+            a_required,
+            w_eq_slice,
+            t_eq_slice_per_group,
+            z_eq_slice,
+            d_weights: inputs.eq_tau1[d_start..(d_start + n_d_active)].to_vec(),
+            b_weights_by_row,
+            a_weights: inputs.eq_tau1[a_start..a_end].to_vec(),
+            endpoints,
+        })
+    }
+}
+
+struct SetupSegment<'a, E> {
+    lo: usize,
+    hi: usize,
+    has_d: bool,
+    d_start_abs: usize,
+    d_weight: E,
+    has_b: bool,
+    b_start_abs: usize,
+    b_weights: &'a [E],
+    has_a: bool,
+    a_start_abs: usize,
+    a_weight: E,
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn packed_slice_inner_sum<
+    F,
+    E,
+    const D: usize,
+    const HAS_D: bool,
+    const HAS_B: bool,
+    const HAS_A: bool,
+>(
+    range: std::ops::Range<usize>,
+    setup_flat: &[CyclotomicRing<F, D>],
+    alpha_pows: &[E],
+    d_start: usize,
+    d_weight: E,
+    w_eq: &[E],
+    b_start: usize,
+    b_weights: &[E],
+    t_eq_per_group: &[Vec<E>],
+    a_start: usize,
+    a_weight: E,
+    z_eq: &[E],
+) -> E
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    cfg_fold_reduce!(
+        range,
+        E::zero,
+        |mut acc, lambda| {
+            let mut weight = E::zero();
+            if HAS_D {
+                weight += d_weight * w_eq[lambda - d_start];
+            }
+            if HAS_B {
+                for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
+                    weight += b_weights[g] * t_eq_slice[lambda - b_start];
+                }
+            }
+            if HAS_A {
+                weight += a_weight * z_eq[lambda - a_start];
+            }
+            if !weight.is_zero() {
+                acc += eval_ring_at_pows(&setup_flat[lambda], alpha_pows) * weight;
+            }
+            acc
+        },
+        |lhs, rhs| lhs + rhs
+    )
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn bar_omega_segment_eval<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: bool>(
+    range: std::ops::Range<usize>,
+    eq_lambda: &[E],
+    d_start: usize,
+    d_weight: E,
+    w_eq: &[E],
+    b_start: usize,
+    b_weights: &[E],
+    t_eq_per_group: &[Vec<E>],
+    a_start: usize,
+    a_weight: E,
+    z_eq: &[E],
+) -> E
+where
+    E: FieldCore,
+{
+    cfg_fold_reduce!(
+        range,
+        E::zero,
+        |mut acc, lambda| {
+            let mut weight = E::zero();
+            if HAS_D {
+                weight += d_weight * w_eq[lambda - d_start];
+            }
+            if HAS_B {
+                for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
+                    weight += b_weights[g] * t_eq_slice[lambda - b_start];
+                }
+            }
+            if HAS_A {
+                weight += a_weight * z_eq[lambda - a_start];
+            }
+            if !weight.is_zero() {
+                acc += eq_lambda[lambda] * weight;
+            }
+            acc
+        },
+        |lhs, rhs| lhs + rhs
+    )
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn get_eq_indices_for_d(
+    current_index: usize,
+    num_digits: usize,
+    num_blocks: usize,
+    num_claims: usize,
+    blocks_per_claim_w: usize,
+    block_offset_low: usize,
+    block_mask: usize,
+    block_bits: usize,
+) -> (usize, usize) {
+    let digit_idx = current_index % num_digits;
+    let block_idx = (current_index / num_digits) % num_blocks;
+    let claim_idx = current_index / blocks_per_claim_w;
+    let m_layout_high_idx = digit_idx * num_claims + claim_idx;
+    let block_sum = block_offset_low + block_idx;
+    let low_eq_idx = block_sum & block_mask;
+    let block_carry = block_sum >> block_bits;
+    let high_eq_idx = m_layout_high_idx + block_carry;
+    (low_eq_idx, high_eq_idx)
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn get_eq_indices_for_b(
+    current_index: usize,
+    flat_t_vector: usize,
+    num_digits: usize,
+    n_a: usize,
+    num_blocks: usize,
+    num_t_vectors: usize,
+    stride_t: usize,
+    block_offset_low: usize,
+    block_mask: usize,
+    block_bits: usize,
+) -> (usize, usize) {
+    let digit_idx = current_index % num_digits;
+    let a_row_idx = (current_index / num_digits) % n_a;
+    let block_idx = (current_index / stride_t) % num_blocks;
+    let m_layout_high_idx =
+        flat_t_vector + num_t_vectors * digit_idx + num_t_vectors * num_digits * a_row_idx;
+    let block_sum = block_offset_low + block_idx;
+    let low_eq_idx = block_sum & block_mask;
+    let block_carry = block_sum >> block_bits;
+    let high_eq_idx = m_layout_high_idx + block_carry;
+    (low_eq_idx, high_eq_idx)
+}
+
+#[inline(always)]
+fn get_eq_indices_for_a(
+    current_index: usize,
+    depth_commit: usize,
+    z_offset_low: usize,
+    z_block_mask: usize,
+    z_offset_low_bits: usize,
+) -> (usize, usize, usize) {
+    let block_idx = current_index / depth_commit;
+    let depth_commit_idx = current_index % depth_commit;
+    let block_sum = z_offset_low + block_idx;
+    let low_eq_idx = block_sum & z_block_mask;
+    let block_carry = block_sum >> z_offset_low_bits;
+    (low_eq_idx, depth_commit_idx, block_carry)
+}
+
+#[inline(always)]
+fn push_role_boundaries(
+    endpoints: &mut Vec<usize>,
+    rows: usize,
+    stride: usize,
+    name: &'static str,
+) -> Result<(), AkitaError> {
+    if rows == 0 || stride == 0 {
+        return Ok(());
+    }
+    let mut boundary = 0usize;
+    for _ in 0..rows {
+        boundary = boundary
+            .checked_add(stride)
+            .ok_or_else(|| AkitaError::InvalidSetup(format!("packed {name} boundary overflow")))?;
+        endpoints.push(boundary);
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn checked_add(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, AkitaError> {
+    lhs.checked_add(rhs)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{name} overflow")))
+}
+
+#[inline(always)]
+fn checked_mul(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, AkitaError> {
+    lhs.checked_mul(rhs)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{name} overflow")))
+}

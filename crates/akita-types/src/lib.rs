@@ -12,6 +12,7 @@ pub mod layout;
 pub mod proof;
 pub mod proof_size;
 pub mod schedule;
+pub mod setup_contribution;
 pub mod sis_floor;
 pub mod sis_offline;
 pub mod transcript;
@@ -87,6 +88,7 @@ pub use schedule::{
     w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
     AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step,
 };
+pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis_offline::{
     a_role_base_norm, root_level_params_for_layout_with_log_basis,
     sis_derived_root_params_for_layout, sis_secure_level_params, SisCollisionBounds, SisRoleWidths,
