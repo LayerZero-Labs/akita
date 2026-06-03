@@ -71,9 +71,7 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     "onehot_fp128_d64_tensor": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 tensor"
     ),
-    "onehot_fp32_d32": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
     "onehot_fp32_d64": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
-    "dense_fp32_d32": CaseMetadata("fp32", "dense", "dense", "D32"),
     "dense_fp32_d64": CaseMetadata("fp32", "dense", "dense", "D64"),
     "onehot_fp64_d32": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
     "onehot_fp64_d64": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
@@ -1117,7 +1115,7 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
         # Intentionally no per-level `level_bytes` vs `total_bytes` comparison.
         # The header-stripped planner estimate is only a conservative upper bound
         # in *aggregate*: it can over- or under-attribute bytes to any individual
-        # level (e.g. dense_fp32_d32 nv26 has levels where the runtime proof
+        # level (e.g. dense_fp32_d64 nv26 has levels where the runtime proof
         # exceeds the per-level estimate while the total stays under it). The
         # total-overcount invariant is asserted in the profile binary itself
         # (`ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` in

@@ -484,7 +484,7 @@ fn fp32_static_dense_round_trip() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type FSmall = fp32::Field;
-        type Cfg = fp32::D32Full;
+        type Cfg = fp32::D64Full;
         const D: usize = Cfg::D;
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =

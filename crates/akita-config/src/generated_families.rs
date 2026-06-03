@@ -138,22 +138,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         table_backed: table_backed::<tensor_verifier::fp128::D64OneHotTensor>,
     },
     GeneratedFamily {
-        module_name: "fp32_d32",
-        const_name: "FP32_D32_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        regen: regen::<fp32::D32Full>,
-        table_backed: table_backed::<fp32::D32Full>,
-    },
-    GeneratedFamily {
-        module_name: "fp32_d32_onehot",
-        const_name: "FP32_D32_ONEHOT_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        regen: regen::<fp32::D32OneHot>,
-        table_backed: table_backed::<fp32::D32OneHot>,
-    },
-    GeneratedFamily {
         module_name: "fp32_d64",
         const_name: "FP32_D64_SCHEDULES",
         min_num_vars: 1,

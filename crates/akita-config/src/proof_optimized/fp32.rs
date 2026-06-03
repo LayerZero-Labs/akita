@@ -7,14 +7,6 @@ pub type Field = Prime32Offset99;
 /// ring-subfield used for fp32 public claims and Fiat-Shamir challenges.
 pub type ExtensionField = RingSubfieldFp4<Field>;
 
-/// Full-field `D=32` preset for the default fp32 schedule path.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D32Full;
-
-/// Onehot `D=32` preset for the default fp32 schedule path.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D32OneHot;
-
 /// Full-field `D=64` preset for fp32 crossover profiling.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64Full;
@@ -39,24 +31,6 @@ pub struct D256Full;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
-impl_proof_optimized_preset!(
-    D32Full,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusFamily::Q32,
-    32,
-    32,
-    32
-);
-impl_proof_optimized_preset!(
-    D32OneHot,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusFamily::Q32,
-    32,
-    32,
-    1
-);
 impl_proof_optimized_preset!(
     D64Full,
     Field,
