@@ -320,7 +320,9 @@ pub fn schedule_from_entry(
                         w_ring_element_count_with_counts_bits(field_bits, &lp, np, nt, nw, nz)?;
                     let len = mul_d(ring)?;
                     let GeneratedStep::Fold(next_level) = next else {
-                        unreachable!("non-terminal fold successor is a fold step");
+                        return Err(AkitaError::InvalidSetup(
+                            "generated non-terminal successor must be a fold step".to_string(),
+                        ));
                     };
                     let next_inputs = AkitaScheduleInputs {
                         num_vars: key.num_vars,
