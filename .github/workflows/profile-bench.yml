@@ -21,7 +21,7 @@ env:
   # Long hosted-runner configs are deferred from this PR's active matrix.
   # fp32 cells use D64 (D32 schedules are root-direct/cleartext-heavy under the
   # shared ring-challenge policy). dense_fp64_d32:25:1 remains deferred.
-  AKITA_BENCH_MODE: onehot_fp128_d32
+  AKITA_BENCH_MODE: onehot_fp128_d128
   AKITA_BENCH_RUNS: "3"
   # One warm-up run per case is discarded before the measured runs to
   # prime caches and lazily-initialized statics; cache misses on the
@@ -31,9 +31,9 @@ env:
     dense_fp32_d64:26:1
     onehot_fp32_d64:32:1
     onehot_fp64_d32:32:1
-    dense_fp128_d32:24:1
-    onehot_fp128_d32:32:1
-    onehot_fp128_d32:30:4
+    dense_fp128_d128:24:1
+    onehot_fp128_d128:32:1
+    onehot_fp128_d128:30:4
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

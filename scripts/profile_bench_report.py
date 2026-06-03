@@ -66,8 +66,10 @@ class CaseMetadata:
 CASE_METADATA: dict[str, CaseMetadata] = {
     "dense_fp128_d32": CaseMetadata("fp128", "dense", "dense", "D32"),
     "dense_fp128_d64": CaseMetadata("fp128", "dense", "dense", "D64"),
+    "dense_fp128_d128": CaseMetadata("fp128", "dense", "dense", "D128"),
     "onehot_fp128_d32": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
     "onehot_fp128_d64": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    "onehot_fp128_d128": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
     "onehot_fp128_d64_tensor": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 tensor"
     ),
@@ -116,7 +118,7 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument(
         "--output-dir", required=True, help="Directory where logs and summary.json are written."
     )
-    run_parser.add_argument("--mode", default="onehot_fp128_d32", help="Benchmark mode.")
+    run_parser.add_argument("--mode", default="onehot_fp128_d128", help="Benchmark mode.")
     run_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     run_parser.add_argument(
         "--num-polys",
@@ -179,7 +181,7 @@ def parse_args() -> argparse.Namespace:
     failure_parser.add_argument(
         "--output-dir", required=True, help="Directory where summary files are written."
     )
-    failure_parser.add_argument("--mode", default="onehot_fp128_d32", help="Benchmark mode.")
+    failure_parser.add_argument("--mode", default="onehot_fp128_d128", help="Benchmark mode.")
     failure_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     failure_parser.add_argument(
         "--num-polys",

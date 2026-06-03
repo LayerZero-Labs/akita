@@ -239,6 +239,14 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_fp128_d64",
         run: run_profile_onehot_fp128_d64,
     },
+    ProfileMode {
+        name: "dense_fp128_d128",
+        run: run_profile_dense_fp128_d128,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d128",
+        run: run_profile_onehot_fp128_d128,
+    },
     // Direct comparison mode from the tensor-verifier branch. The generated
     // tensor preset is D64-only, so this is intentionally not part of the D32
     // benchmark matrix or `AKITA_MODE=all` sweep.
@@ -284,6 +292,8 @@ const PROFILE_MODES: &[ProfileMode] = &[
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_tensor",
     // D128+ presets use runtime DP only; keep them out of the default sweep.
+    "dense_fp128_d128",
+    "onehot_fp128_d128",
     "dense_fp32_d128",
     "onehot_fp32_d128",
 ];
@@ -382,6 +392,25 @@ fn run_profile_onehot_fp128_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32OneHot;
     let title = fp128_onehot_title(32, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d32", &title, nv, num_polys);
+}
+
+fn run_profile_dense_fp128_d128(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D128Full;
+    assert_singleton_mode("dense_fp128_d128", num_polys);
+    let prime = fp128_prime_label();
+    run_dense_mode::<{ Cfg::D }, Cfg>(
+        "dense_fp128_d128",
+        &format!(
+            "=== dense_fp128_d128 (fp128, {prime}, D=128 dense, log_commit_bound=128, runtime DP schedule) ==="
+        ),
+        nv,
+    );
+}
+
+fn run_profile_onehot_fp128_d128(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D128OneHot;
+    let title = fp128_onehot_title(128, nv, num_polys);
+    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d128", &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp32_d64(nv: usize, num_polys: usize) {
