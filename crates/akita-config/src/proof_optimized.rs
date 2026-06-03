@@ -5,10 +5,7 @@
 
 use super::CommitmentConfig;
 use akita_field::AkitaError;
-use akita_field::{
-    Ext2, Prime128OffsetA7F7, Prime16Offset99, Prime32Offset99, Prime64Offset59, RingSubfieldFp4,
-    RingSubfieldFp8,
-};
+use akita_field::{Ext2, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RingSubfieldFp4};
 use akita_types::ClaimIncidenceSummary;
 use akita_types::{AkitaScheduleLookupKey, LevelParams, Schedule, SetupMatrixEnvelope, Step};
 
@@ -557,7 +554,7 @@ fn add_zk_ext_scalar_slots<Cfg: CommitmentConfig>(
 /// Generate a [`CommitmentConfig`] impl for one proof-optimized preset.
 ///
 /// One macro covers every proof-optimized preset (fp128 and the small-field
-/// fp16/fp32/fp64 families): the fp128 presets are the special case where the
+/// fp32/fp64 families): the fp128 presets are the special case where the
 /// claim/challenge field is the base field, `field_bits == 128`, and the SIS
 /// family is `Q128`. All proof-optimized presets share `log_basis = 3`, the
 /// shared ring-challenge policy, the shared setup-matrix sizer, and the
@@ -626,6 +623,5 @@ mod tests;
 // ---------------------------------------------------------------------------
 
 pub mod fp128;
-pub mod fp16;
 pub mod fp32;
 pub mod fp64;

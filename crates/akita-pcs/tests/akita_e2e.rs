@@ -3,7 +3,7 @@
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::fp128;
-use akita_config::proof_optimized::{fp16, fp32, fp64};
+use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
@@ -476,36 +476,6 @@ fn full_d32_prove_verify() {
             result.err()
         );
     });
-}
-
-#[test]
-fn fp16_dense_is_cleartext_only_under_secure_stage1_challenge() {
-    // A 16-bit modulus cannot host a SIS-secure dense commitment once stage-1
-    // folding uses a 128-bit-support challenge. The shared proof-optimized
-    // policy gives `D=32` the `BoundedL1Norm` family (L1 = 121, Linf = 8); that
-    // mass pushes the weak-binding collision past what Q16 admits at *every*
-    // witness size, so `fp16::D32Full` now ships a cleartext (`commit: None`)
-    // root-direct schedule for all `num_vars` (see
-    // `crates/akita-planner/src/generated/fp16_d32_full.rs`). There is no
-    // committing size left, so the dense SIS round-trip the fp32/fp64 presets
-    // still exercise is not representable for fp16; we pin the cleartext
-    // outcome instead. The earlier "commits at num_vars = 5" behavior relied on
-    // the insecure `Uniform { weight: 8 }` challenge (~31-bit support); a
-    // regression that let fp16 dense commit again would signal that the
-    // stage-1 challenge support dropped back below 128 bits.
-    type Cfg = fp16::D32Full;
-    for num_vars in [1usize, 5, 8, 12, 32] {
-        let incidence = akita_types::ClaimIncidenceSummary::same_point(num_vars, 1)
-            .expect("singleton incidence");
-        let err = Cfg::get_params_for_batched_commitment(&incidence).expect_err(
-            "fp16 dense must be cleartext-only (no commit params) under the secure stage-1 challenge",
-        );
-        assert!(
-            err.to_string()
-                .contains("root-direct schedule is missing commit params"),
-            "unexpected fp16 dense commit error at num_vars={num_vars}: {err}"
-        );
-    }
 }
 
 #[test]

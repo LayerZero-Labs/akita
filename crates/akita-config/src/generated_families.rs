@@ -17,7 +17,7 @@ use akita_field::AkitaError;
 use akita_planner::find_schedule;
 use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, Schedule};
 
-use crate::proof_optimized::{fp128, fp16, fp32, fp64};
+use crate::proof_optimized::{fp128, fp32, fp64};
 use crate::{policy_of, tensor_verifier, CommitmentConfig};
 
 /// One generated schedule-table family.
@@ -168,38 +168,6 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         max_num_vars: 32,
         regen: regen::<fp32::D64OneHot>,
         table_backed: table_backed::<fp32::D64OneHot>,
-    },
-    GeneratedFamily {
-        module_name: "fp16_d32_full",
-        const_name: "FP16_D32_FULL_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        regen: regen::<fp16::D32Full>,
-        table_backed: table_backed::<fp16::D32Full>,
-    },
-    GeneratedFamily {
-        module_name: "fp16_d32_onehot",
-        const_name: "FP16_D32_ONEHOT_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        regen: regen::<fp16::D32OneHot>,
-        table_backed: table_backed::<fp16::D32OneHot>,
-    },
-    GeneratedFamily {
-        module_name: "fp16_d64_full",
-        const_name: "FP16_D64_FULL_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        regen: regen::<fp16::D64Full>,
-        table_backed: table_backed::<fp16::D64Full>,
-    },
-    GeneratedFamily {
-        module_name: "fp16_d64_onehot",
-        const_name: "FP16_D64_ONEHOT_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        regen: regen::<fp16::D64OneHot>,
-        table_backed: table_backed::<fp16::D64OneHot>,
     },
     GeneratedFamily {
         module_name: "fp64_d32",

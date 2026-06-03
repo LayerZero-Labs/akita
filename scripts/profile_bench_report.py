@@ -75,10 +75,6 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     "onehot_fp32_d64": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
     "dense_fp32_d32": CaseMetadata("fp32", "dense", "dense", "D32"),
     "dense_fp32_d64": CaseMetadata("fp32", "dense", "dense", "D64"),
-    "onehot_fp16_d32": CaseMetadata("fp16", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
-    "onehot_fp16_d64": CaseMetadata("fp16", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
-    "dense_fp16_d32": CaseMetadata("fp16", "dense", "dense", "D32"),
-    "dense_fp16_d64": CaseMetadata("fp16", "dense", "dense", "D64"),
     "onehot_fp64_d32": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
     "onehot_fp64_d64": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
     "dense_fp64_d32": CaseMetadata("fp64", "dense", "dense", "D32"),
@@ -90,7 +86,7 @@ def case_metadata(mode: str) -> CaseMetadata:
     if mode in CASE_METADATA:
         return CASE_METADATA[mode]
     field_family = "fp128"
-    for family in ("fp16", "fp32", "fp64", "fp128"):
+    for family in ("fp32", "fp64", "fp128"):
         if family in mode:
             field_family = family
             break

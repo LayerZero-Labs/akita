@@ -6,7 +6,6 @@ use akita_planner::generated::{
     fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
 };
 use akita_planner::generated::{
-    fp16_d32_full_table, fp16_d32_onehot_table, fp16_d64_full_table, fp16_d64_onehot_table,
     fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table, fp32_d64_table,
     fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
     GeneratedScheduleTable,
@@ -371,24 +370,6 @@ fn presets_select_expected_sis_modulus_family() {
         <fp64::D64Full as CommitmentConfig>::sis_modulus_family(),
         akita_types::SisModulusFamily::Q64
     );
-    assert_eq!(
-        <fp16::D64Full as CommitmentConfig>::sis_modulus_family(),
-        akita_types::SisModulusFamily::Q16
-    );
-}
-
-#[test]
-#[cfg(not(feature = "zk"))]
-fn fp16_generated_schedule_tables_are_wired() {
-    let onehot_key = AkitaScheduleLookupKey::singleton(32);
-    let onehot_schedule =
-        <fp16::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key).unwrap();
-    assert!(!onehot_schedule.steps.is_empty());
-
-    let dense_key = AkitaScheduleLookupKey::singleton(27);
-    let dense_schedule =
-        <fp16::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key).unwrap();
-    assert!(!dense_schedule.steps.is_empty());
 }
 
 #[test]
@@ -603,10 +584,6 @@ fn generated_fp128_schedule_tables_match_cfg_schedule() {
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_small_field_schedule_tables_match_cfg_schedule() {
-    assert_every_table_entry_materializes::<fp16::D32Full>(fp16_d32_full_table());
-    assert_every_table_entry_materializes::<fp16::D32OneHot>(fp16_d32_onehot_table());
-    assert_every_table_entry_materializes::<fp16::D64Full>(fp16_d64_full_table());
-    assert_every_table_entry_materializes::<fp16::D64OneHot>(fp16_d64_onehot_table());
     assert_every_table_entry_materializes::<fp32::D32Full>(fp32_d32_table());
     assert_every_table_entry_materializes::<fp32::D32OneHot>(fp32_d32_onehot_table());
     assert_every_table_entry_materializes::<fp32::D64Full>(fp32_d64_table());
@@ -620,10 +597,6 @@ fn generated_small_field_schedule_tables_match_cfg_schedule() {
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32Full>(fp16_d32_full_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32OneHot>(fp16_d32_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64Full>(fp16_d64_full_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64OneHot>(fp16_d64_onehot_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D32Full>(fp32_d32_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D32OneHot>(fp32_d32_onehot_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D64Full>(fp32_d64_table());
@@ -637,10 +610,6 @@ fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
 #[test]
 #[cfg(feature = "zk")]
 fn generated_zk_small_field_schedule_tables_have_crt_i8_capacity() {
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32Full>(fp16_d32_full_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32OneHot>(fp16_d32_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64Full>(fp16_d64_full_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64OneHot>(fp16_d64_onehot_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D32Full>(fp32_d32_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D32OneHot>(fp32_d32_onehot_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp32::D64Full>(fp32_d64_table());
@@ -658,15 +627,6 @@ fn generated_batched_roots_restore_scaled_widths() {
     assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
     assert_generated_batched_roots_are_scaled::<fp128::D64Full>(fp128_d64_full_table());
     assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
-    // Q16 (16-bit modulus) presets ship cleartext-only schedules under the
-    // corrected Hachi Lemma 7 weak-binding collision norm combined with the
-    // 128-bit-secure stage-1 challenge: the SIS-secure commitment widths a
-    // 16-bit modulus admits fall below the fold-witness widths, so the DP never
-    // folds. Both `fp16::*Full` and the D32 one-hot preset are therefore fully
-    // cleartext (the larger D32 `BoundedL1Norm` mass, L1 = 121, only deepens
-    // this), leaving `fp16::D64OneHot` as the only Q16 family with folded
-    // batched roots to scale-check.
-    assert_generated_batched_roots_are_scaled::<fp16::D64OneHot>(fp16_d64_onehot_table());
 }
 
 #[test]
@@ -903,15 +863,6 @@ fn assert_preset_uses_shared_ring_challenge<Cfg: CommitmentConfig>() {
 
 #[test]
 fn all_proof_optimized_presets_use_shared_ring_challenge() {
-    assert_preset_uses_shared_ring_challenge::<fp16::D32Full>();
-    assert_preset_uses_shared_ring_challenge::<fp16::D32OneHot>();
-    assert_preset_uses_shared_ring_challenge::<fp16::D64Full>();
-    assert_preset_uses_shared_ring_challenge::<fp16::D64OneHot>();
-    assert_preset_uses_shared_ring_challenge::<fp16::D128Full>();
-    assert_preset_uses_shared_ring_challenge::<fp16::D128OneHot>();
-    assert_preset_uses_shared_ring_challenge::<fp16::D256Full>();
-    assert_preset_uses_shared_ring_challenge::<fp16::D256OneHot>();
-
     assert_preset_uses_shared_ring_challenge::<fp32::D32Full>();
     assert_preset_uses_shared_ring_challenge::<fp32::D32OneHot>();
     assert_preset_uses_shared_ring_challenge::<fp32::D64Full>();

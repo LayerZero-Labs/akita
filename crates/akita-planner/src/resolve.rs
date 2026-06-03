@@ -30,8 +30,7 @@ use akita_types::{
 use crate::find_schedule;
 use crate::generated::{
     fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
-    fp128_d64_onehot_tensor_table, fp16_d32_full_table, fp16_d32_onehot_table, fp16_d64_full_table,
-    fp16_d64_onehot_table, fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table,
+    fp128_d64_onehot_tensor_table, fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table,
     fp32_d64_table, fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
     table_entry, GeneratedScheduleKey, GeneratedScheduleTable, GeneratedScheduleTableEntry,
     GeneratedStep, SisModulusFamily,
@@ -106,20 +105,6 @@ pub fn shipped_table(
                 fp32_d64_onehot_table()
             } else {
                 fp32_d64_table()
-            }
-        }
-        (SisModulusFamily::Q16, 32) => {
-            if onehot {
-                fp16_d32_onehot_table()
-            } else {
-                fp16_d32_full_table()
-            }
-        }
-        (SisModulusFamily::Q16, 64) => {
-            if onehot {
-                fp16_d64_onehot_table()
-            } else {
-                fp16_d64_full_table()
             }
         }
         (SisModulusFamily::Q64, 32) => {

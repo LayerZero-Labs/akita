@@ -76,22 +76,6 @@ pub mod fp128_d64_onehot_tensor_zk;
 #[cfg(feature = "zk")]
 pub mod fp128_d64_onehot_zk;
 #[cfg(not(feature = "zk"))]
-pub mod fp16_d32_full;
-#[cfg(feature = "zk")]
-pub mod fp16_d32_full_zk;
-#[cfg(not(feature = "zk"))]
-pub mod fp16_d32_onehot;
-#[cfg(feature = "zk")]
-pub mod fp16_d32_onehot_zk;
-#[cfg(not(feature = "zk"))]
-pub mod fp16_d64_full;
-#[cfg(feature = "zk")]
-pub mod fp16_d64_full_zk;
-#[cfg(not(feature = "zk"))]
-pub mod fp16_d64_onehot;
-#[cfg(feature = "zk")]
-pub mod fp16_d64_onehot_zk;
-#[cfg(not(feature = "zk"))]
 pub mod fp32_d32;
 #[cfg(not(feature = "zk"))]
 pub mod fp32_d32_onehot;
@@ -257,38 +241,6 @@ small_field_table_fn!(
     fp32_d64_onehot_zk,
     FP32_D64_ONEHOT_SCHEDULES,
     FP32_D64_ONEHOT_ZK_SCHEDULES
-);
-small_field_table_fn!(
-    fp16_d32_full_table,
-    SisModulusFamily::Q16,
-    fp16_d32_full,
-    fp16_d32_full_zk,
-    FP16_D32_FULL_SCHEDULES,
-    FP16_D32_FULL_ZK_SCHEDULES
-);
-small_field_table_fn!(
-    fp16_d32_onehot_table,
-    SisModulusFamily::Q16,
-    fp16_d32_onehot,
-    fp16_d32_onehot_zk,
-    FP16_D32_ONEHOT_SCHEDULES,
-    FP16_D32_ONEHOT_ZK_SCHEDULES
-);
-small_field_table_fn!(
-    fp16_d64_full_table,
-    SisModulusFamily::Q16,
-    fp16_d64_full,
-    fp16_d64_full_zk,
-    FP16_D64_FULL_SCHEDULES,
-    FP16_D64_FULL_ZK_SCHEDULES
-);
-small_field_table_fn!(
-    fp16_d64_onehot_table,
-    SisModulusFamily::Q16,
-    fp16_d64_onehot,
-    fp16_d64_onehot_zk,
-    FP16_D64_ONEHOT_SCHEDULES,
-    FP16_D64_ONEHOT_ZK_SCHEDULES
 );
 small_field_table_fn!(
     fp64_d32_table,
