@@ -201,8 +201,10 @@ impl<const P: u32> PackedFp32Avx2<P> {
         let mut sum_odd = Self::fold_product_once(sum_odd);
         for i in 1..4 {
             let prod_evn = Self::fold_product_once(_mm256_mul_epu32(a[i], b[i]));
-            let prod_odd =
-                Self::fold_product_once(_mm256_mul_epu32(movehdup_epi32(a[i]), movehdup_epi32(b[i])));
+            let prod_odd = Self::fold_product_once(_mm256_mul_epu32(
+                movehdup_epi32(a[i]),
+                movehdup_epi32(b[i]),
+            ));
             sum_evn = _mm256_add_epi64(sum_evn, prod_evn);
             sum_odd = _mm256_add_epi64(sum_odd, prod_odd);
         }
@@ -230,8 +232,10 @@ impl<const P: u32> PackedFp32Avx2<P> {
         let mut sum_odd = Self::fold_product_once(sum_odd);
         for i in 1..3 {
             let prod_evn = Self::fold_product_once(_mm256_mul_epu32(a[i], b[i]));
-            let prod_odd =
-                Self::fold_product_once(_mm256_mul_epu32(movehdup_epi32(a[i]), movehdup_epi32(b[i])));
+            let prod_odd = Self::fold_product_once(_mm256_mul_epu32(
+                movehdup_epi32(a[i]),
+                movehdup_epi32(b[i]),
+            ));
             sum_evn = _mm256_add_epi64(sum_evn, prod_evn);
             sum_odd = _mm256_add_epi64(sum_odd, prod_odd);
         }
