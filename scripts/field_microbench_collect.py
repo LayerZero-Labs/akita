@@ -283,10 +283,10 @@ def parse_label(label: str) -> tuple[str, str, str, str]:
         ext_degree = "4"
         basis = "ring_subfield"
         field = field.removesuffix("_ring_subfield_fp4")
-    elif label.endswith("_rs_fp4"):
+    elif field.endswith("_rs_fp4"):
         ext_degree = "4"
         basis = "ring_subfield"
-        field = label.removesuffix("_rs_fp4")
+        field = field.removesuffix("_rs_fp4")
 
     return library, field, ext_degree, basis
 
