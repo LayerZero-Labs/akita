@@ -1125,8 +1125,8 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
         # exceeds the per-level estimate while the total stays under it). The
         # total-overcount invariant is asserted in the profile binary itself
         # (`ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` in
-        # `crates/akita-pcs/examples/profile/workload.rs`), and absolute proof
-        # growth is guarded by the proof-size regression threshold in CI. Here we
+        # `crates/akita-pcs/examples/profile/workload.rs`). Proof-size deltas vs
+        # baselines are reported in the PR comment but are not CI gates. Here we
         # only enforce the structural level shape (count / index / D) above.
 
 
