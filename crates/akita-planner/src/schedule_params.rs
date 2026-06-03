@@ -17,7 +17,7 @@ use akita_types::{
     decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
     level_proof_bytes, root_extension_opening_partials,
     w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DecompositionParams, DirectStep, DirectWitnessShape, FoldStep, LevelParams, MRowLayout,
+    CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParams, MRowLayout,
     Schedule, Step,
 };
 
@@ -96,7 +96,7 @@ fn derive_candidate_level_params(
             1,
             1,
             1,
-            MRowLayout::Intermediate,
+            MRowLayout::WithDBlock,
         )?
         .checked_mul(policy.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
@@ -107,7 +107,7 @@ fn derive_candidate_level_params(
             1,
             1,
             1,
-            MRowLayout::Terminal,
+            MRowLayout::WithoutDBlock,
         )?
         .checked_mul(policy.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
@@ -186,7 +186,7 @@ struct FoldSuffix {
 /// step:
 ///
 /// - `best_direct` — best schedule whose first step is a `Step::Direct`
-///   (parent scores under `MRowLayout::Terminal`). `None` when infeasible.
+///   (parent scores under `MRowLayout::WithoutDBlock`). `None` when infeasible.
 /// - `best_fold_per_lb` — best `Step::Fold`-first schedule per first-fold
 ///   `log_basis`.
 #[derive(Clone)]
@@ -255,7 +255,7 @@ fn derive_optimal_suffix_schedule(
 
     let best_direct = {
         let witness_shape =
-            DirectWitnessShape::PackedDigits((current_witness_len_terminal, current_lb));
+            CleartextWitnessShape::PackedDigits((current_witness_len_terminal, current_lb));
         let direct_bytes = direct_witness_bytes(policy.decomposition.field_bits(), &witness_shape);
         let step = Step::Direct(DirectStep {
             current_w_len: current_witness_len_terminal,
@@ -321,7 +321,7 @@ fn derive_optimal_suffix_schedule(
                 None,
                 next_witness_len_terminal,
                 1,
-                MRowLayout::Terminal,
+                MRowLayout::WithoutDBlock,
             ) + eor_bytes;
             let total = level_proof_size + suffix_cost;
             let mut steps = Vec::with_capacity(1 + suffix_sched.len());
@@ -343,7 +343,7 @@ fn derive_optimal_suffix_schedule(
                 Some(&suffix_fold.first_fold_params),
                 next_witness_len,
                 1,
-                MRowLayout::Intermediate,
+                MRowLayout::WithDBlock,
             ) + eor_bytes;
             let total = level_proof_size + suffix_fold.total_bytes;
             let mut steps = Vec::with_capacity(1 + suffix_fold.steps.len());
@@ -536,7 +536,7 @@ pub fn find_schedule(
 
     let field_bits = policy.decomposition.field_bits();
 
-    let root_witness_shape = DirectWitnessShape::FieldElements(witness_len);
+    let root_witness_shape = CleartextWitnessShape::FieldElements(witness_len);
     let mut best_cost = direct_witness_bytes(field_bits, &root_witness_shape);
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars,
@@ -638,8 +638,8 @@ pub fn find_schedule(
                     AkitaError::InvalidSetup("root next witness length overflow".into())
                 })
             };
-            let next_w_len = next_withness_len_impl(MRowLayout::Intermediate)?;
-            let next_w_len_terminal = next_withness_len_impl(MRowLayout::Terminal)?;
+            let next_w_len = next_withness_len_impl(MRowLayout::WithDBlock)?;
+            let next_w_len_terminal = next_withness_len_impl(MRowLayout::WithoutDBlock)?;
             let initial_witness_len_bits = witness_len
                 .checked_mul(field_bits as usize)
                 .ok_or_else(|| {
@@ -682,7 +682,7 @@ pub fn find_schedule(
                     None,
                     next_w_len_terminal,
                     z_vectors,
-                    MRowLayout::Terminal,
+                    MRowLayout::WithoutDBlock,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_cost;
                 if total < best_cost {
@@ -707,7 +707,7 @@ pub fn find_schedule(
                     Some(&suffix_fold.first_fold_params),
                     next_w_len,
                     z_vectors,
-                    MRowLayout::Intermediate,
+                    MRowLayout::WithDBlock,
                 ) + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if total < best_cost {

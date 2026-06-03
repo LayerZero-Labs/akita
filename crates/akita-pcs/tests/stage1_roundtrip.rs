@@ -35,7 +35,7 @@ fn assert_stage1_roundtrip(
     let prover = AkitaStage1Prover::new(&witness, &tau0, b, live_x_cols, col_bits, ring_bits)
         .expect("stage1 prover should build");
     let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let (proof, r_stage1) = prover
+    let (proof, stage1_point) = prover
         .prove(&mut prover_transcript)
         .expect("stage1 proof should succeed");
 
@@ -45,7 +45,7 @@ fn assert_stage1_roundtrip(
         .verify(&proof, &mut verifier_transcript)
         .expect("stage1 verification should succeed");
 
-    assert_eq!(r_stage1, verified_r);
+    assert_eq!(stage1_point, verified_r);
     assert_eq!(proof.stages.len(), expected_child_claim_counts.len());
     for (stage, &expected_child_claims) in proof.stages.iter().zip(expected_child_claim_counts) {
         assert_eq!(stage.child_claims.len(), expected_child_claims);

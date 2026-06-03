@@ -765,7 +765,7 @@ fn basis_mode_size(compress: Compress) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DirectWitnessShape, FoldStep, LevelParams, Step};
+    use crate::{CleartextWitnessShape, FoldStep, LevelParams, Step};
     use akita_challenges::SparseChallengeConfig;
     use akita_field::{Prime32Offset99, Prime64Offset59};
 
@@ -799,7 +799,7 @@ mod tests {
                 }),
                 Step::Direct(crate::DirectStep {
                     current_w_len: 256,
-                    witness_shape: DirectWitnessShape::PackedDigits((64, 3)),
+                    witness_shape: CleartextWitnessShape::PackedDigits((64, 3)),
                     direct_bytes: 32,
                     params: None,
                 }),
@@ -921,7 +921,7 @@ mod tests {
         let schedule_a = Schedule {
             steps: vec![Step::Direct(crate::DirectStep {
                 current_w_len: 8,
-                witness_shape: DirectWitnessShape::FieldElements(8),
+                witness_shape: CleartextWitnessShape::FieldElements(8),
                 direct_bytes: 8,
                 params: None,
             })],
@@ -930,7 +930,7 @@ mod tests {
         let schedule_b = Schedule {
             steps: vec![Step::Direct(crate::DirectStep {
                 current_w_len: 8,
-                witness_shape: DirectWitnessShape::PackedDigits((8, 3)),
+                witness_shape: CleartextWitnessShape::PackedDigits((8, 3)),
                 direct_bytes: 3,
                 params: None,
             })],
@@ -955,7 +955,7 @@ mod tests {
         let schedule_a = Schedule {
             steps: vec![Step::Direct(crate::DirectStep {
                 current_w_len: 8,
-                witness_shape: DirectWitnessShape::FieldElements(8),
+                witness_shape: CleartextWitnessShape::FieldElements(8),
                 direct_bytes: 0,
                 params: Some(sample_level_params()),
             })],
@@ -964,7 +964,7 @@ mod tests {
         let schedule_b = Schedule {
             steps: vec![Step::Direct(crate::DirectStep {
                 current_w_len: 8,
-                witness_shape: DirectWitnessShape::FieldElements(8),
+                witness_shape: CleartextWitnessShape::FieldElements(8),
                 direct_bytes: 0,
                 params: Some(other_params),
             })],

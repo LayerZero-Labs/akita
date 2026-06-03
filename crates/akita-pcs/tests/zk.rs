@@ -14,7 +14,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::protocol::ring_switch::{
     build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
 };
-use akita_prover::{AkitaProverSetup, CommitmentProver, QuadraticEquation};
+use akita_prover::{AkitaProverSetup, CommitmentProver, RingRelationProver, RingRelationWitness};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::multilinear_eval;
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
@@ -25,7 +25,7 @@ use akita_types::{
     DecompositionParams, FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
     SisModulusFamily,
 };
-use akita_verifier::{prepare_ring_switch_row_eval, CommitmentVerifier};
+use akita_verifier::{prepare_ring_switch_row_eval, CommitmentVerifier, RingSwitchReplay};
 use common::*;
 use std::marker::PhantomData;
 
@@ -105,7 +105,7 @@ fn plain_root_d_image<const D: usize>(
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
-    let quad_eq = QuadraticEquation::<F, D>::new_prover(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         &CpuBackend,
         prepared,
         vec![ring_opening_point],
@@ -120,24 +120,21 @@ fn plain_root_d_image<const D: usize>(
         std::slice::from_ref(commitment),
         std::slice::from_ref(&y_ring),
         vec![CyclotomicRing::<F, D>::one()],
-        MRowLayout::Intermediate,
+        MRowLayout::WithDBlock,
     )
-    .expect("debug quadratic equation");
+    .expect("debug ring relation");
 
-    assert!(
-        quad_eq.d_blinding_digits().is_some(),
-        "zk quadratic equation should sample D-blinding digits"
-    );
+    let RingRelationWitness { w_hat, .. } = witness;
     let plain_v = CpuBackend
         .digit_rows::<D>(
             prepared,
             layout.d_key.row_len(),
-            quad_eq.w_hat_flat().expect("debug w_hat"),
+            w_hat.flat_digits(),
             layout.log_basis,
         )
         .expect("plain v rows");
     assert_ne!(
-        quad_eq.v, plain_v,
+        instance.v, plain_v,
         "debug zk v should include fresh D-blinding"
     );
     plain_v
@@ -372,7 +369,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
         let reduction = match &mut tampered.root {
             AkitaBatchedRootProof::Terminal(root) => root.extension_opening_reduction.as_mut(),
             AkitaBatchedRootProof::Fold(root) => root.extension_opening_reduction.as_mut(),
-            AkitaBatchedRootProof::Direct { .. } => None,
+            AkitaBatchedRootProof::ZeroFold { .. } => None,
         }
         .expect("fixture should carry extension-opening reduction partials");
         let partial = reduction
@@ -889,7 +886,7 @@ fn run_zk_dense_batched_shape_cases() {
             AkitaBatchedRootProof::Terminal(root) => {
                 assert_eq!(root.y_rings.coeff_len() / D, 1);
             }
-            AkitaBatchedRootProof::Direct { .. } => {
+            AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("same-point fixture should use a folded or terminal ZK proof")
             }
         }
@@ -972,7 +969,7 @@ fn run_zk_dense_batched_shape_cases() {
             AkitaBatchedRootProof::Terminal(root) => {
                 assert_eq!(root.y_rings.coeff_len() / D, NUM_POINTS);
             }
-            AkitaBatchedRootProof::Direct { .. } => {
+            AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("multipoint fixture should use a folded or terminal ZK proof")
             }
         }
@@ -1082,7 +1079,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             .iter()
             .flat_map(|polys| polys.iter())
             .collect();
-        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             ring_opening_points,
@@ -1097,11 +1094,17 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             &commitments,
             &y_rings,
             vec![CyclotomicRing::<F, D>::one(); incidence.num_claims()],
-            MRowLayout::Intermediate,
+            MRowLayout::WithDBlock,
         )
-        .expect("quadratic equation");
-        let w = ring_switch_build_w::<F, CpuBackend, D>(&mut quad_eq, &CpuBackend, &prepared, &lp)
-            .expect("ring-switch witness");
+        .expect("ring relation");
+        let w = ring_switch_build_w::<F, CpuBackend, D>(
+            &instance,
+            witness,
+            &CpuBackend,
+            &prepared,
+            &lp,
+        )
+        .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
@@ -1109,7 +1112,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
         let alpha = F::from_u64(71);
         let alpha_evals_y = scalar_powers(alpha, D);
         let rows = lp
-            .m_row_count_for(NUM_POINTS, NUM_POINTS, MRowLayout::Intermediate)
+            .m_row_count_for(NUM_POINTS, NUM_POINTS, MRowLayout::WithDBlock)
             .expect("row count");
         let tau1_bits = rows.next_power_of_two().trailing_zeros() as usize;
         let gamma = vec![F::one(); incidence.num_claims()];
@@ -1129,20 +1132,24 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
                 .collect();
             let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
-                quad_eq.opening_points(),
-                quad_eq.ring_multiplier_points(),
-                quad_eq.claim_to_point(),
-                &quad_eq.challenges,
+                instance.opening_points(),
+                instance.ring_multiplier_points(),
+                instance.claim_to_point(),
+                &instance.challenges,
                 alpha,
                 &alpha_evals_y,
                 &lp,
                 &tau1,
-                quad_eq.num_polys_per_point(),
-                quad_eq.claim_to_point_poly(),
-                quad_eq.claim_poly_indices(),
+                instance
+                    .commitment_routing()
+                    .num_polys_per_commitment_group(),
+                instance.commitment_routing().claim_to_commitment_group(),
+                instance
+                    .commitment_routing()
+                    .claim_poly_in_commitment_group(),
                 &gamma,
-                quad_eq.num_public_rows(),
-                MRowLayout::Intermediate,
+                instance.num_public_rows(),
+                MRowLayout::WithDBlock,
             )
             .expect("m evals");
             let got = (0..live_x_cols).fold(F::zero(), |acc_x, x| {
@@ -1159,7 +1166,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             let expected = relation_claim_from_rows_extension::<F, F, D>(
                 &tau1,
                 alpha,
-                quad_eq.v(),
+                &instance.v,
                 &commitment_rows,
                 &y_rings,
             )
@@ -1173,50 +1180,45 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             .collect();
         let m_evals_x = compute_m_evals_x::<F, F, D>(
             &setup.expanded,
-            quad_eq.opening_points(),
-            quad_eq.ring_multiplier_points(),
-            quad_eq.claim_to_point(),
-            &quad_eq.challenges,
+            instance.opening_points(),
+            instance.ring_multiplier_points(),
+            instance.claim_to_point(),
+            &instance.challenges,
             alpha,
             &alpha_evals_y,
             &lp,
             &tau1,
-            quad_eq.num_polys_per_point(),
-            quad_eq.claim_to_point_poly(),
-            quad_eq.claim_poly_indices(),
+            instance
+                .commitment_routing()
+                .num_polys_per_commitment_group(),
+            instance.commitment_routing().claim_to_commitment_group(),
+            instance
+                .commitment_routing()
+                .claim_poly_in_commitment_group(),
             &gamma,
-            quad_eq.num_public_rows(),
-            MRowLayout::Intermediate,
+            instance.num_public_rows(),
+            MRowLayout::WithDBlock,
         )
         .expect("m evals");
         let x_challenges: Vec<F> = (0..m_evals_x.len().trailing_zeros() as usize)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
         let expected_eval = multilinear_eval(&m_evals_x, &x_challenges).expect("mle");
-        let prepared_eval = prepare_ring_switch_row_eval::<F, F, D>(
-            &quad_eq.challenges,
-            alpha,
-            &lp,
-            &tau1,
-            quad_eq.num_polys_per_point(),
-            quad_eq.claim_to_point_poly(),
-            quad_eq.claim_poly_indices(),
-            &gamma,
-            quad_eq.num_public_rows(),
-            MRowLayout::Intermediate,
-            quad_eq.opening_points().len(),
-            quad_eq.ring_multiplier_points(),
-            quad_eq.claim_to_point(),
-        )
-        .expect("prepare row eval")
-        .eval_at_point::<F, D>(
-            &x_challenges,
-            &setup.expanded,
-            quad_eq.opening_points(),
-            quad_eq.ring_multiplier_points(),
-            alpha,
-        )
-        .expect("deferred row eval");
+        let replay = RingSwitchReplay {
+            relation: &instance,
+            row_coefficients: &gamma,
+            lp: &lp,
+        };
+        let prepared_eval = prepare_ring_switch_row_eval::<F, F, D>(&replay, alpha, &tau1)
+            .expect("prepare row eval")
+            .eval_at_point::<F, D>(
+                &x_challenges,
+                &setup.expanded,
+                instance.opening_points(),
+                instance.ring_multiplier_points(),
+                alpha,
+            )
+            .expect("deferred row eval");
         assert_eq!(prepared_eval, expected_eval);
     });
 }

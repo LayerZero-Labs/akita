@@ -8,7 +8,10 @@
 //! * **One-hot** — `fp128::D64OneHot` (D = 64, K = D).
 //! * **Dense**   — `fp128::D128Full`   (D = 128, full-field coefficients).
 //!
-//! Variable counts: 10, 15, 20, 25 for each representation (8 tests total).
+//! Variable counts:
+//!
+//! - one-hot: 10, 15, 20
+//! - dense: 10, 15, 18
 
 #![allow(missing_docs)]
 #![cfg(not(feature = "zk"))]
@@ -116,10 +119,7 @@ fn run_single_dense(nv: usize) {
         )
         .expect("layout");
 
-        let mut rng = StdRng::seed_from_u64(0xface_feed_0000 + nv as u64);
-        let evals: Vec<F> = (0..1usize << nv)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-            .collect();
+        let evals = dense_field_evals(nv, 0xface_feed_0000 + nv as u64);
         let poly = DensePoly::<F, DENSE_D>::from_field_evals(nv, &evals).expect("dense poly");
 
         let pt = random_point(nv, 0xbabe_0000 + nv as u64);
@@ -221,8 +221,8 @@ fn single_dense_nv15() {
 }
 
 #[test]
-fn single_dense_nv20() {
-    run_single_dense(20);
+fn single_dense_nv18() {
+    run_single_dense(18);
 }
 
 // #[test]

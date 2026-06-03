@@ -10,7 +10,7 @@ use akita_r1cs::{ZkR1csLinearCombination, ZkRelationAccumulator};
 use akita_sumcheck::ZkSumcheckFinalRelation;
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    relation_claim_from_rows_extension, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
+    relation_claim_from_rows_extension, AkitaExpandedSetup, CleartextWitnessProof, PackedDigits,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
 };
 use std::marker::PhantomData;
@@ -119,8 +119,8 @@ where
     Ok(acc)
 }
 
-fn direct_witness_eval<F, E, const D: usize>(
-    direct_witness: &DirectWitnessProof<F>,
+fn cleartext_witness_eval<F, E, const D: usize>(
+    cleartext_witness: &CleartextWitnessProof<F>,
     physical_w_len: usize,
     challenges: &[E],
     col_bits: usize,
@@ -130,23 +130,23 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    match direct_witness {
-        DirectWitnessProof::PackedDigits(packed_witness) => packed_witness_eval::<F, E, D>(
+    match cleartext_witness {
+        CleartextWitnessProof::PackedDigits(packed_witness) => packed_witness_eval::<F, E, D>(
             packed_witness,
             physical_w_len,
             challenges,
             col_bits,
             ring_bits,
         ),
-        DirectWitnessProof::FieldElements(field_witness) => {
+        CleartextWitnessProof::FieldElements(field_witness) => {
             field_witness_eval::<F, E>(field_witness.coeffs(), challenges, col_bits, ring_bits)
         }
     }
 }
 
 enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
-    Direct {
-        witness: &'a DirectWitnessProof<F>,
+    Cleartext {
+        witness: &'a CleartextWitnessProof<F>,
         physical_w_len: usize,
     },
     ClaimedEval {
@@ -178,7 +178,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     #[allow(dead_code)]
     relation_claim_mask: ZkR1csLinearCombination<E>,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
-    r_stage1: Vec<E>,
+    stage1_point: Vec<E>,
     alpha_evals_y: Vec<E>,
     row_eval_source: Stage2RowEvalSource<E>,
     setup: &'a AkitaExpandedSetup<F>,
@@ -203,7 +203,7 @@ where
         #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
         #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
-        r_stage1: Vec<E>,
+        stage1_point: Vec<E>,
         alpha_evals_y: Vec<E>,
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
@@ -221,10 +221,10 @@ where
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
         })?;
-        if r_stage1.len() != num_rounds {
+        if stage1_point.len() != num_rounds {
             return Err(AkitaError::InvalidSize {
                 expected: num_rounds,
-                actual: r_stage1.len(),
+                actual: stage1_point.len(),
             });
         }
         let expected_alpha_len = 1usize
@@ -253,7 +253,7 @@ where
             #[cfg(feature = "zk")]
             relation_claim_mask,
             witness_oracle,
-            r_stage1,
+            stage1_point,
             alpha_evals_y,
             row_eval_source,
             setup,
@@ -267,17 +267,17 @@ where
         })
     }
 
-    /// Construct a verifier that evaluates the final direct witness locally.
+    /// Construct a verifier that evaluates the final cleartext witness locally.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_direct_witness")]
-    pub(crate) fn new_with_direct_witness(
+    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_cleartext_witness")]
+    pub(crate) fn new_with_cleartext_witness(
         batching_coeff: E,
         s_claim: E,
         #[cfg(feature = "zk")] s_claim_mask: ZkR1csLinearCombination<E>,
         #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
-        direct_witness: &'a DirectWitnessProof<F>,
+        cleartext_witness: &'a CleartextWitnessProof<F>,
         physical_w_len: usize,
-        r_stage1: Vec<E>,
+        stage1_point: Vec<E>,
         alpha_evals_y: Vec<E>,
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
@@ -299,11 +299,11 @@ where
             s_claim_mask,
             #[cfg(feature = "zk")]
             relation_claim_mask,
-            Stage2WitnessOracle::Direct {
-                witness: direct_witness,
+            Stage2WitnessOracle::Cleartext {
+                witness: cleartext_witness,
                 physical_w_len,
             },
-            r_stage1,
+            stage1_point,
             alpha_evals_y,
             row_eval_source,
             setup,
@@ -330,7 +330,7 @@ where
         #[cfg(feature = "zk")] relation_claim_mask: ZkR1csLinearCombination<E>,
         w_eval: E,
         #[cfg(feature = "zk")] w_eval_mask: ZkR1csLinearCombination<E>,
-        r_stage1: Vec<E>,
+        stage1_point: Vec<E>,
         alpha_evals_y: Vec<E>,
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
@@ -357,7 +357,7 @@ where
                 #[cfg(feature = "zk")]
                 mask: w_eval_mask,
             },
-            r_stage1,
+            stage1_point,
             alpha_evals_y,
             row_eval_source,
             setup,
@@ -376,10 +376,10 @@ where
 
     fn witness_eval(&self, challenges: &[E]) -> Result<E, AkitaError> {
         match &self.witness_oracle {
-            Stage2WitnessOracle::Direct {
+            Stage2WitnessOracle::Cleartext {
                 witness,
                 physical_w_len,
-            } => direct_witness_eval::<F, E, D>(
+            } => cleartext_witness_eval::<F, E, D>(
                 witness,
                 *physical_w_len,
                 challenges,
@@ -434,12 +434,12 @@ where
         let relation_oracle = w_eval * alpha_val * row_val;
 
         // Terminal levels run with `batching_coeff = 0`, which zeros the
-        // virtual half regardless of `r_stage1` / `w_eval`. Skip the
+        // virtual half regardless of `stage1_point` / `w_eval`. Skip the
         // EqPolynomial eval and the `w * (w + 1)` round in that case.
         if self.batching_coeff.is_zero() {
             return Ok(relation_oracle);
         }
-        let eq_val = EqPolynomial::mle(&self.r_stage1, challenges)?;
+        let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
         let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
         Ok(self.batching_coeff * virtual_oracle + relation_oracle)
     }
@@ -482,14 +482,14 @@ where
         final_claim: ZkR1csLinearCombination<E>,
         relations: &mut ZkRelationAccumulator<E>,
     ) -> Result<(), AkitaError> {
-        let eq_val = EqPolynomial::mle(&self.r_stage1, challenges)?;
+        let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
         let row_val = self.row_eval(x_challenges)?;
 
         // At the sampled point r = (r_y, r_x), the fused Stage-2 oracle is
         //
-        //   gamma * eq(r_stage1, r) * w(r) * (w(r) + 1)
+        //   gamma * eq(stage1_point, r) * w(r) * (w(r) + 1)
         //     + w(r) * alpha(r_y) * row(r_x).
         //
         // `final_claim` is already the unmasked final sumcheck claim as an LC.
@@ -497,11 +497,11 @@ where
         // eval_masked - eval_mask; otherwise it is a constant direct witness
         // evaluation. The R1CS row below records the oracle equality as
         //
-        //   w(r) * [gamma * eq(r_stage1, r) * w(r)
-        //     + gamma * eq(r_stage1, r) + alpha(r_y) * row(r_x)]
+        //   w(r) * [gamma * eq(stage1_point, r) * w(r)
+        //     + gamma * eq(stage1_point, r) + alpha(r_y) * row(r_x)]
         //     = final_claim.
         let w_lc = match &self.witness_oracle {
-            Stage2WitnessOracle::Direct { .. } => {
+            Stage2WitnessOracle::Cleartext { .. } => {
                 ZkR1csLinearCombination::constant(self.witness_eval(challenges)?)
             }
             Stage2WitnessOracle::ClaimedEval { eval, mask } => {

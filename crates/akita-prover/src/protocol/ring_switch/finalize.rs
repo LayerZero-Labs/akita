@@ -17,7 +17,7 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_finalize<F, E, T, const D: usize>(
-    quad_eq: &QuadraticEquation<F, D>,
+    instance: &RingRelationInstance<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
@@ -31,7 +31,7 @@ where
     T: Transcript<F>,
 {
     ring_switch_finalize_with_claim_groups::<F, E, T, D>(
-        quad_eq,
+        instance,
         setup,
         transcript,
         w,
@@ -49,7 +49,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_finalize_with_claim_groups<F, E, T, const D: usize>(
-    quad_eq: &QuadraticEquation<F, D>,
+    instance: &RingRelationInstance<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
@@ -62,14 +62,14 @@ where
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
-    let gamma = quad_eq
+    let gamma = instance
         .gamma()
         .iter()
         .copied()
         .map(E::lift_base)
         .collect::<Vec<_>>();
     ring_switch_finalize_with_gamma::<F, E, T, D>(
-        quad_eq,
+        instance,
         setup,
         transcript,
         w,
@@ -92,7 +92,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_finalize_after_absorb<F, E, T, const D: usize>(
-    quad_eq: &QuadraticEquation<F, D>,
+    instance: &RingRelationInstance<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
@@ -104,14 +104,14 @@ where
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
-    let gamma = quad_eq
+    let gamma = instance
         .gamma()
         .iter()
         .copied()
         .map(E::lift_base)
         .collect::<Vec<_>>();
     ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
-        quad_eq,
+        instance,
         setup,
         transcript,
         w,
@@ -134,11 +134,11 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_finalize_terminal<F, E, T, const D: usize>(
-    quad_eq: &QuadraticEquation<F, D>,
+    instance: &RingRelationInstance<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
-    final_witness: &DirectWitnessProof<F>,
+    final_witness: &CleartextWitnessProof<F>,
     terminal_layout: TerminalWitnessSegmentLayout,
     lp: &LevelParams,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
@@ -147,14 +147,14 @@ where
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
-    let gamma = quad_eq
+    let gamma = instance
         .gamma()
         .iter()
         .copied()
         .map(E::lift_base)
         .collect::<Vec<_>>();
     ring_switch_finalize_terminal_with_gamma::<F, E, T, D>(
-        quad_eq,
+        instance,
         setup,
         transcript,
         w,
@@ -180,7 +180,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_finalize_with_gamma<F, E, T, const D: usize>(
-    quad_eq: &QuadraticEquation<F, D>,
+    instance: &RingRelationInstance<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
@@ -196,7 +196,7 @@ where
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
     ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
-        quad_eq,
+        instance,
         setup,
         transcript,
         w,
@@ -218,11 +218,11 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_finalize_terminal_with_gamma<F, E, T, const D: usize>(
-    quad_eq: &QuadraticEquation<F, D>,
+    instance: &RingRelationInstance<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
-    final_witness: &DirectWitnessProof<F>,
+    final_witness: &CleartextWitnessProof<F>,
     terminal_layout: TerminalWitnessSegmentLayout,
     lp: &LevelParams,
     gamma: &[E],
@@ -240,13 +240,13 @@ where
     }
     transcript.append_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.remainder);
     ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
-        quad_eq,
+        instance,
         setup,
         transcript,
         w,
         lp,
         gamma,
-        MRowLayout::Terminal,
+        MRowLayout::WithoutDBlock,
     )
 }
 
@@ -265,7 +265,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn ring_switch_finalize_with_gamma_after_absorb<F, E, T, const D: usize>(
-    quad_eq: &QuadraticEquation<F, D>,
+    instance: &RingRelationInstance<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
@@ -280,9 +280,10 @@ where
 {
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let num_polys_per_point = quad_eq.num_polys_per_point();
-    let num_points = num_polys_per_point.len();
-    let num_public_rows = quad_eq.num_public_rows();
+    let routing = instance.commitment_routing();
+    let num_polys_per_commitment_group = routing.num_polys_per_commitment_group();
+    let num_points = num_polys_per_commitment_group.len();
+    let num_public_rows = instance.num_public_rows();
 
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
@@ -299,10 +300,10 @@ where
         .trailing_zeros() as usize;
 
     let tau0: Vec<E> = match m_row_layout {
-        MRowLayout::Intermediate => (0..num_sc_vars)
+        MRowLayout::WithDBlock => (0..num_sc_vars)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
             .collect(),
-        MRowLayout::Terminal => Vec::new(),
+        MRowLayout::WithoutDBlock => Vec::new(),
     };
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -310,12 +311,12 @@ where
     let ring_alpha_evals_y = scalar_powers(alpha, D);
     let alpha_evals_y = scalar_powers(alpha, D);
 
-    let opening_points = quad_eq.opening_points();
-    let ring_multiplier_points = quad_eq.ring_multiplier_points();
-    let claim_to_point = quad_eq.claim_to_point();
-    let claim_to_point_poly = quad_eq.claim_to_point_poly();
-    let claim_poly_indices = quad_eq.claim_poly_indices();
-    let challenges = &quad_eq.challenges;
+    let opening_points = instance.opening_points();
+    let ring_multiplier_points = instance.ring_multiplier_points();
+    let claim_to_point = instance.claim_to_point();
+    let claim_to_commitment_group = routing.claim_to_commitment_group();
+    let claim_poly_in_commitment_group = routing.claim_poly_in_commitment_group();
+    let challenges = &instance.challenges;
     if gamma.len() != claim_to_point.len() {
         return Err(AkitaError::InvalidInput(
             "ring-switch gamma length does not match claim count".to_string(),
@@ -335,9 +336,9 @@ where
                 &ring_alpha_evals_y,
                 lp,
                 &tau1,
-                num_polys_per_point,
-                claim_to_point_poly,
-                claim_poly_indices,
+                num_polys_per_commitment_group,
+                claim_to_commitment_group,
+                claim_poly_in_commitment_group,
                 gamma,
                 num_public_rows,
                 m_row_layout,
@@ -357,9 +358,9 @@ where
             &ring_alpha_evals_y,
             lp,
             &tau1,
-            num_polys_per_point,
-            claim_to_point_poly,
-            claim_poly_indices,
+            num_polys_per_commitment_group,
+            claim_to_commitment_group,
+            claim_poly_in_commitment_group,
             gamma,
             num_public_rows,
             m_row_layout,

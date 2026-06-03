@@ -128,7 +128,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
     out
 }
 
-/// Number of balanced digits needed to decompose the folded witness `z_pre`.
+/// Number of balanced digits needed to decompose the folded witness `z_folded_rings`.
 ///
 /// The folding step multiplies the witness by a sparse challenge vector with
 /// L1-mass `challenge_l1_mass` and applies `r_vars` levels of block folding,
@@ -230,7 +230,7 @@ pub fn compute_num_digits_fold_with_claims(
 /// optimum which is generally asymmetric (especially for onehot where
 /// `δ_commit = 1`).
 ///
-/// # Tight z_pre mode
+/// # Tight z_folded_rings mode
 ///
 /// - `num_ring > 0`: `m_eff = ⌈num_ring / 2^r⌉` — the actual occupied row
 ///   count, which can be smaller than `2^m` when the ring-element count isn't

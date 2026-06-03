@@ -10,7 +10,7 @@ use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
+use akita_types::{CleartextWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
@@ -429,7 +429,7 @@ where
         })
     }
 
-    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {
+    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
         let total_coeffs = self.total_ring_elems.checked_mul(D).ok_or_else(|| {
             AkitaError::InvalidInput("sparse direct witness length overflow".to_string())
         })?;
@@ -443,9 +443,9 @@ where
                 })?;
             coeffs[idx] += F::from_i8(entry.value);
         }
-        Ok(DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
-            coeffs,
-        )))
+        Ok(CleartextWitnessProof::FieldElements(
+            FlatRingVec::from_coeffs(coeffs),
+        ))
     }
 }
 
