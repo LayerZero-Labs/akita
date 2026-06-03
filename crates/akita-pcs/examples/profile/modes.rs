@@ -288,6 +288,16 @@ const PROFILE_MODES: &[ProfileMode] = &[
     },
 ];
 
+/// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
+const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
+    "onehot_fp128_d64_tensor",
+    // CI bench and default comparisons use fp32 D64; D32/D128 stay opt-in.
+    "dense_fp32_d32",
+    "onehot_fp32_d32",
+    "dense_fp32_d128",
+    "onehot_fp32_d128",
+];
+
 fn assert_singleton_mode(mode: &str, num_polys: usize) {
     assert_eq!(
         num_polys, 1,
@@ -487,7 +497,7 @@ pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
 
 pub(crate) fn run_all_profile_modes(nv: usize) {
     for entry in PROFILE_MODES {
-        if entry.name == "onehot_fp128_d64_tensor" {
+        if EXCLUDED_FROM_ALL_SWEEP.contains(&entry.name) {
             continue;
         }
         run_profile_mode(entry.name, nv, 1);
