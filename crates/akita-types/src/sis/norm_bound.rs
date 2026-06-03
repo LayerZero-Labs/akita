@@ -101,6 +101,31 @@ impl FoldWitnessNorms {
 /// `β̄ = min(||c||_inf·||s||_1, ||c||_1·||s||_inf)` and
 /// `ω̄ = ||c||_1` and `ν = ring_subfield_norm_bound`.
 ///
+/// # Precondition (inner-witness shortness)
+///
+/// The per-block `β̄ = ||c·s||_inf` is the *anchored* price: it is sound only
+/// when the committed inner witness L∞ is independently enforced at the
+/// `||s||_inf` recorded by [`FoldWitnessNorms`]. The weak-binding extractor only
+/// ever sees `||c̄·s||_inf = ||z^(ℓ,i) − z^(0)||_inf`, bounded generically by the
+/// *fold response* `2·β^resp` (which carries the fold arity `2^r` and the
+/// batched-claim count); dividing by the unit `c̄` does not recover `||s||_inf`.
+/// The anchored price replaces `2·β^resp` by `ω̄·||s||_inf`, and is justified at:
+///   - every recursive level (`is_root == false`): the witness is committed at
+///     `δ_commit = 1` ([`crate::sis::num_digits_s_commit`]), i.e. it *is* the
+///     previous level's range-checked extended witness (`||s||_inf ≤ b/2`) with
+///     no gadget gap — see the per-level inner-witness bound proposition;
+///   - one-hot roots (`is_root == true` and `log_commit_bound == 1`): also
+///     committed at `δ_commit = 1`, so `s = f` and `||s||_inf ≤ 1` *provided the
+///     caller proves the committed vector is one-hot* (in Jolt, the booleanity +
+///     Hamming-weight checks on the same commitment);
+///   - cleartext-digit roots: range-bounded by construction.
+///
+/// For an UNCONSTRAINED dense root (`δ_commit > 1`, no structural guarantee) the
+/// extracted `s` is bounded only by `2·β^resp`, so this per-block bucket is
+/// UNSOUND there: such a root must be priced via the fold bound
+/// ([`fold_witness_beta`]) instead. Callers select the regime via the schedule's
+/// root-witness-bound policy; this function only computes the anchored bucket.
+///
 /// Returns `None` on norm overflow or when the collision exceeds every audited
 /// bucket for `(sis_family, d)`.
 #[allow(clippy::too_many_arguments)]
