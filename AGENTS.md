@@ -43,7 +43,7 @@ Workspace members under `crates/`:
 ## Key Abstractions
 
 - `AkitaCommitmentScheme` — top-level PCS `commit` / `prove` / `verify`
-- `CommitmentConfig` — single user-facing trait defining every per-config policy hook (algebra, SIS family, decomposition, layout, schedule table/key/plan, transcript bind, prove/commitment params). Replaces the previous `CommitmentConfig` + `ScheduleProvider` + `PlannerConfig` triad. Verifier-reachable hooks return `Result<_, AkitaError>` (`level_params_with_log_basis`, `log_basis_at_level`, `stage1_challenge_config`)
+- `CommitmentConfig` — single user-facing trait defining every per-config policy hook (algebra, SIS family, decomposition, layout, schedule table/key/plan, transcript bind, prove/commitment params). Replaces the previous `CommitmentConfig` + `ScheduleProvider` + `PlannerConfig` triad. Verifier-reachable hooks return `Result<_, AkitaError>` (`level_params_with_log_basis`, `log_basis_at_level`, `ring_challenge_config`)
 - `WCommitmentConfig<const D: usize, Cfg>` — derived recursive-w `CommitmentConfig` for ring-degree dispatch
 - `LevelParams` — recursion schedule, layout, per-level config
 - `PlanPolicy` — value-typed inputs to `akita_types::schedule_plan_from_table` (table materialization)

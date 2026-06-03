@@ -45,10 +45,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Cfg::decomposition()
     }
 
-    fn stage1_challenge_config(
+    fn ring_challenge_config(
         d: usize,
     ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
-        Cfg::stage1_challenge_config(d)
+        Cfg::ring_challenge_config(d)
     }
 
     fn sis_modulus_family() -> SisModulusFamily {

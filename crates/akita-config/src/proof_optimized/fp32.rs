@@ -39,99 +39,75 @@ pub struct D256Full;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D32Full,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q32,
     32,
     32,
-    32,
-    3,
-    8,
-    vec![-1, 1]
+    32
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D32OneHot,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q32,
     32,
     32,
-    1,
-    3,
-    8,
-    vec![-1, 1]
+    1
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D64Full,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q32,
     64,
     32,
-    32,
-    3,
-    8,
-    vec![-1, 1]
+    32
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D64OneHot,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q32,
     64,
     32,
-    1,
-    3,
-    8,
-    vec![-1, 1]
+    1
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D128Full,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q32,
     128,
     32,
-    32,
-    3,
-    8,
-    vec![-1, 1]
+    32
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D128OneHot,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q32,
     128,
     32,
-    1,
-    3,
-    8,
-    vec![-1, 1]
+    1
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D256Full,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q32,
     256,
     32,
-    32,
-    3,
-    8,
-    vec![-1, 1]
+    32
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D256OneHot,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q32,
     256,
     32,
-    1,
-    3,
-    8,
-    vec![-1, 1]
+    1
 );

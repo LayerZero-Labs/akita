@@ -8,19 +8,19 @@ use super::{
 #[rustfmt::skip]
 pub(crate) static FP16_D32_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 1, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 32, log_basis: 3, m_vars: 0, r_vars: 0, n_a: 5, n_b: 5, n_d: 2 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 2, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 32, log_basis: 3, m_vars: 0, r_vars: 0, n_a: 5, n_b: 5, n_d: 2 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 3, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 32, log_basis: 3, m_vars: 0, r_vars: 0, n_a: 5, n_b: 5, n_d: 2 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 4, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 32, log_basis: 3, m_vars: 0, r_vars: 0, n_a: 5, n_b: 5, n_d: 2 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 5, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 32, log_basis: 3, m_vars: 0, r_vars: 0, n_a: 5, n_b: 5, n_d: 2 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 6, num_commitment_groups: 1, num_t_vectors: 1, num_w_vectors: 1, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
@@ -104,19 +104,19 @@ pub(crate) static FP16_D32_FULL_SCHEDULES: &[GeneratedScheduleTableEntry] = &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 1, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 32, log_basis: 3, m_vars: 0, r_vars: 0, n_a: 5, n_b: 6, n_d: 5 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 2, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 32, log_basis: 3, m_vars: 0, r_vars: 0, n_a: 5, n_b: 6, n_d: 5 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 3, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 32, log_basis: 3, m_vars: 0, r_vars: 0, n_a: 5, n_b: 6, n_d: 5 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 4, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 32, log_basis: 3, m_vars: 0, r_vars: 0, n_a: 5, n_b: 6, n_d: 5 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 5, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
-        GeneratedStep::Direct(GeneratedDirectStep { commit: Some(GeneratedFoldStep { ring_d: 32, log_basis: 3, m_vars: 0, r_vars: 0, n_a: 5, n_b: 6, n_d: 5 }) }),
+        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),
     ] },
     GeneratedScheduleTableEntry { key: GeneratedScheduleKey { num_vars: 6, num_commitment_groups: 1, num_t_vectors: 4, num_w_vectors: 4, num_z_vectors: 1 }, steps: &[
         GeneratedStep::Direct(GeneratedDirectStep { commit: None }),

@@ -120,12 +120,18 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
 
-    /// Sparse challenge family for ring dimension `d`.
+    /// Short ring challenge family for ring dimension `d`.
+    ///
+    /// This is the short ring element `c(X)` that folds the committed witness
+    /// (the weak-binding challenge). It is sampled before the stage-1 sumcheck,
+    /// so it is not itself a sumcheck-stage challenge. "Short" means bounded
+    /// norm, not sparse: the `d == 32` policy is a low-norm ball that may be
+    /// dense, while larger degrees use sparse fixed-weight families.
     ///
     /// # Errors
     ///
     /// `InvalidSetup` if `d` is not supported.
-    fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
+    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
 
     /// Stage-1 fold-round challenge shape at one schedule level.
     ///
@@ -213,7 +219,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         akita_planner::get_schedule(
             key,
             &policy_of::<Self>(),
-            Self::stage1_challenge_config,
+            Self::ring_challenge_config,
             Self::fold_challenge_shape_at_level,
         )
     }
@@ -289,8 +295,8 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         }
     }
 
-    fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
-        Cfg::stage1_challenge_config(d)
+    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        Cfg::ring_challenge_config(d)
     }
 
     fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
@@ -359,7 +365,7 @@ mod tests {
             }
         }
 
-        fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
             if d != Self::D {
                 return Err(AkitaError::InvalidSetup(format!(
                     "unsupported D={d} for ExtensionRoleConfig (expected {})",

@@ -17,6 +17,46 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 2;
 /// Maximum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 
+/// Shared short ring-challenge policy for every proof-optimized preset.
+///
+/// "Short" means bounded norm, which is the property that keeps the folded
+/// witness short enough for SIS binding. It does not mean sparse: at `d == 32`
+/// the family is `BoundedL1Norm`, a low-norm ball (`||c||_1 <= 121`,
+/// `||c||_inf <= 8`) whose elements can be fully dense. The larger degrees use
+/// fixed-weight sparse families (`ExactShell` at `d == 64`, `Uniform` at
+/// `d >= 128`), where shortness happens to coincide with sparsity.
+///
+/// The family is keyed only on the ring degree `d`. A preset's `D` is fixed
+/// across all schedule levels, so both the planner DP and the generated-table
+/// expansion call the per-`Cfg` hook with `d == Cfg::D` (see
+/// `akita_planner::find_schedule` and `generated::expand`). Every family
+/// returned here has at least 128 bits of Fiat-Shamir support, which is the
+/// soundness floor for the witness-folding ring challenge; presets must not
+/// pick a lower-support family. fp128 only reaches `d in {32, 64, 128}`; the
+/// small-field presets additionally reach `d == 256`.
+pub(crate) fn proof_optimized_ring_challenge_config(
+    d: usize,
+) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+    match d {
+        32 => Ok(akita_challenges::SparseChallengeConfig::BoundedL1Norm),
+        64 => Ok(akita_challenges::SparseChallengeConfig::ExactShell {
+            count_mag1: 30,
+            count_mag2: 12,
+        }),
+        128 => Ok(akita_challenges::SparseChallengeConfig::Uniform {
+            weight: 31,
+            nonzero_coeffs: vec![-1, 1],
+        }),
+        256 => Ok(akita_challenges::SparseChallengeConfig::Uniform {
+            weight: 23,
+            nonzero_coeffs: vec![-1, 1],
+        }),
+        _ => Err(AkitaError::InvalidSetup(format!(
+            "unsupported proof-optimized ring dim {d}"
+        ))),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // `<Cfg>`-generic policy helpers for the planner and materializer.
 // ---------------------------------------------------------------------------
@@ -514,78 +554,17 @@ fn add_zk_ext_scalar_slots<Cfg: CommitmentConfig>(
 // Per-preset CommitmentConfig macro
 // ---------------------------------------------------------------------------
 
-/// Generate a [`CommitmentConfig`] impl for one fp128 preset.
-macro_rules! impl_fp128_preset {
-    ($cfg:ident, $d:expr, $log_commit_bound:expr) => {
-        impl $crate::CommitmentConfig for $cfg {
-            type Field = Field;
-            type ClaimField = Field;
-            type ChallengeField = Field;
-            const D: usize = $d;
-
-            fn decomposition() -> akita_types::DecompositionParams {
-                // Every fp128 preset uses `log_basis = 3` and sets
-                // `log_open_bound = Some(128)` unless the gadget already
-                // saturates the field (`log_commit_bound == 128`).
-                akita_types::DecompositionParams {
-                    log_basis: 3,
-                    log_commit_bound: $log_commit_bound,
-                    log_open_bound: if $log_commit_bound < 128 {
-                        Some(128)
-                    } else {
-                        None
-                    },
-                }
-            }
-
-            fn stage1_challenge_config(
-                d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
-                // Sparse stage-1 challenge family for a given fp128 ring degree.
-                match d {
-                    32 => Ok(akita_challenges::SparseChallengeConfig::BoundedL1Norm),
-                    64 => Ok(akita_challenges::SparseChallengeConfig::ExactShell {
-                        count_mag1: 30,
-                        count_mag2: 12,
-                    }),
-                    128 => Ok(akita_challenges::SparseChallengeConfig::Uniform {
-                        weight: 31,
-                        nonzero_coeffs: vec![-1, 1],
-                    }),
-                    _ => Err(akita_field::AkitaError::InvalidSetup(format!(
-                        "unsupported fp128 ring dim {d}"
-                    ))),
-                }
-            }
-
-            fn sis_modulus_family() -> akita_types::SisModulusFamily {
-                akita_types::SisModulusFamily::Q128
-            }
-
-            fn max_setup_matrix_size(
-                max_num_vars: usize,
-                max_num_batched_polys: usize,
-                max_num_points: usize,
-            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
-                    max_num_vars,
-                    max_num_batched_polys,
-                    max_num_points,
-                )
-            }
-
-            fn basis_range() -> (u32, u32) {
-                (
-                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
-                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
-                )
-            }
-        }
-    };
-}
-
-macro_rules! impl_small_field_preset {
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $log_basis:expr, $weight:expr, $coeffs:expr) => {
+/// Generate a [`CommitmentConfig`] impl for one proof-optimized preset.
+///
+/// One macro covers every proof-optimized preset (fp128 and the small-field
+/// fp16/fp32/fp64 families): the fp128 presets are the special case where the
+/// claim/challenge field is the base field, `field_bits == 128`, and the SIS
+/// family is `Q128`. All proof-optimized presets share `log_basis = 3`, the
+/// shared ring-challenge policy, the shared setup-matrix sizer, and the
+/// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
+/// parameters.
+macro_rules! impl_proof_optimized_preset {
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ClaimField = $claim_field;
@@ -593,8 +572,11 @@ macro_rules! impl_small_field_preset {
             const D: usize = $d;
 
             fn decomposition() -> akita_types::DecompositionParams {
+                // Proof-optimized presets fold at `log_basis = 3` and set
+                // `log_open_bound = Some(field_bits)` unless the gadget already
+                // saturates the field (`log_commit_bound == field_bits`).
                 akita_types::DecompositionParams {
-                    log_basis: $log_basis,
+                    log_basis: 3,
                     log_commit_bound: $log_commit_bound,
                     log_open_bound: if $log_commit_bound < $field_bits {
                         Some($field_bits)
@@ -604,20 +586,10 @@ macro_rules! impl_small_field_preset {
                 }
             }
 
-            fn stage1_challenge_config(
+            fn ring_challenge_config(
                 d: usize,
             ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
-                if d != Self::D {
-                    return Err(akita_field::AkitaError::InvalidSetup(format!(
-                        "unsupported D={} for small-field preset (expected {})",
-                        d,
-                        Self::D,
-                    )));
-                }
-                Ok(akita_challenges::SparseChallengeConfig::Uniform {
-                    weight: $weight,
-                    nonzero_coeffs: $coeffs,
-                })
+                $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 
             fn sis_modulus_family() -> akita_types::SisModulusFamily {

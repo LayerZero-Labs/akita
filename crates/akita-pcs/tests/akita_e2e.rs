@@ -479,42 +479,33 @@ fn full_d32_prove_verify() {
 }
 
 #[test]
-fn fp16_static_dense_round_trip() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type FSmall = fp16::Field;
-        type Cfg = fp16::D32Full;
-        const D: usize = Cfg::D;
-
-        // The corrected weak-binding collision (`2·ω̄·β̄·ν`, see
-        // `specs/weak-binding-norm-fix.md`) raises the dense root A-rank above
-        // what the 16-bit modulus admits, so `fp16::D32Full` ships a cleartext
-        // (`commit: None`) schedule for `num_vars >= 6` and only commits at the
-        // single-block size `num_vars = 5`. Use that committing size so the
-        // round-trip still exercises a real SIS commitment.
-        const FP16_DENSE_COMMIT_NV: usize = 5;
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<FSmall, D, Cfg>(FP16_DENSE_COMMIT_NV, b"akita_e2e/fp16-static");
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let mut verifier_transcript = AkitaTranscript::<FSmall>::new(b"akita_e2e/fp16-static");
-        let result =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<FSmall, D>>::batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut verifier_transcript,
-                verify_input(&opening_point[..], &openings[..], &commitments[0]),
-                BasisMode::Lagrange,
-            );
-
-        assert!(
-            result.is_ok(),
-            "fp16 static verification must pass: {:?}",
-            result.err()
+fn fp16_dense_is_cleartext_only_under_secure_stage1_challenge() {
+    // A 16-bit modulus cannot host a SIS-secure dense commitment once stage-1
+    // folding uses a 128-bit-support challenge. The shared proof-optimized
+    // policy gives `D=32` the `BoundedL1Norm` family (L1 = 121, Linf = 8); that
+    // mass pushes the weak-binding collision past what Q16 admits at *every*
+    // witness size, so `fp16::D32Full` now ships a cleartext (`commit: None`)
+    // root-direct schedule for all `num_vars` (see
+    // `crates/akita-planner/src/generated/fp16_d32_full.rs`). There is no
+    // committing size left, so the dense SIS round-trip the fp32/fp64 presets
+    // still exercise is not representable for fp16; we pin the cleartext
+    // outcome instead. The earlier "commits at num_vars = 5" behavior relied on
+    // the insecure `Uniform { weight: 8 }` challenge (~31-bit support); a
+    // regression that let fp16 dense commit again would signal that the
+    // stage-1 challenge support dropped back below 128 bits.
+    type Cfg = fp16::D32Full;
+    for num_vars in [1usize, 5, 8, 12, 32] {
+        let incidence = akita_types::ClaimIncidenceSummary::same_point(num_vars, 1)
+            .expect("singleton incidence");
+        let err = Cfg::get_params_for_batched_commitment(&incidence).expect_err(
+            "fp16 dense must be cleartext-only (no commit params) under the secure stage-1 challenge",
         );
-    });
+        assert!(
+            err.to_string()
+                .contains("root-direct schedule is missing commit params"),
+            "unexpected fp16 dense commit error at num_vars={num_vars}: {err}"
+        );
+    }
 }
 
 #[test]

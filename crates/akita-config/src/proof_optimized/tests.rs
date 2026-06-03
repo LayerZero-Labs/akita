@@ -1,4 +1,5 @@
 use super::*;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{CanonicalField, One};
 #[cfg(not(feature = "zk"))]
 use akita_planner::generated::{
@@ -101,7 +102,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
                 log_open_bound: Some(8),
             }
         }
-        fn stage1_challenge_config(
+        fn ring_challenge_config(
             _d: usize,
         ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
             Ok(akita_challenges::SparseChallengeConfig::Uniform {
@@ -657,13 +658,14 @@ fn generated_batched_roots_restore_scaled_widths() {
     assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
     assert_generated_batched_roots_are_scaled::<fp128::D64Full>(fp128_d64_full_table());
     assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
-    // Q16 (16-bit modulus) dense presets ship cleartext-only schedules under
-    // the corrected Hachi Lemma 7 weak-binding collision norm: the SIS-secure
-    // commitment widths the small modulus admits are below the dense
-    // fold-witness widths, so the DP never folds. There are therefore no
-    // folded batched roots to scale-check for `fp16::*Full`. The one-hot Q16
-    // presets keep folding (small collision) and are still checked.
-    assert_generated_batched_roots_are_scaled::<fp16::D32OneHot>(fp16_d32_onehot_table());
+    // Q16 (16-bit modulus) presets ship cleartext-only schedules under the
+    // corrected Hachi Lemma 7 weak-binding collision norm combined with the
+    // 128-bit-secure stage-1 challenge: the SIS-secure commitment widths a
+    // 16-bit modulus admits fall below the fold-witness widths, so the DP never
+    // folds. Both `fp16::*Full` and the D32 one-hot preset are therefore fully
+    // cleartext (the larger D32 `BoundedL1Norm` mass, L1 = 121, only deepens
+    // this), leaving `fp16::D64OneHot` as the only Q16 family with folded
+    // batched roots to scale-check.
     assert_generated_batched_roots_are_scaled::<fp16::D64OneHot>(fp16_d64_onehot_table());
 }
 
@@ -776,4 +778,159 @@ fn tight_block_len_is_no_larger_than_pow2() {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Ring-challenge soundness guards
+// ---------------------------------------------------------------------------
+//
+// Every proof-optimized preset folds against a short ring challenge whose
+// support sets the Fiat-Shamir soundness of the fold. These tests pin the
+// shared dimension-keyed policy to its designed >=128-bit families and assert
+// no preset can silently regress to a low-support family (the historical
+// `Uniform { weight: 8, [-1, 1] }`, which has only ~31 bits at D=32).
+
+/// `log2` of the binomial coefficient `C(n, k)`, summed over logs so the large
+/// `(D, weight)` pairs used by these families never overflow.
+fn log2_binomial(n: usize, k: usize) -> f64 {
+    if k > n {
+        return f64::NEG_INFINITY;
+    }
+    let k = k.min(n - k);
+    (1..=k)
+        .map(|i| ((n - k + i) as f64 / i as f64).log2())
+        .sum::<f64>()
+}
+
+/// Bits of Fiat-Shamir support in a ring-challenge family at ring degree `d`.
+/// `BoundedL1Norm` is constructed so its space exceeds `2^128` (proven in
+/// `akita_challenges::sampler::bounded_l1_support`), so it is reported as
+/// infinite here rather than re-running the bounded-L1 DP.
+fn challenge_support_bits(cfg: &SparseChallengeConfig, d: usize) -> f64 {
+    match cfg {
+        SparseChallengeConfig::Uniform {
+            weight,
+            nonzero_coeffs,
+        } => log2_binomial(d, *weight) + (*weight as f64) * (nonzero_coeffs.len() as f64).log2(),
+        SparseChallengeConfig::ExactShell {
+            count_mag1,
+            count_mag2,
+        } => {
+            let support = count_mag1 + count_mag2;
+            log2_binomial(d, support) + log2_binomial(support, *count_mag1) + (support as f64)
+        }
+        SparseChallengeConfig::BoundedL1Norm => f64::INFINITY,
+    }
+}
+
+#[test]
+fn proof_optimized_ring_challenge_policy_pins_secure_families() {
+    // (d, expected family, (l1, linf)). Each family must clear 128 bits of
+    // Fiat-Shamir support; the (l1, linf) pin guards the folded-witness norm
+    // the schedules are generated against.
+    let cases = [
+        (32usize, SparseChallengeConfig::BoundedL1Norm, (121usize, 8u32)),
+        (
+            64,
+            SparseChallengeConfig::ExactShell {
+                count_mag1: 30,
+                count_mag2: 12,
+            },
+            (54, 2),
+        ),
+        (
+            128,
+            SparseChallengeConfig::Uniform {
+                weight: 31,
+                nonzero_coeffs: vec![-1, 1],
+            },
+            (31, 1),
+        ),
+        (
+            256,
+            SparseChallengeConfig::Uniform {
+                weight: 23,
+                nonzero_coeffs: vec![-1, 1],
+            },
+            (23, 1),
+        ),
+    ];
+    for (d, expected, (l1, linf)) in cases {
+        let got = proof_optimized_ring_challenge_config(d).unwrap();
+        assert_eq!(got, expected, "ring-challenge family changed at d={d}");
+        assert_eq!(
+            (got.l1_norm(), got.infinity_norm()),
+            (l1, linf),
+            "ring-challenge norms changed at d={d}"
+        );
+        let bits = challenge_support_bits(&got, d);
+        assert!(
+            bits >= 128.0,
+            "ring-challenge family {got:?} at d={d} has only {bits:.1} bits of support (<128)"
+        );
+    }
+
+    // `BoundedL1Norm` is only valid at `D = 32`; confirm the policy wires it to
+    // the one degree its sampler accepts.
+    proof_optimized_ring_challenge_config(32)
+        .unwrap()
+        .validate::<32>()
+        .unwrap();
+
+    // Ring degrees no preset uses must be rejected, not silently defaulted.
+    assert!(proof_optimized_ring_challenge_config(16).is_err());
+    assert!(proof_optimized_ring_challenge_config(48).is_err());
+}
+
+/// Assert one preset delegates its ring challenge to the shared policy. The
+/// >=128-bit support of each shared family is proven once in
+/// `proof_optimized_ring_challenge_policy_pins_secure_families`, so this only
+/// has to catch a preset that bypasses the shared helper with a weaker family.
+fn assert_preset_uses_shared_ring_challenge<Cfg: CommitmentConfig>() {
+    let name = std::any::type_name::<Cfg>();
+    let got = Cfg::ring_challenge_config(Cfg::D)
+        .unwrap_or_else(|err| panic!("{name} ring_challenge_config(D) failed: {err}"));
+    let want = proof_optimized_ring_challenge_config(Cfg::D).unwrap();
+    assert_eq!(got, want, "{name} bypassed the shared ring-challenge policy");
+}
+
+#[test]
+fn all_proof_optimized_presets_use_shared_ring_challenge() {
+    assert_preset_uses_shared_ring_challenge::<fp16::D32Full>();
+    assert_preset_uses_shared_ring_challenge::<fp16::D32OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp16::D64Full>();
+    assert_preset_uses_shared_ring_challenge::<fp16::D64OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp16::D128Full>();
+    assert_preset_uses_shared_ring_challenge::<fp16::D128OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp16::D256Full>();
+    assert_preset_uses_shared_ring_challenge::<fp16::D256OneHot>();
+
+    assert_preset_uses_shared_ring_challenge::<fp32::D32Full>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D32OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D64Full>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D64OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D128Full>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D128OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D256Full>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D256OneHot>();
+
+    assert_preset_uses_shared_ring_challenge::<fp64::D32Full>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D32OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D64Full>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D64OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D128Full>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D128OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D256Full>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D256OneHot>();
+
+    assert_preset_uses_shared_ring_challenge::<fp128::D32Full>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D32OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D64Full>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D64OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D128Full>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D128OneHot>();
+
+    // Hand-written (non-macro) preset: guards that the bespoke impl still
+    // routes through the shared policy.
+    assert_preset_uses_shared_ring_challenge::<crate::tensor_verifier::fp128::D64OneHotTensor>();
 }

@@ -63,7 +63,7 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
     let from_dp = find_schedule(
         key,
         &policy_of::<Cfg>(),
-        Cfg::stage1_challenge_config,
+        Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )
     .expect("pure DP must succeed for a valid key");

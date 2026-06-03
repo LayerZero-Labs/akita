@@ -78,7 +78,7 @@ fn regen<Cfg: CommitmentConfig>(key: AkitaScheduleLookupKey) -> Result<Schedule,
     find_schedule(
         key,
         &policy_of::<Cfg>(),
-        Cfg::stage1_challenge_config,
+        Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )
 }
