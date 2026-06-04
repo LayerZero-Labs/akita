@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao, Cursor assistant (model: GPT-5.2) |
 | Created   | 2026-06-04 |
 | Status    | proposed |
-| PR        | (fill on merge) |
+| PR        | https://github.com/LayerZero-Labs/akita/pull/149 |
 
 ## Summary
 
