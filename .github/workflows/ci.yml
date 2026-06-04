@@ -70,7 +70,6 @@ jobs:
           scripts/check-crate-deps.sh akita-config
           scripts/check-crate-deps.sh akita-planner
           scripts/check-crate-deps.sh akita-setup
-          scripts/check-crate-deps.sh akita-scheme
 
   machete:
     name: Unused dependencies

@@ -1,5 +1,6 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
+use crate::dispatch_ring_dim_result;
 use crate::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
@@ -19,6 +20,7 @@ use crate::{
     RingRelationWitness, RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
+use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::fields::wide::{HasOptimizedFold, HasWide};
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
@@ -47,11 +49,12 @@ use akita_types::{
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
-    relation_claim_from_rows_extension, reorder_stage1_coords,
+    recursive_level_layout_from_params, relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
+    schedule_root_fold_step, scheduled_fold_execution, scheduled_next_level_params,
+    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
     tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
     tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
     tensor_row_partials_from_columns, terminal_witness_segment_layout, validate_batched_inputs,
@@ -69,6 +72,7 @@ use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
 use rand_core::OsRng;
 #[cfg(feature = "zk")]
 use std::array::from_fn;
+use std::sync::Arc;
 
 mod inputs;
 mod recursive;
@@ -79,14 +83,12 @@ mod tests;
 
 pub use inputs::{
     build_folded_batched_proof_with_suffix, build_terminal_root_batched_proof,
-    prepare_batched_prove_inputs, prove_batched_with_policy, prove_folded_batched_with_policy,
-    prove_root_direct,
+    prepare_batched_prove_inputs, prove_batched, prove_folded_batched, prove_root_direct,
 };
 pub use recursive::{
-    prove_fold_level_from_ring_relation, prove_recursive_fold_with_params,
-    prove_recursive_level_with_policy, prove_recursive_suffix_with_policy,
-    prove_terminal_fold_level_from_ring_relation, prove_terminal_recursive_fold_with_params,
-    prove_terminal_recursive_level_with_policy, SuffixLevelOutput, SuffixLevelRequest,
+    prove_fold_level_from_ring_relation, prove_recursive_fold_with_params, prove_recursive_level,
+    prove_recursive_suffix, prove_terminal_fold_level_from_ring_relation,
+    prove_terminal_recursive_fold_with_params, prove_terminal_recursive_level,
 };
 #[cfg(test)]
 pub(in crate::protocol::flow) use recursive::{

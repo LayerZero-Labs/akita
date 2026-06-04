@@ -24,7 +24,7 @@
 //! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
 //! - `akita-verifier` - Verifier replay without prover-only polynomial backends
 //! - `akita-prover` - Commitment and proving kernels
-//! - `akita-scheme` - End-to-end [`AkitaCommitmentScheme`] orchestration
+//! - `akita-pcs` - End-to-end [`AkitaCommitmentScheme`] orchestration plus public re-exports
 //!
 //! Verifier-only consumers should depend directly on `akita-verifier`,
 //! `akita-types`, and `akita-config`. This umbrella crate is convenient for
@@ -37,6 +37,8 @@
 
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
+
+mod scheme;
 
 pub use akita_algebra::Module;
 pub use akita_field::AkitaError;
@@ -63,7 +65,7 @@ pub use akita_prover::{
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan,
 };
-pub use akita_scheme::AkitaCommitmentScheme;
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};
 pub use akita_types::{BasisMode, BlockOrder};
+pub use scheme::AkitaCommitmentScheme;

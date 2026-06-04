@@ -40,7 +40,6 @@ parallel = [
   "akita-algebra/parallel",
   "akita-field/parallel",
   "akita-prover/parallel",
-  "akita-scheme/parallel",
   "akita-setup/parallel",
   "akita-sumcheck/parallel",
   "akita-verifier/parallel",
@@ -50,7 +49,6 @@ logging-transcript = ["akita-transcript/logging-transcript"]
 zk = [
   "akita-config/zk",
   "akita-prover/zk",
-  "akita-scheme/zk",
   "akita-setup/zk",
   "akita-types/zk",
   "akita-verifier/zk",
@@ -67,7 +65,6 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
-akita-scheme = { version = "0.1.0", path = "../akita-scheme", default-features = false }
 akita-setup = { version = "0.1.0", path = "../akita-setup", default-features = false }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }

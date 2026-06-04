@@ -223,17 +223,17 @@ CPU cutover tests:
   `single_poly_e2e.rs`, `multipoint_batched_e2e.rs`,
   `batched_aggregated_e2e.rs`, `ring_switch.rs`, `stage1_roundtrip.rs`,
   `sumcheck_core.rs`, and transcript hardening tests.
-- Existing scheme tests under `crates/akita-scheme/src/tests.rs`.
+- Existing scheme tests under `crates/akita-pcs/src/scheme/tests/`.
 - `cargo test -p akita-sumcheck --test drivers`
 - `cargo test -p akita-prover --lib`
-- `cargo test -p akita-scheme --lib`
+- `cargo test -p akita-pcs --lib`
 
 New focused tests:
 
 - `AkitaProverSetup::from_expanded` does not build CPU NTT state.
 - `CpuBackend::prepare_setup` builds typed CPU prepared state with the same NTT
   data that `AkitaProverSetup` used to build.
-- No `NttSlotCache` import in `akita-scheme`.
+- No `NttSlotCache` import in `akita-pcs` scheme orchestration.
 - No `dispatch_with_ntt!` use in migrated paths.
 - No migrated one-hot/sparse-ring path calls a raw `shared_matrix()` prepared
   setup accessor.

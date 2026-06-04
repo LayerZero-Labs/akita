@@ -110,7 +110,6 @@ dependencies = [
  "akita-config",
  "akita-field",
  "akita-prover",
- "akita-scheme",
  "akita-serialization",
  "akita-setup",
  "akita-sumcheck",
@@ -137,12 +136,12 @@ dependencies = [
  "aes",
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
- "akita-verifier",
  "ctr",
  "rand_core 0.6.4",
  "rayon",
@@ -210,22 +209,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "akita-scheme"
-version = "0.1.0"
-dependencies = [
- "akita-challenges",
- "akita-config",
- "akita-field",
- "akita-prover",
- "akita-serialization",
- "akita-setup",
- "akita-transcript",
- "akita-types",
- "akita-verifier",
- "tracing",
-]
-
-[[package]]
 name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
@@ -277,6 +260,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "blake2 0.10.6",
+ "num-traits",
  "rand_core 0.6.4",
  "rayon",
  "sha3 0.10.9",
@@ -289,6 +273,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",

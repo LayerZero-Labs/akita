@@ -1,5 +1,5 @@
 //! [`CommitmentConfig`] — the single `<Cfg>` parameter used by
-//! `akita-prover`, `akita-verifier`, `akita-scheme`, and `akita-setup`.
+//! `akita-prover`, `akita-verifier`, `akita-pcs`, and `akita-setup`.
 //!
 //! `get_params_for_prove` / `get_params_for_batched_commitment` resolve a
 //! schedule for **any** lookup key via [`CommitmentConfig::runtime_schedule`]:
