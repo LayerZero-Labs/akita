@@ -72,8 +72,8 @@ where
 ///
 /// The overcount scales with the number of stage-2 rounds, so it is largest
 /// for small-field / many-level schedules: across the profile-bench matrix the
-/// current worst case is `dense_fp16_d32` nv26 (planned 36960 vs runtime 34256,
-/// a 2704-byte total overcount), with `dense_fp32_d32` nv26 next at 1664. The
+/// current worst case is `dense_fp32_d64` nv26 (planned vs runtime tail sizing).
+/// The
 /// bound covers those with margin. The `actual <= planned` upper-bound check
 /// above is the primary guard against a runtime proof that *grew*; a dropped
 /// level (which would inflate the overcount) is independently caught by the

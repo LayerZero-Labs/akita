@@ -202,7 +202,7 @@ no behavior changes there.
       / `estimate_proof_bytes`.
 - [ ] `CommitmentConfig::runtime_schedule` is a single delegation to
       `akita_planner::get_schedule(key, &policy_of::<Self>(),
-      Self::stage1_challenge_config, Self::fold_challenge_shape_at_level)`.
+      Self::ring_challenge_config, Self::fold_challenge_shape_at_level)`.
 - [ ] `CommitmentConfig::schedule_table()` and the trait `resolve_schedule`
       entry-lookup helper are **removed**; no preset, `WCommitmentConfig`, or
       test config implements them. The `$table` macro argument is gone.
@@ -321,7 +321,7 @@ fn runtime_schedule(key) -> Result<Option<Schedule>, AkitaError> {
     Ok(Some(akita_planner::get_schedule(
         key,
         &policy_of::<Self>(),
-        Self::stage1_challenge_config,
+        Self::ring_challenge_config,
         Self::fold_challenge_shape_at_level,
     )?))
 }

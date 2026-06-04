@@ -3,7 +3,7 @@
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::fp128;
-use akita_config::proof_optimized::{fp16, fp32, fp64};
+use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
@@ -483,45 +483,12 @@ fn full_d32_prove_verify() {
 }
 
 #[test]
-fn fp16_static_dense_round_trip() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type FSmall = fp16::Field;
-        type Cfg = fp16::D32Full;
-        const D: usize = Cfg::D;
-
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<FSmall, D, Cfg>(SMALL_FIELD_TEST_NV, b"akita_e2e/fp16-static");
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let mut verifier_transcript = AkitaTranscript::<FSmall>::new(b"akita_e2e/fp16-static");
-        let result =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<FSmall, D>>::batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut verifier_transcript,
-                verify_input(&opening_point[..], &openings[..], &commitments[0]),
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            );
-
-        assert!(
-            result.is_ok(),
-            "fp16 static verification must pass: {:?}",
-            result.err()
-        );
-    });
-}
-
-#[test]
 fn fp32_static_dense_round_trip() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type FSmall = fp32::Field;
-        type Cfg = fp32::D32Full;
+        type Cfg = fp32::D64Full;
         const D: usize = Cfg::D;
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
@@ -848,12 +815,27 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
-            assert_eq!(
-                proof.size(),
-                plan.total_bytes,
-                "actual proof size {} does not match planner estimate {}",
+            // `Schedule::total_bytes` is the planner's conservative upper bound:
+            // `level_proof_bytes` sizes every stage-2 sumcheck round as
+            // degree-3, but the prover ships a degree-2 first round per
+            // stage-2 sumcheck (one challenge-field element fewer per fold
+            // level). So the runtime proof never exceeds the estimate and
+            // undershoots it by at most one challenge element per fold level.
+            assert!(
+                proof.size() <= plan.total_bytes,
+                "runtime proof {} exceeds planner upper bound {}",
                 proof.size(),
                 plan.total_bytes
+            );
+            let challenge_elem = F::zero().serialized_size(akita_serialization::Compress::No);
+            let overcount = plan.total_bytes - proof.size();
+            assert!(
+                overcount <= plan.num_fold_levels() * challenge_elem,
+                "planner estimate {} overcounts runtime proof {} by {overcount} bytes, \
+                 exceeding the {} stage-2 degree-2 rounds * {challenge_elem}B tolerance",
+                plan.total_bytes,
+                proof.size(),
+                plan.num_fold_levels()
             );
             assert_eq!(
                 decoded
@@ -898,10 +880,18 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             Ok(schedule) => schedule,
             Err(_) => continue,
         };
-        let field_bits = <Cfg as CommitmentConfig>::decomposition().field_bits();
         let within_window = schedule.steps.iter().all(|step| match step {
             akita_types::Step::Fold(fold) => fold.params.log_basis <= 6,
-            akita_types::Step::Direct(direct) => direct.log_basis(field_bits) <= 6,
+            // A terminal direct ships packed digits at the terminal fold's
+            // basis (window-bounded). A root direct ships raw field elements:
+            // it is the zero-fold / uncommittable edge with no fold basis to
+            // bound. Under honest A-role pricing, D=64 stops securing a fold
+            // for very large `num_vars`, so the DP returns this edge instead
+            // of a folded schedule; it carries no basis to check.
+            akita_types::Step::Direct(direct) => match direct.witness_shape {
+                akita_types::CleartextWitnessShape::PackedDigits((_, bits)) => bits <= 6,
+                akita_types::CleartextWitnessShape::FieldElements(_) => true,
+            },
         });
         assert!(
             within_window,

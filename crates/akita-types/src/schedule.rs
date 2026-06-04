@@ -165,7 +165,7 @@ impl AkitaScheduleLookupKey {
 pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
-    crate::layout::digit_math::compute_num_digits_full_field(field_bits, log_basis)
+    crate::sis::compute_num_digits_full_field(field_bits, log_basis)
 }
 
 /// Detect the field modulus from the canonical representation.
@@ -267,7 +267,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits);
+    let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
     let z_pre_count = num_public_rows
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))
@@ -275,7 +275,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     // One public y-row per packaged public opening row.
     let r_rows = lp.m_row_count_for(num_points, num_public_rows, layout)?;
     let r_count = r_rows
-        .checked_mul(crate::layout::digit_math::compute_num_digits_full_field(
+        .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
             lp.log_basis,
         ))

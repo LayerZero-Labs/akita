@@ -82,8 +82,9 @@ fn expected_same_point_batched_shape(
         OneHotCfg::sis_modulus_family(),
         OneHotCfg::D,
         OneHotCfg::decomposition(),
-        OneHotCfg::stage1_challenge_config(OneHotCfg::D).unwrap(),
+        OneHotCfg::ring_challenge_config(OneHotCfg::D).unwrap(),
         OneHotCfg::ring_subfield_embedding_norm_bound(),
+        OneHotCfg::onehot_chunk_size(),
         root_inputs,
         level_lp,
     )
@@ -142,6 +143,7 @@ fn expected_same_point_batched_shape(
             &level_params,
             current_w_len,
             OneHotCfg::decomposition(),
+            OneHotCfg::ring_subfield_embedding_norm_bound(),
         )
         .expect("recursive layout");
         let next_w_len =
@@ -177,6 +179,7 @@ fn expected_same_point_batched_shape(
         &terminal_params,
         current_w_len,
         OneHotCfg::decomposition(),
+        OneHotCfg::ring_subfield_embedding_norm_bound(),
     )
     .expect("terminal layout");
     // The terminal recursive fold ships its `w` in cleartext under
@@ -194,10 +197,16 @@ fn expected_same_point_batched_shape(
     .expect("terminal-layout witness count")
         * terminal_lp.ring_dimension;
     let terminal_rounds = batched_shape_rounds(terminal_lp.ring_dimension, terminal_next_w_len);
+    // Every stage-2 round polynomial is the degree-3 fused norm/relation
+    // shape. The first-round degree-2 compression (leading cubic coefficient
+    // structurally zero) only fires on the prover's stage-2 two-round-prefix
+    // path, which requires a small fold basis (`b in {4, 8}`); the terminal
+    // fold here folds at a larger basis, so it keeps degree-3 in every round.
+    let terminal_stage2 = vec![3; terminal_rounds];
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         y_rings_coeffs: terminal_lp.ring_dimension,
         extension_opening_reduction: None,
-        stage2_sumcheck: vec![3; terminal_rounds],
+        stage2_sumcheck: terminal_stage2,
         final_witness: akita_types::CleartextWitnessShape::PackedDigits((
             terminal_next_w_len,
             terminal_next_params.log_basis,

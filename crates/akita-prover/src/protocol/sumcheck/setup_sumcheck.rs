@@ -212,7 +212,7 @@ where
                 .ok_or_else(|| AkitaError::InvalidSetup("t-vector count overflow".to_string()))
         })?;
     let fold_gadget = gadget_row_scalars::<F>(
-        lp.num_digits_fold(num_t_vectors, F::modulus_bits()),
+        lp.num_digits_fold(num_t_vectors, F::modulus_bits())?,
         lp.log_basis,
     );
     let layout = relation.segment_layout(lp)?;
@@ -258,7 +258,7 @@ where
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
-    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits());
+    let depth_fold = lp.num_digits_fold(num_claims, F::modulus_bits())?;
     if lp.num_blocks == 0 || !lp.num_blocks.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "num_blocks must be a non-zero power of two".to_string(),

@@ -28,6 +28,4 @@ pub use proof_size::{
     packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
     root_extension_opening_partials, sumcheck_rounds,
 };
-pub use sis_derivation::{
-    decomp_depths, level_layout_from_params, recursive_level_layout_from_params,
-};
+pub use sis_derivation::{level_layout_from_params, recursive_level_layout_from_params};

@@ -99,7 +99,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             block_len = lp.block_len,
             delta_commit = lp.num_digits_commit,
             delta_open = lp.num_digits_open,
-            delta_fold = lp.num_digits_fold(num_claims, field_bits),
+            delta_fold = lp.num_digits_fold(num_claims, field_bits).unwrap_or(0),
             current_w_len = level.current_w_len,
             next_w_ring = level.next_w_len / lp.ring_dimension,
             next_w_len = level.next_w_len,
@@ -583,7 +583,7 @@ pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: 
         block_len = layout.block_len,
         delta_commit = layout.num_digits_commit,
         delta_open = layout.num_digits_open,
-        delta_fold = layout.num_digits_fold(num_claims, field_bits),
+        delta_fold = layout.num_digits_fold(num_claims, field_bits).unwrap_or(0),
         log_basis = layout.log_basis,
         "layout"
     );

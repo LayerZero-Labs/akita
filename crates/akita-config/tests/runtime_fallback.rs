@@ -63,7 +63,7 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
     let from_dp = find_schedule(
         key,
         &policy_of::<Cfg>(),
-        Cfg::stage1_challenge_config,
+        Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )
     .expect("pure DP must succeed for a valid key");
@@ -88,6 +88,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         claim_ext_degree: Cfg::CLAIM_EXT_DEGREE,
         chal_ext_degree: Cfg::CHAL_EXT_DEGREE,
         basis_range: Cfg::basis_range(),
+        onehot_chunk_size: Cfg::onehot_chunk_size(),
     };
     assert_eq!(
         policy, expected,

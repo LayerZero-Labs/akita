@@ -13,7 +13,7 @@ pub mod proof;
 pub mod proof_size;
 pub mod schedule;
 pub mod setup_contribution;
-pub mod sis_floor;
+pub mod sis;
 pub mod sis_offline;
 pub mod transcript;
 #[cfg(feature = "zk")]
@@ -32,13 +32,12 @@ pub use instance_descriptor::{
     SetupSection,
 };
 pub use layout::{
-    basis_weights, decomp_depths, direct_witness_bytes, extension_opening_reduction_proof_bytes,
-    field_bytes, gadget_row_scalars, lagrange_weights, level_layout_from_params, monomial_weights,
+    basis_weights, direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes,
+    gadget_row_scalars, lagrange_weights, level_layout_from_params, monomial_weights,
     packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
     recursive_level_layout_from_params, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, root_extension_opening_partials, sumcheck_rounds,
-    AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix, LevelParams, MRowLayout, RingMatrixView,
-    RingOpeningPoint, SisModulusFamily,
+    ring_opening_point_from_field, root_extension_opening_partials, sumcheck_rounds, BasisMode,
+    BlockOrder, FlatMatrix, LevelParams, MRowLayout, RingMatrixView, RingOpeningPoint,
 };
 #[cfg(feature = "zk")]
 pub use proof::ZkHidingProof;
@@ -89,8 +88,9 @@ pub use schedule::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
+pub use sis::{decomp_depths, AjtaiKeyParams, SisModulusFamily};
 pub use sis_offline::{
-    a_role_base_norm, root_level_params_for_layout_with_log_basis,
-    sis_derived_root_params_for_layout, sis_secure_level_params, SisCollisionBounds, SisRoleWidths,
+    root_level_params_for_layout_with_log_basis, sis_derived_root_params_for_layout,
+    sis_secure_level_params, SisCollisionBounds, SisRoleWidths,
 };
 pub use transcript::AppendToTranscript;
