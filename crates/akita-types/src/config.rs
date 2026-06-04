@@ -29,3 +29,13 @@ impl DecompositionParams {
         self.log_open_bound.unwrap_or(self.log_commit_bound)
     }
 }
+
+/// Verifier strategy for the public setup contribution in the ring-switch row
+/// evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupContributionMode {
+    /// Evaluate the setup contribution directly from the expanded setup matrix.
+    Direct,
+    /// Use the recursive setup-contribution path.
+    Recursive,
+}

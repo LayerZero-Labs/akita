@@ -704,6 +704,7 @@ mod tests {
                 std::slice::from_ref(&ring_opening_point),
                 std::slice::from_ref(&ring_multiplier_point),
                 alpha,
+                None,
             )
             .expect("eval_at_point");
 
