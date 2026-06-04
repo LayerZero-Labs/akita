@@ -303,9 +303,9 @@ pub(super) fn assert_terminal_event_order_if_present(
 ) -> Option<usize> {
     use akita_transcript::labels;
 
-    let w_hat = first_label_index(events, labels::ABSORB_TERMINAL_W_HAT)?;
+    let e_hat = first_label_index(events, labels::ABSORB_TERMINAL_E_HAT)?;
     let (sparse_seed, sparse_seed_end) =
-        first_logical_label_span_after(events, w_hat, labels::CHALLENGE_SPARSE_CHALLENGE)
+        first_logical_label_span_after(events, e_hat, labels::CHALLENGE_SPARSE_CHALLENGE)
             .expect("terminal transcript must squeeze sparse seed");
     let remainder =
         first_label_index_after(events, sparse_seed_end, labels::ABSORB_TERMINAL_W_REMAINDER)
@@ -322,17 +322,17 @@ pub(super) fn assert_terminal_event_order_if_present(
 
     for (range, label, message) in [
         (
-            w_hat + 1..remainder,
+            e_hat + 1..remainder,
             labels::CHALLENGE_RING_SWITCH,
             "terminal alpha must not precede witness remainder",
         ),
         (
-            w_hat + 1..remainder,
+            e_hat + 1..remainder,
             labels::CHALLENGE_TAU1,
             "terminal tau1 must not precede alpha",
         ),
         (
-            w_hat + 1..remainder,
+            e_hat + 1..remainder,
             labels::CHALLENGE_SUMCHECK_ROUND,
             "terminal stage-2 sumcheck must not precede tau1",
         ),
@@ -375,7 +375,7 @@ pub(super) fn assert_terminal_event_order_if_present(
         assert_no_logical_label(events, range, label, message);
     }
 
-    assert!(w_hat < sparse_seed, "w_hat must precede sparse seed");
+    assert!(e_hat < sparse_seed, "e_hat must precede sparse seed");
     assert!(
         sparse_seed < remainder,
         "sparse seed must precede witness remainder"
@@ -387,12 +387,12 @@ pub(super) fn assert_terminal_event_order_if_present(
         "tau1 must precede terminal stage-2 sumcheck"
     );
     assert!(
-        events[w_hat..]
+        events[e_hat..]
             .iter()
             .all(|event| event_label(event).is_none_or(|candidate| {
                 !is_label_or_extension_limb(candidate, labels::CHALLENGE_TAU0)
             })),
         "terminal transcript window must not squeeze tau0"
     );
-    Some(w_hat)
+    Some(e_hat)
 }

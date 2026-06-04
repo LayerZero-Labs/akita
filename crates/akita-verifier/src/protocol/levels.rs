@@ -36,7 +36,7 @@ use akita_sumcheck::SumcheckInstanceVerifierExt;
 use akita_sumcheck::ZkSumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_HAT, CHALLENGE_SUMCHECK_BATCH,
+    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_E_HAT, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
 };
 #[cfg(feature = "zk")]
@@ -168,8 +168,8 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let parts = final_witness.terminal_transcript_parts(layout)?;
-    transcript.record_wire_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
-    transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
+    transcript.record_wire_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
+    transcript.append_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
     Ok(TerminalWitnessReplay { parts })
 }
 
@@ -180,7 +180,7 @@ where
 /// commitments, padded opening points, per-claim field openings, one gamma
 /// challenge per claim, and gamma-combined per-point y-rings, then runs the
 /// stage-1 norm-check sumcheck and the stage-2 fused sumcheck, threading
-/// `next_w_commitment` through `ABSORB_SUMCHECK_W`.
+/// `next_w_commitment` through `ABSORB_NEXT_LEVEL_WITNESS_BINDING`.
 ///
 /// # Errors
 ///
@@ -251,7 +251,7 @@ where
 /// `final_witness` in cleartext).
 ///
 /// Mirrors [`verify_intermediate_root_level`] up through the ring-switch
-/// preamble; at the terminal, [`ABSORB_SUMCHECK_W`] absorbs `final_witness`
+/// preamble; at the terminal, [`ABSORB_NEXT_LEVEL_WITNESS_BINDING`] absorbs `final_witness`
 /// instead of a next-witness commitment, stage-1 is skipped entirely, and
 /// stage-2 runs in relation-only mode (`batching_coeff = 0`, `s_claim = 0`).
 ///

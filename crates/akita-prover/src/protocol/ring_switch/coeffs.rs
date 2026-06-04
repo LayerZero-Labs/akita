@@ -39,8 +39,8 @@ where
     }
     let RingRelationWitness {
         z_folded_rings,
-        w_hat,
-        w_folded,
+        e_hat,
+        e_folded,
         mut hint,
         #[cfg(feature = "zk")]
         d_blinding_digits,
@@ -61,14 +61,14 @@ where
         prepared,
         lp,
         &instance.challenges,
-        w_hat.flat_digits(),
+        e_hat.flat_digits(),
         #[cfg(feature = "zk")]
         &d_blinding_digits,
         &decomposed_inner_rows,
         #[cfg(feature = "zk")]
         &b_blinding_digits,
         &recomposed_inner_rows,
-        &w_folded,
+        &e_folded,
         instance.ring_multiplier_points(),
         instance.claim_to_point(),
         routing.claim_to_commitment_group(),
@@ -96,7 +96,7 @@ where
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(
-            &w_hat,
+            &e_hat,
             #[cfg(feature = "zk")]
             &d_blinding_for_w,
             &decomposed_inner_rows,
@@ -248,7 +248,7 @@ fn emit_z_folded_block_inner<const D: usize>(
 /// configured blinding columns.
 #[allow(clippy::too_many_arguments)]
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
-    w_hat: &FlatDigitBlocks<D>,
+    e_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
@@ -266,7 +266,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let block_len = lp.block_len;
     let levels = r_decomp_levels::<F>(log_basis);
 
-    let w_hat_planes = w_hat.flat_digits().len();
+    let e_hat_planes = e_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
     #[cfg(feature = "zk")]
     let d_blinding_planes = d_blinding_digits.flat_digits().len();
@@ -279,7 +279,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         .sum();
     #[cfg(not(feature = "zk"))]
     let b_blinding_planes = 0usize;
-    let z_count = w_hat_planes
+    let z_count = e_hat_planes
         + d_blinding_planes
         + t_hat_planes
         + b_blinding_planes
@@ -287,7 +287,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let r_hat_count = r.len() * levels;
     let z_first = akita_types::ring_column_z_first(lp);
     tracing::debug!(
-        w_hat_planes,
+        e_hat_planes,
         d_blinding_planes,
         t_hat_planes,
         b_blinding_planes,
@@ -305,11 +305,11 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
     let mut out = Vec::with_capacity(total_elems);
 
-    let w_block_count = w_hat.block_count();
+    let w_block_count = e_hat.block_count();
     assert_eq!(
-        w_hat_planes,
+        e_hat_planes,
         w_block_count * depth_open,
-        "build_w_coeffs: w_hat block layout does not match open digit depth"
+        "build_w_coeffs: e_hat block layout does not match open digit depth"
     );
     let t_block_count = t_hat.block_count();
     let t_planes_per_block = if t_block_count == 0 {
@@ -332,7 +332,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             num_digits_fold,
             log_basis,
         );
-        emit_planes_block_inner(&mut out, w_hat.flat_digits(), w_block_count, depth_open);
+        emit_planes_block_inner(&mut out, e_hat.flat_digits(), w_block_count, depth_open);
         emit_planes_block_inner(
             &mut out,
             t_hat.flat_digits(),
@@ -344,7 +344,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
     } else {
-        emit_planes_block_inner(&mut out, w_hat.flat_digits(), w_block_count, depth_open);
+        emit_planes_block_inner(&mut out, e_hat.flat_digits(), w_block_count, depth_open);
         emit_planes_block_inner(
             &mut out,
             t_hat.flat_digits(),

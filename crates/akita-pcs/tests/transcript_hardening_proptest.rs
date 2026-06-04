@@ -113,14 +113,14 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let prover_public = public_transcript_events(prover_transcript.events());
     let verifier_public = public_transcript_events(verifier_transcript.events());
     assert_eq!(prover_public, verifier_public);
-    let terminal_w_hat = assert_terminal_event_order_if_present(&prover_public);
+    let terminal_e_hat = assert_terminal_event_order_if_present(&prover_public);
     if num_vars >= 20 {
-        let terminal_w_hat =
-            terminal_w_hat.expect("recursive corpus case must include a terminal fold");
+        let terminal_e_hat =
+            terminal_e_hat.expect("recursive corpus case must include a terminal fold");
         let tau0 = first_label_index(&prover_public, labels::CHALLENGE_TAU0)
             .expect("recursive corpus case must include non-terminal tau0");
         assert!(
-            tau0 < terminal_w_hat,
+            tau0 < terminal_e_hat,
             "recursive tau0 must occur before the terminal transcript window"
         );
     }

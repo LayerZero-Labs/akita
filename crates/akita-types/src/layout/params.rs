@@ -14,8 +14,8 @@ pub use crate::sis::{AjtaiKeyParams, SisModulusFamily};
 /// Per-level M-matrix row layout selector.
 ///
 /// At an intermediate fold the prover ships a fresh commitment for the next
-/// witness; the verifier never sees `w_hat` in cleartext and the D-block rows
-/// `v = D * w_hat` must appear in the M-matrix to bind `w_hat` into the
+/// witness; the verifier never sees `e_hat` in cleartext and the D-block rows
+/// `v = D * e_hat` must appear in the M-matrix to bind `e_hat` into the
 /// sumcheck.
 ///
 /// At a terminal fold the cleartext witness is absorbed into the transcript
@@ -24,7 +24,7 @@ pub use crate::sis::{AjtaiKeyParams, SisModulusFamily};
 /// lets the prover, verifier, and planner agree to drop it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MRowLayout {
-    /// Full layout including the D-block (`v = D * w_hat` rows). Used at every
+    /// Full layout including the D-block (`v = D * e_hat` rows). Used at every
     /// intermediate fold level and at the root when stage-1 runs.
     WithDBlock,
     /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
