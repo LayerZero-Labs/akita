@@ -84,9 +84,11 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
-use akita_sumcheck::{uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProofShape};
 #[cfg(not(feature = "zk"))]
-use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
+use akita_sumcheck::EqFactoredSumcheckProof;
+use akita_sumcheck::{
+    uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
+};
 #[cfg(feature = "zk")]
 use akita_sumcheck::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 use akita_transcript::Transcript;
