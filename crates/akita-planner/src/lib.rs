@@ -18,7 +18,6 @@ pub mod generated;
 mod resolve;
 pub mod schedule_params;
 
-pub use akita_types::root_level_params_for_layout_with_log_basis;
 pub use generated::GeneratedScheduleTable;
 pub use resolve::{
     estimate_proof_bytes, generated_schedule_lookup_key, get_schedule, schedule_from_entry,

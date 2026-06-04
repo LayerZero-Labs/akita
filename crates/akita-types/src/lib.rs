@@ -15,7 +15,6 @@ pub mod proof_size;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod sis;
-pub mod sis_offline;
 pub mod transcript;
 #[cfg(feature = "zk")]
 pub mod zk;
@@ -103,8 +102,4 @@ pub use schedule::{
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{decomp_depths, AjtaiKeyParams, SisModulusFamily};
-pub use sis_offline::{
-    root_level_params_for_layout_with_log_basis, sis_derived_root_params_for_layout,
-    sis_secure_level_params, SisCollisionBounds, SisRoleWidths,
-};
 pub use transcript::AppendToTranscript;

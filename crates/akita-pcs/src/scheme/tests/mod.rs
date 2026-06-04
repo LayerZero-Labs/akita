@@ -73,25 +73,12 @@ fn expected_same_point_batched_shape(
         panic!("batched schedule should start with a fold");
     };
     let num_fold_levels = akita_types::schedule_num_fold_levels(&schedule);
-    let root_inputs = AkitaScheduleInputs {
-        num_vars: max_num_vars,
-        level: 0,
-        current_w_len: root_step.current_w_len,
-    };
+    // The schedule's root step already carries the fully SIS-derived root
+    // `LevelParams`; the prover folds the root against exactly these params,
+    // so the expected shape reads geometry straight off `level_lp`.
     let level_lp = &root_step.params;
-    let root_lp = akita_types::root_level_params_for_layout_with_log_basis(
-        OneHotCfg::sis_modulus_family(),
-        OneHotCfg::D,
-        OneHotCfg::decomposition(),
-        OneHotCfg::ring_challenge_config(OneHotCfg::D).unwrap(),
-        OneHotCfg::ring_subfield_embedding_norm_bound(),
-        OneHotCfg::onehot_chunk_size(),
-        root_inputs,
-        level_lp,
-    )
-    .unwrap();
     let root_w_len = root_step.next_w_len;
-    let root_rounds = batched_shape_rounds(root_lp.ring_dimension, root_w_len);
+    let root_rounds = batched_shape_rounds(level_lp.ring_dimension, root_w_len);
 
     // 1-fold schedule: the root IS the terminal fold. Emit a terminal-rooted
     // shape with no recursive-suffix steps.
@@ -101,7 +88,7 @@ fn expected_same_point_batched_shape(
         let terminal_next_params =
             scheduled_next_level_params(&schedule, 1).expect("terminal next params");
         return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
-            y_rings_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
+            y_rings_coeffs: incidence.num_public_rows() * level_lp.ring_dimension,
             extension_opening_reduction: None,
             stage2_sumcheck: vec![3; root_rounds],
             final_witness: akita_types::CleartextWitnessShape::PackedDigits((
@@ -113,9 +100,9 @@ fn expected_same_point_batched_shape(
 
     let next_level_params = scheduled_next_level_params(&schedule, 1).unwrap();
     let root_shape = LevelProofShape {
-        y_ring_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
+        y_ring_coeffs: incidence.num_public_rows() * level_lp.ring_dimension,
         extension_opening_reduction: None,
-        v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
+        v_coeffs: level_lp.d_key.row_len() * level_lp.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
         stage2_sumcheck_proof: vec![3; root_rounds],
         stage3_sumcheck: None,

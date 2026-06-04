@@ -1,10 +1,8 @@
 //! Layout, parameter, opening-point, and proof-size helpers.
 //!
-//! Pure data and pure verifier-reachable helpers only. Search and
-//! SIS-derivation loops (`sis_secure_level_params`,
-//! `sis_derived_*_for_layout`) live in [`crate::sis_offline`]; the
-//! digit-math search loop
-//! (`optimal_m_r_split` callers, the (m, r) sweep) lives in
+//! Pure data and pure verifier-reachable helpers only. The SIS-secure rank
+//! derivation lives in [`crate::layout::sis_derivation`]; the digit-math
+//! search loop (`optimal_m_r_split` callers, the (m, r) sweep) lives in
 //! `akita_planner::schedule_params`. This module retains the layout glue
 //! the verifier replay path reaches through `CommitmentConfig` and
 //! `akita_planner::schedule_from_entry`.
