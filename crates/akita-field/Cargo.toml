@@ -17,7 +17,7 @@ readme = "../../README.md"
 
 [dependencies]
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-jolt-field = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
+jolt-field = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false, optional = true }
 num-traits = "0.2"
 rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = { version = "1.10", optional = true }
@@ -28,7 +28,11 @@ jolt-transcript = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8
 rand = "0.8"
 
 [features]
-default = []
+default = ["jolt-compat"]
+# Jolt interop: implements `jolt_field`'s slim trait hierarchy for Akita field
+# types. The only feature that pulls in `jolt-field`. Kept in `default` during the
+# trait-ownership migration so downstream consumers are unaffected.
+jolt-compat = ["dep:jolt-field"]
 parallel = ["dep:rayon"]
 
 [lints]

@@ -6,6 +6,8 @@ pub mod fp128;
 pub mod fp32;
 pub mod fp64;
 pub mod lift;
+mod native_algebra;
+mod native_capability;
 pub mod packed;
 #[cfg(all(
     target_arch = "x86_64",

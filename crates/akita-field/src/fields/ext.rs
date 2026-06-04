@@ -13,11 +13,13 @@ use super::wide::{
     HasUnreducedOps, RingSubfieldFpExt4Fp32ProductAccum,
 };
 use super::{fp128::Fp128, fp32::Fp32, fp64::Fp64};
-use crate::{BalancedDigitLookup, CanonicalField, FieldCore, HalvingField, MulBaseUnreduced};
+use crate::{
+    BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, Invertible,
+    MulBaseUnreduced, RandomSampling, RingCore,
+};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use jolt_field::{FromPrimitiveInt, Invertible, RandomSampling, RingCore};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 use std::marker::PhantomData;

@@ -3,24 +3,17 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
-/// Field arithmetic traits.
-pub mod arithmetic;
+/// Compatibility adapters for external trait hierarchies (the single Jolt seam).
+mod compat;
 /// Error types shared by Akita crates.
 pub mod error;
 /// Concrete prime fields, extension fields, packing, and field FFT helpers.
 pub mod fields;
-/// Implementations of Jolt's slim field hierarchy for Akita types.
-mod jolt_traits;
 /// Conditional parallelism utilities.
 pub mod parallel;
+/// Native field trait hierarchy (algebra + capability traits).
+pub mod traits;
 
-pub use arithmetic::{
-    AdditiveAccumulator, AdditiveGroup, BalancedDigitLookup, CanonicalBitLength, CanonicalBytes,
-    CanonicalField, CanonicalU64, FieldCore, FixedByteSize, FixedBytes, FromPrimitiveInt,
-    HalvingField, Invertible, MulPow2, MulPrimitiveInt, NaiveAccumulator, One, PseudoMersenneField,
-    RandomSampling, ReducingBytes, RingAccumulator, RingCore, SmoothFftField, TranscriptChallenge,
-    WithAccumulator, Zero,
-};
 pub use error::AkitaError;
 pub use fields::{
     canonical_frobenius_thetas, is_registered_prime_offset, pseudo_mersenne_modulus,
@@ -36,4 +29,11 @@ pub use fields::{
     RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
     RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config, TwoNr, UnitNr,
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+};
+pub use traits::{
+    AdditiveAccumulator, AdditiveGroup, BalancedDigitLookup, CanonicalBitLength, CanonicalBytes,
+    CanonicalField, CanonicalU64, FieldCore, FixedByteSize, FixedBytes, FromPrimitiveInt,
+    HalvingField, Invertible, MulPow2, MulPrimitiveInt, NaiveAccumulator, One, PseudoMersenneField,
+    RandomSampling, ReducingBytes, RingAccumulator, RingCore, SmoothFftField, TranscriptChallenge,
+    WithAccumulator, Zero,
 };

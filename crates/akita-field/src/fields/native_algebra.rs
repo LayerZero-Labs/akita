@@ -1,28 +1,35 @@
-use std::{
-    fmt,
-    hash::{Hash, Hasher},
-    iter::{Product, Sum},
-    mem::size_of,
-    ops::{Add, Sub},
-};
+//! Native `num_traits`/`std` supertrait impls and core-algebra markers for the
+//! concrete field and accumulator types.
+//!
+//! This is the consolidated, Jolt-free home for the boilerplate that the native
+//! [`AdditiveGroup`]/[`RingCore`]/[`FieldCore`] hierarchy requires:
+//! `Zero`/`One`/`Display`/`Hash`/`Sum`/`Product` plus the empty algebra markers.
+//! The non-trivial `RingCore::square` / `Invertible::inverse` impls stay
+//! co-located with each type (some rely on private helpers). When the `fields/`
+//! tree is split (see `specs/akita-field-jolt-decoupling.md`) these impls move
+//! next to their types; the `jolt-compat` forwarding lives in `compat/jolt.rs`.
 
-use jolt_field as jf;
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::iter::{Product, Sum};
+use std::ops::{Add, Sub};
+
+use akita_serialization::Valid;
 use num_traits::{One, Zero};
 
-use crate::{
-    fields::{
-        AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32ProductAccum,
-        Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32, FpExt2, FpExt2Config, FpExt2Fp64ProductAccum,
-        PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend, RingSubfieldFpExt4,
-        RingSubfieldFpExt4Fp32ProductAccum, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
-        RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config,
-    },
-    CanonicalField, FieldCore,
+use super::{
+    AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32ProductAccum,
+    Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32, FpExt2, FpExt2Config, FpExt2Fp64ProductAccum,
+    PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend, RingSubfieldFpExt4,
+    RingSubfieldFpExt4Fp32ProductAccum, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
+    RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config,
 };
-use akita_serialization::Valid;
+use crate::{AdditiveGroup, CanonicalField, FieldCore, RingCore};
 
-macro_rules! impl_prime_jolt_traits {
-    ($ty:ident<$p:ident: $p_ty:ty>, $canon:ident, $bytes:expr, $fixed_bytes:literal) => {
+// --- Prime fields -----------------------------------------------------------
+
+macro_rules! impl_prime_native_algebra {
+    ($ty:ident<$p:ident: $p_ty:ty>, $canon:ident) => {
         impl<const $p: $p_ty> Zero for $ty<$p> {
             #[inline]
             fn zero() -> Self {
@@ -82,79 +89,17 @@ macro_rules! impl_prime_jolt_traits {
             }
         }
 
-        impl<const $p: $p_ty> jf::AdditiveGroup for $ty<$p> {}
-        impl<const $p: $p_ty> jf::RingCore for $ty<$p> {}
-        impl<const $p: $p_ty> jf::FieldCore for $ty<$p> {}
-        impl<const $p: $p_ty> jf::MulPow2 for $ty<$p> {}
-        impl<const $p: $p_ty> jf::MulPrimitiveInt for $ty<$p> {}
-        impl<const $p: $p_ty> jf::WithAccumulator for $ty<$p> {
-            type Accumulator = jf::NaiveAccumulator<Self>;
-        }
-        impl<const $p: $p_ty> jf::FixedByteSize for $ty<$p> {
-            const NUM_BYTES: usize = $bytes;
-        }
-
-        impl<const $p: $p_ty> jf::CanonicalBytes for $ty<$p> {
-            #[inline(always)]
-            fn to_bytes_le(&self, out: &mut [u8]) {
-                assert_eq!(out.len(), <Self as jf::FixedByteSize>::NUM_BYTES);
-                out.copy_from_slice(
-                    &self.to_canonical_u128().to_le_bytes()
-                        [..<Self as jf::FixedByteSize>::NUM_BYTES],
-                );
-            }
-        }
-
-        impl<const $p: $p_ty> jf::ReducingBytes for $ty<$p> {
-            #[inline(always)]
-            fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
-                if bytes.len() <= size_of::<u128>() {
-                    let mut padded = [0u8; size_of::<u128>()];
-                    padded[..bytes.len()].copy_from_slice(bytes);
-                    return <Self as jf::FromPrimitiveInt>::from_u128(u128::from_le_bytes(padded));
-                }
-
-                reduce_le_bytes_mod_order(bytes)
-            }
-        }
-
-        impl<const $p: $p_ty> jf::TranscriptChallenge for $ty<$p> {
-            #[inline(always)]
-            fn from_challenge_bytes(bytes: &[u8]) -> Self {
-                <Self as jf::ReducingBytes>::from_le_bytes_mod_order(bytes)
-            }
-        }
-
-        impl<const $p: $p_ty> jf::FixedBytes<$fixed_bytes> for $ty<$p> {}
-
-        impl<const $p: $p_ty> jf::CanonicalBitLength for $ty<$p> {
-            #[inline]
-            fn num_bits(&self) -> u32 {
-                let value = self.to_canonical_u128();
-                u128::BITS - value.leading_zeros()
-            }
-        }
-
-        impl<const $p: $p_ty> jf::CanonicalU64 for $ty<$p> {
-            #[inline]
-            fn to_canonical_u64_checked(&self) -> Option<u64> {
-                self.to_canonical_u128().try_into().ok()
-            }
-        }
+        impl<const $p: $p_ty> AdditiveGroup for $ty<$p> {}
+        impl<const $p: $p_ty> RingCore for $ty<$p> {}
+        impl<const $p: $p_ty> FieldCore for $ty<$p> {}
     };
 }
 
-#[inline(always)]
-fn reduce_le_bytes_mod_order<F: FieldCore + jf::FromPrimitiveInt>(bytes: &[u8]) -> F {
-    let base = F::from_u64(256);
-    bytes.iter().rev().fold(F::zero(), |acc, &byte| {
-        acc * base + F::from_u64(byte as u64)
-    })
-}
+impl_prime_native_algebra!(Fp32<P: u32>, from_canonical_u32);
+impl_prime_native_algebra!(Fp64<P: u64>, from_canonical_u64);
+impl_prime_native_algebra!(Fp128<P: u128>, from_canonical_u128);
 
-impl_prime_jolt_traits!(Fp32<P: u32>, from_canonical_u32, 4, 4);
-impl_prime_jolt_traits!(Fp64<P: u64>, from_canonical_u64, 8, 8);
-impl_prime_jolt_traits!(Fp128<P: u128>, from_canonical_u128, 16, 16);
+// --- FpExt2 -----------------------------------------------------------------
 
 impl<F: FieldCore, C: FpExt2Config<F>> Zero for FpExt2<F, C> {
     #[inline]
@@ -212,8 +157,10 @@ impl<'a, F: FieldCore, C: FpExt2Config<F>> Product<&'a Self> for FpExt2<F, C> {
     }
 }
 
-impl<F: FieldCore, C: FpExt2Config<F>> jf::AdditiveGroup for FpExt2<F, C> {}
-impl<F: FieldCore + Valid, C: FpExt2Config<F>> jf::FieldCore for FpExt2<F, C> {}
+impl<F: FieldCore, C: FpExt2Config<F>> AdditiveGroup for FpExt2<F, C> {}
+impl<F: FieldCore + Valid, C: FpExt2Config<F>> FieldCore for FpExt2<F, C> {}
+
+// --- TowerBasisFpExt4 -------------------------------------------------------
 
 impl<F: FieldCore, C2: FpExt2Config<F>, C4: TowerBasisFpExt4Config<F, C2>> Zero
     for TowerBasisFpExt4<F, C2, C4>
@@ -296,17 +243,19 @@ where
     }
 }
 
-impl<F: FieldCore, C2: FpExt2Config<F>, C4: TowerBasisFpExt4Config<F, C2>> jf::AdditiveGroup
+impl<F: FieldCore, C2: FpExt2Config<F>, C4: TowerBasisFpExt4Config<F, C2>> AdditiveGroup
     for TowerBasisFpExt4<F, C2, C4>
 {
 }
-impl<F, C2, C4> jf::FieldCore for TowerBasisFpExt4<F, C2, C4>
+impl<F, C2, C4> FieldCore for TowerBasisFpExt4<F, C2, C4>
 where
     F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C2>,
     C2: FpExt2Config<F>,
     C4: TowerBasisFpExt4Config<F, C2>,
 {
 }
+
+// --- PowerBasisFpExt4 -------------------------------------------------------
 
 impl<F: FieldCore, C: PowerBasisFpExt4Config<F>> Zero for PowerBasisFpExt4<F, C> {
     #[inline]
@@ -373,13 +322,15 @@ impl<'a, F: FieldCore + PowerBasisFpExt4MulBackend<C>, C: PowerBasisFpExt4Config
     }
 }
 
-impl<F: FieldCore, C: PowerBasisFpExt4Config<F>> jf::AdditiveGroup for PowerBasisFpExt4<F, C> {}
-impl<F, C> jf::FieldCore for PowerBasisFpExt4<F, C>
+impl<F: FieldCore, C: PowerBasisFpExt4Config<F>> AdditiveGroup for PowerBasisFpExt4<F, C> {}
+impl<F, C> FieldCore for PowerBasisFpExt4<F, C>
 where
     F: FieldCore + Valid + PowerBasisFpExt4MulBackend<C>,
     C: PowerBasisFpExt4Config<F>,
 {
 }
+
+// --- RingSubfieldFpExt4 -----------------------------------------------------
 
 impl<F: FieldCore> Zero for RingSubfieldFpExt4<F> {
     #[inline]
@@ -440,8 +391,10 @@ impl<'a, F: FieldCore + RingSubfieldFpExt4MulBackend> Product<&'a Self> for Ring
     }
 }
 
-impl<F: FieldCore + RingSubfieldFpExt4MulBackend> jf::AdditiveGroup for RingSubfieldFpExt4<F> {}
-impl<F: FieldCore + Valid + RingSubfieldFpExt4MulBackend> jf::FieldCore for RingSubfieldFpExt4<F> {}
+impl<F: FieldCore + RingSubfieldFpExt4MulBackend> AdditiveGroup for RingSubfieldFpExt4<F> {}
+impl<F: FieldCore + Valid + RingSubfieldFpExt4MulBackend> FieldCore for RingSubfieldFpExt4<F> {}
+
+// --- RingSubfieldFpExt8 -----------------------------------------------------
 
 impl<F: FieldCore> Zero for RingSubfieldFpExt8<F> {
     #[inline]
@@ -527,10 +480,12 @@ impl<'a, F: FieldCore + RingSubfieldFpExt8MulBackend> Product<&'a Self> for Ring
     }
 }
 
-impl<F: FieldCore + RingSubfieldFpExt8MulBackend> jf::AdditiveGroup for RingSubfieldFpExt8<F> {}
-impl<F: FieldCore + Valid + RingSubfieldFpExt8MulBackend> jf::FieldCore for RingSubfieldFpExt8<F> {}
+impl<F: FieldCore + RingSubfieldFpExt8MulBackend> AdditiveGroup for RingSubfieldFpExt8<F> {}
+impl<F: FieldCore + Valid + RingSubfieldFpExt8MulBackend> FieldCore for RingSubfieldFpExt8<F> {}
 
-macro_rules! impl_wide_additive {
+// --- Wide accumulators ------------------------------------------------------
+
+macro_rules! impl_wide_native_additive {
     ($ty:ty, $zero:expr) => {
         impl Zero for $ty {
             #[inline]
@@ -562,24 +517,24 @@ macro_rules! impl_wide_additive {
             }
         }
 
-        impl jf::AdditiveGroup for $ty {}
+        impl AdditiveGroup for $ty {}
     };
 }
 
-impl_wide_additive!(Fp32x2i32, Fp32x2i32([0; 2]));
-impl_wide_additive!(Fp64x4i32, Fp64x4i32([0; 4]));
-impl_wide_additive!(Fp128x8i32, Fp128x8i32([0; 8]));
-impl_wide_additive!(Fp32ProductAccum, Fp32ProductAccum([0; 2]));
-impl_wide_additive!(Fp64ProductAccum, Fp64ProductAccum([0; 2]));
-impl_wide_additive!(Fp128MulU64Accum, Fp128MulU64Accum([0; 3]));
-impl_wide_additive!(Fp128ProductAccum, Fp128ProductAccum([0; 4]));
-impl_wide_additive!(
+impl_wide_native_additive!(Fp32x2i32, Fp32x2i32([0; 2]));
+impl_wide_native_additive!(Fp64x4i32, Fp64x4i32([0; 4]));
+impl_wide_native_additive!(Fp128x8i32, Fp128x8i32([0; 8]));
+impl_wide_native_additive!(Fp32ProductAccum, Fp32ProductAccum([0; 2]));
+impl_wide_native_additive!(Fp64ProductAccum, Fp64ProductAccum([0; 2]));
+impl_wide_native_additive!(Fp128MulU64Accum, Fp128MulU64Accum([0; 3]));
+impl_wide_native_additive!(Fp128ProductAccum, Fp128ProductAccum([0; 4]));
+impl_wide_native_additive!(
     RingSubfieldFpExt4Fp32ProductAccum,
     RingSubfieldFpExt4Fp32ProductAccum([0; 4])
 );
-impl_wide_additive!(FpExt2Fp64ProductAccum, FpExt2Fp64ProductAccum([0; 4]));
+impl_wide_native_additive!(FpExt2Fp64ProductAccum, FpExt2Fp64ProductAccum([0; 4]));
 
-impl<A: jf::AdditiveGroup> Zero for AccumPair<A> {
+impl<A: AdditiveGroup> Zero for AccumPair<A> {
     #[inline]
     fn zero() -> Self {
         Self(A::zero(), A::zero())
@@ -591,7 +546,7 @@ impl<A: jf::AdditiveGroup> Zero for AccumPair<A> {
     }
 }
 
-impl<'a, A: jf::AdditiveGroup> Add<&'a Self> for AccumPair<A> {
+impl<'a, A: AdditiveGroup> Add<&'a Self> for AccumPair<A> {
     type Output = Self;
 
     #[inline]
@@ -600,7 +555,7 @@ impl<'a, A: jf::AdditiveGroup> Add<&'a Self> for AccumPair<A> {
     }
 }
 
-impl<'a, A: jf::AdditiveGroup> Sub<&'a Self> for AccumPair<A> {
+impl<'a, A: AdditiveGroup> Sub<&'a Self> for AccumPair<A> {
     type Output = Self;
 
     #[inline]
@@ -609,89 +564,4 @@ impl<'a, A: jf::AdditiveGroup> Sub<&'a Self> for AccumPair<A> {
     }
 }
 
-impl<A: jf::AdditiveGroup> jf::AdditiveGroup for AccumPair<A> {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::fields::{Fp32, Fp64, Prime128Offset275};
-    use jolt_field::{
-        AdditiveAccumulator, CanonicalBitLength, CanonicalU64, MulPow2, MulPrimitiveInt,
-        ReducingBytes, RingAccumulator, TranscriptChallenge, WithAccumulator,
-    };
-    use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
-
-    fn assert_byte_traits<F, const N: usize>(value: F, expected: [u8; N])
-    where
-        F: CanonicalField
-            + jf::CanonicalBytes
-            + jf::ReducingBytes
-            + jf::TranscriptChallenge
-            + jf::FixedByteSize
-            + jf::FixedBytes<N>
-            + jf::CanonicalBitLength
-            + jf::CanonicalU64
-            + fmt::Debug
-            + Eq,
-    {
-        let encoded = value.to_bytes_array();
-        assert_eq!(encoded, expected);
-        assert_eq!(F::from_bytes_array(&encoded), value);
-        assert_eq!(F::from_challenge_bytes(&encoded), value);
-        assert_eq!(F::from_le_bytes_mod_order(&encoded), value);
-        assert_eq!(
-            value.num_bits(),
-            u128::BITS - value.to_canonical_u128().leading_zeros()
-        );
-    }
-
-    #[test]
-    fn prime_fields_satisfy_jolt_byte_capabilities() {
-        type F32 = Fp32<251>;
-        type F64 = Fp64<4294967197>;
-        type F128 = Prime128Offset275;
-
-        assert_byte_traits::<F32, 4>(F32::from_u64(42), 42u32.to_le_bytes());
-        assert_byte_traits::<F64, 8>(F64::from_u64(42), 42u64.to_le_bytes());
-        assert_byte_traits::<F128, 16>(
-            F128::from_canonical_u128(0x0102_0304_0506_0708),
-            0x0102_0304_0506_0708u128.to_le_bytes(),
-        );
-
-        assert_eq!(F32::from_le_bytes_mod_order(&[255, 0]), F32::from_u64(4));
-        assert_eq!(F32::from_challenge_bytes(&[255, 0]), F32::from_u64(4));
-        assert_eq!(F32::zero().num_bits(), 0);
-        assert_eq!(F64::from_u64(7).to_canonical_u64_checked(), Some(7));
-        assert_eq!(
-            F128::from_canonical_u128(1u128 << 65).to_canonical_u64_checked(),
-            None
-        );
-        assert_eq!(F32::from_u64(3).mul_pow_2(4), F32::from_u64(48));
-        assert_eq!(F64::from_u64(9).mul_u64(7), F64::from_u64(63));
-
-        let mut acc = <F64 as WithAccumulator>::Accumulator::default();
-        acc.fmadd(F64::from_u64(9), F64::from_u64(7));
-        acc.add(F64::from_u64(2));
-        assert_eq!(acc.reduce(), F64::from_u64(65));
-    }
-
-    #[test]
-    fn jolt_digest_transcripts_accept_akita_fields() {
-        type F = Fp64<4294967197>;
-
-        let mut blake_a = Blake2bTranscript::<F>::new(b"akita-compat");
-        let mut blake_b = Blake2bTranscript::<F>::new(b"akita-compat");
-        let mut keccak = KeccakTranscript::<F>::new(b"akita-compat");
-
-        for transcript in [&mut blake_a, &mut blake_b] {
-            transcript.append(&F::from_u64(42));
-            transcript.append_bytes(b"payload");
-        }
-        keccak.append(&F::from_u64(42));
-        keccak.append_bytes(b"payload");
-
-        let blake_challenge = blake_a.challenge();
-        assert_eq!(blake_challenge, blake_b.challenge());
-        let _: F = keccak.challenge();
-    }
-}
+impl<A: AdditiveGroup> AdditiveGroup for AccumPair<A> {}

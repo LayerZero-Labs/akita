@@ -34,7 +34,7 @@ use ::core::arch::asm;
 use std::io::{Read, Write};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use jolt_field::{FromPrimitiveInt, Invertible, RandomSampling};
+use crate::{FromPrimitiveInt, Invertible, RandomSampling};
 use rand_core::RngCore;
 
 use crate::{
