@@ -1087,7 +1087,11 @@ proof shape, prover, verifier, planner/transcript) plus the paper.
 Five slices are independent and can start immediately; the rest serialize behind
 the L2 norm/table API (S4, S5) and the proof-shape change (S6).
 
-Status: S1 is implemented (`crates/akita-challenges/src/sampler/op_norm.rs`).
+Status: S1 (`crates/akita-challenges/src/sampler/op_norm.rs`), S7
+(`crates/akita-types/src/sis/four_square.rs`), and the S4 L2 norm primitives
+(`crates/akita-types/src/sis/norm_bound.rs`, squared-domain) are implemented as
+pure, not-yet-wired building blocks. The protocol cutover (S3, S5, S6, S8–S12)
+and the paper (S13) are follow-up PRs.
 
 ### Decisions To Lock (gating)
 
@@ -1116,8 +1120,8 @@ Each gates specific slices, noted in parentheses.
 ```text
 WAVE 0  (independent, start now, parallel)
   S1  op-norm predicate gamma_D(c) <= T     [akita-challenges, pure]   DONE
-  S7  four-square decomposition helper      [pure algorithm]
-  S4  L2 norm primitives (s_l2_max, ...)    [akita-types::sis, pure]
+  S7  four-square decomposition helper      [pure algorithm]           DONE
+  S4  L2 norm primitives (s_l2_max, ...)    [akita-types::sis, pure]   DONE
   S2  D=64 support lower bound >= 128 bits   [research / certificate]
   S13 paper cutover (MSIS def, gamma, thm)   [lattice-jolt, text]
 
@@ -1163,18 +1167,25 @@ artifact rather than full enumeration.
 Decide the fallback (larger shell or higher `T`) if it lands short.
 Gates the production policy in S3.
 
-**S4 — L2 norm primitives.** *(independent)*
+**S4 — L2 norm primitives.** *(independent, DONE)*
 `crates/akita-types/src/sis/norm_bound.rs`.
-Add `s_l2_max` (`sqrt(D)·(b/2)` dense, `1` one-hot), `beta_l2 = Gamma·B·s_l2_max`,
-`L2_BOUND_SQUARED = W·beta_l2^2`, and the B/D `||v||_2 <= sqrt(d)·||v||_inf`
-conversion.
+Adds the squared-domain `s_l2_max_squared` (`D·(b/2)^2` dense, `1` one-hot),
+`beta_l2_squared = (Gamma·B·s_l2_max)^2`, `l2_bound_squared = W·beta_l2^2`, and
+the B/D `l2_sq_from_linf` (`||v||_2^2 <= d·||v||_inf^2`) conversion. Squared
+domain keeps every value an exact `u128` integer (`sqrt(D)` is irrational for
+`D ∈ {32, 128}`); the real square root is taken only at bucket/slack selection
+(S8). These are pure and not yet wired into rank pricing (first consumers: S5,
+S8, S11).
 Retain `fold_witness_beta` for digit sizing (`num_digits_fold`); it no longer
 prices the A-role rank.
 
-**S7 — Four-square decomposition helper.** *(independent)*
-Pure helper computing `ell_0..ell_3` with `sum ell_j^2 = B_l2 - Z_SQUARED`
-(Lagrange / Rabin–Shallit), each `ell_j < 2^32`.
-No protocol dependency; consumes only the target integer.
+**S7 — Four-square decomposition helper.** *(independent, DONE)*
+`crates/akita-types/src/sis/four_square.rs`.
+Pure helper computing `ell_0..ell_3` with `sum ell_j^2 = B_l2 - Z_SQUARED`, each
+`ell_j < 2^32`. A Rabin–Shallit-style prime hunt is the fast path; a
+theorem-backed finite two-squares-residual fallback makes the solver total for
+every `u64` target. Integer-only decision path (no floating point).
+No protocol dependency; consumes only the target integer (first consumer: S8).
 
 **S13 — Paper cutover.** *(independent, text)*
 `Documents/Research/lattice-jolt/sections/akita/`.
