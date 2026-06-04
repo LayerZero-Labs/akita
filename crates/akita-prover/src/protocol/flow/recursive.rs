@@ -890,7 +890,7 @@ where
         #[cfg(feature = "zk")]
         zk_hiding,
     } = current_state;
-    let w_view = w.view::<F, D>()?;
+    let witness_view = w.view::<F, D>()?;
     let logical_w = logical_w.as_ref().unwrap_or(&w);
     let typed_hint = hint.to_typed::<D>()?;
     let opening_point = &sumcheck_challenges;
@@ -934,7 +934,7 @@ where
         let _span = tracing::info_span!(
             "evaluate_and_fold",
             level,
-            num_ring_elems = w_view.num_ring_elems(),
+            num_ring_elems = witness_view.num_ring_elems(),
             num_points = prepared_points.len()
         )
         .entered();
@@ -942,7 +942,7 @@ where
         let mut folded = Vec::with_capacity(prepared_points.len());
         for prepared_point in &prepared_points {
             let (y_ring, e_folded) = evaluate_recursive_witness_at_multiplier_point(
-                &w_view,
+                &witness_view,
                 &prepared_point.ring_multiplier_point,
                 level_params.block_len,
                 level_params.num_blocks,
@@ -1011,7 +1011,7 @@ where
         prepared,
         ring_opening_points,
         ring_multiplier_points,
-        &w_view,
+        &witness_view,
         e_folded_by_claim,
         level_params.clone(),
         typed_hint,
@@ -1117,7 +1117,7 @@ where
             &mut current_state.zk_hiding,
         )?)
     };
-    let w_view = current_state.w.view::<F, D>()?;
+    let witness_view = current_state.w.view::<F, D>()?;
     let protocol_point = match &reduction {
         Some(reduction) => ring_subfield_packed_extension_opening_point::<F, L, D>(
             reduction.rho.len(),
@@ -1140,7 +1140,7 @@ where
         let _span = tracing::info_span!(
             "evaluate_and_fold",
             level,
-            num_ring_elems = w_view.num_ring_elems(),
+            num_ring_elems = witness_view.num_ring_elems(),
             num_points = prepared_points.len()
         )
         .entered();
@@ -1148,7 +1148,7 @@ where
         let mut folded = Vec::with_capacity(prepared_points.len());
         for prepared_point in &prepared_points {
             let (y_ring, e_folded) = evaluate_recursive_witness_at_multiplier_point(
-                &w_view,
+                &witness_view,
                 &prepared_point.ring_multiplier_point,
                 level_params.block_len,
                 level_params.num_blocks,
@@ -1217,7 +1217,7 @@ where
         prepared,
         ring_opening_points,
         ring_multiplier_points,
-        &w_view,
+        &witness_view,
         e_folded_by_claim,
         level_params.clone(),
         typed_hint,
