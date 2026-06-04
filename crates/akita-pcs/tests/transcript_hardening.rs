@@ -429,7 +429,10 @@ fn pr88_regression_missing_final_w_absorb_fails_smell_check() {
     let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/pr88"));
     transcript.bind_instance_bytes(b"descriptor");
 
-    transcript.record_wire_use(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"cleartext-final-w");
+    transcript.record_wire_use(
+        labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+        b"cleartext-final-w",
+    );
     transcript.append_bytes(labels::ABSORB_STOP_CONDITION, b"next-w-commitment");
     let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
 
@@ -445,8 +448,14 @@ fn pr88_regression_mutated_final_w_after_absorb_fails_smell_check() {
     let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/pr88"));
     transcript.bind_instance_bytes(b"descriptor");
 
-    transcript.append_bytes(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"original-final-w");
-    transcript.record_wire_use(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"mutated-final-w");
+    transcript.append_bytes(
+        labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+        b"original-final-w",
+    );
+    transcript.record_wire_use(
+        labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+        b"mutated-final-w",
+    );
     let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
 
     let errors = transcript.smell_check_errors();
@@ -461,8 +470,14 @@ fn smell_checks_pass_for_matched_wire_absorb() {
     let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/wire"));
     transcript.bind_instance_bytes(b"descriptor");
     transcript.expect_wire_label(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING);
-    transcript.record_wire_use(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"cleartext-final-w");
-    transcript.append_bytes(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"cleartext-final-w");
+    transcript.record_wire_use(
+        labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+        b"cleartext-final-w",
+    );
+    transcript.append_bytes(
+        labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+        b"cleartext-final-w",
+    );
     let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
 
     transcript.assert_smell_checks();

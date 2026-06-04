@@ -198,7 +198,8 @@ doc/comment mentions are **not** compiler-checked and need explicit grep.
 
 ### Acceptance Criteria
 
-- [x] `rg '\bw_hat\b' crates/` and `rg '\bw_folded\b' crates/` return no matches.
+- [x] `rg 'w_hat' crates/` and `rg 'w_folded' crates/` return no matches (substring
+      grep, so compound identifiers like `w_hat_digit_end` cannot slip through).
 - [x] `rg 'ABSORB_SUMCHECK_W' crates/` and `rg 'ABSORB_TERMINAL_W_HAT' crates/`
       return no matches.
 - [x] `rg 'decompose_batched_w_hat' crates/` returns no matches (tracing span string).
@@ -284,7 +285,7 @@ Rename, atomically across all crates/tests:
 remaining `w_hat` locals → `e_hat`, `w_hat_count` → `e_hat_count`,
 tests `WHatDigit → EHatDigit`.
 Also re-export sites in `akita-types/src/proof/mod.rs` and `src/lib.rs`.
-Verify: `rg '\bw_hat\b' crates/` empty; build green.
+Verify: `rg 'w_hat' crates/` empty; build green.
 
 **Slice 2 — `w_folded` opening-fold cluster.**
 Rename `w_folded_by_poly → e_folded_by_poly`,
@@ -292,7 +293,7 @@ Rename `w_folded_by_poly → e_folded_by_poly`,
 `pre_folded_by_poly → pre_folded_e_by_poly`,
 `pre_folded_by_claim → pre_folded_e_by_claim`,
 remaining `w_folded` locals → `e_folded`.
-Verify: `rg '\bw_folded\b' crates/` empty; build green.
+Verify: `rg 'w_folded' crates/` empty; build green.
 
 **Slice 3 — tracing span string.**
 Change the `tracing::info_span!("decompose_batched_w_hat")` literal in
