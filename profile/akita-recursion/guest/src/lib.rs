@@ -8,7 +8,7 @@
 //! - `deserialize_input`: blob -> typed `AkitaJoltInputs<F, D>`.
 //! - `transcript_init`:   construct the `AkitaTranscript`.
 //! - `akita_verify`:      `akita_verifier::verify_batched` (the kernel
-//!   that `akita-scheme::batched_verify` wraps; we call it directly to
+//!   that `akita-pcs::AkitaCommitmentScheme::batched_verify` wraps; we call it directly to
 //!   avoid `std::time::Instant::now()`, which traps on the Jolt RISC-V
 //!   emulator).
 //!

@@ -92,7 +92,6 @@ dependencies = [
  "akita-config",
  "akita-field",
  "akita-prover",
- "akita-scheme",
  "akita-serialization",
  "akita-setup",
  "akita-sumcheck",
@@ -150,23 +149,6 @@ name = "akita-r1cs"
 version = "0.1.0"
 dependencies = [
  "akita-field",
- "tracing",
-]
-
-[[package]]
-name = "akita-scheme"
-version = "0.1.0"
-dependencies = [
- "akita-challenges",
- "akita-config",
- "akita-field",
- "akita-prover",
- "akita-serialization",
- "akita-setup",
- "akita-transcript",
- "akita-types",
- "akita-verifier",
- "rand 0.8.6",
  "tracing",
 ]
 
