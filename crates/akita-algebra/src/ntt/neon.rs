@@ -1,7 +1,7 @@
 //! AArch64 NEON SIMD kernels for NTT butterfly, Montgomery multiply,
 //! and pointwise operations.
 //!
-//! Provides vectorized i32 (for Q32/Q64/Q128) and i16 (for Q16) paths.
+//! Provides vectorized i32 (for Q32/Q64/Q128) and i16 (for 16-bit NTT primes) paths.
 //! Dispatch is controlled by [`use_neon_ntt`]: set `AKITA_SCALAR_NTT=1`
 //! to force the scalar fallback for A/B performance comparison.
 

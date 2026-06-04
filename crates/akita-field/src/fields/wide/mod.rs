@@ -13,7 +13,6 @@ use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 use crate::{AdditiveGroup, CanonicalField, FieldCore};
 
 use super::fp128::Fp128;
-use super::fp16::Fp16;
 use super::fp32::Fp32;
 use super::fp64::Fp64;
 
@@ -41,13 +40,6 @@ impl<const P: u32> From<Fp32<P>> for Fp32x2i32 {
     fn from(x: Fp32<P>) -> Self {
         let v = x.0;
         Self([(v & 0xFFFF) as i32, (v >> 16) as i32])
-    }
-}
-
-impl<const P: u32> From<Fp16<P>> for Fp32x2i32 {
-    #[inline]
-    fn from(x: Fp16<P>) -> Self {
-        Self([x.to_limbs() as i32, 0])
     }
 }
 
@@ -566,17 +558,6 @@ impl<const P: u32> ReduceTo<Fp32<P>> for Fp32x2i32 {
     }
 }
 
-impl<const P: u32> ReduceTo<Fp16<P>> for Fp32x2i32 {
-    #[inline]
-    fn reduce(self) -> Fp16<P> {
-        let [l0, l1] = self.0;
-        let wide = l0 as i64 + (l1 as i64) * (1i64 << 16);
-        let p = P as i64;
-        let normalized = ((wide % p) + p) % p;
-        Fp16::from_canonical_u32(normalized as u32)
-    }
-}
-
 impl<const P: u64> ReduceTo<Fp64<P>> for Fp64x4i32 {
     #[inline]
     fn reduce(self) -> Fp64<P> {
@@ -598,15 +579,6 @@ impl<const P: u128> ReduceTo<Fp128<P>> for Fp128x8i32 {
 /// instead of the general 22-product ring multiplication.
 #[derive(Debug, Clone, Copy)]
 pub struct FoldMatrixFp32(pub(crate) [[u32; 4]; 4]);
-
-/// Precomputed fold context for `RingSubfieldFp8<Fp16<P>>`.
-///
-/// Stores the 8×8 "multiply by `r`" matrix in the canonical
-/// `[1, e1, ..., e7]` basis (each entry a canonical `Fp16` limb widened to
-/// `u32`), enabling fold via 8 scalar multiply-accumulates per coefficient
-/// instead of the general degree-8 ring multiplication.
-#[derive(Debug, Clone, Copy)]
-pub struct FoldMatrixFp16(pub(crate) [[u32; 8]; 8]);
 
 /// Precomputed fold context for `Fp2<Fp64<P>, C>`.
 ///
@@ -685,7 +657,6 @@ macro_rules! impl_default_optimized_fold {
 
 impl_default_optimized_fold!(Fp64<P: u64>);
 impl_default_optimized_fold!(Fp32<P: u32>);
-impl_default_optimized_fold!(Fp16<P: u32>);
 impl_default_optimized_fold!(Fp128<P: u128>);
 
 impl<const P: u64> HasUnreducedOps for Fp64<P> {
@@ -738,31 +709,6 @@ impl<const P: u32> HasUnreducedOps for Fp32<P> {
     #[inline]
     fn reduce_product_accum(accum: Fp32ProductAccum) -> Self {
         accum.reduce::<P>()
-    }
-}
-
-impl<const P: u32> HasUnreducedOps for Fp16<P> {
-    type MulU64Accum = Fp32ProductAccum;
-    type ProductAccum = Fp32ProductAccum;
-
-    #[inline]
-    fn mul_u64_unreduced(self, small: u64) -> Fp32ProductAccum {
-        Fp32ProductAccum([(self.to_limbs() as u128) * (small as u128), 0])
-    }
-
-    #[inline]
-    fn mul_to_product_accum(self, other: Self) -> Fp32ProductAccum {
-        Fp32ProductAccum([self.mul_wide(other) as u128, 0])
-    }
-
-    #[inline]
-    fn reduce_mul_u64_accum(accum: Fp32ProductAccum) -> Self {
-        Fp16::from_canonical_u128_reduced(accum.0[0])
-    }
-
-    #[inline]
-    fn reduce_product_accum(accum: Fp32ProductAccum) -> Self {
-        Fp16::from_canonical_u128_reduced(accum.0[0])
     }
 }
 
@@ -836,10 +782,6 @@ pub trait HasWide: FieldCore {
 }
 
 impl<const P: u32> HasWide for Fp32<P> {
-    type Wide = Fp32x2i32;
-}
-
-impl<const P: u32> HasWide for Fp16<P> {
     type Wide = Fp32x2i32;
 }
 

@@ -22,7 +22,6 @@ fallback for centered `z_pre` values; zero means one centered term does not fit.
 
 | Profile | Role | K | Limb | q | Primes | log2(P_crt) |
 | --- | --- | ---: | ---: | ---: | --- | ---: |
-| Q16/3xi16 | production | 3 | i16 | 2^16 - 99 | `15361, 13313, 12289` | 41.19 |
 | Q32-reference/4xi16 | comparison only | 4 | i16 | 2^32 - 99 | `15361, 13313, 12289, 11777` | 54.72 |
 | Q32/2xi32 | production | 2 | i32 | 2^32 - 99 | `1073707009, 1073698817` | 60.00 |
 | Q64/3xi32 | production | 3 | i32 | 2^64 - 59 | `1073707009, 1073698817, 1073692673` | 90.00 |
@@ -32,10 +31,6 @@ fallback for centered `z_pre` values; zero means one centered term does not fit.
 
 | Profile | K | Limb | D | balanced32 | raw128 | zpre32768 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Q16/3xi16 | 3 | i16 | 32 | 37,505 | 9,376 | 36 |
-| Q16/3xi16 | 3 | i16 | 64 | 18,752 | 4,688 | 18 |
-| Q16/3xi16 | 3 | i16 | 128 | 9,376 | 2,344 | 9 |
-| Q16/3xi16 | 3 | i16 | 256 | 4,688 | 1,172 | 4 |
 | Q32-reference/4xi16 | 4 | i16 | 32 | 6,729 | 1,682 | 6 |
 | Q32-reference/4xi16 | 4 | i16 | 64 | 3,364 | 841 | 3 |
 | Q32-reference/4xi16 | 4 | i16 | 128 | 1,682 | 420 | 1 |

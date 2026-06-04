@@ -19,7 +19,6 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
 
     use akita_field::fields::pseudo_mersenne::*;
 
-    sumcheck_bench::<Prime16Offset99, P16O99>(&mut group, PRIME16_OFFSET99, &mut rng, n);
     sumcheck_bench::<Prime31Offset19, P31O19>(&mut group, PRIME31_OFFSET19, &mut rng, n);
     sumcheck_bench::<Mersenne31, PackedMersenne31>(&mut group, MERSENNE31, &mut rng, n);
     sumcheck_bench::<Prime32Offset99, P32O99>(&mut group, PRIME32_OFFSET99, &mut rng, n);
