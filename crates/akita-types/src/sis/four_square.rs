@@ -1,4 +1,4 @@
-//! Lagrange four-square slack certificate solver (spec slice S7).
+//! Lagrange four-square slack certificate solver
 //!
 //! The L2 folded-witness certificate turns the inequality `Z_SQUARED <= B_l2`
 //! into the equality
@@ -20,10 +20,13 @@
 //! `ell_j < 2^32` ceiling the spec pins for the certificate payload, with no
 //! runtime clamp needed.
 //!
-//! ## Algorithm (Rabin–Shallit prime hunt)
+//! ## Algorithm
 //!
-//! Solving is reduced to two-squares of a prime, which is cheap and avoids
-//! general integer factorization:
+//! The solver has two paths.
+//!
+//! The fast path is the Rabin–Shallit-style prime hunt. It reduces solving to
+//! two-squares of a prime, which is cheap and avoids general integer
+//! factorization on the common path:
 //!
 //! 1. Strip factors of 4: write `target = 4^e * m` with `m` not divisible by 4
 //!    (so `m mod 4 in {1, 2, 3}`). A four-square representation of `m` scales by
@@ -36,11 +39,16 @@
 //!    Hermite–Serret Euclidean descent on a square root of `-1 (mod p)` for the
 //!    prime case).
 //!
-//! Because `m mod 4 != 0`, residues `p ≡ 1 (mod 4)` are reachable, and such
-//! primes are dense among the scanned residues, so the hunt terminates in a
-//! handful of residue inspections in practice. The decision path is integer-only
-//! (no floating point): [`u64::isqrt`], deterministic Miller–Rabin (exact for all
-//! `u64`), and `u128` modular arithmetic.
+//! The totality path is a finite residual search backed by the two-squares
+//! theorem. It enumerates `a, b`, factors the residual `p = m - a^2 - b^2` by
+//! exact trial division, and constructs `p = c^2 + d^2` iff every prime
+//! `q ≡ 3 (mod 4)` appears with even exponent. Lagrange's four-square theorem
+//! guarantees that some enumerated residual is a sum of two squares, so this
+//! fallback is total for every `u64` target.
+//!
+//! The decision path is integer-only (no floating point): [`u64::isqrt`],
+//! deterministic Miller–Rabin (exact for all `u64`), exact trial division, and
+//! `u128` modular arithmetic.
 //!
 //! The solver has no production caller yet; spec slice S8 (prover certificate
 //! assembly) is the first consumer.
@@ -61,10 +69,11 @@ const MILLER_RABIN_BASES: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 3
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidInput`] only on internal inconsistency (the
-/// prime hunt exhausting its search space, or a self-check on the returned
-/// squares failing). Neither is reachable for a valid `u64` target; the result
-/// is always re-verified before return.
+/// Returns [`AkitaError::InvalidInput`] only on internal inconsistency: a
+/// self-check on the returned squares failing, or the theorem-backed total
+/// fallback finding no representable residual. Neither is reachable for a valid
+/// `u64` target (Lagrange's theorem guarantees the fallback succeeds), and the
+/// result is always re-verified before return.
 pub fn four_squares(target: u64) -> Result<[u64; 4], AkitaError> {
     if target == 0 {
         return Ok([0, 0, 0, 0]);
@@ -78,6 +87,18 @@ pub fn four_squares(target: u64) -> Result<[u64; 4], AkitaError> {
         scale <<= 1;
     }
 
+    if let Some(result) = fast_prime_hunt(m, scale, target)? {
+        return Ok(result);
+    }
+    four_squares_via_two_square_residuals(m, scale, target)
+}
+
+/// Fast path: look for a residual that is either trivial or prime `1 mod 4`.
+///
+/// This usually succeeds quickly, but totality does not depend on it. If it
+/// misses, [`four_squares_via_two_square_residuals`] performs the theorem-backed
+/// finite fallback.
+fn fast_prime_hunt(m: u64, scale: u64, target: u64) -> Result<Option<[u64; 4]>, AkitaError> {
     let a_max = m.isqrt();
     for a in (0..=a_max).rev() {
         let rem_a = m - a * a;
@@ -92,15 +113,58 @@ pub fn four_squares(target: u64) -> Result<[u64; 4], AkitaError> {
                 _ => None,
             };
             if let Some((c, d)) = split {
-                let result = [a * scale, b * scale, c * scale, d * scale];
+                let result = scale_decomposition([a, b, c, d], scale)?;
+                return Ok(Some(verify_decomposition(result, target)?));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Guaranteed fallback.
+///
+/// Proof of totality:
+///
+/// - By Lagrange's four-square theorem, `m = a^2 + b^2 + c^2 + d^2` for some
+///   non-negative integers `a, b, c, d`.
+/// - The nested loops enumerate every possible non-negative `a, b` with
+///   `a^2 + b^2 <= m`, so they eventually visit the first two coordinates of
+///   one such representation.
+/// - For that visit, the residual is `p = c^2 + d^2`.
+/// - [`two_squares`] is exact by the two-squares theorem, so it accepts that
+///   residual and constructs a valid pair.
+fn four_squares_via_two_square_residuals(
+    m: u64,
+    scale: u64,
+    target: u64,
+) -> Result<[u64; 4], AkitaError> {
+    let a_max = m.isqrt();
+    for a in (0..=a_max).rev() {
+        let rem_a = m - a * a;
+        let b_max = rem_a.isqrt();
+        for b in (0..=b_max).rev() {
+            let p = rem_a - b * b;
+            if let Some((c, d)) = two_squares(p)? {
+                let result = scale_decomposition([a, b, c, d], scale)?;
                 return verify_decomposition(result, target);
             }
         }
     }
 
     Err(AkitaError::InvalidInput(format!(
-        "four_squares: no four-square decomposition found for target {target}"
+        "four_squares: total fallback failed for target {target}"
     )))
+}
+
+fn scale_decomposition(values: [u64; 4], scale: u64) -> Result<[u64; 4], AkitaError> {
+    let mut out = [0u64; 4];
+    for (dst, value) in out.iter_mut().zip(values) {
+        *dst = value.checked_mul(scale).ok_or_else(|| {
+            AkitaError::InvalidInput("four_squares: scale multiplication overflowed".to_string())
+        })?;
+    }
+    Ok(out)
 }
 
 /// Re-check `sum result_j^2 == target` over `u128` before returning, so a
@@ -114,6 +178,125 @@ fn verify_decomposition(result: [u64; 4], target: u64) -> Result<[u64; 4], Akita
             "four_squares: internal self-check failed (sum of squares {sum} != target {target})"
         )))
     }
+}
+
+/// Construct `n = a^2 + b^2` iff such a representation exists.
+///
+/// This is the constructive form of the two-squares theorem: a non-negative
+/// integer is a sum of two squares iff every prime `3 mod 4` has even exponent
+/// in its factorization. Prime `1 mod 4` factors are split by
+/// [`two_squares_prime`], and representations are multiplied with the
+/// Brahmagupta-Fibonacci identity.
+fn two_squares(n: u64) -> Result<Option<(u64, u64)>, AkitaError> {
+    match n {
+        0 => return Ok(Some((0, 0))),
+        1 => return Ok(Some((1, 0))),
+        2 => return Ok(Some((1, 1))),
+        _ => {}
+    }
+
+    if is_prime(n) {
+        return if n % 4 == 1 {
+            Ok(Some(two_squares_prime(n)?))
+        } else {
+            Ok(None)
+        };
+    }
+
+    let factors = factor_counts_trial_division(n);
+    let mut rep = (1u64, 0u64);
+    for (p, exp) in factors {
+        if p == 2 {
+            rep = scale_two_square_rep(rep, checked_pow_u64(2, exp / 2)?)?;
+            if exp % 2 == 1 {
+                rep = multiply_two_square_reps(rep, (1, 1))?;
+            }
+        } else if p % 4 == 1 {
+            let prime_rep = two_squares_prime(p)?;
+            for _ in 0..exp {
+                rep = multiply_two_square_reps(rep, prime_rep)?;
+            }
+        } else {
+            if exp % 2 == 1 {
+                return Ok(None);
+            }
+            rep = scale_two_square_rep(rep, checked_pow_u64(p, exp / 2)?)?;
+        }
+    }
+
+    let sum = u128::from(rep.0) * u128::from(rep.0) + u128::from(rep.1) * u128::from(rep.1);
+    if sum == u128::from(n) {
+        Ok(Some(rep))
+    } else {
+        Err(AkitaError::InvalidInput(format!(
+            "two_squares: internal self-check failed ({}^2 + {}^2 != {n})",
+            rep.0, rep.1
+        )))
+    }
+}
+
+fn factor_counts_trial_division(mut n: u64) -> Vec<(u64, u32)> {
+    let mut factors = Vec::new();
+    let mut exp = 0u32;
+    while n.is_multiple_of(2) {
+        n /= 2;
+        exp += 1;
+    }
+    if exp > 0 {
+        factors.push((2, exp));
+    }
+
+    let mut p = 3u64;
+    while p <= n / p {
+        let mut exp = 0u32;
+        while n.is_multiple_of(p) {
+            n /= p;
+            exp += 1;
+        }
+        if exp > 0 {
+            factors.push((p, exp));
+        }
+        p += 2;
+    }
+    if n > 1 {
+        factors.push((n, 1));
+    }
+    factors
+}
+
+fn checked_pow_u64(base: u64, exp: u32) -> Result<u64, AkitaError> {
+    let mut acc = 1u64;
+    for _ in 0..exp {
+        acc = acc.checked_mul(base).ok_or_else(|| {
+            AkitaError::InvalidInput("two_squares: prime-power scale overflowed".to_string())
+        })?;
+    }
+    Ok(acc)
+}
+
+fn scale_two_square_rep(rep: (u64, u64), scale: u64) -> Result<(u64, u64), AkitaError> {
+    Ok((
+        rep.0.checked_mul(scale).ok_or_else(|| {
+            AkitaError::InvalidInput("two_squares: representation scale overflowed".to_string())
+        })?,
+        rep.1.checked_mul(scale).ok_or_else(|| {
+            AkitaError::InvalidInput("two_squares: representation scale overflowed".to_string())
+        })?,
+    ))
+}
+
+fn multiply_two_square_reps(lhs: (u64, u64), rhs: (u64, u64)) -> Result<(u64, u64), AkitaError> {
+    let (a, b) = (i128::from(lhs.0), i128::from(lhs.1));
+    let (c, d) = (i128::from(rhs.0), i128::from(rhs.1));
+    let x = a * c - b * d;
+    let y = a * d + b * c;
+    let x = u64::try_from(x.unsigned_abs()).map_err(|_| {
+        AkitaError::InvalidInput("two_squares: product component overflowed".to_string())
+    })?;
+    let y = u64::try_from(y.unsigned_abs()).map_err(|_| {
+        AkitaError::InvalidInput("two_squares: product component overflowed".to_string())
+    })?;
+    Ok((x, y))
 }
 
 /// `(a * b) mod m` via a `u128` widening; exact for any `a, b, m < 2^64`.
@@ -313,6 +496,44 @@ mod tests {
     }
 
     #[test]
+    fn two_squares_general_matches_theorem() {
+        for &n in &[0u64, 1, 2, 5, 25, 45, 50, 65, 325, 845, 16_900] {
+            let (c, d) = two_squares(n)
+                .expect("two-square construction should not fail")
+                .expect("n should be a sum of two squares");
+            assert_eq!(
+                u128::from(c) * u128::from(c) + u128::from(d) * u128::from(d),
+                u128::from(n),
+                "invalid two-square representation for {n}"
+            );
+        }
+
+        for &n in &[3u64, 6, 7, 11, 12, 21, 28, 44, 3 * 5 * 13] {
+            assert!(
+                two_squares(n)
+                    .expect("two-square rejection should not fail")
+                    .is_none(),
+                "{n} has an odd 3 mod 4 prime exponent and should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn total_fallback_constructs_four_squares() {
+        for &target in &[7u64, 15, 23, 31, 79, 255, 1023, 65_535, 4 * 65_535] {
+            let mut m = target;
+            let mut scale = 1u64;
+            while m.is_multiple_of(4) {
+                m /= 4;
+                scale <<= 1;
+            }
+            let squares = four_squares_via_two_square_residuals(m, scale, target)
+                .expect("fallback decomposition exists");
+            assert_valid_decomposition(target, squares);
+        }
+    }
+
+    #[test]
     fn boundary_targets_near_u64_max() {
         let targets = [
             u64::MAX,
@@ -334,7 +555,7 @@ mod tests {
     fn randomized_full_range() {
         let mut rng = StdRng::seed_from_u64(0xA51A_F0F0_1234_5678);
         for _ in 0..20_000 {
-            let target: u64 = rng.gen();
+            let target: u64 = rng.r#gen();
             let squares = four_squares(target).expect("decomposition exists");
             assert_valid_decomposition(target, squares);
         }
