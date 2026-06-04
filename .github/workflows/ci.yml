@@ -68,6 +68,7 @@ jobs:
           scripts/check-crate-deps.sh akita-verifier
           scripts/check-crate-deps.sh akita-prover
           scripts/check-crate-deps.sh akita-config
+          scripts/check-crate-deps.sh akita-planner
           scripts/check-crate-deps.sh akita-setup
           scripts/check-crate-deps.sh akita-scheme
 
@@ -102,10 +103,81 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
       - name: Install cargo-nextest
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
+      - name: Test timing script fixtures
+        run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
       - name: Run tests (all non-zk features)
-        run: cargo nextest run --no-default-features --features parallel,disk-persistence
+        id: test-non-zk
+        continue-on-error: true
+        run: |
+          start_epoch=$(date +%s)
+          set +e
+          cargo nextest run --profile ci-non-zk --no-default-features --features parallel,disk-persistence
+          status=$?
+          set -e
+          end_epoch=$(date +%s)
+          {
+            echo "AKITA_TEST_TIMING_NON_ZK_START=$start_epoch"
+            echo "AKITA_TEST_TIMING_NON_ZK_END=$end_epoch"
+            echo "AKITA_TEST_TIMING_NON_ZK_STATUS=$status"
+          } >> "$GITHUB_ENV"
+          exit "$status"
       - name: Run tests (all features)
-        run: cargo nextest run --all-features
+        id: test-all-features
+        continue-on-error: true
+        run: |
+          start_epoch=$(date +%s)
+          set +e
+          cargo nextest run --profile ci-all-features --all-features
+          status=$?
+          set -e
+          end_epoch=$(date +%s)
+          {
+            echo "AKITA_TEST_TIMING_ALL_FEATURES_START=$start_epoch"
+            echo "AKITA_TEST_TIMING_ALL_FEATURES_END=$end_epoch"
+            echo "AKITA_TEST_TIMING_ALL_FEATURES_STATUS=$status"
+          } >> "$GITHUB_ENV"
+          exit "$status"
+      - name: Merge test timing artifact
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-test-timing-artifact"
+          python3 scripts/ci_test_timing_report.py merge \
+            --output-dir "$RUNNER_TEMP/ci-test-timing-artifact" \
+            --source-sha "$GITHUB_SHA" \
+            --source-branch "${{ github.head_ref || github.ref_name }}" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --pass non-zk \
+            --junit target/nextest/ci-non-zk/junit.xml \
+            --started-at "${AKITA_TEST_TIMING_NON_ZK_START:-0}" \
+            --finished-at "${AKITA_TEST_TIMING_NON_ZK_END:-0}" \
+            --exit-code "${AKITA_TEST_TIMING_NON_ZK_STATUS:-1}" \
+            --pass all-features \
+            --junit target/nextest/ci-all-features/junit.xml \
+            --started-at "${AKITA_TEST_TIMING_ALL_FEATURES_START:-0}" \
+            --finished-at "${AKITA_TEST_TIMING_ALL_FEATURES_END:-0}" \
+            --exit-code "${AKITA_TEST_TIMING_ALL_FEATURES_STATUS:-1}"
+          python3 scripts/ci_test_timing_report.py render \
+            "$RUNNER_TEMP/ci-test-timing-artifact/summary.json" \
+            --output-dir "$RUNNER_TEMP/ci-test-timing-artifact" \
+            --compact
+          cat "$RUNNER_TEMP/ci-test-timing-artifact/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload test timing artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-test-timing-data
+          path: ${{ runner.temp }}/ci-test-timing-artifact
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Fail if any test pass failed
+        if: always()
+        run: |
+          if [ "${AKITA_TEST_TIMING_NON_ZK_STATUS:-1}" -ne 0 ]; then
+            exit "${AKITA_TEST_TIMING_NON_ZK_STATUS:-1}"
+          fi
+          if [ "${AKITA_TEST_TIMING_ALL_FEATURES_STATUS:-1}" -ne 0 ]; then
+            exit "${AKITA_TEST_TIMING_ALL_FEATURES_STATUS:-1}"
+          fi
 
   typos:
     name: Typos

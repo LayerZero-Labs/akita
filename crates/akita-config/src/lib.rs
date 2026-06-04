@@ -8,9 +8,6 @@
 //! regenerates the schedule with the offline DP search
 //! [`akita_planner::find_schedule`], driven by the `Cfg`-derived
 //! [`policy_of`] bridge. Fallback is the default for every preset.
-//!
-//! [`WCommitmentConfig`] is the derived recursive-w config used by
-//! `<Cfg>`-generic ring-degree dispatch helpers.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -20,7 +17,6 @@ use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ClaimIncidenceSummary, DecompositionParams,
     LevelParams, Schedule, SetupMatrixEnvelope, SisModulusFamily, Step,
 };
-use std::marker::PhantomData;
 
 pub mod generated_families;
 pub mod proof_optimized;
@@ -51,6 +47,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         claim_ext_degree: Cfg::CLAIM_EXT_DEGREE,
         chal_ext_degree: Cfg::CHAL_EXT_DEGREE,
         basis_range: Cfg::basis_range(),
+        onehot_chunk_size: Cfg::onehot_chunk_size(),
     }
 }
 
@@ -119,12 +116,18 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
 
-    /// Sparse challenge family for ring dimension `d`.
+    /// Short ring challenge family for ring dimension `d`.
+    ///
+    /// This is the short ring element `c(X)` that folds the committed witness
+    /// (the weak-binding challenge). It is sampled before the stage-1 sumcheck,
+    /// so it is not itself a sumcheck-stage challenge. "Short" means bounded
+    /// norm, not sparse: the `d == 32` policy is a low-norm ball that may be
+    /// dense, while larger degrees use sparse fixed-weight families.
     ///
     /// # Errors
     ///
     /// `InvalidSetup` if `d` is not supported.
-    fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
+    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError>;
 
     /// Stage-1 fold-round challenge shape at one schedule level.
     ///
@@ -173,6 +176,24 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn basis_range() -> (u32, u32);
 
+    /// One-hot chunk size `K` of the committed witnesses under this config.
+    ///
+    /// Bounds the committed one-hot witness L1 mass per ring element as
+    /// `nonzeros = ceil(D / K)`, which feeds the Hachi Lemma 7 weak-binding
+    /// collision norm and the folded-witness digit count. The value must be a
+    /// true worst case (the smallest `K`, i.e. the largest `nonzeros`, any
+    /// instance under this config may commit). It is only consulted for a root
+    /// level whose `log_commit_bound == 1` (one-hot commitment); dense configs
+    /// always use `nonzeros = D` regardless of this hook.
+    ///
+    /// The default `1` is the fully generic one-hot case: it safely covers every
+    /// valid chunking accepted by `OneHotPoly`, including `K < D` multi-chunk
+    /// roots. A config that publicly guarantees a larger minimum chunk size may
+    /// override this hook to recover tighter one-hot schedules.
+    fn onehot_chunk_size() -> usize {
+        1
+    }
+
     /// Build the runtime [`Schedule`] for `key`.
     ///
     /// Delegates entirely to the planner's cache-then-generate entry point
@@ -195,7 +216,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         akita_planner::get_schedule(
             key,
             &policy_of::<Self>(),
-            Self::stage1_challenge_config,
+            Self::ring_challenge_config,
             Self::fold_challenge_shape_at_level,
         )
     }
@@ -243,74 +264,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 }
 
-/// Derived commitment config for recursive w-openings: `log_commit_bound`
-/// drops to `log_basis` (balanced-digit `w` entries) while `log_open_bound`
-/// inherits the parent opening bound (recursive opening folds produce
-/// full-field coefficients).
-#[derive(Clone, Copy, Debug)]
-pub struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
-    _cfg: PhantomData<Cfg>,
-}
-
-impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
-    type Field = Cfg::Field;
-    type ClaimField = Cfg::ClaimField;
-    type ChallengeField = Cfg::ChallengeField;
-    const D: usize = D;
-
-    fn decomposition() -> DecompositionParams {
-        // Recursive `w` entries are balanced digits, so `log_commit_bound`
-        // drops to `log_basis`. Recursive opening folds produce full-field
-        // coefficients, so `log_open_bound` inherits the parent's open
-        // bound (or commit bound when the parent doesn't pin one).
-        let root = Cfg::decomposition();
-        DecompositionParams {
-            log_basis: root.log_basis,
-            log_commit_bound: root.log_basis,
-            log_open_bound: Some(root.log_open_bound.unwrap_or(root.log_commit_bound)),
-        }
-    }
-
-    fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
-        Cfg::stage1_challenge_config(d)
-    }
-
-    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
-        Cfg::fold_challenge_shape_at_level(inputs)
-    }
-
-    fn sis_modulus_family() -> SisModulusFamily {
-        Cfg::sis_modulus_family()
-    }
-
-    fn max_setup_matrix_size(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-        max_num_points: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
-    }
-
-    fn basis_range() -> (u32, u32) {
-        Cfg::basis_range()
-    }
-
-    /// Resolve schedules through the parent `Cfg`, not this derived config.
-    ///
-    /// `WCommitmentConfig` is a layout-derivation helper: its real interface
-    /// is [`Self::decomposition`], consumed by
-    /// `akita_types::recursive_level_layout_from_params` to size recursive-w
-    /// openings. It is never the top-level config that drives prove/verify, so
-    /// this override is defensive. Like every other hook here, it defers to
-    /// `Cfg` (matching the previous `schedule_table` delegation) rather than
-    /// resolving against this config's synthetic balanced-digit policy
-    /// (`policy_of::<Self>()`), which would select a different table / DP
-    /// schedule than the parent.
-    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-        Cfg::runtime_schedule(key)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,7 +294,7 @@ mod tests {
             }
         }
 
-        fn stage1_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
             if d != Self::D {
                 return Err(AkitaError::InvalidSetup(format!(
                     "unsupported D={d} for ExtensionRoleConfig (expected {})",
@@ -454,7 +407,7 @@ mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
     #[cfg(not(feature = "zk"))]
-    use akita_types::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+    use akita_types::sis::{ceil_supported_collision, min_secure_rank};
 
     #[cfg(not(feature = "zk"))]
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
@@ -477,7 +430,7 @@ mod fp128_policy_tests {
                                 lp.a_key.collision_inf(),
                             )
                         });
-                let a_rank = min_rank_for_secure_width(
+                let a_rank = min_secure_rank(
                     Cfg::sis_modulus_family(),
                     d,
                     a_collision,
@@ -508,7 +461,7 @@ mod fp128_policy_tests {
                                 lp.b_key.collision_inf(),
                             )
                         });
-                let b_rank = min_rank_for_secure_width(
+                let b_rank = min_secure_rank(
                     Cfg::sis_modulus_family(),
                     d,
                     b_collision,
@@ -539,7 +492,7 @@ mod fp128_policy_tests {
                                 lp.d_key.collision_inf(),
                             )
                         });
-                let d_rank = min_rank_for_secure_width(
+                let d_rank = min_secure_rank(
                     Cfg::sis_modulus_family(),
                     d,
                     d_collision,

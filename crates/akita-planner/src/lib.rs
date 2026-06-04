@@ -14,7 +14,6 @@
 
 use akita_types::{DecompositionParams, SisModulusFamily};
 
-mod ajtai_params;
 pub mod generated;
 mod resolve;
 pub mod schedule_params;
@@ -49,4 +48,11 @@ pub struct PlannerPolicy {
     pub chal_ext_degree: usize,
     /// Inclusive `(min, max)` log-basis search range (`Cfg::basis_range()`).
     pub basis_range: (u32, u32),
+    /// One-hot chunk size `K` (`Cfg::onehot_chunk_size()`).
+    ///
+    /// Used to bound the committed one-hot witness L1 mass per ring element
+    /// (`nonzeros = ceil(D/K)`) for the weak-binding collision norm and the
+    /// folded-witness digit count. Only consulted at a root level whose
+    /// `log_commit_bound == 1`; dense levels use `nonzeros = D`.
+    pub onehot_chunk_size: usize,
 }

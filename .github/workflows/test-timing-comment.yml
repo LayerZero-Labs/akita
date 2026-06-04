@@ -1,0 +1,227 @@
+name: Akita CI Test Timing Comment
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  AKITA_TEST_TIMING_ARTIFACT_NAME: ci-test-timing-data
+  AKITA_TEST_TIMING_MARKER: "<!-- akita-ci-test-timing -->"
+
+jobs:
+  comment:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR number
+        id: pr
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const prs = context.payload.workflow_run.pull_requests || [];
+            if (prs.length === 0) {
+              core.info('No pull request associated with this workflow run.');
+              core.setOutput('issue-number', '');
+              return;
+            }
+            core.setOutput('issue-number', String(prs[0].number));
+            core.setOutput('head-sha', String(context.payload.workflow_run.head_sha || ''));
+            core.setOutput('head-branch', String(context.payload.workflow_run.head_branch || ''));
+
+      - name: Checkout trusted default branch
+        if: steps.pr.outputs.issue-number != ''
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Download current test timing artifact
+        if: steps.pr.outputs.issue-number != ''
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ env.AKITA_TEST_TIMING_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/ci-test-timing-current
+          run-id: ${{ github.event.workflow_run.id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Determine baseline artifacts
+        if: steps.pr.outputs.issue-number != ''
+        id: baselines
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const artifactName = process.env.AKITA_TEST_TIMING_ARTIFACT_NAME;
+            const workflowName = context.payload.workflow_run.name;
+            const currentRunId = Number(context.payload.workflow_run.id);
+            const headRef = String(context.payload.workflow_run.head_branch || '');
+            const baseRef = String(context.payload.workflow_run.repository?.default_branch || 'main');
+
+            function setBaselineOutput(prefix, run, label) {
+              core.setOutput(`${prefix}-run-id`, run ? String(run.id) : '');
+              core.setOutput(`${prefix}-sha`, run ? String(run.head_sha || '') : '');
+              core.setOutput(`${prefix}-label`, run ? label : '');
+            }
+
+            async function runHasArtifact(runId) {
+              const resp = await github.rest.actions.listWorkflowRunArtifacts({
+                owner,
+                repo,
+                run_id: runId,
+                per_page: 100,
+              });
+              const artifact = resp.data.artifacts.find(candidate =>
+                candidate.name === artifactName && !candidate.expired
+              );
+              return Boolean(artifact);
+            }
+
+            async function firstRunWithArtifact(runs, allowedConclusions = ['success']) {
+              const allowed = new Set(allowedConclusions);
+              for (const run of runs) {
+                if (run.id === currentRunId) {
+                  continue;
+                }
+                if (run.name !== workflowName || !allowed.has(run.conclusion)) {
+                  continue;
+                }
+                if (await runHasArtifact(run.id)) {
+                  return run;
+                }
+              }
+              return null;
+            }
+
+            setBaselineOutput('previous', null, '');
+            setBaselineOutput('main', null, '');
+
+            try {
+              if (headRef) {
+                const prRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
+                  owner,
+                  repo,
+                  event: 'pull_request',
+                  branch: headRef,
+                  status: 'completed',
+                  per_page: 100,
+                });
+                const previousPrRun = await firstRunWithArtifact(
+                  prRunsResponse.data.workflow_runs,
+                  ['success', 'failure']
+                );
+                setBaselineOutput('previous', previousPrRun, 'the previous PR update with a timing artifact');
+              }
+
+              const mainRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
+                owner,
+                repo,
+                event: 'push',
+                branch: baseRef,
+                status: 'completed',
+                per_page: 100,
+              });
+              const mainCandidates = mainRunsResponse.data.workflow_runs.filter(run =>
+                run.name === workflowName && run.conclusion === 'success'
+              );
+              const mainRun = await firstRunWithArtifact(mainCandidates, ['success']);
+              setBaselineOutput('main', mainRun, `the latest successful \`${baseRef}\` run`);
+            } catch (error) {
+              core.warning(`Could not determine timing baselines: ${error.message}`);
+            }
+
+      - name: Download main baseline artifact
+        if: steps.baselines.outputs.main-run-id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ env.AKITA_TEST_TIMING_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/ci-test-timing-main-baseline
+          run-id: ${{ steps.baselines.outputs.main-run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Download previous run artifact
+        if: steps.baselines.outputs.previous-run-id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ env.AKITA_TEST_TIMING_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/ci-test-timing-previous-run
+          run-id: ${{ steps.baselines.outputs.previous-run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Render timing comment
+        if: steps.pr.outputs.issue-number != ''
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          summary_path="${{ runner.temp }}/ci-test-timing-current/summary.json"
+          if [ ! -f "$summary_path" ]; then
+            python3 scripts/ci_test_timing_report.py failure-summary \
+              --output-dir "${{ runner.temp }}/ci-test-timing-current" \
+              --source-sha "${{ steps.pr.outputs.head-sha }}" \
+              --source-branch "${{ steps.pr.outputs.head-branch }}" \
+              --workflow-run-id "${{ github.event.workflow_run.id }}" \
+              --error "CI test timing artifact missing summary.json."
+          fi
+          python3 scripts/ci_test_timing_report.py render \
+            "$summary_path" \
+            --output-dir "${{ runner.temp }}/ci-test-timing-current" \
+            --main-baseline-dir "${{ runner.temp }}/ci-test-timing-main-baseline" \
+            --previous-baseline-dir "${{ runner.temp }}/ci-test-timing-previous-run"
+
+      - name: Upsert timing PR comment
+        if: steps.pr.outputs.issue-number != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          AKITA_TEST_TIMING_COMMENT: ${{ runner.temp }}/ci-test-timing-current/comment.md
+          AKITA_TEST_TIMING_ISSUE_NUMBER: ${{ steps.pr.outputs.issue-number }}
+          AKITA_TEST_TIMING_MARKER: ${{ env.AKITA_TEST_TIMING_MARKER }}
+        with:
+          script: |
+            const fs = require('fs');
+            const commentPath = process.env.AKITA_TEST_TIMING_COMMENT;
+            if (!fs.existsSync(commentPath)) {
+              core.warning('No timing comment body found in timing artifact dir.');
+              return;
+            }
+            const body = fs.readFileSync(commentPath, 'utf8');
+            const marker = String(process.env.AKITA_TEST_TIMING_MARKER || '<!-- akita-ci-test-timing -->');
+            const issue_number = Number(process.env.AKITA_TEST_TIMING_ISSUE_NUMBER);
+            const { owner, repo } = context.repo;
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 }
+            );
+            const existing = comments.find(comment =>
+              comment.user?.login === 'github-actions[bot]' &&
+              comment.body?.includes(marker)
+            );
+
+            if (existing) {
+              const response = await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated timing PR comment: ${response.data.html_url}`);
+            } else {
+              const response = await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+              core.info(`Created timing PR comment: ${response.data.html_url}`);
+            }

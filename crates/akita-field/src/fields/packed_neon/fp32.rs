@@ -95,8 +95,12 @@ impl<const P: u32> PackedFp32Neon<P> {
     #[inline(always)]
     fn mul_vec(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
         unsafe {
-            if Self::BITS == 31 && Self::C == 1 {
-                return Self::mul_mersenne31_vec(a, b);
+            if Self::BITS == 31 {
+                return if Self::C == 1 {
+                    Self::mul_mersenne31_vec(a, b)
+                } else {
+                    Self::mul_pmersenne31_vec(a, b)
+                };
             }
             let prod_lo = vmull_u32(vget_low_u32(a), vget_low_u32(b));
             let prod_hi = vmull_high_u32(a, b);
@@ -115,6 +119,73 @@ impl<const P: u32> PackedFp32Neon<P> {
             let prod_lo32 = vmulq_u32(a, b);
             let folded = vmlsq_u32(prod_lo32, prod_hi31, p);
             vminq_u32(folded, vsubq_u32(folded, p))
+        }
+    }
+
+    /// Packed multiply for 31-bit pseudo-Mersenne primes `P = 2^31 - C`
+    /// (`BITS == 31`, `C > 1`), reducing entirely in 32-bit lanes.
+    ///
+    /// This generalises the `C == 1` Mersenne kernel
+    /// ([`Self::mul_mersenne31_vec`]) to any small `C` admitted by the
+    /// `Fp32<P>` invariant `C(C+1) < P`, replacing the 64-bit-widening
+    /// [`Self::solinas_reduce`] path. It keeps all four lanes in `uint32x4_t`
+    /// and uses two `vqdmulhq_s32` high-multiplies (the same instruction the
+    /// Mersenne path uses) to extract Solinas fold high words without ever
+    /// forming a 64-bit intermediate.
+    ///
+    /// # Correctness (exact, no estimation)
+    ///
+    /// Precondition: lanes `a, b ∈ [0, P)` (the `Add`/`Sub`/`Mul` impls all
+    /// return canonical lanes, so every `mul_vec` input is canonical). Write
+    /// `z = a*b`, so `0 ≤ z ≤ (P-1)^2 < 2^62`. All steps are exact integer
+    /// identities; the only inequality used is the compile-time invariant
+    /// `C(C+1) < P`, which gives `C^2 < P < 2^31` and `C(C+2) < 2^31`.
+    ///
+    /// 1. `h = sqdmulh(a,b) = floor(2z / 2^32) = floor(z / 2^31)`, exact
+    ///    because `2z < 2^63` (no saturation), and `h ∈ [0, 2^31)`.
+    /// 2. `z_lo31 = (z mod 2^32) & (2^31-1) = z mod 2^31`, so
+    ///    `z = h·2^31 + z_lo31` exactly.
+    /// 3. Since `2^31 = P + C ≡ C (mod P)`, `z ≡ C·h + z_lo31 =: t (mod P)`.
+    /// 4. Fold `t`: `hh = sqdmulh(h, C) = floor(C·h / 2^31) ∈ [0, C)` (exact,
+    ///    `2·h·C < 2^63`), and `ch_lo31 = (C·h mod 2^32) & (2^31-1)
+    ///    = C·h mod 2^31`, so `C·h = hh·2^31 + ch_lo31`.
+    /// 5. `s = ch_lo31 + z_lo31 < 2^32` (sum of two sub-`2^31` values, no u32
+    ///    overflow). With `hp = hh + (s >> 31)` and `lo31p = s & (2^31-1)`,
+    ///    `t = hh·2^31 + s = hp·2^31 + lo31p`, and `hp ≤ (C-1) + 1 = C`.
+    /// 6. Fold again: `t ≡ C·hp + lo31p =: t' (mod P)`. Since `hp ≤ C`,
+    ///    `C·hp ≤ C^2 < 2^31` (so `vmulq_u32(hp, C)` is exact, no wrap), and
+    ///    `t' = C·hp + lo31p < C^2 + 2^31 < 2^32` (no u32 overflow).
+    /// 7. `t' < C^2 + 2^31 ≤ 2P` because `C(C+2) < 2^31 ⇔ C^2 + 2^31 < 2P`.
+    ///    Thus `t' ≡ z (mod P)` and `t' ∈ [0, 2P)`, i.e. `t' ∈ {r, r+P}` for
+    ///    `r = z mod P`. The final `vminq_u32(t', t' - P)` (wrapping sub)
+    ///    returns the canonical `r ∈ [0, P)`.
+    #[inline(always)]
+    unsafe fn mul_pmersenne31_vec(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
+        unsafe {
+            let mask31 = vdupq_n_u32((1u32 << 31) - 1);
+            let cvec = vdupq_n_u32(Self::C);
+            let p = vdupq_n_u32(P);
+
+            // Step 1-2: high/low split of z = a*b.
+            let h = vreinterpretq_u32_s32(vqdmulhq_s32(
+                vreinterpretq_s32_u32(a),
+                vreinterpretq_s32_u32(b),
+            ));
+            let z_lo31 = vandq_u32(vmulq_u32(a, b), mask31);
+
+            // Step 3-5: first Solinas fold t = C*h + z_lo31 = hp*2^31 + lo31p.
+            let hh = vreinterpretq_u32_s32(vqdmulhq_s32(
+                vreinterpretq_s32_u32(h),
+                vreinterpretq_s32_u32(cvec),
+            ));
+            let ch_lo31 = vandq_u32(vmulq_u32(h, cvec), mask31);
+            let s = vaddq_u32(ch_lo31, z_lo31);
+            let hp = vaddq_u32(hh, vshrq_n_u32::<31>(s));
+            let lo31p = vandq_u32(s, mask31);
+
+            // Step 6-7: second fold t' = C*hp + lo31p in [0, 2P), canonicalize.
+            let tprime = vaddq_u32(vmulq_u32(hp, cvec), lo31p);
+            vminq_u32(tprime, vsubq_u32(tprime, p))
         }
     }
 
@@ -170,6 +241,38 @@ impl<const P: u32> PackedFp32Neon<P> {
             let prod_hi_3 = vmull_high_u32(a[3], b[3]);
             (sum_lo, carry_lo) = Self::add_u64_with_carry(sum_lo, prod_lo_3, carry_lo);
             (sum_hi, carry_hi) = Self::add_u64_with_carry(sum_hi, prod_hi_3, carry_hi);
+
+            Self::solinas_reduce_with_carry(sum_lo, sum_hi, carry_lo, carry_hi)
+        }
+    }
+
+    #[inline(always)]
+    fn dot_product_3_vec(a: [uint32x4_t; 3], b: [uint32x4_t; 3]) -> uint32x4_t {
+        unsafe {
+            let mut sum_lo = vmull_u32(vget_low_u32(a[0]), vget_low_u32(b[0]));
+            let mut sum_hi = vmull_high_u32(a[0], b[0]);
+
+            if Self::BITS <= 31 {
+                sum_lo = vaddq_u64(sum_lo, vmull_u32(vget_low_u32(a[1]), vget_low_u32(b[1])));
+                sum_hi = vaddq_u64(sum_hi, vmull_high_u32(a[1], b[1]));
+                sum_lo = vaddq_u64(sum_lo, vmull_u32(vget_low_u32(a[2]), vget_low_u32(b[2])));
+                sum_hi = vaddq_u64(sum_hi, vmull_high_u32(a[2], b[2]));
+
+                return Self::solinas_reduce(sum_lo, sum_hi);
+            }
+
+            let mut carry_lo = vdupq_n_u64(0);
+            let mut carry_hi = vdupq_n_u64(0);
+
+            let prod_lo_1 = vmull_u32(vget_low_u32(a[1]), vget_low_u32(b[1]));
+            let prod_hi_1 = vmull_high_u32(a[1], b[1]);
+            (sum_lo, carry_lo) = Self::add_u64_with_carry(sum_lo, prod_lo_1, carry_lo);
+            (sum_hi, carry_hi) = Self::add_u64_with_carry(sum_hi, prod_hi_1, carry_hi);
+
+            let prod_lo_2 = vmull_u32(vget_low_u32(a[2]), vget_low_u32(b[2]));
+            let prod_hi_2 = vmull_high_u32(a[2], b[2]);
+            (sum_lo, carry_lo) = Self::add_u64_with_carry(sum_lo, prod_lo_2, carry_lo);
+            (sum_hi, carry_hi) = Self::add_u64_with_carry(sum_hi, prod_hi_2, carry_hi);
 
             Self::solinas_reduce_with_carry(sum_lo, sum_hi, carry_lo, carry_hi)
         }
@@ -692,47 +795,29 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
     #[inline(always)]
     fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
         let [a0, a1, a2, a3] = a.map(Self::to_vec);
-        let x0 = a0;
-        let x1 = a2;
-        let y0 = Self::sub_vec(a1, a3);
-        let y1 = a3;
-
-        let x0x1 = Self::mul_vec(x0, x1);
-        let y0y1 = Self::mul_vec(y0, y1);
-        let x1_square = Self::mul_vec(x1, x1);
-        let y1_square = Self::mul_vec(y1, y1);
-        let aa = (
-            Self::add_vec(Self::mul_vec(x0, x0), Self::add_vec(x1_square, x1_square)),
-            Self::add_vec(x0x1, x0x1),
-        );
-        let bb = (
-            Self::add_vec(Self::mul_vec(y0, y0), Self::add_vec(y1_square, y1_square)),
-            Self::add_vec(y0y1, y0y1),
-        );
-
-        let v0 = Self::mul_vec(x0, y0);
-        let v1 = Self::mul_vec(x1, y1);
-        let ab = (
-            Self::add_vec(v0, Self::add_vec(v1, v1)),
-            Self::sub_vec(
-                Self::sub_vec(
-                    Self::mul_vec(Self::add_vec(x0, x1), Self::add_vec(y0, y1)),
-                    v0,
-                ),
-                v1,
-            ),
-        );
-        let constant = (
-            Self::add_vec(Self::add_vec(bb.0, bb.0), Self::add_vec(bb.1, bb.1)),
-            Self::add_vec(bb.0, Self::add_vec(bb.1, bb.1)),
-        );
-        let coeff_e1 = (Self::add_vec(ab.0, ab.0), Self::add_vec(ab.1, ab.1));
-
+        let zero = unsafe { vdupq_n_u32(0) };
+        let two_a1 = Self::add_vec(a1, a1);
+        let two_a2 = Self::add_vec(a2, a2);
+        let two_a3 = Self::add_vec(a3, a3);
+        let neg_a3 = Self::sub_vec(zero, a3);
+        let neg_two_a3 = Self::sub_vec(zero, two_a3);
         [
-            Self::from_vec(Self::add_vec(aa.0, constant.0)),
-            Self::from_vec(Self::add_vec(coeff_e1.0, coeff_e1.1)),
-            Self::from_vec(Self::add_vec(aa.1, constant.1)),
-            Self::from_vec(coeff_e1.1),
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a2, a3],
+                [a0, two_a1, two_a2, two_a3],
+            )),
+            Self::from_vec(Self::dot_product_3_vec(
+                [a0, a1, a2],
+                [two_a1, two_a2, two_a3],
+            )),
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a1, a3],
+                [two_a2, a1, two_a3, neg_a3],
+            )),
+            Self::from_vec(Self::dot_product_3_vec(
+                [a0, a1, a2],
+                [two_a3, two_a2, neg_two_a3],
+            )),
         ]
     }
 

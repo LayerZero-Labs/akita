@@ -26,6 +26,13 @@ else
     akita-config)
       forbidden=(akita-prover akita-verifier akita-pcs)
       ;;
+    akita-planner)
+      # `akita-planner` is the `Cfg`-free schedule owner and sits *below*
+      # `akita-config` in the inverted dependency arrow. It is verifier-reachable
+      # via the runtime DP fallback, so it must never pull in a config- or
+      # protocol-layer crate, which would undo the dependency inversion.
+      forbidden=(akita-config akita-prover akita-verifier akita-setup akita-scheme akita-pcs)
+      ;;
     akita-setup)
       forbidden=(akita-verifier akita-pcs)
       ;;

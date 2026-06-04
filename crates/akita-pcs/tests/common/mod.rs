@@ -180,11 +180,27 @@ pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F,
 }
 
 pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F, DENSE_D> {
-    let mut rng = StdRng::seed_from_u64(seed);
-    let evals: Vec<F> = (0..1usize << nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect();
+    let evals = dense_field_evals(nv, seed);
     DensePoly::<F, DENSE_D>::from_field_evals(nv, &evals).expect("dense poly")
+}
+
+fn splitmix64_next(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
+    let n = 1usize << nv;
+    let mut out = Vec::with_capacity(n);
+    let mut state = seed;
+    for _ in 0..n {
+        let v = splitmix64_next(&mut state);
+        out.push(F::from_canonical_u128_reduced(v as u128));
+    }
+    out
 }
 
 #[cfg(feature = "logging-transcript")]
