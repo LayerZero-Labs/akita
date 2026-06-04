@@ -1131,7 +1131,7 @@ WAVE 0  (independent, start now, parallel)
   S7  four-square decomposition helper      [pure algorithm]           DONE
   S4  L2 norm primitives (s_l2_max, ...)    [akita-types::sis, pure]   DONE
   S2  D=64 support lower bound >= 128 bits   [research / certificate]
-  S13 paper cutover (MSIS def, gamma, thm)   [lattice-jolt, text]
+  S13 paper cutover (MSIS def, gamma, theorem)   [lattice-jolt, text]
 
 WAVE 1
   S3  threshold + transcript rejection       (S1)
