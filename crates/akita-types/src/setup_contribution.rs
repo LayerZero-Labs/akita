@@ -47,7 +47,7 @@ pub struct SetupContributionPlan<E> {
     d_required: usize,
     b_required: usize,
     a_required: usize,
-    w_eq_slice: Vec<E>,
+    e_eq_slice: Vec<E>,
     t_eq_slice_per_group: Vec<Vec<E>>,
     z_eq_slice: Vec<E>,
     d_weights: Vec<E>,
@@ -103,7 +103,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             eq_lambda,
                             segment.d_start_abs,
                             segment.d_weight,
-                            &self.w_eq_slice,
+                            &self.e_eq_slice,
                             segment.b_start_abs,
                             segment.b_weights,
                             &self.t_eq_slice_per_group,
@@ -159,7 +159,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             alpha_pows,
                             segment.d_start_abs,
                             segment.d_weight,
-                            &self.w_eq_slice,
+                            &self.e_eq_slice,
                             segment.b_start_abs,
                             segment.b_weights,
                             &self.t_eq_slice_per_group,
@@ -189,7 +189,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     fn weight_at(&self, lambda: usize, segment: &SetupSegment<'_, E>) -> E {
         let mut weight = E::zero();
         if segment.has_d {
-            weight += segment.d_weight * self.w_eq_slice[lambda - segment.d_start_abs];
+            weight += segment.d_weight * self.e_eq_slice[lambda - segment.d_start_abs];
         }
         if segment.has_b {
             for (g, t_eq_slice) in self.t_eq_slice_per_group.iter().enumerate() {
@@ -262,7 +262,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         eq_low: Option<&[E]>,
         z_block_low_eq: Option<&[E]>,
         fold_gadget: &[F],
-        offset_w: usize,
+        offset_e: usize,
         offset_t: usize,
         offset_z: usize,
     ) -> Result<Self, AkitaError>
@@ -305,8 +305,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
         let block_mask = inputs.num_blocks - 1;
-        let block_offset_low = offset_w & block_mask;
-        let w_offset_high = offset_w >> block_bits;
+        let block_offset_low = offset_e & block_mask;
+        let e_offset_high = offset_e >> block_bits;
         let t_offset_high = offset_t >> block_bits;
         let high_challenges = &full_vec_randomness[block_bits..];
         let eq_low_storage;
@@ -358,8 +358,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
         let stride_t = checked_mul(inputs.n_a, inputs.depth_open, "T stride")?;
         let cols_per_poly_t = checked_mul(stride_t, inputs.num_blocks, "T polynomial width")?;
-        let b_per_claim_w = checked_mul(inputs.num_blocks, inputs.depth_open, "W claim width")?;
-        let n_cols_w = checked_mul(inputs.num_claims, b_per_claim_w, "W column width")?;
+        let b_per_claim_e = checked_mul(inputs.num_blocks, inputs.depth_open, "e-hat claim width")?;
+        let n_cols_e = checked_mul(inputs.num_claims, b_per_claim_e, "e-hat column width")?;
         let max_group_poly_count = inputs
             .num_polys_per_commitment_group
             .iter()
@@ -368,7 +368,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .unwrap_or(0);
         let n_cols_t = checked_mul(max_group_poly_count, cols_per_poly_t, "T column width")?;
 
-        let d_required = checked_mul(n_d_active, n_cols_w, "D setup footprint")?;
+        let d_required = checked_mul(n_d_active, n_cols_e, "D setup footprint")?;
         let b_required = checked_mul(inputs.n_b, n_cols_t, "B setup footprint")?;
         let a_required = checked_mul(inputs.n_a, z_range, "A setup footprint")?;
         let required = d_required.max(b_required).max(a_required);
@@ -390,26 +390,27 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             ));
         }
 
-        let w_eq_slice: Vec<E> = if n_d_active == 0 {
+        let e_eq_slice: Vec<E> = if n_d_active == 0 {
             Vec::new()
         } else {
-            let w_hi_len = checked_mul(inputs.num_claims, inputs.depth_open, "W high-eq width")?;
-            let eq_hi_w_table: Vec<E> = (0..=w_hi_len)
-                .map(|k| eq_eval_at_index(high_challenges, w_offset_high + k))
+            let e_hi_len =
+                checked_mul(inputs.num_claims, inputs.depth_open, "e-hat high-eq width")?;
+            let eq_hi_e_table: Vec<E> = (0..=e_hi_len)
+                .map(|k| eq_eval_at_index(high_challenges, e_offset_high + k))
                 .collect();
-            cfg_into_iter!(0..n_cols_w)
+            cfg_into_iter!(0..n_cols_e)
                 .map(|current_index| {
                     let (low_eq_idx, high_eq_idx) = get_eq_indices_for_d(
                         current_index,
                         inputs.depth_open,
                         inputs.num_blocks,
                         inputs.num_claims,
-                        b_per_claim_w,
+                        b_per_claim_e,
                         block_offset_low,
                         block_mask,
                         block_bits,
                     );
-                    eq_low[low_eq_idx] * eq_hi_w_table[high_eq_idx]
+                    eq_low[low_eq_idx] * eq_hi_e_table[high_eq_idx]
                 })
                 .collect()
         };
@@ -580,7 +581,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let mut endpoints = Vec::with_capacity(n_d_active + inputs.n_b + inputs.n_a + 2);
         endpoints.push(0);
         endpoints.push(required);
-        push_role_boundaries(&mut endpoints, n_d_active, n_cols_w, "D")?;
+        push_role_boundaries(&mut endpoints, n_d_active, n_cols_e, "D")?;
         push_role_boundaries(&mut endpoints, inputs.n_b, n_cols_t, "B")?;
         push_role_boundaries(&mut endpoints, inputs.n_a, z_range, "A")?;
         endpoints.sort_unstable();
@@ -588,13 +589,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
         Ok(Self {
             required,
-            d_stride: n_cols_w,
+            d_stride: n_cols_e,
             b_stride: n_cols_t,
             z_range,
             d_required,
             b_required,
             a_required,
-            w_eq_slice,
+            e_eq_slice,
             t_eq_slice_per_group,
             z_eq_slice,
             d_weights: inputs.eq_tau1[d_start..(d_start + n_d_active)].to_vec(),
@@ -634,7 +635,7 @@ fn packed_slice_inner_sum<
     alpha_pows: &[E],
     d_start: usize,
     d_weight: E,
-    w_eq: &[E],
+    e_eq: &[E],
     b_start: usize,
     b_weights: &[E],
     t_eq_per_group: &[Vec<E>],
@@ -652,7 +653,7 @@ where
         |mut acc, lambda| {
             let mut weight = E::zero();
             if HAS_D {
-                weight += d_weight * w_eq[lambda - d_start];
+                weight += d_weight * e_eq[lambda - d_start];
             }
             if HAS_B {
                 for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
@@ -678,7 +679,7 @@ fn bar_omega_segment_eval<E, const HAS_D: bool, const HAS_B: bool, const HAS_A: 
     eq_lambda: &[E],
     d_start: usize,
     d_weight: E,
-    w_eq: &[E],
+    e_eq: &[E],
     b_start: usize,
     b_weights: &[E],
     t_eq_per_group: &[Vec<E>],
@@ -695,7 +696,7 @@ where
         |mut acc, lambda| {
             let mut weight = E::zero();
             if HAS_D {
-                weight += d_weight * w_eq[lambda - d_start];
+                weight += d_weight * e_eq[lambda - d_start];
             }
             if HAS_B {
                 for (g, t_eq_slice) in t_eq_per_group.iter().enumerate() {
@@ -721,14 +722,14 @@ fn get_eq_indices_for_d(
     num_digits: usize,
     num_blocks: usize,
     num_claims: usize,
-    blocks_per_claim_w: usize,
+    blocks_per_claim_e: usize,
     block_offset_low: usize,
     block_mask: usize,
     block_bits: usize,
 ) -> (usize, usize) {
     let digit_idx = current_index % num_digits;
     let block_idx = (current_index / num_digits) % num_blocks;
-    let claim_idx = current_index / blocks_per_claim_w;
+    let claim_idx = current_index / blocks_per_claim_e;
     let m_layout_high_idx = digit_idx * num_claims + claim_idx;
     let block_sum = block_offset_low + block_idx;
     let low_eq_idx = block_sum & block_mask;

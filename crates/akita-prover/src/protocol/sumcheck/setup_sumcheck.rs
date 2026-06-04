@@ -218,7 +218,7 @@ where
         None,
         None,
         &fold_gadget,
-        layout.offset_w,
+        layout.offset_e,
         layout.offset_t,
         layout.offset_z,
     )?;

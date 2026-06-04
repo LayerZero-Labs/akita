@@ -304,7 +304,7 @@ mod tests {
         .expect("ring opening point");
         let ring_multiplier_point =
             nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
-        let (y_ring, w_folded) = poly.evaluate_and_fold_ring(
+        let (y_ring, e_folded) = poly.evaluate_and_fold_ring(
             ring_multiplier_point
                 .b_rings()
                 .expect("nonconstant test point has ring b weights"),
@@ -329,7 +329,7 @@ mod tests {
             vec![ring_multiplier_point.clone()],
             vec![0usize],
             &[&poly],
-            vec![w_folded],
+            vec![e_folded],
             &incidence_summary,
             lp.clone(),
             vec![batched_hint],
@@ -444,7 +444,7 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (y_ring, w_folded) =
+        let (y_ring, e_folded) =
             poly.evaluate_and_fold(&ring_opening_point.b, &ring_opening_point.a, lp.block_len);
 
         let mut transcript = AkitaTranscript::<F>::new(b"ring-switch-row-regression");
@@ -462,7 +462,7 @@ mod tests {
             vec![ring_multiplier_point.clone()],
             vec![0usize],
             &[&poly],
-            vec![w_folded],
+            vec![e_folded],
             &incidence_summary,
             lp.clone(),
             vec![batched_hint],
@@ -613,7 +613,7 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let (y_ring, w_folded) = poly.evaluate_and_fold(
+        let (y_ring, e_folded) = poly.evaluate_and_fold(
             &ring_opening_point.b,
             &ring_opening_point.a,
             level_params.block_len,
@@ -634,7 +634,7 @@ mod tests {
             vec![ring_multiplier_point.clone()],
             vec![0usize],
             &[&poly],
-            vec![w_folded],
+            vec![e_folded],
             &incidence_summary,
             level_params.clone(),
             vec![batched_hint],

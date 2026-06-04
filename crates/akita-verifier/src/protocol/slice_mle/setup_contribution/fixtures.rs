@@ -29,7 +29,7 @@ pub(crate) struct SetupContributionFixture {
     pub z_block_low_eq: Vec<TestField>,
     pub alpha_pows: Vec<TestField>,
     pub fold_gadget: Vec<TestField>,
-    pub offset_w: usize,
+    pub offset_e: usize,
     pub offset_t: usize,
     pub offset_z: usize,
 }
@@ -118,7 +118,7 @@ impl SetupContributionShape {
         shape
     }
 
-    pub fn z_first_w_t_offset_carry() -> Self {
+    pub fn z_first_e_t_offset_carry() -> Self {
         let mut shape = Self::root_single_point();
         shape.num_blocks = 8;
         shape.block_len = 10;
@@ -143,22 +143,22 @@ impl SetupContributionFixture {
         let inner_width = shape.block_len * shape.depth_commit;
         let rows = 1 + shape.num_public_rows + shape.n_d + shape.n_b * num_points + shape.n_a;
 
-        let w_len = shape.depth_open * total_blocks;
+        let e_len = shape.depth_open * total_blocks;
         let t_len = shape.depth_open * shape.n_a * shape.num_blocks * num_t_vectors;
         let z_len = shape.depth_fold * shape.depth_commit * num_points * shape.block_len;
-        let (offset_w, offset_t, offset_z, total_len) = if shape.z_first {
-            (z_len, z_len + w_len, 0usize, z_len + w_len + t_len)
+        let (offset_e, offset_t, offset_z, total_len) = if shape.z_first {
+            (z_len, z_len + e_len, 0usize, z_len + e_len + t_len)
         } else {
-            (0usize, w_len, w_len + t_len, w_len + t_len + z_len)
+            (0usize, e_len, e_len + t_len, e_len + t_len + z_len)
         };
         let offset_r: usize = total_len;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
         let stride_t = shape.n_a * shape.depth_open;
         let cols_per_poly_t = stride_t * shape.num_blocks;
-        let n_cols_w = shape.num_claims * shape.num_blocks * shape.depth_open;
+        let n_cols_e = shape.num_claims * shape.num_blocks * shape.depth_open;
         let n_cols_t = shape.num_polys_per_point.iter().copied().max().unwrap() * cols_per_poly_t;
-        let max_setup_len = (shape.n_d * n_cols_w)
+        let max_setup_len = (shape.n_d * n_cols_e)
             .max(shape.n_b * n_cols_t)
             .max(shape.n_a * inner_width);
 
@@ -226,7 +226,7 @@ impl SetupContributionFixture {
             gamma: vec![TestField::one(); shape.num_claims],
             claim_to_point: shape.claim_to_point.clone(),
             witness_segment_layout: RingRelationSegmentLayout {
-                offset_w,
+                offset_e,
                 offset_t,
                 offset_z,
                 offset_r,
@@ -260,7 +260,7 @@ impl SetupContributionFixture {
             z_block_low_eq,
             alpha_pows,
             fold_gadget,
-            offset_w,
+            offset_e,
             offset_t,
             offset_z,
         }
@@ -275,7 +275,7 @@ impl SetupContributionFixture {
             Some(&self.z_block_low_eq),
             &self.alpha_pows,
             &self.fold_gadget,
-            self.offset_w,
+            self.offset_e,
             self.offset_t,
             self.offset_z,
         );
@@ -299,7 +299,7 @@ impl SetupContributionFixture {
             None,
             &self.alpha_pows,
             &self.fold_gadget,
-            self.offset_w,
+            self.offset_e,
             self.offset_t,
             self.offset_z,
         );

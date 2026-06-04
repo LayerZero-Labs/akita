@@ -7,8 +7,8 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
 };
 use akita_transcript::labels::{
-    ABSORB_SUMCHECK_W, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0,
-    CHALLENGE_TAU1,
+    ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH,
+    CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(feature = "zk")]
@@ -23,8 +23,8 @@ use akita_types::{
 #[cfg(feature = "zk")]
 use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
-    compute_r_contribution, SetupEvaluation, SetupEvaluator, SetupEvaluatorMode,
-    StructuredSliceMleEvaluator, TStructuredSlicesEvaluator, WStructuredSlicesEvaluator,
+    compute_r_contribution, EStructuredSlicesEvaluator, SetupEvaluation, SetupEvaluator,
+    SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
     ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
 use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
@@ -211,8 +211,8 @@ where
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
     // the outer wrapper just performs the witness absorb before delegating.
-    transcript.record_wire_serde(ABSORB_SUMCHECK_W, w_commitment);
-    transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
+    transcript.record_wire_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
+    transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
     ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)?
         .into_intermediate()
 }
@@ -707,7 +707,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
 
-        // Eq table over the low `log₂(num_blocks)` bits, shared by W/T
+        // Eq table over the low `log₂(num_blocks)` bits, shared by e-hat/T
         // peeled summaries and by `SetupEvaluator` direct mode.
         let offset_low_bits = self.num_blocks.trailing_zeros() as usize;
         if offset_low_bits > x_challenges.len() {
@@ -717,7 +717,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             });
         }
         let eq_low = EqPolynomial::evals(&x_challenges[..offset_low_bits])?;
-        let block_offset_low = layout.offset_w & (self.num_blocks - 1);
+        let block_offset_low = layout.offset_e & (self.num_blocks - 1);
         debug_assert_eq!(block_offset_low, layout.offset_t & (self.num_blocks - 1));
 
         // `z` peels `block_len` (not `num_blocks`) and uses its own
@@ -773,9 +773,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;
         }
 
-        // ----- W -------------------------------------------------------------
-        let w_structured_contribution = {
-            let _span = tracing::info_span!("w_structured").entered();
+        // ----- E-hat ---------------------------------------------------------
+        let e_structured_contribution = {
+            let _span = tracing::info_span!("e_structured").entered();
             let uses_ring_multipliers = ring_multiplier_points
                 .iter()
                 .any(|point| point.as_base().is_none());
@@ -831,9 +831,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                         .ok_or(AkitaError::InvalidProof)
                 })
                 .collect::<Result<_, _>>()?;
-            WStructuredSlicesEvaluator {
+            EStructuredSlicesEvaluator {
                 high_challenges,
-                offset_high: layout.offset_w >> offset_low_bits,
+                offset_high: layout.offset_e >> offset_low_bits,
                 gadget_vector: &g1_open,
                 public_block_summaries: &public_block_summaries,
                 challenge_block_summaries: &challenge_block_summaries,
@@ -872,7 +872,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     Some(&z_block_low_eq),
                     &alpha_pows,
                     &fold_gadget,
-                    layout.offset_w,
+                    layout.offset_e,
                     layout.offset_t,
                     layout.offset_z,
                 );
@@ -945,7 +945,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         };
 
         #[allow(unused_mut)]
-        let mut total = w_structured_contribution
+        let mut total = e_structured_contribution
             + t_structured_contribution
             + z_structured_contribution
             + setup_contribution

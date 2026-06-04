@@ -26,7 +26,7 @@ pub struct SetupEvaluator<'a, F: FieldCore, E: FieldCore> {
     z_block_low_eq: Option<&'a [E]>,
     alpha_pows: &'a [E],
     fold_gadget: &'a [F],
-    offset_w: usize,
+    offset_e: usize,
     offset_t: usize,
     offset_z: usize,
 }
@@ -44,7 +44,7 @@ where
         z_block_low_eq: Option<&'a [E]>,
         alpha_pows: &'a [E],
         fold_gadget: &'a [F],
-        offset_w: usize,
+        offset_e: usize,
         offset_t: usize,
         offset_z: usize,
     ) -> Self {
@@ -55,7 +55,7 @@ where
             z_block_low_eq,
             alpha_pows,
             fold_gadget,
-            offset_w,
+            offset_e,
             offset_t,
             offset_z,
         }
@@ -92,7 +92,7 @@ where
             self.eq_low,
             self.z_block_low_eq,
             self.fold_gadget,
-            self.offset_w,
+            self.offset_e,
             self.offset_t,
             self.offset_z,
         )

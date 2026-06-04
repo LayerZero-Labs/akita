@@ -5,7 +5,7 @@ use akita_types::{RingRelationSegmentLayout, SisModulusFamily};
 
 fn dummy_witness_segment_layout() -> RingRelationSegmentLayout {
     RingRelationSegmentLayout {
-        offset_w: 0,
+        offset_e: 0,
         offset_t: 0,
         offset_z: 0,
         offset_r: 0,

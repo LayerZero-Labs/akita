@@ -12,18 +12,18 @@ where
 {
     let _span = tracing::info_span!("root_evaluate_claims", num_claims = polys.len()).entered();
     let mut per_claim_y_rings = Vec::with_capacity(polys.len());
-    let mut w_folded_by_poly = Vec::with_capacity(polys.len());
+    let mut e_folded_by_poly = Vec::with_capacity(polys.len());
     for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
         let prepared_point = &prepared_points[point_idx];
-        let (y_ring, w_folded) = evaluate_poly_at_multiplier_point(
+        let (y_ring, e_folded) = evaluate_poly_at_multiplier_point(
             *poly,
             &prepared_point.ring_multiplier_point,
             block_len,
         )?;
         per_claim_y_rings.push(y_ring);
-        w_folded_by_poly.push(w_folded);
+        e_folded_by_poly.push(e_folded);
     }
-    Ok((per_claim_y_rings, w_folded_by_poly))
+    Ok((per_claim_y_rings, e_folded_by_poly))
 }
 
 fn multiplier_ring_weights<F: FieldCore, const D: usize>(
@@ -87,7 +87,7 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     next_log_basis: u32,
     commit_w_for_next: CommitW,
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
-    w_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
+    e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
@@ -141,7 +141,7 @@ where
         ring_multiplier_points,
         incidence_summary.claim_to_point().to_vec(),
         polys,
-        w_folded_by_poly,
+        e_folded_by_poly,
         incidence_summary,
         root_params.clone(),
         hints,
@@ -332,7 +332,7 @@ where
         };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
 
-        let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
+        let (per_claim_y_rings, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
             &transformed_refs,
             claim_to_point,
             &prepared_points,
@@ -401,7 +401,7 @@ where
             next_log_basis,
             commit_w_for_next,
             prepared_points,
-            w_folded_by_poly,
+            e_folded_by_poly,
             y_rings,
             #[cfg(feature = "zk")]
             y_rings_masked,
@@ -428,7 +428,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
+    let (per_claim_y_rings, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
         polys,
         claim_to_point,
         &prepared_points,
@@ -524,7 +524,7 @@ where
         ring_multiplier_points,
         incidence_summary.claim_to_point().to_vec(),
         polys,
-        w_folded_by_poly,
+        e_folded_by_poly,
         incidence_summary,
         root_params.clone(),
         hints,
@@ -711,7 +711,7 @@ where
         };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
 
-        let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
+        let (per_claim_y_rings, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
             &transformed_refs,
             claim_to_point,
             &prepared_points,
@@ -778,7 +778,7 @@ where
             expected_w_len,
             final_log_basis,
             prepared_points,
-            w_folded_by_poly,
+            e_folded_by_poly,
             y_rings,
             #[cfg(feature = "zk")]
             y_rings_masked,
@@ -802,7 +802,7 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
+    let (per_claim_y_rings, e_folded_by_poly) = evaluate_root_claims_at_prepared_points(
         polys,
         claim_to_point,
         &prepared_points,
@@ -898,7 +898,7 @@ where
         ring_multiplier_points,
         incidence_summary.claim_to_point().to_vec(),
         polys,
-        w_folded_by_poly,
+        e_folded_by_poly,
         incidence_summary,
         root_params.clone(),
         hints,
@@ -953,7 +953,7 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, B, const D: usiz
     expected_w_len: usize,
     final_log_basis: u32,
     prepared_points: Vec<PreparedRootOpeningPoint<F, D>>,
-    w_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
+    e_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
     row_coefficients: Vec<C>,
@@ -1004,7 +1004,7 @@ where
         ring_multiplier_points,
         incidence_summary.claim_to_point().to_vec(),
         polys,
-        w_folded_by_poly,
+        e_folded_by_poly,
         incidence_summary,
         root_params.clone(),
         hints,

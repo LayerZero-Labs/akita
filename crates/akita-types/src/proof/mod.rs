@@ -1,4 +1,9 @@
 //! Proof structures for the Akita protocol.
+//!
+//! Opening-side notation (paper §§3--5): pre-digit ring openings are `e_folded`;
+//! per-block opening digits are `e_hat` (`e_i = ⟨a, f_i⟩`, `ê_i = G^{-1}(e_i)`).
+//! The full next-level recursive witness stays `w` (`next_w_commitment`,
+//! `final_witness`, `num_w_vectors`, `build_w_coeffs`).
 
 //! Proof, commitment, setup, and claim data shapes.
 
@@ -72,7 +77,7 @@ pub use stage1::{
     stage1_tree_stage_shapes, validate_stage1_tree_basis,
 };
 pub use terminal_witness::{
-    i8_digits_to_bytes, terminal_w_hat_bytes_from_blocks, terminal_witness_segment_layout,
+    i8_digits_to_bytes, terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     RelationOnlyStage2Inputs, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };

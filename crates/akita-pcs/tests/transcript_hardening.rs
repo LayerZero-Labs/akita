@@ -84,7 +84,7 @@ fn event_stream_equality_small() {
 
         let mut verifier_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
-        verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_HAT);
+        verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
         <Scheme as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
             &proof,
@@ -102,7 +102,7 @@ fn event_stream_equality_small() {
         let verifier_public = public_transcript_events(verifier_transcript.events());
         assert_eq!(prover_public, verifier_public);
         assert_terminal_event_order_if_present(&prover_public)
-            .expect("terminal transcript must absorb logical w_hat");
+            .expect("terminal transcript must absorb logical e_hat");
         assert!(matches!(
             prover_transcript.events().first(),
             Some(TranscriptEvent::Preamble { .. })
@@ -147,7 +147,7 @@ fn terminal_event_order_rejects_malformed_windows() {
         (
             "terminal transcript window must not squeeze tau0",
             vec![
-                absorb_event(labels::ABSORB_TERMINAL_W_HAT),
+                absorb_event(labels::ABSORB_TERMINAL_E_HAT),
                 squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
                 absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
                 squeeze_event(ext_limb_label(labels::CHALLENGE_RING_SWITCH, 0)),
@@ -159,7 +159,7 @@ fn terminal_event_order_rejects_malformed_windows() {
         (
             "terminal stage-2 sumcheck must not precede tau1",
             vec![
-                absorb_event(labels::ABSORB_TERMINAL_W_HAT),
+                absorb_event(labels::ABSORB_TERMINAL_E_HAT),
                 squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
                 absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
                 squeeze_event(labels::CHALLENGE_RING_SWITCH),
@@ -171,7 +171,7 @@ fn terminal_event_order_rejects_malformed_windows() {
         (
             "terminal alpha must not precede witness remainder",
             vec![
-                absorb_event(labels::ABSORB_TERMINAL_W_HAT),
+                absorb_event(labels::ABSORB_TERMINAL_E_HAT),
                 squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
                 squeeze_event(labels::CHALLENGE_RING_SWITCH),
                 absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
@@ -183,7 +183,7 @@ fn terminal_event_order_rejects_malformed_windows() {
         (
             "terminal tau1 must not precede alpha",
             vec![
-                absorb_event(labels::ABSORB_TERMINAL_W_HAT),
+                absorb_event(labels::ABSORB_TERMINAL_E_HAT),
                 squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
                 absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
                 squeeze_event(labels::CHALLENGE_TAU1),
@@ -195,7 +195,7 @@ fn terminal_event_order_rejects_malformed_windows() {
         (
             "terminal tau1 limbs must be contiguous before stage-2 sumcheck",
             vec![
-                absorb_event(labels::ABSORB_TERMINAL_W_HAT),
+                absorb_event(labels::ABSORB_TERMINAL_E_HAT),
                 squeeze_event(labels::CHALLENGE_SPARSE_CHALLENGE),
                 absorb_event(labels::ABSORB_TERMINAL_W_REMAINDER),
                 squeeze_event(ext_limb_label(labels::CHALLENGE_RING_SWITCH, 0)),
@@ -226,7 +226,7 @@ fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut CleartextWitne
 
 #[derive(Clone, Copy)]
 enum TerminalTamper {
-    WHatDigit,
+    EHatDigit,
     RemainderDigit,
     WitnessLen,
     PackedPayload,
@@ -236,13 +236,13 @@ impl TerminalTamper {
     fn apply(self, witness: &mut CleartextWitnessProof<F>, layout: TerminalWitnessSegmentLayout) {
         let packed = packed_digits_mut(witness);
         match self {
-            Self::WHatDigit => mutate_packed_digit(packed, layout.w_hat_digit_offset),
+            Self::EHatDigit => mutate_packed_digit(packed, layout.e_hat_digit_offset),
             Self::RemainderDigit => {
-                let w_hat_end = layout.w_hat_digit_end().expect("terminal range");
-                let remainder_idx = if layout.w_hat_digit_offset > 0 {
+                let e_hat_end = layout.e_hat_digit_end().expect("terminal range");
+                let remainder_idx = if layout.e_hat_digit_offset > 0 {
                     0
                 } else {
-                    w_hat_end
+                    e_hat_end
                 };
                 assert!(
                     remainder_idx < packed.num_elems,
@@ -344,7 +344,7 @@ fn mutate_packed_digit(packed: &mut PackedDigits, idx: usize) {
 #[test]
 fn terminal_final_witness_tamper_rejects() {
     for tamper in [
-        TerminalTamper::WHatDigit,
+        TerminalTamper::EHatDigit,
         TerminalTamper::RemainderDigit,
         TerminalTamper::WitnessLen,
         TerminalTamper::PackedPayload,
@@ -434,7 +434,10 @@ fn pr88_regression_missing_final_w_absorb_fails_smell_check() {
     let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/pr88"));
     transcript.bind_instance_bytes(b"descriptor");
 
-    transcript.record_wire_use(labels::ABSORB_SUMCHECK_W, b"cleartext-final-w");
+    transcript.record_wire_use(
+        labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+        b"cleartext-final-w",
+    );
     transcript.append_bytes(labels::ABSORB_STOP_CONDITION, b"next-w-commitment");
     let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
 
@@ -450,8 +453,14 @@ fn pr88_regression_mutated_final_w_after_absorb_fails_smell_check() {
     let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/pr88"));
     transcript.bind_instance_bytes(b"descriptor");
 
-    transcript.append_bytes(labels::ABSORB_SUMCHECK_W, b"original-final-w");
-    transcript.record_wire_use(labels::ABSORB_SUMCHECK_W, b"mutated-final-w");
+    transcript.append_bytes(
+        labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+        b"original-final-w",
+    );
+    transcript.record_wire_use(
+        labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+        b"mutated-final-w",
+    );
     let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
 
     let errors = transcript.smell_check_errors();
@@ -465,9 +474,15 @@ fn pr88_regression_mutated_final_w_after_absorb_fails_smell_check() {
 fn smell_checks_pass_for_matched_wire_absorb() {
     let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/wire"));
     transcript.bind_instance_bytes(b"descriptor");
-    transcript.expect_wire_label(labels::ABSORB_SUMCHECK_W);
-    transcript.record_wire_use(labels::ABSORB_SUMCHECK_W, b"cleartext-final-w");
-    transcript.append_bytes(labels::ABSORB_SUMCHECK_W, b"cleartext-final-w");
+    transcript.expect_wire_label(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING);
+    transcript.record_wire_use(
+        labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+        b"cleartext-final-w",
+    );
+    transcript.append_bytes(
+        labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+        b"cleartext-final-w",
+    );
     let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
 
     transcript.assert_smell_checks();

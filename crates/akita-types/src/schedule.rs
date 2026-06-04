@@ -177,7 +177,7 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 
 /// Total ring elements in the recursive witness polynomial.
 ///
-/// Components: `w_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
+/// Components: `e_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
 pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize, AkitaError> {
     w_ring_element_count_with_counts::<F>(lp, 1, 1, 1, 1)
 }
@@ -258,7 +258,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     num_public_rows: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
-    let w_hat_count = num_w_vectors
+    let e_hat_count = num_w_vectors
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
@@ -302,7 +302,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
                 field_bits as usize,
             ))
             .ok_or_else(|| AkitaError::InvalidSetup("ZK B-blinding width overflow".to_string()))?;
-        w_hat_count
+        e_hat_count
             .checked_add(t_hat_count)
             .and_then(|n| n.checked_add(b_blinding_count))
             .and_then(|n| n.checked_add(d_blinding_count))
@@ -312,7 +312,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     }
     #[cfg(not(feature = "zk"))]
     {
-        w_hat_count
+        e_hat_count
             .checked_add(t_hat_count)
             .and_then(|n| n.checked_add(z_pre_count))
             .and_then(|n| n.checked_add(r_count))

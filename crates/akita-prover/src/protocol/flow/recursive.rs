@@ -402,7 +402,7 @@ where
 /// * builds `logical_w` via ring switching,
 /// * packs it into the terminal [`CleartextWitnessProof`] using
 ///   `final_log_basis` as the planner-mandated minimum bits per element,
-/// * absorbs logical `w_hat` before fold challenge sampling when the
+/// * absorbs logical `e_hat` before fold challenge sampling when the
 ///   ring relation is built, then absorbs the remaining final-witness
 ///   bytes before sampling any ring-switch challenges,
 /// * skips the stage-1 sumcheck entirely (packed-digit range is structurally
@@ -817,7 +817,7 @@ where
         )?]
     };
 
-    let (y_rings, w_folded_by_claim) = {
+    let (y_rings, e_folded_by_claim) = {
         let _span = tracing::info_span!(
             "evaluate_and_fold",
             level,
@@ -828,14 +828,14 @@ where
         let mut y_rings = Vec::with_capacity(prepared_points.len());
         let mut folded = Vec::with_capacity(prepared_points.len());
         for prepared_point in &prepared_points {
-            let (y_ring, w_folded) = evaluate_recursive_witness_at_multiplier_point(
+            let (y_ring, e_folded) = evaluate_recursive_witness_at_multiplier_point(
                 witness,
                 &prepared_point.ring_multiplier_point,
                 level_params.block_len,
                 level_params.num_blocks,
             )?;
             y_rings.push(y_ring);
-            folded.push(w_folded);
+            folded.push(e_folded);
         }
         (y_rings, folded)
     };
@@ -899,7 +899,7 @@ where
         ring_opening_points,
         ring_multiplier_points,
         witness,
-        w_folded_by_claim,
+        e_folded_by_claim,
         level_params.clone(),
         hint,
         transcript,
@@ -1022,7 +1022,7 @@ where
         )?]
     };
 
-    let (y_rings, w_folded_by_claim) = {
+    let (y_rings, e_folded_by_claim) = {
         let _span = tracing::info_span!(
             "evaluate_and_fold",
             level,
@@ -1033,14 +1033,14 @@ where
         let mut y_rings = Vec::with_capacity(prepared_points.len());
         let mut folded = Vec::with_capacity(prepared_points.len());
         for prepared_point in &prepared_points {
-            let (y_ring, w_folded) = evaluate_recursive_witness_at_multiplier_point(
+            let (y_ring, e_folded) = evaluate_recursive_witness_at_multiplier_point(
                 witness,
                 &prepared_point.ring_multiplier_point,
                 level_params.block_len,
                 level_params.num_blocks,
             )?;
             y_rings.push(y_ring);
-            folded.push(w_folded);
+            folded.push(e_folded);
         }
         (y_rings, folded)
     };
@@ -1104,7 +1104,7 @@ where
         ring_opening_points,
         ring_multiplier_points,
         witness,
-        w_folded_by_claim,
+        e_folded_by_claim,
         level_params.clone(),
         hint,
         transcript,

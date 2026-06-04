@@ -55,7 +55,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             None,
             &alpha_pows,
             &fold_gadget,
-            layout.offset_w,
+            layout.offset_e,
             layout.offset_t,
             layout.offset_z,
         );

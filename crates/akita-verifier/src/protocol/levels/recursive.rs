@@ -54,7 +54,7 @@ where
 /// Verify one terminal recursive fold level.
 ///
 /// At the terminal level the cleartext `final_witness` is absorbed via
-/// [`ABSORB_SUMCHECK_W`] in place of a next-witness commitment, stage-1 is
+/// [`ABSORB_NEXT_LEVEL_WITNESS_BINDING`] in place of a next-witness commitment, stage-1 is
 /// skipped (packed-digit range is structurally enforced), and stage-2 runs
 /// in relation-only mode.
 ///

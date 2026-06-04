@@ -366,7 +366,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 /// Terminal fold-level proof.
 ///
 /// Ships `final_witness` in cleartext, absorbed into the transcript at the
-/// `ABSORB_SUMCHECK_W` position in place of the prior `next_w_commitment`.
+/// `ABSORB_NEXT_LEVEL_WITNESS_BINDING` position in place of the prior `next_w_commitment`.
 /// Drops the redundant proof components at the terminal: `stage1`
 /// (`PackedDigits` structurally enforces digit range), `next_w_commitment`
 /// (replaced by `final_witness`), and `next_w_eval` (verifier computes
@@ -385,7 +385,7 @@ pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
     pub stage2_sumcheck: SumcheckProof<L>,
     #[cfg(feature = "zk")]
     pub stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
-    /// Terminal witness, absorbed via `ABSORB_SUMCHECK_W` in place of
+    /// Terminal witness, absorbed via `ABSORB_NEXT_LEVEL_WITNESS_BINDING` in place of
     /// `next_w_commitment`.
     pub final_witness: CleartextWitnessProof<F>,
 }
@@ -456,7 +456,7 @@ pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
     /// Optional extension-opening reduction payload. `None` until the
     /// extension-opening reduction cutover is wired into the root path.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    /// Aggregated `v = Σ_ell D_ell · w_hat_ell`.
+    /// Aggregated `v = Σ_ell D_ell · e_hat_ell`.
     pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
     pub stage1: AkitaStage1Proof<L>,
@@ -848,7 +848,7 @@ pub enum AkitaProofStep<F: FieldCore, L: FieldCore> {
     /// the stage-1 range-check tree.
     Intermediate(AkitaLevelProof<F, L>),
     /// Terminal fold level. Ships `final_witness` in cleartext (absorbed via
-    /// `ABSORB_SUMCHECK_W`) and drops `stage1`, `next_w_commitment`,
+    /// `ABSORB_NEXT_LEVEL_WITNESS_BINDING`) and drops `stage1`, `next_w_commitment`,
     /// `next_w_eval`.
     Terminal(TerminalLevelProof<F, L>),
 }
