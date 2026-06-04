@@ -175,12 +175,16 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    L: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    L: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
@@ -439,12 +443,16 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    L: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    L: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
 {
@@ -579,9 +587,9 @@ pub(in crate::protocol::flow) fn recursive_witness_base_evals<F>(
 where
     F: FieldCore + FromPrimitiveInt,
 {
-    logical_w
-        .as_i8_digits()
-        .iter()
+    // Pure order-preserving map; the indexed parallel collect yields the same
+    // ordering as the serial map, so the base-field witness table is identical.
+    cfg_iter!(logical_w.as_i8_digits())
         .copied()
         .map(F::from_i8)
         .collect()
@@ -596,7 +604,7 @@ pub(in crate::protocol::flow) fn prove_recursive_extension_opening_reduction<F, 
 ) -> Result<RecursiveExtensionOpeningReduction<L>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: ExtField<F> + AkitaSerialize,
+    L: ExtField<F> + HasUnreducedOps + HasOptimizedFold + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let num_vars = opening_point.len();
@@ -616,9 +624,17 @@ where
             actual: logical_w.len(),
         });
     }
-    let mut base_evals = recursive_witness_base_evals::<F>(logical_w);
-    base_evals.resize(padded_len, F::zero());
-    let tensor = tensor_partials_from_base_evals::<F, L>(num_vars, &base_evals, opening_point)?;
+    let _eor_prep_span = tracing::info_span!("recursive_eor_prepare", num_vars).entered();
+    let base_evals = {
+        let _s = tracing::info_span!("eor_base_evals").entered();
+        let mut base_evals = recursive_witness_base_evals::<F>(logical_w);
+        base_evals.resize(padded_len, F::zero());
+        base_evals
+    };
+    let tensor = {
+        let _s = tracing::info_span!("eor_tensor_partials").entered();
+        tensor_partials_from_base_evals::<F, L>(num_vars, &base_evals, opening_point)?
+    };
     check_tensor_extension_opening_claim::<F, L>(
         opening_point,
         expected_opening,
@@ -652,29 +668,35 @@ where
     #[cfg(not(feature = "zk"))]
     debug_assert_eq!(input_claim, true_input_claim);
     let tail_point = &opening_point[split_bits..];
-    let packed_witness = tensor_packed_witness_evals::<F, L>(num_vars, &base_evals)?;
-    let factor_evals = tensor_equality_factor_evals::<F, L>(tail_point, &eta)?;
-    let prover = ExtensionOpeningReductionProver::new(packed_witness, factor_evals)?;
+    let packed_witness = {
+        let _s = tracing::info_span!("eor_packed_witness").entered();
+        tensor_packed_witness_evals::<F, L>(num_vars, &base_evals)?
+    };
+    let factor_evals = {
+        let _s = tracing::info_span!("eor_factor_evals").entered();
+        tensor_equality_factor_evals::<F, L>(tail_point, &eta)?
+    };
+    let prover = ExtensionOpeningReductionProver::from_dense_tables(packed_witness, factor_evals)?;
     if prover.input_claim() != true_input_claim {
         return Err(AkitaError::InvalidInput(
             "extension-opening reduction input claim mismatch".to_string(),
         ));
     }
     let mut prover = prover;
-    #[cfg(feature = "zk")]
-    let reduction_sumcheck =
-        ExtensionOpeningReductionSumcheck::new(input_claim, prover.num_rounds());
+    drop(_eor_prep_span);
+    let _eor_sumcheck_span = tracing::info_span!(
+        "extension_opening_reduction_sumcheck",
+        path = "recursive",
+        num_rounds = prover.num_rounds()
+    )
+    .entered();
     #[cfg(not(feature = "zk"))]
-    let reduction_sumcheck =
-        ExtensionOpeningReductionSumcheck::new(prover.input_claim(), prover.num_rounds());
-    #[cfg(not(feature = "zk"))]
-    let (sumcheck, result) =
-        reduction_sumcheck.prove::<F, _, _>(&mut prover, transcript, |tr| {
-            sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-        })?;
+    let (sumcheck, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
+        sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+    })?;
     #[cfg(feature = "zk")]
-    let (sumcheck_proof_masked, result) = reduction_sumcheck.prove_zk::<F, _, _>(
-        &mut prover,
+    let (sumcheck_proof_masked, rho) = prover.prove_zk::<F, T, _>(
+        input_claim,
         transcript,
         |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         sumcheck_pads,
@@ -685,14 +707,15 @@ where
                 "extension-opening reduction has not reached a final point".to_string(),
             )
         })?;
-    let final_factor =
-        tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &result.challenges)?;
+    let final_factor = tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &rho)?;
     if final_factor != final_factor_from_table {
         return Err(AkitaError::InvalidInput(
             "extension-opening reduction transparent factor mismatch".to_string(),
         ));
     }
-    check_extension_opening_reduction_output(result.final_claim, final_witness, final_factor)?;
+    #[cfg(feature = "zk")]
+    let final_claim = final_witness * final_factor;
+    check_extension_opening_reduction_output(final_claim, final_witness, final_factor)?;
     Ok(RecursiveExtensionOpeningReduction {
         proof: ExtensionOpeningReductionProof {
             partials: proof_partials,
@@ -701,8 +724,8 @@ where
             #[cfg(feature = "zk")]
             sumcheck_proof_masked,
         },
-        rho: result.challenges,
-        final_claim: result.final_claim,
+        rho,
+        final_claim,
         final_factor,
     })
 }
@@ -744,7 +767,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -752,8 +774,10 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
@@ -948,7 +972,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -956,8 +979,10 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
 {
@@ -1147,7 +1172,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -1155,8 +1179,10 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
@@ -1229,7 +1255,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -1237,8 +1262,10 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,

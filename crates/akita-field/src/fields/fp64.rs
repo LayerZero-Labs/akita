@@ -342,6 +342,34 @@ impl<const P: u64> Fp64<P> {
     pub fn solinas_reduce(x: u128) -> Self {
         Self(Self::reduce_u128(x))
     }
+
+    /// Reduce the integer sum `w0 + w1` of two products of canonical residues
+    /// (each `a·b` with `a, b < P`, so each `< 2^{2·BITS}`) to a canonical
+    /// field element.
+    ///
+    /// Used by the specialized `Fp2<Fp64>` EOR fold, which forms each output
+    /// coordinate as a sum of two base-field products before a single
+    /// reduction.
+    ///
+    /// - Sub-word primes (`BITS < 64`): each product is `< 2^{2·BITS} ≤ 2^126`,
+    ///   so the sum is `< 2^127` and never overflows `u128`; reduce directly.
+    /// - Full-word primes (`BITS == 64`, `P = 2^64 − C` with `C < 2^32`): the
+    ///   sum can reach `< 2^129`. Split it into 64-bit limbs and fold the high
+    ///   parts with `2^64 ≡ C` and `2^128 ≡ C² (mod P)`. The folded value is
+    ///   `< 2^97`, which `solinas_reduce` finishes. The result is congruent to
+    ///   `w0 + w1 (mod P)`, hence byte-identical to the canonical reduction.
+    #[inline(always)]
+    pub(crate) fn reduce_sum_of_two_products(w0: u128, w1: u128) -> Self {
+        if Self::BITS < 64 {
+            Self::solinas_reduce(w0.wrapping_add(w1))
+        } else {
+            let (s, carry) = w0.overflowing_add(w1);
+            let cc = Self::C as u128;
+            let folded =
+                (s as u64 as u128) + ((s >> 64) as u64 as u128) * cc + (carry as u128) * cc * cc;
+            Self::solinas_reduce(folded)
+        }
+    }
 }
 
 impl<const P: u64> Add for Fp64<P> {

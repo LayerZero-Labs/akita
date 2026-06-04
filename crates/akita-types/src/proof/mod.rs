@@ -77,17 +77,16 @@ pub use terminal_witness::{
     RelationOnlyStage2Inputs, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
 };
 
+use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
-#[cfg(not(feature = "zk"))]
-use akita_sumcheck::EqFactoredSumcheckProof;
-use akita_sumcheck::SumcheckProof;
-pub use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_sumcheck::{uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProofShape};
+#[cfg(not(feature = "zk"))]
+use akita_sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
 #[cfg(feature = "zk")]
 use akita_sumcheck::{EqFactoredSumcheckProofMasked, SumcheckProofMasked};
 use akita_transcript::Transcript;

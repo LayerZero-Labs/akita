@@ -681,13 +681,13 @@ mod tests {
         AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
         AkitaStage2Proof, CleartextWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
         MRowLayout, PackedDigits, SisModulusFamily, TerminalLevelProof,
+        EXTENSION_OPENING_REDUCTION_DEGREE,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::{AkitaError, FieldCore, Prime128OffsetA7F7};
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::EqFactoredUniPoly;
-    use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
     #[cfg(not(feature = "zk"))]
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
     #[cfg(feature = "zk")]

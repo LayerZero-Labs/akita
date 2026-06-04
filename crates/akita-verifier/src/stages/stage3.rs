@@ -10,10 +10,11 @@ use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::ExtensionOpeningReductionSumcheck;
-use akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND;
+use akita_transcript::labels::{ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND};
 use akita_transcript::{sample_ext_challenge, Transcript};
-use akita_types::{gadget_row_scalars, AkitaExpandedSetup, SetupSumcheckProof};
+use akita_types::{
+    gadget_row_scalars, AkitaExpandedSetup, SetupSumcheckProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 const SETUP_MLE_MARKER: &str = "setup_product_mle_fold";
@@ -103,11 +104,15 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + AkitaSerialize,
         T: Transcript<F>,
     {
-        let result = ExtensionOpeningReductionSumcheck::new(proof.claim, self.rounds)
-            .verify::<F, _, _>(&proof.sumcheck, transcript, |tr| {
-                sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-            })?;
-        let (rho_y, rho_lambda) = result.challenges.split_at(self.ring_bits);
+        transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
+        let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
+            proof.claim,
+            self.rounds,
+            EXTENSION_OPENING_REDUCTION_DEGREE,
+            transcript,
+            |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+        )?;
+        let (rho_y, rho_lambda) = challenges.split_at(self.ring_bits);
 
         // Distinct per-fold marker suffix so Jolt does not aggregate every
         // recursion level's setup-product sumcheck under one marker name.
@@ -127,7 +132,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         jolt_end_cycle_tracking(&omega_marker);
         jolt_start_cycle_tracking(&alpha_check_marker);
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
-        if result.final_claim != setup_val * omega * alpha_val {
+        if final_claim != setup_val * omega * alpha_val {
             jolt_end_cycle_tracking(&alpha_check_marker);
             return Err(AkitaError::InvalidProof);
         }

@@ -10,6 +10,7 @@ where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
 {
+    let _span = tracing::info_span!("root_evaluate_claims", num_claims = polys.len()).entered();
     let mut per_claim_y_rings = Vec::with_capacity(polys.len());
     let mut w_folded_by_poly = Vec::with_capacity(polys.len());
     for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
@@ -97,8 +98,13 @@ fn finish_root_fold_with_prepared_openings<F, C, T, P, B, const D: usize, Commit
     setup_contribution_mode: SetupContributionMode,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
+    C: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
@@ -217,12 +223,13 @@ pub fn prove_root_fold_with_params<F, E, C, T, P, B, const D: usize, CommitW>(
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    E: RingSubfieldEncoding<F>,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
+    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F>
         + ExtField<E>
         + ExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,
@@ -300,20 +307,29 @@ where
             #[cfg(feature = "zk")]
             &mut zk_hiding,
         )?;
-        let protocol_point = ring_subfield_packed_extension_opening_point::<F, C, D>(
-            reduction.rho.len(),
-            &reduction.rho,
-        )?;
-        let prepared_protocol_point = prepare_root_opening_point_ext::<F, C, C, D>(
-            &protocol_point,
-            basis,
-            root_params,
-            alpha_bits,
-        )?;
+        let protocol_point = {
+            let _span = tracing::info_span!("root_extension_protocol_point").entered();
+            ring_subfield_packed_extension_opening_point::<F, C, D>(
+                reduction.rho.len(),
+                &reduction.rho,
+            )?
+        };
+        let prepared_protocol_point = {
+            let _span = tracing::info_span!("root_extension_prepare_protocol_point").entered();
+            prepare_root_opening_point_ext::<F, C, C, D>(
+                &protocol_point,
+                basis,
+                root_params,
+                alpha_bits,
+            )?
+        };
         prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
-        let transformed_polys = cfg_iter!(polys)
-            .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
-            .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?;
+        let transformed_polys = {
+            let _span = tracing::info_span!("root_extension_transform_polys", num_claims).entered();
+            cfg_iter!(polys)
+                .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
+                .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?
+        };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
 
         let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
@@ -587,9 +603,14 @@ pub fn prove_terminal_root_fold_with_params<F, E, C, T, P, B, const D: usize>(
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    E: RingSubfieldEncoding<F>,
-    C: RingSubfieldEncoding<F> + ExtField<E> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
+    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
+    C: RingSubfieldEncoding<F>
+        + ExtField<E>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
@@ -664,21 +685,30 @@ where
             #[cfg(feature = "zk")]
             zk_hiding,
         )?;
-        let protocol_point = ring_subfield_packed_extension_opening_point::<F, C, D>(
-            reduction.rho.len(),
-            &reduction.rho,
-        )?;
-        let prepared_protocol_point = prepare_root_opening_point_ext::<F, C, C, D>(
-            &protocol_point,
-            basis,
-            root_params,
-            alpha_bits,
-        )?;
+        let protocol_point = {
+            let _span = tracing::info_span!("root_extension_protocol_point").entered();
+            ring_subfield_packed_extension_opening_point::<F, C, D>(
+                reduction.rho.len(),
+                &reduction.rho,
+            )?
+        };
+        let prepared_protocol_point = {
+            let _span = tracing::info_span!("root_extension_prepare_protocol_point").entered();
+            prepare_root_opening_point_ext::<F, C, C, D>(
+                &protocol_point,
+                basis,
+                root_params,
+                alpha_bits,
+            )?
+        };
         prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
-        let transformed_polys = polys
-            .iter()
-            .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
-            .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?;
+        let transformed_polys = {
+            let _span = tracing::info_span!("root_extension_transform_polys", num_claims).entered();
+            polys
+                .iter()
+                .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
+                .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?
+        };
         let transformed_refs = transformed_polys.iter().collect::<Vec<_>>();
 
         let (per_claim_y_rings, w_folded_by_poly) = evaluate_root_claims_at_prepared_points(
@@ -932,8 +962,13 @@ fn finish_terminal_root_fold_with_prepared_openings<F, C, T, P, B, const D: usiz
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
+    C: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     B: ProverComputeBackend<F>,
@@ -1048,8 +1083,13 @@ pub fn prove_root_fold_from_ring_relation<F, C, T, B, const D: usize, CommitW>(
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
+    C: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
@@ -1072,16 +1112,19 @@ where
     } = next_commitment;
     let w_commitment_proof = committed_commitment.clone();
 
-    let rs = ring_switch_finalize_with_gamma::<F, C, T, D>(
-        &instance,
-        expanded,
-        transcript,
-        &logical_w,
-        &w_commitment_proof,
-        lp,
-        &row_coefficients,
-        MRowLayout::WithDBlock,
-    )?;
+    let rs = {
+        let _span = tracing::info_span!("root_ring_switch_finalize").entered();
+        ring_switch_finalize_with_gamma::<F, C, T, D>(
+            &instance,
+            expanded,
+            transcript,
+            &logical_w,
+            &w_commitment_proof,
+            lp,
+            &row_coefficients,
+            MRowLayout::WithDBlock,
+        )?
+    };
 
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
         &rs.tau1,
@@ -1298,8 +1341,13 @@ pub fn prove_terminal_root_fold_from_ring_relation<F, C, T, B, const D: usize>(
     #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, C>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    C: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField,
+    C: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
 {

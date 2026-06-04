@@ -253,7 +253,6 @@ dependencies = [
  "akita-field",
  "akita-serialization",
  "akita-transcript",
- "rayon",
  "tracing",
 ]
 
@@ -279,6 +278,7 @@ dependencies = [
  "akita-transcript",
  "blake2 0.10.6",
  "rand_core 0.6.4",
+ "rayon",
  "sha3 0.10.9",
  "tracing",
 ]

@@ -211,7 +211,10 @@ where
         BasisMode,
     ) -> Result<AkitaBatchedProof<F, L>, AkitaError>,
 {
-    let prepared_claims = prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?;
+    let prepared_claims = {
+        let _span = tracing::info_span!("prepare_batched_prove_inputs").entered();
+        prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?
+    };
     let num_vars = prepared_claims.incidence_summary.num_vars();
     let mut schedule = select_schedule(&prepared_claims.incidence_summary)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
@@ -393,17 +396,17 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    E: RingSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F> + MulBaseUnreduced<F>,
     C: RingSubfieldEncoding<F>
         + ExtField<E>
         + ExtField<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
     T: Transcript<F>,

@@ -21,12 +21,11 @@ akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-r1cs = { version = "0.1.0", path = "../akita-r1cs", optional = true }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
-rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [features]
 default = []
-parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
+parallel = ["akita-algebra/parallel", "akita-field/parallel"]
 zk = [
   "dep:akita-r1cs",
   "akita-algebra/zk",

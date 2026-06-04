@@ -2,7 +2,7 @@
 
 use super::eq_poly::EqPolynomial;
 use crate::{cfg_fold_reduce, FieldCore, FromPrimitiveInt, Zero};
-use akita_field::fields::wide::{HasWide, ReduceTo};
+use akita_field::fields::wide::{HasOptimizedFold, HasWide, ReduceTo};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::AkitaError;
@@ -194,15 +194,36 @@ fn multilinear_eval_ref<E: FieldCore>(evals: &[E], point: &[E]) -> E {
 /// than 2 elements. This is a prover-only helper where the caller guarantees
 /// well-formed input.
 #[tracing::instrument(skip_all, name = "fold_evals_in_place")]
-pub fn fold_evals_in_place<E: FieldCore>(evals: &mut Vec<E>, r: E) {
+pub fn fold_evals_in_place<E: HasOptimizedFold>(evals: &mut Vec<E>, r: E) {
     assert!(
         evals.len().is_power_of_two(),
         "evals length must be a power of two"
     );
     assert!(evals.len() >= 2, "evals must have at least 2 elements");
     let half = evals.len() / 2;
+    let ctx = E::precompute_fold(r);
+
+    // The fold writes output index `i` while reading inputs `2*i`/`2*i+1`, so a
+    // naive in-place parallel loop would race (writing `evals[i]` clobbers an
+    // input `evals[2*i']` another task still needs). For large tables we instead
+    // build a fresh buffer in parallel; small/late rounds stay in-place serial
+    // to avoid rayon fork-join overhead.
+    #[cfg(feature = "parallel")]
+    {
+        const PAR_FOLD_THRESHOLD: usize = 1 << 12;
+        if half >= PAR_FOLD_THRESHOLD {
+            let src: &[E] = evals;
+            let folded: Vec<E> = (0..half)
+                .into_par_iter()
+                .map(|i| E::fold_one(&ctx, src[2 * i], src[2 * i + 1]))
+                .collect();
+            *evals = folded;
+            return;
+        }
+    }
+
     for i in 0..half {
-        evals[i] = evals[2 * i] + r * (evals[2 * i + 1] - evals[2 * i]);
+        evals[i] = E::fold_one(&ctx, evals[2 * i], evals[2 * i + 1]);
     }
     evals.truncate(half);
 }

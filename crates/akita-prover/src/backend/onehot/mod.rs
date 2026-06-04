@@ -29,6 +29,7 @@
 //!     kernel based on the actual layout in use.
 //!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial.
 
+use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
@@ -37,7 +38,6 @@ use akita_field::parallel::*;
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
-use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
     CleartextWitnessProof, FlatDigitBlocks, FlatRingVec, RingMatrixView, RingSubfieldEncoding,
 };
