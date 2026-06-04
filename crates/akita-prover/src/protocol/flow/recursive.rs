@@ -1107,10 +1107,7 @@ where
     let reduction = if <L as ExtField<F>>::EXT_DEGREE == 1 {
         None
     } else {
-        let logical_w = current_state
-            .logical_w
-            .as_ref()
-            .unwrap_or(&current_state.w);
+        let logical_w = current_state.logical_w.as_ref().unwrap_or(&current_state.w);
         Some(prove_recursive_extension_opening_reduction::<F, L, T>(
             logical_w,
             opening_point,
