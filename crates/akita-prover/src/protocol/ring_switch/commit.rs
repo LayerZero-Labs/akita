@@ -133,22 +133,6 @@ where
     Ok((RingCommitment { u }, hint))
 }
 
-/// Recursive-commitment layout derived from `Cfg` decomposition policy.
-fn recursive_w_commit_layout<Cfg>(
-    commit_params: &LevelParams,
-    current_w_len: usize,
-) -> Result<LevelParams, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    recursive_level_layout_from_params(
-        commit_params,
-        current_w_len,
-        Cfg::decomposition(),
-        Cfg::ring_subfield_embedding_norm_bound(),
-    )
-}
-
 /// Dispatch a recursive `w` commitment to the selected ring dimension under
 /// config `Cfg`.
 ///
@@ -175,13 +159,12 @@ where
     dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
         let prepared_commit = backend.prepare_expanded::<D_COMMIT>(expanded.clone())?;
         if <Cfg::ChallengeField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
-            let commit_layout = recursive_w_commit_layout::<Cfg>(&commit_params, logical_w.len())?;
             let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
                 logical_w,
                 expanded.as_ref(),
                 backend,
                 &prepared_commit,
-                &commit_layout,
+                &commit_params,
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
@@ -189,18 +172,19 @@ where
                 hint: RecursiveCommitmentHintCache::from_typed(wh)?,
             })
         } else {
+            // The tensor pack is length-preserving (it redistributes the same
+            // digit count), so the committed witness fits the schedule's
+            // recursive commit params directly — no per-length re-derivation.
             let committed_w =
                 tensor_pack_recursive_witness::<Cfg::Field, Cfg::ChallengeField, { D_COMMIT }>(
                     logical_w,
                 )?;
-            let commit_layout =
-                recursive_w_commit_layout::<Cfg>(&commit_params, committed_w.len())?;
             let (wc, wh) = commit_w::<Cfg::Field, B, { D_COMMIT }>(
                 &committed_w,
                 expanded.as_ref(),
                 backend,
                 &prepared_commit,
-                &commit_layout,
+                &commit_params,
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),
@@ -237,13 +221,12 @@ where
 {
     if commit_params.ring_dimension == D {
         if <Cfg::ChallengeField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
-            let commit_layout = recursive_w_commit_layout::<Cfg>(commit_params, logical_w.len())?;
             let (wc, wh) = commit_w::<Cfg::Field, B, D>(
                 logical_w,
                 expanded.as_ref(),
                 backend,
                 prepared,
-                &commit_layout,
+                commit_params,
             )?;
             Ok(NextWitnessCommitment {
                 witness: None,
@@ -251,15 +234,16 @@ where
                 hint: RecursiveCommitmentHintCache::from_typed(wh)?,
             })
         } else {
+            // The tensor pack is length-preserving, so the committed witness
+            // fits the schedule's recursive commit params directly.
             let committed_w =
                 tensor_pack_recursive_witness::<Cfg::Field, Cfg::ChallengeField, D>(logical_w)?;
-            let commit_layout = recursive_w_commit_layout::<Cfg>(commit_params, committed_w.len())?;
             let (wc, wh) = commit_w::<Cfg::Field, B, D>(
                 &committed_w,
                 expanded.as_ref(),
                 backend,
                 prepared,
-                &commit_layout,
+                commit_params,
             )?;
             Ok(NextWitnessCommitment {
                 witness: Some(committed_w),

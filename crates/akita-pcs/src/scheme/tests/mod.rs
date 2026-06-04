@@ -127,15 +127,11 @@ fn expected_same_point_batched_shape(
         let (level_params, next_level_params) =
             scheduled_fold_execution(&schedule, current_level, inputs, current_log_basis)
                 .expect("scheduled recursive fold");
-        let current_lp = akita_types::recursive_level_layout_from_params(
-            &level_params,
-            current_w_len,
-            OneHotCfg::decomposition(),
-            OneHotCfg::ring_subfield_embedding_norm_bound(),
-        )
-        .expect("recursive layout");
+        // The schedule's recursive fold params already are the fully expanded
+        // layout the prover/verifier use for this level.
+        let current_lp = &level_params;
         let next_w_len =
-            w_ring_element_count::<OneHotF>(&current_lp).unwrap() * current_lp.ring_dimension;
+            w_ring_element_count::<OneHotF>(current_lp).unwrap() * current_lp.ring_dimension;
         let rounds = batched_shape_rounds(current_lp.ring_dimension, next_w_len);
         step_shapes.push(AkitaProofStepShape::Intermediate(LevelProofShape {
             y_ring_coeffs: current_lp.ring_dimension,
@@ -163,19 +159,14 @@ fn expected_same_point_batched_shape(
     let (terminal_params, terminal_next_params) =
         scheduled_fold_execution(&schedule, current_level, terminal_inputs, current_log_basis)
             .expect("scheduled terminal fold");
-    let terminal_lp = akita_types::recursive_level_layout_from_params(
-        &terminal_params,
-        current_w_len,
-        OneHotCfg::decomposition(),
-        OneHotCfg::ring_subfield_embedding_norm_bound(),
-    )
-    .expect("terminal layout");
+    // The schedule's terminal fold params already are the fully expanded layout.
+    let terminal_lp = &terminal_params;
     // The terminal recursive fold ships its `w` in cleartext under
     // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
     // the expected packed-digit witness shape uses the terminal-layout ring
     // count instead of the intermediate-layout `w_ring_element_count`.
     let terminal_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<OneHotF>(
-        &terminal_lp,
+        terminal_lp,
         1,
         1,
         1,

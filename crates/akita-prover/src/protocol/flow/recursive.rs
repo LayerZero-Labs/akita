@@ -1292,12 +1292,12 @@ where
         #[cfg(feature = "zk")]
         zk_hiding,
     } = current_state;
-    let w_lp = recursive_level_layout_from_params(
-        level_params,
-        current_w.len(),
-        Cfg::decomposition(),
-        Cfg::ring_subfield_embedding_norm_bound(),
-    )?;
+    // The schedule's recursive fold params already carry the fully expanded
+    // SIS-secure layout for this level (the verifier opens against exactly
+    // these); the runtime witness length is validated to match the planned
+    // `current_w_len` by `scheduled_fold_execution`, so no re-derivation is
+    // needed.
+    let w_lp = level_params;
     let w_view = current_w.view::<Cfg::Field, D>()?;
     let logical_w = logical_w.as_ref().unwrap_or(&current_w);
     let typed_hint: AkitaCommitmentHint<Cfg::Field, D> = hint.to_typed::<D>()?;
@@ -1315,7 +1315,7 @@ where
         typed_hint,
         &commitment,
         level,
-        &w_lp,
+        w_lp,
         next_params.log_basis,
         #[cfg(feature = "zk")]
         zk_hiding,
@@ -1367,12 +1367,10 @@ where
     let _setup_span = tracing::info_span!("inter_level_setup_terminal", level).entered();
 
     let current_w = &current_state.w;
-    let w_lp = recursive_level_layout_from_params(
-        level_params,
-        current_w.len(),
-        Cfg::decomposition(),
-        Cfg::ring_subfield_embedding_norm_bound(),
-    )?;
+    // The schedule's terminal fold params already carry the fully expanded
+    // layout for this level; the witness length is validated against the
+    // planned `current_w_len` upstream, so no re-derivation is needed.
+    let w_lp = level_params;
     let w_view = current_w.view::<Cfg::Field, D>()?;
     let logical_w = current_state.logical_w.as_ref().unwrap_or(current_w);
     let typed_hint: AkitaCommitmentHint<Cfg::Field, D> = current_state.hint.to_typed::<D>()?;
@@ -1390,7 +1388,7 @@ where
         typed_hint,
         &current_state.commitment,
         level,
-        &w_lp,
+        w_lp,
         final_log_basis,
         #[cfg(feature = "zk")]
         &mut current_state.zk_hiding,

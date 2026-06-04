@@ -1,18 +1,17 @@
 //! Layout, parameter, opening-point, and proof-size helpers.
 //!
-//! Pure data and pure verifier-reachable helpers only. The SIS-secure rank
-//! derivation lives in [`crate::layout::sis_derivation`]; the digit-math
-//! search loop (`optimal_m_r_split` callers, the (m, r) sweep) lives in
-//! `akita_planner::schedule_params`. This module retains the layout glue
-//! the verifier replay path reaches through `CommitmentConfig` and
-//! `akita_planner::schedule_from_entry`.
+//! Pure data and pure verifier-reachable helpers only. The recursion layout is
+//! owned by the schedule: the planner builds each fold level's `LevelParams`
+//! (`akita_planner::schedule_from_entry` / `find_schedule`, using the
+//! digit-math `optimal_m_r_split` sweep), and prover/verifier read those params
+//! directly. This module retains the layout glue the replay path reaches
+//! through `CommitmentConfig`.
 
 pub mod digit_math;
 pub mod flat_matrix;
 pub mod opening_point;
 pub mod params;
 pub mod proof_size;
-pub mod sis_derivation;
 
 pub use digit_math::gadget_row_scalars;
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
@@ -26,4 +25,3 @@ pub use proof_size::{
     packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
     root_extension_opening_partials, sumcheck_rounds,
 };
-pub use sis_derivation::{level_layout_from_params, recursive_level_layout_from_params};
