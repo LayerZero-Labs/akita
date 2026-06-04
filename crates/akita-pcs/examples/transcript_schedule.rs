@@ -21,7 +21,7 @@ fn main() {
         &F::from_canonical_u128_reduced(42),
     );
     let _ = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
-    transcript.append_bytes(labels::ABSORB_TERMINAL_W_HAT, b"terminal-w-hat");
+    transcript.append_bytes(labels::ABSORB_TERMINAL_E_HAT, b"terminal-e-hat");
     let _ = transcript.challenge_scalar(labels::CHALLENGE_SPARSE_CHALLENGE);
     transcript.append_bytes(labels::ABSORB_TERMINAL_W_REMAINDER, b"terminal-w-remainder");
     let _ = transcript.challenge_scalar(labels::CHALLENGE_RING_SWITCH);

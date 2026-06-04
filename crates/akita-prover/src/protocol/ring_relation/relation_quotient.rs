@@ -127,7 +127,7 @@ fn add_cyclic_scalar_ring_product<F: FieldCore, const D: usize>(
 }
 
 fn cyclic_public_row_product<F, const D: usize>(
-    w_folded: &[CyclotomicRing<F, D>],
+    e_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
     row_coefficient_rings: &[CyclotomicRing<F, D>],
@@ -153,7 +153,7 @@ where
                 .checked_mul(blocks_per_claim)
                 .and_then(|idx| idx.checked_add(block_idx))
                 .ok_or(AkitaError::InvalidProof)?;
-            let folded = w_folded.get(folded_idx).ok_or(AkitaError::InvalidProof)?;
+            let folded = e_folded.get(folded_idx).ok_or(AkitaError::InvalidProof)?;
             let weighted_multiplier = if let Some(scalar) = point.b_constant_coeff(block_idx) {
                 row_coefficient_rings[claim_idx].scale(&scalar)
             } else {
@@ -253,12 +253,12 @@ pub fn compute_relation_quotient<F, B, const D: usize>(
     prepared: &B::PreparedSetup<D>,
     lp: &LevelParams,
     challenges: &Challenges,
-    w_hat_flat: &[[i8; D]],
+    e_hat_flat: &[[i8; D]],
     #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
-    w_folded: &[CyclotomicRing<F, D>],
+    e_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
     claim_to_commitment_group: &[usize],
@@ -312,7 +312,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     if ring_multiplier_points.len() != num_public_outputs
-        || claim_to_point.len().checked_mul(blocks_per_claim) != Some(w_folded.len())
+        || claim_to_point.len().checked_mul(blocks_per_claim) != Some(e_folded.len())
         || row_coefficient_rings.len() != claim_to_point.len()
         || claim_to_commitment_group.len() != claim_to_point.len()
         || claim_poly_in_commitment_group.len() != claim_to_point.len()
@@ -335,7 +335,7 @@ where
     if challenges.logical_len() != expected_challenges {
         return Err(AkitaError::InvalidProof);
     }
-    if w_hat_flat.len()
+    if e_hat_flat.len()
         != expected_challenges
             .checked_mul(lp.num_digits_open)
             .ok_or(AkitaError::InvalidProof)?
@@ -404,7 +404,7 @@ where
             n_d: n_d_active,
             n_b: relation_n_b,
             n_a,
-            w_hat: w_hat_flat,
+            e_hat: e_hat_flat,
             t_hat: relation_t_hat,
             z_segment: first_z_segment,
             z_folded_centered_inf_norm,
@@ -514,10 +514,10 @@ where
         if row_idx == 0 {
             let t_row = Instant::now();
             let _span = tracing::info_span!("challenge_fold_row").entered();
-            // Consistency row: Σ c_i · w_folded[i] over all (claim, block).
+            // Consistency row: Σ c_i · e_folded[i] over all (claim, block).
             let quotient =
                 parallel_high_half_accumulate::<F, _, D>(challenges, tensor_products, |i| {
-                    Some(w_folded[i])
+                    Some(e_folded[i])
                 })?;
             let mut quotient = CyclotomicRing::from_slice(&quotient);
             quotient -= consistency_z_quotient;
@@ -532,7 +532,7 @@ where
             } else {
                 let point_idx = row_idx - 1;
                 let cyclic = cyclic_public_row_product::<F, D>(
-                    w_folded,
+                    e_folded,
                     ring_multiplier_points,
                     claim_to_point,
                     row_coefficient_rings,
