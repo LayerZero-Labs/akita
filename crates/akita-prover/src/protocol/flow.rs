@@ -49,7 +49,7 @@ use akita_types::{
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
-    recursive_level_layout_from_params, relation_claim_from_rows_extension, reorder_stage1_coords,
+    relation_claim_from_rows_extension, reorder_stage1_coords,
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
