@@ -8,7 +8,6 @@ pub mod accum;
 pub mod batched_sumcheck;
 pub mod compact_fold;
 pub mod drivers;
-pub mod extension_opening_reduction;
 pub mod traits;
 pub mod types;
 
@@ -32,20 +31,6 @@ pub use drivers::{
     EqFactoredMaskedProveOutput, MaskedProveOutput, ZkEqFactoredFinalRelation,
     ZkEqFactoredSumcheckInstanceProverExt, ZkEqFactoredSumcheckInstanceVerifierExt,
     ZkSumcheckFinalRelation, ZkSumcheckInstanceProverExt, ZkSumcheckInstanceVerifierExt,
-};
-pub use extension_opening_reduction::{
-    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
-    extension_opening_reduction_claim, extension_opening_reduction_eval_at_point,
-    tensor_column_partials_from_base_evals, tensor_equality_factor_eval_at_point,
-    tensor_equality_factor_evals, tensor_logical_claim_from_partials, tensor_opening_split,
-    tensor_packed_witness_evals, tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, BatchedExtensionOpeningReductionProver,
-    BatchedExtensionOpeningReductionTerm, ExtensionOpeningFactorTerm,
-    ExtensionOpeningReductionFactor, ExtensionOpeningReductionProver,
-    ExtensionOpeningReductionRoundResult, ExtensionOpeningReductionSumcheck,
-    ExtensionOpeningReductionVerifier, ExtensionOpeningTensorPartials,
-    SparseExtensionOpeningWitness, EXTENSION_OPENING_REDUCTION_DEGREE,
-    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,

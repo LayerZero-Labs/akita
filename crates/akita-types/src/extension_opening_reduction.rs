@@ -1,43 +1,18 @@
-//! Extension-opening reduction sumcheck instances.
+//! Extension-opening-reduction tensor and output helpers.
 //!
-//! This module implements the degree-two reduction used to collapse a logical
-//! extension-field opening into one ordinary opening of the transformed
-//! committed witness. The dense-table instance here proves claims of the form
-//! `sum_x witness(x) * factor(x)`, where `factor` is the transparent
-//! extension-opening factor. Later small-digit folded-witness code should plug
-//! in at this boundary instead of treating the protocol as an arbitrary product
-//! gadget.
+//! These helpers are pure tensor algebra shared by prover and verifier code.
+//! The concrete EOR prover instance and its witness-bearing state live in
+//! `akita-prover`.
 
-use crate::drivers::SumcheckInstanceProverExt;
-#[cfg(feature = "zk")]
-use crate::drivers::ZkSumcheckInstanceProverExt;
-use crate::traits::{SumcheckInstanceProver, SumcheckInstanceVerifier};
-use crate::types::SumcheckProof;
-#[cfg(feature = "zk")]
-use crate::types::SumcheckProofMasked;
-use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
-#[cfg(feature = "zk")]
-use akita_algebra::uni_poly::CompressedUniPoly;
-use akita_algebra::uni_poly::UniPoly;
-use akita_algebra::EqPolynomial;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-#[cfg(feature = "zk")]
-use akita_r1cs::{
-    zk_masked_compressed_round_claim_mask, ZkR1csLinearCombination, ZkRelationAccumulator,
-};
-use akita_serialization::AkitaSerialize;
-use akita_transcript::{labels, Transcript};
+use akita_algebra::poly::multilinear_eval;
+use akita_algebra::{EqPolynomial, SplitEqEvals};
+use akita_field::{AkitaError, ExtField, FieldCore, HasUnreducedOps, MulBaseUnreduced};
+use num_traits::Zero;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 /// Degree bound for one witness factor times one transparent reduction factor.
 pub const EXTENSION_OPENING_REDUCTION_DEGREE: usize = 2;
-
-/// Maximum number of sparse low-index rounds to keep in the lazy tensor factor.
-///
-/// The lazy factor caches one small state per low-bit assignment, avoiding a
-/// full dense factor table while the sparse witness still has large support.
-pub const SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS: usize = 12;
 
 /// Tensor-algebra data for one extension-opening reduction instance.
 ///
@@ -108,11 +83,32 @@ where
     }
 
     let tail_len = 1usize << (original_num_vars - split_bits);
-    let mut packed = Vec::with_capacity(tail_len);
-    for tail in 0..tail_len {
-        let base = tail * width;
-        packed.push(E::from_base_slice(&base_evals[base..base + width]));
-    }
+    // Pure order-preserving map; the indexed parallel collect yields the same
+    // ordering as the serial loop, so the packed table is byte-identical.
+    #[cfg(feature = "parallel")]
+    let packed: Vec<E> = {
+        const PARALLEL_PACK_THRESHOLD: usize = 1 << 14;
+        if tail_len >= PARALLEL_PACK_THRESHOLD {
+            base_evals[..tail_len * width]
+                .par_chunks_exact(width)
+                .map(E::from_base_slice)
+                .collect()
+        } else {
+            (0..tail_len)
+                .map(|tail| {
+                    let base = tail * width;
+                    E::from_base_slice(&base_evals[base..base + width])
+                })
+                .collect()
+        }
+    };
+    #[cfg(not(feature = "parallel"))]
+    let packed: Vec<E> = (0..tail_len)
+        .map(|tail| {
+            let base = tail * width;
+            E::from_base_slice(&base_evals[base..base + width])
+        })
+        .collect();
     Ok(packed)
 }
 
@@ -128,7 +124,7 @@ pub fn tensor_column_partials_from_base_evals<F, E>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
 {
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
     if split_bits > original_num_vars {
@@ -152,17 +148,136 @@ where
         });
     }
 
+    // Dao-Thaler / Gruen split of the tail equality table: contract
+    // `partials[head] = Σ_tail eq(tail_point, tail) · base_evals[tail*width + head]`
+    // as an outer loop over the high tail bits wrapping an inner loop over the low
+    // bits, instead of materializing the full `2^tail` equality table.
     let tail_point = &logical_point[split_bits..];
-    let tail_len = 1usize << tail_point.len();
-    let tail_eq = EqPolynomial::evals(tail_point)?;
-    let mut partials = vec![E::zero(); width];
-    for (tail, &weight) in tail_eq.iter().enumerate().take(tail_len) {
-        let base = tail * width;
-        for head in 0..width {
-            partials[head] += weight.mul_base(base_evals[base + head]);
+    let split = SplitEqEvals::new(tail_point)?;
+    let source = FlatColumnSource {
+        evals: base_evals,
+        width,
+    };
+    Ok(tensor_column_partials_split_fold::<F, E, _>(
+        &split, width, &source,
+    ))
+}
+
+/// Read-only source of the base-field column runs consumed by the
+/// extension-opening tensor partials fold.
+///
+/// `row(tail)` returns the contiguous `width`-length base-field run at flat tail
+/// index `tail`, where `tail` ranges over `0..2^tail_bits`. Implementing this
+/// lets a backend stream its base witness `f` in place during the partials fold
+/// instead of first copying it into a flat buffer.
+pub trait TensorColumnSource<F: FieldCore>: Sync {
+    /// The `width`-length base-field run at flat tail index `tail`.
+    fn row(&self, tail: usize) -> &[F];
+}
+
+/// Column source backed by a flat tail-major base-eval slice:
+/// `row(tail) = evals[tail*width .. (tail+1)*width]`.
+pub struct FlatColumnSource<'a, F: FieldCore> {
+    evals: &'a [F],
+    width: usize,
+}
+
+impl<F: FieldCore> TensorColumnSource<F> for FlatColumnSource<'_, F> {
+    #[inline]
+    fn row(&self, tail: usize) -> &[F] {
+        let base = tail * self.width;
+        &self.evals[base..base + self.width]
+    }
+}
+
+/// Contract the split tail equality table against a base-field column source.
+///
+/// Field addition is exact and associative, and the deferred inner sum is exact
+/// whenever [`HasUnreducedOps::DELAYED_PRODUCT_SUM_IS_EXACT`] holds, so the
+/// `(x_out, x_in)` reordering yields the identical canonical partials as a flat
+/// fold over `tail`.
+pub fn tensor_column_partials_split_fold<F, E, S>(
+    split: &SplitEqEvals<E>,
+    width: usize,
+    source: &S,
+) -> Vec<E>
+where
+    F: FieldCore,
+    E: MulBaseUnreduced<F>,
+    S: TensorColumnSource<F>,
+{
+    let out_len = split.out_len();
+    #[cfg(feature = "parallel")]
+    {
+        const PARALLEL_PARTIALS_THRESHOLD: usize = 1 << 14;
+        if out_len.saturating_mul(split.in_len()) >= PARALLEL_PARTIALS_THRESHOLD {
+            return (0..out_len)
+                .into_par_iter()
+                .fold(
+                    || vec![E::zero(); width],
+                    |mut out, x_out| {
+                        partials_out_contribution::<F, E, S>(split, source, width, x_out, &mut out);
+                        out
+                    },
+                )
+                .reduce(
+                    || vec![E::zero(); width],
+                    |mut acc, other| {
+                        for (slot, value) in acc.iter_mut().zip(other) {
+                            *slot += value;
+                        }
+                        acc
+                    },
+                );
         }
     }
-    Ok(partials)
+    let mut out = vec![E::zero(); width];
+    for x_out in 0..out_len {
+        partials_out_contribution::<F, E, S>(split, source, width, x_out, &mut out);
+    }
+    out
+}
+
+/// Accumulate one outer-index slab `e_out[x_out] · Σ_{x_in} e_in[x_in] · f(·)`
+/// into `out` (one entry per packed head). The inner sum over `x_in` defers
+/// reduction when the field opts in; otherwise it falls back to per-term
+/// `mul_base`.
+#[inline]
+fn partials_out_contribution<F, E, S>(
+    split: &SplitEqEvals<E>,
+    source: &S,
+    width: usize,
+    x_out: usize,
+    out: &mut [E],
+) where
+    F: FieldCore,
+    E: MulBaseUnreduced<F>,
+    S: TensorColumnSource<F>,
+{
+    let in_len = split.in_len();
+    let e_out = split.e_out[x_out];
+    let row_base = x_out * in_len;
+    if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        let mut inner = vec![<E as HasUnreducedOps>::ProductAccum::zero(); width];
+        for (x_in, &e_in) in split.e_in.iter().enumerate().take(in_len) {
+            for (slot, &coeff) in inner.iter_mut().zip(source.row(row_base + x_in)) {
+                *slot += e_in.mul_base_to_product_accum(coeff);
+            }
+        }
+        for (slot, acc) in out.iter_mut().zip(inner) {
+            *slot += e_out * E::reduce_product_accum(acc);
+        }
+    } else {
+        let mut inner = vec![E::zero(); width];
+        for (x_in, &e_in) in split.e_in.iter().enumerate().take(in_len) {
+            for (slot, &coeff) in inner.iter_mut().zip(source.row(row_base + x_in)) {
+                *slot += e_in.mul_base(coeff);
+            }
+        }
+        for (slot, value) in out.iter_mut().zip(inner) {
+            *slot += e_out * value;
+        }
+    }
 }
 
 /// Transpose the tensor partial object from column view to row view.
@@ -217,7 +332,7 @@ pub fn tensor_partials_from_base_evals<F, E>(
 ) -> Result<ExtensionOpeningTensorPartials<E>, AkitaError>
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
 {
     let column_partials = tensor_column_partials_from_base_evals::<F, E>(
         original_num_vars,
@@ -318,7 +433,8 @@ where
         .fold(E::zero(), |acc, (weight, partial)| acc + weight * partial))
 }
 
-fn project_tensor_factor_value<F, E>(
+#[doc(hidden)]
+pub fn project_tensor_factor_value<F, E>(
     value: E,
     eta_weights: &[E],
     width: usize,
@@ -605,6 +721,20 @@ pub fn extension_opening_reduction_claim<E: FieldCore>(
     factor_evals: &[E],
 ) -> Result<E, AkitaError> {
     validate_reduction_tables(witness_evals, factor_evals)?;
+    // `sum_x witness(x) * factor(x)`. Field addition is exact and associative,
+    // so the parallel reduction yields the identical canonical value as the
+    // serial fold.
+    #[cfg(feature = "parallel")]
+    {
+        const PARALLEL_CLAIM_THRESHOLD: usize = 1 << 14;
+        if witness_evals.len() >= PARALLEL_CLAIM_THRESHOLD {
+            return Ok(witness_evals
+                .par_iter()
+                .zip(factor_evals.par_iter())
+                .map(|(&w, &a)| w * a)
+                .reduce(E::zero, |acc, term| acc + term));
+        }
+    }
     Ok(witness_evals
         .iter()
         .zip(factor_evals.iter())
@@ -628,17 +758,52 @@ pub fn extension_opening_reduction_eval_at_point<E: FieldCore>(
     Ok(witness_eval * factor_eval)
 }
 
-mod batched;
-mod dense;
-mod output;
-mod sparse;
-mod sumcheck;
+/// Check the final extension-opening reduction equality.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] if the final sumcheck claim does not
+/// match the product of the ordinary witness opening and transparent factor
+/// evaluation at the sumcheck challenge point.
+pub fn check_extension_opening_reduction_output<E: FieldCore>(
+    final_claim: E,
+    witness_eval: E,
+    factor_eval: E,
+) -> Result<(), AkitaError> {
+    if final_claim != witness_eval * factor_eval {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(())
+}
 
-pub use batched::BatchedExtensionOpeningReductionProver;
-pub use dense::ExtensionOpeningReductionProver;
-pub use output::check_extension_opening_reduction_output;
-pub use sparse::{BatchedExtensionOpeningReductionTerm, SparseExtensionOpeningWitness};
-pub use sumcheck::{ExtensionOpeningReductionSumcheck, ExtensionOpeningReductionVerifier};
+pub fn validate_reduction_tables<E: FieldCore>(
+    witness_evals: &[E],
+    factor_evals: &[E],
+) -> Result<(), AkitaError> {
+    if witness_evals.len() != factor_evals.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: witness_evals.len(),
+            actual: factor_evals.len(),
+        });
+    }
+    num_rounds_from_table_len(witness_evals.len()).map(|_| ())
+}
 
-pub(super) use dense::{accumulate_dense_round, fold_dense_reduction_tables_in_place};
-pub(super) use output::{checked_table_len, num_rounds_from_table_len, validate_reduction_tables};
+pub fn checked_table_len(num_vars: usize) -> Result<usize, AkitaError> {
+    if num_vars >= usize::BITS as usize {
+        return Err(AkitaError::InvalidInput(format!(
+            "extension-opening reduction table has too many variables: {num_vars}"
+        )));
+    }
+    Ok(1usize << num_vars)
+}
+
+pub fn num_rounds_from_table_len(len: usize) -> Result<usize, AkitaError> {
+    if len == 0 || !len.is_power_of_two() {
+        return Err(AkitaError::InvalidSize {
+            expected: len.max(1).next_power_of_two(),
+            actual: len,
+        });
+    }
+    Ok(len.trailing_zeros() as usize)
+}

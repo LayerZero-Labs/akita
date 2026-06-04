@@ -11,10 +11,12 @@ pub mod kernels;
 pub mod protocol;
 mod validation;
 
+use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
-use akita_sumcheck::SparseExtensionOpeningWitness;
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
+};
 use akita_types::{
     embed_ring_subfield_vector, CleartextWitnessProof, FlatDigitBlocks, OpeningPoints,
     RingSubfieldEncoding,
@@ -276,7 +278,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// invalid.
     fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let num_vars = self.num_vars();
         if logical_point.len() != num_vars {
@@ -291,7 +293,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
                 "root tensor partials require field-element root witness".to_string(),
             )
         })?;
-        akita_sumcheck::tensor_column_partials_from_base_evals::<F, E>(
+        akita_types::tensor_column_partials_from_base_evals::<F, E>(
             num_vars,
             field_elems.coeffs(),
             logical_point,
@@ -311,7 +313,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         polys
             .iter()
@@ -337,7 +339,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
                 "root tensor projection requires field-element root witness".to_string(),
             )
         })?;
-        akita_sumcheck::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
+        akita_types::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
     }
 
     /// Materialize a sparse tensor-packed root witness when the backend can
@@ -607,7 +609,7 @@ where
 
     fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         <P as AkitaPolyOps<F, D>>::tensor_extension_column_partials::<E>(*self, logical_point)
     }
@@ -617,7 +619,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: ExtField<F>,
+        E: MulBaseUnreduced<F>,
     {
         let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
         P::tensor_extension_column_partials_batch(&inner_refs, logical_point)

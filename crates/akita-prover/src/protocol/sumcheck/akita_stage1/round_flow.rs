@@ -70,8 +70,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> EqFactoredSumcheckInstanceProver<E>
-    for AkitaStage1Prover<E>
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
+    EqFactoredSumcheckInstanceProver<E> for AkitaStage1Prover<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_vars
@@ -249,7 +249,7 @@ pub(crate) fn pad_compact_witness(
 
 #[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn advance_stage1_claim<
-    F: FieldCore + FromPrimitiveInt + akita_field::CanonicalField + HasUnreducedOps,
+    F: FieldCore + FromPrimitiveInt + akita_field::CanonicalField + HasUnreducedOps + HasOptimizedFold,
 >(
     prover: &AkitaStage1Prover<F>,
     scaled_claim: F,
