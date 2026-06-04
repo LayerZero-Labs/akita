@@ -695,8 +695,8 @@ This also means there is a real tightening lever, separate from changing fields:
 
 - Extension fields do **not** help. `F_{q^k}` has characteristic `q`, so a sum of
   base-field-embedded squares still reduces mod `q` coordinate-wise and wraps at
-  the same point; only a genuinely larger prime or multi-prime/limbed accumulation
-  raises the no-wrap ceiling.
+  the same point. A genuinely larger base prime raises the no-wrap ceiling; see
+  follow-up below for staying on 31/32-bit fields.
 - A tighter verifier-enforced per-coefficient bound shrinks the gate directly.
   Constraining the top fold digit so the asserted bound is `beta_linf` rather than
   `balanced_digit_max ≈ 2^lb · beta_linf` recovers up to a factor `2^{2·lb}` in
@@ -706,6 +706,18 @@ This also means there is a real tightening lever, separate from changing fields:
 
 Absent those, fp32 falls back at all but the smallest one-hot roots, and
 fp64/fp128 effectively always certify.
+
+**Follow-up (deferred): realized certificates on 31/32-bit fields.**
+
+The initial cutover does not implement this. When the structural gate above
+fails, levels on `q ≈ 2^31` or `2^32` price the A-role at the deterministic
+`L2_BOUND_SQUARED` instead of a tighter realized `B_l2`. A later slice may allow
+the same base field to support the realized certificate on dense recursive levels
+by accumulating the squared norm without forming a single wrapped field sum over
+recomposed coordinates (for example, wide accumulation from the committed digit
+planes already bound by stage 1). Whether that can be made sound and cheap enough
+for production is open; it is listed here only so the fallback tier is not read
+as a permanent limitation of small fields.
 
 ### Recomposed Witness vs Committed Decomposition (two linked sumchecks)
 
@@ -1290,6 +1302,8 @@ the ring-relation rows; ZK-path parity if the feature stays enabled.
 6. Resolved: the B/D roles keep their coefficient `L∞` digit-collision bound
    `2^lb - 1` and convert into the unified L2 table via
    `||v||_2 <= sqrt(d)·||v||_inf` (see Invariants and SIS Tables And Planner).
+7. Deferred: small-field (31/32-bit) realized L2 certificates without widening
+   the base prime; see "Follow-up (deferred)" under the field-capacity gate.
 
 ## References
 
