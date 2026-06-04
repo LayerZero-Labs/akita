@@ -93,7 +93,7 @@ pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use proof_size::level_proof_bytes;
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
-    scale_batched_root_layout_unchecked, schedule_is_root_direct, schedule_num_fold_levels,
+    schedule_is_root_direct, schedule_num_fold_levels,
     schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_fold_execution,
     scheduled_next_level_params, validate_opening_points_for_claims, w_ring_element_count,
     w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
