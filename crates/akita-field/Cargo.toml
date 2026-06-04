@@ -28,10 +28,11 @@ jolt-transcript = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8
 rand = "0.8"
 
 [features]
-default = ["jolt-compat"]
+default = []
 # Jolt interop: implements `jolt_field`'s slim trait hierarchy for Akita field
-# types. The only feature that pulls in `jolt-field`. Kept in `default` during the
-# trait-ownership migration so downstream consumers are unaffected.
+# types. The only feature that pulls in `jolt-field`. Opt-in: Akita owns its trait
+# surface natively, so no workspace crate needs this. Enable it only for code that
+# bridges Akita field types into Jolt's `jolt_field` trait bounds.
 jolt-compat = ["dep:jolt-field"]
 parallel = ["dep:rayon"]
 
