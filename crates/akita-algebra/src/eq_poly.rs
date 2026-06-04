@@ -213,6 +213,55 @@ impl<E: FieldCore> EqPolynomial<E> {
     }
 }
 
+/// Dao-Thaler / Gruen split of the equality table (eprint 2024/1210).
+///
+/// Instead of materializing the full `2^n` table `eq(point, ·)`, store the two
+/// half-tables `e_in = eq(point[..m], ·)` (low / inner bits) and
+/// `e_out = eq(point[m..], ·)` (high / outer bits) with `m = n / 2`. By the
+/// product structure of `eq`, for an index `x = x_out * in_len + x_in`
+/// (little-endian, so `x_in` is the low `m` bits):
+///
+/// ```text
+/// eq(point, x) = e_out[x_out] * e_in[x_in].
+/// ```
+///
+/// This cuts the equality allocation from `2^n` to `2^{n-m} + 2^m` and lets a
+/// contraction `Σ_x eq(point, x) · src(x)` run as an outer loop over `x_out`
+/// (parallelizable) wrapping an inner loop over `x_in` that can defer reduction
+/// via [`akita_field::MulBaseUnreduced`].
+#[derive(Debug, Clone)]
+pub struct SplitEqEvals<E: FieldCore> {
+    /// Equality table over the high (outer) `n - m` variables, size `2^{n-m}`.
+    pub e_out: Vec<E>,
+    /// Equality table over the low (inner) `m` variables, size `2^m`.
+    pub e_in: Vec<E>,
+}
+
+impl<E: FieldCore> SplitEqEvals<E> {
+    /// Build the split tables for `eq(point, ·)`. The low `point.len() / 2`
+    /// coordinates form the inner table; the rest form the outer table.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`EqPolynomial::evals`] allocation / overflow errors.
+    pub fn new(point: &[E]) -> Result<Self, AkitaError> {
+        let m = point.len() / 2;
+        let e_in = EqPolynomial::evals(&point[..m])?;
+        let e_out = EqPolynomial::evals(&point[m..])?;
+        Ok(Self { e_out, e_in })
+    }
+
+    /// Number of inner (low-bit) indices, `2^m`.
+    pub fn in_len(&self) -> usize {
+        self.e_in.len()
+    }
+
+    /// Number of outer (high-bit) indices, `2^{n-m}`.
+    pub fn out_len(&self) -> usize {
+        self.e_out.len()
+    }
+}
+
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
@@ -255,6 +304,28 @@ mod tests {
         let scaled = EqPolynomial::evals_with_scaling(&r, Some(scale)).unwrap();
         for (u, s) in unscaled.iter().zip(scaled.iter()) {
             assert_eq!(*s, *u * scale);
+        }
+    }
+
+    #[test]
+    fn split_eq_evals_factorizes_full_table() {
+        let mut rng = StdRng::seed_from_u64(0x5917);
+        for n in 0..9 {
+            let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+            let full = EqPolynomial::evals(&r).unwrap();
+            let split = SplitEqEvals::new(&r).unwrap();
+            assert_eq!(split.in_len() * split.out_len(), full.len(), "n={n}");
+            let in_len = split.in_len();
+            for x_out in 0..split.out_len() {
+                for x_in in 0..in_len {
+                    let idx = x_out * in_len + x_in;
+                    assert_eq!(
+                        split.e_out[x_out] * split.e_in[x_in],
+                        full[idx],
+                        "n={n} x_out={x_out} x_in={x_in}"
+                    );
+                }
+            }
         }
     }
 

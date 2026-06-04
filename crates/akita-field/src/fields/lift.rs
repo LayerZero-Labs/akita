@@ -6,7 +6,8 @@ use crate::fields::ext::{
     TowerBasisFp4Config, UnitNr,
 };
 use crate::{
-    pseudo_mersenne_modulus, AkitaError, FieldCore, FromPrimitiveInt, PseudoMersenneField,
+    pseudo_mersenne_modulus, AkitaError, FieldCore, FromPrimitiveInt, HasUnreducedOps,
+    PseudoMersenneField,
 };
 use akita_serialization::Valid;
 
@@ -45,6 +46,27 @@ pub trait ExtField<F: FieldCore>: FieldCore + LiftBase<F> + MulBase<F> + FromPri
     /// Return base-field coefficients in the canonical basis.
     fn to_base_vec(&self) -> Vec<F>;
 }
+
+/// Deferred-reduction extension-times-base multiply.
+///
+/// `mul_base_to_product_accum` scales `self` by a base scalar `x` and writes the
+/// result into [`HasUnreducedOps::ProductAccum`] without reducing, so a batch of
+/// `E × F` products can be summed and reduced once. When
+/// [`HasUnreducedOps::DELAYED_PRODUCT_SUM_IS_EXACT`] holds, the reduced sum equals
+/// the per-term [`MulBase::mul_base`] sum within the accumulator's headroom.
+///
+/// `E × F` has no cross terms, so the default body (lift `x` and reuse
+/// [`HasUnreducedOps::mul_to_product_accum`]) is correct everywhere; extensions
+/// whose product-accumulator layout admits cheaper coordinate scaling override it.
+pub trait MulBaseUnreduced<F: FieldCore>: ExtField<F> + HasUnreducedOps {
+    /// Accumulate `self * x` (extension times base scalar) without reducing.
+    #[inline]
+    fn mul_base_to_product_accum(self, x: F) -> Self::ProductAccum {
+        self.mul_to_product_accum(Self::lift_base(x))
+    }
+}
+
+impl<F: FieldCore + FromPrimitiveInt + HasUnreducedOps> MulBaseUnreduced<F> for F {}
 
 /// Frobenius operations for an extension field over `F`.
 ///

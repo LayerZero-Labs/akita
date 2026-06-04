@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(not(feature = "zk"))]
+use akita_types::recover_ring_subfield_inner_product;
 use akita_types::{ClaimIncidenceSummary, CommitmentRouting, RingRelationInstance};
 
 /// Verify one intermediate recursive fold level.
@@ -161,6 +163,11 @@ where
     if y_rings.len() != 1 {
         return Err(AkitaError::InvalidProof);
     }
+    // The zk EOR final relation consumes the shared y-ring opening masks, so it
+    // stays in this outer flow rather than inside the sumcheck driver. It carries
+    // `(final_claim_lc, factor)` for that deferred relation.
+    #[cfg(feature = "zk")]
+    let mut zk_eor_final: Option<(ZkR1csLinearCombination<L>, L)> = None;
     let reduction_check = if <L as ExtField<F>>::EXT_DEGREE == 1 {
         if proof.extension_opening_reduction().is_some() {
             return Err(AkitaError::InvalidProof);
@@ -234,14 +241,41 @@ where
         };
         let tail_point = &current_state.opening_point[split_bits..];
         #[cfg(not(feature = "zk"))]
-        let result = ExtensionOpeningReductionSumcheck::new(input_claim, tail_point.len())
-            .verify::<F, _, _>(&reduction.sumcheck, transcript, |tr| {
+        {
+            let basis = current_state.basis;
+            let eor_verifier = ExtensionOpeningReductionVerifier::<F, L, D>::new(
+                tail_point.len(),
+                input_claim,
+                eta,
+                vec![(&y_rings[0], tail_point.to_vec())],
+                Box::new(
+                    move |rho: &[L]| -> Result<CyclotomicRing<F, D>, AkitaError> {
+                        let protocol_point = ring_subfield_packed_extension_opening_point::<F, L, D>(
+                            rho.len(),
+                            rho,
+                        )?;
+                        Ok(prepare_recursive_opening_point_ext::<F, L, D>(
+                            &protocol_point,
+                            basis,
+                            lp,
+                            alpha_bits,
+                            block_order,
+                        )?
+                        .inner_reduction)
+                    },
+                ),
+            );
+            let rho = eor_verifier.verify::<F, T, _>(&reduction.sumcheck, transcript, |tr| {
                 sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
+            Some(rho)
+        }
         #[cfg(feature = "zk")]
-        let (final_claim_lc, challenges) =
-            ExtensionOpeningReductionSumcheck::new(input_claim, tail_point.len())
-                .verify_zk::<F, _, _>(
+        {
+            let (final_claim_lc, challenges) =
+                verify_zk_extension_opening_reduction_sumcheck::<F, L, T, _>(
+                    input_claim,
+                    tail_point.len(),
                     &reduction.sumcheck_proof_masked,
                     input_claim_mask,
                     transcript,
@@ -249,25 +283,14 @@ where
                     zk_relations,
                     zk_hiding_cursor,
                 )?;
-        #[cfg(feature = "zk")]
-        let result_challenges = challenges;
-        #[cfg(not(feature = "zk"))]
-        let result_challenges = result.challenges;
-        let factor =
-            tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &result_challenges)?;
-        #[cfg(feature = "zk")]
-        {
-            Some((final_claim_lc, factor, result_challenges))
-        }
-        #[cfg(not(feature = "zk"))]
-        {
-            Some((result.final_claim, factor, result_challenges))
+            let factor =
+                tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &challenges)?;
+            zk_eor_final = Some((final_claim_lc, factor));
+            Some(challenges)
         }
     };
     let protocol_point = match &reduction_check {
-        Some((_final_claim, _factor, rho)) => {
-            ring_subfield_packed_extension_opening_point::<F, L, D>(rho.len(), rho)?
-        }
+        Some(rho) => ring_subfield_packed_extension_opening_point::<F, L, D>(rho.len(), rho)?,
         None => current_state.opening_point.clone(),
     };
     let prepared_points = vec![prepare_recursive_opening_point_ext::<F, L, D>(
@@ -303,37 +326,29 @@ where
             y_masks.get(..D).ok_or(AkitaError::InvalidProof)?,
             &prepared_points[0].inner_reduction,
         )?;
-        match &reduction_check {
-            Some((final_claim, factor, _rho)) => {
-                let mut residual = final_claim.clone();
-                residual.add_scaled(-*factor, &y_opening);
-                zk_push_linear_zero(
-                    zk_relations,
-                    "recursive extension-opening reduction output",
-                    residual,
-                )?;
-            }
-            None => {
-                let true_opening = ZkRelationAccumulator::unmask_lc(
-                    current_state.opening,
-                    &current_state.opening_mask,
-                );
-                let mut residual = y_opening;
-                residual.add_scaled(-L::one(), &true_opening);
-                zk_push_linear_zero(zk_relations, "recursive y-ring opening relation", residual)?;
-            }
+        if let Some((final_claim, factor)) = &zk_eor_final {
+            let mut residual = final_claim.clone();
+            residual.add_scaled(-*factor, &y_opening);
+            zk_push_linear_zero(
+                zk_relations,
+                "recursive extension-opening reduction output",
+                residual,
+            )?;
+        } else {
+            let true_opening = ZkRelationAccumulator::unmask_lc(
+                current_state.opening,
+                &current_state.opening_mask,
+            );
+            let mut residual = y_opening;
+            residual.add_scaled(-L::one(), &true_opening);
+            zk_push_linear_zero(zk_relations, "recursive y-ring opening relation", residual)?;
         }
     }
+    // When `reduction_check` is `Some`, the non-zk EOR final relation is enforced
+    // inside the sumcheck driver via `expected_output_claim`.
     #[cfg(not(feature = "zk"))]
-    match reduction_check {
-        Some((final_claim, factor, _rho)) => {
-            check_extension_opening_reduction_output(final_claim, internal_claims[0], factor)?;
-        }
-        None => {
-            if internal_claims[0] != current_state.opening {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
+    if reduction_check.is_none() && internal_claims[0] != current_state.opening {
+        return Err(AkitaError::InvalidProof);
     }
 
     let ring_opening_points = prepared_points
