@@ -1,14 +1,13 @@
 use super::*;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{CanonicalField, One};
 #[cfg(not(feature = "zk"))]
 use akita_planner::generated::{
-    fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
+    fp128_d128_full_table, fp128_d128_onehot_table, fp128_d64_onehot_table,
 };
 use akita_planner::generated::{
-    fp16_d32_full_table, fp16_d32_onehot_table, fp16_d64_full_table, fp16_d64_onehot_table,
-    fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table, fp32_d64_table,
-    fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
-    GeneratedScheduleTable,
+    fp32_d128_onehot_table, fp32_d256_onehot_table, fp64_d128_onehot_table, fp64_d128_table,
+    fp64_d256_onehot_table, GeneratedScheduleTable,
 };
 use akita_types::SisModulusFamily;
 
@@ -101,7 +100,7 @@ fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_par
                 log_open_bound: Some(8),
             }
         }
-        fn stage1_challenge_config(
+        fn ring_challenge_config(
             _d: usize,
         ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
             Ok(akita_challenges::SparseChallengeConfig::Uniform {
@@ -170,7 +169,7 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
     // would bind singleton-sized params while verification ran
     // against batched ones.
     use akita_types::{digest_effective_schedule, root_direct_schedule};
-    type Cfg = fp128::D32Full;
+    type Cfg = fp128::D128Full;
     let real_incidence =
         ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
     let real_params =
@@ -212,11 +211,11 @@ fn fallback_root_direct_schedule_binds_real_incidence_commit_params() {
 #[test]
 fn setup_matrix_envelope_covers_grouped_batch_schedules() {
     let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
-    let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence)
+    let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D128Full>(&incidence)
         .unwrap()
         .expect("grouped same-point shape should resolve to a setup envelope");
 
-    let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
+    let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D128Full>(30, 4, 1)
         .expect("setup envelope should cover generated grouped batch schedules");
     assert!(setup_envelope.max_setup_len >= grouped_same_point.max_setup_len);
 }
@@ -236,7 +235,7 @@ fn expected_runtime_root_setup_len(lp: &LevelParams, incidence: &ClaimIncidenceS
 
 #[test]
 fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
-    type Cfg = fp128::D32Full;
+    type Cfg = fp128::D128Full;
     let incidence = ClaimIncidenceSummary::same_point(30, 4).expect("batched same-point incidence");
     let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
@@ -256,7 +255,7 @@ fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
 fn setup_matrix_envelope_covers_skewed_multipoint_root_widths() {
     use akita_types::root_direct_schedule;
 
-    type Cfg = fp128::D32Full;
+    type Cfg = fp128::D128Full;
     let incidence =
         ClaimIncidenceSummary::from_point_polys(30, vec![3, 1]).expect("skewed incidence");
     let commit_incidence =
@@ -284,7 +283,7 @@ fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
     use akita_challenges::SparseChallengeConfig;
     use akita_types::SisModulusFamily;
 
-    type Cfg = fp128::D32Full;
+    type Cfg = fp128::D128Full;
     let sparse = SparseChallengeConfig::Uniform {
         weight: 1,
         nonzero_coeffs: vec![-1, 1],
@@ -323,7 +322,7 @@ fn setup_matrix_envelope_excludes_zk_blinding_tail_columns() {
 #[test]
 #[cfg(feature = "zk")]
 fn setup_matrix_envelope_covers_zk_hiding_blinding_columns() {
-    type Cfg = fp32::D32Full;
+    type Cfg = fp128::D128Full;
     let incidence = ClaimIncidenceSummary::same_point(26, 1).expect("singleton incidence");
     let schedule = Cfg::get_params_for_prove(&incidence).expect("runtime schedule");
     let root_params = root_commit_params_from_schedule(&schedule)
@@ -370,38 +369,6 @@ fn presets_select_expected_sis_modulus_family() {
         <fp64::D64Full as CommitmentConfig>::sis_modulus_family(),
         akita_types::SisModulusFamily::Q64
     );
-    assert_eq!(
-        <fp16::D64Full as CommitmentConfig>::sis_modulus_family(),
-        akita_types::SisModulusFamily::Q16
-    );
-}
-
-#[test]
-#[cfg(not(feature = "zk"))]
-fn fp16_generated_schedule_tables_are_wired() {
-    let onehot_key = AkitaScheduleLookupKey::singleton(32);
-    let onehot_schedule =
-        <fp16::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key).unwrap();
-    assert!(!onehot_schedule.steps.is_empty());
-
-    let dense_key = AkitaScheduleLookupKey::singleton(27);
-    let dense_schedule =
-        <fp16::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key).unwrap();
-    assert!(!dense_schedule.steps.is_empty());
-}
-
-#[test]
-#[cfg(not(feature = "zk"))]
-fn fp32_d32_generated_schedule_tables_are_wired() {
-    let onehot_key = AkitaScheduleLookupKey::singleton(32);
-    let onehot_schedule =
-        <fp32::D32OneHot as crate::CommitmentConfig>::runtime_schedule(onehot_key).unwrap();
-    assert!(!onehot_schedule.steps.is_empty());
-
-    let dense_key = AkitaScheduleLookupKey::singleton(26);
-    let dense_schedule =
-        <fp32::D32Full as crate::CommitmentConfig>::runtime_schedule(dense_key).unwrap();
-    assert!(!dense_schedule.steps.is_empty());
 }
 
 // ----- migrated from former `schedule_policy::tests` -------------------
@@ -593,80 +560,53 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_fp128_schedule_tables_match_cfg_schedule() {
-    assert_every_table_entry_materializes::<fp128::D32Full>(fp128_d32_full_table());
-    assert_every_table_entry_materializes::<fp128::D32OneHot>(fp128_d32_onehot_table());
-    assert_every_table_entry_materializes::<fp128::D64Full>(fp128_d64_full_table());
+    assert_every_table_entry_materializes::<fp128::D128Full>(fp128_d128_full_table());
+    assert_every_table_entry_materializes::<fp128::D128OneHot>(fp128_d128_onehot_table());
     assert_every_table_entry_materializes::<fp128::D64OneHot>(fp128_d64_onehot_table());
 }
 
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_small_field_schedule_tables_match_cfg_schedule() {
-    assert_every_table_entry_materializes::<fp16::D32Full>(fp16_d32_full_table());
-    assert_every_table_entry_materializes::<fp16::D32OneHot>(fp16_d32_onehot_table());
-    assert_every_table_entry_materializes::<fp16::D64Full>(fp16_d64_full_table());
-    assert_every_table_entry_materializes::<fp16::D64OneHot>(fp16_d64_onehot_table());
-    assert_every_table_entry_materializes::<fp32::D32Full>(fp32_d32_table());
-    assert_every_table_entry_materializes::<fp32::D32OneHot>(fp32_d32_onehot_table());
-    assert_every_table_entry_materializes::<fp32::D64Full>(fp32_d64_table());
-    assert_every_table_entry_materializes::<fp32::D64OneHot>(fp32_d64_onehot_table());
-    assert_every_table_entry_materializes::<fp64::D32Full>(fp64_d32_table());
-    assert_every_table_entry_materializes::<fp64::D32OneHot>(fp64_d32_onehot_table());
-    assert_every_table_entry_materializes::<fp64::D64Full>(fp64_d64_table());
-    assert_every_table_entry_materializes::<fp64::D64OneHot>(fp64_d64_onehot_table());
+    assert_every_table_entry_materializes::<fp32::D128OneHot>(fp32_d128_onehot_table());
+    assert_every_table_entry_materializes::<fp32::D256OneHot>(fp32_d256_onehot_table());
+    assert_every_table_entry_materializes::<fp64::D128Full>(fp64_d128_table());
+    assert_every_table_entry_materializes::<fp64::D128OneHot>(fp64_d128_onehot_table());
+    assert_every_table_entry_materializes::<fp64::D256OneHot>(fp64_d256_onehot_table());
 }
 
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32Full>(fp16_d32_full_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32OneHot>(fp16_d32_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64Full>(fp16_d64_full_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64OneHot>(fp16_d64_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D32Full>(fp32_d32_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D32OneHot>(fp32_d32_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64Full>(fp32_d64_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64OneHot>(fp32_d64_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32Full>(fp64_d32_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32OneHot>(fp64_d32_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64Full>(fp64_d64_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64OneHot>(fp64_d64_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D128OneHot>(fp32_d128_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D256OneHot>(fp32_d256_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D128Full>(fp64_d128_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D128OneHot>(fp64_d128_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D256OneHot>(fp64_d256_onehot_table());
 }
 
 #[test]
 #[cfg(feature = "zk")]
 fn generated_zk_small_field_schedule_tables_have_crt_i8_capacity() {
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32Full>(fp16_d32_full_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D32OneHot>(fp16_d32_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64Full>(fp16_d64_full_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp16::D64OneHot>(fp16_d64_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D32Full>(fp32_d32_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D32OneHot>(fp32_d32_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64Full>(fp32_d64_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp32::D64OneHot>(fp32_d64_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32Full>(fp64_d32_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D32OneHot>(fp64_d32_onehot_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64Full>(fp64_d64_table());
-    assert_every_table_entry_has_crt_i8_capacity::<fp64::D64OneHot>(fp64_d64_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D128OneHot>(fp32_d128_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp32::D256OneHot>(fp32_d256_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D128Full>(fp64_d128_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D128OneHot>(fp64_d128_onehot_table());
+    assert_every_table_entry_has_crt_i8_capacity::<fp64::D256OneHot>(fp64_d256_onehot_table());
 }
 
 #[test]
 #[cfg(not(feature = "zk"))]
 fn generated_batched_roots_restore_scaled_widths() {
-    assert_generated_batched_roots_are_scaled::<fp128::D32Full>(fp128_d32_full_table());
-    assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
-    assert_generated_batched_roots_are_scaled::<fp128::D64Full>(fp128_d64_full_table());
+    assert_generated_batched_roots_are_scaled::<fp128::D128Full>(fp128_d128_full_table());
+    assert_generated_batched_roots_are_scaled::<fp128::D128OneHot>(fp128_d128_onehot_table());
     assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
-    assert_generated_batched_roots_are_scaled::<fp16::D32Full>(fp16_d32_full_table());
-    assert_generated_batched_roots_are_scaled::<fp16::D32OneHot>(fp16_d32_onehot_table());
-    assert_generated_batched_roots_are_scaled::<fp16::D64Full>(fp16_d64_full_table());
-    assert_generated_batched_roots_are_scaled::<fp16::D64OneHot>(fp16_d64_onehot_table());
 }
 
 #[test]
 #[cfg(not(feature = "zk"))]
-fn generated_d64_full_table_materializes_valid_plans() {
-    let table = fp128_d64_full_table();
+fn generated_d128_full_table_materializes_valid_plans() {
+    let table = fp128_d128_full_table();
     for entry in table.entries {
         let key = AkitaScheduleLookupKey::new(
             entry.key.num_vars,
@@ -674,7 +614,7 @@ fn generated_d64_full_table_materializes_valid_plans() {
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
         );
-        <fp128::D64Full as CommitmentConfig>::runtime_schedule(key)
+        <fp128::D128Full as CommitmentConfig>::runtime_schedule(key)
             .expect("config schedule should succeed");
     }
 }
@@ -739,8 +679,12 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
     else {
         panic!("4x30 onehot schedule should end in packed digits");
     };
+    // Bound reflects the committed-fold A-role SIS pricing: honest pricing
+    // lifts the per-level rank, widening the terminal witness, but the
+    // byte-aware schedule still keeps folding rather than dumping a huge
+    // cleartext root.
     assert!(
-        num_elems <= 245_888,
+        num_elems <= 375_104,
         "expected byte-aware batched schedule to keep folding, got final_w with {num_elems} elems"
     );
 }
@@ -772,4 +716,155 @@ fn tight_block_len_is_no_larger_than_pow2() {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Ring-challenge soundness guards
+// ---------------------------------------------------------------------------
+//
+// Every proof-optimized preset folds against a short ring challenge whose
+// support sets the Fiat-Shamir soundness of the fold. These tests pin the
+// shared dimension-keyed policy to its designed >=128-bit families and assert
+// no preset can silently regress to a low-support family (the historical
+// `Uniform { weight: 8, [-1, 1] }`, which has only ~31 bits at D=32).
+
+/// `log2` of the binomial coefficient `C(n, k)`, summed over logs so the large
+/// `(D, weight)` pairs used by these families never overflow.
+fn log2_binomial(n: usize, k: usize) -> f64 {
+    if k > n {
+        return f64::NEG_INFINITY;
+    }
+    let k = k.min(n - k);
+    (1..=k)
+        .map(|i| ((n - k + i) as f64 / i as f64).log2())
+        .sum::<f64>()
+}
+
+/// Bits of Fiat-Shamir support in a ring-challenge family at ring degree `d`.
+/// `BoundedL1Norm` is constructed so its space exceeds `2^128` (proven in
+/// `akita_challenges::sampler::bounded_l1_support`), so it is reported as
+/// infinite here rather than re-running the bounded-L1 DP.
+fn challenge_support_bits(cfg: &SparseChallengeConfig, d: usize) -> f64 {
+    match cfg {
+        SparseChallengeConfig::Uniform {
+            weight,
+            nonzero_coeffs,
+        } => log2_binomial(d, *weight) + (*weight as f64) * (nonzero_coeffs.len() as f64).log2(),
+        SparseChallengeConfig::ExactShell {
+            count_mag1,
+            count_mag2,
+        } => {
+            let support = count_mag1 + count_mag2;
+            log2_binomial(d, support) + log2_binomial(support, *count_mag1) + (support as f64)
+        }
+        SparseChallengeConfig::BoundedL1Norm => f64::INFINITY,
+    }
+}
+
+#[test]
+fn proof_optimized_ring_challenge_policy_pins_secure_families() {
+    // (d, expected family, (l1, linf)). Each family must clear 128 bits of
+    // Fiat-Shamir support; the (l1, linf) pin guards the folded-witness norm
+    // the schedules are generated against.
+    let cases = [
+        (
+            32usize,
+            SparseChallengeConfig::BoundedL1Norm,
+            (121usize, 8u32),
+        ),
+        (
+            64,
+            SparseChallengeConfig::ExactShell {
+                count_mag1: 30,
+                count_mag2: 12,
+            },
+            (54, 2),
+        ),
+        (
+            128,
+            SparseChallengeConfig::Uniform {
+                weight: 31,
+                nonzero_coeffs: vec![-1, 1],
+            },
+            (31, 1),
+        ),
+        (
+            256,
+            SparseChallengeConfig::Uniform {
+                weight: 23,
+                nonzero_coeffs: vec![-1, 1],
+            },
+            (23, 1),
+        ),
+    ];
+    for (d, expected, (l1, linf)) in cases {
+        let got = proof_optimized_ring_challenge_config(d).unwrap();
+        assert_eq!(got, expected, "ring-challenge family changed at d={d}");
+        assert_eq!(
+            (got.l1_norm(), got.infinity_norm()),
+            (l1, linf),
+            "ring-challenge norms changed at d={d}"
+        );
+        let bits = challenge_support_bits(&got, d);
+        assert!(
+            bits >= 128.0,
+            "ring-challenge family {got:?} at d={d} has only {bits:.1} bits of support (<128)"
+        );
+    }
+
+    // `BoundedL1Norm` is only valid at `D = 32`; confirm the policy wires it to
+    // the one degree its sampler accepts.
+    proof_optimized_ring_challenge_config(32)
+        .unwrap()
+        .validate::<32>()
+        .unwrap();
+
+    // Ring degrees no preset uses must be rejected, not silently defaulted.
+    assert!(proof_optimized_ring_challenge_config(16).is_err());
+    assert!(proof_optimized_ring_challenge_config(48).is_err());
+}
+
+/// Assert one preset delegates its ring challenge to the shared policy.
+/// Support for 128-bit-and-larger fields in each shared family is proven once in
+/// `proof_optimized_ring_challenge_policy_pins_secure_families`, so this only
+/// has to catch a preset that bypasses the shared helper with a weaker family.
+fn assert_preset_uses_shared_ring_challenge<Cfg: CommitmentConfig>() {
+    let name = std::any::type_name::<Cfg>();
+    let got = Cfg::ring_challenge_config(Cfg::D)
+        .unwrap_or_else(|err| panic!("{name} ring_challenge_config(D) failed: {err}"));
+    let want = proof_optimized_ring_challenge_config(Cfg::D).unwrap();
+    assert_eq!(
+        got, want,
+        "{name} bypassed the shared ring-challenge policy"
+    );
+}
+
+#[test]
+fn all_proof_optimized_presets_use_shared_ring_challenge() {
+    assert_preset_uses_shared_ring_challenge::<fp32::D64Full>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D64OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D128Full>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D128OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D256Full>();
+    assert_preset_uses_shared_ring_challenge::<fp32::D256OneHot>();
+
+    assert_preset_uses_shared_ring_challenge::<fp64::D32Full>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D32OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D64Full>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D64OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D128Full>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D128OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D256Full>();
+    assert_preset_uses_shared_ring_challenge::<fp64::D256OneHot>();
+
+    assert_preset_uses_shared_ring_challenge::<fp128::D32Full>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D32OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D64Full>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D64OneHot>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D128Full>();
+    assert_preset_uses_shared_ring_challenge::<fp128::D128OneHot>();
+
+    // Hand-written (non-macro) preset: guards that the bespoke impl still
+    // routes through the shared policy.
+    assert_preset_uses_shared_ring_challenge::<crate::tensor_verifier::fp128::D64OneHotTensor>();
 }
