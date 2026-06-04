@@ -4,7 +4,7 @@ use crate::fields::ext::{
     power_basis_fp4_mul_coeffs, ring_subfield_fp8_mul_schedule, ring_subfield_fp8_square_schedule,
     Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
 };
-use crate::fields::{Fp128, Fp16, Fp32, Fp64};
+use crate::fields::{Fp128, Fp32, Fp64};
 use crate::{FieldCore, Invertible};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use num_traits::{One, Zero};
@@ -376,37 +376,6 @@ pub type Fp128Packing<const P: u128> = NoPacking<Fp128<P>>;
 
 impl<const P: u128> HasPacking for Fp128<P> {
     type Packing = Fp128Packing<P>;
-}
-
-/// Selected packed backend for `Fp16`.
-#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-pub type Fp16Packing<const P: u32> = super::packed_neon::PackedFp16Neon<P>;
-
-/// Selected packed backend for `Fp16`.
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx512f",
-    target_feature = "avx512dq"
-))]
-pub type Fp16Packing<const P: u32> = super::packed_avx512::PackedFp16Avx512<P>;
-
-/// Selected packed backend for `Fp16`.
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx2",
-    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
-))]
-pub type Fp16Packing<const P: u32> = super::packed_avx2::PackedFp16Avx2<P>;
-
-/// Scalar fallback packed backend for `Fp16`.
-#[cfg(not(any(
-    all(target_arch = "aarch64", target_feature = "neon"),
-    all(target_arch = "x86_64", target_feature = "avx2")
-)))]
-pub type Fp16Packing<const P: u32> = NoPacking<Fp16<P>>;
-
-impl<const P: u32> HasPacking for Fp16<P> {
-    type Packing = Fp16Packing<P>;
 }
 
 /// Selected packed backend for `Fp32`.

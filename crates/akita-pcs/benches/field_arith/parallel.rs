@@ -5,8 +5,8 @@ use std::thread;
 
 #[cfg(feature = "parallel")]
 use akita_field::{
-    CanonicalField, PackedField, PackedValue, Prime128Offset275, Prime16Offset99, Prime31Offset19,
-    Prime64Offset59, RandomSampling,
+    CanonicalField, PackedField, PackedValue, Prime128Offset275, Prime31Offset19, Prime64Offset59,
+    RandomSampling,
 };
 #[cfg(feature = "parallel")]
 use criterion::{black_box, Criterion, Throughput};
@@ -56,8 +56,6 @@ pub(crate) fn bench_parallel_throughput(c: &mut Criterion) {
         .expect("build benchmark rayon pool");
 
     let mut rng = StdRng::seed_from_u64(0x7061_7261_0001);
-    let lhs16: Vec<Prime16Offset99> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
-    let rhs16: Vec<Prime16Offset99> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
     let lhs31: Vec<Prime31Offset19> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
     let rhs31: Vec<Prime31Offset19> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
     let lhs64: Vec<Prime64Offset59> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
@@ -69,8 +67,6 @@ pub(crate) fn bench_parallel_throughput(c: &mut Criterion) {
         .map(|_| Prime128Offset275::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
 
-    let lhs16_p = P16O99::pack_slice(&lhs16);
-    let rhs16_p = P16O99::pack_slice(&rhs16);
     let lhs31_p = P31O19::pack_slice(&lhs31);
     let rhs31_p = P31O19::pack_slice(&rhs31);
     let lhs64_p = P64O59::pack_slice(&lhs64);
@@ -78,11 +74,9 @@ pub(crate) fn bench_parallel_throughput(c: &mut Criterion) {
     let lhs128_p = P128O275::pack_slice(&lhs128);
     let rhs128_p = P128O275::pack_slice(&rhs128);
 
-    let mut out16 = vec![Prime16Offset99::zero(); n];
     let mut out31 = vec![Prime31Offset19::zero(); n];
     let mut out64 = vec![Prime64Offset59::zero(); n];
     let mut out128 = vec![F128::zero(); n];
-    let mut out16_p = vec![P16O99::broadcast(Prime16Offset99::zero()); lhs16_p.len()];
     let mut out31_p = vec![P31O19::broadcast(Prime31Offset19::zero()); lhs31_p.len()];
     let mut out64_p = vec![P64O59::broadcast(Prime64Offset59::zero()); lhs64_p.len()];
     let mut out128_p = vec![P128O275::broadcast(F128::zero()); lhs128_p.len()];
@@ -92,15 +86,6 @@ pub(crate) fn bench_parallel_throughput(c: &mut Criterion) {
     ));
     group.throughput(Throughput::Elements(n as u64));
 
-    bench_scalar_parallel(
-        &mut group,
-        &pool,
-        PRIME16_OFFSET99,
-        &lhs16,
-        &rhs16,
-        &mut out16,
-        chunk,
-    );
     bench_scalar_parallel(
         &mut group,
         &pool,
@@ -127,15 +112,6 @@ pub(crate) fn bench_parallel_throughput(c: &mut Criterion) {
         &rhs128,
         &mut out128,
         chunk,
-    );
-    bench_packed_parallel(
-        &mut group,
-        &pool,
-        PRIME16_OFFSET99,
-        &lhs16_p,
-        &rhs16_p,
-        &mut out16_p,
-        (chunk / P16O99::WIDTH).max(1),
     );
     bench_packed_parallel(
         &mut group,

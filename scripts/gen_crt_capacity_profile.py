@@ -8,14 +8,6 @@ import sys
 
 PROFILES = [
     {
-        "name": "Q16/3xi16",
-        "role": "production",
-        "q_label": "2^16 - 99",
-        "q": 2**16 - 99,
-        "primes": [15361, 13313, 12289],
-        "limb": "i16",
-    },
-    {
         "name": "Q32-reference/4xi16",
         "role": "comparison only",
         "q_label": "2^32 - 99",
@@ -57,7 +49,6 @@ ROLES = [
 ]
 
 RUST_PRIME_CONST_BY_PROFILE = {
-    "Q16/3xi16": "Q16_PRIMES",
     "Q32/2xi32": "Q32_PRIMES",
     "Q64/3xi32": "Q64_PRIMES",
     "Q128/5xi32": "I32_RAW_PRIMES",

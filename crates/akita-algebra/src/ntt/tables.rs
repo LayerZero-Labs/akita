@@ -1,6 +1,5 @@
 //! Deterministic parameter presets for small-prime CRT arithmetic.
 //!
-//! Q16: 16-bit-or-smaller fields with three `i16` NTT-friendly primes.
 //! Q32: `logq = 32` with two `i32` NTT-friendly primes.
 //! Q64: `logq = 64` with three `i32` NTT-friendly primes.
 //! Q128: `logq = 128` with five `i32` NTT-friendly primes.
@@ -12,41 +11,6 @@ use super::prime::NttPrime;
 pub const RING_DEGREE: usize = 64;
 /// Maximum ring degree covered by the CRT parameter sets.
 pub const MAX_CRT_RING_DEGREE: usize = 256;
-
-/// Number of CRT primes for the `q <= u16::MAX` parameter set.
-pub const Q16_NUM_PRIMES: usize = 3;
-
-/// Largest modulus routed to the Q16 CRT profile.
-pub const Q16_MODULUS: u64 = u16::MAX as u64;
-
-/// CRT primes and per-prime Montgomery constants for `q <= u16::MAX`.
-///
-/// All constants are for `R = 2^16` (i16 width).
-pub const Q16_PRIMES: [NttPrime<i16>; Q16_NUM_PRIMES] = [
-    NttPrime {
-        p: 15361,
-        pinv: -15359,
-        mont: 4092,
-        montsq: 974,
-    },
-    NttPrime {
-        p: 13313,
-        pinv: -13311,
-        mont: -1029,
-        montsq: -6199,
-    },
-    NttPrime {
-        p: 12289,
-        pinv: -12287,
-        mont: 4091,
-        montsq: -1337,
-    },
-];
-
-/// Garner CRT reconstruction constants for Q16.
-pub fn q16_garner() -> GarnerData<i16, Q16_NUM_PRIMES> {
-    GarnerData::compute(&Q16_PRIMES)
-}
 
 /// Number of CRT primes for the `logq = 32` parameter set.
 pub const Q32_NUM_PRIMES: usize = 2;
@@ -231,8 +195,13 @@ mod tests {
     }
 
     #[test]
-    fn verify_q16_prime_derived_constants() {
-        assert_i16_prime_profile(&Q16_PRIMES);
+    fn verify_synthetic_i16_prime_derived_constants() {
+        let primes = [
+            NttPrime::compute(15361_i16),
+            NttPrime::compute(13313_i16),
+            NttPrime::compute(12289_i16),
+        ];
+        assert_i16_prime_profile(&primes);
     }
 
     #[test]
@@ -252,7 +221,6 @@ mod tests {
 
     #[test]
     fn garner_data_is_consistent() {
-        assert_garner_profile("Q16", &Q16_PRIMES, q16_garner());
         assert_garner_profile("Q32", &Q32_PRIMES, q32_garner());
         assert_garner_profile("Q64", &Q64_PRIMES, q64_garner());
         let q128_primes = q128_primes();
