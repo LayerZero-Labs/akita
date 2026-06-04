@@ -718,7 +718,6 @@ fn decode_sis_family<R: Read>(
         0 => Ok(SisModulusFamily::Q32),
         1 => Ok(SisModulusFamily::Q64),
         2 => Ok(SisModulusFamily::Q128),
-        3 => Ok(SisModulusFamily::Q16),
         other => Err(SerializationError::InvalidData(format!(
             "unknown SisModulusFamily tag {other}"
         ))),
@@ -823,6 +822,13 @@ mod tests {
             PlanSection::from_schedule(&schedule),
             CallSection::from_incidence(&incidence, BasisMode::Lagrange).expect("call"),
         )
+    }
+
+    #[test]
+    fn rejects_removed_q16_sis_family_tag() {
+        let err = decode_sis_family(std::io::Cursor::new([3u8]), Compress::No, Validate::Yes)
+            .expect_err("historical Q16 tag 3 must be rejected");
+        assert!(matches!(err, SerializationError::InvalidData(_)));
     }
 
     #[test]

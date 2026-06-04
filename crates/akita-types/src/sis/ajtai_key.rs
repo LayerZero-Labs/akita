@@ -14,8 +14,6 @@ use crate::descriptor_bytes::{push_u32, push_usize, sis_family_tag};
 /// SIS modulus family used to select generated security floors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SisModulusFamily {
-    /// Representative q = 2^16 - 99.
-    Q16,
     /// Representative q = 2^32 - 99.
     Q32,
     /// Representative q = 2^64 - 59.
@@ -59,11 +57,7 @@ pub fn ceil_supported_collision(
     ];
     let supported = matches!(
         (sis_family, d),
-        (SisModulusFamily::Q16, 32)
-            | (SisModulusFamily::Q16, 64)
-            | (SisModulusFamily::Q16, 128)
-            | (SisModulusFamily::Q16, 256)
-            | (SisModulusFamily::Q32, 32)
+        (SisModulusFamily::Q32, 32)
             | (SisModulusFamily::Q32, 64)
             | (SisModulusFamily::Q32, 128)
             | (SisModulusFamily::Q32, 256)
@@ -303,33 +297,5 @@ mod tests {
             Some(20)
         );
         assert_eq!(min_secure_rank(SisModulusFamily::Q32, 32, 127, 16), Some(5));
-        assert_eq!(
-            sis_max_widths(SisModulusFamily::Q16, 32, 7).map(<[u64]>::len),
-            Some(20)
-        );
-        assert_eq!(
-            sis_max_widths(SisModulusFamily::Q16, 64, 7).map(<[u64]>::len),
-            Some(20)
-        );
-        assert_eq!(sis_max_widths(SisModulusFamily::Q16, 512, 7), None);
-        assert_eq!(sis_max_widths(SisModulusFamily::Q16, 1024, 7), None);
-    }
-
-    #[test]
-    fn q16_floor_lookups_do_not_fall_back_to_other_families() {
-        assert_eq!(
-            sis_max_widths(SisModulusFamily::Q16, 32, 7),
-            Some(
-                &[
-                    3, 6, 9, 15, 47, 140, 377, 958, 2_273, 5_144, 11_184, 23_903, 48_739, 96_741,
-                    187_451, 355_415, 660_737, 682_696, 682_696, 682_696,
-                ][..]
-            )
-        );
-        assert_eq!(min_secure_rank(SisModulusFamily::Q16, 32, 7, 16), Some(5));
-        assert_eq!(
-            ceil_supported_collision(SisModulusFamily::Q16, 32, 64),
-            Some(127)
-        );
     }
 }

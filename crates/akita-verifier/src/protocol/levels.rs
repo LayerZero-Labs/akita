@@ -14,6 +14,7 @@ use crate::protocol::ring_switch::{
 };
 use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
+use crate::stages::SetupSumcheckVerifier;
 use akita_algebra::CyclotomicRing;
 #[cfg(feature = "zk")]
 use akita_algebra::EqPolynomial;
@@ -36,7 +37,7 @@ use akita_sumcheck::SumcheckInstanceVerifierExt;
 use akita_sumcheck::ZkSumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_STAGE2_NEXT_W_EVAL,
-    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_HAT, CHALLENGE_SUMCHECK_BATCH,
+    ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_E_HAT, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
 };
 #[cfg(feature = "zk")]
@@ -58,8 +59,9 @@ use akita_types::{
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
     ClaimIncidenceSummary, CleartextWitnessProof, CommitmentRouting,
     ExtensionOpeningReductionProof, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
-    RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding, Schedule, Step,
-    TerminalLevelProof, TerminalWitnessSegmentLayout, TerminalWitnessTranscriptParts,
+    RingOpeningPoint, RingRelationInstance, RingSubfieldEncoding, Schedule, SetupContributionMode,
+    SetupSumcheckProof, Step, TerminalLevelProof, TerminalWitnessSegmentLayout,
+    TerminalWitnessTranscriptParts,
 };
 #[cfg(feature = "zk")]
 use akita_types::{tensor_equality_factor_eval_at_point, EXTENSION_OPENING_REDUCTION_DEGREE};
@@ -71,6 +73,22 @@ use zk::{verify_zk_hiding_commitment, zk_recovered_y_ring_lc};
 mod recursive;
 
 pub(crate) use recursive::verify_fold_batched_proof;
+
+fn stage3_sumcheck_proof_for_mode<L: FieldCore>(
+    mode: SetupContributionMode,
+    stage3_sumcheck_proof: Option<&SetupSumcheckProof<L>>,
+) -> Result<Option<&SetupSumcheckProof<L>>, AkitaError> {
+    match (mode, stage3_sumcheck_proof) {
+        (SetupContributionMode::Direct, None) => Ok(None),
+        (SetupContributionMode::Direct, Some(_)) => Err(AkitaError::InvalidSetup(
+            "direct setup-contribution mode received stage3_sumcheck_proof".to_string(),
+        )),
+        (SetupContributionMode::Recursive, Some(proof)) => Ok(Some(proof)),
+        (SetupContributionMode::Recursive, None) => Err(AkitaError::InvalidSetup(
+            "recursive setup-contribution mode is missing stage3_sumcheck_proof".to_string(),
+        )),
+    }
+}
 
 /// Verifier state carried between recursive fold levels.
 pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
@@ -168,8 +186,8 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let parts = final_witness.terminal_transcript_parts(layout)?;
-    transcript.record_wire_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
-    transcript.append_bytes(ABSORB_TERMINAL_W_HAT, &parts.w_hat);
+    transcript.record_wire_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
+    transcript.append_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_hat);
     Ok(TerminalWitnessReplay { parts })
 }
 
@@ -180,7 +198,7 @@ where
 /// commitments, padded opening points, per-claim field openings, one gamma
 /// challenge per claim, and gamma-combined per-point y-rings, then runs the
 /// stage-1 norm-check sumcheck and the stage-2 fused sumcheck, threading
-/// `next_w_commitment` through `ABSORB_SUMCHECK_W`.
+/// `next_w_commitment` through `ABSORB_NEXT_LEVEL_WITNESS_BINDING`.
 ///
 /// # Errors
 ///
@@ -194,6 +212,7 @@ pub(crate) fn verify_intermediate_root_level<F, E, C, T, const D: usize>(
     v_flat: &FlatRingVec<F>,
     stage1: &AkitaStage1Proof<C>,
     stage2: &AkitaStage2Proof<F, C>,
+    stage3_sumcheck_proof: Option<&SetupSumcheckProof<C>>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claim_points: &[&[E]],
@@ -201,6 +220,7 @@ pub(crate) fn verify_intermediate_root_level<F, E, C, T, const D: usize>(
     commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
+    setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<C>,
     root_lp: &LevelParams,
@@ -217,6 +237,8 @@ where
         + AkitaSerialize,
     T: Transcript<F>,
 {
+    let stage3_sumcheck_proof =
+        stage3_sumcheck_proof_for_mode(setup_contribution_mode, stage3_sumcheck_proof)?;
     verify_root_level_inner::<F, E, C, T, D>(
         y_rings_flat,
         extension_opening_reduction,
@@ -226,6 +248,7 @@ where
         &stage2.sumcheck_proof,
         #[cfg(feature = "zk")]
         &stage2.sumcheck_proof_masked,
+        stage3_sumcheck_proof,
         setup,
         transcript,
         claim_points,
@@ -251,7 +274,7 @@ where
 /// `final_witness` in cleartext).
 ///
 /// Mirrors [`verify_intermediate_root_level`] up through the ring-switch
-/// preamble; at the terminal, [`ABSORB_SUMCHECK_W`] absorbs `final_witness`
+/// preamble; at the terminal, [`ABSORB_NEXT_LEVEL_WITNESS_BINDING`] absorbs `final_witness`
 /// instead of a next-witness commitment, stage-1 is skipped entirely, and
 /// stage-2 runs in relation-only mode (`batching_coeff = 0`, `s_claim = 0`).
 ///
@@ -300,6 +323,7 @@ where
         stage2_sumcheck,
         #[cfg(feature = "zk")]
         stage2_sumcheck_masked,
+        None,
         setup,
         transcript,
         claim_points,
@@ -339,6 +363,7 @@ fn verify_root_level_inner<F, E, C, T, const D: usize>(
     stage1: Option<&AkitaStage1Proof<C>>,
     #[cfg(not(feature = "zk"))] stage2_sumcheck: &akita_sumcheck::SumcheckProof<C>,
     #[cfg(feature = "zk")] stage2_sumcheck_masked: &akita_sumcheck::SumcheckProofMasked<C>,
+    stage3_sumcheck_proof: Option<&SetupSumcheckProof<C>>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claim_points: &[&[E]],
@@ -889,7 +914,12 @@ where
         _ => return Err(AkitaError::InvalidProof),
     };
     let stage2_input_claim = batching_coeff * s_claim + relation_claim;
-    let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
+    let setup_prepared_row_eval = stage3_sumcheck_proof.map(|_| rs.prepared_row_eval.clone());
+    let row_eval_source = if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
+        Stage2RowEvalSource::new_with_setup_claim(rs.prepared_row_eval, stage3_sumcheck_proof.claim)
+    } else {
+        Stage2RowEvalSource::new(rs.prepared_row_eval)
+    };
     #[cfg(feature = "zk")]
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <C as ExtField<F>>::EXT_DEGREE;
@@ -977,6 +1007,17 @@ where
     if let RootStageInput::Intermediate { next_w_eval, .. } = &stage_input {
         transcript.record_wire_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
         transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, next_w_eval);
+    }
+    if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
+        let setup_prepared_row_eval = setup_prepared_row_eval
+            .as_ref()
+            .ok_or(AkitaError::InvalidProof)?;
+        let verifier = SetupSumcheckVerifier::new::<F, D>(
+            setup_prepared_row_eval,
+            &sumcheck_challenges[rs.ring_bits..],
+            rs.alpha,
+        )?;
+        verifier.verify::<F, T, D>(&setup.expanded, stage3_sumcheck_proof, transcript)?;
     }
     Ok(sumcheck_challenges)
 }

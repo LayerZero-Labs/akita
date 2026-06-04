@@ -557,11 +557,6 @@ type PR8Prime31 = PackedRingSubfieldFp8<Prime31Offset19, <Prime31Offset19 as Has
 type R8Prime32 = RingSubfieldFp8<Prime32Offset99>;
 type PR8Prime32 = PackedRingSubfieldFp8<Prime32Offset99, <Prime32Offset99 as HasPacking>::Packing>;
 
-use crate::fields::ext::RingSubfieldFp8;
-use crate::Prime16Offset99;
-type R8Fp16 = RingSubfieldFp8<Prime16Offset99>;
-type PR8Fp16 = PackedRingSubfieldFp8<Prime16Offset99, <Prime16Offset99 as HasPacking>::Packing>;
-
 #[test]
 fn packed_ring_subfield_fp8_mul_fp64() {
     let mut rng = StdRng::seed_from_u64(500);
@@ -623,50 +618,6 @@ fn packed_ring_subfield_fp8_mul_prime32() {
 }
 
 #[test]
-fn packed_fp16_basic_arithmetic() {
-    use crate::fields::packed::HasPacking;
-    type F16 = Prime16Offset99;
-    type PF16 = <F16 as HasPacking>::Packing;
-
-    let mut rng = StdRng::seed_from_u64(600);
-    let width = PF16::WIDTH;
-    let a_elems: Vec<F16> = (0..width).map(|_| F16::random(&mut rng)).collect();
-    let b_elems: Vec<F16> = (0..width).map(|_| F16::random(&mut rng)).collect();
-    let pa = PF16::from_fn(|i| a_elems[i]);
-    let pb = PF16::from_fn(|i| b_elems[i]);
-
-    let sum = pa + pb;
-    let diff = pa - pb;
-    let prod = pa * pb;
-
-    for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
-        assert_eq!(sum.extract(i), *a + *b, "add mismatch lane {i}");
-        assert_eq!(diff.extract(i), *a - *b, "sub mismatch lane {i}");
-        assert_eq!(prod.extract(i), *a * *b, "mul mismatch lane {i}");
-    }
-}
-
-#[test]
-fn packed_ring_subfield_fp8_mul_fp16() {
-    let mut rng = StdRng::seed_from_u64(503);
-    let width = <PR8Fp16 as PackedValue>::WIDTH;
-    let a_elems: Vec<R8Fp16> = (0..width).map(|_| R8Fp16::random(&mut rng)).collect();
-    let b_elems: Vec<R8Fp16> = (0..width).map(|_| R8Fp16::random(&mut rng)).collect();
-
-    let pa = PR8Fp16::from_fn(|i| a_elems[i]);
-    let pb = PR8Fp16::from_fn(|i| b_elems[i]);
-    let pc = pa * pb;
-
-    for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
-        assert_eq!(
-            pc.extract(i),
-            *a * *b,
-            "packed RingSubfieldFp8<Fp16> mul mismatch at lane {i}"
-        );
-    }
-}
-
-#[test]
 fn packed_ring_subfield_fp8_square() {
     let mut rng = StdRng::seed_from_u64(504);
     let width = <PR8Prime31 as PackedValue>::WIDTH;
@@ -680,72 +631,6 @@ fn packed_ring_subfield_fp8_square() {
             sq.extract(i),
             a.square(),
             "packed RingSubfieldFp8 square mismatch at lane {i}"
-        );
-    }
-}
-
-#[test]
-fn packed_ring_subfield_fp8_square_fp16() {
-    let mut rng = StdRng::seed_from_u64(505);
-    let width = <PR8Fp16 as PackedValue>::WIDTH;
-    let a_elems: Vec<R8Fp16> = (0..width).map(|_| R8Fp16::random(&mut rng)).collect();
-
-    let pa = PR8Fp16::from_fn(|i| a_elems[i]);
-    let sq = pa.square();
-
-    for (i, a) in a_elems.iter().enumerate() {
-        assert_eq!(
-            sq.extract(i),
-            a.square(),
-            "packed RingSubfieldFp8<Fp16> square mismatch at lane {i}"
-        );
-    }
-}
-
-/// Edge-value parity for the Fp16 fp8 mul and square kernels.
-///
-/// Stresses the Solinas reduction and the canonicalizing add/sub wraparound
-/// with coefficients at the field boundary (`0`, `1`, `(P-1)/2`, `P-2`, `P-1`)
-/// across every lane. Selects whichever backend `HasPacking` resolves to, so
-/// the scalar / NEON / AVX2 / AVX-512 CI legs each exercise their own kernel.
-#[test]
-fn packed_ring_subfield_fp8_fp16_edge() {
-    use crate::fields::pseudo_mersenne::PRIME16_OFFSET99_MODULUS as MODULUS;
-    type F16 = Prime16Offset99;
-
-    let edges: [u16; 6] = [
-        0,
-        1,
-        2,
-        ((MODULUS - 1) / 2) as u16,
-        (MODULUS - 2) as u16,
-        (MODULUS - 1) as u16,
-    ];
-    let elem = |offset: usize| {
-        R8Fp16::new(std::array::from_fn(|j| {
-            F16::from_canonical_u16(edges[(offset + j) % edges.len()])
-        }))
-    };
-
-    let width = <PR8Fp16 as PackedValue>::WIDTH;
-    let a_elems: Vec<R8Fp16> = (0..width).map(elem).collect();
-    let b_elems: Vec<R8Fp16> = (0..width).map(|i| elem(i + 3)).collect();
-
-    let pa = PR8Fp16::from_fn(|i| a_elems[i]);
-    let pb = PR8Fp16::from_fn(|i| b_elems[i]);
-    let pmul = pa * pb;
-    let psq = pa.square();
-
-    for i in 0..width {
-        assert_eq!(
-            pmul.extract(i),
-            a_elems[i] * b_elems[i],
-            "packed RingSubfieldFp8<Fp16> edge mul mismatch at lane {i}"
-        );
-        assert_eq!(
-            psq.extract(i),
-            a_elems[i].square(),
-            "packed RingSubfieldFp8<Fp16> edge square mismatch at lane {i}"
         );
     }
 }

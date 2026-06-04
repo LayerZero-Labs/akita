@@ -92,7 +92,7 @@ fn plain_root_d_image<const D: usize>(
     )
     .expect("ring opening point");
     let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-    let (y_ring, w_folded) = poly.evaluate_and_fold(
+    let (y_ring, e_folded) = poly.evaluate_and_fold(
         &ring_opening_point.b,
         &ring_opening_point.a,
         layout.block_len,
@@ -112,7 +112,7 @@ fn plain_root_d_image<const D: usize>(
         vec![ring_multiplier_point],
         vec![0usize],
         &[poly],
-        vec![w_folded],
+        vec![e_folded],
         &single_point_group_incidence(point.len()),
         layout.clone(),
         vec![hint],
@@ -124,12 +124,12 @@ fn plain_root_d_image<const D: usize>(
     )
     .expect("debug ring relation");
 
-    let RingRelationWitness { w_hat, .. } = witness;
+    let RingRelationWitness { e_hat, .. } = witness;
     let plain_v = CpuBackend
         .digit_rows::<D>(
             prepared,
             layout.d_key.row_len(),
-            w_hat.flat_digits(),
+            e_hat.flat_digits(),
             layout.log_basis,
         )
         .expect("plain v rows");
@@ -161,7 +161,7 @@ fn assert_folded_v_hiding<const D: usize>(
     assert_ne!(
         root.v.to_vec::<D>(),
         plain_root_v,
-        "zk root v should not expose the plain D * w_hat image at D={D}, nv={nv}"
+        "zk root v should not expose the plain D * e_hat image at D={D}, nv={nv}"
     );
 
     let recursive_levels: Vec<_> = proof.fold_levels().collect();
@@ -321,6 +321,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
             prove_input(&point, std::slice::from_ref(&poly), &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("zk fp32 prove");
 
@@ -344,6 +345,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitment),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("zk fp32 extension-opening reduction verify");
 
@@ -367,6 +369,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]
                 &mut verifier_transcript,
                 verify_input(&point, &openings, &commitment),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .is_err(),
             "zk verifier should reject tampered extension-opening partials"
@@ -465,6 +468,7 @@ where
             prove_input(&point, &poly_refs, &commitments[0], hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("zk prove");
 
@@ -486,6 +490,7 @@ where
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("zk verify");
 
@@ -507,6 +512,7 @@ where
                 &mut verifier_transcript,
                 verify_input(&point, &openings, &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .is_err(),
             "zk verifier should reject unreferenced trailing hiding witness slots"
@@ -557,6 +563,7 @@ fn run_zk_dense_cursor_binding_negatives() {
             prove_input(&point, &poly_refs, &commitments[0], hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("zk prove");
         assert!(
@@ -582,6 +589,7 @@ fn run_zk_dense_cursor_binding_negatives() {
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("zk verify");
 
@@ -609,6 +617,7 @@ fn run_zk_dense_cursor_binding_negatives() {
                     &mut verifier_transcript,
                     verify_input(&point, &openings, &commitments[0]),
                     BasisMode::Lagrange,
+                    akita_types::SetupContributionMode::Direct,
                 )
                 .is_err(),
                 "zk verifier should reject tampered {case}"
@@ -738,6 +747,7 @@ where
             prove_input(&point, &poly_refs, &commitments[0], hint.clone()),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("zk prove");
 
@@ -749,6 +759,7 @@ where
             prove_input(&point, &poly_refs, &commitments[0], hint),
             &mut second_prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("second zk prove");
         assert_folded_v_hiding::<D>(nv, &proof, &second_proof, &plain_root_v);
@@ -782,6 +793,7 @@ where
             &mut verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("zk verify");
         let mut second_verifier_transcript = AkitaTranscript::<F>::new(label);
@@ -791,6 +803,7 @@ where
             &mut second_verifier_transcript,
             verify_input(&point, &openings, &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("second zk verify");
     });
@@ -850,6 +863,7 @@ fn run_zk_dense_batched_shape_cases() {
             prove_input(&same_point, &same_point_poly_refs, &commitment, hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("same-point zk batched prove");
         assert!(
@@ -884,6 +898,7 @@ fn run_zk_dense_batched_shape_cases() {
             &mut verifier_transcript,
             verify_input(&same_point, &same_point_openings, &commitment),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("same-point zk batched verify");
 
@@ -937,6 +952,7 @@ fn run_zk_dense_batched_shape_cases() {
             prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("multipoint zk batched prove");
         match &proof.root {
@@ -967,6 +983,7 @@ fn run_zk_dense_batched_shape_cases() {
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("multipoint zk batched verify");
     });
@@ -1018,7 +1035,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
         let mut ring_opening_points = Vec::with_capacity(NUM_POINTS);
         let mut ring_multiplier_points = Vec::with_capacity(NUM_POINTS);
         let mut y_rings = Vec::with_capacity(NUM_POINTS);
-        let mut w_folded_by_poly = Vec::with_capacity(NUM_POINTS);
+        let mut e_folded_by_poly = Vec::with_capacity(NUM_POINTS);
         for (point, polys) in opening_points_owned.iter().zip(polys_per_point.iter()) {
             let ring_opening_point = ring_opening_point_from_field(
                 &point[alpha_bits..],
@@ -1029,7 +1046,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             )
             .expect("ring point");
             let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-            let (y_ring, w_folded) = polys[0].evaluate_and_fold(
+            let (y_ring, e_folded) = polys[0].evaluate_and_fold(
                 &ring_opening_point.b,
                 &ring_opening_point.a,
                 lp.block_len,
@@ -1037,7 +1054,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             ring_opening_points.push(ring_opening_point);
             ring_multiplier_points.push(ring_multiplier_point);
             y_rings.push(y_ring);
-            w_folded_by_poly.push(w_folded);
+            e_folded_by_poly.push(e_folded);
         }
 
         let mut transcript = AkitaTranscript::<F>::new(b"zk/multipoint-row-regression");
@@ -1063,7 +1080,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             ring_multiplier_points,
             incidence.claim_to_point().to_vec(),
             &polys_flat,
-            w_folded_by_poly,
+            e_folded_by_poly,
             &incidence,
             lp.clone(),
             hints,
@@ -1194,6 +1211,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
                 instance.opening_points(),
                 instance.ring_multiplier_points(),
                 alpha,
+                None,
             )
             .expect("deferred row eval");
         assert_eq!(prepared_eval, expected_eval);

@@ -114,6 +114,7 @@ fn batched_root_direct_fast_path_round_trip() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched root-direct prove");
 
@@ -152,6 +153,7 @@ fn batched_root_direct_fast_path_round_trip() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched root-direct verify");
 }
@@ -202,6 +204,7 @@ fn batched_root_direct_rejects_wrong_opening() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched root-direct prove");
     assert!(proof.is_root_direct());
@@ -221,6 +224,7 @@ fn batched_root_direct_rejects_wrong_opening() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
     assert!(result.is_err(), "verifier must reject bogus openings");
 }
@@ -266,6 +270,7 @@ fn batched_verify_passes_for_consistent_openings() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -288,6 +293,7 @@ fn batched_verify_passes_for_consistent_openings() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
 
     assert!(result.is_ok());
@@ -335,6 +341,7 @@ fn batched_verify_rejects_wrong_opening() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -352,6 +359,7 @@ fn batched_verify_rejects_wrong_opening() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
 
     assert!(matches!(result, Err(AkitaError::InvalidProof)));
@@ -398,6 +406,7 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .unwrap();
 
@@ -429,6 +438,7 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     );
 
     assert!(matches!(result, Err(AkitaError::InvalidProof)));
