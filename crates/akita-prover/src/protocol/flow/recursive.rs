@@ -1095,8 +1095,6 @@ where
         );
     }
 
-    let w_view = current_state.w.view::<F, D>()?;
-    let logical_w = current_state.logical_w();
     let typed_hint = current_state.hint.to_typed::<D>()?;
     let opening_point = &current_state.sumcheck_challenges;
     let expected_opening = current_state.opening;
@@ -1109,6 +1107,10 @@ where
     let reduction = if <L as ExtField<F>>::EXT_DEGREE == 1 {
         None
     } else {
+        let logical_w = current_state
+            .logical_w
+            .as_ref()
+            .unwrap_or(&current_state.w);
         Some(prove_recursive_extension_opening_reduction::<F, L, T>(
             logical_w,
             opening_point,
@@ -1118,6 +1120,7 @@ where
             &mut current_state.zk_hiding,
         )?)
     };
+    let w_view = current_state.w.view::<F, D>()?;
     let protocol_point = match &reduction {
         Some(reduction) => ring_subfield_packed_extension_opening_point::<F, L, D>(
             reduction.rho.len(),
@@ -1162,7 +1165,7 @@ where
     let y_rings_masked = y_rings
         .iter()
         .map(|y_ring| {
-            let (_, y_garbage) = zk_hiding.take_ring::<D>()?;
+            let (_, y_garbage) = current_state.zk_hiding.take_ring::<D>()?;
             Ok(*y_ring + y_garbage)
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
