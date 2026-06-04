@@ -15,7 +15,6 @@ pub mod proof_size;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod sis;
-pub mod sis_offline;
 pub mod transcript;
 #[cfg(feature = "zk")]
 pub mod zk;
@@ -47,11 +46,11 @@ pub use instance_descriptor::{
 };
 pub use layout::{
     basis_weights, direct_witness_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    gadget_row_scalars, lagrange_weights, level_layout_from_params, monomial_weights,
-    packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
-    recursive_level_layout_from_params, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, root_extension_opening_partials, sumcheck_rounds, BasisMode,
-    BlockOrder, FlatMatrix, LevelParams, MRowLayout, RingMatrixView, RingOpeningPoint,
+    gadget_row_scalars, lagrange_weights, monomial_weights, packed_digits_bytes,
+    planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    root_extension_opening_partials, sumcheck_rounds, BasisMode, BlockOrder, FlatMatrix,
+    LevelParams, MRowLayout, RingMatrixView, RingOpeningPoint,
 };
 #[cfg(feature = "zk")]
 pub use proof::ZkHidingProof;
@@ -94,17 +93,13 @@ pub use proof::{derive_zk_b_matrix, derive_zk_d_matrix};
 pub use proof_size::level_proof_bytes;
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_current_w_len, root_direct_schedule,
-    scale_batched_root_layout_unchecked, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, schedule_terminal_direct_witness_shape, scheduled_fold_execution,
-    scheduled_next_level_params, validate_opening_points_for_claims, w_ring_element_count,
-    w_ring_element_count_with_counts, w_ring_element_count_with_counts_bits,
-    w_ring_element_count_with_counts_for_layout, w_ring_element_count_with_counts_for_layout_bits,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, FoldStep, Schedule, Step,
+    schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
+    schedule_terminal_direct_witness_shape, scheduled_fold_execution, scheduled_next_level_params,
+    validate_opening_points_for_claims, w_ring_element_count, w_ring_element_count_with_counts,
+    w_ring_element_count_with_counts_bits, w_ring_element_count_with_counts_for_layout,
+    w_ring_element_count_with_counts_for_layout_bits, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    DirectStep, FoldStep, Schedule, Step,
 };
 pub use setup_contribution::{SetupContributionPlan, SetupContributionPlanInputs};
 pub use sis::{decomp_depths, AjtaiKeyParams, SisModulusFamily};
-pub use sis_offline::{
-    root_level_params_for_layout_with_log_basis, sis_derived_root_params_for_layout,
-    sis_secure_level_params, SisCollisionBounds, SisRoleWidths,
-};
 pub use transcript::AppendToTranscript;

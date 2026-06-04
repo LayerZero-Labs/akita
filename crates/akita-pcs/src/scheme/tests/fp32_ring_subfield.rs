@@ -1,5 +1,45 @@
 use super::*;
 
+/// Scale a per-polynomial root layout to a batched root layout without
+/// SIS-floor audit on the scaled B/D keys (synthetic fixture only).
+fn scale_batched_root_layout_unchecked(
+    root_lp: &LevelParams,
+    num_claims: usize,
+) -> Result<LevelParams, AkitaError> {
+    if num_claims == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "max_num_batched_polys must be at least 1".to_string(),
+        ));
+    }
+    let d = root_lp.ring_dimension;
+    let b_col_len = root_lp
+        .b_key
+        .col_len()
+        .checked_mul(num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("batched outer width overflow".to_string()))?;
+    let d_col_len = root_lp
+        .d_key
+        .col_len()
+        .checked_mul(num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?;
+    let mut scaled = root_lp.clone();
+    scaled.b_key = akita_types::AjtaiKeyParams::new_unchecked(
+        scaled.b_key.sis_family(),
+        scaled.b_key.row_len(),
+        b_col_len,
+        scaled.b_key.collision_inf(),
+        d,
+    );
+    scaled.d_key = akita_types::AjtaiKeyParams::new_unchecked(
+        scaled.d_key.sis_family(),
+        scaled.d_key.row_len(),
+        d_col_len,
+        scaled.d_key.collision_inf(),
+        d,
+    );
+    Ok(scaled)
+}
+
 #[derive(Clone)]
 struct Fp32RingSubfieldRootFoldCfg;
 #[derive(Clone)]
@@ -15,8 +55,8 @@ struct Fp32RingSubfieldOuterFallbackCfg;
 /// `new_unchecked` so the layout carries real buckets instead of the
 /// `0` `params_only` default. This `(family, D)` is intentionally
 /// outside the audited SIS-floor tables, so the fixture scales via
-/// `akita_types::scale_batched_root_layout_unchecked` rather than the
-/// strict, table-audited expansion path.
+/// [`scale_batched_root_layout_unchecked`] rather than the strict,
+/// table-audited expansion path.
 fn fp32_ring_subfield_root_lp(m_vars: usize) -> LevelParams {
     use akita_types::AjtaiKeyParams;
     let sis_family = akita_types::SisModulusFamily::Q32;
@@ -179,10 +219,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = akita_types::scale_batched_root_layout_unchecked(
-            &Self::root_lp(),
-            incidence.num_claims(),
-        )?;
+        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), incidence.num_claims())?;
         let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
             incidence.num_points(),
@@ -268,10 +305,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
-        let lp = akita_types::scale_batched_root_layout_unchecked(
-            &Self::root_lp(),
-            incidence.num_claims(),
-        )?;
+        let lp = scale_batched_root_layout_unchecked(&Self::root_lp(), incidence.num_claims())?;
         // Single-fold schedule: the root IS the terminal fold, so its
         // shipped `w` is built under MRowLayout::WithoutDBlock (no D-block in
         // the per-row `r` quotients). The schedule's `next_w_len` and the
