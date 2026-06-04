@@ -844,16 +844,10 @@ pub fn prove_recursive_fold_with_params<F, L, T, B, const D: usize, CommitW>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
-    witness: &RecursiveWitnessView<'_, F, D>,
-    logical_w: &RecursiveWitnessFlat,
-    opening_point: &[L],
-    expected_opening: L,
-    hint: AkitaCommitmentHint<F, D>,
-    commitment: &FlatRingVec<F>,
+    current_state: RecursiveProverState<F, L>,
     level: usize,
     level_params: &LevelParams,
     next_log_basis: u32,
-    #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
     setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
@@ -884,6 +878,24 @@ where
             "prove_recursive_fold_with_params"
         );
     }
+
+    let RecursiveProverState {
+        w,
+        logical_w,
+        commitment,
+        hint,
+        sumcheck_challenges,
+        opening: expected_opening,
+        log_basis: _,
+        #[cfg(feature = "zk")]
+        zk_hiding,
+    } = current_state;
+    let w_view = w.view::<F, D>()?;
+    let logical_w = logical_w.as_ref().unwrap_or(&w);
+    let typed_hint = hint.to_typed::<D>()?;
+    let opening_point = &sumcheck_challenges;
+    #[cfg(feature = "zk")]
+    let mut zk_hiding = zk_hiding;
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
@@ -922,7 +934,7 @@ where
         let _span = tracing::info_span!(
             "evaluate_and_fold",
             level,
-            num_ring_elems = witness.num_ring_elems(),
+            num_ring_elems = w_view.num_ring_elems(),
             num_points = prepared_points.len()
         )
         .entered();
@@ -930,7 +942,7 @@ where
         let mut folded = Vec::with_capacity(prepared_points.len());
         for prepared_point in &prepared_points {
             let (y_ring, e_folded) = evaluate_recursive_witness_at_multiplier_point(
-                witness,
+                &w_view,
                 &prepared_point.ring_multiplier_point,
                 level_params.block_len,
                 level_params.num_blocks,
@@ -999,10 +1011,10 @@ where
         prepared,
         ring_opening_points,
         ring_multiplier_points,
-        witness,
+        &w_view,
         e_folded_by_claim,
         level_params.clone(),
-        hint,
+        typed_hint,
         transcript,
         commitment_u,
         &y_rings,
@@ -1051,16 +1063,10 @@ pub fn prove_terminal_recursive_fold_with_params<F, L, T, B, const D: usize>(
     backend: &B,
     prepared: &B::PreparedSetup<D>,
     transcript: &mut T,
-    witness: &RecursiveWitnessView<'_, F, D>,
-    logical_w: &RecursiveWitnessFlat,
-    opening_point: &[L],
-    expected_opening: L,
-    hint: AkitaCommitmentHint<F, D>,
-    commitment: &FlatRingVec<F>,
+    current_state: &mut RecursiveProverState<F, L>,
     level: usize,
     level_params: &LevelParams,
     final_log_basis: u32,
-    #[cfg(feature = "zk")] zk_hiding: &mut ZkHidingProverState<F>,
 ) -> Result<TerminalLevelProof<F, L>, AkitaError>
 where
     F: FieldCore
@@ -1089,6 +1095,13 @@ where
         );
     }
 
+    let w_view = current_state.w.view::<F, D>()?;
+    let logical_w = current_state.logical_w();
+    let typed_hint = current_state.hint.to_typed::<D>()?;
+    let opening_point = &current_state.sumcheck_challenges;
+    let expected_opening = current_state.opening;
+    let commitment = &current_state.commitment;
+
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     let commitment_u = commitment.as_ring_slice::<D>()?;
     commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
@@ -1102,7 +1115,7 @@ where
             expected_opening,
             transcript,
             #[cfg(feature = "zk")]
-            zk_hiding,
+            &mut current_state.zk_hiding,
         )?)
     };
     let protocol_point = match &reduction {
@@ -1127,7 +1140,7 @@ where
         let _span = tracing::info_span!(
             "evaluate_and_fold",
             level,
-            num_ring_elems = witness.num_ring_elems(),
+            num_ring_elems = w_view.num_ring_elems(),
             num_points = prepared_points.len()
         )
         .entered();
@@ -1135,7 +1148,7 @@ where
         let mut folded = Vec::with_capacity(prepared_points.len());
         for prepared_point in &prepared_points {
             let (y_ring, e_folded) = evaluate_recursive_witness_at_multiplier_point(
-                witness,
+                &w_view,
                 &prepared_point.ring_multiplier_point,
                 level_params.block_len,
                 level_params.num_blocks,
@@ -1204,10 +1217,10 @@ where
         prepared,
         ring_opening_points,
         ring_multiplier_points,
-        witness,
+        &w_view,
         e_folded_by_claim,
         level_params.clone(),
-        hint,
+        typed_hint,
         transcript,
         commitment_u,
         &y_rings,
@@ -1231,17 +1244,16 @@ where
         #[cfg(feature = "zk")]
         y_rings_masked,
         #[cfg(feature = "zk")]
-        zk_hiding,
+        &mut current_state.zk_hiding,
     )
 }
 
 /// Prove one recursive fold level from D-erased recursive state under config
 /// `Cfg`.
 ///
-/// The prover crate owns the state unpacking, typed recursive witness view,
-/// typed hint conversion, current-level layout selection (from `Cfg`), the
-/// next-level recursive commitment, opening-point handoff, and fold proof
-/// mechanics.
+/// Delegates witness unpacking and fold mechanics to
+/// [`prove_recursive_fold_with_params`]; this wrapper only threads the
+/// schedule-selected level params and next-witness commitment policy.
 ///
 /// # Errors
 ///
@@ -1280,27 +1292,6 @@ where
     B: ProverComputeBackend<Cfg::Field>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
-
-    let RecursiveProverState {
-        w: current_w,
-        logical_w,
-        commitment,
-        hint,
-        log_basis: _,
-        sumcheck_challenges,
-        opening,
-        #[cfg(feature = "zk")]
-        zk_hiding,
-    } = current_state;
-    // The schedule's recursive fold params already carry the fully expanded
-    // SIS-secure layout for this level (the verifier opens against exactly
-    // these); the runtime witness length is validated to match the planned
-    // `current_w_len` by `scheduled_fold_execution`, so no re-derivation is
-    // needed.
-    let w_lp = level_params;
-    let w_view = current_w.view::<Cfg::Field, D>()?;
-    let logical_w = logical_w.as_ref().unwrap_or(&current_w);
-    let typed_hint: AkitaCommitmentHint<Cfg::Field, D> = hint.to_typed::<D>()?;
     drop(_setup_span);
 
     prove_recursive_fold_with_params::<Cfg::Field, Cfg::ChallengeField, T, B, D, _>(
@@ -1308,17 +1299,10 @@ where
         backend,
         prepared,
         transcript,
-        &w_view,
-        logical_w,
-        &sumcheck_challenges,
-        opening,
-        typed_hint,
-        &commitment,
+        current_state,
         level,
-        w_lp,
+        level_params,
         next_params.log_basis,
-        #[cfg(feature = "zk")]
-        zk_hiding,
         setup_contribution_mode,
         |w| crate::commit_next_w::<Cfg, B, D>(next_params, expanded, backend, prepared, w),
     )
@@ -1331,8 +1315,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if the current-level layout cannot be derived from `Cfg`
-/// or the underlying terminal fold prover fails.
+/// Returns an error if witness unpacking or the underlying terminal fold
+/// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_terminal_recursive_level<Cfg, T, B, const D: usize>(
@@ -1365,15 +1349,6 @@ where
     B: ProverComputeBackend<Cfg::Field>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup_terminal", level).entered();
-
-    let current_w = &current_state.w;
-    // The schedule's terminal fold params already carry the fully expanded
-    // layout for this level; the witness length is validated against the
-    // planned `current_w_len` upstream, so no re-derivation is needed.
-    let w_lp = level_params;
-    let w_view = current_w.view::<Cfg::Field, D>()?;
-    let logical_w = current_state.logical_w.as_ref().unwrap_or(current_w);
-    let typed_hint: AkitaCommitmentHint<Cfg::Field, D> = current_state.hint.to_typed::<D>()?;
     drop(_setup_span);
 
     prove_terminal_recursive_fold_with_params::<Cfg::Field, Cfg::ChallengeField, T, B, D>(
@@ -1381,16 +1356,9 @@ where
         backend,
         prepared,
         transcript,
-        &w_view,
-        logical_w,
-        &current_state.sumcheck_challenges,
-        current_state.opening,
-        typed_hint,
-        &current_state.commitment,
+        current_state,
         level,
-        w_lp,
+        level_params,
         final_log_basis,
-        #[cfg(feature = "zk")]
-        &mut current_state.zk_hiding,
     )
 }
