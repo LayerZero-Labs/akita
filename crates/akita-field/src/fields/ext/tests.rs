@@ -224,7 +224,8 @@ fn ring_subfield_fp8_serialization_is_coeff_ordered() {
         .iter()
         .flat_map(|coeff| {
             let mut coeff_bytes = Vec::new();
-            coeff.serialize_with_mode(&mut coeff_bytes, Compress::No)
+            coeff
+                .serialize_with_mode(&mut coeff_bytes, Compress::No)
                 .unwrap();
             coeff_bytes
         })
