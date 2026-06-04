@@ -468,7 +468,7 @@ fn eq_impl() {
 #[test]
 fn ring_subfield_fp_ext4_fp32_product_accum_matches_direct_mul() {
     use super::ring_subfield_fp_ext4::ring_subfield_fp_ext4_mul_to_accum_fp32;
-    use crate::fields::wide::RingSubfieldFp4Fp32ProductAccum;
+    use crate::fields::wide::RingSubfieldFpExt4Fp32ProductAccum;
     use crate::Fp32;
     use num_traits::Zero;
 
@@ -485,7 +485,7 @@ fn ring_subfield_fp_ext4_fp32_product_accum_matches_direct_mul() {
         assert_eq!(direct, reduced, "accum mismatch for a={a:?} b={b:?}");
     }
 
-    let zero_accum = RingSubfieldFp4Fp32ProductAccum::ZERO;
+    let zero_accum = RingSubfieldFpExt4Fp32ProductAccum::ZERO;
     assert!(zero_accum.is_zero());
     let reduced_zero = R4Fp32::new(zero_accum.reduce::<251>());
     assert_eq!(reduced_zero, R4Fp32::zero());
@@ -555,8 +555,8 @@ fn mul_base_to_product_accum_matches_mul_base_sum() {
         );
     }
 
-    // fp_ext4/Fp32 takes the optimal coordinate-scaling override; fp_ext2/Fp64 takes
-    // the lifted default body. Both defer reduction.
+    // fp_ext4/Fp32 takes the optimal coordinate-scaling override; fp_ext2/Fp64
+    // takes the lifted default body. Both defer reduction.
     check::<Fp32<251>, RingSubfieldFpExt4<Fp32<251>>>(0xB001);
     check::<F, Ext2<F>>(0xB002);
 }

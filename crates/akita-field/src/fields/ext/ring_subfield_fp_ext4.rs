@@ -168,7 +168,7 @@ impl<const P: u32> RingSubfieldFpExt4MulBackend for Fp32<P> {
 }
 
 /// Widening `RingSubfieldFpExt4<Fp32<P>>` multiplication that skips per-coefficient
-/// Solinas reduction, returning `RingSubfieldFp4Fp32ProductAccum` instead.
+/// Solinas reduction, returning `RingSubfieldFpExt4Fp32ProductAccum` instead.
 ///
 /// The φ(X) ring reduction is already fused into the formulas — only the
 /// base-field modular reduction is deferred.
@@ -176,7 +176,7 @@ impl<const P: u32> RingSubfieldFpExt4MulBackend for Fp32<P> {
 pub(crate) fn ring_subfield_fp_ext4_mul_to_accum_fp32<const P: u32>(
     a: [Fp32<P>; 4],
     b: [Fp32<P>; 4],
-) -> RingSubfieldFp4Fp32ProductAccum {
+) -> RingSubfieldFpExt4Fp32ProductAccum {
     #[inline(always)]
     fn product<const P: u32>(a: Fp32<P>, b: Fp32<P>) -> u128 {
         (a.to_limbs() as u128) * (b.to_limbs() as u128)
@@ -185,7 +185,7 @@ pub(crate) fn ring_subfield_fp_ext4_mul_to_accum_fp32<const P: u32>(
     let [a0, a1, a2, a3] = a;
     let [b0, b1, b2, b3] = b;
     let modulus_square = (P as u128) * (P as u128);
-    RingSubfieldFp4Fp32ProductAccum([
+    RingSubfieldFpExt4Fp32ProductAccum([
         product(a0, b0) + 2 * (product(a1, b1) + product(a2, b2) + product(a3, b3)),
         product(a0, b1)
             + product(a1, b0)
@@ -557,7 +557,7 @@ impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for RingSub
 
 impl<const P: u32> HasUnreducedOps for RingSubfieldFpExt4<Fp32<P>> {
     type MulU64Accum = Self;
-    type ProductAccum = RingSubfieldFp4Fp32ProductAccum;
+    type ProductAccum = RingSubfieldFpExt4Fp32ProductAccum;
 
     // `ring_subfield_fp_ext4_mul_to_accum_fp32` widens each Fp32 limb product
     // (< 7·p² ≈ 2^65) into a u128 slot with no `mod 2^128` wrap, so summing a
@@ -595,7 +595,7 @@ impl<const P: u32> MulBaseUnreduced<Fp32<P>> for RingSubfieldFpExt4<Fp32<P>> {
         // exactly (see `DELAYED_PRODUCT_SUM_IS_EXACT`).
         let x = x.to_limbs() as u128;
         let [a0, a1, a2, a3] = self.coeffs;
-        RingSubfieldFp4Fp32ProductAccum([
+        RingSubfieldFpExt4Fp32ProductAccum([
             (a0.to_limbs() as u128) * x,
             (a1.to_limbs() as u128) * x,
             (a2.to_limbs() as u128) * x,

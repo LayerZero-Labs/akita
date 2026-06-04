@@ -88,9 +88,9 @@ impl Neg for Fp32ProductAccum {
 /// slot (slot 0 is the worst case). The u128 capacity of 2^128 allows up
 /// to 2^63 accumulations before overflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingSubfieldFp4Fp32ProductAccum(pub [u128; 4]);
+pub struct RingSubfieldFpExt4Fp32ProductAccum(pub [u128; 4]);
 
-impl RingSubfieldFp4Fp32ProductAccum {
+impl RingSubfieldFpExt4Fp32ProductAccum {
     /// Additive identity accumulator.
     pub const ZERO: Self = Self([0; 4]);
 
@@ -107,7 +107,7 @@ impl RingSubfieldFp4Fp32ProductAccum {
     }
 }
 
-impl Add for RingSubfieldFp4Fp32ProductAccum {
+impl Add for RingSubfieldFpExt4Fp32ProductAccum {
     type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self {
@@ -119,7 +119,7 @@ impl Add for RingSubfieldFp4Fp32ProductAccum {
         ])
     }
 }
-impl AddAssign for RingSubfieldFp4Fp32ProductAccum {
+impl AddAssign for RingSubfieldFpExt4Fp32ProductAccum {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
         self.0[0] = self.0[0].wrapping_add(rhs.0[0]);
@@ -128,7 +128,7 @@ impl AddAssign for RingSubfieldFp4Fp32ProductAccum {
         self.0[3] = self.0[3].wrapping_add(rhs.0[3]);
     }
 }
-impl Sub for RingSubfieldFp4Fp32ProductAccum {
+impl Sub for RingSubfieldFpExt4Fp32ProductAccum {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: Self) -> Self {
@@ -140,7 +140,7 @@ impl Sub for RingSubfieldFp4Fp32ProductAccum {
         ])
     }
 }
-impl SubAssign for RingSubfieldFp4Fp32ProductAccum {
+impl SubAssign for RingSubfieldFpExt4Fp32ProductAccum {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         self.0[0] = self.0[0].wrapping_sub(rhs.0[0]);
@@ -149,7 +149,7 @@ impl SubAssign for RingSubfieldFp4Fp32ProductAccum {
         self.0[3] = self.0[3].wrapping_sub(rhs.0[3]);
     }
 }
-impl Neg for RingSubfieldFp4Fp32ProductAccum {
+impl Neg for RingSubfieldFpExt4Fp32ProductAccum {
     type Output = Self;
     #[inline]
     fn neg(self) -> Self {
@@ -244,9 +244,9 @@ impl Neg for Fp64ProductAccum {
 /// Headroom: each `Fp64ProductAccum` slot holds u64 halves in u128,
 /// so 2^64 accumulations before overflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Fp2Fp64ProductAccum(pub [u128; 4]);
+pub struct FpExt2Fp64ProductAccum(pub [u128; 4]);
 
-impl Fp2Fp64ProductAccum {
+impl FpExt2Fp64ProductAccum {
     /// Additive identity accumulator.
     pub const ZERO: Self = Self([0; 4]);
 
@@ -260,7 +260,7 @@ impl Fp2Fp64ProductAccum {
     }
 }
 
-impl Add for Fp2Fp64ProductAccum {
+impl Add for FpExt2Fp64ProductAccum {
     type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self {
@@ -272,7 +272,7 @@ impl Add for Fp2Fp64ProductAccum {
         ])
     }
 }
-impl AddAssign for Fp2Fp64ProductAccum {
+impl AddAssign for FpExt2Fp64ProductAccum {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
         self.0[0] = self.0[0].wrapping_add(rhs.0[0]);
@@ -281,7 +281,7 @@ impl AddAssign for Fp2Fp64ProductAccum {
         self.0[3] = self.0[3].wrapping_add(rhs.0[3]);
     }
 }
-impl Sub for Fp2Fp64ProductAccum {
+impl Sub for FpExt2Fp64ProductAccum {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: Self) -> Self {
@@ -293,7 +293,7 @@ impl Sub for Fp2Fp64ProductAccum {
         ])
     }
 }
-impl SubAssign for Fp2Fp64ProductAccum {
+impl SubAssign for FpExt2Fp64ProductAccum {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         self.0[0] = self.0[0].wrapping_sub(rhs.0[0]);
@@ -302,7 +302,7 @@ impl SubAssign for Fp2Fp64ProductAccum {
         self.0[3] = self.0[3].wrapping_sub(rhs.0[3]);
     }
 }
-impl Neg for Fp2Fp64ProductAccum {
+impl Neg for FpExt2Fp64ProductAccum {
     type Output = Self;
     #[inline]
     fn neg(self) -> Self {

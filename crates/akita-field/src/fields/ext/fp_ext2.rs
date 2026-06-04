@@ -494,7 +494,7 @@ fn fp64_accum_limbs(lo128: u128, hi_carry: u128) -> [u128; 2] {
 pub(crate) fn fp_ext2_mul_to_accum_fp64<const P: u64, C: FpExt2Config<Fp64<P>>>(
     a: [Fp64<P>; 2],
     b: [Fp64<P>; 2],
-) -> Fp2Fp64ProductAccum {
+) -> FpExt2Fp64ProductAccum {
     let p00: u128 = a[0].mul_wide(b[0]);
     let p11 = a[1].mul_wide(b[1]);
     let p01 = a[0].mul_wide(b[1]);
@@ -519,12 +519,12 @@ pub(crate) fn fp_ext2_mul_to_accum_fp64<const P: u64, C: FpExt2Config<Fp64<P>>>(
     let (c1_sum, c1_carry) = p01.overflowing_add(p10);
     let [c1_lo, c1_hi] = fp64_accum_limbs(c1_sum, c1_carry as u128);
 
-    Fp2Fp64ProductAccum([c0_lo, c0_hi, c1_lo, c1_hi])
+    FpExt2Fp64ProductAccum([c0_lo, c0_hi, c1_lo, c1_hi])
 }
 
 impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasUnreducedOps for FpExt2<Fp64<P>, C> {
     type MulU64Accum = AccumPair<<Fp64<P> as HasUnreducedOps>::MulU64Accum>;
-    type ProductAccum = Fp2Fp64ProductAccum;
+    type ProductAccum = FpExt2Fp64ProductAccum;
 
     // `fp_ext2_mul_to_accum_fp64` keeps the full >128-bit coefficient via carry-aware
     // base-2^64 limbs, so summing a batch and reducing once equals per-term `Mul`.
@@ -541,7 +541,7 @@ impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasUnreducedOps for FpExt2<Fp64<P>,
     }
 
     #[inline]
-    fn mul_to_product_accum(self, other: Self) -> Fp2Fp64ProductAccum {
+    fn mul_to_product_accum(self, other: Self) -> FpExt2Fp64ProductAccum {
         fp_ext2_mul_to_accum_fp64::<P, C>(self.coeffs, other.coeffs)
     }
 
@@ -554,7 +554,7 @@ impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasUnreducedOps for FpExt2<Fp64<P>,
     }
 
     #[inline]
-    fn reduce_product_accum(accum: Fp2Fp64ProductAccum) -> Self {
+    fn reduce_product_accum(accum: FpExt2Fp64ProductAccum) -> Self {
         let [c0, c1] = accum.reduce::<P>();
         Self::new(c0, c1)
     }

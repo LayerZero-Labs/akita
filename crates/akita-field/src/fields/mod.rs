@@ -52,6 +52,6 @@ pub use pseudo_mersenne::{
 };
 pub use wide::{
     AccumPair, FoldMatrixFp32, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32,
-    Fp2Fp64ProductAccum, Fp32ProductAccum, Fp32x2i32, Fp64ProductAccum, Fp64x4i32,
-    HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo, RingSubfieldFp4Fp32ProductAccum,
+    Fp32ProductAccum, Fp32x2i32, Fp64ProductAccum, Fp64x4i32, FpExt2Fp64ProductAccum,
+    HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo, RingSubfieldFpExt4Fp32ProductAccum,
 };

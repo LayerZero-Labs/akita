@@ -11,11 +11,11 @@ use num_traits::{One, Zero};
 
 use crate::{
     fields::{
-        AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp2Fp64ProductAccum,
-        Fp32, Fp32ProductAccum, Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32, FpExt2, FpExt2Config,
-        PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend,
-        RingSubfieldFp4Fp32ProductAccum, RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend,
-        RingSubfieldFpExt8, RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config,
+        AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32ProductAccum,
+        Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32, FpExt2, FpExt2Config, FpExt2Fp64ProductAccum,
+        PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend, RingSubfieldFpExt4,
+        RingSubfieldFpExt4Fp32ProductAccum, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
+        RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config,
     },
     CanonicalField, FieldCore,
 };
@@ -574,10 +574,10 @@ impl_wide_additive!(Fp64ProductAccum, Fp64ProductAccum([0; 2]));
 impl_wide_additive!(Fp128MulU64Accum, Fp128MulU64Accum([0; 3]));
 impl_wide_additive!(Fp128ProductAccum, Fp128ProductAccum([0; 4]));
 impl_wide_additive!(
-    RingSubfieldFp4Fp32ProductAccum,
-    RingSubfieldFp4Fp32ProductAccum([0; 4])
+    RingSubfieldFpExt4Fp32ProductAccum,
+    RingSubfieldFpExt4Fp32ProductAccum([0; 4])
 );
-impl_wide_additive!(Fp2Fp64ProductAccum, Fp2Fp64ProductAccum([0; 4]));
+impl_wide_additive!(FpExt2Fp64ProductAccum, FpExt2Fp64ProductAccum([0; 4]));
 
 impl<A: jf::AdditiveGroup> Zero for AccumPair<A> {
     #[inline]
