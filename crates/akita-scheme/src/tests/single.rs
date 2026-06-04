@@ -236,16 +236,13 @@ fn schedule_with_setup_prefix_carried_suffix(
     let root_level_bytes = root_fold.level_bytes;
     let next_params = akita_types::scheduled_next_level_params(&schedule, 1)?;
     let carried_key = akita_types::AkitaScheduleLookupKey::new_with_points(num_vars, 2, 2, 2, 2);
-    let carried_suffix =
-        akita_prover::dispatch_ring_dim_result!(next_params.ring_dimension, |D_LEVEL| {
-            type WCfg<const D: usize, Cfg> = akita_config::WCommitmentConfig<D, Cfg>;
-            akita_config::test_support::recursive_carried_suffix_schedule::<WCfg<{ D_LEVEL }, Cfg>>(
-                carried_key,
-                1,
-                root_next_w_len,
-                root_log_basis,
-            )
-        })?;
+    let carried_suffix = akita_config::test_support::recursive_carried_suffix_schedule::<Cfg>(
+        next_params.ring_dimension,
+        carried_key,
+        1,
+        root_next_w_len,
+        root_log_basis,
+    )?;
     if !matches!(
         carried_suffix.steps.first(),
         Some(akita_types::Step::Fold(_))
@@ -337,6 +334,7 @@ fn recursive_suffix_verifies_witness_plus_dummy_setup_carried_batch() {
                                 params,
                                 current_w_len,
                                 Cfg::decomposition(),
+                                Cfg::ring_subfield_embedding_norm_bound(),
                             )
                         },
                         recursive_w_commit_layout_for_d::<Cfg>,
@@ -370,6 +368,7 @@ fn recursive_suffix_verifies_witness_plus_dummy_setup_carried_batch() {
                                 params,
                                 current_w_len,
                                 Cfg::decomposition(),
+                                Cfg::ring_subfield_embedding_norm_bound(),
                             )
                         },
                         recursive_w_commit_layout_for_d::<Cfg>,
