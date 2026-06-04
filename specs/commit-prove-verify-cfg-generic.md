@@ -4,7 +4,7 @@
 |-------------|--------------------------------|
 | Author(s)   |                                |
 | Created     | 2026-06-04                     |
-| Status      | proposed                       |
+| Status      | implemented                    |
 | PR          |                                |
 
 ## Summary
