@@ -757,7 +757,10 @@ mod perf {
         println!("p99.9  = {:.3}", pct(0.999));
         println!("p99.99 = {:.3}", pct(0.9999));
         println!("max    = {:.3}", gammas[n - 1]);
-        println!("(||c||_1 = {} is the trivial deterministic bound)", C1 + 2 * C2);
+        println!(
+            "(||c||_1 = {} is the trivial deterministic bound)",
+            C1 + 2 * C2
+        );
         println!("--- acceptance p(T) = Pr[gamma <= T] and avg candidates 1/p ---");
         for t in 14..=30u32 {
             let acc = gammas.partition_point(|&g| g <= t as f64);
