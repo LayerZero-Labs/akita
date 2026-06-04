@@ -54,6 +54,9 @@ The result is that Akita only supports the shipped and security-viable modulus f
 - This spec does not require deleting historical `specs/*` documents that mention fp16.
 - This spec does not attempt to preserve the ability to verify old Q16 proofs.
   The repo makes no compatibility guarantees, and this is an intentional break.
+- This spec does not remove the generic `RingSubfieldFp8` extension type.
+  Only the `RingSubfieldFp8<Fp16>` specialization and its fp16-only optimized paths are removed.
+  `RingSubfieldFp8<Fp32>`, `RingSubfieldFp8<Fp64>`, and `RingSubfieldFp8<Fp128>` remain as generic extension infrastructure.
 - This spec does not remove the generic `i16` NTT prime width.
   `PrimeWidth`'s `i16` arm and the i16 butterfly/Montgomery/SIMD kernels stay as reusable infrastructure: a future schedule could route Q32/Q64 through several small `i16` NTT primes instead of `i32` primes, and choosing `i32` primes today does not foreclose that.
   Only the Q16-specific concrete tables and dispatch are removed.
@@ -111,6 +114,7 @@ This is a full deletion across multiple crates, with the main ownership boundari
   - Removes `Fp16` and all fp16-only optimizations and packings.
   - Removes `Prime16Offset99` from the pseudo-Mersenne registry.
   - Removes any fp16 specialization of extension fields (notably `RingSubfieldFp8<Fp16>` paths).
+  - Keeps the generic `RingSubfieldFp8` extension type and its supported non-fp16 base-field instantiations.
 
 - `akita-algebra`
   - Removes the Q16-specific CRT/NTT tables and Garner constants (`Q16_PRIMES`, `Q16_NUM_PRIMES`, `Q16_MODULUS`, `q16_garner` in `crates/akita-algebra/src/ntt/tables.rs`) and the Q16 prime-table tests.

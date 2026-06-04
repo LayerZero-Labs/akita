@@ -214,6 +214,30 @@ fn ring_subfield_fp8_inv() {
 }
 
 #[test]
+fn ring_subfield_fp8_serialization_is_coeff_ordered() {
+    let x = R8::new(std::array::from_fn(|i| F::from_u64(i as u64 + 1)));
+    let mut bytes = Vec::new();
+    x.serialize_with_mode(&mut bytes, Compress::No).unwrap();
+
+    let expected = x
+        .coeffs
+        .iter()
+        .flat_map(|coeff| {
+            let mut coeff_bytes = Vec::new();
+            coeff.serialize_with_mode(&mut coeff_bytes, Compress::No)
+                .unwrap();
+            coeff_bytes
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(x.serialized_size(Compress::No), expected.len());
+    assert_eq!(bytes, expected);
+
+    let decoded = R8::deserialize_with_mode(&bytes[..], Compress::No, Validate::Yes, &()).unwrap();
+    assert_eq!(decoded, x);
+}
+
+#[test]
 fn frobenius_fp2_is_conjugation() {
     let x = E2::new(F::from_u64(13), F::from_u64(21));
     assert_eq!(<E2 as FrobeniusExtField<F>>::frobenius_pow(x, 0), x);

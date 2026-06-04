@@ -420,6 +420,32 @@ fn cyclotomic_ntt_crt_round_trip_q32() {
     assert_eq!(ring, round_trip);
 }
 
+const SYNTHETIC_I16_NUM_PRIMES: usize = 3;
+
+fn synthetic_i16_primes() -> [NttPrime<i16>; SYNTHETIC_I16_NUM_PRIMES] {
+    [
+        NttPrime::compute(15361_i16),
+        NttPrime::compute(13313_i16),
+        NttPrime::compute(12289_i16),
+    ]
+}
+
+fn assert_synthetic_i16_ntt_round_trip<const D: usize>() {
+    type F = Fp64<{ Q32_MODULUS }>;
+    type R<const D: usize> = CyclotomicRing<F, D>;
+    type N<const D: usize> = CyclotomicCrtNtt<i16, SYNTHETIC_I16_NUM_PRIMES, D>;
+
+    let params =
+        CrtNttParamSet::<i16, SYNTHETIC_I16_NUM_PRIMES, D>::new(synthetic_i16_primes());
+    let coeffs: [F; D] =
+        std::array::from_fn(|i| F::from_u64(((i as u64 * 17) + 5) % Q32_MODULUS));
+    let ring = R::<D>::from_coefficients(coeffs);
+    let ntt = N::<D>::from_ring_with_params(&ring, &params);
+    let round_trip = ntt.to_ring_with_params(&params);
+
+    assert_eq!(ring, round_trip);
+}
+
 fn assert_q32_ntt_round_trip<const D: usize>() {
     type F = Fp64<{ Q32_MODULUS }>;
     type R<const D: usize> = CyclotomicRing<F, D>;
@@ -454,6 +480,14 @@ fn reduced_q32_ntt_round_trips_across_supported_ring_dims() {
     assert_q32_ntt_round_trip::<64>();
     assert_q32_ntt_round_trip::<128>();
     assert_q32_ntt_round_trip::<256>();
+}
+
+#[test]
+fn synthetic_i16_ntt_round_trips_across_supported_ring_dims() {
+    assert_synthetic_i16_ntt_round_trip::<32>();
+    assert_synthetic_i16_ntt_round_trip::<64>();
+    assert_synthetic_i16_ntt_round_trip::<128>();
+    assert_synthetic_i16_ntt_round_trip::<256>();
 }
 
 #[test]
