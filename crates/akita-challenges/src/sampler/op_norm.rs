@@ -1,4 +1,4 @@
-//! Exact operator-norm acceptance predicate `gamma_D(c) <= T` (spec slice S1).
+//! Exact operator-norm acceptance predicate `gamma_D(c) <= T`.
 //!
 //! For `c in Z[X]/(X^D + 1)` the negacyclic convolution operator norm is
 //!
@@ -10,9 +10,10 @@
 //! and `accept(c) iff gamma_D(c) <= T iff max_k |c_hat(k)|^2 <= T^2`.
 //!
 //! Soundness contract (the only invariant callers depend on): a returned
-//! [`Decision::Accept`] means `gamma_D(c) <= T` over the reals. To honor that
-//! without trusting machine floating-point FFTs (forbidden by the spec), the
-//! decision is integer-only:
+//! [`Decision::Accept`] means `gamma_D(c) <= T` over the reals. Machine
+//! floating-point FFTs cannot honor that contract (their rounding could turn a
+//! just-over-threshold challenge into an unsound accept), so the decision is
+//! integer-only:
 //!
 //! - The `2*D` distinct trig values `cos(pi*t/D), sin(pi*t/D)` are tabulated as
 //!   signed fixed-point integers at scale `2^q`, each carried with a *sound*
@@ -27,14 +28,17 @@
 //!   [`Decision::Accept`] is returned only when every `upper_k <= T^2 2^{2q}`,
 //!   so acceptance is always sound. A frequency whose *lower* bound already
 //!   exceeds the threshold forces [`Decision::Reject`]; anything in between is
-//!   [`Decision::Indeterminate`] (the spec sanctions treating the boundary band
-//!   as a reject, at the cost of a slightly smaller accepted support).
+//!   [`Decision::Indeterminate`]. Callers that fold the boundary band into a
+//!   reject (see [`OpNormTable::accept_strict`]) stay sound, at the cost of a
+//!   slightly smaller accepted support.
 //!
 //! Only the `D/2` frequencies `k = 0..D/2` are scanned: `zeta_{D-1-k} =
 //! conj(zeta_k)` and `c` is real, so `|c_hat(D-1-k)| = |c_hat(k)|`.
 //!
-//! The predicate itself has no production caller yet; slice S3 (operator-norm
-//! rejection sampling) is the first consumer.
+//! This is the acceptance oracle for operator-norm rejection sampling of fold
+//! challenges: a sampled challenge is retained only if it passes
+//! [`OpNormTable::accept_strict`]. It is not yet wired into the sampler, hence
+//! the crate-internal visibility and the `dead_code` allow below.
 #![allow(dead_code)]
 
 use akita_field::AkitaError;

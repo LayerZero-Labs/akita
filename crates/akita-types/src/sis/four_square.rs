@@ -16,9 +16,8 @@
 //!
 //! The input is a `u64`, so `target < 2^64`. Each returned `ell_j` is one of
 //! four non-negative squares summing to `target`, hence `ell_j^2 <= target` and
-//! `ell_j <= floor(sqrt(target)) <= 2^32 - 1 < 2^32`. This is exactly the
-//! `ell_j < 2^32` ceiling the spec pins for the certificate payload, with no
-//! runtime clamp needed.
+//! `ell_j <= floor(sqrt(target)) <= 2^32 - 1 < 2^32`, so every slack witness
+//! fits a 32-bit budget with no runtime clamp needed.
 //!
 //! ## Algorithm
 //!
@@ -50,8 +49,8 @@
 //! deterministic Miller–Rabin (exact for all `u64`), exact trial division, and
 //! `u128` modular arithmetic.
 //!
-//! The solver has no production caller yet; spec slice S8 (prover certificate
-//! assembly) is the first consumer.
+//! The prover calls this when it assembles the folded-witness L2 certificate,
+//! turning the realized slack `B_l2 - Z_SQUARED` into the four committed witnesses.
 
 use akita_field::AkitaError;
 

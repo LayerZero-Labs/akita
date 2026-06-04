@@ -120,6 +120,14 @@ The primary protocol surfaces are:
   batching must have masked-proof relations analogous to the transparent path.
   The mask accounting must remain linear except for the explicitly recorded
   quadratic relations.
+- **Standalone code documentation.** Comments, docstrings, and implementations
+  must make sense on their own, without the reader opening this spec.
+  Do not tag source with slice identifiers (`S1`, `S8`, ...), do not cite "the
+  spec", and do not describe a symbol only by its future spec consumer.
+  Explain the math, the contract, and the symbol's role in codebase terms
+  (concrete types, functions, and protocol objects).
+  Slice and spec tracking belongs in commit messages and PR descriptions, not in
+  the code.
 
 ### Non-Goals
 

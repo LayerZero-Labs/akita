@@ -249,10 +249,10 @@ pub fn fold_witness_beta(
 // stays in the squared, exact-integer domain: `sqrt(D)` is irrational for
 // `D ∈ {32, 128}`, and squaring it away keeps the values exact `u128` integers.
 // A real square root is taken only when the prover picks the bucket `B_l2` and
-// the four-square slack (spec slice S8), never in these sizing helpers.
+// the four-square slack, never in these sizing helpers.
 //
-// None of these are wired into rank pricing yet; the L2 SIS table + planner
-// cutover (S5, S11) and the prover certificate (S8) are the first consumers.
+// These are pure sizing leaves: the planner/setup derives the A-role binding
+// rank from them, and the prover bounds the realized certificate slack with them.
 
 /// Squared per-block committed-witness Euclidean bound `s_l2_max^2`, the L2
 /// analogue of the [`FoldWitnessNorms`] `(||s||_inf, ||s||_1)` pair:
@@ -262,9 +262,9 @@ pub fn fold_witness_beta(
 /// s_l2_max^2 = 1             a one-hot block (a single unit coefficient).
 /// ```
 ///
-/// The one-hot value is the spec's per-block contract (one unit coefficient).
-/// Per-level policy for multi-chunk one-hot or tensor folds is decided by the
-/// caller (S8/S11), not here.
+/// The one-hot value is for a block with a single unit coefficient
+/// (`||s||_2 = 1`). Per-level policy for multi-chunk one-hot or tensor folds is
+/// decided by the caller, not here.
 ///
 /// # Errors
 ///
