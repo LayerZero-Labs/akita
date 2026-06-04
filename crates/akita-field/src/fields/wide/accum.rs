@@ -35,13 +35,6 @@ impl<const P: u32> From<Fp32<P>> for Fp32ProductAccum {
     }
 }
 
-impl<const P: u32> From<Fp16<P>> for Fp32ProductAccum {
-    #[inline]
-    fn from(x: Fp16<P>) -> Self {
-        Self([x.to_limbs() as u128, 0])
-    }
-}
-
 impl Add for Fp32ProductAccum {
     type Output = Self;
     #[inline]
@@ -166,76 +159,6 @@ impl Neg for RingSubfieldFp4Fp32ProductAccum {
             self.0[2].wrapping_neg(),
             self.0[3].wrapping_neg(),
         ])
-    }
-}
-
-/// Accumulator for `RingSubfieldFp8<Fp16>` products with delayed reduction.
-///
-/// Each slot holds the unreduced `u64` sum for one of the 8 ring-subfield
-/// coefficients in basis `[1, e1, ..., e7]`. The φ(X) ring reduction is fused
-/// into the per-coefficient formulas; only the base-field Solinas reduction
-/// (`reduce_u128`) is deferred to [`reduce`](Self::reduce).
-///
-/// Headroom: every `Fp16` base product is `< P² < 2^32` (`P = 2^16 − 99`). The
-/// busiest coefficient (slot 0) sums `1 + 2·7 = 15` of them, and the others add
-/// `≤ 6·P²` non-negativity offsets, so a single product's worst slot is computed
-/// exactly in `u64` (`< 15·P² < 2^36`) and widened to `u128` here. The `u128`
-/// slot keeps the running batch sum exact for any prover-reachable product count
-/// `N` (`N·15·P² < 2^128` ⟺ `N < 2^92`). This matters because the dense EOR
-/// round (`accumulate_dense_round` / `fused_fold_and_accumulate`) sums
-/// `half = table_len/2` products into one slot before reducing — a `u64` slot
-/// would overflow near `half ≈ 2^28` (reached around `num_vars` 32–33), whereas
-/// `u128` cannot. Covered by `ring_subfield_fp8_fp16_accum_summation`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RingSubfieldFp8Fp16ProductAccum(pub [u128; 8]);
-
-impl RingSubfieldFp8Fp16ProductAccum {
-    /// Additive identity accumulator.
-    pub const ZERO: Self = Self([0; 8]);
-
-    /// Reduce accumulated unreduced coefficients to a canonical
-    /// `RingSubfieldFp8<Fp16<P>>`.
-    #[inline]
-    pub fn reduce<const P: u32>(self) -> [Fp16<P>; 8] {
-        std::array::from_fn(|i| Fp16::<P>::from_canonical_u128_reduced(self.0[i]))
-    }
-}
-
-impl Add for RingSubfieldFp8Fp16ProductAccum {
-    type Output = Self;
-    #[inline]
-    fn add(self, rhs: Self) -> Self {
-        Self(std::array::from_fn(|i| self.0[i].wrapping_add(rhs.0[i])))
-    }
-}
-impl AddAssign for RingSubfieldFp8Fp16ProductAccum {
-    #[inline]
-    fn add_assign(&mut self, rhs: Self) {
-        for i in 0..8 {
-            self.0[i] = self.0[i].wrapping_add(rhs.0[i]);
-        }
-    }
-}
-impl Sub for RingSubfieldFp8Fp16ProductAccum {
-    type Output = Self;
-    #[inline]
-    fn sub(self, rhs: Self) -> Self {
-        Self(std::array::from_fn(|i| self.0[i].wrapping_sub(rhs.0[i])))
-    }
-}
-impl SubAssign for RingSubfieldFp8Fp16ProductAccum {
-    #[inline]
-    fn sub_assign(&mut self, rhs: Self) {
-        for i in 0..8 {
-            self.0[i] = self.0[i].wrapping_sub(rhs.0[i]);
-        }
-    }
-}
-impl Neg for RingSubfieldFp8Fp16ProductAccum {
-    type Output = Self;
-    #[inline]
-    fn neg(self) -> Self {
-        Self(std::array::from_fn(|i| self.0[i].wrapping_neg()))
     }
 }
 

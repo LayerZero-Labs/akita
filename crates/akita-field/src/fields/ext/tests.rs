@@ -3,7 +3,7 @@ use crate::fields::lift::{
     canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
     ExtField, FrobeniusExtField,
 };
-use crate::{Fp64, Prime16Offset99};
+use crate::Fp64;
 use crate::{FromPrimitiveInt, Invertible};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -14,7 +14,6 @@ type E4 = TowerBasisFp4<F, TwoNr, UnitNr>;
 type P4 = PowerBasisFp4<F, TwoNr>;
 type R4 = RingSubfieldFp4<F>;
 type R8 = RingSubfieldFp8<F>;
-type R8Fp16 = RingSubfieldFp8<Prime16Offset99>;
 
 #[test]
 fn fp2_add_sub_identity() {
@@ -215,17 +214,27 @@ fn ring_subfield_fp8_inv() {
 }
 
 #[test]
-fn ring_subfield_fp8_fp16_serialization_is_coeff_ordered() {
-    let x = R8Fp16::new(std::array::from_fn(|i| {
-        Prime16Offset99::from_u64(i as u64 + 1)
-    }));
+fn ring_subfield_fp8_serialization_is_coeff_ordered() {
+    let x = R8::new(std::array::from_fn(|i| F::from_u64(i as u64 + 1)));
     let mut bytes = Vec::new();
     x.serialize_with_mode(&mut bytes, Compress::No).unwrap();
-    assert_eq!(x.serialized_size(Compress::No), 16);
-    assert_eq!(bytes, vec![1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8, 0]);
 
-    let decoded =
-        R8Fp16::deserialize_with_mode(&bytes[..], Compress::No, Validate::Yes, &()).unwrap();
+    let expected = x
+        .coeffs
+        .iter()
+        .flat_map(|coeff| {
+            let mut coeff_bytes = Vec::new();
+            coeff
+                .serialize_with_mode(&mut coeff_bytes, Compress::No)
+                .unwrap();
+            coeff_bytes
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(x.serialized_size(Compress::No), expected.len());
+    assert_eq!(bytes, expected);
+
+    let decoded = R8::deserialize_with_mode(&bytes[..], Compress::No, Validate::Yes, &()).unwrap();
     assert_eq!(decoded, x);
 }
 
@@ -546,11 +555,10 @@ fn mul_base_to_product_accum_matches_mul_base_sum() {
         );
     }
 
-    // fp4/Fp32 takes the optimal coordinate-scaling override; fp2/Fp64 and
-    // fp8/Fp16 take the lifted default body. All three defer reduction.
+    // fp4/Fp32 takes the optimal coordinate-scaling override; fp2/Fp64 takes
+    // the lifted default body. Both defer reduction.
     check::<Fp32<251>, RingSubfieldFp4<Fp32<251>>>(0xB001);
     check::<F, Ext2<F>>(0xB002);
-    check::<Prime16Offset99, R8Fp16>(0xB003);
 }
 
 // Regression guard for the `Fp2<Fp64>` delayed-reduction accumulator. The earlier
@@ -613,103 +621,6 @@ fn fp2_fp64_accum_summation_large_operands() {
         E::reduce_product_accum(accum_sum),
         "fp2<fp64> accumulated sum of {n} products mismatched"
     );
-}
-
-#[test]
-fn ring_subfield_fp8_fp16_product_accum_matches_direct_mul() {
-    use super::ring_subfield_fp8::ring_subfield_fp8_mul_to_accum_fp16;
-    use crate::fields::wide::RingSubfieldFp8Fp16ProductAccum;
-    use num_traits::Zero;
-
-    // Prime16Offset99 = Fp16<65_437> (2^16 - 99).
-    const P: u32 = 65_437;
-
-    let mut rng = StdRng::seed_from_u64(0x8ACC0);
-    for _ in 0..400 {
-        let a = R8Fp16::random(&mut rng);
-        let b = R8Fp16::random(&mut rng);
-        let direct = a * b;
-        let accum = ring_subfield_fp8_mul_to_accum_fp16(a.coeffs, b.coeffs);
-        let reduced = R8Fp16::new(accum.reduce::<P>());
-        assert_eq!(direct, reduced, "accum mismatch for a={a:?} b={b:?}");
-    }
-
-    let zero_accum = RingSubfieldFp8Fp16ProductAccum::ZERO;
-    assert!(zero_accum.is_zero());
-    let reduced_zero = R8Fp16::new(zero_accum.reduce::<P>());
-    assert_eq!(reduced_zero, R8Fp16::zero());
-}
-
-#[test]
-fn ring_subfield_fp8_fp16_accum_summation() {
-    use num_traits::Zero;
-
-    let mut rng = StdRng::seed_from_u64(0x8ACC1);
-    let n = 4096;
-    let pairs: Vec<(R8Fp16, R8Fp16)> = (0..n)
-        .map(|_| (R8Fp16::random(&mut rng), R8Fp16::random(&mut rng)))
-        .collect();
-
-    let direct_sum: R8Fp16 = pairs
-        .iter()
-        .map(|(a, b)| *a * *b)
-        .fold(R8Fp16::zero(), |s, p| s + p);
-
-    let accum_sum = pairs.iter().fold(
-        <R8Fp16 as HasUnreducedOps>::ProductAccum::zero(),
-        |s, (a, b)| s + a.mul_to_product_accum(*b),
-    );
-    let reduced = R8Fp16::reduce_product_accum(accum_sum);
-
-    assert_eq!(
-        direct_sum, reduced,
-        "accumulated sum of {n} products mismatched"
-    );
-}
-
-// Regression for the dense-EOR-round overflow: `accumulate_dense_round` /
-// `fused_fold_and_accumulate` sum `half = table_len/2` products into a single
-// accumulator slot before reducing once. Each Fp16 ring-product slot is
-// `< 15·P² < 2^36`, so a `u64` slot wrapped once `half · 15·P²` crossed `2^64`
-// (`half ≈ 2^28`, reached around `num_vars` 32-33), silently corrupting proofs.
-// The `u128` slot must reduce values well past `2^64` exactly (this value cannot
-// even be represented in the old `[u64; 8]`).
-#[test]
-fn ring_subfield_fp8_fp16_accum_reduces_past_u64() {
-    use crate::fields::wide::RingSubfieldFp8Fp16ProductAccum;
-
-    const P: u32 = 65_437; // 2^16 - 99
-    let vals: [u128; 8] = std::array::from_fn(|i| {
-        // Distinct per slot and far above u64::MAX (~1.8e19).
-        (5u128 << 64) + (i as u128).wrapping_mul(0x9E37_79B9_7F4A_7C15) + 1
-    });
-    let reduced = RingSubfieldFp8Fp16ProductAccum(vals).reduce::<P>();
-    for (i, r) in reduced.iter().enumerate() {
-        assert_eq!(
-            u32::from(r.to_limbs()),
-            (vals[i] % P as u128) as u32,
-            "slot {i} reduced incorrectly past 2^64"
-        );
-    }
-}
-
-#[test]
-fn ring_subfield_fp8_fp16_fold_matrix_matches_generic() {
-    // The 8×8 fold matrix must reproduce the generic ring-multiply fold
-    // `even + r·(odd - even)` byte-for-byte, otherwise the EOR fold diverges.
-    let mut rng = StdRng::seed_from_u64(0x8F01D);
-    for _ in 0..400 {
-        let r = R8Fp16::random(&mut rng);
-        let even = R8Fp16::random(&mut rng);
-        let odd = R8Fp16::random(&mut rng);
-        let ctx = <R8Fp16 as HasOptimizedFold>::precompute_fold(r);
-        let matrix = <R8Fp16 as HasOptimizedFold>::fold_one(&ctx, even, odd);
-        let generic = even + r * (odd - even);
-        assert_eq!(
-            matrix, generic,
-            "fold mismatch r={r:?} even={even:?} odd={odd:?}"
-        );
-    }
 }
 
 // The specialized `Fp2<Fp64>` EOR fold must be byte-identical to the generic

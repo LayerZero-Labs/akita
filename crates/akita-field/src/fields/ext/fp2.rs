@@ -394,7 +394,6 @@ macro_rules! impl_fp2_unreduced_identity {
     };
 }
 
-impl_fp2_unreduced_identity!(Fp16<P: u32>);
 impl_fp2_unreduced_identity!(Fp32<P: u32>);
 impl_fp2_unreduced_identity!(Fp128<P: u128>);
 
@@ -414,7 +413,6 @@ macro_rules! impl_fp2_default_optimized_fold {
     };
 }
 
-impl_fp2_default_optimized_fold!(Fp16<P: u32>);
 impl_fp2_default_optimized_fold!(Fp32<P: u32>);
 impl_fp2_default_optimized_fold!(Fp128<P: u128>);
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 use crate::validation::MAX_I8_LOG_BASIS;
-use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q16_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES};
+use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q64_NUM_PRIMES};
 
 pub(super) const BALANCED_DIGIT_RHS_MAX_ABS: u64 = 1 << (MAX_I8_LOG_BASIS - 1);
 pub(super) const I8_RHS_MAX_ABS: u64 = 128;
@@ -200,9 +200,6 @@ where
 pub(crate) fn selected_crt_i8_capacity_profile<F: CanonicalField, const D: usize>(
 ) -> Result<CrtI8CapacityProfile, AkitaError> {
     match select_crt_ntt_params::<F, D>()? {
-        ProtocolCrtNttParams::Q16(params) => {
-            capacity_profile_from_params::<F, _, Q16_NUM_PRIMES, D>(&params, "Q16/3xi16", 16)
-        }
         ProtocolCrtNttParams::Q32(params) => {
             capacity_profile_from_params::<F, _, Q32_NUM_PRIMES, D>(&params, "Q32/2xi32", 32)
         }
@@ -269,10 +266,9 @@ pub(super) fn safe_crt_chunk_width<
 mod tests {
     use super::*;
     use akita_algebra::ntt::tables::{
-        q128_primes, Q128_NUM_PRIMES, Q16_NUM_PRIMES, Q16_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES,
-        Q64_NUM_PRIMES, Q64_PRIMES,
+        q128_primes, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES, Q64_PRIMES,
     };
-    use akita_field::{Fp64, Prime128Offset275, Prime16Offset99, Prime32Offset99, Prime64Offset59};
+    use akita_field::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn q128_digit_capacity_matches_expected_scale() {
@@ -351,11 +347,6 @@ mod tests {
     #[test]
     fn selected_capacity_profiles_match_golden_safe_widths() {
         assert_profile_widths(
-            selected_crt_i8_capacity_profile::<Prime16Offset99, 256>().unwrap(),
-            4_688,
-            1_172,
-        );
-        assert_profile_widths(
             selected_crt_i8_capacity_profile::<Prime32Offset99, 256>().unwrap(),
             32_765,
             8_191,
@@ -375,15 +366,6 @@ mod tests {
     #[test]
     fn centered_zpre_capacity_matches_golden_widths() {
         const D: usize = 256;
-        let q16_params = CrtNttParamSet::<i16, Q16_NUM_PRIMES, D>::new(Q16_PRIMES);
-        assert_eq!(
-            max_safe_crt_accumulation_width::<Prime16Offset99, i16, Q16_NUM_PRIMES, D>(
-                &q16_params,
-                32_768
-            ),
-            Some(4)
-        );
-
         let q32_params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
         assert_eq!(
             max_safe_crt_accumulation_width::<Prime32Offset99, i32, Q32_NUM_PRIMES, D>(
@@ -415,8 +397,6 @@ mod tests {
     #[test]
     fn reduced_profiles_fit_single_i8_terms_at_direct_ring_dims() {
         for profile in [
-            selected_crt_i8_capacity_profile::<Prime16Offset99, 128>().unwrap(),
-            selected_crt_i8_capacity_profile::<Prime16Offset99, 256>().unwrap(),
             selected_crt_i8_capacity_profile::<Prime32Offset99, 128>().unwrap(),
             selected_crt_i8_capacity_profile::<Prime32Offset99, 256>().unwrap(),
             selected_crt_i8_capacity_profile::<Prime64Offset59, 128>().unwrap(),
@@ -429,11 +409,6 @@ mod tests {
 
     #[test]
     fn selected_capacity_profile_matches_expected_dispatch_metadata() {
-        let q16 = selected_crt_i8_capacity_profile::<Prime16Offset99, 64>().unwrap();
-        assert_eq!(q16.profile_id, "Q16/3xi16");
-        assert_eq!(q16.num_primes, Q16_NUM_PRIMES);
-        assert_eq!(q16.limb_bits, 16);
-
         let q32 = selected_crt_i8_capacity_profile::<Prime32Offset99, 64>().unwrap();
         assert_eq!(q32.profile_id, "Q32/2xi32");
         assert_eq!(q32.num_primes, Q32_NUM_PRIMES);
@@ -453,17 +428,6 @@ mod tests {
     #[test]
     fn profile_safe_widths_match_manual_params() {
         const D: usize = 256;
-        let q16_params = CrtNttParamSet::<i16, Q16_NUM_PRIMES, D>::new(Q16_PRIMES);
-        let q16 = selected_crt_i8_capacity_profile::<Prime16Offset99, D>().unwrap();
-        assert_eq!(
-            q16.raw_i8_safe_width,
-            max_safe_crt_accumulation_width::<Prime16Offset99, i16, Q16_NUM_PRIMES, D>(
-                &q16_params,
-                I8_RHS_MAX_ABS
-            )
-            .unwrap()
-        );
-
         let q64_params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
         let q64 = selected_crt_i8_capacity_profile::<Prime64Offset59, D>().unwrap();
         assert_eq!(

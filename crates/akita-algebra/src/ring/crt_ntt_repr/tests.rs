@@ -1,10 +1,22 @@
 use super::lut::{centered_prime_residue_i128, centered_prime_residue_i64};
 use super::*;
-use crate::ntt::tables::{Q16_NUM_PRIMES, Q16_PRIMES, Q32_PRIMES};
+use crate::ntt::prime::NttPrime;
+use crate::ntt::tables::Q32_PRIMES;
+
+const SYNTHETIC_I16_NUM_PRIMES: usize = 3;
+
+fn synthetic_i16_primes() -> [NttPrime<i16>; SYNTHETIC_I16_NUM_PRIMES] {
+    [
+        NttPrime::compute(15361_i16),
+        NttPrime::compute(13313_i16),
+        NttPrime::compute(12289_i16),
+    ]
+}
 
 #[test]
 fn centered_prime_residue_keeps_positive_half_boundary() {
-    let prime16 = Q16_PRIMES[0];
+    let primes = synthetic_i16_primes();
+    let prime16 = primes[0];
     let half16 = i64::from(prime16.p) / 2;
     assert_eq!(centered_prime_residue_i64(prime16, half16), half16 as i16);
     assert_eq!(
@@ -32,10 +44,11 @@ fn centered_prime_residue_keeps_positive_half_boundary() {
 #[test]
 fn centered_mont_lut_matches_centered_residue_boundary() {
     const D: usize = 64;
-    let params = CrtNttParamSet::<i16, Q16_NUM_PRIMES, D>::new(Q16_PRIMES);
+    let primes = synthetic_i16_primes();
+    let params = CrtNttParamSet::<i16, SYNTHETIC_I16_NUM_PRIMES, D>::new(primes);
     let prime = params.primes[0];
     let half = i32::from(prime.p) / 2;
-    let lut = CenteredMontLut::<i16, Q16_NUM_PRIMES>::new(&params, half + 1);
+    let lut = CenteredMontLut::<i16, SYNTHETIC_I16_NUM_PRIMES>::new(&params, half + 1);
 
     let boundary = centered_prime_residue_i64(prime, i64::from(half));
     let past_boundary = centered_prime_residue_i64(prime, i64::from(half + 1));

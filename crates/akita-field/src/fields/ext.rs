@@ -9,11 +9,10 @@ mod tests;
 mod tower_fp4;
 
 use super::wide::{
-    AccumPair, FoldMatrixFp16, FoldMatrixFp32, FoldMatrixFp64, Fp2Fp64ProductAccum,
-    HasOptimizedFold, HasUnreducedOps, RingSubfieldFp4Fp32ProductAccum,
-    RingSubfieldFp8Fp16ProductAccum,
+    AccumPair, FoldMatrixFp32, FoldMatrixFp64, Fp2Fp64ProductAccum, HasOptimizedFold,
+    HasUnreducedOps, RingSubfieldFp4Fp32ProductAccum,
 };
-use super::{fp128::Fp128, fp16::Fp16, fp32::Fp32, fp64::Fp64};
+use super::{fp128::Fp128, fp32::Fp32, fp64::Fp64};
 use crate::{BalancedDigitLookup, CanonicalField, FieldCore, HalvingField, MulBaseUnreduced};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
