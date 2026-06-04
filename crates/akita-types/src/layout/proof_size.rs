@@ -2,7 +2,7 @@
 
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::layout::digit_math::compute_num_digits_full_field;
+use crate::sis::compute_num_digits_full_field;
 use crate::{CleartextWitnessShape, LevelParams, EXTENSION_OPENING_REDUCTION_DEGREE};
 
 /// Field element size in bytes for a field with `field_bits` bits.
@@ -110,7 +110,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .ok_or_else(|| AkitaError::InvalidSetup("planned T width overflow".to_string()))?;
     let z_pre_count = lp
         .inner_width()
-        .checked_mul(lp.num_digits_fold(1, field_bits))
+        .checked_mul(lp.num_digits_fold(1, field_bits)?)
         .ok_or_else(|| AkitaError::InvalidSetup("planned Z width overflow".to_string()))?;
     let r_count = lp
         .m_row_count(1, 1)?

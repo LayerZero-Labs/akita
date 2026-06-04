@@ -1,6 +1,6 @@
 //! End-to-end Akita PCS scheme orchestration.
 
-use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig, WCommitmentConfig};
+use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::fields::wide::{HasOptimizedFold, HasWide};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
@@ -71,11 +71,16 @@ fn recursive_w_commit_layout_for_d<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    dispatch_ring_dim_result!(commit_d, |D_COMMIT| {
+    // The dispatch validates `commit_d` is a supported ring dimension (the
+    // only reason it is needed here); the recursive-w layout itself is derived
+    // from `commit_params` and `Cfg::decomposition()`, neither of which depends
+    // on the matched const.
+    dispatch_ring_dim_result!(commit_d, |_D_COMMIT| {
         akita_types::recursive_level_layout_from_params(
             commit_params,
             current_w_len,
-            WCommitmentConfig::<{ D_COMMIT }, Cfg>::decomposition(),
+            Cfg::decomposition(),
+            Cfg::ring_subfield_embedding_norm_bound(),
         )
     })
 }
@@ -142,6 +147,7 @@ where
                     params,
                     current_w_len,
                     Cfg::decomposition(),
+                    Cfg::ring_subfield_embedding_norm_bound(),
                 )
             },
             |w| {
@@ -155,7 +161,8 @@ where
                         akita_types::recursive_level_layout_from_params(
                             params,
                             current_w_len,
-                            WCommitmentConfig::<D, Cfg>::decomposition(),
+                            Cfg::decomposition(),
+                            Cfg::ring_subfield_embedding_norm_bound(),
                         )
                     },
                     recursive_w_commit_layout_for_d::<Cfg>,
@@ -179,6 +186,7 @@ where
                         params,
                         current_w_len,
                         Cfg::decomposition(),
+                        Cfg::ring_subfield_embedding_norm_bound(),
                     )
                 },
                 |w| {
@@ -199,7 +207,8 @@ where
                             akita_types::recursive_level_layout_from_params(
                                 params,
                                 current_w_len,
-                                WCommitmentConfig::<{ D_LEVEL }, Cfg>::decomposition(),
+                                Cfg::decomposition(),
+                                Cfg::ring_subfield_embedding_norm_bound(),
                             )
                         },
                         recursive_w_commit_layout_for_d::<Cfg>,
@@ -333,6 +342,7 @@ where
                     params,
                     current_w_len,
                     Cfg::decomposition(),
+                    Cfg::ring_subfield_embedding_norm_bound(),
                 )
             },
         )
@@ -360,6 +370,7 @@ where
                         params,
                         current_w_len,
                         Cfg::decomposition(),
+                        Cfg::ring_subfield_embedding_norm_bound(),
                     )
                 },
             )
@@ -580,6 +591,7 @@ where
                                         params,
                                         current_w_len,
                                         Cfg::decomposition(),
+                                        Cfg::ring_subfield_embedding_norm_bound(),
                                     )
                                 },
                                 recursive_w_commit_layout_for_d::<Cfg>,

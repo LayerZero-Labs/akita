@@ -33,18 +33,10 @@ pub mod fp128 {
             }
         }
 
-        fn stage1_challenge_config(
+        fn ring_challenge_config(
             d: usize,
         ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
-            match d {
-                64 => Ok(akita_challenges::SparseChallengeConfig::ExactShell {
-                    count_mag1: 30,
-                    count_mag2: 12,
-                }),
-                _ => Err(akita_field::AkitaError::InvalidSetup(format!(
-                    "unsupported D={d} for D64OneHotTensor"
-                ))),
-            }
+            crate::proof_optimized::proof_optimized_ring_challenge_config(d)
         }
 
         /// Tensor at the root level (`level == 0`), flat at every recursive

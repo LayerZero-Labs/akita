@@ -149,7 +149,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         }
     }
 
-    fn stage1_challenge_config(
+    fn ring_challenge_config(
         _d: usize,
     ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
         Ok(akita_challenges::SparseChallengeConfig::Uniform {
@@ -238,7 +238,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         }
     }
 
-    fn stage1_challenge_config(
+    fn ring_challenge_config(
         _d: usize,
     ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
         Ok(akita_challenges::SparseChallengeConfig::Uniform {

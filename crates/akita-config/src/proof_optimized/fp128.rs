@@ -30,12 +30,60 @@ pub struct D32OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
-impl_fp128_preset!(D128Full, 128, 128);
-impl_fp128_preset!(D128OneHot, 128, 1);
-impl_fp128_preset!(D64Full, 64, 128);
-impl_fp128_preset!(D64OneHot, 64, 1);
-impl_fp128_preset!(D32Full, 32, 128);
-impl_fp128_preset!(D32OneHot, 32, 1);
+impl_proof_optimized_preset!(
+    D128Full,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    128,
+    128,
+    128
+);
+impl_proof_optimized_preset!(
+    D128OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    128,
+    128,
+    1
+);
+impl_proof_optimized_preset!(
+    D64Full,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    64,
+    128,
+    128
+);
+impl_proof_optimized_preset!(
+    D64OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    64,
+    128,
+    1
+);
+impl_proof_optimized_preset!(
+    D32Full,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    32,
+    128,
+    128
+);
+impl_proof_optimized_preset!(
+    D32OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusFamily::Q128,
+    32,
+    128,
+    1
+);
 
 /// Concrete fp128 preset selected by a schedule-family query.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,10 +92,16 @@ pub enum Fp128Preset {
     D32Full,
     /// Full-field adaptive `D=64` preset.
     D64Full,
+    /// Full-field `D=128` preset (proof-size optimum under committed-fold
+    /// A-role pricing).
+    D128Full,
     /// Onehot adaptive `D=32` preset.
     D32OneHot,
     /// Binary onehot generated `D=64` preset.
     D64OneHot,
+    /// Binary onehot `D=128` preset (proof-size optimum under committed-fold
+    /// A-role pricing).
+    D128OneHot,
 }
 
 impl Fp128Preset {
@@ -56,12 +110,13 @@ impl Fp128Preset {
         match self {
             Self::D32Full | Self::D32OneHot => 32,
             Self::D64Full | Self::D64OneHot => 64,
+            Self::D128Full | Self::D128OneHot => 128,
         }
     }
 
     /// Whether this preset is onehot-oriented.
     pub const fn is_onehot(self) -> bool {
-        matches!(self, Self::D32OneHot | Self::D64OneHot)
+        matches!(self, Self::D32OneHot | Self::D64OneHot | Self::D128OneHot)
     }
 
     /// Stable human-readable preset name.
@@ -69,8 +124,10 @@ impl Fp128Preset {
         match self {
             Self::D32Full => "D32Full",
             Self::D64Full => "D64Full",
+            Self::D128Full => "D128Full",
             Self::D32OneHot => "D32OneHot",
             Self::D64OneHot => "D64OneHot",
+            Self::D128OneHot => "D128OneHot",
         }
     }
 }
@@ -127,6 +184,7 @@ pub fn best_full_schedule(
     Ok(best_by_exact_bytes([
         candidate::<D32Full>(Fp128Preset::D32Full, key)?,
         candidate::<D64Full>(Fp128Preset::D64Full, key)?,
+        candidate::<D128Full>(Fp128Preset::D128Full, key)?,
     ]))
 }
 
@@ -145,5 +203,6 @@ pub fn best_onehot_schedule(
     Ok(best_by_exact_bytes([
         candidate::<D32OneHot>(Fp128Preset::D32OneHot, key)?,
         candidate::<D64OneHot>(Fp128Preset::D64OneHot, key)?,
+        candidate::<D128OneHot>(Fp128Preset::D128OneHot, key)?,
     ]))
 }

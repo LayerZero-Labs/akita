@@ -7,6 +7,23 @@
 | Status      | implemented, with long hosted-runner cells deferred   |
 | PR          | https://github.com/LayerZero-Labs/akita/pull/107      |
 
+> **Status note (2026-06-03, PR #146).** The committed-fold A-role reprice in
+> [`specs/weak-binding-norm-fix.md`](weak-binding-norm-fix.md) made the small-D
+> families non-securable (fp16 entirely; fp32/fp64 at D32/D64), so the **active**
+> benchmark matrix was re-pointed at securable D128 profiles for the small prime
+> fields. A later follow-up re-pointed the **fp128** cells to D64 after measuring
+> that D64 is the fp128 proof-size optimum (~20% smaller than D128 for both
+> dense and one-hot, while still folding securely); the small-field fp32/fp64
+> cells remain at D128 because their D64 is non-securable. The current matrix
+> is the "Active Benchmark Matrix" section below. Everything else (this Summary,
+> and everything from "## Evaluation" onward: Acceptance Criteria, Validation,
+> Performance, Design, Alternatives, Follow-Up) is the original **PR #107
+> historical record**. Its fp16 / D32 / D64 cell references (e.g.
+> `onehot_fp16_d32`, `dense_fp64_d32`, `dense_fp128_d32`, the "fp128 D32" report
+> wording) describe the pre-reprice matrix and are superseded by the Active
+> Benchmark Matrix; they are retained as PR #107's completed acceptance record,
+> not the current shipping configuration.
+
 ## Summary
 
 This PR widens the profile benchmark workflow from a small fp128/fp32 sample
@@ -35,33 +52,49 @@ The checked-in workflow currently runs:
 
 | Mode | Field | Workload | Variables | Polys | Config | Notes |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| `dense_fp16_d32` | fp16 | dense | 26 | 1 | D32 | Small-field dense smoke. |
-| `onehot_fp32_d32` | fp32 | 1-of-256 one-hot | 32 | 1 | D32 | Small-field one-hot smoke. |
-| `dense_fp32_d32` | fp32 | dense | 26 | 1 | D32 | Small-field dense smoke. |
-| `onehot_fp64_d32` | fp64 | 1-of-256 one-hot | 32 | 1 | D32 | Small-field one-hot smoke. |
-| `dense_fp128_d32` | fp128 | dense | 24 | 1 | D32 | Slim fp128 dense smoke that keeps the Q128 dense path active. |
-| `onehot_fp128_d32` | fp128 | 1-of-256 one-hot | 32 | 1 | D32 | Explicit fp128 one-hot mode. |
-| `onehot_fp128_d32` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D32 | Preserves same-point batched one-hot coverage. |
+| `onehot_fp32_d128` | fp32 | 1-of-256 one-hot | 28 | 1 | D128 | Smallest securable fp32 one-hot under honest pricing. Capped at nv=28: the ext-degree-4 challenge schedule keeps a large un-folded witness, so at nv>=30 the prover's eq-evaluation table exceeds the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling. |
+| `onehot_fp64_d128` | fp64 | 1-of-256 one-hot | 28 | 1 | D128 | Smallest securable fp64 one-hot under honest pricing. Capped at nv=28 for the same eq-table-budget reason as the fp32 cell. |
+| `dense_fp128_d64` | fp128 | dense | 24 | 1 | D64 | fp128 dense smoke at the proof-size-optimal ring dimension (D64 beats D128 by ~18-22%). |
+| `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | Explicit fp128 one-hot mode at the proof-size-optimal ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
+| `onehot_fp128_d64` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D64 | Preserves same-point batched one-hot coverage. |
 
-This is deliberately a D32 matrix. D64 profile modes still exist for direct
-local comparisons, and `main` adds a D64-only tensor-verifier profile mode, but
-neither the adaptive `full`/`onehot` selectors nor the tensor mode are part of
-the active benchmark matrix.
+Every active cell folds securely under honest committed-fold A-role pricing.
+The ring degree differs by field, for two distinct reasons:
+
+- **Small prime fields (fp32/fp64):** their D32/D64 schedules are no longer
+  securable under the reprice — they degrade to a cleartext root-direct proof
+  and stop exercising a real folding commitment — so the smallest secure ring
+  degree is D128. Those cells (and all fp16 cells) use D128 one-hot.
+- **fp128:** D64 is the actual proof-size optimum for both dense and one-hot.
+  Measured against the runtime schedule's `total_bytes`, D64 produces ~18-23%
+  smaller proofs than D128 across the matrix shapes (e.g. one-hot nv=32:
+  133,000 B at D64 vs 163,968 B at D128; dense nv=24: 131,656 B vs 160,080 B),
+  while still folding through 8-9 secure recursive levels. This is confirmed by
+  `current_d64_onehot_schedule_stays_within_audited_sis_widths` (securability)
+  and by the `best_full_schedule` / `best_onehot_schedule` selectors, which
+  pick D64 (or D32), never D128. The earlier D128 fp128 cells were *not*
+  proof-size optimal; the production-default ring dimension is D128, but the
+  benchmark matrix tracks the proof-size optimum.
+
+D32/D128 profile modes still exist for direct local comparisons, and `main`
+adds a D64-only tensor-verifier profile mode, but neither the adaptive
+`full`/`onehot` selectors nor those comparison modes are part of the active
+benchmark matrix.
 
 Deferred target cells:
 
 | Mode | Field | Workload | Variables | Polys | Config | Re-enable condition |
 | --- | --- | --- | ---: | ---: | --- | --- |
-| `onehot_fp16_d32` | fp16 | 1-of-256 one-hot | 32 | 1 | D32 | Re-enable after small-field one-hot prover cost is reduced or CI budget changes. |
-| `dense_fp64_d32` | fp64 | dense | 25 | 1 | D32 | Re-enable after separate dense fp64 validation and hosted-runner budget review. |
+| `dense_fp64_d128` | fp64 | dense | 24 | 1 | D128 | Re-enable after dense small-field hosted-runner cost is validated (fp32 ships no dense family, so fp64 D128 is the only securable dense small-field cell). |
 
 The first successful 8-case candidate run identified the two cost offenders:
 `onehot_fp16_d32:32:1` spent about 210 seconds in proving and peaked around
 6.2 GiB RSS, while `dense_fp128_d32:26:1` spent about 56 seconds in commit plus
-38 seconds in prove and peaked around 8.4 GiB RSS. Those numbers are useful
-profiling data, but the always-on fp128 dense cell is intentionally reduced to
-`dense_fp128_d32:24:1` so CI still exercises the Q128 dense path without paying
-the full `nv=26` cost.
+38 seconds in prove and peaked around 8.4 GiB RSS (those figures are the
+historical D32-era measurements). The always-on fp128 dense cell stays at
+`nv=24` to keep CI tractable, and now runs at the proof-size-optimal
+`dense_fp128_d64:24:1`; D64 commit/prove cost differs from the D32 numbers
+above, so the timing baseline must be regenerated on the first post-swap run.
 
 ### Scope
 
@@ -87,11 +120,11 @@ The test-coverage cleanup touches:
 1. Benchmark modes are fully cut over to explicit names. There are no
    compatibility aliases for old bare names such as `onehot`, `full`,
    `full_d32`, `onehot_d32`, or `full_fp16_d32`.
-2. The benchmark path is pinned to explicit D32 mode names, not adaptive D
-   selection. `AKITA_BENCH_MODE`, `AKITA_BENCH_CASES`, and the default profile
+2. The benchmark path is pinned to explicit per-field D mode names, not adaptive
+   D selection. `AKITA_BENCH_MODE`, `AKITA_BENCH_CASES`, and the default profile
    mode all spell out the selected D value.
 3. Benchmark-facing labels expose field family, workload, and ring dimension.
-   fp128 rows say `*_fp128_d32`; one-hot rows say `1-of-256 one-hot`.
+   fp128 rows say `*_fp128_d128`; one-hot rows say `1-of-256 one-hot`.
 4. Case IDs are semantic and stable for new artifacts:
    `{field}-{workload[-batched]}-nv{num_vars}-np{num_polys}-d{D}`.
    Loaded summaries are normalized from `(mode, nv, np)` using the new naming
@@ -138,6 +171,12 @@ The test-coverage cleanup touches:
 
 ## Evaluation
 
+> **PR #107 historical record below.** The acceptance criteria, validation, and
+> design notes that follow document what PR #107 shipped and tested (the D32 /
+> fp16 era matrix). They are superseded for the active matrix by the PR #146
+> re-point (see the top status note and "Active Benchmark Matrix" above); fp16 /
+> D32 / D64 cell mentions here are historical, not current targets.
+
 ### Acceptance Criteria
 
 - [x] `.github/workflows/profile-bench.yml` sets `AKITA_BENCH_RUNS` to `3`.
@@ -145,7 +184,7 @@ The test-coverage cleanup touches:
       hosted-runner matrix cases.
 - [x] The known long hosted-runner offender `onehot_fp16_d32:32:1` is
       documented as deferred rather than active.
-- [x] `dense_fp128_d32` remains active at `nv=24`, not the earlier `nv=26`
+- [x] `dense_fp128_d128` remains active at `nv=24`, not the earlier `nv=26`
       hosted-runner offender size.
 - [ ] `dense_fp64_d32:25:1` is re-enabled after a separate validation pass
       and completes setup, commit, prove, verify, proof summary, and proof
@@ -235,8 +274,8 @@ This PR reduces per-case samples from 5 to 3 and expands the active matrix from
 3 cases to 7 cases. The first 8-case candidate run was useful for finding
 costly coverage, but `onehot_fp16_d32:32:1` and `dense_fp128_d32:26:1` are too
 expensive for this PR's always-on hosted-runner budget. The active workflow
-therefore keeps dense fp128 coverage at `nv=24` and remains a smoke matrix, not
-an exhaustive benchmark suite.
+therefore keeps dense fp128 coverage at `nv=24` (now `dense_fp128_d128:24:1`)
+and remains a smoke matrix, not an exhaustive benchmark suite.
 
 One PR run completed all 8 candidate benchmark cases with status `ok`, but the job
 failed later in GitHub API baseline/comment handling. This PR now treats those
@@ -254,8 +293,8 @@ mode surface is now explicit:
 - `onehot_fp{16,32,64,128}_d{32,64}`
 
 The old `full*` and bare `onehot*` names are removed. `AGENTS.md` now points the
-canonical profiling command at `AKITA_MODE=onehot_fp128_d32`. This is an
-explicit D32 cutover, not a renamed adaptive selector.
+canonical profiling command at `AKITA_MODE=onehot_fp128_d128`. This is an
+explicit per-field D cutover, not a renamed adaptive selector.
 
 After merging `main`, the profile example also exposes
 `onehot_fp128_d64_tensor` as a direct local comparison mode because the tensor
@@ -366,7 +405,7 @@ verification, and folded-proof assertions.
 Documentation changes in this PR:
 
 - `AGENTS.md` updates the canonical profile command to
-  `AKITA_MODE=onehot_fp128_d32`.
+  `AKITA_MODE=onehot_fp128_d128`.
 - This spec records the active matrix, deferred long hosted-runner cells,
   reporting format, test cleanup, and verification.
 - The PR body must summarize the final active matrix, deferred long cells,
@@ -380,8 +419,8 @@ cost only.
 
 - Re-enable `onehot_fp16_d32:32:1` after small-field one-hot prover cost is
   reduced or the CI runner budget changes.
-- Revisit `dense_fp128_d32:26:1` after dense fp128 commit/prove cost is reduced
-  or the CI runner budget changes.
+- Revisit `dense_fp128_d128` at `nv=26` after dense fp128 commit/prove cost is
+  reduced or the CI runner budget changes.
 - Re-enable `dense_fp64_d32:25:1` after a separate dense fp64 validation pass.
 - Record the first fully successful expanded workflow runtime after the
   deferred cells are re-enabled.

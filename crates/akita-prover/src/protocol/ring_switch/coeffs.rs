@@ -258,7 +258,9 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     num_claims: usize,
 ) -> RecursiveWitnessFlat {
     let log_basis = lp.log_basis;
-    let num_digits_fold = lp.num_digits_fold(num_claims, F::modulus_bits());
+    let num_digits_fold = lp
+        .num_digits_fold(num_claims, F::modulus_bits())
+        .expect("build_w_coeffs: degenerate fold bound in validated level params");
     let depth_open = lp.num_digits_open;
     let depth_commit = lp.num_digits_commit;
     let block_len = lp.block_len;

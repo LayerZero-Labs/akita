@@ -534,7 +534,7 @@ mod tests {
 
     #[test]
     fn asymmetric_centering_decompose_roundtrip() {
-        use akita_types::layout::digit_math::compute_num_digits_full_field;
+        use akita_types::sis::compute_num_digits_full_field;
         use rand::SeedableRng;
 
         type F = fp128::Field;
