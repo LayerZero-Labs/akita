@@ -42,10 +42,6 @@ Key abstractions and surfaces:
   `omega_S` evaluation) API. Lives under `stages/` alongside stage1/stage2.
 - `akita-types::SETUP_SUMCHECK_DEGREE` — the relocated degree constant
   (formerly `FACTORED_PRODUCT_SUMCHECK_DEGREE`).
-- Per-fold Jolt cycle markers: `setup_product_mle_fold_{N}`,
-  `setup_product_omega_fold_{N}`, `setup_product_alpha_check_fold_{N}`, where
-  `{N}` is a monotonic per-`verify` counter so each recursion level is
-  attributable separately in a trace.
 - `profile/akita-recursion` artifact/host/guest gain a `--setup-mode
   <direct|recursive>` CLI input (default `direct`); the chosen mode is recorded
   in the verifier-input blob so host preflight and guest replay verify under the
@@ -108,8 +104,6 @@ Key abstractions and surfaces:
       and cross-mode rejection.
 - [ ] `cargo run -p akita-pcs --example recursive_setup` proves + verifies under
       both modes and reports the per-mode setup-contribution treatment.
-- [ ] Per-fold cycle markers appear distinctly in the recursion trace
-      (`setup_product_*_fold_{N}`).
 - [ ] `cargo fmt`, `cargo clippy --all -- -D warnings`, and `cargo test` are
       green.
 
@@ -122,7 +116,7 @@ Key abstractions and surfaces:
   (`single_poly_e2e`, `akita_e2e`, `multipoint_batched_e2e`,
   `batched_aggregated_e2e`, `transcript_hardening*`), and the
   `setup_contribution` unit/equivalence tests in `akita-verifier`.
-- Tests run in debug; the example and recursion trace run in `--release`.
+- Tests run in debug; the recursion harness example runs in `--release`.
 - ZK feature combinations are intentionally not covered (see Non-Goals).
 
 ### Performance
@@ -147,9 +141,7 @@ cd profile/akita-recursion
 cargo build --release
 AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB=target/blob.bin \
   ./target/release/akita-recursion-artifact --setup-mode recursive
-ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
-  ./target/release/akita-recursion-host --trace-only --trace-output /dev/null \
-  --input target/blob.bin
+./target/release/akita-recursion-host --input target/blob.bin
 ```
 
 ## Design
@@ -184,15 +176,12 @@ ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
 - **Select the recursion mode via an environment variable.** Rejected in favor
   of a CLI flag with a `direct` default, and recording the mode in the blob so
   host and guest cannot disagree.
-- **Per-fold markers via a fixed indexed marker table.** Rejected in favor of a
-  single `AtomicUsize` that suffixes the marker name per `verify` call — minimal
-  and sufficient to disambiguate folds in the aggregated Jolt output.
 
 ## Documentation
 
 - This spec.
 - `crates/akita-pcs/examples/recursive_setup.rs` (new runnable example).
-- `profile/akita-recursion/README.md` already documents the trace flow; the new
+- `profile/akita-recursion/README.md` already documents the harness flow; the new
   `--setup-mode` flag is self-describing via `--help`.
 
 ## References
