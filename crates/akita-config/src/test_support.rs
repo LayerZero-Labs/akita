@@ -70,13 +70,7 @@ where
 
 /// Test-only helper for constructing a recursive carried-opening suffix from
 /// an already committed recursive state.
-///
-/// `ring_dimension` is the active recursive ring degree (from the committed
-/// level params); it may differ from [`CommitmentConfig::D`] after a ring
-/// switch, so the planner policy is stamped with this value instead of
-/// `Cfg::D` alone.
 pub fn recursive_carried_suffix_schedule<Cfg>(
-    ring_dimension: usize,
     key: AkitaScheduleLookupKey,
     start_level: usize,
     current_w_len: usize,
@@ -85,11 +79,9 @@ pub fn recursive_carried_suffix_schedule<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let mut policy = policy_of::<Cfg>();
-    policy.ring_dimension = ring_dimension;
     akita_planner::find_recursive_carried_suffix_schedule(
         key,
-        &policy,
+        &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         start_level,
         current_w_len,

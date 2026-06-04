@@ -162,6 +162,7 @@ fn derive_candidate_level_params_for_shape(
             counts.num_t_vectors,
             counts.num_w_vectors,
             counts.num_z_vectors,
+            1,
             MRowLayout::WithDBlock,
         )?
         .checked_mul(policy.ring_dimension)
@@ -173,6 +174,7 @@ fn derive_candidate_level_params_for_shape(
             counts.num_t_vectors,
             counts.num_w_vectors,
             counts.num_z_vectors,
+            1,
             MRowLayout::WithoutDBlock,
         )?
         .checked_mul(policy.ring_dimension)
@@ -816,6 +818,7 @@ pub fn find_schedule(
                     key.num_t_vectors,
                     key.num_w_vectors,
                     key.num_z_vectors,
+                    key.num_t_vectors,
                     layout,
                 )?;
                 rings.checked_mul(policy.ring_dimension).ok_or_else(|| {

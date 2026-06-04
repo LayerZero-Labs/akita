@@ -221,6 +221,7 @@ pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
+        num_t_vectors,
         layout,
     )
 }
@@ -242,6 +243,7 @@ pub fn w_ring_element_count_with_counts_bits(
         num_t_vectors,
         num_w_vectors,
         num_public_rows,
+        num_t_vectors,
         crate::layout::MRowLayout::WithDBlock,
     )
 }
@@ -249,6 +251,7 @@ pub fn w_ring_element_count_with_counts_bits(
 /// Non-generic variant of [`w_ring_element_count_with_counts_for_layout`] for
 /// callers that already know the effective field bit width. The planner
 /// search uses this to keep its API free of a base-field type parameter.
+#[allow(clippy::too_many_arguments)]
 pub fn w_ring_element_count_with_counts_for_layout_bits(
     field_bits: u32,
     lp: &LevelParams,
@@ -256,6 +259,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
+    fold_num_claims: usize,
     layout: crate::layout::MRowLayout,
 ) -> Result<usize, AkitaError> {
     let w_hat_count = num_w_vectors
@@ -267,7 +271,7 @@ pub fn w_ring_element_count_with_counts_for_layout_bits(
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    let num_digits_fold = lp.num_digits_fold(num_t_vectors, field_bits)?;
+    let num_digits_fold = lp.num_digits_fold(fold_num_claims, field_bits)?;
     let z_pre_count = num_public_rows
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(num_digits_fold))

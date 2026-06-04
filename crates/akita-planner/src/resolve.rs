@@ -273,6 +273,7 @@ pub fn schedule_from_entry(
                         nt,
                         nw,
                         nz,
+                        1,
                         MRowLayout::WithoutDBlock,
                     )?;
                     let len = mul_d(ring)?;

@@ -8,6 +8,11 @@
 //! regenerates the schedule with the offline DP search
 //! [`akita_planner::find_schedule`], driven by the `Cfg`-derived
 //! [`policy_of`] bridge. Fallback is the default for every preset.
+//!
+//! [`WCommitmentConfig`] is the derived recursive-w config used by
+//! `<Cfg>`-generic ring-degree dispatch helpers.
+
+use std::marker::PhantomData;
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -261,6 +266,60 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 "schedule has no steps".to_string(),
             )),
         }
+    }
+}
+
+/// Derived commitment config for recursive w-openings: `log_commit_bound`
+/// drops to `log_basis` (balanced-digit `w` entries) while `log_open_bound`
+/// inherits the parent opening bound (recursive opening folds produce
+/// full-field coefficients).
+#[derive(Clone, Copy, Debug)]
+pub struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
+    _cfg: PhantomData<Cfg>,
+}
+
+impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
+    type Field = Cfg::Field;
+    type ClaimField = Cfg::ClaimField;
+    type ChallengeField = Cfg::ChallengeField;
+    const D: usize = D;
+
+    fn decomposition() -> DecompositionParams {
+        let root = Cfg::decomposition();
+        DecompositionParams {
+            log_basis: root.log_basis,
+            log_commit_bound: root.log_basis,
+            log_open_bound: Some(root.log_open_bound.unwrap_or(root.log_commit_bound)),
+        }
+    }
+
+    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        Cfg::ring_challenge_config(d)
+    }
+
+    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
+        Cfg::fold_challenge_shape_at_level(inputs)
+    }
+
+    fn sis_modulus_family() -> SisModulusFamily {
+        Cfg::sis_modulus_family()
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+    }
+
+    fn basis_range() -> (u32, u32) {
+        Cfg::basis_range()
+    }
+
+    /// Resolve schedules through the parent `Cfg`, not this derived config.
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+        Cfg::runtime_schedule(key)
     }
 }
 
