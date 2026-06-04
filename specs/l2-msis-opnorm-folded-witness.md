@@ -20,7 +20,7 @@ First, folding challenges are sampled from operator-norm accepted distributions,
 starting with the D=64 exact-shell family and rejection threshold `gamma(c) <= 16`.
 Second, the folded witness `z = sum_i c_i * s_i` carries a certified Euclidean
 norm bound, proved over the finite field as an exact integer statement.
-Third, the SIS planner, generated tables, paper definition, transcript
+Third, the SIS planner, generated tables, public security model, transcript
 descriptor, proof sizing, and verifier checks all move to the new L2 norm model
 in one pass.
 
@@ -53,9 +53,6 @@ The primary protocol surfaces are:
 - `akita-config` / `akita-planner`: schedule search, shipped-table selection,
   generated table representation, and proof-size accounting under the L2 MSIS
   model.
-- `lattice-jolt` paper text: Module-SIS definition, weak-binding theorem,
-  challenge distribution, and folded-witness norm-check sections.
-
 ### Invariants
 
 - **Single security table, per-role norm derivation.** All SIS binding decisions
@@ -147,8 +144,9 @@ The primary protocol surfaces are:
 
 ### Acceptance Criteria
 
-- [ ] The paper's Module-SIS definition and Akita weak-binding theorem use the
-      same Euclidean norm that the Rust planner and verifier enforce.
+- [ ] The public repo specs and security docs use the same Euclidean Module-SIS
+      norm, operator-norm challenge distribution, and folded-witness bound that
+      the Rust planner and verifier enforce.
 - [ ] `akita_types::sis` exposes one committed-fold A-role L2 collision or
       witness-bound API, and the old committed-fold `collision_inf` API is
       removed from all production call sites.
@@ -965,7 +963,7 @@ operator-norm threshold.
 
 The current SIS tables are keyed by a rounded coefficient `L∞` collision bucket.
 The cutover needs generated L2 MSIS tables keyed by the Euclidean bound used in
-the paper theorem.
+the security model.
 
 Required changes:
 
@@ -982,12 +980,12 @@ Required changes:
 - Keep the B-role and D-role opening-digit collisions at their natural
   coefficient bound `2^lb - 1` (the difference of two balanced digits), and
   convert each into the unified L2 table by `||v||_2 <= sqrt(d) · ||v||_inf`.
-  The paper and the generated tables must state this conversion explicitly so a
-  single L2 MSIS floor covers all three roles.
+  The generated tables and public docs must state this conversion explicitly so
+  a single L2 MSIS floor covers all three roles.
 
-### Paper Cutover
+### Public Security Model Documentation
 
-The paper must change together with the code.
+The public repo documentation must change together with the code.
 At minimum:
 
 - Replace the current `MSIS_{q,d}(n,m,eta)` definition using
@@ -1056,7 +1054,6 @@ Likely primary files:
 - `crates/akita-verifier/src/protocol/levels.rs`
 - `scripts/gen_sis_table.py`
 - `specs/weak-binding-norm-fix.md`
-- paper files under `Documents/Research/lattice-jolt/sections/akita/`
 
 ## Alternatives Considered
 
@@ -1085,21 +1082,21 @@ The verifier must either see or certify the relevant folded-witness L2 bound.
 
 Rejected.
 This repo makes no backward-compatibility guarantee, and dual schedule tables
-would invite drift between paper, planner, prover, and verifier.
+would invite drift between the security model, planner, prover, and verifier.
 The cutover should replace the old path.
 
 ## Execution
 
-The work decomposes into 14 slices across six tracks (challenge family, L2 SIS,
-proof shape, prover, verifier, planner/transcript) plus the paper.
-Five slices are independent and can start immediately; the rest serialize behind
+The work decomposes into 13 slices across six tracks (challenge family, L2 SIS,
+proof shape, prover, verifier, planner/transcript/tests).
+Four slices are independent and can start immediately; the rest serialize behind
 the L2 norm/table API (S4, S5) and the proof-shape change (S6).
 
 Status: S1 (`crates/akita-challenges/src/sampler/op_norm.rs`), S7
 (`crates/akita-types/src/sis/four_square.rs`), and the S4 L2 norm primitives
 (`crates/akita-types/src/sis/norm_bound.rs`, squared-domain) are implemented as
-pure, not-yet-wired building blocks. The protocol cutover (S3, S5, S6, S8–S12)
-and the paper (S13) are follow-up PRs.
+pure, not-yet-wired building blocks. The remaining protocol and test cutover
+(S3, S5, S6, S8–S13) is follow-up work.
 
 ### Decisions To Lock (gating)
 
@@ -1131,7 +1128,6 @@ WAVE 0  (independent, start now, parallel)
   S7  four-square decomposition helper      [pure algorithm]           DONE
   S4  L2 norm primitives (s_l2_max, ...)    [akita-types::sis, pure]   DONE
   S2  D=64 support lower bound >= 128 bits   [research / certificate]
-  S13 paper cutover (MSIS def, gamma, theorem)   [lattice-jolt, text]
 
 WAVE 1
   S3  threshold + transcript rejection       (S1)
@@ -1148,7 +1144,7 @@ WAVE 3
   S10 verifier replay + no-panic             (S6, S9)
 
 WAVE 4
-  S14 e2e tamper tests + ZK parity           (all)
+  S13 e2e tamper tests + ZK parity           (all)
 ```
 
 ### Slices
@@ -1194,13 +1190,6 @@ Pure helper computing `ell_0..ell_3` with `sum ell_j^2 = B_l2 - Z_SQUARED`, each
 theorem-backed finite two-squares-residual fallback makes the solver total for
 every `u64` target. Integer-only decision path (no floating point).
 No protocol dependency; consumes only the target integer (first consumer: S8).
-
-**S13 — Paper cutover.** *(independent, text)*
-`Documents/Research/lattice-jolt/sections/akita/`.
-Euclidean MSIS definition, accepted-challenge distribution + min-entropy,
-`gamma(c)` as the negacyclic convolution operator norm, the folded-response L2
-bound, the four-square certificate, the weak-binding theorem re-derivation, and
-removal of L∞ schedule/pricing language.
 
 **S3 — Threshold + transcript-stable rejection sampling.** *(S1)*
 `crates/akita-challenges/src/config.rs`, `sampler/exact_shell.rs`, `sampler/mod.rs`.
@@ -1271,7 +1260,7 @@ no-wrap gate before treating the field equality as an integer equality, and
 reject every malformed challenge/certificate/shape with `AkitaError` /
 `SerializationError`.
 
-**S14 — End-to-end + ZK parity.** *(all)*
+**S13 — End-to-end + ZK parity.** *(all)*
 End-to-end prover/verifier tests that fail under independent tampering of the
 committed folded witness, the L2 certificate, the next-witness commitment, and
 the ring-relation rows; ZK-path parity if the feature stays enabled.
@@ -1312,7 +1301,3 @@ the ring-relation rows; ZK-path parity if the feature stays enabled.
 - `crates/akita-prover/src/protocol/ring_switch/coeffs.rs` (`build_w_coeffs`)
 - `crates/akita-prover/src/protocol/sumcheck/akita_stage2/mod.rs`
 - `crates/akita-verifier/src/protocol/slice_mle/setup_contribution.rs`
-- `D64-EXACT-SHELL-OPNORM-RESEARCH-PROMPT-NEVER-COMMIT.md`
-- `A-ROLE-PRICING-HANDOFF-NEVER-COMMIT.md`
-- `Documents/Research/paper-note/notes/akita-labrador-greyhound-proofsize-leopard-2026-06-03.md`
-- `Documents/Research/lattice-jolt/sections/akita/2_preliminaries.tex`
