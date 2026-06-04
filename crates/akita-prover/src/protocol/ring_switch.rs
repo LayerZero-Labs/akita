@@ -24,7 +24,7 @@ use akita_field::{
     MulBase, RandomSampling,
 };
 use akita_transcript::labels::{
-    ABSORB_SUMCHECK_W, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0,
+    ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0,
     CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};

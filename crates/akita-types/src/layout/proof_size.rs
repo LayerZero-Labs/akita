@@ -99,7 +99,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
     lp: &LevelParams,
 ) -> Result<usize, AkitaError> {
     let _field_marker = core::marker::PhantomData::<F>;
-    let w_hat_count = lp
+    let e_hat_count = lp
         .num_blocks
         .checked_mul(lp.num_digits_open)
         .ok_or_else(|| AkitaError::InvalidSetup("planned W width overflow".to_string()))?;
@@ -131,7 +131,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
             lp.log_basis,
             field_bits as usize,
         );
-        w_hat_count
+        e_hat_count
             .checked_add(t_hat_count)
             .and_then(|n| n.checked_add(b_blinding_count))
             .and_then(|n| n.checked_add(d_blinding_count))
@@ -141,7 +141,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
     }
     #[cfg(not(feature = "zk"))]
     {
-        w_hat_count
+        e_hat_count
             .checked_add(t_hat_count)
             .and_then(|n| n.checked_add(z_pre_count))
             .and_then(|n| n.checked_add(r_count))

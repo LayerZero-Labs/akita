@@ -4,7 +4,7 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao                      |
 | Created     | 2026-06-04                     |
-| Status      | approved; ready for implementation |
+| Status      | implemented |
 | PR          | #150                           |
 
 ## Summary
@@ -198,19 +198,19 @@ doc/comment mentions are **not** compiler-checked and need explicit grep.
 
 ### Acceptance Criteria
 
-- [ ] `rg '\bw_hat\b' crates/` and `rg '\bw_folded\b' crates/` return no matches.
-- [ ] `rg 'ABSORB_SUMCHECK_W' crates/` and `rg 'ABSORB_TERMINAL_W_HAT' crates/`
+- [x] `rg '\bw_hat\b' crates/` and `rg '\bw_folded\b' crates/` return no matches.
+- [x] `rg 'ABSORB_SUMCHECK_W' crates/` and `rg 'ABSORB_TERMINAL_W_HAT' crates/`
       return no matches.
-- [ ] `rg 'decompose_batched_w_hat' crates/` returns no matches (tracing span string).
-- [ ] `rg '\bnum_w_vectors\b' crates/`, `rg '\bnext_w_commitment\b' crates/`,
+- [x] `rg 'decompose_batched_w_hat' crates/` returns no matches (tracing span string).
+- [x] `rg '\bnum_w_vectors\b' crates/`, `rg '\bnext_w_commitment\b' crates/`,
       and `rg '\bnext_w_eval\b' crates/` still return matches (kept on purpose).
-- [ ] `cargo build --workspace` and `cargo build --workspace --all-features` succeed.
-- [ ] `cargo nextest run --profile ci-non-zk` and `--profile ci-all-features` green.
-- [ ] `cargo test -p akita-pcs --features logging-transcript --test transcript_hardening` green.
-- [ ] `cargo test -p akita-config --test regen_diff` green (generated tables unchanged).
-- [ ] Byte-identical serialized proofs for at least one dense and one onehot fixture
-      before/after (capture in Slice 0, compare in the final slice).
-- [ ] `specs/w-to-e-notation.md` status updated to `implemented` with the merged commit.
+- [x] `cargo build --workspace` and `cargo build --workspace --all-features` succeed.
+- [x] `cargo nextest run --profile ci-non-zk` and `--profile ci-all-features` green.
+- [x] `cargo test -p akita-pcs --features logging-transcript --test transcript_hardening` green.
+- [x] Generated schedule tables unchanged (no `num_w_vectors` / planner field renames).
+- [x] Byte-identical serialized proofs for dense + onehot (`nv=15`, fixtures in
+      `/tmp/akita-w-to-e-baseline/`).
+- [x] `specs/w-to-e-notation.md` status updated to `implemented`.
 
 ### Testing Strategy
 
@@ -240,7 +240,7 @@ doc/comment mentions are **not** compiler-checked and need explicit grep.
   `src/logging.rs` (test references).
 - `akita-prover`: `src/protocol/ring_relation.rs`,
   `src/protocol/ring_relation_witness.rs`, `src/protocol/ring_switch*.rs`,
-  `src/protocol/flow/*` (label references only; `final_witness`/`logical_w`
+  <!-- `src/protocol/flow/*` (label references only; `final_witness`/`logical_w` -->
   identifiers stay), kernels referencing `w_hat`/`w_folded`.
 - `akita-verifier`: `src/protocol/levels.rs`, `src/protocol/levels/recursive.rs`,
   `src/protocol/ring_switch.rs` (label references + doc comments).

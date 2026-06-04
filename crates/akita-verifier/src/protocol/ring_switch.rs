@@ -7,7 +7,7 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
 };
 use akita_transcript::labels::{
-    ABSORB_SUMCHECK_W, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0,
+    ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0,
     CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
@@ -172,8 +172,8 @@ where
 {
     // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
     // the outer wrapper just performs the witness absorb before delegating.
-    transcript.record_wire_serde(ABSORB_SUMCHECK_W, w_commitment);
-    transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
+    transcript.record_wire_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
+    transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
     ring_switch_verifier_core::<F, E, T, D>(replay, w_len, transcript, MRowLayout::WithDBlock)?
         .into_intermediate()
 }

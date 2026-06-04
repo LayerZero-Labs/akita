@@ -34,7 +34,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
     n_d: usize,
     n_b: usize,
     n_a: usize,
-    w_hat: &[[i8; D]],
+    e_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
     z_folded_max_abs: u32,
@@ -52,7 +52,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
     let d_width = d_cyc_rows.first().map_or(0, |r| r.len());
     let b_width = b_cyc_rows.first().map_or(0, |r| r.len());
     let a_width = a_cyc_rows.first().map_or(0, |r| r.len());
-    let w_len = w_hat.len().min(d_width);
+    let w_len = e_hat.len().min(d_width);
     let t_len = t_hat.len().min(b_width);
     let z_len = z_folded_rings.len().min(a_width);
     let max_col = w_len.max(t_len).max(z_len);
@@ -72,9 +72,9 @@ pub(super) fn fused_split_eq_quotients_with_params<
         capacity: u64::from(z_folded_max_abs).max(actual_z_abs_bound),
         lut: actual_z_abs_bound,
     };
-    if !digit_rows_within_digit_bound::<D>(w_hat, w_len, w_digit_abs_bound) {
+    if !digit_rows_within_digit_bound::<D>(e_hat, w_len, w_digit_abs_bound) {
         return Err(AkitaError::InvalidInput(
-            "fused quotient w_hat contains digits outside its log_basis range".to_string(),
+            "fused quotient e_hat contains digits outside its log_basis range".to_string(),
         ));
     }
     if !digit_rows_within_digit_bound::<D>(t_hat, t_len, t_digit_abs_bound) {
@@ -102,7 +102,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
             n_d,
             n_b,
             n_a,
-            w_hat,
+            e_hat,
             t_hat,
             z_folded_rings,
             z_bounds.lut,
@@ -117,7 +117,7 @@ pub(super) fn fused_split_eq_quotients_with_params<
     }
 
     let d_result =
-        accumulate_cyclic_i8_rows(d_cyc_rows, n_d, w_hat, w_len, w_digit_abs_bound, params);
+        accumulate_cyclic_i8_rows(d_cyc_rows, n_d, e_hat, w_len, w_digit_abs_bound, params);
     let b_result =
         accumulate_cyclic_i8_rows(b_cyc_rows, n_b, t_hat, t_len, t_digit_abs_bound, params);
     let a_result = accumulate_centered_quotient_rows(
@@ -147,7 +147,7 @@ fn fused_split_eq_quotients_one_shot<
     n_d: usize,
     n_b: usize,
     n_a: usize,
-    w_hat: &[[i8; D]],
+    e_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
     z_lut_abs_bound: u64,
@@ -192,9 +192,9 @@ fn fused_split_eq_quotients_one_shot<
             let tile_end = (tile_start + tw).min(max_col);
 
             for j in tile_start..tile_end {
-                if j < w_len && !is_zero_plane(&w_hat[j]) {
+                if j < w_len && !is_zero_plane(&e_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
-                    let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&w_hat[j], params, lut);
+                    let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&e_hat[j], params, lut);
                     for (acc_d, cyc_row) in accs.0.iter_mut().zip(d_cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_d, &cyc_row[j], &ntt_w, params);
                     }
@@ -530,7 +530,7 @@ fn accumulate_centered_quotient_rows_field<
 /// Fused split-eq quotient kernel dispatching over [`NttSlotCache`] variants.
 ///
 /// Computes three NTT-cached mat-vec products in a single tiled pass:
-/// - D-cyclic: `cyc[0..n_d] · w_hat` (cyclic domain)
+/// - D-cyclic: `cyc[0..n_d] · e_hat` (cyclic domain)
 /// - B-cyclic: `cyc[0..n_b] · t_hat` (cyclic domain)
 /// - A-quotient: `(cyc[0..n_a]·z_cyc − neg[0..n_a]·z_neg) / 2`
 ///
@@ -547,7 +547,7 @@ pub(crate) fn fused_split_eq_quotients<
     n_d: usize,
     n_b: usize,
     n_a: usize,
-    w_hat: &[[i8; D]],
+    e_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
     z_folded_max_abs: u32,
@@ -564,7 +564,7 @@ pub(crate) fn fused_split_eq_quotients<
         n_d,
         n_b,
         n_a,
-        w_hat,
+        e_hat,
         t_hat,
         z_folded_rings,
         z_folded_max_abs,
@@ -582,7 +582,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     n_d: usize,
     n_b: usize,
     n_a: usize,
-    w_hat: &[[i8; D]],
+    e_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
     z_folded_max_abs: u32,
@@ -602,7 +602,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
         n_d,
         n_b,
         n_a,
-        w_hat,
+        e_hat,
         t_hat,
         z_folded_rings,
         z_folded_max_abs,
@@ -620,7 +620,7 @@ fn fused_split_eq_quotients_with_digit_bound<
     n_d: usize,
     n_b: usize,
     n_a: usize,
-    w_hat: &[[i8; D]],
+    e_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
     z_folded_max_abs: u32,
@@ -634,7 +634,7 @@ fn fused_split_eq_quotients_with_digit_bound<
     ),
     AkitaError,
 > {
-    let d_width = w_hat.len();
+    let d_width = e_hat.len();
     let b_width = t_hat.len();
     let a_width = z_folded_rings.len();
     match slot {
@@ -663,7 +663,7 @@ fn fused_split_eq_quotients_with_digit_bound<
                 n_d,
                 n_b,
                 n_a,
-                w_hat,
+                e_hat,
                 t_hat,
                 z_folded_rings,
                 z_folded_max_abs,
@@ -697,7 +697,7 @@ fn fused_split_eq_quotients_with_digit_bound<
                 n_d,
                 n_b,
                 n_a,
-                w_hat,
+                e_hat,
                 t_hat,
                 z_folded_rings,
                 z_folded_max_abs,
@@ -731,7 +731,7 @@ fn fused_split_eq_quotients_with_digit_bound<
                 n_d,
                 n_b,
                 n_a,
-                w_hat,
+                e_hat,
                 t_hat,
                 z_folded_rings,
                 z_folded_max_abs,
@@ -765,7 +765,7 @@ fn fused_split_eq_quotients_with_digit_bound<
                 n_d,
                 n_b,
                 n_a,
-                w_hat,
+                e_hat,
                 t_hat,
                 z_folded_rings,
                 z_folded_max_abs,
