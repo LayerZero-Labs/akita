@@ -17,15 +17,15 @@ use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams, MRowLayout,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingRelationSegmentLayout,
-    RingSubfieldEncoding, TerminalWitnessTranscriptParts,
+    RingSubfieldEncoding, SetupContributionPlanInputs, TerminalWitnessTranscriptParts,
 };
 
 #[cfg(feature = "zk")]
 use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
-    compute_r_contribution, compute_setup_contribution, StructuredSliceMleEvaluator,
-    TStructuredSlicesEvaluator, WStructuredSlicesEvaluator, ZDenseSlicesEvaluator,
-    ZStructuredPow2SlicesEvaluator,
+    compute_r_contribution, EStructuredSlicesEvaluator, SetupEvaluation, SetupEvaluator,
+    SetupEvaluatorMode, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
+    ZDenseSlicesEvaluator, ZStructuredPow2SlicesEvaluator,
 };
 use super::{validate_level_dispatch, validate_log_basis, validate_ring_dispatch};
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
@@ -33,6 +33,44 @@ pub(crate) use tensor_challenges::PreparedChallengeEvals;
 mod tensor_challenges;
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline(always)]
+fn jolt_cycle_marker(marker_id_str: &str, event_type: u32) {
+    const JOLT_CYCLE_TRACK_CALL_ID: u32 = 0xC7C1E;
+    let marker_id = marker_id_str.as_ptr() as usize as u32;
+    let marker_len = marker_id_str.len() as u32;
+    unsafe {
+        core::arch::asm!(
+            ".insn i 0x5B, 2, x0, x0, 0",
+            in("x10") JOLT_CYCLE_TRACK_CALL_ID,
+            in("x11") marker_id,
+            in("x12") marker_len,
+            in("x13") event_type,
+            options(nostack, preserves_flags)
+        );
+    }
+}
+
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline(always)]
+fn jolt_start_cycle_tracking(marker_id: &str) {
+    jolt_cycle_marker(marker_id, 1);
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+#[inline(always)]
+fn jolt_start_cycle_tracking(_marker_id: &str) {}
+
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline(always)]
+fn jolt_end_cycle_tracking(marker_id: &str) {
+    jolt_cycle_marker(marker_id, 2);
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+#[inline(always)]
+fn jolt_end_cycle_tracking(_marker_id: &str) {}
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
@@ -104,6 +142,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 /// alpha-evaluated folding challenges and the tau1 eq-polynomial expansion.
 /// Everything else is passed by reference at evaluation time to avoid
 /// duplicating setup matrix views, opening points, and gadget vectors.
+#[derive(Clone)]
 pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) c_alphas: PreparedChallengeEvals<F>,
     pub(crate) eq_tau1: Vec<F>,
@@ -597,6 +636,28 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         Ok(self.witness_segment_layout)
     }
 
+    pub(crate) fn create_setup_contribution_inputs(&self) -> SetupContributionPlanInputs<E> {
+        SetupContributionPlanInputs {
+            eq_tau1: self.eq_tau1.clone(),
+            num_t_vectors: self.num_t_vectors,
+            num_blocks: self.num_blocks,
+            num_claims: self.num_claims,
+            depth_open: self.depth_open,
+            depth_commit: self.depth_commit,
+            depth_fold: self.depth_fold,
+            block_len: self.block_len,
+            inner_width: self.inner_width,
+            n_a: self.n_a,
+            n_d: self.n_d,
+            m_row_layout: self.m_row_layout,
+            n_b: self.n_b,
+            num_points: self.num_points,
+            rows: self.rows,
+            num_polys_per_commitment_group: self.num_polys_per_commitment_group.clone(),
+            num_public_rows: self.num_public_rows,
+        }
+    }
+
     /// Evaluate the prepared ring-switch row table at the supplied point.
     ///
     /// # Errors
@@ -611,6 +672,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         opening_points: &[RingOpeningPoint<F>],
         ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
         alpha: E,
+        setup_claim: Option<E>,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -645,8 +707,8 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
 
-        // Eq table over the low `log₂(num_blocks)` bits, shared by W/T
-        // peeled summaries and by `compute_setup_contribution`.
+        // Eq table over the low `log₂(num_blocks)` bits, shared by e-hat/T
+        // peeled summaries and by `SetupEvaluator` direct mode.
         let offset_low_bits = self.num_blocks.trailing_zeros() as usize;
         if offset_low_bits > x_challenges.len() {
             return Err(AkitaError::InvalidSize {
@@ -655,7 +717,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             });
         }
         let eq_low = EqPolynomial::evals(&x_challenges[..offset_low_bits])?;
-        let block_offset_low = layout.offset_w & (self.num_blocks - 1);
+        let block_offset_low = layout.offset_e & (self.num_blocks - 1);
         debug_assert_eq!(block_offset_low, layout.offset_t & (self.num_blocks - 1));
 
         // `z` peels `block_len` (not `num_blocks`) and uses its own
@@ -711,9 +773,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;
         }
 
-        // ----- W -------------------------------------------------------------
-        let w_structured_contribution = {
-            let _span = tracing::info_span!("w_structured").entered();
+        // ----- E-hat ---------------------------------------------------------
+        let e_structured_contribution = {
+            let _span = tracing::info_span!("e_structured").entered();
             let uses_ring_multipliers = ring_multiplier_points
                 .iter()
                 .any(|point| point.as_base().is_none());
@@ -769,9 +831,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                         .ok_or(AkitaError::InvalidProof)
                 })
                 .collect::<Result<_, _>>()?;
-            WStructuredSlicesEvaluator {
+            EStructuredSlicesEvaluator {
                 high_challenges,
-                offset_high: layout.offset_w >> offset_low_bits,
+                offset_high: layout.offset_e >> offset_low_bits,
                 gadget_vector: &g1_open,
                 public_block_summaries: &public_block_summaries,
                 challenge_block_summaries: &challenge_block_summaries,
@@ -798,18 +860,32 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- Fused D·ŵ + B·t̂ + A·ẑ ---------------------------------------
         let setup_contribution = {
             let _span = tracing::info_span!("setup_contribution").entered();
-            compute_setup_contribution::<F, E, D>(
-                self,
-                x_challenges,
-                setup,
-                &eq_low,
-                &z_block_low_eq,
-                &alpha_pows,
-                &fold_gadget,
-                layout.offset_w,
-                layout.offset_t,
-                layout.offset_z,
-            )?
+            jolt_start_cycle_tracking("setup_contribution");
+            let result = if let Some(claim) = setup_claim {
+                Ok(claim)
+            } else {
+                let setup_contribution_inputs = self.create_setup_contribution_inputs();
+                let evaluator = SetupEvaluator::new(
+                    &setup_contribution_inputs,
+                    x_challenges,
+                    Some(&eq_low),
+                    Some(&z_block_low_eq),
+                    &alpha_pows,
+                    &fold_gadget,
+                    layout.offset_e,
+                    layout.offset_t,
+                    layout.offset_z,
+                );
+                match evaluator.evaluate::<D>(SetupEvaluatorMode::Direct { setup })? {
+                    SetupEvaluation::Direct(value) => Ok(value),
+                    #[cfg(test)]
+                    SetupEvaluation::Recursive(_) => Err(AkitaError::InvalidSetup(
+                        "setup evaluator returned recursive output for direct mode".into(),
+                    )),
+                }
+            };
+            jolt_end_cycle_tracking("setup_contribution");
+            result?
         };
 
         // ----- Z (consistency-row) ------------------------------------------
@@ -869,7 +945,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         };
 
         #[allow(unused_mut)]
-        let mut total = w_structured_contribution
+        let mut total = e_structured_contribution
             + t_structured_contribution
             + z_structured_contribution
             + setup_contribution

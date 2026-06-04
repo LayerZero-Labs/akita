@@ -58,6 +58,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot prove");
 
@@ -120,6 +121,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
             },
         )],
         BasisMode::Lagrange,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("batched onehot verify");
 }

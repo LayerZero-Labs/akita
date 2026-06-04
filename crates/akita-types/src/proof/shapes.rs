@@ -1,5 +1,8 @@
 use super::*;
 
+/// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
+pub const SETUP_SUMCHECK_DEGREE: usize = 2;
+
 /// Headerless shape context for one stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AkitaStage1StageShape {
@@ -18,6 +21,13 @@ pub struct ExtensionOpeningReductionShape {
     pub sumcheck: SumcheckProofShape,
 }
 
+/// Headerless shape for [`SetupSumcheckProof`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupProductSumcheckShape {
+    /// Product-sumcheck shape: one compact coefficient count per round.
+    pub sumcheck: SumcheckProofShape,
+}
+
 impl ExtensionOpeningReductionShape {
     /// Construct the standard degree-two reduction shape.
     pub fn standard(partials: usize, num_rounds: usize) -> Self {
@@ -28,10 +38,26 @@ impl ExtensionOpeningReductionShape {
     }
 }
 
+impl Valid for SetupProductSumcheckShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_sequence_len(self.sumcheck.len())?;
+        for &degree in &self.sumcheck {
+            checked_shape_len(degree)?;
+            if degree != SETUP_SUMCHECK_DEGREE {
+                return Err(SerializationError::InvalidData(format!(
+                    "setup product sumcheck degree {} does not match expected degree {}",
+                    degree, SETUP_SUMCHECK_DEGREE
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Valid for ExtensionOpeningReductionShape {
     fn check(&self) -> Result<(), SerializationError> {
         checked_shape_len(self.partials)?;
-        checked_shape_len(self.sumcheck.len())?;
+        checked_shape_sequence_len(self.sumcheck.len())?;
         for &degree in &self.sumcheck {
             checked_shape_len(degree)?;
             if degree != EXTENSION_OPENING_REDUCTION_DEGREE {
@@ -72,6 +98,8 @@ pub struct LevelProofShape {
     pub stage1_stages: Vec<AkitaStage1StageShape>,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
     pub stage2_sumcheck_proof: SumcheckProofShape,
+    /// Shape of the optional stage-3 setup product-sumcheck payload.
+    pub stage3_sumcheck: Option<SetupProductSumcheckShape>,
     /// Number of field coefficients in `next_w_commitment`.
     pub next_commit_coeffs: usize,
 }
@@ -109,7 +137,6 @@ pub enum AkitaProofStepShape {
     Terminal(TerminalLevelProofShape),
 }
 
-#[cfg(not(feature = "zk"))]
 pub(super) fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
     sc.round_polys
         .iter()
@@ -156,6 +183,7 @@ pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
     v: &FlatRingVec<F>,
     stage1: &AkitaStage1Proof<L>,
     stage2: &AkitaStage2Proof<F, L>,
+    stage3_sumcheck_proof: Option<&SetupSumcheckProof<L>>,
 ) -> LevelProofShape {
     LevelProofShape {
         y_ring_coeffs: y_coeffs,
@@ -179,6 +207,7 @@ pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
         stage2_sumcheck_proof: sumcheck_shape(&stage2.sumcheck_proof),
         #[cfg(feature = "zk")]
         stage2_sumcheck_proof: sumcheck_proof_masked_shape(&stage2.sumcheck_proof_masked),
+        stage3_sumcheck: stage3_sumcheck_proof.map(SetupSumcheckProof::shape),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
     }
 }
@@ -188,6 +217,38 @@ pub(super) fn level_proof_shape<F: FieldCore, L: FieldCore>(
 // These impls let callers bundle proof shapes alongside proofs (e.g. when
 // shipping verifier inputs to a Jolt guest program), so that the proof can be
 // deserialized in environments that don't reconstruct a `Schedule` first.
+
+fn deserialize_shape_vec<T, R: Read>(
+    reader: &mut R,
+    compress: Compress,
+    validate: Validate,
+) -> Result<Vec<T>, SerializationError>
+where
+    T: AkitaDeserialize<Context = ()>,
+{
+    let encoded_len = u64::deserialize_with_mode(&mut *reader, compress, validate, &())?;
+    let len =
+        usize::try_from(encoded_len).map_err(|_| SerializationError::LengthLimitExceeded {
+            len: encoded_len,
+            max: usize::MAX,
+        })?;
+    if matches!(validate, Validate::Yes) {
+        checked_shape_sequence_len(len)?;
+    }
+
+    let mut out = Vec::new();
+    out.try_reserve_exact(len)
+        .map_err(|_| SerializationError::InvalidData("shape-backed allocation failed".into()))?;
+    for _ in 0..len {
+        out.push(T::deserialize_with_mode(
+            &mut *reader,
+            compress,
+            validate,
+            &(),
+        )?);
+    }
+    Ok(out)
+}
 
 impl Valid for AkitaStage1StageShape {
     fn check(&self) -> Result<(), SerializationError> {
@@ -249,11 +310,14 @@ impl Valid for LevelProofShape {
             reduction.check()?;
         }
         checked_shape_len(self.v_coeffs)?;
-        checked_shape_len(self.stage1_stages.len())?;
+        checked_shape_sequence_len(self.stage1_stages.len())?;
         self.stage1_stages.check()?;
-        checked_shape_len(self.stage2_sumcheck_proof.len())?;
+        checked_shape_sequence_len(self.stage2_sumcheck_proof.len())?;
         for &degree in &self.stage2_sumcheck_proof {
             checked_shape_len(degree)?;
+        }
+        if let Some(shape) = &self.stage3_sumcheck {
+            shape.check()?;
         }
         checked_shape_len(self.next_commit_coeffs)?;
         Ok(())
@@ -284,6 +348,14 @@ impl AkitaSerialize for LevelProofShape {
             .serialize_with_mode(&mut writer, compress)?;
         self.stage2_sumcheck_proof
             .serialize_with_mode(&mut writer, compress)?;
+        self.stage3_sumcheck
+            .is_some()
+            .serialize_with_mode(&mut writer, compress)?;
+        if let Some(stage3_sumcheck) = &self.stage3_sumcheck {
+            stage3_sumcheck
+                .sumcheck
+                .serialize_with_mode(&mut writer, compress)?;
+        }
         self.next_commit_coeffs
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
@@ -303,6 +375,11 @@ impl AkitaSerialize for LevelProofShape {
             + self.v_coeffs.serialized_size(compress)
             + self.stage1_stages.serialized_size(compress)
             + self.stage2_sumcheck_proof.serialized_size(compress)
+            + true.serialized_size(compress)
+            + self
+                .stage3_sumcheck
+                .as_ref()
+                .map_or(0, |shape| shape.sumcheck.serialized_size(compress))
             + self.next_commit_coeffs.serialized_size(compress)
     }
 }
@@ -320,21 +397,23 @@ impl AkitaDeserialize for LevelProofShape {
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let extension_opening_reduction = if has_extension_opening_reduction {
             let partials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            let sumcheck =
-                SumcheckProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
             Some(ExtensionOpeningReductionShape { partials, sumcheck })
         } else {
             None
         };
         let v_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let stage1_stages = Vec::<AkitaStage1StageShape>::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &(),
-        )?;
-        let stage2_sumcheck =
-            SumcheckProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let stage1_stages = deserialize_shape_vec(&mut reader, compress, validate)?;
+        let stage2_sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
+        let has_stage3_sumcheck =
+            bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let stage3_sumcheck = if has_stage3_sumcheck {
+            Some(SetupProductSumcheckShape {
+                sumcheck: deserialize_shape_vec(&mut reader, compress, validate)?,
+            })
+        } else {
+            None
+        };
         let next_commit_coeffs =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
@@ -343,6 +422,7 @@ impl AkitaDeserialize for LevelProofShape {
             v_coeffs,
             stage1_stages,
             stage2_sumcheck_proof: stage2_sumcheck,
+            stage3_sumcheck,
             next_commit_coeffs,
         };
         if matches!(validate, Validate::Yes) {
@@ -439,7 +519,7 @@ impl Valid for TerminalLevelProofShape {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.check()?;
         }
-        checked_shape_len(self.stage2_sumcheck.len())?;
+        checked_shape_sequence_len(self.stage2_sumcheck.len())?;
         for &degree in &self.stage2_sumcheck {
             checked_shape_len(degree)?;
         }
@@ -503,22 +583,24 @@ impl AkitaDeserialize for TerminalLevelProofShape {
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let extension_opening_reduction = if has_extension_opening_reduction {
             let partials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            let sumcheck =
-                SumcheckProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
             Some(ExtensionOpeningReductionShape { partials, sumcheck })
         } else {
             None
         };
-        let stage2_sumcheck =
-            SumcheckProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let stage2_sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
         let final_witness =
             CleartextWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        Ok(Self {
+        let out = Self {
             y_rings_coeffs,
             extension_opening_reduction,
             stage2_sumcheck,
             final_witness,
-        })
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
     }
 }
 
@@ -602,14 +684,14 @@ impl Valid for AkitaBatchedProofShape {
                 step_shapes,
             } => {
                 root_shape.check()?;
-                checked_shape_len(step_shapes.len())?;
+                checked_shape_sequence_len(step_shapes.len())?;
                 step_shapes.check()?;
             }
             Self::Terminal(terminal) => {
                 terminal.check()?;
             }
             Self::ZeroFold { witness_shapes } => {
-                checked_shape_len(witness_shapes.len())?;
+                checked_shape_sequence_len(witness_shapes.len())?;
                 witness_shapes.check()?;
             }
         }
@@ -669,12 +751,7 @@ impl AkitaDeserialize for AkitaBatchedProofShape {
             0 => {
                 let root_shape =
                     LevelProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
-                let step_shapes = Vec::<AkitaProofStepShape>::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    &(),
-                )?;
+                let step_shapes = deserialize_shape_vec(&mut reader, compress, validate)?;
                 let out = Self::Fold {
                     root_shape,
                     step_shapes,
@@ -698,12 +775,7 @@ impl AkitaDeserialize for AkitaBatchedProofShape {
                 Ok(out)
             }
             2 => {
-                let witness_shapes = Vec::<CleartextWitnessShape>::deserialize_with_mode(
-                    &mut reader,
-                    compress,
-                    validate,
-                    &(),
-                )?;
+                let witness_shapes = deserialize_shape_vec(&mut reader, compress, validate)?;
                 let out = Self::ZeroFold { witness_shapes };
                 if matches!(validate, Validate::Yes) {
                     out.check()?;

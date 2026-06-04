@@ -148,18 +148,7 @@ fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
         .map_err(|err| format!("strict input decode failed: {err}"))?;
     let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     let openings = [decoded.opening];
-    verify_batched_with_policy::<
-        F,
-        Claim,
-        Challenge,
-        _,
-        D,
-        _,
-        _,
-        _,
-        _,
-        _,
-    >(
+    verify_batched_with_policy::<F, Claim, Challenge, _, D, _, _, _, _, _>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
@@ -177,6 +166,7 @@ fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
                 transcript,
             )
         },
+        decoded.setup_contribution_mode,
         |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
             verify_root_direct_commitments_with_params::<F, D>(
                 witnesses,

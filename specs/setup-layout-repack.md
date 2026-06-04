@@ -665,21 +665,81 @@ This adds a Stage 3, but it is conceptually clean: Stage 2 continues to reduce
 the witness side to one folded-witness opening claim, and Stage 3 leaves only
 the setup-prefix opening claim `s_rho`.
 
-The more compact no-new-stage optimization is to shift the relation-matrix
-work back before the setup product sumcheck and use Stage 2 for the setup
-product. That optimization is not free. The shifted relation work creates a
-claim about the witness at relation randomness, while the norm/range side also
-creates a witness claim at its own randomness unless the two are algebraically
-fused. One of the following must then happen:
+The more compact no-new-stage optimization, and the optimized target for this
+protocol, shifts the relation-matrix work back before the setup product
+sumcheck and uses Stage 2 for the setup product. The level then runs two
+stages, the same as the baseline scheme, instead of three. The setup product
+sumcheck depends on the relation point `r_x` through the A/J adjoint `eta_Z`,
+so it cannot start until `r_x` is fixed; the only reason it lands in a third
+stage above is that the baseline fuses the relation into Stage 2, fixing `r_x`
+only at the very end.
 
-- carry both witness openings into the next recursive incidence batch; or
-- add an explicit witness-claim reduction, e.g. a linear reduction from
-  `lambda * W(r_relation) + W(r_norm)` to one later opening `W(r_star)`.
+Shifted schedule:
 
-Without that extra carried opening or claim reduction, the shifted protocol
-leaves a witness claim unresolved. Therefore the first setup-offloading branch
-should implement the post-Stage-2 version, and treat the no-new-stage shift as
-a later optimization after recursive carried-opening batching exists.
+- Stage 1 batches the ring-switched relation directly into the range/norm
+  `Q(S)` sumcheck: with a batching scalar `zeta`, one sumcheck proves
+  `zeta * 0 + V_alpha = sum_{x,y} [ zeta * eq(tau_0,(x,y)) * Q(W(W+1)) + W(x,y) * alpha(y) * m_tau1(x) ]`,
+  fixing the shared point `r_1 = (r_x, r_y)`. Batching drops the
+  `eq(tau_0, .)`-factored compact stage-1 message (it no longer composes with
+  the tree-based range prover), which we accept because it is cheaper than
+  running the relation as a second stage-1 sumcheck. Stage 1 leaves the relation
+  witness claim `W(r_1)`, the deferred row value `m_tau1(r_x)`, and the carried
+  norm claim `s = W(r_1)(W(r_1)+1)`, whose binding to the witness is deferred to
+  the Stage-2 refold.
+- Stage 2 runs the setup product sumcheck for
+  `m_tau1(r_x) = m_local(r_x) + sigma_S`, reducing `sigma_S` to the carried
+  setup opening `s_rho`, exactly as in the Stage-3 slice.
+
+Batching the relation into Stage 1 splits the witness side across the stages:
+the relation opens `W` at `r_1`, while the norm claim `s` is bound to the
+witness only by the Stage-2 refold (the `s = W(W+1)` virtualization), which
+lands at a fresh point. Close the two with one witness claim-reduction
+sumcheck, folded into Stage 2 next to the setup product. With `lambda` sampled
+from the transcript:
+
+```text
+lambda * W(r_1) + s
+  = sum_{x,y} eq(r_1, (x,y)) * [
+      lambda * W(x,y)
+      + W(x,y) * (W(x,y) + 1)
+    ]
+```
+
+reduces both claims to one opening `W(r_star)` at a fresh point. This is the
+same range-refold-plus-relation fusion the baseline already runs in Stage 2,
+with the relation term replaced by the `eq(r_1, .)` reduction of the stage-1
+relation claim, and it uses the same degree-2 primitive as the extension
+opening reduction (EOR). We standardize on the reduction (rather than opening
+`W(r_1)` directly) because it keeps the recursive carry at a single witness
+opening at the Stage-2 refold point.
+
+The recursive boundary is unchanged: the level emits one folded-witness opening
+`(u', r_star, W(r_star))` plus the carried setup-prefix opening
+`(C_S, (rho_lambda, rho_y), s_rho)`. No second witness opening is carried.
+
+Cost. Relative to the Stage-3 slice, batching the relation into Stage 1 fixes
+`r_x` early enough to run the setup product in Stage 2, removing the third
+stage; the relation rides the range sumcheck's `mu'` rounds at no extra degree,
+so the witness-domain cost is `deg Q + 2` rounds in both forms. The trade is
+that Stage 1 forgoes the `eq(tau_0, .)`-factored compact range prover. The setup
+product sumcheck contributes the same
+`ceil(log2 N_setup^R) + log2 D_setup` rounds in either placement, and the
+claim-reduction term rides the stage-2 refold for free. The net transcript
+delta is on the order of a few hundred bytes at level-0 round counts.
+
+Alternative. One can instead keep the range check in its `eq(tau_0, .)`-factored
+compact form and run the relation as a second, parallel stage-1 sumcheck. This
+preserves the tree-based range prover but spends an extra witness-domain
+sumcheck and produces the relation and norm claims at two unrelated points; the
+Stage-2 claim reduction keeps the same degree-2 shape either way. We batch the
+relation into the range sumcheck instead, trading the compact stage-1 message
+for one fewer stage-1 sumcheck.
+
+The Stage-3 post-Stage-2 placement remains the first implementation step: it is
+correct, conceptually clean, and reduces the witness side to one opening
+without the extra stage-1 relation sumcheck. The optimized relation-shift form
+is the target once recursive carried-opening batching exists and the witness
+claim-reduction sumcheck is wired.
 
 ### Recursive Carried-Opening Boundary
 
@@ -841,9 +901,12 @@ Stage 3 against a materialized setup-opening oracle, then integrate the
 succinct `omega_S` evaluator, selected prefix commitments, gating policy, and
 recursive carried-opening batching.
 
-The no-new-stage placement should remain deferred until the witness
-claim-reduction path is explicit. It is an optimization over the clean Stage 3
-shape, not the correctness baseline.
+The no-new-stage relation-shift placement is the optimized target (see Product
+Sumcheck Placement). The Stage-3 post-Stage-2 shape is the first implementation
+step toward it: it is the correctness baseline and the simplest delegated-claim
+wiring. Move to the relation-shift form, with the explicit witness
+claim-reduction sumcheck folded into Stage 2, once recursive carried-opening
+batching exists.
 
 ## Implementation Plan for the Repack Branch
 

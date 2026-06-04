@@ -159,12 +159,27 @@ enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
 /// Source of deferred ring-switch row evaluations used by the stage-2 verifier.
 pub(crate) struct Stage2RowEvalSource<F: FieldCore> {
     prepared: RingSwitchDeferredRowEval<F>,
+    setup_claim: Option<F>,
 }
 
 impl<F: FieldCore> Stage2RowEvalSource<F> {
     /// Construct a source from prepared ring-switch row-eval state.
     pub(crate) fn new(prepared: RingSwitchDeferredRowEval<F>) -> Self {
-        Self { prepared }
+        Self {
+            prepared,
+            setup_claim: None,
+        }
+    }
+
+    /// Construct a source that uses a separately proved setup contribution.
+    pub(crate) fn new_with_setup_claim(
+        prepared: RingSwitchDeferredRowEval<F>,
+        setup_claim: F,
+    ) -> Self {
+        Self {
+            prepared,
+            setup_claim: Some(setup_claim),
+        }
     }
 }
 
@@ -397,6 +412,7 @@ where
             self.opening_points,
             self.ring_multiplier_points,
             self.alpha,
+            self.row_eval_source.setup_claim,
         )
     }
 }
