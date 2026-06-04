@@ -82,6 +82,8 @@ pub(crate) struct OpNormTable {
     eps_root: i128,
     /// Largest `||c||_1` the overflow validation covered.
     max_l1: i128,
+    /// Largest threshold `t` the overflow validation covered.
+    max_t: i128,
 }
 
 impl OpNormTable {
@@ -119,6 +121,7 @@ impl OpNormTable {
             base_sin,
             eps_root,
             max_l1,
+            max_t,
         })
     }
 
@@ -127,8 +130,9 @@ impl OpNormTable {
     /// # Errors
     ///
     /// Returns [`AkitaError::InvalidInput`] if a position is `>= D`, the
-    /// positions/coefficients lengths disagree, or `||c||_1` exceeds the
-    /// `max_l1` this table validated (which could overflow the accumulators).
+    /// positions/coefficients lengths disagree, or `||c||_1` / `t` exceed the
+    /// `max_l1` / `max_t` this table validated (either could overflow the
+    /// accumulators or the threshold).
     pub(crate) fn decide(
         &self,
         challenge: &SparseChallenge,
@@ -179,6 +183,16 @@ impl OpNormTable {
             return Err(AkitaError::InvalidInput(format!(
                 "operator-norm predicate: ||c||_1 = {l1} exceeds validated max_l1 = {}",
                 self.max_l1
+            )));
+        }
+        // `threshold = t^2 << 2q` is only proven to fit `i128` for `t <= max_t`
+        // (the bound `new` validated). Reject larger thresholds rather than risk
+        // a debug-overflow panic or a release wrap that would corrupt the
+        // comparison.
+        if i128::from(t) > self.max_t {
+            return Err(AkitaError::InvalidInput(format!(
+                "operator-norm predicate: threshold t = {t} exceeds validated max_t = {}",
+                self.max_t
             )));
         }
 
@@ -677,6 +691,22 @@ mod tests {
             coeffs: vec![1, 1, 1, 1, 1],
         };
         assert!(t.decide(&ch, 8).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_threshold() {
+        let d = 32;
+        // `||c||_1` stays within `max_l1`, so the threshold guard (not the L1
+        // guard) is what rejects a `t` above the validated `max_t = 16`.
+        let table = OpNormTable::new(d, Q, 64, 16).unwrap();
+        let ch = SparseChallenge {
+            positions: vec![0, 1],
+            coeffs: vec![1, 1],
+        };
+        assert!(table.decide(&ch, 17).is_err());
+        assert!(table.decide(&ch, u64::MAX).is_err());
+        // A threshold at the validated boundary is still accepted as input.
+        assert!(table.decide(&ch, 16).is_ok());
     }
 
     #[test]
