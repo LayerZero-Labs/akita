@@ -13,6 +13,7 @@ use akita_prover::{
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
+    SetupContributionMode,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
@@ -51,6 +52,17 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
         group.sample_size(10);
         group.measurement_time(Duration::from_secs(30));
     }
+}
+
+/// Setup-contribution modes benchmarked per phase. Direct scans the expanded
+/// setup matrix inline; Recursive delegates each non-terminal fold to the
+/// stage-3 setup-product sumcheck. Benching both keeps `prove/{mode}`,
+/// `verify/{mode}`, and `e2e/{mode}` regressions independently visible.
+fn setup_contribution_modes() -> [(SetupContributionMode, &'static str); 2] {
+    [
+        (SetupContributionMode::Direct, "direct"),
+        (SetupContributionMode::Recursive, "recursive"),
+    ]
 }
 
 fn bench_dense_phases<
@@ -131,124 +143,127 @@ fn bench_dense_phases<
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    group.bench_function("prove", |b| {
-        b.iter_batched(
-            || vec![hint.clone()],
-            |h| {
-                let mut transcript = AkitaTranscript::<F>::new(b"bench");
-                black_box(
-                    <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-                        &setup,
-                        &CpuBackend,
-                        &prepared,
-                        vec![(
-                            &pt[..],
-                            CommittedPolynomials {
-                                polynomials: &poly_refs[..],
-                                commitment: &commitments[0],
-                                hint: h.into_iter().next().unwrap(),
-                            },
-                        )],
-                        &mut transcript,
-                        BasisMode::Lagrange,
-                        akita_types::SetupContributionMode::Direct,
-                    )
-                    .unwrap(),
-                )
-            },
-            BatchSize::LargeInput,
-        )
-    });
-
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
-    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-        &setup,
-        &CpuBackend,
-        &prepared,
-        vec![(
-            &pt[..],
-            CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            },
-        )],
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
-    )
-    .unwrap();
 
-    group.bench_function("verify", |b| {
-        b.iter(|| {
-            let mut transcript = AkitaTranscript::<F>::new(b"bench");
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-                black_box(&proof),
-                black_box(&verifier_setup),
-                &mut transcript,
-                black_box(vec![(
-                    &pt[..],
-                    CommittedOpenings {
-                        openings: opening_groups[0],
-                        commitment: &commitments[0],
-                    },
-                )]),
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
+    for (mode, mode_label) in setup_contribution_modes() {
+        group.bench_function(format!("prove/{mode_label}"), |b| {
+            b.iter_batched(
+                || vec![hint.clone()],
+                |h| {
+                    let mut transcript = AkitaTranscript::<F>::new(b"bench");
+                    black_box(
+                        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                            &setup,
+                            &CpuBackend,
+                            &prepared,
+                            vec![(
+                                &pt[..],
+                                CommittedPolynomials {
+                                    polynomials: &poly_refs[..],
+                                    commitment: &commitments[0],
+                                    hint: h.into_iter().next().unwrap(),
+                                },
+                            )],
+                            &mut transcript,
+                            BasisMode::Lagrange,
+                            mode,
+                        )
+                        .unwrap(),
+                    )
+                },
+                BatchSize::LargeInput,
             )
-            .unwrap();
-        })
-    });
+        });
 
-    group.bench_function("e2e", |b| {
-        b.iter(|| {
-            let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                &setup,
-                &CpuBackend,
-                &prepared,
-                std::slice::from_ref(&poly),
-            )
-            .unwrap();
-            let cms = [cm];
-            let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
-            let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-                &setup,
-                &CpuBackend,
-                &prepared,
-                vec![(
-                    &pt[..],
-                    CommittedPolynomials {
-                        polynomials: &poly_refs[..],
-                        commitment: &cms[0],
-                        hint: h,
-                    },
-                )],
-                &mut pt_tr,
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            )
-            .unwrap();
-            let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-                &pf,
-                &verifier_setup,
-                &mut vt_tr,
-                vec![(
-                    &pt[..],
-                    CommittedOpenings {
-                        openings: opening_groups[0],
-                        commitment: &cms[0],
-                    },
-                )],
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            )
-            .unwrap();
-            black_box(())
-        })
-    });
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            vec![(
+                &pt[..],
+                CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint: hint.clone(),
+                },
+            )],
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            mode,
+        )
+        .unwrap();
+
+        group.bench_function(format!("verify/{mode_label}"), |b| {
+            b.iter(|| {
+                let mut transcript = AkitaTranscript::<F>::new(b"bench");
+                <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                    black_box(&proof),
+                    black_box(&verifier_setup),
+                    &mut transcript,
+                    black_box(vec![(
+                        &pt[..],
+                        CommittedOpenings {
+                            openings: opening_groups[0],
+                            commitment: &commitments[0],
+                        },
+                    )]),
+                    BasisMode::Lagrange,
+                    mode,
+                )
+                .unwrap();
+            })
+        });
+
+        group.bench_function(format!("e2e/{mode_label}"), |b| {
+            b.iter(|| {
+                let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &setup,
+                    &CpuBackend,
+                    &prepared,
+                    std::slice::from_ref(&poly),
+                )
+                .unwrap();
+                let cms = [cm];
+                let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
+                let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                    &setup,
+                    &CpuBackend,
+                    &prepared,
+                    vec![(
+                        &pt[..],
+                        CommittedPolynomials {
+                            polynomials: &poly_refs[..],
+                            commitment: &cms[0],
+                            hint: h,
+                        },
+                    )],
+                    &mut pt_tr,
+                    BasisMode::Lagrange,
+                    mode,
+                )
+                .unwrap();
+                let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
+                <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                    &pf,
+                    &verifier_setup,
+                    &mut vt_tr,
+                    vec![(
+                        &pt[..],
+                        CommittedOpenings {
+                            openings: opening_groups[0],
+                            commitment: &cms[0],
+                        },
+                    )],
+                    BasisMode::Lagrange,
+                    mode,
+                )
+                .unwrap();
+                black_box(())
+            })
+        });
+    }
 
     group.finish();
 }
@@ -339,124 +354,127 @@ fn bench_onehot_phases<
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    group.bench_function("prove", |b| {
-        b.iter_batched(
-            || vec![hint.clone()],
-            |h| {
-                let mut transcript = AkitaTranscript::<F>::new(b"bench");
-                black_box(
-                    <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-                        &setup,
-                        &CpuBackend,
-                        &prepared,
-                        vec![(
-                            &pt[..],
-                            CommittedPolynomials {
-                                polynomials: &poly_refs[..],
-                                commitment: &commitments[0],
-                                hint: h.into_iter().next().unwrap(),
-                            },
-                        )],
-                        &mut transcript,
-                        BasisMode::Lagrange,
-                        akita_types::SetupContributionMode::Direct,
-                    )
-                    .unwrap(),
-                )
-            },
-            BatchSize::LargeInput,
-        )
-    });
-
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
-    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-        &setup,
-        &CpuBackend,
-        &prepared,
-        vec![(
-            &pt[..],
-            CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            },
-        )],
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
-    )
-    .unwrap();
 
-    group.bench_function("verify", |b| {
-        b.iter(|| {
-            let mut transcript = AkitaTranscript::<F>::new(b"bench");
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-                black_box(&proof),
-                black_box(&verifier_setup),
-                &mut transcript,
-                black_box(vec![(
-                    &pt[..],
-                    CommittedOpenings {
-                        openings: opening_groups[0],
-                        commitment: &commitments[0],
-                    },
-                )]),
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
+    for (mode, mode_label) in setup_contribution_modes() {
+        group.bench_function(format!("prove/{mode_label}"), |b| {
+            b.iter_batched(
+                || vec![hint.clone()],
+                |h| {
+                    let mut transcript = AkitaTranscript::<F>::new(b"bench");
+                    black_box(
+                        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                            &setup,
+                            &CpuBackend,
+                            &prepared,
+                            vec![(
+                                &pt[..],
+                                CommittedPolynomials {
+                                    polynomials: &poly_refs[..],
+                                    commitment: &commitments[0],
+                                    hint: h.into_iter().next().unwrap(),
+                                },
+                            )],
+                            &mut transcript,
+                            BasisMode::Lagrange,
+                            mode,
+                        )
+                        .unwrap(),
+                    )
+                },
+                BatchSize::LargeInput,
             )
-            .unwrap();
-        })
-    });
+        });
 
-    group.bench_function("e2e", |b| {
-        b.iter(|| {
-            let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                &setup,
-                &CpuBackend,
-                &prepared,
-                std::slice::from_ref(&onehot_poly),
-            )
-            .unwrap();
-            let cms = [cm];
-            let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
-            let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-                &setup,
-                &CpuBackend,
-                &prepared,
-                vec![(
-                    &pt[..],
-                    CommittedPolynomials {
-                        polynomials: &poly_refs[..],
-                        commitment: &cms[0],
-                        hint: h,
-                    },
-                )],
-                &mut pt_tr,
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            )
-            .unwrap();
-            let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-                &pf,
-                &verifier_setup,
-                &mut vt_tr,
-                vec![(
-                    &pt[..],
-                    CommittedOpenings {
-                        openings: opening_groups[0],
-                        commitment: &cms[0],
-                    },
-                )],
-                BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
-            )
-            .unwrap();
-            black_box(())
-        })
-    });
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"bench");
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            &CpuBackend,
+            &prepared,
+            vec![(
+                &pt[..],
+                CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint: hint.clone(),
+                },
+            )],
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+            mode,
+        )
+        .unwrap();
+
+        group.bench_function(format!("verify/{mode_label}"), |b| {
+            b.iter(|| {
+                let mut transcript = AkitaTranscript::<F>::new(b"bench");
+                <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                    black_box(&proof),
+                    black_box(&verifier_setup),
+                    &mut transcript,
+                    black_box(vec![(
+                        &pt[..],
+                        CommittedOpenings {
+                            openings: opening_groups[0],
+                            commitment: &commitments[0],
+                        },
+                    )]),
+                    BasisMode::Lagrange,
+                    mode,
+                )
+                .unwrap();
+            })
+        });
+
+        group.bench_function(format!("e2e/{mode_label}"), |b| {
+            b.iter(|| {
+                let (cm, h) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    &setup,
+                    &CpuBackend,
+                    &prepared,
+                    std::slice::from_ref(&onehot_poly),
+                )
+                .unwrap();
+                let cms = [cm];
+                let mut pt_tr = AkitaTranscript::<F>::new(b"bench");
+                let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                    &setup,
+                    &CpuBackend,
+                    &prepared,
+                    vec![(
+                        &pt[..],
+                        CommittedPolynomials {
+                            polynomials: &poly_refs[..],
+                            commitment: &cms[0],
+                            hint: h,
+                        },
+                    )],
+                    &mut pt_tr,
+                    BasisMode::Lagrange,
+                    mode,
+                )
+                .unwrap();
+                let mut vt_tr = AkitaTranscript::<F>::new(b"bench");
+                <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                    &pf,
+                    &verifier_setup,
+                    &mut vt_tr,
+                    vec![(
+                        &pt[..],
+                        CommittedOpenings {
+                            openings: opening_groups[0],
+                            commitment: &cms[0],
+                        },
+                    )],
+                    BasisMode::Lagrange,
+                    mode,
+                )
+                .unwrap();
+                black_box(())
+            })
+        });
+    }
 
     group.finish();
 }

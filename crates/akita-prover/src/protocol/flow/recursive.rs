@@ -336,12 +336,6 @@ where
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     let stage3_sumcheck_proof = match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let row_coefficients = instance
-                .gamma()
-                .iter()
-                .copied()
-                .map(L::lift_base)
-                .collect::<Vec<_>>();
             let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
             let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_len)?;
             let output = SetupSumcheckProver::prove::<F, T, _, D>(
@@ -351,7 +345,6 @@ where
                 &tau1,
                 alpha,
                 &sumcheck_challenges[ring_bits..],
-                &row_coefficients,
                 transcript,
                 |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
             )?;

@@ -149,6 +149,33 @@ fn stage3_sumcheck_size<L: FieldCore + AkitaSerialize>(
     })
 }
 
+/// Total serialized bytes of the recursive-mode stage-3 setup-product
+/// sumcheck payloads across every non-terminal fold level (the folded root and
+/// each intermediate step). This is the proof-size overhead that
+/// `SetupContributionMode::Recursive` adds on top of the direct-mode payload
+/// priced by `akita_types::level_proof_bytes`; terminal levels carry no
+/// stage-3 proof and contribute zero.
+pub(crate) fn observed_stage3_setup_product_bytes<FF, L>(proof: &AkitaBatchedProof<FF, L>) -> usize
+where
+    FF: FieldCore + AkitaSerialize,
+    L: FieldCore + AkitaSerialize,
+{
+    let root_bytes = proof.root.as_fold().map_or(0, |fold| {
+        stage3_sumcheck_size(fold.stage3_sumcheck_proof.as_ref())
+    });
+    let step_bytes: usize = proof
+        .steps
+        .iter()
+        .map(|step| match step {
+            AkitaProofStep::Intermediate(lp) => {
+                stage3_sumcheck_size(lp.stage3_sumcheck_proof.as_ref())
+            }
+            AkitaProofStep::Terminal(_) => 0,
+        })
+        .sum();
+    root_bytes + step_bytes
+}
+
 fn print_akita_level_breakdown<FF, L, const D: usize>(
     label: &str,
     level_idx: usize,

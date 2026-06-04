@@ -18,8 +18,7 @@ mod zk_blinding;
 
 pub use setup_contribution::SetupEvaluator;
 pub(crate) use setup_contribution::{
-    jolt_end_cycle_tracking, jolt_start_cycle_tracking, SetupEvalPlan, SetupEvaluation,
-    SetupEvaluatorMode,
+    JoltCycleScope, SetupEvalPlan, SetupEvaluation, SetupEvaluatorMode,
 };
 pub(super) use structured_slice::{
     compute_r_contribution, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,

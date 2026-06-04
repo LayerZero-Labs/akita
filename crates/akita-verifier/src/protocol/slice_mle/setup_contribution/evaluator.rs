@@ -23,23 +23,74 @@ fn jolt_cycle_marker(marker_id_str: &str, event_type: u32) {
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 #[inline(always)]
-pub(crate) fn jolt_start_cycle_tracking(marker_id: &str) {
+fn jolt_start_cycle_tracking(marker_id: &str) {
     jolt_cycle_marker(marker_id, 1);
 }
 
-#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-#[inline(always)]
-pub(crate) fn jolt_start_cycle_tracking(_marker_id: &str) {}
-
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 #[inline(always)]
-pub(crate) fn jolt_end_cycle_tracking(marker_id: &str) {
+fn jolt_end_cycle_tracking(marker_id: &str) {
     jolt_cycle_marker(marker_id, 2);
 }
 
-#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-#[inline(always)]
-pub(crate) fn jolt_end_cycle_tracking(_marker_id: &str) {}
+/// RAII guard for a Jolt cycle-tracking span.
+///
+/// Construction opens the span (`jolt_start_cycle_tracking`) and drop closes it
+/// (`jolt_end_cycle_tracking`). Because the closing event runs on drop, every
+/// exit path closes the span, including an early `?` propagation or a verifier
+/// rejection. This removes the need for hand-placed end markers on each error
+/// branch.
+///
+/// On non-RISC-V targets the marker is never materialized, so the host build
+/// performs no string formatting or allocation.
+pub(crate) struct JoltCycleScope {
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+    marker: std::borrow::Cow<'static, str>,
+}
+
+impl JoltCycleScope {
+    /// Open a span under a fixed marker name.
+    pub(crate) fn enter(marker: &'static str) -> Self {
+        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+        {
+            jolt_start_cycle_tracking(marker);
+            Self {
+                marker: std::borrow::Cow::Borrowed(marker),
+            }
+        }
+        #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+        {
+            let _ = marker;
+            Self {}
+        }
+    }
+
+    /// Open a span under a per-fold marker name `{base}_{idx}` so Jolt does not
+    /// aggregate distinct recursion levels under one name. The `{base}_{idx}`
+    /// string is only built on RISC-V; host builds skip the allocation.
+    pub(crate) fn enter_indexed(base: &'static str, idx: usize) -> Self {
+        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+        {
+            let marker = format!("{base}_{idx}");
+            jolt_start_cycle_tracking(&marker);
+            Self {
+                marker: std::borrow::Cow::Owned(marker),
+            }
+        }
+        #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+        {
+            let _ = (base, idx);
+            Self {}
+        }
+    }
+}
+
+impl Drop for JoltCycleScope {
+    fn drop(&mut self) {
+        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+        jolt_end_cycle_tracking(&self.marker);
+    }
+}
 
 pub(crate) enum SetupEvaluatorMode<'a, F: FieldCore> {
     Direct {
@@ -112,16 +163,14 @@ where
         let plan = self.prepare()?;
         match mode {
             SetupEvaluatorMode::Direct { setup } => {
-                jolt_start_cycle_tracking("setup_inner_product_segments");
+                let _scope = JoltCycleScope::enter("setup_inner_product_segments");
                 let value = plan.evaluate_direct::<F, D>(setup, self.alpha_pows)?;
-                jolt_end_cycle_tracking("setup_inner_product_segments");
                 Ok(SetupEvaluation::Direct(value))
             }
             #[cfg(test)]
             SetupEvaluatorMode::Recursive { setup } => {
-                jolt_start_cycle_tracking("setup_bar_omega");
+                let _scope = JoltCycleScope::enter("setup_bar_omega");
                 let value = recursive_inner_product::<F, E, D>(&plan, setup, self.alpha_pows)?;
-                jolt_end_cycle_tracking("setup_bar_omega");
                 Ok(SetupEvaluation::Recursive(value))
             }
         }

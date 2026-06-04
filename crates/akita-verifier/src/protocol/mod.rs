@@ -14,7 +14,7 @@ pub use batched::{
 };
 pub use ring_switch::{prepare_ring_switch_row_eval, RingSwitchDeferredRowEval, RingSwitchReplay};
 pub use slice_mle::SetupEvaluator;
-pub(crate) use slice_mle::{jolt_end_cycle_tracking, jolt_start_cycle_tracking, SetupEvalPlan};
+pub(crate) use slice_mle::{JoltCycleScope, SetupEvalPlan};
 
 #[inline]
 pub(crate) fn validate_ring_dispatch<const D: usize>() -> Result<usize, AkitaError> {

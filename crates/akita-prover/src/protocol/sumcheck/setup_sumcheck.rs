@@ -84,7 +84,11 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
     /// Internally derives the `(required, bar_omega, alpha_pows)` factored
     /// terms from the level parameters and ring relation, then builds the
     /// `lambda * D + y` setup table (zero-padded up to the next power-of-two
-    /// lambda dimension) and runs the product sumcheck.
+    /// lambda dimension) and runs the product sumcheck. The factored weights
+    /// come entirely from the ring-switch row evaluation (`bar_omega`) and the
+    /// `alpha` ring challenge; the public per-claim row coefficients are
+    /// already folded into the relation upstream, so this product does not take
+    /// them as a separate input.
     ///
     /// # Errors
     ///
@@ -99,7 +103,6 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
         tau1: &[E],
         alpha: E,
         x_challenges: &[E],
-        row_coefficients: &[E],
         transcript: &mut T,
         sample_round: SampleRound,
     ) -> Result<SetupSumcheckProverOutput<E>, AkitaError>
@@ -109,14 +112,8 @@ impl<E: FieldCore> SetupSumcheckProver<E> {
         T: Transcript<F>,
         SampleRound: FnMut(&mut T) -> E,
     {
-        let (required, mut bar_omega, alpha_pows) = prepare_setup_sumcheck_terms::<F, E, D>(
-            lp,
-            relation,
-            tau1,
-            alpha,
-            x_challenges,
-            row_coefficients,
-        )?;
+        let (required, mut bar_omega, alpha_pows) =
+            prepare_setup_sumcheck_terms::<F, E, D>(lp, relation, tau1, alpha, x_challenges)?;
 
         if required > setup_entries.len() {
             return Err(AkitaError::InvalidSetup(
@@ -195,7 +192,6 @@ fn prepare_setup_sumcheck_terms<F, E, const D: usize>(
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
-    _row_coefficients: &[E],
 ) -> Result<(usize, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,

@@ -2,9 +2,7 @@ mod evaluator;
 
 pub(crate) use akita_types::SetupContributionPlan as SetupEvalPlan;
 pub use evaluator::SetupEvaluator;
-pub(crate) use evaluator::{
-    jolt_end_cycle_tracking, jolt_start_cycle_tracking, SetupEvaluation, SetupEvaluatorMode,
-};
+pub(crate) use evaluator::{JoltCycleScope, SetupEvaluation, SetupEvaluatorMode};
 
 #[cfg(test)]
 mod fixtures;

@@ -2,9 +2,7 @@
 //! prover-side `SetupSumcheckProver`.
 
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-use crate::protocol::{
-    jolt_end_cycle_tracking, jolt_start_cycle_tracking, SetupEvalPlan, SetupEvaluator,
-};
+use crate::protocol::{JoltCycleScope, SetupEvalPlan, SetupEvaluator};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
@@ -115,28 +113,32 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let (rho_y, rho_lambda) = challenges.split_at(self.ring_bits);
 
         // Distinct per-fold marker suffix so Jolt does not aggregate every
-        // recursion level's setup-product sumcheck under one marker name.
+        // recursion level's setup-product sumcheck under one marker name. The
+        // RAII scopes close their spans on drop, so every exit path (including
+        // the early `?` returns and the final rejection below) closes them.
         let fold = SETUP_SUMCHECK_FOLD_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let mle_marker = format!("{SETUP_MLE_MARKER}_{fold}");
-        let omega_marker = format!("{SETUP_OMEGA_MARKER}_{fold}");
-        let alpha_check_marker = format!("{SETUP_ALPHA_CHECK_MARKER}_{fold}");
 
-        jolt_start_cycle_tracking(&mle_marker);
-        let eq_lambda = lambda_eq_table(self.plan.required(), rho_lambda)?;
-        let eq_y = ring_eq_table::<E, D>(rho_y)?;
-        let setup_val =
-            setup_mle_at_eq_tables::<F, E, D>(setup, self.plan.required(), &eq_lambda, &eq_y)?;
-        jolt_end_cycle_tracking(&mle_marker);
-        jolt_start_cycle_tracking(&omega_marker);
-        let omega = self.plan.evaluate_bar_omega_with_eq(&eq_lambda)?;
-        jolt_end_cycle_tracking(&omega_marker);
-        jolt_start_cycle_tracking(&alpha_check_marker);
+        let eq_lambda;
+        let eq_y;
+        let setup_val;
+        {
+            let _mle_scope = JoltCycleScope::enter_indexed(SETUP_MLE_MARKER, fold);
+            eq_lambda = lambda_eq_table(self.plan.required(), rho_lambda)?;
+            eq_y = ring_eq_table::<E, D>(rho_y)?;
+            setup_val =
+                setup_mle_at_eq_tables::<F, E, D>(setup, self.plan.required(), &eq_lambda, &eq_y)?;
+        }
+
+        let omega = {
+            let _omega_scope = JoltCycleScope::enter_indexed(SETUP_OMEGA_MARKER, fold);
+            self.plan.evaluate_bar_omega_with_eq(&eq_lambda)?
+        };
+
+        let _alpha_check_scope = JoltCycleScope::enter_indexed(SETUP_ALPHA_CHECK_MARKER, fold);
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
         if final_claim != setup_val * omega * alpha_val {
-            jolt_end_cycle_tracking(&alpha_check_marker);
             return Err(AkitaError::InvalidProof);
         }
-        jolt_end_cycle_tracking(&alpha_check_marker);
         Ok(())
     }
 }

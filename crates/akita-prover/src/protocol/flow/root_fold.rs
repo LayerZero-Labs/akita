@@ -1267,7 +1267,6 @@ where
                 &tau1,
                 alpha,
                 &sumcheck_challenges[ring_bits..],
-                &row_coefficients,
                 transcript,
                 |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
             )?;
