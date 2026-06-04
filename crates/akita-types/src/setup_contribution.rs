@@ -557,8 +557,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                 + inputs.block_len * inputs.num_points * inputs.depth_fold * dc;
                             let sum = offset_z_dense_low + x;
                             let low_idx = sum & mask;
-                            let high_idx = sum >> k;
-                            let eq_val = eq_low_z_dense[low_idx] * eq_high_z_dense[high_idx];
+                            // `eq_high_z_dense` starts at `offset_z_dense_high`,
+                            // so the low-bit carry is the relative high-table index.
+                            let high_carry = sum >> k;
+                            let eq_val = eq_low_z_dense[low_idx] * eq_high_z_dense[high_carry];
                             acc += eq_val.mul_base(fg);
                         }
                     }
@@ -807,4 +809,82 @@ fn checked_add(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, Akit
 fn checked_mul(lhs: usize, rhs: usize, name: &'static str) -> Result<usize, AkitaError> {
     lhs.checked_mul(rhs)
         .ok_or_else(|| AkitaError::InvalidSetup(format!("{name} overflow")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{gadget_row_scalars, MRowLayout};
+    use akita_field::Prime128OffsetA7F7;
+
+    type F = Prime128OffsetA7F7;
+
+    fn test_scalar(value: u128) -> F {
+        F::from_canonical_u128(value)
+    }
+
+    #[test]
+    fn dense_z_eq_slice_uses_relative_high_carry() {
+        let block_len = 12;
+        let depth_commit = 3;
+        let depth_fold = 2;
+        let num_points = 1;
+        let z_range = block_len * depth_commit;
+        let offset_z = 192;
+        let full_vec_randomness = (0..9)
+            .map(|idx| test_scalar(101 + idx as u128))
+            .collect::<Vec<_>>();
+        let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
+        let inputs = SetupContributionPlanInputs {
+            eq_tau1: vec![test_scalar(11), test_scalar(12)],
+            num_t_vectors: 0,
+            num_blocks: 4,
+            num_claims: 1,
+            depth_open: 16,
+            depth_commit,
+            depth_fold,
+            block_len,
+            inner_width: z_range,
+            n_a: 1,
+            n_d: 0,
+            m_row_layout: MRowLayout::WithoutDBlock,
+            n_b: 0,
+            num_points,
+            rows: 2,
+            num_polys_per_commitment_group: vec![0],
+            num_public_rows: 0,
+        };
+
+        let plan = SetupContributionPlan::prepare::<F>(
+            &inputs,
+            &full_vec_randomness,
+            None,
+            None,
+            &fold_gadget,
+            0,
+            64,
+            offset_z,
+        )
+        .unwrap();
+
+        let expected = (0..z_range)
+            .map(|c| {
+                let dc = c % depth_commit;
+                let blk = c / depth_commit;
+                let mut acc = F::zero();
+                for pt in 0..num_points {
+                    for (df, &fg) in fold_gadget.iter().enumerate().take(depth_fold) {
+                        let x = blk
+                            + block_len * pt
+                            + block_len * num_points * df
+                            + block_len * num_points * depth_fold * dc;
+                        acc += eq_eval_at_index(&full_vec_randomness, offset_z + x) * fg;
+                    }
+                }
+                -acc
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(plan.z_eq_slice, expected);
+    }
 }
