@@ -1,13 +1,12 @@
 //! End-to-end Akita PCS scheme orchestration.
 
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
-use akita_field::fields::wide::HasWide;
-use akita_field::fields::HasUnreducedOps;
+use akita_field::fields::wide::{HasOptimizedFold, HasWide};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
+    HasUnreducedOps, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::dispatch_ring_dim_result;
 use akita_prover::{
@@ -121,13 +120,7 @@ fn dispatch_prove_level<F, T, B, const D: usize, Cfg>(
     next_params: LevelParams,
 ) -> Result<ProveLevelOutput<F, Cfg::ChallengeField>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasUnreducedOps
-        + HasWide
-        + HalvingField
-        + PseudoMersenneField,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F>,
@@ -136,6 +129,7 @@ where
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + HasUnreducedOps
+        + HasOptimizedFold
         + AkitaSerialize,
 {
     if level_d == D {
@@ -245,7 +239,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + PseudoMersenneField
@@ -258,6 +251,7 @@ where
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + HasUnreducedOps
+        + HasOptimizedFold
         + AkitaSerialize,
 {
     akita_prover::prove_recursive_suffix_with_policy::<F, Cfg::ChallengeField, _, _>(
@@ -321,13 +315,7 @@ fn dispatch_prove_terminal_level<F, T, B, const D: usize, Cfg>(
     final_log_basis: u32,
 ) -> Result<akita_types::TerminalLevelProof<F, Cfg::ChallengeField>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasUnreducedOps
-        + HasWide
-        + HalvingField
-        + PseudoMersenneField,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + PseudoMersenneField,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     Cfg: CommitmentConfig<Field = F>,
@@ -336,6 +324,7 @@ where
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + HasUnreducedOps
+        + HasOptimizedFold
         + AkitaSerialize,
 {
     if level_d == D {
@@ -395,7 +384,6 @@ where
         + CanonicalField
         + RandomSampling
         + HasWide
-        + HasUnreducedOps
         + HalvingField
         + FromPrimitiveInt
         + PseudoMersenneField
@@ -407,6 +395,7 @@ where
         + FrobeniusExtField<F>
         + FromPrimitiveInt
         + HasUnreducedOps
+        + HasOptimizedFold
         + AkitaSerialize,
 {
     type ProverSetup = AkitaProverSetup<F, D>;
@@ -640,7 +629,6 @@ where
         + CanonicalField
         + RandomSampling
         + HasWide
-        + HasUnreducedOps
         + HalvingField
         + FromPrimitiveInt
         + PseudoMersenneField

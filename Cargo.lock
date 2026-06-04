@@ -200,7 +200,6 @@ dependencies = [
  "akita-r1cs",
  "akita-serialization",
  "akita-transcript",
- "rayon",
  "tracing",
 ]
 
@@ -225,8 +224,10 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "blake2 0.10.6",
+ "num-traits",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rayon",
  "sha3 0.10.9",
  "tracing",
 ]

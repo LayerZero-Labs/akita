@@ -4,7 +4,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_field::fields::wide::{HasWide, ReduceTo};
+use akita_field::fields::wide::{HasOptimizedFold, HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     HalvingField, HasUnreducedOps, PseudoMersenneField, RandomSampling,
@@ -90,7 +90,6 @@ where
         + FromPrimitiveInt
         + RandomSampling
         + HasWide
-        + HasUnreducedOps
         + HalvingField
         + PseudoMersenneField
         + AkitaSerialize
@@ -103,6 +102,7 @@ where
         + RingSubfieldEncoding<F>
         + ExtField<Cfg::ClaimField>
         + HasUnreducedOps
+        + HasOptimizedFold
         + AkitaSerialize,
 {
     assert_eq!(D, Cfg::D);

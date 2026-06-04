@@ -1,10 +1,9 @@
 //! Header-stripped proof-size and planned-witness sizing formulas.
 
 use akita_field::{AkitaError, CanonicalField};
-use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
 
 use crate::sis::compute_num_digits_full_field;
-use crate::{CleartextWitnessShape, LevelParams};
+use crate::{CleartextWitnessShape, LevelParams, EXTENSION_OPENING_REDUCTION_DEGREE};
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {

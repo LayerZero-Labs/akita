@@ -40,7 +40,7 @@ pub use fp32::Fp32;
 pub use fp64::Fp64;
 pub use lift::{
     canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
-    ExtField, FrobeniusExtField, LiftBase, MulBase,
+    ExtField, FrobeniusExtField, LiftBase, MulBase, MulBaseUnreduced,
 };
 pub use packed::{
     Fp128Packing, Fp16Packing, Fp32Packing, Fp64Packing, HasPacking, NoPacking, PackedField,
@@ -53,6 +53,8 @@ pub use pseudo_mersenne::{
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use wide::{
-    AccumPair, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32ProductAccum, Fp32x2i32,
-    Fp64ProductAccum, Fp64x4i32, HasUnreducedOps, HasWide, ReduceTo,
+    AccumPair, FoldMatrixFp16, FoldMatrixFp32, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32,
+    Fp2Fp64ProductAccum, Fp32ProductAccum, Fp32x2i32, Fp64ProductAccum, Fp64x4i32,
+    HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo, RingSubfieldFp4Fp32ProductAccum,
+    RingSubfieldFp8Fp16ProductAccum,
 };

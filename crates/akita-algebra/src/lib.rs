@@ -32,7 +32,7 @@ pub use akita_field::{
     Zero,
 };
 pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};
-pub use eq_poly::EqPolynomial;
+pub use eq_poly::{EqPolynomial, SplitEqEvals};
 pub use module::{Module, VectorModule};
 pub use ntt::tables;
 pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};
