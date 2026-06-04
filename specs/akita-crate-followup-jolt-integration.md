@@ -120,12 +120,12 @@ Required local and CI checks:
 - `cargo check --workspace --all-targets`
 - `cargo check -p akita-pcs --example profile --all-features`
 - `cargo check -p akita-verifier --no-default-features`
-- `cargo check -p akita-scheme --all-targets`
+- `cargo check -p akita-pcs --all-targets`
 - `cargo check -p akita-pcs --tests --message-format=short`
 - `cargo test --no-run --message-format=short --all-features`
 - `cargo test -p akita-config fp128_family_selector --all-features`
 - `cargo test -p akita-prover --lib`
-- `cargo test -p akita-scheme --lib`
+- `cargo test -p akita-pcs --lib`
 - `cargo test -p akita-pcs --test transcript`
 - `cargo test -p akita-pcs --test sparse_challenge`
 - `cargo test -p akita-pcs --test single_poly_e2e single_onehot_nv10 -- --exact`
@@ -138,7 +138,6 @@ Required local and CI checks:
 - `scripts/check-crate-deps.sh akita-prover`
 - `scripts/check-crate-deps.sh akita-config`
 - `scripts/check-crate-deps.sh akita-setup`
-- `scripts/check-crate-deps.sh akita-scheme`
 
 ### Performance
 

@@ -146,7 +146,6 @@ scripts/check-crate-deps.sh akita-verifier
 scripts/check-crate-deps.sh akita-prover
 scripts/check-crate-deps.sh akita-config
 scripts/check-crate-deps.sh akita-setup
-scripts/check-crate-deps.sh akita-scheme
 cargo run -p akita-planner --bin akita-planner -- --validate
 RUSTFLAGS="-D warnings -C target-cpu=x86-64" cargo check -p akita-verifier --no-default-features
 rustup target add wasm32-unknown-unknown

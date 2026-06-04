@@ -31,13 +31,10 @@ else
       # `akita-config` in the inverted dependency arrow. It is verifier-reachable
       # via the runtime DP fallback, so it must never pull in a config- or
       # protocol-layer crate, which would undo the dependency inversion.
-      forbidden=(akita-config akita-prover akita-verifier akita-setup akita-scheme akita-pcs)
+      forbidden=(akita-config akita-prover akita-verifier akita-setup akita-pcs)
       ;;
     akita-setup)
       forbidden=(akita-verifier akita-pcs)
-      ;;
-    akita-scheme)
-      forbidden=(akita-pcs)
       ;;
     *)
       echo "no default forbidden dependency set for ${pkg}; pass forbidden packages explicitly" >&2

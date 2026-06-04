@@ -18,6 +18,7 @@ use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
+use akita_config::CommitmentConfig;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, LiftBase,
@@ -31,9 +32,9 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::RingRelationInstance;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup,
-    CleartextWitnessProof, FlatDigitBlocks, FlatRingVec, LevelParams, MRowLayout, RingCommitment,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
+    recursive_level_layout_from_params, validate_opening_points_for_claims, AkitaCommitmentHint,
+    AkitaExpandedSetup, CleartextWitnessProof, FlatDigitBlocks, FlatRingVec, LevelParams,
+    MRowLayout, RingCommitment, RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
     TerminalWitnessSegmentLayout,
 };
 
@@ -45,7 +46,7 @@ mod finalize;
 mod tests;
 
 pub use coeffs::{build_w_coeffs, ring_switch_build_w};
-pub use commit::{commit_next_w_with_policy, commit_w, NextWitnessCommitment};
+pub use commit::{commit_next_w, commit_w, NextWitnessCommitment};
 pub use evals::{build_w_evals_compact, compute_m_evals_x};
 pub use finalize::{
     ring_switch_finalize, ring_switch_finalize_after_absorb, ring_switch_finalize_terminal,

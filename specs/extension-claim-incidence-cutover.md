@@ -107,8 +107,8 @@ Targeted commands run on the PR head:
 - `cargo test -p akita-types degree_one_challenge_bridge_matches_base_sampling` (PR #69; removed by PR #71 Part 1)
 - `cargo test -p akita-verifier extension`
 - `cargo test -p akita-prover prover_claim_preparation_accepts_extension_points`
-- `cargo test -p akita-scheme fp128_degree_one_batched_proof_roundtrip_is_stable`
-- `cargo test -p akita-scheme folded_payload_commitments_and_digits_stay_base_field`
+- `cargo test -p akita-pcs fp128_degree_one_batched_proof_roundtrip_is_stable`
+- `cargo test -p akita-pcs folded_payload_commitments_and_digits_stay_base_field`
 
 ## Design
 
