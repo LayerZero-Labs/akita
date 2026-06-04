@@ -82,7 +82,7 @@ where
     akita_planner::find_recursive_carried_suffix_schedule(
         key,
         &policy_of::<Cfg>(),
-        Cfg::stage1_challenge_config,
+        Cfg::ring_challenge_config,
         start_level,
         current_w_len,
         current_log_basis,
