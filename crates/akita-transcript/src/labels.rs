@@ -76,11 +76,14 @@ pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
 /// Challenge for γ-batching evaluation claims at the same point.
 pub const CHALLENGE_EVAL_BATCH: &[u8] = b"ak/c/eb";
 
-/// Absorb the `w` coefficient vector before sumcheck (paper §4.3).
-pub const ABSORB_SUMCHECK_W: &[u8] = b"ak/a/w";
-/// Absorb terminal logical `w_hat` digits before sparse-challenge sampling.
-pub const ABSORB_TERMINAL_W_HAT: &[u8] = b"ak/a/twh";
-/// Absorb terminal final-witness digits outside logical `w_hat`.
+/// Binds the next-level witness at this fold step. Intermediate folds absorb
+/// the Ajtai commitment `u'` to the next-level witness `w` (`next_w_commitment`);
+/// the terminal fold absorbs the cleartext `final_witness` (packed `w`) in the
+/// same wire position. Diagnostic label only; sponge bytes are positional.
+pub const ABSORB_NEXT_LEVEL_WITNESS_BINDING: &[u8] = b"ak/a/w";
+/// Absorb terminal logical `e_hat` digits before sparse-challenge sampling.
+pub const ABSORB_TERMINAL_E_HAT: &[u8] = b"ak/a/twh";
+/// Absorb terminal final-witness digits outside logical `e_hat`.
 pub const ABSORB_TERMINAL_W_REMAINDER: &[u8] = b"ak/a/twr";
 /// Challenge for sampling `τ₀` (F_0 range-check batching point, paper §4.3).
 pub const CHALLENGE_TAU0: &[u8] = b"ak/c/t0";
@@ -116,8 +119,8 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_TENSOR_FOLD_RIGHT,
     ABSORB_EVAL_OPENINGS_FIELD,
     CHALLENGE_EVAL_BATCH,
-    ABSORB_SUMCHECK_W,
-    ABSORB_TERMINAL_W_HAT,
+    ABSORB_NEXT_LEVEL_WITNESS_BINDING,
+    ABSORB_TERMINAL_E_HAT,
     ABSORB_TERMINAL_W_REMAINDER,
     CHALLENGE_TAU0,
     CHALLENGE_TAU1,

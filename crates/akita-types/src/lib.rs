@@ -70,7 +70,7 @@ pub use proof::{
     ring_column_z_first, ring_inner_product_with_extension_weights,
     ring_relation_segment_layout_for_opening_shape, ring_subfield_packed_extension_opening_point,
     root_tensor_projection_enabled, sample_public_matrix_seed, sample_public_row_coefficients,
-    terminal_w_hat_bytes_from_blocks, terminal_witness_segment_layout,
+    terminal_e_hat_bytes_from_blocks, terminal_witness_segment_layout,
     terminal_witness_segment_layout_from_counts, terminal_witness_transcript_parts,
     validate_batched_inputs, validate_public_matrix_matches_seed, verifier_claims_to_incidence,
     AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof,

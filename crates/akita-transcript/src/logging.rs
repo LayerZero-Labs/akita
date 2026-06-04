@@ -391,7 +391,7 @@ mod tests {
     fn catches_wire_without_matching_absorb_before_squeeze() {
         let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"logging-test"));
         transcript.bind_instance_bytes(b"descriptor");
-        transcript.record_wire_use(labels::ABSORB_SUMCHECK_W, b"final-w");
+        transcript.record_wire_use(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"final-w");
         let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
         let errors = transcript.smell_check_errors();
         assert!(errors.iter().any(|error| error.contains("wire `ak/a/w`")));
@@ -401,8 +401,8 @@ mod tests {
     fn accepts_wire_with_matching_absorb_before_squeeze() {
         let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"logging-test"));
         transcript.bind_instance_bytes(b"descriptor");
-        transcript.record_wire_use(labels::ABSORB_SUMCHECK_W, b"final-w");
-        transcript.append_bytes(labels::ABSORB_SUMCHECK_W, b"final-w");
+        transcript.record_wire_use(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"final-w");
+        transcript.append_bytes(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING, b"final-w");
         let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU0);
         transcript.assert_smell_checks();
     }
@@ -411,7 +411,7 @@ mod tests {
     fn coverage_manifest_requires_wire_events() {
         let mut transcript = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"logging-test"));
         transcript.bind_instance_bytes(b"descriptor");
-        transcript.expect_wire_label(labels::ABSORB_SUMCHECK_W);
+        transcript.expect_wire_label(labels::ABSORB_NEXT_LEVEL_WITNESS_BINDING);
         let errors = transcript.smell_check_errors();
         assert!(errors
             .iter()
