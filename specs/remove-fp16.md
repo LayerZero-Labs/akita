@@ -4,7 +4,7 @@
 |-----------|-------|
 | Author(s) | Quang Dao, Cursor assistant (GPT-5.2 draft, Claude Opus 4.8 revisions) |
 | Created   | 2026-06-04 |
-| Status    | proposed |
+| Status    | implemented |
 | PR        | https://github.com/LayerZero-Labs/akita/pull/149 |
 
 ## Summary
@@ -62,17 +62,17 @@ The result is that Akita only supports the shipped and security-viable modulus f
 
 ### Acceptance Criteria
 
-- [ ] `Fp16` is not present in the Rust codebase outside `specs/`.
-- [ ] `Prime16Offset99` is not present in the Rust codebase outside `specs/`.
-- [ ] `Fp16Packing`, `PackedFp16Neon`, `PackedFp16Avx2`, and `PackedFp16Avx512` are not present in the Rust codebase outside `specs/`.
-- [ ] `FoldMatrixFp16` and `RingSubfieldFp8Fp16ProductAccum` are not present in the Rust codebase outside `specs/`.
-- [ ] `SisModulusFamily::Q16` does not exist, and there are no Q16 SIS floor rows shipped in code.
-- [ ] No shipped or profile preset resolves to `SisModulusFamily::Q16`; the only families selected are Q32/Q64/Q128.
-- [ ] The Q16-specific NTT tables (`Q16_PRIMES`, `Q16_NUM_PRIMES`, `Q16_MODULUS`, `q16_garner`) and the `ProtocolCrtNttParams::Q16` / `NttSlotCache::Q16` dispatch variants are removed, while the generic `i16` `PrimeWidth` implementation and its NTT/SIMD kernels remain and still build under `-D warnings`.
-- [ ] The instance descriptor decoding rejects the removed Q16 tag (historically tag `3`) with `SerializationError::InvalidData(...)`, while tags `0`/`1`/`2` still decode to Q32/Q64/Q128 unchanged.
-- [ ] `cargo fmt -q` is clean.
-- [ ] `cargo clippy --all --message-format=short -q -- -D warnings` is clean.
-- [ ] `cargo test` passes.
+- [x] `Fp16` is not present in the Rust codebase outside `specs/`.
+- [x] `Prime16Offset99` is not present in the Rust codebase outside `specs/`.
+- [x] `Fp16Packing`, `PackedFp16Neon`, `PackedFp16Avx2`, and `PackedFp16Avx512` are not present in the Rust codebase outside `specs/`.
+- [x] `FoldMatrixFp16` and `RingSubfieldFp8Fp16ProductAccum` are not present in the Rust codebase outside `specs/`.
+- [x] `SisModulusFamily::Q16` does not exist, and there are no Q16 SIS floor rows shipped in code.
+- [x] No shipped or profile preset resolves to `SisModulusFamily::Q16`; the only families selected are Q32/Q64/Q128.
+- [x] The Q16-specific NTT tables (`Q16_PRIMES`, `Q16_NUM_PRIMES`, `Q16_MODULUS`, `q16_garner`) and the `ProtocolCrtNttParams::Q16` / `NttSlotCache::Q16` dispatch variants are removed, while the generic `i16` `PrimeWidth` implementation and its NTT/SIMD kernels remain and still build under `-D warnings`.
+- [x] The instance descriptor decoding rejects the removed Q16 tag (historically tag `3`) with `SerializationError::InvalidData(...)`, while tags `0`/`1`/`2` still decode to Q32/Q64/Q128 unchanged.
+- [x] `cargo fmt -q` is clean.
+- [x] `cargo clippy --all --message-format=short -q -- -D warnings` is clean.
+- [x] `cargo test` passes.
 
 ### Testing Strategy
 

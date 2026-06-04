@@ -5,10 +5,6 @@ macro_rules! dispatch_slot {
         let nr: usize = $num_rows;
         let nc: usize = $num_cols;
         match $slot {
-            NttSlotCache::Q16 { neg, params: p, .. } => {
-                let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
-                $func(&rows, $($arg,)* p)
-            }
             NttSlotCache::Q32 { neg, params: p, .. } => {
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)

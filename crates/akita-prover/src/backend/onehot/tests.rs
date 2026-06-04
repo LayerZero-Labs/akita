@@ -2,8 +2,8 @@ use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
 use crate::DensePoly;
 use akita_field::fields::{
-    Fp64, Prime128Offset275, Prime16Offset99, Prime24Offset3, Prime32Offset99, RingSubfieldFp4,
-    RingSubfieldFp8, TowerBasisFp4, TwoNr, UnitNr,
+    Fp64, Prime128Offset275, Prime24Offset3, Prime32Offset99, RingSubfieldFp4, TowerBasisFp4,
+    TwoNr, UnitNr,
 };
 use akita_field::RandomSampling;
 use akita_types::FlatMatrix;
@@ -396,66 +396,6 @@ fn batched_tensor_column_partials_match_dense_for_ring_subfield_fp4() {
                 F::from_canonical_u128_reduced(7 * idx as u128 + 2),
                 F::from_canonical_u128_reduced(7 * idx as u128 + 4),
                 F::from_canonical_u128_reduced(7 * idx as u128 + 8),
-            ])
-        })
-        .collect::<Vec<_>>();
-
-    let dense_expected = polys
-        .iter()
-        .map(|poly| {
-            materialize_onehot_as_dense(poly)
-                .tensor_extension_column_partials::<E>(&point)
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
-    let poly_refs = polys.iter().collect::<Vec<_>>();
-    let batched =
-        <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::tensor_extension_column_partials_batch::<E>(
-            &poly_refs, &point,
-        )
-        .unwrap();
-
-    assert_eq!(batched, dense_expected);
-}
-
-#[test]
-fn batched_tensor_column_partials_match_dense_for_ring_subfield_fp8() {
-    type F = Prime16Offset99;
-    type E = RingSubfieldFp8<F>;
-    const D: usize = 32;
-    const ONEHOT_K: usize = 16;
-    const NUM_VARS: usize = 10;
-
-    let num_chunks = (1usize << NUM_VARS) / ONEHOT_K;
-    let make_indices = |seed: usize| {
-        (0..num_chunks)
-            .map(|chunk| {
-                let h = chunk
-                    .wrapping_mul(2_654_435_761)
-                    .wrapping_add(seed.wrapping_mul(40_503));
-                if h % 13 == 0 {
-                    None
-                } else {
-                    Some(h % ONEHOT_K)
-                }
-            })
-            .collect::<Vec<Option<usize>>>()
-    };
-    let polys = [
-        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(1)).unwrap(),
-        OneHotPoly::<F, D>::new(ONEHOT_K, make_indices(2)).unwrap(),
-    ];
-    let point = (0..NUM_VARS)
-        .map(|idx| {
-            E::from_base_slice(&[
-                F::from_canonical_u128_reduced(3 * idx as u128 + 1),
-                F::from_canonical_u128_reduced(3 * idx as u128 + 2),
-                F::from_canonical_u128_reduced(3 * idx as u128 + 4),
-                F::from_canonical_u128_reduced(3 * idx as u128 + 8),
-                F::from_canonical_u128_reduced(3 * idx as u128 + 16),
-                F::from_canonical_u128_reduced(3 * idx as u128 + 5),
-                F::from_canonical_u128_reduced(3 * idx as u128 + 7),
-                F::from_canonical_u128_reduced(3 * idx as u128 + 11),
             ])
         })
         .collect::<Vec<_>>();
