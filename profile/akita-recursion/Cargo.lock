@@ -161,6 +161,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "akita-verifier",
+ "clap",
  "rand 0.8.6",
  "rayon",
  "tracing",

@@ -135,6 +135,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("multipoint batched prove");
 
@@ -156,6 +157,7 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -244,7 +246,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
                     &polys_per_point_refs,
                     &commitments,
                     hints,
-                ), &mut prover_transcript, BasisMode::Lagrange)
+                ), &mut prover_transcript, BasisMode::Lagrange, akita_types::SetupContributionMode::Direct)
             .expect("multipoint batched prove");
 
         let mut serialized = Vec::new();
@@ -268,6 +270,7 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             &mut verifier_transcript,
             verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -364,6 +367,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
             prover_claims,
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("shared-commitment multipoint batched prove");
 
@@ -401,6 +405,7 @@ fn multipoint_dense_shared_commitment_round_trip() {
             &mut verifier_transcript,
             verifier_claims,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -499,6 +504,7 @@ mod non_zk_negative_cases {
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("multipoint batched prove");
 
@@ -514,6 +520,7 @@ mod non_zk_negative_cases {
                 &mut verifier_transcript,
                 verify_inputs_from_groups(&swapped_points, &openings_per_point_refs, &commitments),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(result.is_err(), "swapped opening points must be rejected");
         });
@@ -598,6 +605,7 @@ mod non_zk_negative_cases {
                 ),
                 &mut transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(result.is_err(), "capacity overflow must be rejected");
         });
@@ -692,6 +700,7 @@ mod non_zk_negative_cases {
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("multipoint batched prove");
 
@@ -713,6 +722,7 @@ mod non_zk_negative_cases {
                 &mut verifier_transcript,
                 verify_inputs_from_groups(&opening_points, &truncated_refs, &commitments),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_err(),

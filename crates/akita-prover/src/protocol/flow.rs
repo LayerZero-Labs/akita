@@ -10,7 +10,7 @@ use crate::protocol::ring_switch::{
     ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
     NextWitnessCommitment, RingSwitchOutput,
 };
-use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
+use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover, SetupSumcheckProver};
 #[cfg(feature = "zk")]
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
 use crate::protocol::RingRelationProver;
@@ -63,7 +63,8 @@ use akita_types::{
     ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof,
     CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim,
     LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
-    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, SetupContributionMode,
+    SetupSumcheckProof, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -320,6 +321,8 @@ pub struct RootLevelRawOutput<F: FieldCore, L: FieldCore, const D: usize> {
     /// ZK plain-opening round masks for the stage-2 sumcheck.
     #[cfg(feature = "zk")]
     pub stage2_sumcheck_proof_masked: SumcheckProofMasked<L>,
+    /// Stage-3 setup product-sumcheck proof for recursive setup-contribution replay.
+    pub stage3_sumcheck_proof: Option<SetupSumcheckProof<L>>,
     /// Recursive witness commitment carried in the proof.
     pub w_commitment_proof: FlatRingVec<F>,
     /// Claimed terminal evaluation of the recursive witness at this level.

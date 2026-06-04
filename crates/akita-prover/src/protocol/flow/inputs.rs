@@ -178,6 +178,7 @@ pub fn prove_batched<'a, Cfg, T, P, B, const D: usize>(
     >,
     transcript: &mut T,
     basis: BasisMode,
+    setup_contribution_mode: SetupContributionMode,
 ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -257,6 +258,7 @@ where
         &schedule,
         basis,
         &root_next_params,
+        setup_contribution_mode,
     )
     .map(|(proof, _total_levels)| proof)
 }
@@ -292,6 +294,7 @@ where
         stage2_sumcheck_proof,
         #[cfg(feature = "zk")]
         stage2_sumcheck_proof_masked,
+        stage3_sumcheck_proof,
         w_commitment_proof,
         w_eval,
         next_state,
@@ -315,6 +318,7 @@ where
         stage2_sumcheck_proof,
         #[cfg(feature = "zk")]
         stage2_sumcheck_proof_masked,
+        stage3_sumcheck_proof,
         w_commitment_proof,
         w_eval,
     );
@@ -371,6 +375,7 @@ pub fn prove_folded_batched<'a, Cfg, T, P, B, const D: usize>(
     schedule: &Schedule,
     basis: BasisMode,
     root_next_params: &LevelParams,
+    setup_contribution_mode: SetupContributionMode,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ChallengeField>, usize), AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -469,6 +474,7 @@ where
             root_step.next_w_len,
             final_log_basis,
             basis,
+            setup_contribution_mode,
             #[cfg(feature = "zk")]
             &mut zk_hiding_state,
         )?;
@@ -511,6 +517,7 @@ where
         #[cfg(feature = "zk")]
         zk_hiding_state,
         basis,
+        setup_contribution_mode,
         |w| crate::commit_next_w::<Cfg, B, D>(root_next_params, expanded, backend, prepared, w),
     )?;
 
@@ -518,7 +525,14 @@ where
         raw,
         |next_state| {
             crate::prove_recursive_suffix::<Cfg, T, B, D>(
-                expanded, backend, prepared, num_vars, transcript, next_state, schedule,
+                expanded,
+                backend,
+                prepared,
+                num_vars,
+                transcript,
+                next_state,
+                schedule,
+                setup_contribution_mode,
             )
         },
     )

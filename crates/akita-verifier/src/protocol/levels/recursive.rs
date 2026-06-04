@@ -22,6 +22,7 @@ pub(crate) fn verify_intermediate_level<F, L, T, const D: usize>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
     block_order: BlockOrder,
+    setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<Vec<L>, AkitaError>
@@ -42,6 +43,7 @@ where
         None,
         lp,
         block_order,
+        setup_contribution_mode,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
         #[cfg(feature = "zk")]
@@ -72,6 +74,7 @@ pub(crate) fn verify_terminal_level<F, L, T, const D: usize>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
     block_order: BlockOrder,
+    setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<Vec<L>, AkitaError>
@@ -92,6 +95,7 @@ where
         Some(final_w_len),
         lp,
         block_order,
+        setup_contribution_mode,
         #[cfg(feature = "zk")]
         zk_hiding_cursor,
         #[cfg(feature = "zk")]
@@ -128,6 +132,7 @@ fn verify_one_level_inner<F, L, T, const D: usize>(
     final_w_len: Option<usize>,
     lp: &LevelParams,
     block_order: BlockOrder,
+    setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<Vec<L>, AkitaError>
@@ -484,7 +489,19 @@ where
         }
     };
     let stage2_input_claim = batching_coeff * s_claim + relation_claim;
-    let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
+    let stage3_sumcheck_proof = match &proof {
+        FoldProofView::Intermediate(level_proof) => stage3_sumcheck_proof_for_mode(
+            setup_contribution_mode,
+            level_proof.stage3_sumcheck_proof.as_ref(),
+        )?,
+        FoldProofView::Terminal(_) => None,
+    };
+    let setup_prepared_row_eval = stage3_sumcheck_proof.map(|_| rs.prepared_row_eval.clone());
+    let row_eval_source = if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
+        Stage2RowEvalSource::new_with_setup_claim(rs.prepared_row_eval, stage3_sumcheck_proof.claim)
+    } else {
+        Stage2RowEvalSource::new(rs.prepared_row_eval)
+    };
     #[cfg(feature = "zk")]
     let stage2_next_w_eval_mask_cursor =
         *zk_hiding_cursor + (rs.col_bits + rs.ring_bits) * 3 * <L as ExtField<F>>::EXT_DEGREE;
@@ -581,6 +598,17 @@ where
         transcript.record_wire_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
         transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &next_w_eval);
     }
+    if let Some(stage3_sumcheck_proof) = stage3_sumcheck_proof {
+        let setup_prepared_row_eval = setup_prepared_row_eval
+            .as_ref()
+            .ok_or(AkitaError::InvalidProof)?;
+        let verifier = SetupSumcheckVerifier::new::<F, D>(
+            setup_prepared_row_eval,
+            &challenges[rs.ring_bits..],
+            rs.alpha,
+        )?;
+        verifier.verify::<F, T, D>(&setup.expanded, stage3_sumcheck_proof, transcript)?;
+    }
     Ok(challenges)
 }
 
@@ -622,6 +650,7 @@ fn dispatch_verify_intermediate_level<F, L, T>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
     block_order: BlockOrder,
+    setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<Vec<L>, AkitaError>
@@ -643,6 +672,7 @@ where
                 current_state,
                 lp,
                 block_order,
+                setup_contribution_mode,
                 #[cfg(feature = "zk")]
                 zk_hiding_cursor,
                 #[cfg(feature = "zk")]
@@ -670,6 +700,7 @@ fn dispatch_verify_terminal_level<F, L, T>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     lp: &LevelParams,
     block_order: BlockOrder,
+    setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<Vec<L>, AkitaError>
@@ -692,6 +723,7 @@ where
                 current_state,
                 lp,
                 block_order,
+                setup_contribution_mode,
                 #[cfg(feature = "zk")]
                 zk_hiding_cursor,
                 #[cfg(feature = "zk")]
@@ -727,6 +759,7 @@ pub(crate) fn verify_batched_recursive_suffix<'a, F, L, T, const D: usize>(
     transcript: &mut T,
     schedule: &Schedule,
     mut current_state: RecursiveVerifierState<'a, F, L>,
+    setup_contribution_mode: SetupContributionMode,
     #[cfg(feature = "zk")] zk_hiding_cursor: &mut usize,
     #[cfg(feature = "zk")] zk_relations: &mut ZkRelationAccumulator<L>,
 ) -> Result<(), AkitaError>
@@ -772,6 +805,7 @@ where
                         &current_state,
                         &current_lp,
                         BlockOrder::ColumnMajor,
+                        setup_contribution_mode,
                         #[cfg(feature = "zk")]
                         zk_hiding_cursor,
                         #[cfg(feature = "zk")]
@@ -786,6 +820,7 @@ where
                         &current_state,
                         &current_lp,
                         BlockOrder::ColumnMajor,
+                        setup_contribution_mode,
                         #[cfg(feature = "zk")]
                         zk_hiding_cursor,
                         #[cfg(feature = "zk")]
@@ -847,6 +882,7 @@ where
                         &current_state,
                         &current_lp,
                         BlockOrder::ColumnMajor,
+                        setup_contribution_mode,
                         #[cfg(feature = "zk")]
                         zk_hiding_cursor,
                         #[cfg(feature = "zk")]
@@ -862,6 +898,7 @@ where
                         &current_state,
                         &current_lp,
                         BlockOrder::ColumnMajor,
+                        setup_contribution_mode,
                         #[cfg(feature = "zk")]
                         zk_hiding_cursor,
                         #[cfg(feature = "zk")]
@@ -908,6 +945,7 @@ pub(crate) fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
     schedule: &Schedule,
     root_lp: &LevelParams,
     next_level_params: &LevelParams,
+    setup_contribution_mode: SetupContributionMode,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
@@ -1024,6 +1062,7 @@ where
                 &fold_root.v,
                 &fold_root.stage1,
                 &fold_root.stage2,
+                fold_root.stage3_sumcheck_proof.as_ref(),
                 setup,
                 transcript,
                 opening_points,
@@ -1031,6 +1070,7 @@ where
                 commitments,
                 incidence_summary,
                 basis,
+                setup_contribution_mode,
                 #[cfg(feature = "zk")]
                 &mut zk_hiding_cursor,
                 #[cfg(feature = "zk")]
@@ -1066,6 +1106,7 @@ where
                 transcript,
                 schedule,
                 current_state,
+                setup_contribution_mode,
                 #[cfg(feature = "zk")]
                 &mut zk_hiding_cursor,
                 #[cfg(feature = "zk")]

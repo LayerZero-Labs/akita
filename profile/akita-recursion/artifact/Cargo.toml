@@ -23,6 +23,7 @@ akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }
 akita-verifier = { path = "../../../crates/akita-verifier" }
 
+clap = { version = "4", features = ["derive"] }
 rand = "0.8"
 rayon = { version = "1.10", optional = true }
 tracing = "0.1"

@@ -13,7 +13,9 @@ use akita_prover::{
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::AkitaVerifierSetup;
-use akita_types::{validate_ring_subfield_role, BasisMode, RingSubfieldEncoding};
+use akita_types::{
+    validate_ring_subfield_role, BasisMode, RingSubfieldEncoding, SetupContributionMode,
+};
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint, RingCommitment};
 use akita_verifier::{CommitmentVerifier, VerifierClaims};
 use std::marker::PhantomData;
@@ -136,6 +138,7 @@ where
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
+        setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F>,
@@ -151,6 +154,7 @@ where
             claims,
             transcript,
             basis,
+            setup_contribution_mode,
         )?;
 
         tracing::info!(
@@ -191,10 +195,18 @@ where
         transcript: &mut T,
         claims: VerifierClaims<'a, Self::ClaimField, Self::Commitment>,
         basis: BasisMode,
+        setup_contribution_mode: SetupContributionMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;
-        akita_verifier::verify_batched::<Cfg, T, D>(proof, setup, transcript, claims, basis)?;
+        akita_verifier::verify_batched::<Cfg, T, D>(
+            proof,
+            setup,
+            transcript,
+            claims,
+            basis,
+            setup_contribution_mode,
+        )?;
 
         tracing::info!(
             levels = proof.num_fold_levels() + 1,
