@@ -32,6 +32,11 @@ REQUIRED_RUN_METRICS = (
     "proof_size_bytes",
     "accounted_bytes",
     "max_rss_kib",
+    "crt_profile",
+    "crt_num_primes",
+    "crt_limb_bits",
+    "balanced_digit_safe_width",
+    "raw_i8_safe_width",
     "claim_ext_degree",
     "challenge_ext_degree",
     "akita_levels",
@@ -58,26 +63,26 @@ class CaseMetadata:
     config: str
 
 
+# Securable families under honest committed-fold A-role pricing, i.e. the ones
+# that ship a generated schedule table
+# (`akita_config::generated_families::ALL_GENERATED_FAMILIES`). Modes outside
+# this map still render via the `case_metadata` fallback below.
 CASE_METADATA: dict[str, CaseMetadata] = {
-    "dense_fp128_d32": CaseMetadata("fp128", "dense", "dense", "D32"),
-    "dense_fp128_d64": CaseMetadata("fp128", "dense", "dense", "D64"),
-    "onehot_fp128_d32": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
+    # fp128 ships dense + one-hot at D128 and one-hot at D64 (plus the D64
+    # one-hot tensor preset).
+    "dense_fp128_d128": CaseMetadata("fp128", "dense", "dense", "D128"),
     "onehot_fp128_d64": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
+    "onehot_fp128_d128": CaseMetadata("fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
     "onehot_fp128_d64_tensor": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "D64 tensor"
     ),
-    "onehot_fp32_d32": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
-    "onehot_fp32_d64": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
-    "dense_fp32_d32": CaseMetadata("fp32", "dense", "dense", "D32"),
-    "dense_fp32_d64": CaseMetadata("fp32", "dense", "dense", "D64"),
-    "onehot_fp16_d32": CaseMetadata("fp16", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
-    "onehot_fp16_d64": CaseMetadata("fp16", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
-    "dense_fp16_d32": CaseMetadata("fp16", "dense", "dense", "D32"),
-    "dense_fp16_d64": CaseMetadata("fp16", "dense", "dense", "D64"),
-    "onehot_fp64_d32": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D32"),
-    "onehot_fp64_d64": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D64"),
-    "dense_fp64_d32": CaseMetadata("fp64", "dense", "dense", "D32"),
-    "dense_fp64_d64": CaseMetadata("fp64", "dense", "dense", "D64"),
+    # Small fields fold securely only at D128/D256 under honest pricing; fp32
+    # ships no dense family.
+    "onehot_fp32_d128": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
+    "onehot_fp32_d256": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D256"),
+    "dense_fp64_d128": CaseMetadata("fp64", "dense", "dense", "D128"),
+    "onehot_fp64_d128": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
+    "onehot_fp64_d256": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D256"),
 }
 
 
@@ -85,7 +90,7 @@ def case_metadata(mode: str) -> CaseMetadata:
     if mode in CASE_METADATA:
         return CASE_METADATA[mode]
     field_family = "fp128"
-    for family in ("fp16", "fp32", "fp64", "fp128"):
+    for family in ("fp32", "fp64", "fp128"):
         if family in mode:
             field_family = family
             break
@@ -117,7 +122,7 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument(
         "--output-dir", required=True, help="Directory where logs and summary.json are written."
     )
-    run_parser.add_argument("--mode", default="onehot_fp128_d32", help="Benchmark mode.")
+    run_parser.add_argument("--mode", default="onehot_fp128_d128", help="Benchmark mode.")
     run_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     run_parser.add_argument(
         "--num-polys",
@@ -180,7 +185,7 @@ def parse_args() -> argparse.Namespace:
     failure_parser.add_argument(
         "--output-dir", required=True, help="Directory where summary files are written."
     )
-    failure_parser.add_argument("--mode", default="onehot_fp128_d32", help="Benchmark mode.")
+    failure_parser.add_argument("--mode", default="onehot_fp128_d128", help="Benchmark mode.")
     failure_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
     failure_parser.add_argument(
         "--num-polys",
@@ -349,7 +354,18 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
     for line in log_text.splitlines():
         line = ANSI_RE.sub("", line)
         kvs = parse_kvs(line)
-        if " INFO setup" in line and kvs.get("label") == mode:
+        if " INFO setup sizes" in line and kvs.get("label") == mode:
+            summary["setup_ring_elements"] = int(kvs["setup_ring_elements"])
+            summary["setup_vector_bytes"] = int(kvs["setup_vector_bytes"])
+            summary["setup_ntt_cache_bytes"] = int(kvs["setup_ntt_cache_bytes"])
+        elif "CRT NTT profile" in line and kvs.get("label") == mode:
+            summary["crt_profile"] = kvs["crt_profile"]
+            summary["crt_num_primes"] = int(kvs["crt_num_primes"])
+            summary["crt_limb_bits"] = int(kvs["crt_limb_bits"])
+            summary["max_i8_log_basis"] = int(kvs["max_i8_log_basis"])
+            summary["balanced_digit_safe_width"] = int(kvs["balanced_digit_safe_width"])
+            summary["raw_i8_safe_width"] = int(kvs["raw_i8_safe_width"])
+        elif " INFO setup" in line and kvs.get("label") == mode:
             summary["setup_s"] = float(kvs["elapsed_s"])
         elif " INFO commit" in line and kvs.get("label") == mode:
             summary["commit_s"] = float(kvs["elapsed_s"])
@@ -516,6 +532,11 @@ def infer_failure_phase(summary: dict[str, object], first_missing: str | None = 
         "accounted_bytes": "proof accounting",
         "consistent_proof_accounting": "proof accounting",
         "max_rss_kib": "memory",
+        "crt_profile": "CRT profile",
+        "crt_num_primes": "CRT profile",
+        "crt_limb_bits": "CRT profile",
+        "balanced_digit_safe_width": "CRT capacity",
+        "raw_i8_safe_width": "CRT capacity",
         "claim_ext_degree": "field roles",
         "challenge_ext_degree": "field roles",
         "akita_levels": "proof levels",
@@ -557,6 +578,14 @@ SUMMARY_CSV_COLUMNS = (
     "num_polys",
     "runs",
     "setup_s",
+    "setup_ring_elements",
+    "setup_vector_bytes",
+    "setup_ntt_cache_bytes",
+    "crt_profile",
+    "crt_num_primes",
+    "crt_limb_bits",
+    "balanced_digit_safe_width",
+    "raw_i8_safe_width",
     "commit_s",
     "prove_total_s",
     "verify_total_s",
@@ -789,6 +818,10 @@ def fmt_seconds(value: float) -> str:
     return f"{value:.3f}"
 
 
+def fmt_milliseconds(value: float) -> str:
+    return f"{value * 1_000.0:.1f}"
+
+
 def fmt_mib(value_kib: float) -> str:
     return f"{value_kib / 1024.0:.1f}"
 
@@ -828,7 +861,7 @@ TIME_METRICS = [
     Metric("setup_s", "Setup", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
     Metric("prove_total_s", "Prove", "s", fmt_seconds),
-    Metric("verify_total_s", "Verify", "s", fmt_seconds),
+    Metric("verify_total_s", "Verify", "ms", fmt_milliseconds),
     Metric("max_rss_kib", "Max RSS", "MiB", fmt_mib),
 ]
 
@@ -860,6 +893,13 @@ def fmt_optional_seconds(summary: dict[str, object], key: str) -> str:
     return fmt_seconds(float(value))
 
 
+def fmt_optional_milliseconds(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "n/a"
+    return fmt_milliseconds(float(value))
+
+
 def fmt_optional_mib(summary: dict[str, object], key: str) -> str:
     value = summary.get(key)
     if value is None:
@@ -872,6 +912,13 @@ def fmt_optional_bytes(summary: dict[str, object], key: str) -> str:
     if value is None:
         return "n/a"
     return fmt_bytes(float(value))
+
+
+def fmt_optional_mib_from_bytes(summary: dict[str, object], key: str) -> str:
+    value = summary.get(key)
+    if value is None:
+        return "n/a"
+    return f"{float(value) / (1024.0 * 1024.0):.1f}"
 
 
 def numeric_delta(
@@ -930,9 +977,11 @@ def render_matrix_summary(
         "Case",
         "Mode",
         "Setup s",
+        "Setup vec MiB",
+        "Setup NTT MiB",
         "Commit s",
         "Prove s",
-        "Verify s",
+        "Verify ms",
         "RSS MiB",
         "Proof B",
     ]
@@ -953,9 +1002,11 @@ def render_matrix_summary(
             md_text(case_label),
             code_text(current["mode"]),
             fmt_optional_seconds(current, "setup_s"),
+            fmt_optional_mib_from_bytes(current, "setup_vector_bytes"),
+            fmt_optional_mib_from_bytes(current, "setup_ntt_cache_bytes"),
             fmt_optional_seconds(current, "commit_s"),
             fmt_optional_seconds(current, "prove_total_s"),
-            fmt_optional_seconds(current, "verify_total_s"),
+            fmt_optional_milliseconds(current, "verify_total_s"),
             fmt_optional_mib(current, "max_rss_kib"),
             fmt_optional_bytes(current, "proof_size_bytes"),
         ]
@@ -1067,13 +1118,16 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
                 f"planned/proof D mismatch at L{planned_level}: "
                 f"planned={planned_d}, proof={proof_d}"
             )
-        planned_bytes = int(planned["level_bytes"])
-        proof_bytes = int(proof["total_bytes"])
-        if planned_bytes != proof_bytes:
-            raise ValueError(
-                f"planned/proof byte mismatch at L{planned_level}: "
-                f"planned={planned_bytes}, proof={proof_bytes}"
-            )
+        # Intentionally no per-level `level_bytes` vs `total_bytes` comparison.
+        # The header-stripped planner estimate is only a conservative upper bound
+        # in *aggregate*: it can over- or under-attribute bytes to any individual
+        # level (e.g. dense_fp128_d128 nv24 has levels where the runtime proof
+        # exceeds the per-level estimate while the total stays under it). The
+        # total-overcount invariant is asserted in the profile binary itself
+        # (`ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` in
+        # `crates/akita-pcs/examples/profile/workload.rs`). Proof-size deltas vs
+        # baselines are reported in the PR comment but are not CI gates. Here we
+        # only enforce the structural level shape (count / index / D) above.
 
 
 def render_report(args: argparse.Namespace) -> int:
@@ -1228,14 +1282,40 @@ def render_report(args: argparse.Namespace) -> int:
             ]:
                 observed_range = sample_range(current, key)
                 if observed_range is not None:
+                    formatter = fmt_milliseconds if key == "verify_total_s" else fmt_seconds
+                    unit = "ms" if key == "verify_total_s" else "s"
                     ranges.append(
-                        f"{label} `{fmt_seconds(observed_range[0])}-{fmt_seconds(observed_range[1])}s`"
+                        f"{label} `{formatter(observed_range[0])}-{formatter(observed_range[1])}{unit}`"
                     )
             if ranges:
                 print()
                 print(f"- Sample ranges: {', '.join(ranges)}.")
 
         print()
+        if current.get("setup_ring_elements") is not None:
+            print(f"- Setup ring elements: `{current['setup_ring_elements']}`")
+        if current.get("setup_vector_bytes") is not None:
+            print(
+                f"- Setup vector: `{fmt_bytes(float(current['setup_vector_bytes']))} B` "
+                f"({fmt_optional_mib_from_bytes(current, 'setup_vector_bytes')} MiB)"
+            )
+        if current.get("setup_ntt_cache_bytes") is not None:
+            print(
+                f"- Setup NTT cache: `{fmt_bytes(float(current['setup_ntt_cache_bytes']))} B` "
+                f"({fmt_optional_mib_from_bytes(current, 'setup_ntt_cache_bytes')} MiB)"
+            )
+        if current.get("crt_profile") is not None:
+            print(
+                f"- CRT profile: `{current['crt_profile']}` "
+                f"(K={current.get('crt_num_primes', 'n/a')}, "
+                f"limb_bits={current.get('crt_limb_bits', 'n/a')})"
+            )
+        if current.get("balanced_digit_safe_width") is not None or current.get("raw_i8_safe_width") is not None:
+            print(
+                "- CRT safe widths: "
+                f"`balanced_digit={current.get('balanced_digit_safe_width', 'n/a')}`, "
+                f"`raw_i8={current.get('raw_i8_safe_width', 'n/a')}`"
+            )
         if current.get("proof_size_bytes") is not None:
             print(f"- Proof size: `{fmt_bytes(float(current['proof_size_bytes']))} B`")
         if current.get("akita_fold_bytes") is not None:

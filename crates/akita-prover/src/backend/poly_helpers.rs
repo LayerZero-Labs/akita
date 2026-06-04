@@ -788,11 +788,11 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
-    let z_pre = cfg_iter!(centered_coeffs)
+    let z_folded_rings = cfg_iter!(centered_coeffs)
         .map(|coeff_accum| signed_accum_to_ring::<F, D>(*coeff_accum, modulus))
         .collect();
     DecomposeFoldWitness {
-        z_pre,
+        z_folded_rings,
         centered_coeffs,
         centered_inf_norm,
     }
@@ -809,7 +809,7 @@ mod tests {
     use akita_challenges::SparseChallenge;
     use akita_field::CanonicalField;
     use akita_field::{Fp64, Prime128Offset275};
-    use akita_types::layout::digit_math::compute_num_digits_full_field;
+    use akita_types::sis::compute_num_digits_full_field;
 
     /// SIMD-vs-scalar parity for the sparse-multiply-accumulate decompose-fold
     /// kernel, exercising whichever SIMD backend is active (NEON / AVX2 /

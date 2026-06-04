@@ -2,12 +2,13 @@ use akita_algebra::backend::{CrtReconstruct, NttPrimeOps};
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use akita_algebra::poly::Poly;
 use akita_algebra::tables::{
-    q128_garner, q128_primes, q32_garner, q64_garner, q64_primes, Q128_MODULUS, Q128_NUM_PRIMES,
-    Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES,
+    q128_garner, q128_primes, q32_garner, q64_garner, Q128_MODULUS, Q128_NUM_PRIMES, Q32_MODULUS,
+    Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
 };
+use akita_algebra::NttPrime;
 use akita_algebra::{
-    CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, LimbQ, MontCoeff, PackedPartialSplitEval16,
-    PartialSplitEval16, PartialSplitNtt16, ScalarBackend,
+    CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, LimbQ,
+    MontCoeff, PackedPartialSplitEval16, PartialSplitEval16, PartialSplitNtt16, ScalarBackend,
 };
 use akita_field::{Fp128, Fp32, Fp64, HasPacking, Prime128Offset159, Prime128Offset275};
 
@@ -44,7 +45,7 @@ fn limbq_ordering() {
 #[test]
 fn ntt_normalize_in_range() {
     for prime in &Q32_PRIMES {
-        for &a in &[0i16, 1, -1, 100, -100, prime.p - 1, -(prime.p - 1)] {
+        for &a in &[0i32, 1, -1, 100, -100, prime.p - 1, -(prime.p - 1)] {
             let n = prime.normalize(MontCoeff::from_raw(a));
             assert!(
                 n.raw() >= 0 && n.raw() < prime.p,
@@ -58,28 +59,27 @@ fn ntt_normalize_in_range() {
 
 #[test]
 fn csubp_widened_handles_large_negative_i16() {
-    for &prime in &Q32_PRIMES {
-        let p = prime.p;
-        // Values in (-2p, -(2^15 - p)) that previously overflowed in narrow i16
-        for &raw in &[-20000i16, -(p + p / 2), -(p + 1000)] {
-            if raw <= -2 * p || raw >= 0 {
-                continue;
-            }
-            let a = MontCoeff::from_raw(raw);
-            let reduced = prime.reduce_range(a);
-            let r = reduced.raw();
-            assert!(
-                r > -p && r < p,
-                "reduce_range({raw}) = {r} not in (-{p}, {p}) for p={p}"
-            );
-
-            let norm = prime.normalize(reduced);
-            let n = norm.raw();
-            assert!(
-                n >= 0 && n < p,
-                "normalize(reduce_range({raw})) = {n} not in [0, {p}) for p={p}"
-            );
+    let prime = NttPrime::compute(15361_i16);
+    let p = prime.p;
+    // Values in (-2p, -(2^15 - p)) that previously overflowed in narrow i16
+    for &raw in &[-20000i16, -(p + p / 2), -(p + 1000)] {
+        if raw <= -2 * p || raw >= 0 {
+            continue;
         }
+        let a = MontCoeff::from_raw(raw);
+        let reduced = prime.reduce_range(a);
+        let r = reduced.raw();
+        assert!(
+            r > -p && r < p,
+            "reduce_range({raw}) = {r} not in (-{p}, {p}) for p={p}"
+        );
+
+        let norm = prime.normalize(reduced);
+        let n = norm.raw();
+        assert!(
+            n >= 0 && n < p,
+            "normalize(reduce_range({raw})) = {n} not in [0, {p}) for p={p}"
+        );
     }
 }
 
@@ -94,12 +94,57 @@ fn ntt_mul_commutative() {
 #[test]
 fn mont_coeff_round_trip() {
     for prime in &Q32_PRIMES {
-        for &val in &[0i16, 1, 2, 100, prime.p - 1] {
+        for &val in &[0i32, 1, 2, 100, prime.p - 1] {
             let mont = prime.from_canonical(val);
             let back = prime.to_canonical(mont);
             assert_eq!(back, val, "round-trip failed for val={val}, p={}", prime.p);
         }
     }
+}
+
+#[test]
+fn digit_lut_covers_log_basis_six_balanced_range() {
+    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, 64>::new(Q32_PRIMES);
+    let lut = DigitMontLut::<_, Q32_NUM_PRIMES>::new(&params);
+
+    for (k, prime) in params.primes.iter().enumerate() {
+        for raw in -32i8..=31 {
+            assert_eq!(lut.get(k, raw), prime.from_canonical(i32::from(raw)));
+        }
+    }
+}
+
+#[test]
+fn digit_lut_can_cover_active_small_balanced_range() {
+    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, 64>::new(Q32_PRIMES);
+    let lut = DigitMontLut::<_, Q32_NUM_PRIMES>::new_with_digit_bound(&params, 2);
+
+    for (k, prime) in params.primes.iter().enumerate() {
+        for raw in -2i8..=1 {
+            assert_eq!(lut.get(k, raw), prime.from_canonical(i32::from(raw)));
+        }
+    }
+}
+
+#[test]
+fn centered_lut_understated_bound_falls_back_exactly() {
+    const D: usize = 64;
+    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
+    let lut = CenteredMontLut::new(&params, 1);
+    let coeffs = std::array::from_fn(|i| {
+        if i % 2 == 0 {
+            20 + i as i32
+        } else {
+            -20 - i as i32
+        }
+    });
+
+    let with_lut = CyclotomicCrtNtt::from_centered_i32_pair_with_lut(&coeffs, &params, &lut);
+    let direct = CyclotomicCrtNtt::<i32, Q32_NUM_PRIMES, D>::from_centered_i32_pair_with_params(
+        &coeffs, &params,
+    );
+
+    assert_eq!(with_lut, direct);
 }
 
 #[test]
@@ -123,10 +168,10 @@ fn poly_add_sub_neg() {
 #[test]
 fn ntt_forward_inverse_round_trip() {
     let prime = Q32_PRIMES[0];
-    let tw = NttTwiddles::<i16, 64>::compute(prime);
+    let tw = NttTwiddles::<i32, 64>::compute(prime);
 
-    let original: [MontCoeff<i16>; 64] =
-        std::array::from_fn(|i| prime.from_canonical((i as i16) % prime.p));
+    let original: [MontCoeff<i32>; 64] =
+        std::array::from_fn(|i| prime.from_canonical((i as i32) % prime.p));
 
     let mut a = original;
     forward_ntt(&mut a, prime, &tw);
@@ -145,10 +190,10 @@ fn ntt_forward_inverse_round_trip() {
 #[test]
 fn ntt_forward_inverse_all_primes() {
     for (pi, prime) in Q32_PRIMES.iter().enumerate() {
-        let tw = NttTwiddles::<i16, 64>::compute(*prime);
+        let tw = NttTwiddles::<i32, 64>::compute(*prime);
 
         let original: [_; 64] =
-            std::array::from_fn(|i| prime.from_canonical(((i * (pi + 1)) as i16) % prime.p));
+            std::array::from_fn(|i| prime.from_canonical(((i * (pi + 1)) as i32) % prime.p));
 
         let mut a = original;
         forward_ntt(&mut a, *prime, &tw);
@@ -170,28 +215,28 @@ fn ntt_forward_inverse_all_primes() {
 fn negacyclic_ntt_mul_matches_schoolbook_single_prime_d8() {
     const D: usize = 8;
     let prime = Q32_PRIMES[0];
-    let tw = NttTwiddles::<i16, D>::compute(prime);
+    let tw = NttTwiddles::<i32, D>::compute(prime);
 
-    let a_canon: [i16; D] = std::array::from_fn(|i| ((i as i16 * 7) + 3) % prime.p);
-    let b_canon: [i16; D] = std::array::from_fn(|i| ((i as i16 * 5) + 11) % prime.p);
+    let a_canon: [i32; D] = std::array::from_fn(|i| ((i as i32 * 7) + 3) % prime.p);
+    let b_canon: [i32; D] = std::array::from_fn(|i| ((i as i32 * 5) + 11) % prime.p);
 
     // Schoolbook negacyclic convolution mod p: X^D = -1.
-    let mut school = [0i16; D];
+    let mut school = [0i32; D];
     for (i, &ai) in a_canon.iter().enumerate() {
         for (j, &bj) in b_canon.iter().enumerate() {
             let prod = (ai as i64 * bj as i64) % (prime.p as i64);
             let idx = i + j;
             if idx < D {
-                school[idx] = ((school[idx] as i64 + prod) % (prime.p as i64)) as i16;
+                school[idx] = ((school[idx] as i64 + prod) % (prime.p as i64)) as i32;
             } else {
                 let k = idx - D;
-                school[k] = ((school[k] as i64 - prod) % (prime.p as i64)) as i16;
+                school[k] = ((school[k] as i64 - prod) % (prime.p as i64)) as i32;
             }
         }
     }
     for x in &mut school {
         if *x < 0 {
-            *x = (*x as i64 + prime.p as i64) as i16;
+            *x = (*x as i64 + prime.p as i64) as i32;
         }
     }
 
@@ -203,7 +248,7 @@ fn negacyclic_ntt_mul_matches_schoolbook_single_prime_d8() {
     let mut c: [_; D] = std::array::from_fn(|i| prime.mul(a[i], b[i]));
     inverse_ntt(&mut c, prime, &tw);
 
-    let got: [i16; D] = std::array::from_fn(|i| prime.to_canonical(prime.normalize(c[i])));
+    let got: [i32; D] = std::array::from_fn(|i| prime.to_canonical(prime.normalize(c[i])));
     assert_eq!(got, school);
 }
 
@@ -211,7 +256,7 @@ fn negacyclic_ntt_mul_matches_schoolbook_single_prime_d8() {
 fn negacyclic_ntt_forward_matches_manual_evals_d8() {
     const D: usize = 8;
     let prime = Q32_PRIMES[0];
-    let tw = NttTwiddles::<i16, D>::compute(prime);
+    let tw = NttTwiddles::<i32, D>::compute(prime);
     let p = prime.p as i64;
 
     fn pow_mod(mut base: i64, mut exp: i64, modulus: i64) -> i64 {
@@ -241,7 +286,7 @@ fn negacyclic_ntt_forward_matches_manual_evals_d8() {
         }
     }
     let psi = psi.expect("psi should exist");
-    let a_canon: [i16; D] = std::array::from_fn(|i| ((i as i16 * 7) + 3) % prime.p);
+    let a_canon: [i32; D] = std::array::from_fn(|i| ((i as i32 * 7) + 3) % prime.p);
 
     let mut expected = Vec::with_capacity(D);
     for k in 0..D {
@@ -252,13 +297,13 @@ fn negacyclic_ntt_forward_matches_manual_evals_d8() {
             acc = (acc + (ai as i64) * power) % p;
             power = (power * alpha) % p;
         }
-        expected.push(acc as i16);
+        expected.push(acc as i32);
     }
     expected.sort_unstable();
 
     let mut a = std::array::from_fn(|i| prime.from_canonical(a_canon[i]));
     forward_ntt(&mut a, prime, &tw);
-    let mut got: Vec<i16> = a
+    let mut got: Vec<i32> = a
         .iter()
         .map(|x| prime.to_canonical(prime.normalize(*x)))
         .collect();
@@ -271,28 +316,28 @@ fn negacyclic_ntt_forward_matches_manual_evals_d8() {
 fn negacyclic_ntt_mul_matches_schoolbook_single_prime_d64() {
     const D: usize = 64;
     let prime = Q32_PRIMES[0];
-    let tw = NttTwiddles::<i16, D>::compute(prime);
+    let tw = NttTwiddles::<i32, D>::compute(prime);
     let p = prime.p as i64;
 
-    let a_canon: [i16; D] = std::array::from_fn(|i| ((i as i16 * 7) + 3) % prime.p);
-    let b_canon: [i16; D] = std::array::from_fn(|i| ((i as i16 * 5) + 11) % prime.p);
+    let a_canon: [i32; D] = std::array::from_fn(|i| ((i as i32 * 7) + 3) % prime.p);
+    let b_canon: [i32; D] = std::array::from_fn(|i| ((i as i32 * 5) + 11) % prime.p);
 
-    let mut school = [0i16; D];
+    let mut school = [0i32; D];
     for (i, &ai) in a_canon.iter().enumerate() {
         for (j, &bj) in b_canon.iter().enumerate() {
             let prod = (ai as i64 * bj as i64) % p;
             let idx = i + j;
             if idx < D {
-                school[idx] = ((school[idx] as i64 + prod) % p) as i16;
+                school[idx] = ((school[idx] as i64 + prod) % p) as i32;
             } else {
                 let k = idx - D;
-                school[k] = ((school[k] as i64 - prod) % p) as i16;
+                school[k] = ((school[k] as i64 - prod) % p) as i32;
             }
         }
     }
     for x in &mut school {
         if *x < 0 {
-            *x = (*x as i64 + p) as i16;
+            *x = (*x as i64 + p) as i32;
         }
     }
 
@@ -304,39 +349,39 @@ fn negacyclic_ntt_mul_matches_schoolbook_single_prime_d64() {
     let mut c: [_; D] = std::array::from_fn(|i| prime.reduce_range(prime.mul(a[i], b[i])));
     inverse_ntt(&mut c, prime, &tw);
 
-    let got: [i16; D] = std::array::from_fn(|i| prime.to_canonical(prime.normalize(c[i])));
+    let got: [i32; D] = std::array::from_fn(|i| prime.to_canonical(prime.normalize(c[i])));
     assert_eq!(got, school);
 }
 
 #[test]
 fn negacyclic_ntt_mul_matches_schoolbook_all_q32_primes_d64() {
     const D: usize = 64;
-    let a_canon: [i16; D] = std::array::from_fn(|i| i as i16 * 7 + 3);
-    let b_canon: [i16; D] = std::array::from_fn(|i| i as i16 * 5 + 11);
+    let a_canon: [i32; D] = std::array::from_fn(|i| i as i32 * 7 + 3);
+    let b_canon: [i32; D] = std::array::from_fn(|i| i as i32 * 5 + 11);
 
     for (pi, &prime) in Q32_PRIMES.iter().enumerate() {
-        let tw = NttTwiddles::<i16, D>::compute(prime);
+        let tw = NttTwiddles::<i32, D>::compute(prime);
         let p = prime.p as i64;
 
-        let a_mod: [i16; D] = std::array::from_fn(|i| ((a_canon[i] as i64).rem_euclid(p)) as i16);
-        let b_mod: [i16; D] = std::array::from_fn(|i| ((b_canon[i] as i64).rem_euclid(p)) as i16);
+        let a_mod: [i32; D] = std::array::from_fn(|i| ((a_canon[i] as i64).rem_euclid(p)) as i32);
+        let b_mod: [i32; D] = std::array::from_fn(|i| ((b_canon[i] as i64).rem_euclid(p)) as i32);
 
-        let mut school = [0i16; D];
+        let mut school = [0i32; D];
         for (i, &ai) in a_mod.iter().enumerate() {
             for (j, &bj) in b_mod.iter().enumerate() {
                 let prod = (ai as i64 * bj as i64) % p;
                 let idx = i + j;
                 if idx < D {
-                    school[idx] = ((school[idx] as i64 + prod) % p) as i16;
+                    school[idx] = ((school[idx] as i64 + prod) % p) as i32;
                 } else {
                     let k = idx - D;
-                    school[k] = ((school[k] as i64 - prod) % p) as i16;
+                    school[k] = ((school[k] as i64 - prod) % p) as i32;
                 }
             }
         }
         for x in &mut school {
             if *x < 0 {
-                *x = (*x as i64 + p) as i16;
+                *x = (*x as i64 + p) as i32;
             }
         }
 
@@ -345,13 +390,13 @@ fn negacyclic_ntt_mul_matches_schoolbook_all_q32_primes_d64() {
         forward_ntt(&mut a, prime, &tw);
         forward_ntt(&mut b, prime, &tw);
 
-        let mut c = [MontCoeff::from_raw(0i16); D];
+        let mut c = [MontCoeff::from_raw(0i32); D];
         for i in 0..D {
             c[i] = prime.reduce_range(prime.mul(a[i], b[i]));
         }
         inverse_ntt(&mut c, prime, &tw);
 
-        let got: [i16; D] = std::array::from_fn(|i| prime.to_canonical(prime.normalize(c[i])));
+        let got: [i32; D] = std::array::from_fn(|i| prime.to_canonical(prime.normalize(c[i])));
         assert_eq!(got, school, "prime[{pi}] p={} mismatch", prime.p);
     }
 }
@@ -360,28 +405,106 @@ fn negacyclic_ntt_mul_matches_schoolbook_all_q32_primes_d64() {
 fn cyclotomic_ntt_crt_round_trip_q32() {
     type F = Fp64<{ Q32_MODULUS }>;
     type R = CyclotomicRing<F, 64>;
-    type N = CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, 64>;
+    type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 
-    let twiddles: [NttTwiddles<i16, 64>; Q32_NUM_PRIMES] =
-        std::array::from_fn(|k| NttTwiddles::compute(Q32_PRIMES[k]));
+    let primes = Q32_PRIMES;
+    let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
+        std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
 
     let coeffs: [F; 64] = std::array::from_fn(|i| F::from_u64(((i as u64 * 17) + 5) % Q32_MODULUS));
     let ring = R::from_coefficients(coeffs);
-    let ntt = N::from_ring(&ring, &Q32_PRIMES, &twiddles);
+    let ntt = N::from_ring(&ring, &primes, &twiddles);
     let garner = q32_garner();
-    let round_trip = ntt.to_ring(&Q32_PRIMES, &twiddles, &garner);
+    let round_trip = ntt.to_ring(&primes, &twiddles, &garner);
 
     assert_eq!(ring, round_trip);
+}
+
+const SYNTHETIC_I16_NUM_PRIMES: usize = 3;
+
+fn synthetic_i16_primes() -> [NttPrime<i16>; SYNTHETIC_I16_NUM_PRIMES] {
+    [
+        NttPrime::compute(15361_i16),
+        NttPrime::compute(13313_i16),
+        NttPrime::compute(12289_i16),
+    ]
+}
+
+fn assert_synthetic_i16_ntt_round_trip<const D: usize>() {
+    type F = Fp64<{ Q32_MODULUS }>;
+    type R<const D: usize> = CyclotomicRing<F, D>;
+    type N<const D: usize> = CyclotomicCrtNtt<i16, SYNTHETIC_I16_NUM_PRIMES, D>;
+
+    let params = CrtNttParamSet::<i16, SYNTHETIC_I16_NUM_PRIMES, D>::new(synthetic_i16_primes());
+    let coeffs: [F; D] = std::array::from_fn(|i| F::from_u64(((i as u64 * 17) + 5) % Q32_MODULUS));
+    let ring = R::<D>::from_coefficients(coeffs);
+    let ntt = N::<D>::from_ring_with_params(&ring, &params);
+    let round_trip = ntt.to_ring_with_params(&params);
+
+    assert_eq!(ring, round_trip);
+}
+
+fn assert_q32_ntt_round_trip<const D: usize>() {
+    type F = Fp64<{ Q32_MODULUS }>;
+    type R<const D: usize> = CyclotomicRing<F, D>;
+    type N<const D: usize> = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>;
+
+    let params = CrtNttParamSet::<i32, Q32_NUM_PRIMES, D>::new(Q32_PRIMES);
+    let coeffs: [F; D] = std::array::from_fn(|i| F::from_u64(((i as u64 * 17) + 5) % Q32_MODULUS));
+    let ring = R::<D>::from_coefficients(coeffs);
+    let ntt = N::<D>::from_ring_with_params(&ring, &params);
+    let round_trip = ntt.to_ring_with_params(&params);
+
+    assert_eq!(ring, round_trip);
+}
+
+fn assert_q64_ntt_round_trip<const D: usize>() {
+    type F = Fp64<{ Q64_MODULUS }>;
+    type R<const D: usize> = CyclotomicRing<F, D>;
+    type N<const D: usize> = CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>;
+
+    let params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
+    let coeffs: [F; D] = std::array::from_fn(|i| F::from_u64(((i as u64 * 19) + 3) % Q64_MODULUS));
+    let ring = R::<D>::from_coefficients(coeffs);
+    let ntt = N::<D>::from_ring_with_params(&ring, &params);
+    let round_trip = ntt.to_ring_with_params(&params);
+
+    assert_eq!(ring, round_trip);
+}
+
+#[test]
+fn reduced_q32_ntt_round_trips_across_supported_ring_dims() {
+    assert_q32_ntt_round_trip::<32>();
+    assert_q32_ntt_round_trip::<64>();
+    assert_q32_ntt_round_trip::<128>();
+    assert_q32_ntt_round_trip::<256>();
+}
+
+#[test]
+fn synthetic_i16_ntt_round_trips_across_supported_ring_dims() {
+    assert_synthetic_i16_ntt_round_trip::<32>();
+    assert_synthetic_i16_ntt_round_trip::<64>();
+    assert_synthetic_i16_ntt_round_trip::<128>();
+    assert_synthetic_i16_ntt_round_trip::<256>();
+}
+
+#[test]
+fn reduced_q64_ntt_round_trips_across_supported_ring_dims() {
+    assert_q64_ntt_round_trip::<32>();
+    assert_q64_ntt_round_trip::<64>();
+    assert_q64_ntt_round_trip::<128>();
+    assert_q64_ntt_round_trip::<256>();
 }
 
 #[test]
 fn cyclotomic_ntt_reduced_ops_are_stable() {
     type F = Fp64<{ Q32_MODULUS }>;
     type R = CyclotomicRing<F, 64>;
-    type N = CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, 64>;
+    type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 
-    let twiddles: [NttTwiddles<i16, 64>; Q32_NUM_PRIMES] =
-        std::array::from_fn(|k| NttTwiddles::compute(Q32_PRIMES[k]));
+    let primes = Q32_PRIMES;
+    let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
+        std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
 
     let a = R::from_coefficients(std::array::from_fn(|i| {
         F::from_u64(((i as u64 * 3) + 1) % Q32_MODULUS)
@@ -390,16 +513,16 @@ fn cyclotomic_ntt_reduced_ops_are_stable() {
         F::from_u64(((i as u64 * 11) + 7) % Q32_MODULUS)
     }));
 
-    let ntt_a = N::from_ring(&a, &Q32_PRIMES, &twiddles);
-    let ntt_b = N::from_ring(&b, &Q32_PRIMES, &twiddles);
+    let ntt_a = N::from_ring(&a, &primes, &twiddles);
+    let ntt_b = N::from_ring(&b, &primes, &twiddles);
 
-    let sum = ntt_a.add_reduced(&ntt_b, &Q32_PRIMES);
-    let back = sum.sub_reduced(&ntt_b, &Q32_PRIMES);
+    let sum = ntt_a.add_reduced(&ntt_b, &primes);
+    let back = sum.sub_reduced(&ntt_b, &primes);
     assert_eq!(back, ntt_a);
 
     let garner = q32_garner();
-    let zero_ntt = ntt_a.add_reduced(&ntt_a.neg_reduced(&Q32_PRIMES), &Q32_PRIMES);
-    let zero_ring = zero_ntt.to_ring(&Q32_PRIMES, &twiddles, &garner);
+    let zero_ntt = ntt_a.add_reduced(&ntt_a.neg_reduced(&primes), &primes);
+    let zero_ring = zero_ntt.to_ring(&primes, &twiddles, &garner);
     assert_eq!(zero_ring, R::zero());
 }
 
@@ -407,22 +530,23 @@ fn cyclotomic_ntt_reduced_ops_are_stable() {
 fn backend_path_matches_default_scalar_path() {
     type F = Fp64<{ Q32_MODULUS }>;
     type R = CyclotomicRing<F, 64>;
-    type N = CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, 64>;
+    type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 
-    let twiddles: [NttTwiddles<i16, 64>; Q32_NUM_PRIMES] =
-        std::array::from_fn(|k| NttTwiddles::compute(Q32_PRIMES[k]));
+    let primes = Q32_PRIMES;
+    let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
+        std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
     let ring = R::from_coefficients(std::array::from_fn(|i| {
         F::from_u64(((i as u64 * 13) + 9) % Q32_MODULUS)
     }));
 
-    let default_ntt = N::from_ring(&ring, &Q32_PRIMES, &twiddles);
-    let backend_ntt = N::from_ring_with_backend::<F, ScalarBackend>(&ring, &Q32_PRIMES, &twiddles);
+    let default_ntt = N::from_ring(&ring, &primes, &twiddles);
+    let backend_ntt = N::from_ring_with_backend::<F, ScalarBackend>(&ring, &primes, &twiddles);
     assert_eq!(default_ntt, backend_ntt);
 
     let garner = q32_garner();
-    let default_back = default_ntt.to_ring(&Q32_PRIMES, &twiddles, &garner);
+    let default_back = default_ntt.to_ring(&primes, &twiddles, &garner);
     let backend_back =
-        backend_ntt.to_ring_with_backend::<F, ScalarBackend>(&Q32_PRIMES, &twiddles, &garner);
+        backend_ntt.to_ring_with_backend::<F, ScalarBackend>(&primes, &twiddles, &garner);
     assert_eq!(default_back, backend_back);
 }
 
@@ -430,10 +554,11 @@ fn backend_path_matches_default_scalar_path() {
 fn crt_ntt_mul_matches_schoolbook_q32() {
     type F = Fp64<{ Q32_MODULUS }>;
     type R = CyclotomicRing<F, 64>;
-    type N = CyclotomicCrtNtt<i16, Q32_NUM_PRIMES, 64>;
+    type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 
-    let twiddles: [NttTwiddles<i16, 64>; Q32_NUM_PRIMES] =
-        std::array::from_fn(|k| NttTwiddles::compute(Q32_PRIMES[k]));
+    let primes = Q32_PRIMES;
+    let twiddles: [NttTwiddles<i32, 64>; Q32_NUM_PRIMES] =
+        std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
     let garner = q32_garner();
 
     let a = R::from_coefficients(std::array::from_fn(|i| {
@@ -445,10 +570,10 @@ fn crt_ntt_mul_matches_schoolbook_q32() {
 
     let schoolbook = a * b;
 
-    let ntt_a = N::from_ring(&a, &Q32_PRIMES, &twiddles);
-    let ntt_b = N::from_ring(&b, &Q32_PRIMES, &twiddles);
-    let ntt_prod = ntt_a.pointwise_mul(&ntt_b, &Q32_PRIMES);
-    let ntt_result: R = ntt_prod.to_ring(&Q32_PRIMES, &twiddles, &garner);
+    let ntt_a = N::from_ring(&a, &primes, &twiddles);
+    let ntt_b = N::from_ring(&b, &primes, &twiddles);
+    let ntt_prod = ntt_a.pointwise_mul(&ntt_b, &primes);
+    let ntt_result: R = ntt_prod.to_ring(&primes, &twiddles, &garner);
 
     assert_eq!(schoolbook, ntt_result);
 }
@@ -658,7 +783,7 @@ fn partial_split_mul_centered_i8_matches_schoolbook_q128m159() {
         let centered = ((i as i64 * 7 + 3) % 41) - 20;
         F::from_i64(centered)
     }));
-    let rhs_i8: [i8; 32] = std::array::from_fn(|i| (((i * 23 + 11) % 256) as i16 - 128) as i8);
+    let rhs_i8: [i8; 32] = std::array::from_fn(|i| (((i * 23 + 11) % 256) as i32 - 128) as i8);
     let rhs = R::from_coefficients(std::array::from_fn(|i| F::from_i8(rhs_i8[i])));
 
     let schoolbook = lhs * rhs;
@@ -679,7 +804,7 @@ fn partial_split_mul_centered_i8_matches_crt_q128m159() {
         let centered = ((i as i64 * 13 + 1) % 33) - 16;
         F::from_i64(centered)
     }));
-    let rhs_i8: [i8; 32] = std::array::from_fn(|i| (((i * 19 + 5) % 256) as i16 - 128) as i8);
+    let rhs_i8: [i8; 32] = std::array::from_fn(|i| (((i * 19 + 5) % 256) as i32 - 128) as i8);
 
     let split_result = split.multiply_d32_rhs_i8(&lhs, &rhs_i8);
     let crt_result: R = N::from_ring_with_params(&lhs, &params)
@@ -971,7 +1096,7 @@ fn q64_ntt_round_trip() {
     type R = CyclotomicRing<F, 64>;
     type N = CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, 64>;
 
-    let primes = q64_primes();
+    let primes = Q64_PRIMES;
     let twiddles: [NttTwiddles<i32, 64>; Q64_NUM_PRIMES] =
         std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
     let garner = q64_garner();
@@ -990,7 +1115,7 @@ fn crt_ntt_mul_matches_schoolbook_q64() {
     type R = CyclotomicRing<F, 64>;
     type N = CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, 64>;
 
-    let primes = q64_primes();
+    let primes = Q64_PRIMES;
     let twiddles: [NttTwiddles<i32, 64>; Q64_NUM_PRIMES] =
         std::array::from_fn(|k| NttTwiddles::compute(primes[k]));
     let garner = q64_garner();

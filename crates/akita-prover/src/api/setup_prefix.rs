@@ -147,9 +147,19 @@ where
     let b_blinding_digits =
         sample_blinding_digits::<F, D>(level_params.b_key.row_len(), level_params.log_basis)?;
     #[cfg(feature = "zk")]
-    let mut u = backend.digit_rows::<D>(prepared, level_params.b_key.row_len(), &b_input_digits)?;
+    let mut u = backend.digit_rows::<D>(
+        prepared,
+        level_params.b_key.row_len(),
+        &b_input_digits,
+        level_params.log_basis,
+    )?;
     #[cfg(not(feature = "zk"))]
-    let u = backend.digit_rows::<D>(prepared, level_params.b_key.row_len(), &b_input_digits)?;
+    let u = backend.digit_rows::<D>(
+        prepared,
+        level_params.b_key.row_len(),
+        &b_input_digits,
+        level_params.log_basis,
+    )?;
     #[cfg(feature = "zk")]
     {
         let blinding_rows = backend.zk_b_digit_rows::<D>(
@@ -436,7 +446,7 @@ mod tests {
                 nonzero_coeffs: vec![-1, 1],
             },
         )
-        .with_decomp(2, 3, 2, 2, 3, 0)
+        .with_decomp(2, 3, 2, 2, 3)
         .expect("level params")
     }
 
@@ -569,7 +579,7 @@ mod tests {
                 nonzero_coeffs: vec![-1, 1],
             },
         )
-        .with_decomp(2, 0, 1, 1, 1, 0)
+        .with_decomp(2, 1, 1, 1, 2)
         .expect("large level params");
         let large_incidence = ClaimIncidenceSummary::same_point(8, 1).expect("large incidence");
         let large_prefix = large_params
@@ -621,7 +631,7 @@ mod tests {
                 nonzero_coeffs: vec![-1, 1],
             },
         )
-        .with_decomp(1, 0, 1, 1, 1, 2)
+        .with_decomp(1, 0, 1, 1, 1)
         .expect("aligned level params");
         let incidence = ClaimIncidenceSummary::same_point(2, 1).expect("incidence");
         let n_prefix = level_params

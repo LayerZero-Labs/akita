@@ -3,7 +3,7 @@ use crate::fields::lift::{
     canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
     ExtField, FrobeniusExtField,
 };
-use crate::{Fp64, Prime16Offset99};
+use crate::Fp64;
 use crate::{FromPrimitiveInt, Invertible};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -14,7 +14,6 @@ type E4 = TowerBasisFp4<F, TwoNr, UnitNr>;
 type P4 = PowerBasisFp4<F, TwoNr>;
 type R4 = RingSubfieldFp4<F>;
 type R8 = RingSubfieldFp8<F>;
-type R8Fp16 = RingSubfieldFp8<Prime16Offset99>;
 
 #[test]
 fn fp2_add_sub_identity() {
@@ -215,17 +214,27 @@ fn ring_subfield_fp8_inv() {
 }
 
 #[test]
-fn ring_subfield_fp8_fp16_serialization_is_coeff_ordered() {
-    let x = R8Fp16::new(std::array::from_fn(|i| {
-        Prime16Offset99::from_u64(i as u64 + 1)
-    }));
+fn ring_subfield_fp8_serialization_is_coeff_ordered() {
+    let x = R8::new(std::array::from_fn(|i| F::from_u64(i as u64 + 1)));
     let mut bytes = Vec::new();
     x.serialize_with_mode(&mut bytes, Compress::No).unwrap();
-    assert_eq!(x.serialized_size(Compress::No), 16);
-    assert_eq!(bytes, vec![1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8, 0]);
 
-    let decoded =
-        R8Fp16::deserialize_with_mode(&bytes[..], Compress::No, Validate::Yes, &()).unwrap();
+    let expected = x
+        .coeffs
+        .iter()
+        .flat_map(|coeff| {
+            let mut coeff_bytes = Vec::new();
+            coeff
+                .serialize_with_mode(&mut coeff_bytes, Compress::No)
+                .unwrap();
+            coeff_bytes
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(x.serialized_size(Compress::No), expected.len());
+    assert_eq!(bytes, expected);
+
+    let decoded = R8::deserialize_with_mode(&bytes[..], Compress::No, Validate::Yes, &()).unwrap();
     assert_eq!(decoded, x);
 }
 
@@ -454,4 +463,234 @@ fn eq_impl() {
     let c = E2::new(F::from_u64(1), F::from_u64(3));
     assert_eq!(a, b);
     assert_ne!(a, c);
+}
+
+#[test]
+fn ring_subfield_fp4_fp32_product_accum_matches_direct_mul() {
+    use super::ring_subfield_fp4::ring_subfield_fp4_mul_to_accum_fp32;
+    use crate::fields::wide::RingSubfieldFp4Fp32ProductAccum;
+    use crate::Fp32;
+    use num_traits::Zero;
+
+    type Fp = Fp32<251>;
+    type R4Fp32 = RingSubfieldFp4<Fp>;
+
+    let mut rng = StdRng::seed_from_u64(0xACC0);
+    for _ in 0..200 {
+        let a = R4Fp32::random(&mut rng);
+        let b = R4Fp32::random(&mut rng);
+        let direct = a * b;
+        let accum = ring_subfield_fp4_mul_to_accum_fp32(a.coeffs, b.coeffs);
+        let reduced = R4Fp32::new(accum.reduce::<251>());
+        assert_eq!(direct, reduced, "accum mismatch for a={a:?} b={b:?}");
+    }
+
+    let zero_accum = RingSubfieldFp4Fp32ProductAccum::ZERO;
+    assert!(zero_accum.is_zero());
+    let reduced_zero = R4Fp32::new(zero_accum.reduce::<251>());
+    assert_eq!(reduced_zero, R4Fp32::zero());
+}
+
+#[test]
+fn ring_subfield_fp4_fp32_accum_summation() {
+    use crate::Fp32;
+    use num_traits::Zero;
+
+    type Fp = Fp32<251>;
+    type R4Fp32 = RingSubfieldFp4<Fp>;
+
+    let mut rng = StdRng::seed_from_u64(0xACC1);
+    let n = 1024;
+    let pairs: Vec<(R4Fp32, R4Fp32)> = (0..n)
+        .map(|_| (R4Fp32::random(&mut rng), R4Fp32::random(&mut rng)))
+        .collect();
+
+    let direct_sum: R4Fp32 = pairs
+        .iter()
+        .map(|(a, b)| *a * *b)
+        .fold(R4Fp32::zero(), |s, p| s + p);
+
+    let accum_sum = pairs.iter().fold(
+        <R4Fp32 as HasUnreducedOps>::ProductAccum::zero(),
+        |s, (a, b)| s + a.mul_to_product_accum(*b),
+    );
+    let reduced = R4Fp32::reduce_product_accum(accum_sum);
+
+    assert_eq!(
+        direct_sum, reduced,
+        "accumulated sum of {n} products mismatched"
+    );
+}
+
+#[test]
+fn mul_base_to_product_accum_matches_mul_base_sum() {
+    use crate::{Fp32, MulBaseUnreduced};
+    use num_traits::Zero;
+
+    fn check<Base, Ext>(seed: u64)
+    where
+        Base: FieldCore + RandomSampling,
+        Ext: MulBaseUnreduced<Base> + Zero + RandomSampling,
+    {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let n = 1024;
+        let pairs: Vec<(Ext, Base)> = (0..n)
+            .map(|_| (Ext::random(&mut rng), Base::random(&mut rng)))
+            .collect();
+
+        let direct: Ext = pairs
+            .iter()
+            .map(|(w, x)| w.mul_base(*x))
+            .fold(Ext::zero(), |s, p| s + p);
+
+        let accum = pairs.iter().fold(
+            <Ext as HasUnreducedOps>::ProductAccum::zero(),
+            |s, (w, x)| s + w.mul_base_to_product_accum(*x),
+        );
+
+        assert_eq!(
+            direct,
+            Ext::reduce_product_accum(accum),
+            "delayed base-scaling mismatch over {n} terms"
+        );
+    }
+
+    // fp4/Fp32 takes the optimal coordinate-scaling override; fp2/Fp64 takes
+    // the lifted default body. Both defer reduction.
+    check::<Fp32<251>, RingSubfieldFp4<Fp32<251>>>(0xB001);
+    check::<F, Ext2<F>>(0xB002);
+}
+
+// Regression guard for the `Fp2<Fp64>` delayed-reduction accumulator. The earlier
+// bug dropped the carry into bit 128 because each Fp2 coefficient (c0 up to ~2^130,
+// c1 up to ~2^129) was formed in a single `u128`. It only surfaces with near-`p`
+// operands -- products around 2^128 -- which the small-modulus tests never reach,
+// so these use the real 2^64-59 prime and cover both Fp2 configs.
+#[test]
+fn fp2_fp64_product_accum_matches_direct_mul_large_operands() {
+    use crate::Prime64Offset59;
+
+    let mut rng = StdRng::seed_from_u64(0xF64A);
+    for _ in 0..256 {
+        // TwoNr (IS_NEG_ONE = false): c0 = p00 + 2*p11.
+        let a = Ext2::<Prime64Offset59>::random(&mut rng);
+        let b = Ext2::<Prime64Offset59>::random(&mut rng);
+        assert_eq!(
+            a * b,
+            Ext2::<Prime64Offset59>::reduce_product_accum(a.mul_to_product_accum(b)),
+            "TwoNr accum mismatch a={a:?} b={b:?}"
+        );
+
+        // NegOneNr (IS_NEG_ONE = true): c0 = p00 + p^2 - p11.
+        let c = Fp2::<Prime64Offset59, NegOneNr>::random(&mut rng);
+        let d = Fp2::<Prime64Offset59, NegOneNr>::random(&mut rng);
+        assert_eq!(
+            c * d,
+            Fp2::<Prime64Offset59, NegOneNr>::reduce_product_accum(c.mul_to_product_accum(d)),
+            "NegOneNr accum mismatch c={c:?} d={d:?}"
+        );
+    }
+}
+
+#[test]
+fn fp2_fp64_accum_summation_large_operands() {
+    use crate::Prime64Offset59;
+    use num_traits::Zero;
+
+    type E = Ext2<Prime64Offset59>;
+
+    let mut rng = StdRng::seed_from_u64(0xF64C);
+    let n = 1024;
+    let pairs: Vec<(E, E)> = (0..n)
+        .map(|_| (E::random(&mut rng), E::random(&mut rng)))
+        .collect();
+
+    let direct_sum: E = pairs
+        .iter()
+        .map(|(a, b)| *a * *b)
+        .fold(E::zero(), |s, p| s + p);
+
+    let accum_sum = pairs
+        .iter()
+        .fold(<E as HasUnreducedOps>::ProductAccum::zero(), |s, (a, b)| {
+            s + a.mul_to_product_accum(*b)
+        });
+
+    assert_eq!(
+        direct_sum,
+        E::reduce_product_accum(accum_sum),
+        "fp2<fp64> accumulated sum of {n} products mismatched"
+    );
+}
+
+// The specialized `Fp2<Fp64>` EOR fold must be byte-identical to the generic
+// `even + r·(odd − even)`. Full-word `Prime64Offset59` exercises the
+// carry-folding reduction path (products near 2^128, sum near 2^129);
+// sub-word `Prime40Offset195` exercises the no-overflow path. Random operands
+// reach carry=1 roughly half the time; the explicit max-coordinate cases pin
+// the worst case. Covers both `Fp2Config`s (TwoNr and NegOneNr).
+#[test]
+fn fp2_fp64_optimized_fold_matches_generic() {
+    use crate::{Prime40Offset195, Prime64Offset59};
+
+    macro_rules! check_fold {
+        ($E:ty, $r:expr, $even:expr, $odd:expr) => {{
+            let r: $E = $r;
+            let even: $E = $even;
+            let odd: $E = $odd;
+            let generic = even + r * (odd - even);
+            let ctx = <$E as HasOptimizedFold>::precompute_fold(r);
+            let optimized = <$E as HasOptimizedFold>::fold_one(&ctx, even, odd);
+            assert_eq!(
+                generic,
+                optimized,
+                "{} fold mismatch r={r:?} even={even:?} odd={odd:?}",
+                stringify!($E)
+            );
+        }};
+    }
+
+    let mut rng = StdRng::seed_from_u64(0xF01D);
+    for _ in 0..512 {
+        check_fold!(
+            Ext2<Prime64Offset59>,
+            Ext2::random(&mut rng),
+            Ext2::random(&mut rng),
+            Ext2::random(&mut rng)
+        );
+        check_fold!(
+            Fp2<Prime64Offset59, NegOneNr>,
+            Fp2::random(&mut rng),
+            Fp2::random(&mut rng),
+            Fp2::random(&mut rng)
+        );
+        check_fold!(
+            Ext2<Prime40Offset195>,
+            Ext2::random(&mut rng),
+            Ext2::random(&mut rng),
+            Ext2::random(&mut rng)
+        );
+        check_fold!(
+            Fp2<Prime40Offset195, NegOneNr>,
+            Fp2::random(&mut rng),
+            Fp2::random(&mut rng),
+            Fp2::random(&mut rng)
+        );
+    }
+
+    // Worst case for the full-word carry fold: all coordinates at p-1, so each
+    // base product is ≈ p² ≈ 2^128 and the per-coordinate sum is ≈ 2^129.
+    let max64 = Prime64Offset59::zero() - Prime64Offset59::one();
+    check_fold!(
+        Ext2<Prime64Offset59>,
+        Ext2::new(max64, max64),
+        Ext2::zero(),
+        Ext2::new(max64, max64)
+    );
+    check_fold!(
+        Fp2<Prime64Offset59, NegOneNr>,
+        Fp2::new(max64, max64),
+        Fp2::zero(),
+        Fp2::new(max64, max64)
+    );
 }

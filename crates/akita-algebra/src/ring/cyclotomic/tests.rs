@@ -23,12 +23,67 @@ fn cyclotomic_ring_satisfies_jolt_ring_core() {
 }
 
 #[test]
+fn shift_accumulate_into_matches_negacyclic_shift() {
+    let mut rng = StdRng::seed_from_u64(0x1234);
+    let a = CyclotomicRing::<F64, D>::random(&mut rng);
+    let dst = CyclotomicRing::<F64, D>::random(&mut rng);
+
+    for k in 0..D {
+        let expected = dst + a.negacyclic_shift(k);
+        let mut actual = dst;
+        a.shift_accumulate_into(&mut actual, k);
+        assert_eq!(actual, expected, "shift_accumulate_into k={k}");
+    }
+}
+
+#[test]
+fn shift_sub_into_matches_negacyclic_shift() {
+    let mut rng = StdRng::seed_from_u64(0x1234);
+    let a = CyclotomicRing::<F64, D>::random(&mut rng);
+    let dst = CyclotomicRing::<F64, D>::random(&mut rng);
+
+    for k in 0..D {
+        let expected = dst - a.negacyclic_shift(k);
+        let mut actual = dst;
+        a.shift_sub_into(&mut actual, k);
+        assert_eq!(actual, expected, "shift_sub_into k={k}");
+    }
+}
+
+#[test]
+fn shift_scale_accumulate_into_matches_scaled_negacyclic_shift() {
+    let mut rng = StdRng::seed_from_u64(0x2468);
+    let a = CyclotomicRing::<F64, D>::random(&mut rng);
+    let dst = CyclotomicRing::<F64, D>::random(&mut rng);
+    let scales = [
+        F64::zero(),
+        F64::one(),
+        -F64::one(),
+        F64::from_u64(7),
+        F64::from_u64(4294967196),
+    ];
+
+    for k in 0..D {
+        for &scale in &scales {
+            let mut actual = dst;
+            a.shift_scale_accumulate_into(&mut actual, k, scale);
+
+            let expected = dst + a.scale(&scale).negacyclic_shift(k);
+            assert_eq!(
+                actual, expected,
+                "shift_scale_accumulate_into k={k} scale={scale:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn wide_shift_accumulate_matches_narrow_fp64() {
     let mut rng = StdRng::seed_from_u64(0x1234);
     let src = CyclotomicRing::<F64, D>::random(&mut rng);
     let initial = CyclotomicRing::<F64, D>::random(&mut rng);
 
-    for k in [0, 1, 7, 31, 63] {
+    for k in 0..D {
         let mut narrow = initial;
         src.shift_accumulate_into(&mut narrow, k);
 
@@ -47,7 +102,7 @@ fn wide_shift_sub_matches_narrow_fp64() {
     let src = CyclotomicRing::<F64, D>::random(&mut rng);
     let initial = CyclotomicRing::<F64, D>::random(&mut rng);
 
-    for k in [0, 1, 15, 32, 63] {
+    for k in 0..D {
         let mut narrow = initial;
         src.shift_sub_into(&mut narrow, k);
 
@@ -71,7 +126,9 @@ fn wide_mul_by_monomial_sum_matches_narrow_fp64() {
 
     let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
     let mut wide_dst = WideCyclotomicRing::<Fp64x4i32, D>::zero();
-    wide_src.mul_by_monomial_sum_into(&mut wide_dst, &positions);
+    for &k in &positions {
+        wide_src.shift_accumulate_into(&mut wide_dst, k);
+    }
     let wide_reduced: CyclotomicRing<F64, D> = wide_dst.reduce();
 
     assert_eq!(narrow, wide_reduced);

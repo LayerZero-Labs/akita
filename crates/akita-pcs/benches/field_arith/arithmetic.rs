@@ -420,6 +420,35 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
                 for _ in 0..iters {
                     for _ in 0..params.throughput_iters {
                         for acc_i in acc.iter_mut() {
+                            *acc_i = acc_i.square();
+                        }
+                    }
+                }
+                black_box(acc[0].extract(0));
+                duration_per_logical_op(
+                    start.elapsed(),
+                    (params.streams * PF::WIDTH * params.throughput_iters) as u64,
+                )
+            })
+        },
+    );
+
+    throughput_group.throughput(Throughput::Elements(1));
+    throughput_group.bench_function(
+        format!(
+            "packed_mul_self_stream/{}x{}x{}_ns_lane",
+            params.streams,
+            PF::WIDTH,
+            params.throughput_iters
+        ),
+        |b| {
+            b.iter_custom(|iters| {
+                let lanes = black_box(&packed_stream_lanes);
+                let mut acc: Vec<PF> = lanes.iter().map(|(a, _)| *a).collect();
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..params.throughput_iters {
+                        for acc_i in acc.iter_mut() {
                             let x = *acc_i;
                             *acc_i = x * x;
                         }

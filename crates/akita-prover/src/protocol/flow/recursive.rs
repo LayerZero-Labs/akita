@@ -139,7 +139,7 @@ where
     })
 }
 
-/// Prove one recursive fold level after the caller has built its quadratic
+/// Prove one recursive fold level after the caller has built its ring-relation
 /// equation and selected the commitment policy for the next `w`.
 ///
 /// The caller owns config/schedule decisions through `commit_w_for_next`; this
@@ -153,7 +153,7 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_fold_level_from_quadratic<F, L, T, B, const D: usize, CommitW>(
+pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -162,7 +162,8 @@ pub fn prove_fold_level_from_quadratic<F, L, T, B, const D: usize, CommitW>(
     level: usize,
     lp: &LevelParams,
     next_log_basis: u32,
-    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
+    instance: RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] proof_y_rings: Vec<CyclotomicRing<F, D>>,
@@ -173,17 +174,21 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    L: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    L: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
-    let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
+    let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
     let next_commitment = {
         let _span = tracing::info_span!("commit_w_level", level).entered();
         commit_w_for_next(&logical_w)?
@@ -194,20 +199,20 @@ where
         hint: committed_hint,
     } = next_commitment;
     let w_commitment_proof = committed_commitment.clone();
-    let rs = ring_switch_finalize::<F, L, T, { D }>(
-        &quad_eq,
+    let rs = ring_switch_finalize::<F, L, T, D>(
+        &instance,
         expanded,
         transcript,
         &logical_w,
         &w_commitment_proof,
         lp,
-        MRowLayout::Intermediate,
+        MRowLayout::WithDBlock,
     )?;
 
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
-        &quad_eq.v,
+        &instance.v,
         commitment_u,
         &y_rings,
     )?;
@@ -215,7 +220,7 @@ where
     let relation_claim_public = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
-        &quad_eq.v,
+        &instance.v,
         commitment_u,
         &proof_y_rings,
     )?;
@@ -235,7 +240,7 @@ where
     #[cfg(feature = "zk")]
     let (stage1_round_pads, stage1_child_claim_masks, stage2_round_pads) =
         zk_hiding.take_current_level_pads::<L>(col_bits + ring_bits, b)?;
-    let (stage1_proof, r_stage1, s_claim) = {
+    let (stage1_proof, stage1_point, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = AkitaStage1Prover::new(
             &w_evals_compact,
@@ -251,9 +256,9 @@ where
         }
         #[cfg(not(feature = "zk"))]
         {
-            let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+            let (stage1_proof, stage1_point) = stage1_prover.prove(transcript)?;
             let s_claim = stage1_proof.s_claim;
-            (stage1_proof, r_stage1, s_claim)
+            (stage1_proof, stage1_point, s_claim)
         }
     };
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
@@ -264,7 +269,7 @@ where
         let stage2_prover_result = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             s_claim,
             b,
             alpha_evals_y,
@@ -302,7 +307,7 @@ where
         let mut stage2_prover = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             s_claim,
             b,
             alpha_evals_y,
@@ -334,7 +339,7 @@ where
         AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
             proof_y_rings,
             extension_opening_reduction,
-            quad_eq.v,
+            instance.v,
             stage1_proof,
             #[cfg(not(feature = "zk"))]
             stage2_sumcheck_proof,
@@ -368,21 +373,21 @@ where
 }
 
 /// Prove the terminal recursive fold level after the caller has built its
-/// quadratic equation.
+/// ring relation.
 ///
 /// At the terminal level the next witness is shipped in cleartext as
 /// [`PackedDigits`], so this function:
 ///
 /// * builds `logical_w` via ring switching,
-/// * packs it into the terminal [`DirectWitnessProof`] using
+/// * packs it into the terminal [`CleartextWitnessProof`] using
 ///   `final_log_basis` as the planner-mandated minimum bits per element,
 /// * absorbs logical `w_hat` before fold challenge sampling when the
-///   quadratic equation is built, then absorbs the remaining final-witness
+///   ring relation is built, then absorbs the remaining final-witness
 ///   bytes before sampling any ring-switch challenges,
 /// * skips the stage-1 sumcheck entirely (packed-digit range is structurally
 ///   enforced by the packing), and
 /// * runs stage-2 in relation-only mode with `batching_coeff = 0`,
-///   `s_claim = 0`, and dummy `r_stage1` zeros — these zero the virtual
+///   `s_claim = 0`, and dummy `stage1_point` zeros — these zero the virtual
 ///   sumcheck contribution leaving only the relation oracle.
 ///
 /// # Errors
@@ -390,7 +395,7 @@ where
 /// Returns an error if ring switching or the stage-2 sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_terminal_fold_level_from_quadratic<F, L, T, B, const D: usize>(
+pub fn prove_terminal_fold_level_from_ring_relation<F, L, T, B, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup<D>,
@@ -399,7 +404,8 @@ pub fn prove_terminal_fold_level_from_quadratic<F, L, T, B, const D: usize>(
     _level: usize,
     lp: &LevelParams,
     final_log_basis: u32,
-    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
+    instance: RingRelationInstance<F, D>,
+    witness: RingRelationWitness<F, D>,
     extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] y_rings_masked: Vec<CyclotomicRing<F, D>>,
@@ -409,26 +415,31 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
         + PseudoMersenneField,
-    L: ExtField<F> + RingSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    L: ExtField<F>
+        + RingSubfieldEncoding<F>
+        + HasUnreducedOps
+        + HasOptimizedFold
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
 {
     let terminal_layout = terminal_witness_segment_layout(
         lp,
-        quad_eq.claim_to_point().len(),
-        quad_eq.num_public_rows(),
+        instance.claim_to_point().len(),
+        instance.num_public_rows(),
+        F::modulus_bits(),
     )?;
-    let logical_w = ring_switch_build_w::<F, B, { D }>(&mut quad_eq, backend, prepared, lp)?;
-    let final_witness = DirectWitnessProof::PackedDigits(
+    let logical_w = ring_switch_build_w::<F, B, D>(&instance, witness, backend, prepared, lp)?;
+    let final_witness = CleartextWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(logical_w.as_i8_digits(), final_log_basis),
     );
-    let rs = ring_switch_finalize_terminal::<F, L, T, { D }>(
-        &quad_eq,
+    let rs = ring_switch_finalize_terminal::<F, L, T, D>(
+        &instance,
         expanded,
         transcript,
         &logical_w,
@@ -468,9 +479,9 @@ where
     } = rs;
 
     // Relation-only stage-2: batching_coeff = 0 zeros the virtual-claim
-    // contribution to every round polynomial regardless of `r_stage1`, so
-    // dummy zeros for `r_stage1` and `s_claim` are safe.
-    let r_stage1 = vec![L::zero(); col_bits + ring_bits];
+    // contribution to every round polynomial regardless of `stage1_point`, so
+    // dummy zeros for `stage1_point` and `s_claim` are safe.
+    let stage1_point = vec![L::zero(); col_bits + ring_bits];
     #[cfg(feature = "zk")]
     let stage2_round_pads = zk_hiding.take_compressed_rounds::<L>(col_bits + ring_bits, 3)?;
     #[cfg(feature = "zk")]
@@ -479,7 +490,7 @@ where
         let mut stage2_prover = AkitaStage2Prover::new(
             L::zero(),
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             L::zero(),
             b,
             alpha_evals_y,
@@ -504,7 +515,7 @@ where
         let mut stage2_prover = AkitaStage2Prover::new(
             L::zero(),
             w_evals_compact,
-            &r_stage1,
+            &stage1_point,
             L::zero(),
             b,
             alpha_evals_y,
@@ -550,9 +561,9 @@ pub(in crate::protocol::flow) fn recursive_witness_base_evals<F>(
 where
     F: FieldCore + FromPrimitiveInt,
 {
-    logical_w
-        .as_i8_digits()
-        .iter()
+    // Pure order-preserving map; the indexed parallel collect yields the same
+    // ordering as the serial map, so the base-field witness table is identical.
+    cfg_iter!(logical_w.as_i8_digits())
         .copied()
         .map(F::from_i8)
         .collect()
@@ -567,7 +578,7 @@ pub(in crate::protocol::flow) fn prove_recursive_extension_opening_reduction<F, 
 ) -> Result<RecursiveExtensionOpeningReduction<L>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    L: ExtField<F> + AkitaSerialize,
+    L: ExtField<F> + HasUnreducedOps + HasOptimizedFold + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let num_vars = opening_point.len();
@@ -587,9 +598,17 @@ where
             actual: logical_w.len(),
         });
     }
-    let mut base_evals = recursive_witness_base_evals::<F>(logical_w);
-    base_evals.resize(padded_len, F::zero());
-    let tensor = tensor_partials_from_base_evals::<F, L>(num_vars, &base_evals, opening_point)?;
+    let _eor_prep_span = tracing::info_span!("recursive_eor_prepare", num_vars).entered();
+    let base_evals = {
+        let _s = tracing::info_span!("eor_base_evals").entered();
+        let mut base_evals = recursive_witness_base_evals::<F>(logical_w);
+        base_evals.resize(padded_len, F::zero());
+        base_evals
+    };
+    let tensor = {
+        let _s = tracing::info_span!("eor_tensor_partials").entered();
+        tensor_partials_from_base_evals::<F, L>(num_vars, &base_evals, opening_point)?
+    };
     check_tensor_extension_opening_claim::<F, L>(
         opening_point,
         expected_opening,
@@ -623,29 +642,35 @@ where
     #[cfg(not(feature = "zk"))]
     debug_assert_eq!(input_claim, true_input_claim);
     let tail_point = &opening_point[split_bits..];
-    let packed_witness = tensor_packed_witness_evals::<F, L>(num_vars, &base_evals)?;
-    let factor_evals = tensor_equality_factor_evals::<F, L>(tail_point, &eta)?;
-    let prover = ExtensionOpeningReductionProver::new(packed_witness, factor_evals)?;
+    let packed_witness = {
+        let _s = tracing::info_span!("eor_packed_witness").entered();
+        tensor_packed_witness_evals::<F, L>(num_vars, &base_evals)?
+    };
+    let factor_evals = {
+        let _s = tracing::info_span!("eor_factor_evals").entered();
+        tensor_equality_factor_evals::<F, L>(tail_point, &eta)?
+    };
+    let prover = ExtensionOpeningReductionProver::from_dense_tables(packed_witness, factor_evals)?;
     if prover.input_claim() != true_input_claim {
         return Err(AkitaError::InvalidInput(
             "extension-opening reduction input claim mismatch".to_string(),
         ));
     }
     let mut prover = prover;
-    #[cfg(feature = "zk")]
-    let reduction_sumcheck =
-        ExtensionOpeningReductionSumcheck::new(input_claim, prover.num_rounds());
+    drop(_eor_prep_span);
+    let _eor_sumcheck_span = tracing::info_span!(
+        "extension_opening_reduction_sumcheck",
+        path = "recursive",
+        num_rounds = prover.num_rounds()
+    )
+    .entered();
     #[cfg(not(feature = "zk"))]
-    let reduction_sumcheck =
-        ExtensionOpeningReductionSumcheck::new(prover.input_claim(), prover.num_rounds());
-    #[cfg(not(feature = "zk"))]
-    let (sumcheck, result) =
-        reduction_sumcheck.prove::<F, _, _>(&mut prover, transcript, |tr| {
-            sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-        })?;
+    let (sumcheck, rho, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
+        sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+    })?;
     #[cfg(feature = "zk")]
-    let (sumcheck_proof_masked, result) = reduction_sumcheck.prove_zk::<F, _, _>(
-        &mut prover,
+    let (sumcheck_proof_masked, rho) = prover.prove_zk::<F, T, _>(
+        input_claim,
         transcript,
         |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         sumcheck_pads,
@@ -656,14 +681,15 @@ where
                 "extension-opening reduction has not reached a final point".to_string(),
             )
         })?;
-    let final_factor =
-        tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &result.challenges)?;
+    let final_factor = tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &rho)?;
     if final_factor != final_factor_from_table {
         return Err(AkitaError::InvalidInput(
             "extension-opening reduction transparent factor mismatch".to_string(),
         ));
     }
-    check_extension_opening_reduction_output(result.final_claim, final_witness, final_factor)?;
+    #[cfg(feature = "zk")]
+    let final_claim = final_witness * final_factor;
+    check_extension_opening_reduction_output(final_claim, final_witness, final_factor)?;
     Ok(RecursiveExtensionOpeningReduction {
         proof: ExtensionOpeningReductionProof {
             partials: proof_partials,
@@ -672,8 +698,8 @@ where
             #[cfg(feature = "zk")]
             sumcheck_proof_masked,
         },
-        rho: result.challenges,
-        final_claim: result.final_claim,
+        rho,
+        final_claim,
         final_factor,
     })
 }
@@ -684,12 +710,12 @@ where
 /// The caller owns schedule/config selection and passes the next-level
 /// commitment policy as a closure. This function owns recursive opening-point
 /// reduction, witness folding, public recursive transcript absorbs, recursive
-/// quadratic-equation construction, and the folded-level prover mechanics.
+/// ring-relation construction, and the folded-level prover mechanics.
 ///
 /// # Errors
 ///
 /// Returns an error if the recursive opening point has the wrong dimension,
-/// witness folding or quadratic-equation construction fails, or the folded
+/// witness folding or ring-relation construction fails, or the folded
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
@@ -714,7 +740,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -722,8 +747,10 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
@@ -846,25 +873,23 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
-    let quad_eq = Box::new(
-        QuadraticEquation::<F, { D }>::new_recursive_multipoint_prover(
-            backend,
-            prepared,
-            ring_opening_points,
-            ring_multiplier_points,
-            witness,
-            w_folded_by_claim,
-            level_params.clone(),
-            hint,
-            transcript,
-            commitment_u,
-            &y_rings,
-            MRowLayout::Intermediate,
-        )?,
-    );
+    let (instance, witness) = RingRelationProver::new_recursive_multipoint::<F, D, _, _>(
+        backend,
+        prepared,
+        ring_opening_points,
+        ring_multiplier_points,
+        witness,
+        w_folded_by_claim,
+        level_params.clone(),
+        hint,
+        transcript,
+        commitment_u,
+        &y_rings,
+        MRowLayout::WithDBlock,
+    )?;
 
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
-    prove_fold_level_from_quadratic::<F, L, T, B, D, _>(
+    prove_fold_level_from_ring_relation::<F, L, T, B, D, _>(
         expanded,
         backend,
         prepared,
@@ -873,7 +898,8 @@ where
         level,
         level_params,
         next_log_basis,
-        quad_eq,
+        instance,
+        witness,
         extension_opening_reduction,
         y_rings,
         #[cfg(feature = "zk")]
@@ -888,9 +914,9 @@ where
 /// [`TerminalLevelProof`] instead of an intermediate
 /// [`AkitaLevelProof`] + next-witness commitment pair.
 ///
-/// All recursive-opening, witness folding, and quadratic-equation setup is
+/// All recursive-opening, witness folding, and ring-relation setup is
 /// identical to the intermediate path. The two differ only inside the inner
-/// fold proof (see [`prove_terminal_fold_level_from_quadratic`]).
+/// fold proof (see [`prove_terminal_fold_level_from_ring_relation`]).
 ///
 /// # Errors
 ///
@@ -918,7 +944,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -926,8 +951,10 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
 {
@@ -1050,25 +1077,23 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
-    let quad_eq = Box::new(
-        QuadraticEquation::<F, { D }>::new_recursive_multipoint_prover(
-            backend,
-            prepared,
-            ring_opening_points,
-            ring_multiplier_points,
-            witness,
-            w_folded_by_claim,
-            level_params.clone(),
-            hint,
-            transcript,
-            commitment_u,
-            &y_rings,
-            MRowLayout::Terminal,
-        )?,
-    );
+    let (instance, witness) = RingRelationProver::new_recursive_multipoint::<F, D, _, _>(
+        backend,
+        prepared,
+        ring_opening_points,
+        ring_multiplier_points,
+        witness,
+        w_folded_by_claim,
+        level_params.clone(),
+        hint,
+        transcript,
+        commitment_u,
+        &y_rings,
+        MRowLayout::WithoutDBlock,
+    )?;
 
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
-    prove_terminal_fold_level_from_quadratic::<F, L, T, B, D>(
+    prove_terminal_fold_level_from_ring_relation::<F, L, T, B, D>(
         expanded,
         backend,
         prepared,
@@ -1077,7 +1102,8 @@ where
         level,
         level_params,
         final_log_basis,
-        quad_eq,
+        instance,
+        witness,
         extension_opening_reduction,
         y_rings,
         #[cfg(feature = "zk")]
@@ -1117,7 +1143,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -1125,8 +1150,10 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
@@ -1198,7 +1225,6 @@ where
     F: FieldCore
         + CanonicalField
         + RandomSampling
-        + HasUnreducedOps
         + HasWide
         + HalvingField
         + Invertible
@@ -1206,8 +1232,10 @@ where
     L: RingSubfieldEncoding<F>
         + FrobeniusExtField<F>
         + HasUnreducedOps
+        + HasOptimizedFold
         + FromPrimitiveInt
-        + AkitaSerialize,
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
     T: Transcript<F>,
     B: ProverComputeBackend<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,

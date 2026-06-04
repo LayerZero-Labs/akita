@@ -29,36 +29,52 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
-    if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+    let digit_bound = balanced_digit_abs_bound(log_basis);
+    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
+        .expect("single i8 CRT term must fit supported parameters");
+    if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS
+        && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+        && inner_width == max_data_width
     {
-        return if CHECK_ZERO {
-            mat_vec_mul_i8_block_parallel_with_params(
-                ntt_mat, blocks, num_digits, log_basis, params,
-            )
-        } else {
-            mat_vec_mul_i8_dense_block_parallel_with_params(
-                ntt_mat, blocks, num_digits, log_basis, params,
-            )
-        };
+        if inner_width <= safe_width {
+            return if CHECK_ZERO {
+                mat_vec_mul_i8_block_parallel_with_params(
+                    ntt_mat, blocks, num_digits, log_basis, params,
+                )
+            } else {
+                mat_vec_mul_i8_dense_block_parallel_with_params(
+                    ntt_mat, blocks, num_digits, log_basis, params,
+                )
+            };
+        }
+        let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
+        return mat_vec_mul_i8_block_parallel_chunked_with_params::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat,
+            blocks,
+            inner_width,
+            chunk_width,
+            num_digits,
+            log_basis,
+            params,
+        );
     }
 
-    let lut = DigitMontLut::new(params);
-    let raw_tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
-    // Keep full tiles on ring boundaries so on-the-fly decomposition does not
-    // re-expand the same ring when adjacent tiles meet mid digit-pack.
-    let tw = aligned_i8_tile_width(raw_tw, inner_width, num_digits);
-    let num_tiles = inner_width.div_ceil(tw);
-
-    let final_accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>> = cfg_fold_reduce!(
-        0..num_tiles,
-        || vec![vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a]; num_blocks],
-        |mut accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>>, tile_idx| {
-            let tile_start = tile_idx * tw;
-            let tile_end = (tile_start + tw).min(inner_width);
-            let ring_start = tile_start / num_digits;
-            let ring_end = ((tile_end - 1) / num_digits) + 1;
-            let digit_offset = tile_start - ring_start * num_digits;
-            let tile_len = tile_end - tile_start;
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
+    let tile_width = aligned_i8_tile_width(base_tile_width::<W, K, D>(), inner_width, num_digits);
+    let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
+    drive_block_chunked_matvec(
+        num_blocks,
+        n_a,
+        inner_width,
+        safe_width,
+        tile_width,
+        chunk_width,
+        params,
+        |accs, start, end| {
+            let ring_start = start / num_digits;
+            let ring_end = ((end - 1) / num_digits) + 1;
+            let digit_offset = start - ring_start * num_digits;
+            let tile_len = end - start;
 
             for block_idx in 0..num_blocks {
                 let block = blocks[block_idx];
@@ -80,35 +96,12 @@ pub(super) fn mat_vec_mul_i8_with_params_impl<
                     }
                     let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
                     for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
-                        accumulate_pointwise_product_into(
-                            acc,
-                            &mat_row[tile_start + j],
-                            &ntt_d,
-                            params,
-                        );
+                        accumulate_pointwise_product_into(acc, &mat_row[start + j], &ntt_d, params);
                     }
                 }
             }
-            accs
         },
-        |mut a: Vec<Vec<CyclotomicCrtNtt<W, K, D>>>, b| {
-            for block_idx in 0..num_blocks {
-                for row in 0..n_a {
-                    add_ntt_into(&mut a[block_idx][row], &b[block_idx][row], params);
-                }
-            }
-            a
-        }
-    );
-
-    cfg_into_iter!(final_accs)
-        .map(|row_accs| {
-            row_accs
-                .into_iter()
-                .map(|acc| acc.to_ring_with_params(params))
-                .collect()
-        })
-        .collect()
+    )
 }
 
 pub(super) fn mat_vec_mul_i8_with_params<
@@ -145,6 +138,7 @@ pub(super) fn mat_vec_mul_i8_dense_with_params<
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn mat_vec_mul_i8_strided_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -169,30 +163,35 @@ pub(super) fn mat_vec_mul_i8_strided_with_params<
         return vec![vec![CyclotomicRing::<F, D>::zero(); n_a]; num_blocks];
     }
 
-    if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+    let digit_bound = balanced_digit_abs_bound(log_basis);
+    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
+        .expect("single i8 CRT term must fit supported parameters");
+    if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS
+        && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
+        && inner_width == block_len.saturating_mul(num_digits)
+        && inner_width <= safe_width
     {
         return mat_vec_mul_i8_strided_block_parallel_with_params(
             ntt_mat, coeffs, num_blocks, block_len, num_digits, log_basis, params,
         );
     }
 
-    let lut = DigitMontLut::new(params);
-    let raw_tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
-    // Keep full tiles on ring boundaries so on-the-fly decomposition does not
-    // re-expand the same ring when adjacent tiles meet mid digit-pack.
-    let tw = aligned_i8_tile_width(raw_tw, inner_width, num_digits);
-    let num_tiles = inner_width.div_ceil(tw);
-
-    let final_accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>> = cfg_fold_reduce!(
-        0..num_tiles,
-        || vec![vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a]; num_blocks],
-        |mut accs: Vec<Vec<CyclotomicCrtNtt<W, K, D>>>, tile_idx| {
-            let tile_start = tile_idx * tw;
-            let tile_end = (tile_start + tw).min(inner_width);
-            let ring_start = tile_start / num_digits;
-            let ring_end = ((tile_end - 1) / num_digits) + 1;
-            let digit_offset = tile_start - ring_start * num_digits;
-            let tile_len = tile_end - tile_start;
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
+    let tile_width = aligned_i8_tile_width(base_tile_width::<W, K, D>(), inner_width, num_digits);
+    let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
+    drive_block_chunked_matvec(
+        num_blocks,
+        n_a,
+        inner_width,
+        safe_width,
+        tile_width,
+        chunk_width,
+        params,
+        |accs, start, end| {
+            let ring_start = start / num_digits;
+            let ring_end = ((end - 1) / num_digits) + 1;
+            let digit_offset = start - ring_start * num_digits;
+            let tile_len = end - start;
 
             for (block_idx, block_accs) in accs.iter_mut().enumerate() {
                 let mut partial_coeffs = Vec::with_capacity(ring_end.saturating_sub(ring_start));
@@ -220,33 +219,10 @@ pub(super) fn mat_vec_mul_i8_strided_with_params<
                     }
                     let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
                     for (acc, mat_row) in block_accs.iter_mut().zip(ntt_mat.iter()) {
-                        accumulate_pointwise_product_into(
-                            acc,
-                            &mat_row[tile_start + j],
-                            &ntt_d,
-                            params,
-                        );
+                        accumulate_pointwise_product_into(acc, &mat_row[start + j], &ntt_d, params);
                     }
                 }
             }
-            accs
         },
-        |mut a: Vec<Vec<CyclotomicCrtNtt<W, K, D>>>, b| {
-            for block_idx in 0..num_blocks {
-                for row in 0..n_a {
-                    add_ntt_into(&mut a[block_idx][row], &b[block_idx][row], params);
-                }
-            }
-            a
-        }
-    );
-
-    cfg_into_iter!(final_accs)
-        .map(|row_accs| {
-            row_accs
-                .into_iter()
-                .map(|acc| acc.to_ring_with_params(params))
-                .collect()
-        })
-        .collect()
+    )
 }

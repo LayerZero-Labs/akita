@@ -1024,7 +1024,7 @@ mod tests {
                 nonzero_coeffs: vec![-1, 1],
             },
         )
-        .with_decomp(2, 3, 2, 2, 3, 0)
+        .with_decomp(2, 3, 2, 2, 3)
         .expect("sample level params")
     }
 

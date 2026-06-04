@@ -99,8 +99,12 @@ benchmark matrix.
 10. `LevelParams::challenge_l1_mass()` returns `cfg.l1_norm()` for flat and
     `cfg.l1_norm()^2` for tensor. Generated tensor schedule entries stamp the
     root fold shape before singleton layout derivation, so the table-backed
-    singleton root layout is sized with the tensor mass. The runtime DP planner
-    and batched-root scaling are not fully tensor-mass-aware in this branch.
+    singleton root layout is sized with the tensor mass. Both the runtime DP
+    planner's root-candidate fold-digit sizing and
+    `akita_types::scale_batched_root_layout` derive the batched fold digit
+    count from `challenge_l1_mass · num_claims`, so tensor batched roots are
+    sized for the tight `omega² · num_claims` bound rather than the previous
+    `max(omega², omega · num_claims)` floor.
 11. Tensor presets require backend tensor kernels. The tensor path fails with
     `AkitaError` if a backend does not implement the tensor-shaped fold kernel;
     it does not silently expand through an unoptimized fallback.
@@ -229,9 +233,10 @@ Tensor products increase the effective per-logical-block L1 envelope from
 through `LevelParams::challenge_l1_mass()` and uses dedicated generated schedule
 tables for the tensor preset, so performance and proof-size comparisons must be
 made against that preset's generated schedule, not by only changing the sampler
-at runtime. Batched-root scaling currently maxes the singleton tensor digit
-count against a flat-mass batched bound; it does not recompute fold digits with
-`omega^2 * num_claims`.
+at runtime. Batched-root scaling derives the fold digit count from
+`challenge_l1_mass · num_claims` directly via `LevelParams::challenge_l1_mass()`,
+so tensor batched roots are sized for `omega^2 · num_claims`. Generated tensor
+table entries with `num_t_vectors > 1` reflect this tight sizing.
 
 ## Design
 
@@ -433,17 +438,20 @@ fold shape onto the generated level params before deriving the singleton root
 layout, so that singleton fold digits and the `(m_vars, r_vars)` split observe
 `omega^2` for tensor roots.
 
-Two current limitations are intentionally reflected in this spec:
+One current limitation is intentionally reflected in this spec:
 
-- Batched-root scaling calls `scale_batched_root_layout` with the flat
-  stage-1 L1 norm. For tensor roots, this preserves the already-sized singleton
-  tensor fold digits and only increases them if the flat-mass batched bound is
-  larger; it does not apply `omega^2 * num_claims`.
-- The offline DP fallback carries a `fold_challenge_shape` hook, but the
-  from-scratch root search still derives root candidates through flat default
-  params and flat-mass batched scaling. The public tensor preset is therefore
-  expected to use its generated table, not runtime DP search, for production
-  schedule selection.
+- The offline DP fallback carries a `fold_challenge_shape` hook and now
+  sizes root-candidate fold digits with `effective_l1_mass · num_t_vectors`
+  (tight `omega^2 · num_claims` for tensor). The from-scratch root search
+  still derives root candidates through the configured singleton default
+  params, so production tensor schedule selection is expected to use the
+  generated table — DP search is a fallback rather than a primary path.
+
+`scale_batched_root_layout` reads the per-claim effective L1 mass directly
+from `LevelParams::challenge_l1_mass()`, so batched-root scaling sizes
+tensor batched roots for the tight `omega^2 · num_claims` bound. The
+historical `root_stage1_l1_mass` argument was structurally redundant
+with the layout's stage-1 config and has been removed.
 
 The fp128 tensor-verifier preset is:
 

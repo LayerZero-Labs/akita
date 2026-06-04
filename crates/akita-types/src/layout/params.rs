@@ -7,9 +7,9 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
-use crate::descriptor_bytes::{push_i8, push_u32, push_usize, sis_family_tag};
+use crate::descriptor_bytes::{push_i8, push_u32, push_usize};
 
-pub use crate::generated::sis_floor::SisModulusFamily;
+pub use crate::sis::{AjtaiKeyParams, SisModulusFamily};
 
 /// Per-level M-matrix row layout selector.
 ///
@@ -26,188 +26,10 @@ pub use crate::generated::sis_floor::SisModulusFamily;
 pub enum MRowLayout {
     /// Full layout including the D-block (`v = D * w_hat` rows). Used at every
     /// intermediate fold level and at the root when stage-1 runs.
-    Intermediate,
+    WithDBlock,
     /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
     /// the terminal fold level where `final_witness` ships on the wire.
-    Terminal,
-}
-
-/// Parameters for a single Ajtai commitment matrix.
-///
-/// Each matrix in the protocol (A, B, D) is characterised by its row count
-/// (security rank), column count (message width), and the worst-case L∞
-/// collision bound used for SIS security sizing.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AjtaiKeyParams {
-    row_len: usize,
-    col_len: usize,
-    collision_inf: u32,
-    sis_family: SisModulusFamily,
-}
-
-impl AjtaiKeyParams {
-    fn sis_security_violation(
-        sis_family: SisModulusFamily,
-        row_len: usize,
-        col_len: usize,
-        collision_inf: u32,
-        ring_dimension: usize,
-    ) -> Option<String> {
-        if col_len > 0 && collision_inf > 0 && row_len > 0 {
-            use crate::generated::sis_floor::min_rank_for_secure_width;
-            if let Some(floor) = min_rank_for_secure_width(
-                sis_family,
-                ring_dimension as u32,
-                collision_inf,
-                col_len as u64,
-            ) {
-                if row_len < floor {
-                    return Some(format!(
-                        "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
-                         (family={sis_family:?}, d={ring_dimension}, \
-                         collision_inf={collision_inf}, col_len={col_len})"
-                    ));
-                }
-            }
-        }
-        None
-    }
-
-    /// Create a new `AjtaiKeyParams` with SIS security enforcement.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `row_len` is below the 128-bit SIS security floor for the
-    /// given `(sis_family, ring_dimension, collision_inf, col_len)` tuple.
-    pub fn new(
-        sis_family: SisModulusFamily,
-        row_len: usize,
-        col_len: usize,
-        collision_inf: u32,
-        ring_dimension: usize,
-    ) -> Self {
-        if let Some(message) = Self::sis_security_violation(
-            sis_family,
-            row_len,
-            col_len,
-            collision_inf,
-            ring_dimension,
-        ) {
-            panic!("{message}");
-        }
-        Self {
-            row_len,
-            col_len,
-            collision_inf,
-            sis_family,
-        }
-    }
-
-    /// Create a new `AjtaiKeyParams`, returning an error on SIS violations.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `row_len` is below the 128-bit SIS security floor
-    /// for the given `(sis_family, ring_dimension, collision_inf, col_len)` tuple.
-    pub fn try_new(
-        sis_family: SisModulusFamily,
-        row_len: usize,
-        col_len: usize,
-        collision_inf: u32,
-        ring_dimension: usize,
-    ) -> Result<Self, AkitaError> {
-        if let Some(message) = Self::sis_security_violation(
-            sis_family,
-            row_len,
-            col_len,
-            collision_inf,
-            ring_dimension,
-        ) {
-            return Err(AkitaError::InvalidSetup(message));
-        }
-        Ok(Self {
-            row_len,
-            col_len,
-            collision_inf,
-            sis_family,
-        })
-    }
-
-    /// Create a new `AjtaiKeyParams` without enforcing SIS security.
-    ///
-    /// Logs a debug-build warning if `row_len` is below the SIS floor but does
-    /// not panic. Use this for intermediate construction steps where ranks
-    /// have not yet converged (e.g., batched scaling, iterative SIS fixed-point
-    /// loops).
-    pub fn new_unchecked(
-        sis_family: SisModulusFamily,
-        row_len: usize,
-        col_len: usize,
-        collision_inf: u32,
-        ring_dimension: usize,
-    ) -> Self {
-        #[cfg(not(debug_assertions))]
-        let _ = ring_dimension;
-        #[cfg(debug_assertions)]
-        if col_len > 0 && collision_inf > 0 && row_len > 0 {
-            use crate::generated::sis_floor::min_rank_for_secure_width;
-            if let Some(floor) = min_rank_for_secure_width(
-                sis_family,
-                ring_dimension as u32,
-                collision_inf,
-                col_len as u64,
-            ) {
-                if row_len < floor {
-                    tracing::warn!(
-                        ?sis_family,
-                        row_len,
-                        floor,
-                        ring_dimension,
-                        collision_inf,
-                        col_len,
-                        "AjtaiKeyParams::new_unchecked: row_len below SIS floor"
-                    );
-                }
-            }
-        }
-        Self {
-            row_len,
-            col_len,
-            collision_inf,
-            sis_family,
-        }
-    }
-
-    /// Number of rows.
-    #[inline]
-    pub fn row_len(&self) -> usize {
-        self.row_len
-    }
-
-    /// Number of columns.
-    #[inline]
-    pub fn col_len(&self) -> usize {
-        self.col_len
-    }
-
-    /// Worst-case L∞ collision bound for SIS security sizing.
-    #[inline]
-    pub fn collision_inf(&self) -> u32 {
-        self.collision_inf
-    }
-
-    /// SIS modulus family used to validate this key.
-    #[inline]
-    pub fn sis_family(&self) -> SisModulusFamily {
-        self.sis_family
-    }
-
-    fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(sis_family_tag(self.sis_family()));
-        push_usize(bytes, self.row_len());
-        push_usize(bytes, self.col_len());
-        push_u32(bytes, self.collision_inf());
-    }
+    WithoutDBlock,
 }
 
 /// Unified per-level parameters for one Akita recursion level.
@@ -250,11 +72,51 @@ pub struct LevelParams {
     pub num_digits_commit: usize,
     /// Gadget decomposition depth for opening evaluations (δ_open).
     pub num_digits_open: usize,
-    /// Gadget decomposition depth for the folded witness (δ_fold / τ).
-    pub num_digits_fold: usize,
+    /// One-hot chunk size `K` of the committed witness at this level, used to
+    /// derive the per-block witness L1 mass `nonzeros = ceil(D/K)` for the
+    /// folded-witness `min(||c||_inf·||s||_1, ||c||_1·||s||_inf)` bound.
+    ///
+    /// `0` means the level commits a dense witness (balanced gadget digits:
+    /// `||s||_inf = b/2`, `nonzeros = D`). A non-zero value `K` means the level
+    /// commits a one-hot witness (`||s||_inf = 1`, `nonzeros = ceil(D/K)`);
+    /// this is only ever set on a root level whose `log_commit_bound == 1`.
+    pub onehot_chunk_size: usize,
 }
 
 impl LevelParams {
+    /// Synthetic `LevelParams` carrying only a terminal-direct's `log_basis`.
+    ///
+    /// `scheduled_next_level_params` returns this stub when the next step
+    /// is a terminal `Direct(PackedDigits)`: that step does not commit
+    /// anything, so it has no Ajtai keys, no block geometry, and no
+    /// digit depths. The only field consumers downstream actually read is
+    /// `log_basis` (used by `prove_recursive_suffix_with_policy` as
+    /// `final_log_basis` for the terminal fold's witness packing); every
+    /// other field is left at the zero/empty defaults to make accidental
+    /// use surface as obviously-degenerate output. Do not feed this stub
+    /// into commitment, audit, or descriptor-binding code paths.
+    pub fn log_basis_stub(log_basis: u32) -> Self {
+        Self {
+            ring_dimension: 0,
+            log_basis,
+            a_key: AjtaiKeyParams::default(),
+            b_key: AjtaiKeyParams::default(),
+            d_key: AjtaiKeyParams::default(),
+            num_blocks: 0,
+            block_len: 0,
+            m_vars: 0,
+            r_vars: 0,
+            stage1_config: SparseChallengeConfig::Uniform {
+                weight: 0,
+                nonzero_coeffs: Vec::new(),
+            },
+            fold_challenge_shape: TensorChallengeShape::Flat,
+            num_digits_commit: 0,
+            num_digits_open: 0,
+            onehot_chunk_size: 0,
+        }
+    }
+
     /// Build a params-only `LevelParams` with zeroed layout fields.
     ///
     /// Only ring dimension, matrix row counts, log_basis, and stage1_config
@@ -295,7 +157,7 @@ impl LevelParams {
             fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
-            num_digits_fold: 0,
+            onehot_chunk_size: 0,
         }
     }
 
@@ -304,6 +166,61 @@ impl LevelParams {
     pub fn challenge_l1_mass(&self) -> usize {
         self.fold_challenge_shape
             .effective_l1_mass(&self.stage1_config)
+    }
+
+    /// Per-block committed-witness `(||s||_inf, ||s||_1)` for the folded
+    /// witness at this level (one-hot vs dense, see [`Self::onehot_chunk_size`]).
+    #[inline]
+    pub fn fold_witness_norms(&self) -> crate::sis::FoldWitnessNorms {
+        let is_onehot = self.onehot_chunk_size > 0;
+        crate::sis::FoldWitnessNorms::new(
+            self.log_basis,
+            self.ring_dimension,
+            if is_onehot { self.onehot_chunk_size } else { 1 },
+            is_onehot,
+        )
+    }
+
+    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level,
+    /// accounting for the challenge shape (flat vs tensor).
+    #[inline]
+    pub fn challenge_infinity_norm(&self) -> usize {
+        self.fold_challenge_shape
+            .effective_infinity_norm(&self.stage1_config)
+    }
+
+    /// Gadget decomposition depth for the folded witness (δ_fold / τ).
+    ///
+    /// Delegates to [`crate::sis::num_digits_fold`], which derives
+    /// `β = num_claims · 2^r_vars · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)`
+    /// from this level's fold challenge and witness norms.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`crate::sis::num_digits_fold`]'s rejection of a degenerate
+    /// fold bound (`r_vars >= 127`, `β` overflow, or `β == 0`).
+    #[inline]
+    pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> Result<usize, AkitaError> {
+        let challenge = crate::sis::FoldChallengeNorms {
+            infinity_norm: self.challenge_infinity_norm() as u128,
+            l1_norm: self.challenge_l1_mass() as u128,
+        };
+        crate::sis::num_digits_fold(
+            self.r_vars,
+            num_claims,
+            field_bits,
+            self.log_basis,
+            challenge,
+            self.fold_witness_norms(),
+        )
+    }
+
+    /// Set the one-hot chunk size `K`, returning the updated params.
+    #[inline]
+    #[must_use]
+    pub fn with_onehot_chunk_size(mut self, onehot_chunk_size: usize) -> Self {
+        self.onehot_chunk_size = onehot_chunk_size;
+        self
     }
 
     /// Replace the fold-round challenge shape, returning the updated params.
@@ -347,9 +264,10 @@ impl LevelParams {
         push_usize(bytes, self.m_vars);
         push_usize(bytes, self.r_vars);
         append_sparse_challenge_descriptor_bytes(bytes, &self.stage1_config);
+        append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         push_usize(bytes, self.num_digits_commit);
         push_usize(bytes, self.num_digits_open);
-        push_usize(bytes, self.num_digits_fold);
+        push_usize(bytes, self.onehot_chunk_size);
     }
 
     /// Width of outer matrix B (column count of the B-key).
@@ -370,6 +288,24 @@ impl LevelParams {
         self.log_num_blocks() + self.log_block_len()
     }
 
+    /// Logical opening-point variable count for recursive fold levels.
+    ///
+    /// Matches [`crate::prepare_recursive_opening_point_ext`]: outer
+    /// block/position coordinates plus the inner `log2(ring_dimension)` bits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the summed dimension overflows `usize`.
+    pub fn recursive_opening_num_vars(&self) -> Result<usize, AkitaError> {
+        let alpha_bits = self.ring_dimension.trailing_zeros() as usize;
+        self.m_vars
+            .checked_add(self.r_vars)
+            .and_then(|n| n.checked_add(alpha_bits))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("recursive opening num_vars overflow".to_string())
+            })
+    }
+
     /// Row count with `num_commitments` explicit commitment vectors and
     /// `num_public_outputs` public y-rows.
     ///
@@ -382,11 +318,7 @@ impl LevelParams {
         num_commitments: usize,
         num_public_outputs: usize,
     ) -> Result<usize, AkitaError> {
-        self.m_row_count_for(
-            num_commitments,
-            num_public_outputs,
-            MRowLayout::Intermediate,
-        )
+        self.m_row_count_for(num_commitments, num_public_outputs, MRowLayout::WithDBlock)
     }
 
     /// Row count for an explicit M-row layout.
@@ -401,8 +333,8 @@ impl LevelParams {
         layout: MRowLayout,
     ) -> Result<usize, AkitaError> {
         let n_d_active = match layout {
-            MRowLayout::Intermediate => self.d_key.row_len(),
-            MRowLayout::Terminal => 0,
+            MRowLayout::WithDBlock => self.d_key.row_len(),
+            MRowLayout::WithoutDBlock => 0,
         };
         n_d_active
             .checked_add(
@@ -420,11 +352,12 @@ impl LevelParams {
     /// Fill in the layout-derived fields from explicit decomposition parameters.
     ///
     /// Takes a params-only `LevelParams` (with zeroed layout fields) and
-    /// computes block geometry, matrix column counts, and digit depths.
+    /// computes block geometry, matrix column counts, and commit/open digit
+    /// depths.
     ///
     /// When `num_ring > 0` (recursive levels), `block_len` is set to
     /// `ceil(num_ring / num_blocks)` instead of `2^m_vars`, giving tight
-    /// z_pre sizing. Pass `0` for root-level layouts.
+    /// z_folded_rings sizing. Pass `0` for root-level layouts.
     ///
     /// # Errors
     ///
@@ -435,7 +368,6 @@ impl LevelParams {
         r_vars: usize,
         num_digits_commit: usize,
         num_digits_open: usize,
-        num_digits_fold: usize,
         num_ring: usize,
     ) -> Result<Self, AkitaError> {
         let num_blocks = 1usize
@@ -493,12 +425,24 @@ impl LevelParams {
             fold_challenge_shape: self.fold_challenge_shape,
             num_digits_commit,
             num_digits_open,
-            num_digits_fold,
+            onehot_chunk_size: self.onehot_chunk_size,
         })
     }
 
-    /// Build a new `LevelParams` that keeps rank/ring info from `self` but
-    /// replaces all layout-derived fields with those from `other`.
+    /// Build a new `LevelParams` that keeps rank/ring/SIS-bucket info
+    /// from `self` but replaces all layout-derived fields with those
+    /// from `other`.
+    ///
+    /// "Layout-derived fields" are `col_len`, `num_blocks`, `block_len`,
+    /// `m_vars`, `r_vars`, and the commit/open digit counts. **`collision_inf`
+    /// is not a layout field** — it is the SIS-floor bucket the rank
+    /// (`row_len`) was sized against — so it is preserved from `self`,
+    /// matching the placement of `row_len` and `sis_family`. Pulling
+    /// `collision_inf` from `other` would lose the audited bucket when
+    /// the layout argument was constructed via
+    /// [`LevelParams::params_only`] (which leaves `collision_inf = 0`)
+    /// or threaded through [`Self::with_decomp`], and would let the SIS
+    /// audit at [`AjtaiKeyParams::try_new`] short-circuit silently.
     pub fn with_layout(&self, other: &LevelParams) -> Self {
         let d = self.ring_dimension;
         Self {
@@ -508,21 +452,21 @@ impl LevelParams {
                 self.a_key.sis_family,
                 self.a_key.row_len,
                 other.a_key.col_len,
-                other.a_key.collision_inf,
+                self.a_key.collision_inf,
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
                 self.b_key.sis_family,
                 self.b_key.row_len,
                 other.b_key.col_len,
-                other.b_key.collision_inf,
+                self.b_key.collision_inf,
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
                 self.d_key.sis_family,
                 self.d_key.row_len,
                 other.d_key.col_len,
-                other.d_key.collision_inf,
+                self.d_key.collision_inf,
                 d,
             ),
             num_blocks: other.num_blocks,
@@ -533,7 +477,7 @@ impl LevelParams {
             fold_challenge_shape: other.fold_challenge_shape,
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
-            num_digits_fold: other.num_digits_fold,
+            onehot_chunk_size: other.onehot_chunk_size,
         }
     }
 }
@@ -565,6 +509,16 @@ fn append_sparse_challenge_descriptor_bytes(bytes: &mut Vec<u8>, config: &Sparse
     }
 }
 
+fn append_tensor_challenge_shape_descriptor_bytes(
+    bytes: &mut Vec<u8>,
+    shape: TensorChallengeShape,
+) {
+    match shape {
+        TensorChallengeShape::Flat => bytes.push(0),
+        TensorChallengeShape::Tensor => bytes.push(1),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,7 +539,7 @@ mod tests {
     }
 
     fn sample_layout_lp() -> LevelParams {
-        sample_params_only().with_decomp(4, 2, 2, 2, 3, 0).unwrap()
+        sample_params_only().with_decomp(4, 2, 2, 2, 0).unwrap()
     }
 
     #[test]
@@ -605,7 +559,6 @@ mod tests {
         assert_eq!(lp.challenge_l1_mass(), 3);
         assert_eq!(lp.num_digits_commit, layout_lp.num_digits_commit);
         assert_eq!(lp.num_digits_open, layout_lp.num_digits_open);
-        assert_eq!(lp.num_digits_fold, layout_lp.num_digits_fold);
     }
 
     #[test]
@@ -635,7 +588,7 @@ mod tests {
         assert_eq!(lp.m_row_count(2, 5).unwrap(), 3 + 4 * 2 + 5 + 1 + 2);
         assert_eq!(lp.m_row_count(4, 4).unwrap(), 3 + 4 * 4 + 4 + 1 + 2);
         assert_eq!(
-            lp.m_row_count_for(2, 5, MRowLayout::Terminal).unwrap(),
+            lp.m_row_count_for(2, 5, MRowLayout::WithoutDBlock).unwrap(),
             4 * 2 + 5 + 1 + 2
         );
     }

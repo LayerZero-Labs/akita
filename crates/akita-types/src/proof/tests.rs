@@ -58,7 +58,7 @@ fn packed_digits_malformed_buffer_returns_error() {
 
 #[test]
 fn direct_witness_shape_rejects_oversized_allocations() {
-    let err = DirectWitnessShape::FieldElements(DEFAULT_MAX_SEQUENCE_LEN + 1)
+    let err = CleartextWitnessShape::FieldElements(DEFAULT_MAX_SEQUENCE_LEN + 1)
         .check()
         .unwrap_err();
     assert!(matches!(
@@ -104,8 +104,8 @@ fn flat_ring_vec_checked_decoders_reject_zero_dimension() {
 
 #[test]
 fn batched_proof_shape_validation_recurses_into_witness_shapes() {
-    let shape = AkitaBatchedProofShape::Direct {
-        witness_shapes: vec![DirectWitnessShape::FieldElements(
+    let shape = AkitaBatchedProofShape::ZeroFold {
+        witness_shapes: vec![CleartextWitnessShape::FieldElements(
             DEFAULT_MAX_SEQUENCE_LEN + 1,
         )],
     };
@@ -274,7 +274,7 @@ fn tiny_terminal_stage2_masked() -> SumcheckProofMasked<F> {
 #[test]
 fn terminal_level_proof_serde_round_trip() {
     const D: usize = 8;
-    let final_witness = DirectWitnessProof::PackedDigits(
+    let final_witness = CleartextWitnessProof::PackedDigits(
         PackedDigits::from_i8_digits_with_min_bits(&[1i8, -1, 0, 2], 3),
     );
 

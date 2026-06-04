@@ -8,9 +8,12 @@ mod ring_subfield_fp8;
 mod tests;
 mod tower_fp4;
 
-use super::wide::{AccumPair, HasUnreducedOps};
-use super::{fp128::Fp128, fp16::Fp16, fp32::Fp32, fp64::Fp64};
-use crate::{BalancedDigitLookup, CanonicalField, FieldCore, HalvingField};
+use super::wide::{
+    AccumPair, FoldMatrixFp32, FoldMatrixFp64, Fp2Fp64ProductAccum, HasOptimizedFold,
+    HasUnreducedOps, RingSubfieldFp4Fp32ProductAccum,
+};
+use super::{fp128::Fp128, fp32::Fp32, fp64::Fp64};
+use crate::{BalancedDigitLookup, CanonicalField, FieldCore, HalvingField, MulBaseUnreduced};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -24,6 +27,9 @@ pub use fp2::{Ext2, Fp2, Fp2Config, NegOneNr, TwoNr};
 pub(crate) use power_fp4::power_basis_fp4_mul_coeffs;
 pub use power_fp4::{PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend};
 pub use ring_subfield_fp4::{RingSubfieldFp4, RingSubfieldFp4MulBackend};
+pub(crate) use ring_subfield_fp8::{
+    ring_subfield_fp8_mul_schedule, ring_subfield_fp8_square_schedule,
+};
 pub use ring_subfield_fp8::{RingSubfieldFp8, RingSubfieldFp8MulBackend};
 pub use tower_fp4::{TowerBasisFp4, TowerBasisFp4Config, UnitNr};
 

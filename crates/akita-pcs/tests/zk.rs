@@ -14,19 +14,18 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::protocol::ring_switch::{
     build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
 };
-use akita_prover::{AkitaProverSetup, CommitmentProver, QuadraticEquation};
+use akita_prover::{AkitaProverSetup, CommitmentProver, RingRelationProver, RingRelationWitness};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::multilinear_eval;
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     lagrange_weights, relation_claim_from_rows_extension, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
-    AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary, CommitmentEnvelope,
+    AkitaCommitmentHint, AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary,
     DecompositionParams, FlatRingVec, MRowLayout, RingCommitment, RingMultiplierOpeningPoint,
     SisModulusFamily,
 };
-use akita_verifier::{prepare_ring_switch_row_eval, CommitmentVerifier};
+use akita_verifier::{prepare_ring_switch_row_eval, CommitmentVerifier, RingSwitchReplay};
 use common::*;
 use std::marker::PhantomData;
 
@@ -46,32 +45,14 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Cfg::decomposition()
     }
 
-    fn stage1_challenge_config(
+    fn ring_challenge_config(
         d: usize,
     ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
-        Cfg::stage1_challenge_config(d)
+        Cfg::ring_challenge_config(d)
     }
 
     fn sis_modulus_family() -> SisModulusFamily {
         Cfg::sis_modulus_family()
-    }
-
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        None
-    }
-
-    fn schedule_plan(
-        _key: AkitaScheduleLookupKey,
-    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-        Ok(None)
-    }
-
-    fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
-        Cfg::audited_root_rank(role, max_num_vars)
-    }
-
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        Cfg::envelope(max_num_vars)
     }
 
     fn max_setup_matrix_size(
@@ -82,8 +63,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
-    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
-        Cfg::log_basis_search_range(inputs)
+    fn basis_range() -> (u32, u32) {
+        Cfg::basis_range()
     }
 }
 
@@ -124,7 +105,7 @@ fn plain_root_d_image<const D: usize>(
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
-    let quad_eq = QuadraticEquation::<F, D>::new_prover(
+    let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
         &CpuBackend,
         prepared,
         vec![ring_opening_point],
@@ -139,23 +120,21 @@ fn plain_root_d_image<const D: usize>(
         std::slice::from_ref(commitment),
         std::slice::from_ref(&y_ring),
         vec![CyclotomicRing::<F, D>::one()],
-        MRowLayout::Intermediate,
+        MRowLayout::WithDBlock,
     )
-    .expect("debug quadratic equation");
+    .expect("debug ring relation");
 
-    assert!(
-        quad_eq.d_blinding_digits().is_some(),
-        "zk quadratic equation should sample D-blinding digits"
-    );
+    let RingRelationWitness { w_hat, .. } = witness;
     let plain_v = CpuBackend
         .digit_rows::<D>(
             prepared,
             layout.d_key.row_len(),
-            quad_eq.w_hat_flat().expect("debug w_hat"),
+            w_hat.flat_digits(),
+            layout.log_basis,
         )
         .expect("plain v rows");
     assert_ne!(
-        quad_eq.v, plain_v,
+        instance.v, plain_v,
         "debug zk v should include fresh D-blinding"
     );
     plain_v
@@ -306,17 +285,8 @@ fn dense_fp32_extension_opening(
         })
 }
 
-#[derive(Clone, Copy)]
-enum ExpectedRoot {
-    Terminal,
-    Fold,
-}
-
-fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
-    label: &'static [u8],
-    expected_root: ExpectedRoot,
-) {
-    type Cfg = fp32::D32Full;
+fn run_zk_fp32_extension_opening_reduction<const NV: usize>(label: &'static [u8]) {
+    type Cfg = fp32::D64Full;
     const D: usize = Cfg::D;
 
     init_rayon_pool();
@@ -354,23 +324,14 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
         )
         .expect("zk fp32 prove");
 
-        match (expected_root, &proof.root) {
-            (ExpectedRoot::Terminal, AkitaBatchedRootProof::Terminal(root)) => {
-                assert!(
-                    root.extension_opening_reduction.is_some(),
-                    "fixture must exercise root extension-opening reduction"
-                );
-            }
-            (ExpectedRoot::Fold, AkitaBatchedRootProof::Fold(root)) => {
+        match &proof.root {
+            AkitaBatchedRootProof::Fold(root) => {
                 assert!(
                     root.extension_opening_reduction.is_some(),
                     "fixture must exercise folded-root extension-opening reduction"
                 );
             }
-            (ExpectedRoot::Terminal, other) => {
-                panic!("expected terminal root extension-reduction proof, got {other:?}");
-            }
-            (ExpectedRoot::Fold, other) => {
+            other => {
                 panic!("expected folded root extension-reduction proof, got {other:?}");
             }
         }
@@ -390,7 +351,7 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
         let reduction = match &mut tampered.root {
             AkitaBatchedRootProof::Terminal(root) => root.extension_opening_reduction.as_mut(),
             AkitaBatchedRootProof::Fold(root) => root.extension_opening_reduction.as_mut(),
-            AkitaBatchedRootProof::Direct { .. } => None,
+            AkitaBatchedRootProof::ZeroFold { .. } => None,
         }
         .expect("fixture should carry extension-opening reduction partials");
         let partial = reduction
@@ -414,33 +375,23 @@ fn run_zk_fp32_extension_opening_reduction<const NV: usize>(
 }
 
 #[test]
-fn zk_fp32_extension_opening_reduction_terminal_root_verifies() {
-    // The fp32 D32Full zk schedule transitions from a one-fold (Terminal)
-    // root to a multi-fold root early in the supported range. After
-    // regenerating the schedule tables with an idempotent DP, `nv = 12` is
-    // the largest singleton key that still picks a 1-fold root for this
-    // preset; `nv = 13` already escalates to a 2-fold root and is the
-    // matching `Fold`-root fixture below.
-    run_zk_fp32_extension_opening_reduction::<12>(
-        b"zk/fp32-extension-root-terminal",
-        ExpectedRoot::Terminal,
-    );
-}
-
-#[test]
 fn zk_fp32_extension_opening_reduction_folded_root_verifies() {
-    run_zk_fp32_extension_opening_reduction::<13>(
-        b"zk/fp32-extension-root-fold",
-        ExpectedRoot::Fold,
-    );
+    // Under honest committed-fold pricing the small Q32 modulus has no 1-fold
+    // (`Terminal`) root regime: a singleton fp32 D64Full commitment is a
+    // cleartext (`ZeroFold`) root for `nv <= 14`, jumps straight to a
+    // multi-fold (`Fold`) root at `nv = 15`, and saturates back to `ZeroFold`
+    // for `nv >= 22` (the modulus can no longer securely commit the folded
+    // witness). So extension-opening reduction is exercised on the `Fold` root
+    // at `nv = 15`. D32Full never ships a fold-root schedule, so this fixture
+    // pins D64.
+    run_zk_fp32_extension_opening_reduction::<15>(b"zk/fp32-extension-root-fold");
 }
 
 fn run_zk_dense_commitment_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
     BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>:
-        CommitmentConfig<Field = F, ClaimField = F>,
-    Scheme<D, akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>>: CommitmentProver<
+    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
+    Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
@@ -458,7 +409,7 @@ where
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    type Cfg<Base> = akita_planner::test_utils::PlannerCfg<RuntimePlanned<Base>>;
+    type Cfg<Base> = RuntimePlanned<Base>;
 
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
@@ -564,7 +515,7 @@ where
 }
 
 fn run_zk_dense_cursor_binding_negatives() {
-    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
+    type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
     const NV: usize = 14;
     const LABEL: &[u8] = b"zk_cursor_binding_negatives";
@@ -714,9 +665,8 @@ fn run_zk_dense_cursor_binding_negatives() {
 fn run_zk_dense_v_hiding<const D: usize, BaseCfg>(nv: usize, label: &'static [u8])
 where
     BaseCfg: CommitmentConfig<Field = F, ClaimField = F>,
-    akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>:
-        CommitmentConfig<Field = F, ClaimField = F>,
-    Scheme<D, akita_planner::test_utils::PlannerCfg<RuntimePlanned<BaseCfg>>>: CommitmentProver<
+    RuntimePlanned<BaseCfg>: CommitmentConfig<Field = F, ClaimField = F>,
+    Scheme<D, RuntimePlanned<BaseCfg>>: CommitmentProver<
             F,
             D,
             ProverSetup = AkitaProverSetup<F, D>,
@@ -734,7 +684,7 @@ where
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    type Cfg<Base> = akita_planner::test_utils::PlannerCfg<RuntimePlanned<Base>>;
+    type Cfg<Base> = RuntimePlanned<Base>;
 
     assert_eq!(BaseCfg::D, D);
     init_rayon_pool();
@@ -847,9 +797,14 @@ where
 }
 
 fn run_zk_dense_batched_shape_cases() {
-    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
+    type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
-    const NV: usize = 14;
+    // Under the corrected weak-binding collision norm + regenerated SIS floor,
+    // the multipoint (2-point) dense fp128 D32 batched root first folds at
+    // `nv = 15` (it ships a cleartext `ZeroFold` root for `nv <= 14`). The
+    // same-point 3-poly case folds from `nv = 14`; `nv = 15` keeps both shapes
+    // on a folded root, which is what this fixture exercises.
+    const NV: usize = 15;
 
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -908,7 +863,7 @@ fn run_zk_dense_batched_shape_cases() {
             AkitaBatchedRootProof::Terminal(root) => {
                 assert_eq!(root.y_rings.coeff_len() / D, 1);
             }
-            AkitaBatchedRootProof::Direct { .. } => {
+            AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("same-point fixture should use a folded or terminal ZK proof")
             }
         }
@@ -991,7 +946,7 @@ fn run_zk_dense_batched_shape_cases() {
             AkitaBatchedRootProof::Terminal(root) => {
                 assert_eq!(root.y_rings.coeff_len() / D, NUM_POINTS);
             }
-            AkitaBatchedRootProof::Direct { .. } => {
+            AkitaBatchedRootProof::ZeroFold { .. } => {
                 panic!("multipoint fixture should use a folded or terminal ZK proof")
             }
         }
@@ -1019,7 +974,7 @@ fn run_zk_dense_batched_shape_cases() {
 
 #[test]
 fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
-    type Cfg = akita_planner::test_utils::PlannerCfg<RuntimePlanned<fp128::D32Full>>;
+    type Cfg = RuntimePlanned<fp128::D32Full>;
     const D: usize = fp128::D32Full::D;
     const NV: usize = 14;
     const NUM_POINTS: usize = 2;
@@ -1101,7 +1056,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             .iter()
             .flat_map(|polys| polys.iter())
             .collect();
-        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
+        let (instance, witness) = RingRelationProver::new::<F, D, _, _, _>(
             &CpuBackend,
             &prepared,
             ring_opening_points,
@@ -1116,11 +1071,17 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             &commitments,
             &y_rings,
             vec![CyclotomicRing::<F, D>::one(); incidence.num_claims()],
-            MRowLayout::Intermediate,
+            MRowLayout::WithDBlock,
         )
-        .expect("quadratic equation");
-        let w = ring_switch_build_w::<F, CpuBackend, D>(&mut quad_eq, &CpuBackend, &prepared, &lp)
-            .expect("ring-switch witness");
+        .expect("ring relation");
+        let w = ring_switch_build_w::<F, CpuBackend, D>(
+            &instance,
+            witness,
+            &CpuBackend,
+            &prepared,
+            &lp,
+        )
+        .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
@@ -1128,7 +1089,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
         let alpha = F::from_u64(71);
         let alpha_evals_y = scalar_powers(alpha, D);
         let rows = lp
-            .m_row_count_for(NUM_POINTS, NUM_POINTS, MRowLayout::Intermediate)
+            .m_row_count_for(NUM_POINTS, NUM_POINTS, MRowLayout::WithDBlock)
             .expect("row count");
         let tau1_bits = rows.next_power_of_two().trailing_zeros() as usize;
         let gamma = vec![F::one(); incidence.num_claims()];
@@ -1148,20 +1109,24 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
                 .collect();
             let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
-                quad_eq.opening_points(),
-                quad_eq.ring_multiplier_points(),
-                quad_eq.claim_to_point(),
-                &quad_eq.challenges,
+                instance.opening_points(),
+                instance.ring_multiplier_points(),
+                instance.claim_to_point(),
+                &instance.challenges,
                 alpha,
                 &alpha_evals_y,
                 &lp,
                 &tau1,
-                quad_eq.num_polys_per_point(),
-                quad_eq.claim_to_point_poly(),
-                quad_eq.claim_poly_indices(),
+                instance
+                    .commitment_routing()
+                    .num_polys_per_commitment_group(),
+                instance.commitment_routing().claim_to_commitment_group(),
+                instance
+                    .commitment_routing()
+                    .claim_poly_in_commitment_group(),
                 &gamma,
-                quad_eq.num_public_rows(),
-                MRowLayout::Intermediate,
+                instance.num_public_rows(),
+                MRowLayout::WithDBlock,
             )
             .expect("m evals");
             let got = (0..live_x_cols).fold(F::zero(), |acc_x, x| {
@@ -1178,7 +1143,7 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             let expected = relation_claim_from_rows_extension::<F, F, D>(
                 &tau1,
                 alpha,
-                quad_eq.v(),
+                &instance.v,
                 &commitment_rows,
                 &y_rings,
             )
@@ -1192,50 +1157,45 @@ fn zk_multipoint_ring_switch_relation_matches_materialized_m() {
             .collect();
         let m_evals_x = compute_m_evals_x::<F, F, D>(
             &setup.expanded,
-            quad_eq.opening_points(),
-            quad_eq.ring_multiplier_points(),
-            quad_eq.claim_to_point(),
-            &quad_eq.challenges,
+            instance.opening_points(),
+            instance.ring_multiplier_points(),
+            instance.claim_to_point(),
+            &instance.challenges,
             alpha,
             &alpha_evals_y,
             &lp,
             &tau1,
-            quad_eq.num_polys_per_point(),
-            quad_eq.claim_to_point_poly(),
-            quad_eq.claim_poly_indices(),
+            instance
+                .commitment_routing()
+                .num_polys_per_commitment_group(),
+            instance.commitment_routing().claim_to_commitment_group(),
+            instance
+                .commitment_routing()
+                .claim_poly_in_commitment_group(),
             &gamma,
-            quad_eq.num_public_rows(),
-            MRowLayout::Intermediate,
+            instance.num_public_rows(),
+            MRowLayout::WithDBlock,
         )
         .expect("m evals");
         let x_challenges: Vec<F> = (0..m_evals_x.len().trailing_zeros() as usize)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
         let expected_eval = multilinear_eval(&m_evals_x, &x_challenges).expect("mle");
-        let prepared_eval = prepare_ring_switch_row_eval::<F, F, D>(
-            &quad_eq.challenges,
-            alpha,
-            &lp,
-            &tau1,
-            quad_eq.num_polys_per_point(),
-            quad_eq.claim_to_point_poly(),
-            quad_eq.claim_poly_indices(),
-            &gamma,
-            quad_eq.num_public_rows(),
-            MRowLayout::Intermediate,
-            quad_eq.opening_points().len(),
-            quad_eq.ring_multiplier_points(),
-            quad_eq.claim_to_point(),
-        )
-        .expect("prepare row eval")
-        .eval_at_point::<F, D>(
-            &x_challenges,
-            &setup.expanded,
-            quad_eq.opening_points(),
-            quad_eq.ring_multiplier_points(),
-            alpha,
-        )
-        .expect("deferred row eval");
+        let replay = RingSwitchReplay {
+            relation: &instance,
+            row_coefficients: &gamma,
+            lp: &lp,
+        };
+        let prepared_eval = prepare_ring_switch_row_eval::<F, F, D>(&replay, alpha, &tau1)
+            .expect("prepare row eval")
+            .eval_at_point::<F, D>(
+                &x_challenges,
+                &setup.expanded,
+                instance.opening_points(),
+                instance.ring_multiplier_points(),
+                alpha,
+            )
+            .expect("deferred row eval");
         assert_eq!(prepared_eval, expected_eval);
     });
 }

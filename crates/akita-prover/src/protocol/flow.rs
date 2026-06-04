@@ -1,5 +1,9 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
+use crate::protocol::extension_opening_reduction::{
+    ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
+    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+};
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_terminal,
     ring_switch_finalize_terminal_with_gamma, ring_switch_finalize_with_gamma,
@@ -8,30 +12,21 @@ use crate::protocol::ring_switch::{
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 #[cfg(feature = "zk")]
 use crate::protocol::zk_hiding_commit::commit_zk_hiding_witness;
+use crate::protocol::RingRelationProver;
 use crate::{
-    AkitaPolyOps, CommittedPolynomials, ProverClaims, ProverComputeBackend, QuadraticEquation,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
-    RootTensorProjectionPoly,
+    AkitaPolyOps, CommittedPolynomials, ProverClaims, ProverComputeBackend,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, RingRelationInstance,
+    RingRelationWitness, RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::fields::wide::HasWide;
+use akita_field::fields::wide::{HasOptimizedFold, HasWide};
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, Invertible, PseudoMersenneField, RandomSampling,
+    HalvingField, Invertible, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{
-    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
-    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
-    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, BatchedExtensionOpeningReductionProver,
-    BatchedExtensionOpeningReductionTerm, ExtensionOpeningReductionProver,
-    ExtensionOpeningReductionSumcheck, SumcheckInstanceProver,
-    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
-};
 #[cfg(feature = "zk")]
 use akita_sumcheck::{
     CompressedUniPoly, EqFactoredUniPoly, SumcheckProofMasked, ZkSumcheckInstanceProverExt,
@@ -48,6 +43,7 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
+    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
@@ -55,13 +51,16 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_extension_opening_partials, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, terminal_witness_segment_layout, validate_batched_inputs,
+    schedule_root_fold_step, tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
+    tensor_logical_claim_from_partials, tensor_opening_split, tensor_packed_witness_evals,
+    tensor_partials_from_base_evals, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, terminal_witness_segment_layout, validate_batched_inputs,
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup,
     AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder,
-    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectWitnessProof,
-    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
-    MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
-    RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
+    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CleartextWitnessProof,
+    CleartextWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim,
+    LevelParams, MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
+    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
 };
 #[cfg(feature = "zk")]
 use akita_types::{stage1_tree_stage_shapes, sumcheck_rounds, ZkHidingProof};
@@ -83,9 +82,9 @@ pub use inputs::{
     prove_root_direct,
 };
 pub use recursive::{
-    prove_fold_level_from_quadratic, prove_recursive_fold_with_params,
+    prove_fold_level_from_ring_relation, prove_recursive_fold_with_params,
     prove_recursive_level_with_policy, prove_recursive_suffix_with_policy,
-    prove_terminal_fold_level_from_quadratic, prove_terminal_recursive_fold_with_params,
+    prove_terminal_fold_level_from_ring_relation, prove_terminal_recursive_fold_with_params,
     prove_terminal_recursive_level_with_policy, SuffixLevelOutput, SuffixLevelRequest,
 };
 #[cfg(test)]
@@ -95,8 +94,8 @@ pub(in crate::protocol::flow) use recursive::{
 pub(in crate::protocol::flow) use root_extension::*;
 pub(in crate::protocol::flow) use root_fold::evaluate_recursive_witness_at_multiplier_point;
 pub use root_fold::{
-    prove_root_fold_from_quadratic, prove_root_fold_with_params,
-    prove_terminal_root_fold_from_quadratic, prove_terminal_root_fold_with_params,
+    prove_root_fold_from_ring_relation, prove_root_fold_with_params,
+    prove_terminal_root_fold_from_ring_relation, prove_terminal_root_fold_with_params,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -282,8 +281,8 @@ impl<F: FieldCore> ZkHidingProverState<F> {
         let partial_masks = (0..partials)
             .map(|_| self.take_ext_scalar())
             .collect::<Result<Vec<_>, _>>()?;
-        let round_pads = self
-            .take_compressed_rounds(rounds, akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE)?;
+        let round_pads =
+            self.take_compressed_rounds(rounds, akita_types::EXTENSION_OPENING_REDUCTION_DEGREE)?;
         Ok((partial_masks, round_pads))
     }
 }
@@ -558,7 +557,7 @@ fn append_zk_extension_reduction_slots<F, L>(
     F: FieldCore + RandomSampling,
     L: ExtField<F>,
 {
-    let round_coeffs = akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
+    let round_coeffs = akita_types::EXTENSION_OPENING_REDUCTION_DEGREE;
     for _ in 0..(partials + rounds * round_coeffs) {
         push_random_ext_scalar_slots::<F, L>(out, rng);
     }
@@ -632,7 +631,7 @@ where
                 );
             }
             // Recursive-level ring mask: added to that level's `y_ring` before
-            // ring-switching so the current quadratic-equation value is hidden.
+            // ring-switching so the current ring-relation value is hidden.
             hiding_witness.extend((0..D).map(|_| F::random(&mut rng)));
             // Terminal recursive folds skip Stage 1 and consume only Stage 2 pads.
             let include_stage1 = step_idx + 1 < fold_steps.len();

@@ -29,23 +29,3 @@ impl DecompositionParams {
         self.log_open_bound.unwrap_or(self.log_commit_bound)
     }
 }
-
-/// Maximum matrix row envelope needed across all runtime levels for a config.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommitmentEnvelope {
-    /// Maximum inner Ajtai rank needed by any supported level.
-    pub max_n_a: usize,
-    /// Maximum outer commitment rank needed by any supported level.
-    pub max_n_b: usize,
-    /// Maximum prover D-matrix rank needed by any supported level.
-    pub max_n_d: usize,
-}
-
-/// Selects which Ajtai role the audited rank floor applies to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AjtaiRole {
-    /// Inner Ajtai matrix `A`.
-    Inner,
-    /// Outer commitment matrices `B` and `D` (sized together).
-    Outer,
-}

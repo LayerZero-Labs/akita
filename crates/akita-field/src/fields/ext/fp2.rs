@@ -359,12 +359,177 @@ impl<F: FieldCore + BalancedDigitLookup + Valid, C: Fp2Config<F>> BalancedDigitL
 {
 }
 
-impl<F: HasUnreducedOps + Valid, C: Fp2Config<F>> HasUnreducedOps for Fp2<F, C> {
-    type MulU64Accum = AccumPair<F::MulU64Accum>;
-    type ProductAccum = AccumPair<F::ProductAccum>;
+/// Identity-stub `HasUnreducedOps` for `Fp2` variants without a dedicated
+/// delayed-reduction accumulator. `ProductAccum = Self`, so every multiply
+/// reduces immediately. Same pattern as `RingSubfieldFp4<Fp64/Fp128>` and
+/// `RingSubfieldFp8<*>`.
+macro_rules! impl_fp2_unreduced_identity {
+    ($base:ident<$p:ident: $pty:ty>) => {
+        impl<const $p: $pty, C: Fp2Config<$base<$p>>> HasUnreducedOps for Fp2<$base<$p>, C> {
+            type MulU64Accum = Self;
+            type ProductAccum = Self;
+
+            #[inline]
+            fn mul_u64_unreduced(self, small: u64) -> Self {
+                self * Self::from_u64(small)
+            }
+            #[inline]
+            fn mul_to_product_accum(self, other: Self) -> Self {
+                self * other
+            }
+            #[inline]
+            fn reduce_mul_u64_accum(accum: Self) -> Self {
+                accum
+            }
+            #[inline]
+            fn reduce_product_accum(accum: Self) -> Self {
+                accum
+            }
+        }
+
+        impl<const $p: $pty, C: Fp2Config<$base<$p>>> MulBaseUnreduced<$base<$p>>
+            for Fp2<$base<$p>, C>
+        {
+        }
+    };
+}
+
+impl_fp2_unreduced_identity!(Fp32<P: u32>);
+impl_fp2_unreduced_identity!(Fp128<P: u128>);
+
+macro_rules! impl_fp2_default_optimized_fold {
+    ($base:ident<$p:ident: $pty:ty>) => {
+        impl<const $p: $pty, C: Fp2Config<$base<$p>>> HasOptimizedFold for Fp2<$base<$p>, C> {
+            type FoldCtx = Self;
+            #[inline]
+            fn precompute_fold(r: Self) -> Self {
+                r
+            }
+            #[inline]
+            fn fold_one(r: &Self, even: Self, odd: Self) -> Self {
+                even + *r * (odd - even)
+            }
+        }
+    };
+}
+
+impl_fp2_default_optimized_fold!(Fp32<P: u32>);
+impl_fp2_default_optimized_fold!(Fp128<P: u128>);
+
+/// Specialized EOR fold for `Fp2<Fp64<P>, C>`.
+///
+/// Mirrors `RingSubfieldFp4<Fp32>`: precompute the "multiply by `r`" matrix
+/// once per round, then fold each pair as `even + r·(odd − even)` using
+/// base-field (`u64`) products with a single delayed reduction per output
+/// coordinate. Only `Fp64` bases are specialized; other bases keep the generic
+/// `Fp2` fold via `impl_fp2_default_optimized_fold`.
+impl<const P: u64, C: Fp2Config<Fp64<P>>> HasOptimizedFold for Fp2<Fp64<P>, C> {
+    type FoldCtx = FoldMatrixFp64;
+
+    /// Build the 2×2 "multiply by `r`" matrix in the `[1, u]` basis.
+    ///
+    /// For `r = r0 + r1·u` and `u² = NR`, multiplying `(a0, a1)` by `r` yields
+    /// `(r0·a0 + NR·r1·a1, r1·a0 + r0·a1)`, i.e. the matrix
+    /// `[[r0, NR·r1], [r1, r0]]`. `NR·r1` is materialized once via `mul_nr`
+    /// (a free negation for `IS_NEG_ONE`, a doubling for the `NR = 2` preset).
+    #[inline]
+    fn precompute_fold(r: Self) -> FoldMatrixFp64 {
+        let r0 = r.coeffs[0];
+        let r1 = r.coeffs[1];
+        let nr_r1 = Self::mul_nr(r1);
+        FoldMatrixFp64([
+            [r0.to_limbs(), nr_r1.to_limbs()],
+            [r1.to_limbs(), r0.to_limbs()],
+        ])
+    }
+
+    /// Fold one pair: `even + r·(odd − even)`.
+    ///
+    /// Each output coordinate is the sum of two `u64×u64 → u128` base products,
+    /// reduced once by `Fp64::reduce_sum_of_two_products`. This is the
+    /// schoolbook product (4 base multiplies, 2 reductions) with delayed
+    /// reduction, versus the generic Karatsuba multiply (3 multiplies, 3
+    /// reductions). The reduced coordinates are canonical, so the result is
+    /// byte-identical to the generic fold.
+    #[inline]
+    fn fold_one(ctx: &FoldMatrixFp64, even: Self, odd: Self) -> Self {
+        let m = &ctx.0;
+        let d0 = (odd.coeffs[0] - even.coeffs[0]).to_limbs() as u128;
+        let d1 = (odd.coeffs[1] - even.coeffs[1]).to_limbs() as u128;
+        let c0 =
+            Fp64::<P>::reduce_sum_of_two_products((m[0][0] as u128) * d0, (m[0][1] as u128) * d1);
+        let c1 =
+            Fp64::<P>::reduce_sum_of_two_products((m[1][0] as u128) * d0, (m[1][1] as u128) * d1);
+        Self::new(even.coeffs[0] + c0, even.coeffs[1] + c1)
+    }
+}
+
+/// Split `value = lo128 + hi_carry * 2^128` into base-2^64 limbs
+/// `[bits 0..64, bits 64..]` for a `Fp64ProductAccum` slot pair.
+///
+/// The high limb may exceed 64 bits (it carries `hi_carry` in bits 64.., which
+/// is small — at most 2 here), and the accumulator's `reduce` reconstructs
+/// `lo + hi * 2^64` exactly, so the full (>128-bit) coefficient survives without
+/// the wrap-mod-2^128 that a single-`u128` intermediate would incur.
+#[inline(always)]
+fn fp64_accum_limbs(lo128: u128, hi_carry: u128) -> [u128; 2] {
+    [lo128 as u64 as u128, (lo128 >> 64) | (hi_carry << 64)]
+}
+
+/// Widening `Fp2<Fp64<P>, C>` multiplication with delayed reduction.
+///
+/// Each coefficient is a combination of base products that can exceed 128 bits
+/// — `c0` reaches `p00 + p^2` (IS_NEG_ONE) or `p00 + 2*p11` (just under 2^130),
+/// and `c1 = p01 + p10` reaches ~2^129. Forming them in a single `u128` would
+/// drop the carry into bit 128 (wrap mod 2^128), which is *not* congruent mod
+/// `p` and corrupts the delayed sum. We instead track the carry explicitly and
+/// store base-2^64 limbs via [`fp64_accum_limbs`], so summing a batch and
+/// reducing once is exact. For `IS_NEG_ONE` configs the `p^2` bias keeps `c0`
+/// non-negative (and `p^2 == 0 (mod p)`, so it is invisible after reduction).
+#[inline(always)]
+pub(crate) fn fp2_mul_to_accum_fp64<const P: u64, C: Fp2Config<Fp64<P>>>(
+    a: [Fp64<P>; 2],
+    b: [Fp64<P>; 2],
+) -> Fp2Fp64ProductAccum {
+    let p00: u128 = a[0].mul_wide(b[0]);
+    let p11 = a[1].mul_wide(b[1]);
+    let p01 = a[0].mul_wide(b[1]);
+    let p10 = a[1].mul_wide(b[0]);
+
+    let [c0_lo, c0_hi] = if C::IS_NEG_ONE {
+        // c0 = p00 + p^2 - p11, non-negative and < 2^129.
+        let modulus_sq = (P as u128) * (P as u128);
+        let (sum, carry_add) = p00.overflowing_add(modulus_sq);
+        let (diff, borrow) = sum.overflowing_sub(p11);
+        // c0 >= 0 guarantees carry_add >= borrow, so this stays in {0, 1}.
+        let hi_carry = (carry_add as u128) - (borrow as u128);
+        fp64_accum_limbs(diff, hi_carry)
+    } else {
+        // c0 = p00 + 2*p11, < 3*p^2 < 2^130 (carry in {0, 1, 2}).
+        let (sum1, carry1) = p00.overflowing_add(p11);
+        let (sum2, carry2) = sum1.overflowing_add(p11);
+        let hi_carry = (carry1 as u128) + (carry2 as u128);
+        fp64_accum_limbs(sum2, hi_carry)
+    };
+    // c1 = p01 + p10, < 2*p^2 < 2^129 (carry in {0, 1}).
+    let (c1_sum, c1_carry) = p01.overflowing_add(p10);
+    let [c1_lo, c1_hi] = fp64_accum_limbs(c1_sum, c1_carry as u128);
+
+    Fp2Fp64ProductAccum([c0_lo, c0_hi, c1_lo, c1_hi])
+}
+
+impl<const P: u64, C: Fp2Config<Fp64<P>>> HasUnreducedOps for Fp2<Fp64<P>, C> {
+    type MulU64Accum = AccumPair<<Fp64<P> as HasUnreducedOps>::MulU64Accum>;
+    type ProductAccum = Fp2Fp64ProductAccum;
+
+    // `fp2_mul_to_accum_fp64` keeps the full >128-bit coefficient via carry-aware
+    // base-2^64 limbs, so summing a batch and reducing once equals per-term `Mul`.
+    // Covered by the `Ext2<Prime64Offset59>` rounds in
+    // `sparse_tensor_factor_matches_dense_factor_rounds`.
+    const DELAYED_PRODUCT_SUM_IS_EXACT: bool = true;
 
     #[inline]
-    fn mul_u64_unreduced(self, small: u64) -> AccumPair<F::MulU64Accum> {
+    fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
         AccumPair(
             self.coeffs[0].mul_u64_unreduced(small),
             self.coeffs[1].mul_u64_unreduced(small),
@@ -372,32 +537,26 @@ impl<F: HasUnreducedOps + Valid, C: Fp2Config<F>> HasUnreducedOps for Fp2<F, C> 
     }
 
     #[inline]
-    fn mul_to_product_accum(self, other: Self) -> AccumPair<F::ProductAccum> {
-        let c00 = self.coeffs[0].mul_to_product_accum(other.coeffs[0]);
-        let c11 = self.coeffs[1].mul_to_product_accum(other.coeffs[1]);
-        let c01 = self.coeffs[0].mul_to_product_accum(other.coeffs[1]);
-        let c10 = self.coeffs[1].mul_to_product_accum(other.coeffs[0]);
-
-        let nr_c11 = if C::IS_NEG_ONE { -c11 } else { c11 + c11 };
-        AccumPair(c00 + nr_c11, c01 + c10)
+    fn mul_to_product_accum(self, other: Self) -> Fp2Fp64ProductAccum {
+        fp2_mul_to_accum_fp64::<P, C>(self.coeffs, other.coeffs)
     }
 
     #[inline]
-    fn reduce_mul_u64_accum(accum: AccumPair<F::MulU64Accum>) -> Self {
+    fn reduce_mul_u64_accum(accum: Self::MulU64Accum) -> Self {
         Self::new(
-            F::reduce_mul_u64_accum(accum.0),
-            F::reduce_mul_u64_accum(accum.1),
+            Fp64::<P>::reduce_mul_u64_accum(accum.0),
+            Fp64::<P>::reduce_mul_u64_accum(accum.1),
         )
     }
 
     #[inline]
-    fn reduce_product_accum(accum: AccumPair<F::ProductAccum>) -> Self {
-        Self::new(
-            F::reduce_product_accum(accum.0),
-            F::reduce_product_accum(accum.1),
-        )
+    fn reduce_product_accum(accum: Fp2Fp64ProductAccum) -> Self {
+        let [c0, c1] = accum.reduce::<P>();
+        Self::new(c0, c1)
     }
 }
+
+impl<const P: u64, C: Fp2Config<Fp64<P>>> MulBaseUnreduced<Fp64<P>> for Fp2<Fp64<P>, C> {}
 
 /// Default quadratic extension used by Akita field tests and helpers.
 pub type Ext2<F> = Fp2<F, TwoNr>;

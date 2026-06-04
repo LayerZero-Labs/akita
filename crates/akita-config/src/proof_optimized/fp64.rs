@@ -39,107 +39,75 @@ pub struct D256Full;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D32Full,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q64,
     32,
     64,
-    64,
-    3,
-    8,
-    vec![-1, 1],
-    Some(akita_types::generated::fp64_d32_table())
+    64
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D32OneHot,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q64,
     32,
     64,
-    1,
-    3,
-    8,
-    vec![-1, 1],
-    Some(akita_types::generated::fp64_d32_onehot_table())
+    1
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D64Full,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q64,
     64,
     64,
-    64,
-    3,
-    8,
-    vec![-1, 1],
-    Some(akita_types::generated::fp64_d64_table())
+    64
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D64OneHot,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q64,
     64,
     64,
-    1,
-    3,
-    8,
-    vec![-1, 1],
-    Some(akita_types::generated::fp64_d64_onehot_table())
+    1
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D128Full,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q64,
     128,
     64,
-    64,
-    3,
-    8,
-    vec![-1, 1],
-    None
+    64
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D128OneHot,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q64,
     128,
     64,
-    1,
-    3,
-    8,
-    vec![-1, 1],
-    None
+    1
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D256Full,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q64,
     256,
     64,
-    64,
-    3,
-    8,
-    vec![-1, 1],
-    None
+    64
 );
-impl_small_field_preset!(
+impl_proof_optimized_preset!(
     D256OneHot,
     Field,
     ExtensionField,
     akita_types::SisModulusFamily::Q64,
     256,
     64,
-    1,
-    3,
-    8,
-    vec![-1, 1],
-    None
+    1
 );

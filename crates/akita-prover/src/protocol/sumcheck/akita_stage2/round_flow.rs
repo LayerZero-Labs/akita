@@ -93,7 +93,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> SumcheckInstanceProver<E>
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
     for AkitaStage2Prover<E>
 {
     fn num_rounds(&self) -> usize {

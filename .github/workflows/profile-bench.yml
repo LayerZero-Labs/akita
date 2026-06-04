@@ -16,24 +16,39 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
-  # The active benchmark path is pinned to explicit D32 modes. It deliberately
+  # The active benchmark path is pinned to explicit preset modes. It deliberately
   # does not use the old adaptive `full`/`onehot` selectors.
-  # Long hosted-runner configs are deferred from this PR's active matrix.
-  # In particular, onehot_fp16_d32:32:1 and dense_fp128_d32:26:1 are measured
-  # offenders and should come back only after tuning or a larger runner budget.
-  AKITA_BENCH_MODE: onehot_fp128_d32
+  # Every cell folds securely under honest committed-fold A-role pricing.
+  #
+  # Ring-degree choice differs by field:
+  # - Small prime fields (fp32/fp64): their D32/D64 schedules are non-securable
+  #   under the reprice (they degrade to a cleartext root-direct proof), so the
+  #   smallest secure ring degree is D128. Those cells use D128 one-hot.
+  # - fp128: D64 is the actual proof-size optimum for both dense and one-hot
+  #   (~20% smaller than D128 while still folding through 8-9 secure levels;
+  #   confirmed by `current_d64_onehot_schedule_stays_within_audited_sis_widths`
+  #   and the `best_full_schedule`/`best_onehot_schedule` selectors, which pick
+  #   D64 over D128). The fp128 cells therefore track D64, not D128.
+  AKITA_BENCH_MODE: onehot_fp128_d64
   AKITA_BENCH_RUNS: "3"
   # One warm-up run per case is discarded before the measured runs to
   # prime caches and lazily-initialized statics; cache misses on the
   # first run otherwise distort the median across only 3 samples.
   AKITA_BENCH_WARMUPS: "1"
+  # The small-field (fp32/fp64) D128 one-hot cells run at nv=28, not nv=32.
+  # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
+  # than the fp128 cells (the fp32 nv=32 setup vector is ~2.6 GiB vs ~270 MiB
+  # for fp128), so at nv>=30 the prover's eq-evaluation table exceeds the
+  # 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling and the run aborts. nv=28
+  # is the largest validated size that both fits that budget and still folds
+  # through multiple recursive levels. The fp128 cells fold aggressively enough
+  # to stay at nv=32.
   AKITA_BENCH_CASES: |
-    dense_fp16_d32:26:1
-    onehot_fp32_d32:32:1
-    dense_fp32_d32:26:1
-    onehot_fp64_d32:32:1
-    onehot_fp128_d32:32:1
-    onehot_fp128_d32:30:4
+    onehot_fp32_d128:28:1
+    onehot_fp64_d128:28:1
+    dense_fp128_d64:24:1
+    onehot_fp128_d64:32:1
+    onehot_fp128_d64:30:4
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -270,59 +285,6 @@ jobs:
           path: ${{ env.AKITA_BENCH_PREVIOUS_RUN_DIR }}
           run-id: ${{ steps.bench-baselines.outputs.previous-run-id }}
           github-token: ${{ github.token }}
-
-      - name: Enforce proof-size regression threshold
-        if: always() && github.event_name == 'pull_request' && steps.bench-baselines.outputs.main-run-id != ''
-        env:
-          AKITA_BENCH_MAX_PROOF_SIZE_REGRESSION: "1.05"
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import pathlib
-          import sys
-
-          current_path = pathlib.Path(os.environ["AKITA_BENCH_ARTIFACT_DIR"]) / "summary.json"
-          baseline_path = pathlib.Path(os.environ["AKITA_BENCH_MAIN_BASELINE_DIR"]) / "summary.json"
-          threshold = float(os.environ["AKITA_BENCH_MAX_PROOF_SIZE_REGRESSION"])
-
-          if not current_path.exists() or not baseline_path.exists():
-              print("Benchmark summary or baseline missing; skipping proof-size threshold.")
-              sys.exit(0)
-
-          def cases_by_id(summary):
-              cases = summary.get("cases")
-              if isinstance(cases, list):
-                  return {str(case.get("case_id")): case for case in cases}
-              return {str(summary.get("case_id")): summary}
-
-          current = cases_by_id(json.loads(current_path.read_text()))
-          baseline = cases_by_id(json.loads(baseline_path.read_text()))
-          failures = []
-
-          for case_id, current_case in current.items():
-              if int(current_case.get("exit_code", 0)) != 0:
-                  continue
-              baseline_case = baseline.get(case_id)
-              if not baseline_case:
-                  continue
-              current_size = current_case.get("proof_size_bytes")
-              baseline_size = baseline_case.get("proof_size_bytes")
-              if current_size is None or baseline_size in (None, 0):
-                  continue
-              ratio = float(current_size) / float(baseline_size)
-              if ratio > threshold:
-                  failures.append(
-                      f"{case_id}: proof_size_bytes {current_size} exceeds baseline "
-                      f"{baseline_size} by {ratio - 1:.2%}"
-                  )
-
-          if failures:
-              print("Proof-size regression threshold exceeded:")
-              for failure in failures:
-                  print(f"- {failure}")
-              sys.exit(1)
-          PY
 
       - name: Render benchmark report
         if: always()

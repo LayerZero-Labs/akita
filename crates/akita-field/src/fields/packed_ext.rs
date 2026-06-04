@@ -7,7 +7,8 @@
 
 use crate::fields::ext::{
     Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
-    RingSubfieldFp4MulBackend, TowerBasisFp4, TowerBasisFp4Config,
+    RingSubfieldFp4MulBackend, RingSubfieldFp8, RingSubfieldFp8MulBackend, TowerBasisFp4,
+    TowerBasisFp4Config,
 };
 use crate::fields::packed::{HasPacking, PackedField, PackedValue};
 use crate::{FieldCore, Invertible};
@@ -644,7 +645,9 @@ where
     type Output = Self;
     #[inline(always)]
     fn add(self, rhs: Self) -> Self {
-        Self::new(std::array::from_fn(|i| self.coeffs[i] + rhs.coeffs[i]))
+        let [a0, a1, a2, a3] = self.coeffs;
+        let [b0, b1, b2, b3] = rhs.coeffs;
+        Self::new([a0 + b0, a1 + b1, a2 + b2, a3 + b3])
     }
 }
 
@@ -656,7 +659,9 @@ where
     type Output = Self;
     #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
-        Self::new(std::array::from_fn(|i| self.coeffs[i] - rhs.coeffs[i]))
+        let [a0, a1, a2, a3] = self.coeffs;
+        let [b0, b1, b2, b3] = rhs.coeffs;
+        Self::new([a0 - b0, a1 - b1, a2 - b2, a3 - b3])
     }
 }
 
@@ -705,532 +710,164 @@ where
     type Packing = PackedRingSubfieldFp4<F, F::Packing>;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::fields::ext::{Ext2, PowerBasisFp4, RingSubfieldFp4, TowerBasisFp4, TwoNr, UnitNr};
-    use crate::Fp32;
-    use crate::Fp64;
-    use crate::Prime31Offset19;
-    use crate::Prime32Offset99;
-    use crate::Prime64Offset59;
-    use crate::RandomSampling;
-    use crate::RingCore;
-    use rand::rngs::StdRng;
-    use rand::SeedableRng;
-
-    type F = Fp64<4294967197>;
-    type E2 = Ext2<F>;
-    type E4 = TowerBasisFp4<F, TwoNr, UnitNr>;
-    type P4 = PowerBasisFp4<F, TwoNr>;
-    type R4 = RingSubfieldFp4<F>;
-    type PE2 = PackedFp2<F, TwoNr, <F as HasPacking>::Packing>;
-    type PE4 = PackedTowerBasisFp4<F, TwoNr, UnitNr, <F as HasPacking>::Packing>;
-    type PP4 = PackedPowerBasisFp4<F, TwoNr, <F as HasPacking>::Packing>;
-    type PR4 = PackedRingSubfieldFp4<F, <F as HasPacking>::Packing>;
-    type Mersenne31 = Fp32<{ (1u32 << 31) - 1 }>;
-    type Generic30Offset16397 = Fp32<{ (1u32 << 30) - 16_397 }>;
-    type Generic31Offset61 = Fp32<{ (1u32 << 31) - 61 }>;
-    type Generic31Offset32787 = Fp32<{ (1u32 << 31) - 32_787 }>;
-    type PP4Prime31 =
-        PackedPowerBasisFp4<Prime31Offset19, TwoNr, <Prime31Offset19 as HasPacking>::Packing>;
-    type PR4Prime31 =
-        PackedRingSubfieldFp4<Prime31Offset19, <Prime31Offset19 as HasPacking>::Packing>;
-    type PP4Mersenne31 =
-        PackedPowerBasisFp4<Mersenne31, TwoNr, <Mersenne31 as HasPacking>::Packing>;
-    type PR4Mersenne31 = PackedRingSubfieldFp4<Mersenne31, <Mersenne31 as HasPacking>::Packing>;
-    type PP4Generic30Offset16397 = PackedPowerBasisFp4<
-        Generic30Offset16397,
-        TwoNr,
-        <Generic30Offset16397 as HasPacking>::Packing,
-    >;
-    type PR4Generic30Offset16397 =
-        PackedRingSubfieldFp4<Generic30Offset16397, <Generic30Offset16397 as HasPacking>::Packing>;
-    type PP4Generic31Offset61 =
-        PackedPowerBasisFp4<Generic31Offset61, TwoNr, <Generic31Offset61 as HasPacking>::Packing>;
-    type PR4Generic31Offset61 =
-        PackedRingSubfieldFp4<Generic31Offset61, <Generic31Offset61 as HasPacking>::Packing>;
-    type PP4Generic31Offset32787 = PackedPowerBasisFp4<
-        Generic31Offset32787,
-        TwoNr,
-        <Generic31Offset32787 as HasPacking>::Packing,
-    >;
-    type PR4Generic31Offset32787 =
-        PackedRingSubfieldFp4<Generic31Offset32787, <Generic31Offset32787 as HasPacking>::Packing>;
-    type R4Prime32 = RingSubfieldFp4<Prime32Offset99>;
-    type PR4Prime32 =
-        PackedRingSubfieldFp4<Prime32Offset99, <Prime32Offset99 as HasPacking>::Packing>;
-    type E2Full = Fp2<Prime64Offset59, TwoNr>;
-    type PE2Full = PackedFp2<Prime64Offset59, TwoNr, <Prime64Offset59 as HasPacking>::Packing>;
-
-    fn fp32_ext_edge_values<const P: u32>() -> [Fp32<P>; 4] {
-        [
-            Fp32::<P>::from_canonical_u32(P - 1),
-            Fp32::<P>::from_canonical_u32(P - 2),
-            Fp32::<P>::from_canonical_u32((P - 1) / 2),
-            Fp32::<P>::one(),
-        ]
-    }
-
-    fn check_packed_power_basis_fp4_edge<const P: u32, PP4>()
-    where
-        PP4: PackedField<Scalar = PowerBasisFp4<Fp32<P>, TwoNr>>
-            + PackedValue<Value = PowerBasisFp4<Fp32<P>, TwoNr>>,
-    {
-        let values = fp32_ext_edge_values::<P>();
-        let elem = |offset: usize| {
-            PowerBasisFp4::<Fp32<P>, TwoNr>::new(std::array::from_fn(|j| {
-                values[(offset + j) % values.len()]
-            }))
-        };
-        let a = PP4::from_fn(elem);
-        let b = PP4::from_fn(|i| elem(i + 1));
-        let product = a * b;
-        let square = a.square();
-
-        for lane in 0..PP4::WIDTH {
-            let lhs = elem(lane);
-            let rhs = elem(lane + 1);
-            assert_eq!(
-                product.extract(lane),
-                lhs * rhs,
-                "packed PowerBasisFp4 edge mul mismatch at lane {lane}"
-            );
-            assert_eq!(
-                square.extract(lane),
-                lhs.square(),
-                "packed PowerBasisFp4 edge square mismatch at lane {lane}"
-            );
-        }
-    }
-
-    fn check_packed_ring_subfield_fp4_edge<const P: u32, PR4>()
-    where
-        PR4: PackedField<Scalar = RingSubfieldFp4<Fp32<P>>>
-            + PackedValue<Value = RingSubfieldFp4<Fp32<P>>>,
-    {
-        let values = fp32_ext_edge_values::<P>();
-        let elem = |offset: usize| {
-            RingSubfieldFp4::<Fp32<P>>::new(std::array::from_fn(|j| {
-                values[(offset + j) % values.len()]
-            }))
-        };
-        let a = PR4::from_fn(elem);
-        let b = PR4::from_fn(|i| elem(i + 1));
-        let product = a * b;
-        let square = a.square();
-
-        for lane in 0..PR4::WIDTH {
-            let lhs = elem(lane);
-            let rhs = elem(lane + 1);
-            assert_eq!(
-                product.extract(lane),
-                lhs * rhs,
-                "packed RingSubfieldFp4 edge mul mismatch at lane {lane}"
-            );
-            assert_eq!(
-                square.extract(lane),
-                lhs.square(),
-                "packed RingSubfieldFp4 edge square mismatch at lane {lane}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_fp2_add() {
-        let mut rng = StdRng::seed_from_u64(100);
-        let width = <PE2 as PackedValue>::WIDTH;
-        let a_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
-        let b_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
-
-        let pa = PE2::from_fn(|i| a_elems[i]);
-        let pb = PE2::from_fn(|i| b_elems[i]);
-        let pc = pa + pb;
-
-        for i in 0..width {
-            assert_eq!(pc.extract(i), a_elems[i] + b_elems[i]);
-        }
-    }
-
-    #[test]
-    fn packed_fp2_mul() {
-        let mut rng = StdRng::seed_from_u64(200);
-        let width = <PE2 as PackedValue>::WIDTH;
-        let a_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
-        let b_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
-
-        let pa = PE2::from_fn(|i| a_elems[i]);
-        let pb = PE2::from_fn(|i| b_elems[i]);
-        let pc = pa * pb;
-
-        for i in 0..width {
-            assert_eq!(
-                pc.extract(i),
-                a_elems[i] * b_elems[i],
-                "packed Fp2 mul mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_fp2_mul_full_word_fp64() {
-        let mut rng = StdRng::seed_from_u64(201);
-        let width = <PE2Full as PackedValue>::WIDTH;
-        let a_elems: Vec<E2Full> = (0..width).map(|_| E2Full::random(&mut rng)).collect();
-        let b_elems: Vec<E2Full> = (0..width).map(|_| E2Full::random(&mut rng)).collect();
-
-        let pa = PE2Full::from_fn(|i| a_elems[i]);
-        let pb = PE2Full::from_fn(|i| b_elems[i]);
-        let pc = pa * pb;
-
-        for i in 0..width {
-            assert_eq!(
-                pc.extract(i),
-                a_elems[i] * b_elems[i],
-                "full-word packed Fp2 mul mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_fp2_broadcast() {
-        let val = E2::new(F::from_u64(7), F::from_u64(11));
-        let packed = PE2::broadcast(val);
-        let width = <PE2 as PackedValue>::WIDTH;
-        for i in 0..width {
-            assert_eq!(packed.extract(i), val);
-        }
-    }
-
-    #[test]
-    fn packed_fp4_mul() {
-        let mut rng = StdRng::seed_from_u64(300);
-        let width = <PE4 as PackedValue>::WIDTH;
-        let a_elems: Vec<E4> = (0..width).map(|_| E4::random(&mut rng)).collect();
-        let b_elems: Vec<E4> = (0..width).map(|_| E4::random(&mut rng)).collect();
-
-        let pa = PE4::from_fn(|i| a_elems[i]);
-        let pb = PE4::from_fn(|i| b_elems[i]);
-        let pc = pa * pb;
-
-        for i in 0..width {
-            assert_eq!(
-                pc.extract(i),
-                a_elems[i] * b_elems[i],
-                "packed TowerBasisFp4 mul mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_power_basis_fp4_mul() {
-        let mut rng = StdRng::seed_from_u64(350);
-        let width = <PP4 as PackedValue>::WIDTH;
-        let a_elems: Vec<P4> = (0..width).map(|_| P4::random(&mut rng)).collect();
-        let b_elems: Vec<P4> = (0..width).map(|_| P4::random(&mut rng)).collect();
-
-        let pa = PP4::from_fn(|i| a_elems[i]);
-        let pb = PP4::from_fn(|i| b_elems[i]);
-        let pc = pa * pb;
-
-        for i in 0..width {
-            assert_eq!(
-                pc.extract(i),
-                a_elems[i] * b_elems[i],
-                "packed PowerBasisFp4 mul mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_power_basis_fp4_prime31_edge_lanes() {
-        check_packed_power_basis_fp4_edge::<
-            { crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
-            PP4Prime31,
-        >();
-    }
-
-    #[test]
-    fn packed_power_basis_fp4_mersenne31_edge_lanes() {
-        check_packed_power_basis_fp4_edge::<{ (1u32 << 31) - 1 }, PP4Mersenne31>();
-    }
-
-    #[test]
-    fn packed_power_basis_fp4_generic31_edge_lanes() {
-        check_packed_power_basis_fp4_edge::<{ (1u32 << 31) - 61 }, PP4Generic31Offset61>();
-    }
-
-    #[test]
-    fn packed_power_basis_fp4_large_generic30_edge_lanes() {
-        check_packed_power_basis_fp4_edge::<{ (1u32 << 30) - 16_397 }, PP4Generic30Offset16397>();
-    }
-
-    #[test]
-    fn packed_power_basis_fp4_large_generic31_edge_lanes() {
-        check_packed_power_basis_fp4_edge::<{ (1u32 << 31) - 32_787 }, PP4Generic31Offset32787>();
-    }
-
-    #[test]
-    fn packed_tower_basis_fp4_inverse() {
-        let mut rng = StdRng::seed_from_u64(351);
-        let width = <PE4 as PackedValue>::WIDTH;
-        let elems: Vec<E4> = (0..width)
-            .map(|_| {
-                let x = E4::random(&mut rng);
-                if x.is_zero() {
-                    E4::one()
-                } else {
-                    x
-                }
-            })
-            .collect();
-
-        let packed = PE4::from_fn(|i| elems[i]);
-        let inverted = packed.inverse().unwrap();
-
-        for (i, elem) in elems.iter().enumerate() {
-            assert_eq!(
-                inverted.extract(i),
-                elem.inverse().unwrap(),
-                "packed TowerBasisFp4 inverse mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_power_basis_fp4_inverse() {
-        let mut rng = StdRng::seed_from_u64(352);
-        let width = <PP4 as PackedValue>::WIDTH;
-        let elems: Vec<P4> = (0..width)
-            .map(|_| {
-                let x = P4::random(&mut rng);
-                if x.is_zero() {
-                    P4::one()
-                } else {
-                    x
-                }
-            })
-            .collect();
-
-        let packed = PP4::from_fn(|i| elems[i]);
-        let inverted = packed.inverse().unwrap();
-
-        for (i, elem) in elems.iter().enumerate() {
-            assert_eq!(
-                inverted.extract(i),
-                elem.inverse().unwrap(),
-                "packed PowerBasisFp4 inverse mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_add() {
-        let mut rng = StdRng::seed_from_u64(360);
-        let width = <PR4 as PackedValue>::WIDTH;
-        let a_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
-        let b_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
-
-        let pa = PR4::from_fn(|i| a_elems[i]);
-        let pb = PR4::from_fn(|i| b_elems[i]);
-        let pc = pa + pb;
-
-        for i in 0..width {
-            assert_eq!(
-                pc.extract(i),
-                a_elems[i] + b_elems[i],
-                "packed RingSubfieldFp4 add mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_sub() {
-        let mut rng = StdRng::seed_from_u64(361);
-        let width = <PR4 as PackedValue>::WIDTH;
-        let a_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
-        let b_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
-
-        let pa = PR4::from_fn(|i| a_elems[i]);
-        let pb = PR4::from_fn(|i| b_elems[i]);
-        let pc = pa - pb;
-
-        for i in 0..width {
-            assert_eq!(
-                pc.extract(i),
-                a_elems[i] - b_elems[i],
-                "packed RingSubfieldFp4 sub mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_mul() {
-        let mut rng = StdRng::seed_from_u64(362);
-        let width = <PR4 as PackedValue>::WIDTH;
-        let a_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
-        let b_elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
-
-        let pa = PR4::from_fn(|i| a_elems[i]);
-        let pb = PR4::from_fn(|i| b_elems[i]);
-        let pc = pa * pb;
-
-        for i in 0..width {
-            assert_eq!(
-                pc.extract(i),
-                a_elems[i] * b_elems[i],
-                "packed RingSubfieldFp4 mul mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_mul_prime32() {
-        let mut rng = StdRng::seed_from_u64(365);
-        let width = <PR4Prime32 as PackedValue>::WIDTH;
-        let a_elems: Vec<R4Prime32> = (0..width).map(|_| R4Prime32::random(&mut rng)).collect();
-        let b_elems: Vec<R4Prime32> = (0..width).map(|_| R4Prime32::random(&mut rng)).collect();
-
-        let pa = PR4Prime32::from_fn(|i| a_elems[i]);
-        let pb = PR4Prime32::from_fn(|i| b_elems[i]);
-        let pc = pa * pb;
-
-        for i in 0..width {
-            assert_eq!(
-                pc.extract(i),
-                a_elems[i] * b_elems[i],
-                "Prime32 packed RingSubfieldFp4 mul mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_prime31_edge_lanes() {
-        check_packed_ring_subfield_fp4_edge::<
-            { crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
-            PR4Prime31,
-        >();
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_mersenne31_edge_lanes() {
-        check_packed_ring_subfield_fp4_edge::<{ (1u32 << 31) - 1 }, PR4Mersenne31>();
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_generic31_edge_lanes() {
-        check_packed_ring_subfield_fp4_edge::<{ (1u32 << 31) - 61 }, PR4Generic31Offset61>();
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_large_generic30_edge_lanes() {
-        check_packed_ring_subfield_fp4_edge::<{ (1u32 << 30) - 16_397 }, PR4Generic30Offset16397>();
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_large_generic31_edge_lanes() {
-        check_packed_ring_subfield_fp4_edge::<{ (1u32 << 31) - 32_787 }, PR4Generic31Offset32787>();
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_square() {
-        let mut rng = StdRng::seed_from_u64(363);
-        let width = <PR4 as PackedValue>::WIDTH;
-        let elems: Vec<R4> = (0..width).map(|_| R4::random(&mut rng)).collect();
-
-        let packed = PR4::from_fn(|i| elems[i]);
-        let squared = packed.square();
-
-        for (i, elem) in elems.iter().enumerate() {
-            assert_eq!(
-                squared.extract(i),
-                elem.square(),
-                "packed RingSubfieldFp4 square mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_square_prime32() {
-        let mut rng = StdRng::seed_from_u64(366);
-        let width = <PR4Prime32 as PackedValue>::WIDTH;
-        let elems: Vec<R4Prime32> = (0..width).map(|_| R4Prime32::random(&mut rng)).collect();
-
-        let packed = PR4Prime32::from_fn(|i| elems[i]);
-        let squared = packed.square();
-
-        for (i, elem) in elems.iter().enumerate() {
-            assert_eq!(
-                squared.extract(i),
-                elem.square(),
-                "Prime32 packed RingSubfieldFp4 square mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_inverse() {
-        let mut rng = StdRng::seed_from_u64(367);
-        let width = <PR4 as PackedValue>::WIDTH;
-        let elems: Vec<R4> = (0..width)
-            .map(|_| {
-                let x = R4::random(&mut rng);
-                if x.is_zero() {
-                    R4::one()
-                } else {
-                    x
-                }
-            })
-            .collect();
-
-        let packed = PR4::from_fn(|i| elems[i]);
-        let inverted = packed.inverse().unwrap();
-
-        for (i, elem) in elems.iter().enumerate() {
-            assert_eq!(
-                inverted.extract(i),
-                elem.inverse().unwrap(),
-                "packed RingSubfieldFp4 inverse mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_broadcast() {
-        let val = R4::new([
-            F::from_u64(7),
-            F::from_u64(11),
-            F::from_u64(13),
-            F::from_u64(17),
-        ]);
-        let packed = PR4::broadcast(val);
-        let width = <PR4 as PackedValue>::WIDTH;
-        for i in 0..width {
-            assert_eq!(packed.extract(i), val);
-        }
-    }
-
-    #[test]
-    fn packed_ring_subfield_fp4_pack_unpack() {
-        let mut rng = StdRng::seed_from_u64(364);
-        let width = <PR4 as PackedValue>::WIDTH;
-        let elems: Vec<R4> = (0..width * 3).map(|_| R4::random(&mut rng)).collect();
-
-        let packed = PR4::pack_slice(&elems);
-        let unpacked = PR4::unpack_slice(&packed);
-
-        assert_eq!(elems, unpacked);
-    }
-
-    #[test]
-    fn pack_unpack_roundtrip_fp2() {
-        let mut rng = StdRng::seed_from_u64(400);
-        let width = <PE2 as PackedValue>::WIDTH;
-        let elems: Vec<E2> = (0..width * 3).map(|_| E2::random(&mut rng)).collect();
-
-        let packed = PE2::pack_slice(&elems);
-        let unpacked = PE2::unpack_slice(&packed);
-
-        assert_eq!(elems, unpacked);
+/// Packed `RingSubfieldFp8` elements stored in transpose layout: `[PF; 8]`.
+///
+/// Each `PF` lane contains one coefficient of a degree-8 Chebyshev-basis element.
+pub struct PackedRingSubfieldFp8<F: FieldCore, PF: PackedField<Scalar = F>> {
+    /// Packed coefficients in `[1, e1, ..., e7]` order.
+    pub coeffs: [PF; 8],
+    _marker: std::marker::PhantomData<fn() -> F>,
+}
+
+impl<F, PF> Clone for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    fn clone(&self) -> Self {
+        *self
     }
 }
+
+impl<F, PF> Copy for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+}
+
+impl<F, PF> std::fmt::Debug for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PackedRingSubfieldFp8")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<F, PF> PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    /// Create a packed value from packed ring-subfield coefficients.
+    #[inline]
+    pub fn new(coeffs: [PF; 8]) -> Self {
+        Self {
+            coeffs,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<F, PF> PackedValue for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore + Valid + 'static,
+    PF: PackedField<Scalar = F>,
+{
+    type Value = RingSubfieldFp8<F>;
+    const WIDTH: usize = PF::WIDTH;
+
+    fn from_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> Self::Value,
+    {
+        let mut coeffs: [Vec<F>; 8] = std::array::from_fn(|_| Vec::with_capacity(PF::WIDTH));
+        for i in 0..PF::WIDTH {
+            let val = f(i);
+            for (j, coeff) in val.coeffs.into_iter().enumerate() {
+                coeffs[j].push(coeff);
+            }
+        }
+        Self::new(std::array::from_fn(|j| PF::from_fn(|i| coeffs[j][i])))
+    }
+
+    fn extract(&self, lane: usize) -> Self::Value {
+        RingSubfieldFp8::new(std::array::from_fn(|j| self.coeffs[j].extract(lane)))
+    }
+}
+
+impl<F, PF> Add for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    type Output = Self;
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] + rhs.coeffs[i]))
+    }
+}
+
+impl<F, PF> Sub for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    type Output = Self;
+    #[inline(always)]
+    fn sub(self, rhs: Self) -> Self {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] - rhs.coeffs[i]))
+    }
+}
+
+impl<F, PF> Mul for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore,
+    PF: PackedField<Scalar = F>,
+{
+    type Output = Self;
+    #[inline(always)]
+    fn mul(self, rhs: Self) -> Self {
+        Self::new(PF::ring_subfield_fp8_mul(self.coeffs, rhs.coeffs))
+    }
+}
+
+impl<F, PF> PackedField for PackedRingSubfieldFp8<F, PF>
+where
+    F: FieldCore + Valid + RingSubfieldFp8MulBackend + 'static,
+    PF: PackedField<Scalar = F>,
+{
+    type Scalar = RingSubfieldFp8<F>;
+
+    #[inline]
+    fn broadcast(value: Self::Scalar) -> Self {
+        Self::new(std::array::from_fn(|i| PF::broadcast(value.coeffs[i])))
+    }
+
+    #[inline(always)]
+    fn square(self) -> Self {
+        Self::new(PF::ring_subfield_fp8_square(self.coeffs))
+    }
+
+    #[inline(always)]
+    fn inverse(self) -> Option<Self>
+    where
+        Self::Scalar: Invertible,
+    {
+        // Fp8 inversion uses Gaussian elimination — delegate lane by lane.
+        let mut coeffs: [Vec<F>; 8] = std::array::from_fn(|_| Vec::with_capacity(PF::WIDTH));
+        for lane in 0..PF::WIDTH {
+            let scalar = self.extract(lane);
+            let inv = scalar.inverse()?;
+            for (j, c) in inv.coeffs.into_iter().enumerate() {
+                coeffs[j].push(c);
+            }
+        }
+        Some(Self::new(std::array::from_fn(|j| {
+            PF::from_fn(|i| coeffs[j][i])
+        })))
+    }
+}
+
+impl<F> HasPacking for RingSubfieldFp8<F>
+where
+    F: FieldCore + Valid + HasPacking + RingSubfieldFp8MulBackend + 'static,
+{
+    type Packing = PackedRingSubfieldFp8<F, F::Packing>;
+}
+
+#[cfg(test)]
+mod tests;
