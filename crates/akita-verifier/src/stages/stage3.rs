@@ -13,7 +13,7 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, AkitaExpandedSetup, SetupSumcheckProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+    gadget_row_scalars, AkitaExpandedSetup, SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
 };
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -108,7 +108,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
             proof.claim,
             self.rounds,
-            EXTENSION_OPENING_REDUCTION_DEGREE,
+            SETUP_SUMCHECK_DEGREE,
             transcript,
             |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         )?;
