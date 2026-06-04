@@ -240,19 +240,18 @@ pub fn fold_witness_beta(
     .ok_or_else(|| AkitaError::InvalidSetup("fold_witness_beta: β overflows u128".to_string()))
 }
 
-// --- L2 (Euclidean) folded-witness bound primitives ---------
+// --- Euclidean (L2) folded-witness bound primitives -------------------------
 //
-// The L2 MSIS cutover prices the committed A-role against a Euclidean bound on
-// the folded response `z = Σ c_i·s_i` instead of the coefficient-`L∞` envelope
-// above. The protocol only ever consumes the *squared* bound (the certificate
-// proves `Σ z[i]^2 = B_l2` and sizes against `B_l2`), so every primitive here
-// stays in the squared, exact-integer domain: `sqrt(D)` is irrational for
-// `D ∈ {32, 128}`, and squaring it away keeps the values exact `u128` integers.
-// A real square root is taken only when the prover picks the bucket `B_l2` and
-// the four-square slack, never in these sizing helpers.
+// These price the committed A-role against a Euclidean bound on the folded
+// response `z = Σ c_i·s_i`, the alternative to the coefficient-`L∞` envelope
+// above. Only the *squared* quantity `Σ z[i]^2` is ever consumed, so every
+// primitive here stays in the squared, exact-integer domain: `sqrt(D)` is
+// irrational for `D ∈ {32, 128}`, and squaring it away keeps the values exact
+// `u128` integers. A real square root is taken elsewhere (when bounding the
+// realized `Σ z[i]^2` and its slack), never in these sizing helpers.
 //
 // These are pure sizing leaves: the planner/setup derives the A-role binding
-// rank from them, and the prover bounds the realized certificate slack with them.
+// rank from them, and the prover bounds the realized witness norm with them.
 
 /// Squared per-block committed-witness Euclidean bound `s_l2_max^2`, the L2
 /// analogue of the [`FoldWitnessNorms`] `(||s||_inf, ||s||_1)` pair:
@@ -334,9 +333,9 @@ pub fn beta_l2_squared(
 /// L2_BOUND_SQUARED = W · beta_l2^2.
 /// ```
 ///
-/// This is the deterministic A-role bound used directly when no realized
-/// certificate is emitted (the field-capacity fallback); `B_l2` is the
-/// certificate-tightened value in `Z_SQUARED <= B_l2 <= L2_BOUND_SQUARED`.
+/// This deterministic bound prices the A-role directly when the prover does not
+/// separately prove a tighter bound on the realized squared norm `Σ z[i]^2`.
+/// Any such tighter proven bound lies between `Σ z[i]^2` and this value.
 ///
 /// # Errors
 ///
@@ -348,12 +347,13 @@ pub fn l2_bound_squared(width_w: u128, beta_l2_squared: u128) -> Result<u128, Ak
     })
 }
 
-/// Convert a coefficient-`L∞` collision bound into the unified L2 table via
-/// `||v||_2 <= sqrt(d)·||v||_inf`, kept squared and exact: `||v||_2^2 <= d·linf^2`.
+/// Convert a coefficient-`L∞` collision bound to its Euclidean (L2) counterpart
+/// via `||v||_2 <= sqrt(d)·||v||_inf`, kept squared and exact:
+/// `||v||_2^2 <= d·linf^2`.
 ///
-/// This is how the B-role and D-role opening-digit collisions (natural bound
-/// `2^lb - 1`, the difference of two balanced digits) price against the single
-/// Euclidean MSIS floor.
+/// This lets the B-role and D-role opening-digit collisions (natural bound
+/// `2^lb - 1`, the difference of two balanced digits) be priced by the same
+/// Euclidean MSIS floor as the A-role, rather than a separate `L∞` table.
 ///
 /// # Errors
 ///

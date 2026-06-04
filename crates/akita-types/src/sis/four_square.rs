@@ -1,16 +1,21 @@
-//! Lagrange four-square slack certificate solver
+//! Sum-of-four-squares solver for turning a bound into an equality.
 //!
-//! The L2 folded-witness certificate turns the inequality `Z_SQUARED <= B_l2`
-//! into the equality
+//! A non-strict integer bound `value <= bound` can be rewritten as an exact
+//! equality using Lagrange's four-square theorem: the non-negative slack
+//! `bound - value` is a sum of four integer squares, so
 //!
 //! ```text
-//! Z_SQUARED + ell_0^2 + ell_1^2 + ell_2^2 + ell_3^2 = B_l2
+//! value + ell_0^2 + ell_1^2 + ell_2^2 + ell_3^2 = bound.
 //! ```
 //!
-//! by representing the non-negative slack `target = B_l2 - Z_SQUARED` as a sum
-//! of four squares (Lagrange's four-square theorem). [`four_squares`] is that
-//! pure, prover-side solver: it consumes only the target integer and returns the
-//! four slack witnesses `ell_0..ell_3`.
+//! [`four_squares`] is the pure solver for that step. It consumes only the slack
+//! integer `target = bound - value` and returns the four witnesses
+//! `ell_0..ell_3`.
+//!
+//! The prover uses it to certify a Euclidean-norm bound on the folded witness
+//! `z`: there `value` is the realized squared norm `Σ z[i]^2` and `bound` is the
+//! proven upper bound, so the four squares become the committed slack witnesses
+//! of the certificate.
 //!
 //! ## Bound guarantee
 //!
@@ -48,9 +53,6 @@
 //! The decision path is integer-only (no floating point): [`u64::isqrt`],
 //! deterministic Miller–Rabin (exact for all `u64`), exact trial division, and
 //! `u128` modular arithmetic.
-//!
-//! The prover calls this when it assembles the folded-witness L2 certificate,
-//! turning the realized slack `B_l2 - Z_SQUARED` into the four committed witnesses.
 
 use akita_field::AkitaError;
 
@@ -562,8 +564,8 @@ mod tests {
 
     #[test]
     fn randomized_certificate_sized_range() {
-        // The realistic certificate regime: slack near the calibration's
-        // Z_SQUARED ~ 2^32, well inside the field-capacity gate.
+        // A realistic slack-target size (up to ~2^40): the regime the certificate
+        // feeds this solver in practice, well below the full u64 range above.
         let mut rng = StdRng::seed_from_u64(0x0BAD_C0DE_DEAD_BEEF);
         for _ in 0..20_000 {
             let target: u64 = rng.gen_range(0..(1u64 << 40));
