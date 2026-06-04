@@ -440,7 +440,6 @@ fn assert_every_table_entry_materializes<Cfg: CommitmentConfig>(table: Generated
 
 fn crt_product_for_small_field_cfg<Cfg: CommitmentConfig>() -> (&'static str, u128) {
     match Cfg::sis_modulus_family() {
-        SisModulusFamily::Q16 => ("Q16/3xi16", 2_513_112_702_977),
         SisModulusFamily::Q32 => ("Q32/2xi32", 1_152_837_945_367_908_353),
         SisModulusFamily::Q64 => ("Q64/3xi32", 1_237_793_655_097_897_487_951_597_569),
         family => panic!("small-field capacity test does not cover {family:?}"),
