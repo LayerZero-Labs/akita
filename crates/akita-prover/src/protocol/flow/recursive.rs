@@ -168,6 +168,7 @@ pub fn prove_fold_level_from_ring_relation<F, L, T, B, const D: usize, CommitW>(
     y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] proof_y_rings: Vec<CyclotomicRing<F, D>>,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
+    setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
 where
@@ -232,9 +233,9 @@ where
         col_bits,
         ring_bits,
         tau0,
-        tau1: _,
+        tau1,
         b,
-        alpha: _,
+        alpha,
     } = rs;
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     #[cfg(feature = "zk")]
@@ -333,23 +334,43 @@ where
     #[cfg(feature = "zk")]
     let proof_w_eval = w_eval_masked;
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
+    let stage3_sumcheck_proof = match setup_contribution_mode {
+        SetupContributionMode::Recursive => {
+            let setup_len = expanded.shared_matrix().total_ring_elements_at::<D>()?;
+            let setup_view = expanded.shared_matrix().ring_view::<D>(1, setup_len)?;
+            let output = SetupSumcheckProver::prove::<F, T, _, D>(
+                setup_view.as_slice(),
+                lp,
+                &instance,
+                &tau1,
+                alpha,
+                &sumcheck_challenges[ring_bits..],
+                transcript,
+                |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+            )?;
+            Some(SetupSumcheckProof {
+                claim: output.claim,
+                sumcheck: output.sumcheck,
+            })
+        }
+        SetupContributionMode::Direct => None,
+    };
+
     #[cfg(not(feature = "zk"))]
     let proof_y_rings = y_rings;
-    let (level_proof, sumcheck_challenges) = (
-        AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
-            proof_y_rings,
-            extension_opening_reduction,
-            instance.v,
-            stage1_proof,
-            #[cfg(not(feature = "zk"))]
-            stage2_sumcheck_proof,
-            #[cfg(feature = "zk")]
-            stage2_sumcheck_proof_masked,
-            w_commitment_proof,
-            proof_w_eval,
-        ),
-        sumcheck_challenges,
+    let mut level_proof = AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
+        proof_y_rings,
+        extension_opening_reduction,
+        instance.v,
+        stage1_proof,
+        #[cfg(not(feature = "zk"))]
+        stage2_sumcheck_proof,
+        #[cfg(feature = "zk")]
+        stage2_sumcheck_proof_masked,
+        w_commitment_proof,
+        proof_w_eval,
     );
+    level_proof.stage3_sumcheck_proof = stage3_sumcheck_proof;
 
     let (committed_witness, logical_w) = match packed_witness {
         Some(packed_witness) => (packed_witness, Some(logical_w)),
@@ -485,7 +506,7 @@ where
     #[cfg(feature = "zk")]
     let stage2_round_pads = zk_hiding.take_compressed_rounds::<L>(col_bits + ring_bits, 3)?;
     #[cfg(feature = "zk")]
-    let stage2_sumcheck_proof_masked = {
+    let (stage2_sumcheck_proof_masked, _sumcheck_challenges) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
             L::zero(),
@@ -507,10 +528,10 @@ where
                 |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
                 stage2_round_pads,
             )?;
-        stage2_sumcheck_proof_masked
+        (stage2_sumcheck_proof_masked, _sumcheck_challenges)
     };
     #[cfg(not(feature = "zk"))]
-    let stage2_sumcheck = {
+    let (stage2_sumcheck, _sumcheck_challenges) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck_terminal").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
             L::zero(),
@@ -529,23 +550,21 @@ where
             .prove::<F, T, _>(transcript, |tr| {
                 sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
-        stage2_sumcheck
+        (stage2_sumcheck, _sumcheck_challenges)
     };
-
-    Ok(
-        TerminalLevelProof::new_with_extension_opening_reduction::<D>(
-            #[cfg(not(feature = "zk"))]
-            y_rings,
-            #[cfg(feature = "zk")]
-            y_rings_masked,
-            extension_opening_reduction,
-            #[cfg(not(feature = "zk"))]
-            stage2_sumcheck,
-            #[cfg(feature = "zk")]
-            stage2_sumcheck_proof_masked,
-            final_witness,
-        ),
-    )
+    let proof = TerminalLevelProof::new_with_extension_opening_reduction::<D>(
+        #[cfg(not(feature = "zk"))]
+        y_rings,
+        #[cfg(feature = "zk")]
+        y_rings_masked,
+        extension_opening_reduction,
+        #[cfg(not(feature = "zk"))]
+        stage2_sumcheck,
+        #[cfg(feature = "zk")]
+        stage2_sumcheck_proof_masked,
+        final_witness,
+    );
+    Ok(proof)
 }
 
 pub(in crate::protocol::flow) struct RecursiveExtensionOpeningReduction<L: FieldCore> {
@@ -734,6 +753,7 @@ pub fn prove_recursive_fold_with_params<F, L, T, B, const D: usize, CommitW>(
     level_params: &LevelParams,
     next_log_basis: u32,
     #[cfg(feature = "zk")] mut zk_hiding: ZkHidingProverState<F>,
+    setup_contribution_mode: SetupContributionMode,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
 where
@@ -906,6 +926,7 @@ where
         y_rings_masked,
         #[cfg(feature = "zk")]
         zk_hiding,
+        setup_contribution_mode,
         commit_w_for_next,
     )
 }
@@ -1136,6 +1157,7 @@ pub fn prove_recursive_level_with_policy<F, L, T, B, const D: usize, CurrentLayo
     level: usize,
     level_params: &LevelParams,
     next_log_basis: u32,
+    setup_contribution_mode: SetupContributionMode,
     current_layout: CurrentLayout,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
@@ -1194,6 +1216,7 @@ where
         next_log_basis,
         #[cfg(feature = "zk")]
         zk_hiding,
+        setup_contribution_mode,
         commit_w_for_next,
     )
 }

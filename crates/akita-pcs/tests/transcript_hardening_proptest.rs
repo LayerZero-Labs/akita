@@ -94,6 +94,7 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
         prove_inputs_from_groups(&opening_points, &polys_per_point_refs, &commitments, hints),
         &mut prover_transcript,
         basis_mode,
+        akita_types::SetupContributionMode::Direct,
     )
     .expect("prove");
 

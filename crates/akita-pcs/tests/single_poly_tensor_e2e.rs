@@ -85,6 +85,7 @@ fn run_single_onehot_tensor(nv: usize) {
             prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
         assert_zk_tensor_root_proof_shape(&proof);
@@ -103,6 +104,7 @@ fn run_single_onehot_tensor(nv: usize) {
                 prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
                 &mut second_prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("second prove")
         };
@@ -123,6 +125,7 @@ fn run_single_onehot_tensor(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -145,6 +148,7 @@ fn run_single_onehot_tensor(nv: usize) {
                     &mut bad_verifier_transcript,
                     verify_input(&pt[..], &bad_openings[..], &commitments[0]),
                     BasisMode::Lagrange,
+                    akita_types::SetupContributionMode::Direct,
                 );
             assert!(
                 bad_result.is_err(),
@@ -164,6 +168,7 @@ fn run_single_onehot_tensor(nv: usize) {
                 &mut second_verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("second onehot tensor verify");
         }
@@ -238,6 +243,7 @@ fn run_single_dense_tensor(nv: usize) {
             prove_input(&pt[..], &poly_refs[..], &commitments[0], prove_hint),
             &mut prover_transcript,
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
         assert_zk_tensor_root_proof_shape(&proof);
@@ -256,6 +262,7 @@ fn run_single_dense_tensor(nv: usize) {
                 prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
                 &mut second_prover_transcript,
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("second prove")
         };
@@ -276,6 +283,7 @@ fn run_single_dense_tensor(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
+            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -298,6 +306,7 @@ fn run_single_dense_tensor(nv: usize) {
                     &mut bad_verifier_transcript,
                     verify_input(&pt[..], &bad_openings[..], &commitments[0]),
                     BasisMode::Lagrange,
+                    akita_types::SetupContributionMode::Direct,
                 );
             assert!(
                 bad_result.is_err(),
@@ -317,6 +326,7 @@ fn run_single_dense_tensor(nv: usize) {
                 &mut second_verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
+                akita_types::SetupContributionMode::Direct,
             )
             .expect("second dense tensor verify");
         }
