@@ -1,11 +1,11 @@
 //! Helpers for embedding base fields into extension fields.
 
-use crate::fields::ext::{
+use crate::ext::{
     FpExt2, FpExt2Config, PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend,
     RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
     RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config, UnitNr,
 };
-use crate::fields::unreduced::HasUnreducedOps;
+use crate::unreduced::HasUnreducedOps;
 use crate::{
     pseudo_mersenne_modulus, AkitaError, FieldCore, FromPrimitiveInt, PseudoMersenneField,
 };

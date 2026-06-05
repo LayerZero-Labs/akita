@@ -435,7 +435,7 @@ pub trait PseudoMersenneField: CanonicalField {
 ///    exact multiplicative order `SMOOTH_SUBGROUP_ORDER`.
 ///
 /// Both invariants are checked by the `omega_has_declared_order` test
-/// in `src/fields/fft.rs` and re-derived against
+/// in `src/fft.rs` and re-derived against
 /// `find_primitive_nth_root` so the constants cannot drift.
 pub trait SmoothFftField: CanonicalField + PseudoMersenneField {
     /// Order of the largest smooth multiplicative subgroup we support

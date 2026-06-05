@@ -5,8 +5,6 @@
 //! `FromPrimitiveInt`/`RandomSampling` carry per-type logic and stay in the prime
 //! modules; this module owns the shared *derived*-capability boilerplate that the
 //! Jolt seam (`compat/jolt.rs`) used to host. The seam now forwards to these.
-//!
-//! TODO(field-split): fold into the per-type prime modules once `fields/` is split.
 
 use std::mem::size_of;
 
@@ -104,7 +102,7 @@ mod tests {
     //! resolves to the native impl even when `jolt-compat` also implements a
     //! same-named Jolt trait on the concrete field type.
     use super::*;
-    use crate::fields::Prime128Offset275;
+    use crate::Prime128Offset275;
     use crate::{AdditiveAccumulator, RingAccumulator};
 
     /// Asserts the full canonical byte round-trip on the native traits.

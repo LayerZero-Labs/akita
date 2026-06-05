@@ -18,11 +18,11 @@
 use jolt_field as jf;
 use rand_core::RngCore;
 
-use crate::fields::unreduced::{
+use crate::unreduced::{
     AccumPair, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32ProductAccum, Fp32x2i32,
     Fp64ProductAccum, Fp64x4i32, FpExt2Fp64ProductAccum, RingSubfieldFpExt4Fp32ProductAccum,
 };
-use crate::fields::{
+use crate::{
     Fp128, Fp32, Fp64, FpExt2, FpExt2Config, PowerBasisFpExt4, PowerBasisFpExt4Config,
     RingSubfieldFpExt4, RingSubfieldFpExt8, TowerBasisFpExt4, TowerBasisFpExt4Config,
 };
@@ -214,10 +214,7 @@ impl<A: crate::AdditiveGroup> jf::AdditiveGroup for AccumPair<A> {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        fields::{Fp32, Fp64, Prime128Offset275},
-        CanonicalField,
-    };
+    use crate::{CanonicalField, Fp32, Fp64, Prime128Offset275};
     use jolt_field::{
         AdditiveAccumulator, CanonicalBitLength, CanonicalU64, MulPow2, MulPrimitiveInt,
         ReducingBytes, RingAccumulator, TranscriptChallenge, WithAccumulator,

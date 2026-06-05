@@ -16,13 +16,17 @@ pub(crate) mod ext;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub(crate) mod neon;
 
-use crate::fields::ext::{
+pub use ext::{
+    PackedFpExt2, PackedPowerBasisFpExt4, PackedRingSubfieldFpExt4, PackedRingSubfieldFpExt8,
+    PackedTowerBasisFpExt4,
+};
+
+use crate::ext::{
     power_basis_fp_ext4_mul_coeffs, ring_subfield_fp_ext8_mul_schedule,
     ring_subfield_fp_ext8_square_schedule, FpExt2Config, PowerBasisFpExt4Config,
     TowerBasisFpExt4Config,
 };
-use crate::fields::{Fp128, Fp32, Fp64};
-use crate::{FieldCore, Invertible};
+use crate::{FieldCore, Fp128, Fp32, Fp64, Invertible};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use num_traits::{One, Zero};
 
@@ -460,11 +464,10 @@ impl<const P: u64> HasPacking for Fp64<P> {
 #[cfg(test)]
 mod tests {
     use super::{HasPacking, PackedField, PackedValue};
-    use crate::fields::{
-        Fp32, Prime128Offset275, Prime24Offset3, Prime31Offset19, Prime32Offset99,
-        Prime40Offset195, Prime64Offset59,
+    use crate::{
+        CanonicalField, FieldCore, Fp32, Prime128Offset275, Prime24Offset3, Prime31Offset19,
+        Prime32Offset99, Prime40Offset195, Prime64Offset59, RandomSampling,
     };
-    use crate::{CanonicalField, FieldCore, RandomSampling};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
 
     fn rand_u128<R: RngCore>(rng: &mut R) -> u128 {
@@ -658,7 +661,7 @@ mod tests {
         type F = Prime31Offset19;
         type PF = <F as HasPacking>::Packing;
         check_packed_fp32_edge_lanes::<
-            { crate::fields::prime::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
+            { crate::prime::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
             PF,
         >();
     }
@@ -679,7 +682,7 @@ mod tests {
     fn packed_fp32_31b_mul_matches_scalar_stress() {
         type F = Prime31Offset19;
         type PF = <F as HasPacking>::Packing;
-        const P: u32 = crate::fields::prime::pseudo_mersenne::PRIME31_OFFSET19_MODULUS;
+        const P: u32 = crate::prime::pseudo_mersenne::PRIME31_OFFSET19_MODULUS;
 
         let boundary = [
             0u32,

@@ -4,9 +4,9 @@
 //! registers for branchless conditionals.
 
 use super::{PackedField, PackedValue};
-use crate::fields::ext::{FpExt2Config, PowerBasisFpExt4Config, TowerBasisFpExt4Config};
-use crate::fields::{Fp128, Fp32, Fp64};
+use crate::ext::{FpExt2Config, PowerBasisFpExt4Config, TowerBasisFpExt4Config};
 use crate::Invertible;
+use crate::{Fp128, Fp32, Fp64};
 use core::arch::x86_64::*;
 use core::fmt;
 use core::mem::transmute;

@@ -5,12 +5,12 @@
 //! This enables WIDTH-fold parallel arithmetic over `FpExt2` using existing SIMD
 //! base-field operations.
 
-use crate::fields::ext::{
+use crate::ext::{
     FpExt2, FpExt2Config, PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend,
     RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
     RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config,
 };
-use crate::fields::packed::{HasPacking, PackedField, PackedValue};
+use crate::packed::{HasPacking, PackedField, PackedValue};
 use crate::{FieldCore, Invertible};
 use akita_serialization::Valid;
 use core::ops::{Add, Mul, Sub};

@@ -912,7 +912,7 @@ mod prime_2355_tests {
 
     /// Drift guard: re-derive the primitive `SMOOTH_SUBGROUP_ORDER`-th
     /// root of unity from a base scan and assert it equals the literal
-    /// declared in [`crate::fields::prime::fp128`]. Also validates the
+    /// declared in [`crate::prime::fp128`]. Also validates the
     /// trait's structural invariant `SMOOTH_SUBGROUP_ORDER | (p − 1)`.
     #[test]
     fn smooth_omega_matches_search() {

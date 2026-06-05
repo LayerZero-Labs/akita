@@ -1,5 +1,5 @@
 use super::*;
-use crate::fields::ext::lift::{
+use crate::ext::lift::{
     canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
     ExtField, FrobeniusExtField,
 };
@@ -468,7 +468,7 @@ fn eq_impl() {
 #[test]
 fn ring_subfield_fp_ext4_fp32_product_accum_matches_direct_mul() {
     use super::ring_subfield_fp_ext4::ring_subfield_fp_ext4_mul_to_accum_fp32;
-    use crate::fields::unreduced::RingSubfieldFpExt4Fp32ProductAccum;
+    use crate::unreduced::RingSubfieldFpExt4Fp32ProductAccum;
     use crate::Fp32;
     use num_traits::Zero;
 
