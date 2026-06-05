@@ -1107,8 +1107,17 @@ the L2 norm/table API (S4, S5) and the proof-shape change (S6).
 Status: S1 (`crates/akita-challenges/src/sampler/op_norm.rs`), S7
 (`crates/akita-types/src/sis/four_square.rs`), and the S4 L2 norm primitives
 (`crates/akita-types/src/sis/norm_bound.rs`, squared-domain) are implemented as
-pure, not-yet-wired building blocks. The remaining protocol and test cutover
-(S3, S5, S6, S8–S13) is follow-up work.
+pure, not-yet-wired building blocks on `main`.
+
+Follow-up implementation is split across branch `quang/s3-s5-sis-estimator-spec`
+(spec-first) and later PRs:
+
+- **S5a** ([`sis-euclidean-estimator.md`](sis-euclidean-estimator.md)): Rust offline
+  estimator + `gen_sis_table` (spec in flight; implementation after spec approval).
+- **S5b**: L2 table regen, `collision_l2_sq` rename, wire A-role pricing (blocked on S5a).
+- **S3**: operator-norm threshold + transcript rejection (blocked on **S2** for the
+  production D=64 shell/threshold; see below).
+- **S6, S8–S13**: proof shape, certificate, planner schedules, e2e (unchanged).
 
 ### Decisions To Lock (gating)
 
@@ -1119,7 +1128,10 @@ Each gates specific slices, noted in parentheses.
   `||v||_2 <= sqrt(d)·||v||_inf` conversion into the single L2 table. (S4, S5)
 - D=64 exact-shell operator-norm acceptance lower bound, and the fallback if it
   lands below `0.225` (larger shell or higher `T`). (S2)
-- Production D=64 shell and threshold; starting candidate `(31, 11)`, `T = 16`. (S2, S3)
+- Production D=64 shell and threshold; starting candidate `(31, 11)`, `T = 16`. (S2, S3).
+  **Frozen on `main` until S2 certifies:** keep `ExactShell { count_mag1: 30, count_mag2: 12 }`
+  with no `operator_norm_threshold` field. Do not land `(31, 11), T = 16` in
+  `proof_optimized` presets until the S2 accepted-support lower bound is a checked artifact.
 - L2 bound policy for dense, one-hot, tensor, and terminal levels (the
   `s_l2_max` source per level). (S4)
 - Certificate placement: whether sumcheck 2's `w_next(rho')` claim is batched
@@ -1129,8 +1141,8 @@ Each gates specific slices, noted in parentheses.
   `coeffs · balanced_digit_max(lb, num_digits_fold)^2 + 4·B_l2 < q_eff` and the
   per-(field, level) fallback to the deterministic bound (binds often on fp32,
   rarely on fp64, never on fp128). (S8, S10)
-- The canonical Euclidean MSIS estimator and table-generation command
-  (Open Question 1). (S5)
+- The canonical Euclidean MSIS estimator and table-generation command: see
+  [`sis-euclidean-estimator.md`](sis-euclidean-estimator.md) (S5a). (S5b consumes its output.)
 
 ### Slice Dependency Graph
 
@@ -1142,8 +1154,9 @@ WAVE 0  (independent, start now, parallel)
   S2  D=64 support lower bound >= 128 bits   [research / certificate]
 
 WAVE 1
-  S3  threshold + transcript rejection       (S1)
-  S5  L2 SIS tables + collision_inf rename   (S4)
+  S5a Rust Euclidean SIS estimator + gen      (spec: sis-euclidean-estimator.md)
+  S5b L2 SIS tables + collision_l2_sq rename  (S4, S5a)
+  S3  threshold + transcript rejection       (S1, S2 for production policy)
   S6  proof shape / serialization / size     (parameterize B_l2 early)
 
 WAVE 2
@@ -1203,20 +1216,29 @@ theorem-backed finite two-squares-residual fallback makes the solver total for
 every `u64` target. Integer-only decision path (no floating point).
 No protocol dependency; consumes only the target integer (first consumer: S8).
 
-**S3 — Threshold + transcript-stable rejection sampling.** *(S1)*
+**S3 — Threshold + transcript-stable rejection sampling.** *(S1; production shell after S2)*
 `crates/akita-challenges/src/config.rs`, `sampler/exact_shell.rs`, `sampler/mod.rs`.
 Add `operator_norm_threshold` to `ExactShell`, reject-and-resample with stable
 XOF consumption (no prover/verifier divergence) calling the S1 predicate, and
 bind shell parameters + threshold into `domain_separator_bytes`.
-Update the proof-optimized D=64 policy after S2.
+Tests and non-production presets may use `(31, 11), T = 16` before S2 lands.
+**Do not** change `proof_optimized` D=64 production presets until S2 certifies the
+accepted-support lower bound.
 
-**S5 — L2 SIS tables + key rename.** *(S4)*
-`crates/akita-types/src/sis/{ajtai_key,generated_sis_table}.rs`,
-`scripts/gen_sis_table.py`.
-Generate L2 bucket ladders + secure-rank floors keyed by the Euclidean bound;
-rename `collision_inf` to the L2 bound name across `AjtaiKeyParams`,
-`min_secure_rank`, `ceil_supported_collision`, and descriptor bytes.
-Remove the old committed-fold L∞ rank-pricing paths.
+**S5a — Rust Euclidean SIS estimator.** *(spec-approved before code)*
+[`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md),
+future `crates/akita-sis-estimator/`.
+Offline crate reproducing lattice-estimator `SIS.lattice(..., norm=2, BDGL16)` on the
+`cost_euclidean` path; `gen_sis_table` binary emits regenerated rows. Golden tests pin
+equivalence. This slice does not change protocol code on its own.
+
+**S5b — L2 SIS tables + key rename.** *(S4, S5a)*
+`crates/akita-types/src/sis/{ajtai_key,generated_sis_table}.rs`.
+Regenerate L2 bucket ladders (`2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`) + secure-rank floors;
+rename `collision_inf` to `collision_l2_sq` across `AjtaiKeyParams`, `min_secure_rank`,
+`ceil_supported_collision`, and descriptor bytes; wire A-role `8·Γ·ν·‖z‖₂` pricing from S4.
+Remove the old committed-fold L∞ rank-pricing paths. Deprecate Sage-only regen as the
+canonical path once the Rust binary is checked in.
 
 **S6 — Proof shape, serialization, proof size.** *(parameterizable early)*
 `crates/akita-types/src/proof/{levels,shapes}.rs`, `proof_size.rs`,
@@ -1279,8 +1301,9 @@ the ring-relation rows; ZK-path parity if the feature stays enabled.
 
 ## Open Questions
 
-1. What exact Euclidean MSIS estimator and table-generation command should be
-   canonical for the repo?
+1. Resolved: [`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md) defines the
+   Rust `akita-sis-estimator` crate and `gen_sis_table` binary as the canonical offline
+   regen path, with golden parity to lattice-estimator `SIS.lattice(..., norm=2, BDGL16)`.
 2. Should the certified bucket `B_l2` be a fixed worst-case-per-level value, or
    may the prover abort against a tighter `B_l2` with a separately proved
    acceptance probability?
@@ -1307,6 +1330,7 @@ the ring-relation rows; ZK-path parity if the feature stays enabled.
 
 ## References
 
+- `specs/sis-euclidean-estimator.md` (S5a: offline estimator + table regen)
 - `specs/weak-binding-norm-fix.md`
 - `specs/bounded-l1-sparse-challenge.md`
 - `specs/tensor-structured-folding-challenges.md`
