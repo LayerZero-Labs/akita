@@ -118,16 +118,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Enable the second commitment tier (matrix `F`).
     ///
-    /// Default `false` keeps the single-tier (A→B) layout, byte-for-byte
-    /// identical to the historical scheme. When `true`, the planner is allowed
+    /// When `true`, the planner is allowed
     /// to reuse a smaller first-tier matrix `B` across `f` witness slices and
     /// commit the partial images with a second-tier matrix `F`
     /// (`u_final = F · decompose(u_1 ‖ … ‖ u_f)`), shrinking the shared
     /// preprocessing matrix and the verifier setup-contribution scan. See
     /// `specs/tiered-commitment.md`. Threaded into the planner via
-    /// [`PlannerPolicy::tiered`] (see [`policy_of`]) and read by the
-    /// `shipped_table` discriminator; prover/verifier branch on the resulting
-    /// per-level `LevelParams` (`tier_split` / `f_key`), not this flag directly.
+    /// [`PlannerPolicy::tiered`] (see [`policy_of`]).
     const TIERED_COMMITMENT: bool = false;
 
     /// Gadget base + coefficient bounds.

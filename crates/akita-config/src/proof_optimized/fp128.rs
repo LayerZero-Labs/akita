@@ -18,10 +18,7 @@ pub struct D64Full;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHot;
 
-/// Binary onehot `D=64` preset with the tiered second commitment matrix `F`
-/// enabled (`TIERED_COMMITMENT = true`). Same algebra/SIS/chunk as
-/// [`D64OneHot`]; the planner reuses a smaller first-tier `B` across `f`
-/// witness slices so the shared preprocessing matrix is bounded by `A`.
+/// Binary onehot `D=64` preset with the tiered commitment matrix `F`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHotTiered;
 

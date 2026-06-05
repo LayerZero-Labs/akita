@@ -217,7 +217,7 @@ pub fn matrix_envelope_for_schedule<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let setup_levels = setup_level_params_from_runtime_schedule(&schedule.steps);
+    let setup_levels: Vec<LevelParams> = setup_level_params_from_runtime_schedule(&schedule.steps);
     let mut envelope = matrix_envelope_for_levels::<Cfg>(&setup_levels)?;
     accumulate_root_matrix_envelope_for_incidence(
         schedule,
@@ -256,8 +256,6 @@ fn accumulate_matrix_envelope_for_level<Cfg: CommitmentConfig>(
         .row_len()
         .checked_mul(lp.d_matrix_width())
         .ok_or_else(|| AkitaError::InvalidSetup("D setup envelope overflow".to_string()))?;
-    // Second-tier F prefix (tiered levels only; `b_len` already uses the shrunk
-    // B' since `lp.b_key` holds the B' dims). `0` for single-tier levels.
     let f_len = match lp.f_key.as_ref() {
         Some(fk) => fk
             .row_len()
@@ -313,18 +311,11 @@ fn root_runtime_matrix_len_for_incidence(
         lp.d_key.row_len().checked_mul(d_width).ok_or_else(|| {
             AkitaError::InvalidSetup("batched D setup envelope overflow".to_string())
         })?;
-    // Tiered levels store a smaller B' reused across `tier_split` slices, so the
-    // stored width is `full_b_width / tier_split` (div_ceil keeps it an upper
-    // bound when the runtime incidence is skewed relative to the schedule key).
-    // `tier_split == 1` for single-tier levels reproduces the full width.
-    let stored_b_width = full_b_width.div_ceil(lp.tier_split.max(1));
     let b_len = lp
         .b_key
         .row_len()
-        .checked_mul(stored_b_width)
+        .checked_mul(full_b_width.div_ceil(lp.tier_split.max(1)))
         .ok_or_else(|| AkitaError::InvalidSetup("batched B setup envelope overflow".to_string()))?;
-    // Second-tier F prefix (F width does not scale with the per-group poly
-    // count): the planner-sized `f_key` footprint, or `0` for single-tier.
     let f_len = match lp.f_key.as_ref() {
         Some(fk) => fk.row_len().checked_mul(fk.col_len()).ok_or_else(|| {
             AkitaError::InvalidSetup("batched F setup envelope overflow".to_string())
@@ -604,7 +595,7 @@ macro_rules! impl_proof_optimized_preset {
             const D: usize = $d;
 
             // Defaults to `false`; the tiered preset(s) pass `true` as the
-            // optional trailing arg (which requires `onehot_chunk_size`).
+            // optional trailing arg.
             const TIERED_COMMITMENT: bool =
                 impl_proof_optimized_preset!(@tiered $($($tiered)?)?);
 

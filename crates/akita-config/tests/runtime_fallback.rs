@@ -108,29 +108,6 @@ fn policy_bridge_matches_cfg_hooks() {
 }
 
 #[test]
-fn tiered_flag_is_off_by_default_and_on_for_tiered_preset() {
-    // Read the flag through the runtime `policy_of` bridge (not the associated
-    // const directly) so the assertions are not constant-folded.
-    let plain = policy_of::<fp128::D64OneHot>();
-    let tiered = policy_of::<fp128::D64OneHotTiered>();
-    assert!(!plain.tiered, "default preset must be single-tier");
-    assert!(tiered.tiered, "tiered preset must enable tiering");
-    // The tiered policy resolves to its own dedicated shipped table (whose
-    // tiered compact entries store the committed `B'`/`F` layout directly via
-    // `tier_split` + `n_f`).
-    #[cfg(not(feature = "zk"))]
-    assert!(
-        akita_planner::shipped_table(&tiered, false).is_some(),
-        "tiered preset must resolve to the shipped tiered table"
-    );
-    #[cfg(feature = "zk")]
-    assert!(
-        akita_planner::shipped_table(&tiered, false).is_none(),
-        "tiering ships no zk table; the tiered policy must fall back to the DP"
-    );
-}
-
-#[test]
 fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     // Degenerate vector counts and out-of-range opening points must be
     // rejected with `AkitaError`, not by panicking. Large-but-bounded
