@@ -116,9 +116,8 @@ fn tiered_flag_is_off_by_default_and_on_for_tiered_preset() {
     assert!(!plain.tiered, "default preset must be single-tier");
     assert!(tiered.tiered, "tiered preset must enable tiering");
     // The tiered policy resolves to its own dedicated shipped table (whose
-    // compact entries store the un-tiered `n_b` and replay `apply_tiering` on
-    // expansion). Tiering ships no `_zk` family, so under `zk` the tiered
-    // policy has no shipped table and falls back to the runtime DP.
+    // tiered compact entries store the committed `B'`/`F` layout directly via
+    // `tier_split` + `n_f`).
     #[cfg(not(feature = "zk"))]
     assert!(
         akita_planner::shipped_table(&tiered, false).is_some(),

@@ -91,13 +91,10 @@ fn tiering_candidate(
 /// Verifier-reachable through the runtime DP fallback: never panics — every
 /// product is checked and every emitted key passes [`AjtaiKeyParams::try_new`].
 ///
-/// Also replayed by [`crate::generated::GeneratedFoldStep::expand_to_level_params`]
-/// so a shipped tiered table reconstructs the exact same `B'`/`F` split the DP
-/// chose: the table stores the *un-tiered* `n_b`, and expansion re-applies this.
-pub(crate) fn apply_tiering(
-    policy: &PlannerPolicy,
-    lp: LevelParams,
-) -> Result<LevelParams, AkitaError> {
+/// This is the DP's source of truth for the `B'`/`F` split. The shipped tiered
+/// table stores the resulting layout directly (`B'` rank, `tier_split`, `n_f`),
+/// so table expansion reconstructs it without re-running this search.
+fn apply_tiering(policy: &PlannerPolicy, lp: LevelParams) -> Result<LevelParams, AkitaError> {
     if !policy.tiered {
         return Ok(lp);
     }

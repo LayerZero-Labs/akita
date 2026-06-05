@@ -158,10 +158,50 @@ impl GeneratedFoldStep {
             0
         };
 
+        // Tiered second tier (`B'`/`F`): the compact entry stores the committed
+        // layout directly — `n_b` is the shrunk `B'` rank, `tier_split` is the
+        // split factor, and `n_f` is the second-tier `F` rank. The `B'` width is
+        // the full outer width divided by the split, and `F` commits
+        // `tier_split · n_b · num_digits_open` digit columns at the same
+        // digit-range bucket as `B`/`D`. A single-tier step stores `None`/`None`
+        // and keeps the full `B` width. (No `apply_tiering` re-search: the table
+        // is the frozen snapshot; the DP path owns `apply_tiering` for misses.)
+        let (b_width, tier_split, f_key) = match (self.tier_split, self.n_f) {
+            (None, None) => (outer_width, 1usize, None),
+            (Some(f), Some(n_f)) => {
+                let f = f as usize;
+                if f <= 1 {
+                    return Err(AkitaError::InvalidSetup(
+                        "generated tiered step has tier_split <= 1".to_string(),
+                    ));
+                }
+                if outer_width == 0 || !outer_width.is_multiple_of(f) {
+                    return Err(AkitaError::InvalidSetup(
+                        "generated tiered B' width does not divide the full outer width"
+                            .to_string(),
+                    ));
+                }
+                let b_small_width = outer_width / f;
+                let f_width = f
+                    .checked_mul(self.n_b as usize)
+                    .and_then(|w| w.checked_mul(num_digits_open_val))
+                    .ok_or_else(|| no_layout("F"))?;
+                let f_key =
+                    AjtaiKeyParams::try_new(sis_family, n_f as usize, f_width, b_bucket, ring_d)?;
+                (b_small_width, f, Some(f_key))
+            }
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "generated tiered step must set both tier_split and n_f, or neither"
+                        .to_string(),
+                ));
+            }
+        };
+
         // Audit each shipped rank against its width + bucket as we build the
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
-        let level = LevelParams {
+        Ok(LevelParams {
             ring_dimension: ring_d,
             log_basis,
             a_key: AjtaiKeyParams::try_new(
@@ -174,7 +214,7 @@ impl GeneratedFoldStep {
             b_key: AjtaiKeyParams::try_new(
                 sis_family,
                 self.n_b as usize,
-                outer_width,
+                b_width,
                 b_bucket,
                 ring_d,
             )?,
@@ -194,16 +234,9 @@ impl GeneratedFoldStep {
             num_digits_commit,
             num_digits_open,
             onehot_chunk_size,
-            // Single-tier by default; a tiered policy re-derives `B'`/`F` below
-            // by replaying `apply_tiering` on this un-tiered layout.
-            tier_split: 1,
-            f_key: None,
-        };
-
-        // Under a tiered policy, replay the same `B'`/`F` split the DP chose.
-        // The stored `n_b` is the un-tiered first-tier rank, so this is a no-op
-        // for single-tier policies and an exact reconstruction otherwise.
-        crate::schedule_params::apply_tiering(policy, level)
+            tier_split,
+            f_key,
+        })
     }
 }
 

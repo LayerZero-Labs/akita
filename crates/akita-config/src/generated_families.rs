@@ -129,11 +129,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         regen: regen::<tensor_verifier::fp128::D64OneHotTensor>,
         table_backed: table_backed::<tensor_verifier::fp128::D64OneHotTensor>,
     },
-    // Tiered companion of `fp128_d64_onehot`: the compact entries store the
-    // un-tiered `n_b`, and expansion replays `apply_tiering` to recover the
-    // `B'`/`F` split. Tiering is a non-ZK optimization; under `zk` the table
-    // path is disabled (`shipped_table` returns `None`) so both `regen` and
-    // `table_backed` resolve through the DP and the drift guard still holds.
+    // Tiered companion of `fp128_d64_onehot`
     GeneratedFamily {
         module_name: "fp128_d64_onehot_tiered",
         const_name: "FP128_D64_ONEHOT_TIERED_SCHEDULES",

@@ -7,11 +7,18 @@ pub struct GeneratedFoldStep {
     pub m_vars: u32,
     pub r_vars: u32,
     pub n_a: u32,
-    /// First-tier `B` rank **before** any tiering split. Under a tiered policy,
-    /// expansion re-derives the shrunk `B'` and the second-tier `F` by replaying
-    /// `apply_tiering`, so the table stores the un-tiered rank here.
+    /// Stored first-tier `B` rank. This is the actual committed rank: the shrunk
+    /// `B'` rank when the step is tiered (`tier_split.is_some()`), and the full
+    /// `B` rank otherwise.
     pub n_b: u32,
     pub n_d: u32,
+    /// Tiered split factor `f`. `None` for single-tier steps; `Some(f)` when the
+    /// step reuses a smaller `B'` across `f` column-slices (paired with `n_f`).
+    pub tier_split: Option<u32>,
+    /// Second-tier `F` rank. `None` for single-tier steps; `Some` iff
+    /// `tier_split` is `Some`. Expansion sizes `F` from `tier_split`, `n_b`, and
+    /// the level's `num_digits_open`.
+    pub n_f: Option<u32>,
 }
 
 /// Terminal direct-send step in a generated schedule.
@@ -150,10 +157,10 @@ pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
-/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: entries whose
-/// first-tier `B` footprint exceeds inner `A` carry the un-tiered `n_b`, and
-/// expansion replays `apply_tiering` to recover the `B'`/`F` split. Tiering is
-/// a non-ZK optimization, so this family has no `_zk` variant.
+/// Tiered-commitment companion of [`fp128_d64_onehot_table`]: tiered entries
+/// store the committed `B'`/`F` layout directly (`tier_split` + `n_f` set, with
+/// `n_b` the shrunk `B'` rank), so expansion rebuilds `B'`/`F` from the stored
+/// fields. Tiering is a non-ZK optimization, so this family has no `_zk` variant.
 #[cfg(not(feature = "zk"))]
 pub fn fp128_d64_onehot_tiered_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {

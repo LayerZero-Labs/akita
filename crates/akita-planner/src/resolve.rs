@@ -81,10 +81,8 @@ pub fn shipped_table(
 ) -> Option<GeneratedScheduleTable> {
     let onehot = policy.decomposition.log_commit_bound == 1;
     // Tiered policies select a dedicated tiered table whose compact entries
-    // store the un-tiered `n_b`; expansion replays `apply_tiering` to recover
-    // the `B'`/`F` split. A tiered policy never aliases a non-tiered table.
-    // Tiering is a non-ZK optimization (no `_zk` tiered family), so under `zk`
-    // a tiered policy falls through to the runtime DP.
+    // store the committed `B'`/`F` layout directly (`tier_split` + `n_f`). A
+    // tiered policy never aliases a non-tiered table.
     if policy.tiered {
         #[cfg(not(feature = "zk"))]
         if !root_fold_is_tensor
