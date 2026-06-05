@@ -243,6 +243,59 @@ where
     ClaimIncidenceSummary::same_point(num_vars, polys.len())
 }
 
+pub(crate) fn validate_onehot_chunk_size_for_params<F, const D: usize, P>(
+    polys: &[P],
+    params: &LevelParams,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    P: AkitaPolyOps<F, D>,
+{
+    let expected = params.onehot_chunk_size;
+    if expected <= 1 {
+        return Ok(());
+    }
+    for (poly_idx, poly) in polys.iter().enumerate() {
+        if let Some(actual) = poly.onehot_chunk_size() {
+            if actual != expected {
+                return Err(AkitaError::InvalidInput(format!(
+                    "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
+                     config/layout requires onehot_k={expected}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_batched_onehot_chunk_size_for_params<F, const D: usize, P>(
+    polys_per_point: &[&[P]],
+    params: &LevelParams,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    P: AkitaPolyOps<F, D>,
+{
+    let expected = params.onehot_chunk_size;
+    if expected <= 1 {
+        return Ok(());
+    }
+    for (point_idx, polys) in polys_per_point.iter().enumerate() {
+        for (poly_idx, poly) in polys.iter().enumerate() {
+            if let Some(actual) = poly.onehot_chunk_size() {
+                if actual != expected {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "one-hot polynomial at point {point_idx}, index {poly_idx} uses \
+                         onehot_k={actual}, but this config/layout requires \
+                         onehot_k={expected}"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usize, AkitaError> {
     total_polys.checked_mul(per_poly).ok_or_else(|| {
         AkitaError::InvalidInput(format!(
@@ -372,6 +425,7 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
     prepare_commit_inputs::<F, D, P>(polys, expanded)?;
     validate_commit_level_params::<F, D>(params, expanded)?;
+    validate_onehot_chunk_size_for_params::<F, D, P>(polys, params)?;
     commit_with_validated_params::<F, D, P, B>(polys, backend, prepared, params)
 }
 
@@ -433,12 +487,13 @@ where
 {
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
     let incidence = prepare_commit_inputs::<Cfg::Field, D, P>(polys, expanded)?;
+    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+    validate_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys, &params)?;
     if should_transform_root_commitment::<Cfg, D>(&incidence)? {
         let transformed = polys
             .iter()
             .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
             .collect::<Result<Vec<RootTensorProjectionPoly<Cfg::Field, D>>, _>>()?;
-        let params = Cfg::get_params_for_batched_commitment(&incidence)?;
         validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
         return commit_with_validated_params::<
             Cfg::Field,
@@ -447,7 +502,6 @@ where
             B,
         >(&transformed, backend, prepared, &params);
     }
-    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
     commit_with_validated_params::<Cfg::Field, D, P, B>(polys, backend, prepared, &params)
 }
@@ -563,6 +617,8 @@ where
 {
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
     let incidence = prepare_batched_commit_inputs::<Cfg::Field, D, P>(polys_per_point, expanded)?;
+    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
+    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, D, P>(polys_per_point, &params)?;
     if should_transform_root_commitment::<Cfg, D>(&incidence)? {
         let transformed: Vec<Vec<RootTensorProjectionPoly<Cfg::Field, D>>> = polys_per_point
             .iter()
@@ -575,7 +631,6 @@ where
             .collect::<Result<_, _>>()?;
         let transformed_refs: Vec<&[RootTensorProjectionPoly<Cfg::Field, D>]> =
             transformed.iter().map(Vec::as_slice).collect();
-        let params = Cfg::get_params_for_batched_commitment(&incidence)?;
         validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
         return batched_commit_with_validated_params::<
             Cfg::Field,
@@ -584,7 +639,6 @@ where
             B,
         >(&transformed_refs, backend, prepared, &params);
     }
-    let params = Cfg::get_params_for_batched_commitment(&incidence)?;
     validate_commit_level_params::<Cfg::Field, D>(&params, expanded)?;
     batched_commit_with_validated_params::<Cfg::Field, D, P, B>(
         polys_per_point,
@@ -642,13 +696,14 @@ where
     backend.validate_prepared_setup::<D>(prepared, expanded)?;
     prepare_batched_commit_inputs::<F, D, P>(polys_per_point, expanded)?;
     validate_commit_level_params::<F, D>(params, expanded)?;
+    validate_batched_onehot_chunk_size_for_params::<F, D, P>(polys_per_point, params)?;
     batched_commit_with_validated_params::<F, D, P, B>(polys_per_point, backend, prepared, params)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AkitaProverSetup;
+    use crate::{AkitaProverSetup, OneHotPoly};
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
     use akita_types::{SetupMatrixEnvelope, SisModulusFamily};
@@ -750,6 +805,32 @@ mod tests {
             checked_commit_b_input_len(usize::MAX, 2),
             Err(AkitaError::InvalidInput(_))
         ));
+    }
+
+    #[test]
+    fn onehot_chunk_size_validator_rejects_mismatched_k() {
+        let params = LevelParams::params_only(
+            SisModulusFamily::Q32,
+            D,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_onehot_chunk_size(256);
+        let wrong = OneHotPoly::<F, D, u16>::new(64, vec![Some(1), None]).unwrap();
+        let ok = OneHotPoly::<F, D, u16>::new(256, vec![Some(1), None]).unwrap();
+
+        assert!(matches!(
+            validate_onehot_chunk_size_for_params::<F, D, _>(&[wrong], &params),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        validate_onehot_chunk_size_for_params::<F, D, _>(&[ok], &params)
+            .expect("matching onehot_k should be accepted");
     }
 
     #[test]

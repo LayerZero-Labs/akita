@@ -68,7 +68,7 @@ fn derive_candidate_level_params(
     }
 
     let mut best: Option<(LevelParams, usize, usize)> = None;
-    for r in 1..reduced_vars {
+    for r in (1..reduced_vars).rev() {
         let Some(num_blocks) = 1usize.checked_shl(r as u32) else {
             continue;
         };
@@ -697,7 +697,7 @@ pub fn find_schedule(
         let num_digits_commit = num_digits_s_commit(level_decomp, true);
         let num_digits_open = num_digits_open(level_decomp);
 
-        for r_vars in min_r_vars..=max_r_vars {
+        for r_vars in (min_r_vars..=max_r_vars).rev() {
             let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
                 continue;
             };

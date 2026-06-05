@@ -64,7 +64,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusFamily::Q128,
     64,
     128,
-    1
+    1,
+    256
 );
 impl_proof_optimized_preset!(
     D32Full,

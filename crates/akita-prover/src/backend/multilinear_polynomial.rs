@@ -80,6 +80,13 @@ where
         }
     }
 
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        match self {
+            Self::Dense(poly) => poly.onehot_chunk_size(),
+            Self::OneHot(poly) => poly.onehot_chunk_size(),
+        }
+    }
+
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         match self {
             Self::Dense(poly) => poly.fold_blocks(scalars, block_len),

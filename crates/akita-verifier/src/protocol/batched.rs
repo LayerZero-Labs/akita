@@ -497,6 +497,25 @@ where
     }
 }
 
+fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
+    schedule: &Schedule,
+) -> Result<(), AkitaError> {
+    let expected = Cfg::onehot_chunk_size();
+    if Cfg::decomposition().log_commit_bound != 1 || expected <= 1 {
+        return Ok(());
+    }
+    let root_params = match schedule.steps.first() {
+        Some(akita_types::Step::Fold(root)) => Some(&root.params),
+        Some(akita_types::Step::Direct(root)) => root.params.as_ref(),
+        None => None,
+    }
+    .ok_or(AkitaError::InvalidProof)?;
+    if root_params.onehot_chunk_size != expected {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(())
+}
+
 /// Verify a batched proof after root schedule selection.
 ///
 /// This owns the root-proof variant dispatch, direct witness/opening checks,
@@ -674,6 +693,7 @@ where
             root_direct_params = Some(params);
         }
     }
+    validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
 
     bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
         &setup.expanded,

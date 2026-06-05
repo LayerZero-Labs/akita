@@ -561,7 +561,13 @@ fn add_zk_ext_scalar_slots<Cfg: CommitmentConfig>(
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
 /// parameters.
 macro_rules! impl_proof_optimized_preset {
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
+    (@onehot_chunk_size $onehot_chunk_size:expr) => {
+        $onehot_chunk_size
+    };
+    (@onehot_chunk_size) => {
+        1
+    };
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr $(, $onehot_chunk_size:expr)?) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ClaimField = $claim_field;
@@ -610,6 +616,10 @@ macro_rules! impl_proof_optimized_preset {
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
                 )
+            }
+
+            fn onehot_chunk_size() -> usize {
+                impl_proof_optimized_preset!(@onehot_chunk_size $($onehot_chunk_size)?)
             }
         }
     };
