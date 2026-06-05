@@ -1,9 +1,10 @@
-# Spec: Rust Euclidean SIS Estimator (`akita-sis-estimator`)
+# Spec: Euclidean SIS Table Regen via lattice-estimator (S5a)
 
 | Field       | Value |
 |-------------|-------|
 | Author(s)   | Quang Dao, Cursor agent draft |
 | Created     | 2026-06-05 |
+| Revised     | 2026-06-05 (upstream-first; supersedes Rust-port draft) |
 | Status      | proposed |
 | PR          | [#155](https://github.com/LayerZero-Labs/akita/pull/155) (branch `quang/s3-s5-sis-estimator-spec`) |
 
@@ -18,100 +19,66 @@ Today that table is produced offline by `scripts/gen_sis_table.py`, which calls
 [lattice-estimator](https://github.com/malb/lattice-estimator) through SageMath from an
 implicit external checkout (`--estimator-path`, `LATTICE_ESTIMATOR_PATH`, or a sibling
 `../lattice-estimator` directory).
-That path is fragile (Sage/cysignals hangs on degenerate instances, parallel regen crashes,
-no CI regen, schema drift between the Python bucket ladder and the checked-in Rust table,
-and no checked-in reference pointer for reviewers to reproduce exactly what was used).
+That path is fragile: the checkout is unpinned, degenerate Euclidean instances can hang,
+parallel sweeps can crash under Sage + `fork`, and the bucket ladder in the generator can
+drift from the checked-in Rust table.
 
-This spec defines an in-repo Rust estimator crate and table-generation binary that reproduce
-the **narrow** surface Akita actually uses (Euclidean SIS + BDGL16 only), with golden
-validation against a pinned `lattice-estimator` git submodule plus Akita-local reference
-patches, and deterministic, parallel-friendly regen.
+**Strategy (revised):** fix and harden lattice-estimator upstream with **general**
+reliability and performance improvements, pin it as a git submodule in Akita, and keep
+`scripts/gen_sis_table.py` as the canonical offline regen driver.
+No in-repo Rust reimplementation of `cost_euclidean`.
+Akita-specific golden data and width-search regression live **only in this repo**.
 
-The crate is an **offline build tool**, not a runtime prover/verifier dependency.
+The estimator remains an **offline build tool**, not a runtime prover/verifier dependency.
 
 ## Intent
 
 ### Goal
 
-Add workspace crate `akita-sis-estimator` and binary `gen_sis_table` (name may match the
-existing script for drop-in replacement) that:
+1. **Upstream (lattice-estimator):** land a small number of general-purpose fixes so
+   Euclidean SIS estimation is reliable, bounded-time, and safe to run in parallel sweeps.
+   Upstream PRs must stand on their own merit (correctness, robustness, docs); they must
+   not mention Akita, carry Akita-only tests, or exist solely to unblock our table regen.
+2. **Akita (S5a):** pin `malb/lattice-estimator` under `third_party/lattice-estimator`,
+   harden `scripts/gen_sis_table.py` (provenance header, `--jobs`, remove interim hacks once
+   upstream fixes land), and check in Akita-local golden CSV plus a regen/check script.
+3. **Akita (S5b, separate slice):** stitch emitted rows into
+   `crates/akita-types/src/sis/generated_sis_table.rs`, rename `collision_l2_sq`, wire
+   L2 A-role pricing (see parent spec).
 
-1. Implements `sis_euclidean_security_bits(n, q, m, length_bound) -> f64` matching
-   lattice-estimator `SIS.lattice(..., norm=2, red_cost_model=BDGL16)` on the
-   `cost_euclidean` code path (see Design for the exact contract).
-2. Exposes `max_secure_width(rank, d, collision_l2_sq, q, target_bits, search_cap) -> u64`
-   via the same monotone width search the Python script uses today.
-3. Adds `malb/lattice-estimator` as a pinned git submodule under
-   `third_party/lattice-estimator` and an Akita-local patch set under
-   `crates/akita-sis-estimator/reference/patches/`.
-   The submodule is a manual reference oracle for refreshing and reviewing golden data, not
-   a normal CI dependency.
-4. **Emits** Rust match arms (or CSV) to stdout or an artifact file under the crate
-   (`crates/akita-sis-estimator/`); it does **not** write `generated_sis_table.rs` in this
-   slice. Stitching the emitted rows into `crates/akita-types/src/sis/generated_sis_table.rs`
-   (power-of-two buckets `2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`) is the S5b deliverable
-   (see "Bucket ladder lockstep").
-5. Records provenance in generated headers (pinned estimator submodule commit + patch hashes,
-   crate version, target bits, search caps, family moduli).
-
-Parent spec slices **S5a** (this spec) unblocks **S5b** (table stitch + `collision_l2_sq`
-rename cutover) and **S11** (schedule table regen under L2 pricing).
+Parent slice **S5a** (this spec) unblocks **S5b** (table stitch + rename) and **S11**
+(schedule regen under L2 pricing).
 
 ### Invariants
 
-- **Reference equivalence.** On a pinned golden grid of `(n, q, m, length_bound)` instances,
-  `log2(rop)` from the Rust core matches the pinned reference oracle:
-  `third_party/lattice-estimator` at the recorded submodule commit, with the recorded
-  Akita-local patches applied in order.
-  The block size `β(δ)` is reproduced as an **exact integer** on every non-degenerate cell
-  (same monotone root, same `ceil(root − 1e-8)` convention as
-  `ReductionCost._beta_find_root`), so the only residual difference is `f64` rounding inside
-  `BDGL16._asymptotic` / `log2`, bounded at **±0.01 bits**. Degenerate cells (see
-  "Deterministic conservative ceiling") are reported as `-inf` on both sides and compared for
-  exact equality, not within the ±0.01 band.
-- **Reference oracle is checked in, not ambient.** The Sage/lattice-estimator path used for
-  golden refresh is reproducible from repo state: initialize the pinned submodule, apply the
-  checked-in patches, run the documented refresh command, and compare the resulting golden
-  CSV/JSON. Normal CI does **not** install Sage or invoke the submodule; it tests the Rust
-  estimator against committed golden data. A reference refresh is a manual/audit job and an
-  explicit part of any submodule bump.
-- **Deterministic conservative ceiling.** The `β(δ)` inversion is bounded to lattice-estimator's
-  own bracket `β ∈ [40, β_max]`, `β_max = 2^16`. Upstream
-  `ReductionCost.beta` is `_beta_find_root`, which on a bracket failure falls back to the
-  **unbounded** `_beta_simple` loop; that loop diverges precisely when the required root lies
-  below the bracket, i.e. when `δ < _delta(β_max) ≈ 1.00006` (the degenerate `δ → 1` regime;
-  e.g. the `d=32, r=1, length_bound=256` knee where `_solve_for_delta_euclidean` returns
-  `δ = 1.0`). The reference patch replaces that fallback with a deterministic `-inf`
-  reporting convention, and the Rust core implements the same convention directly, with
-  **no wall-clock budget**. This fires on exactly the cells the interim Sage generator guards
-  with a Unix-only `SIGALRM` wall-clock budget (a no-op where `SIGALRM` / `setitimer` are
-  unavailable), so it reproduces the generator's `-inf` policy machine-independently. It can
-  only **under**-report secure width, never over-report it (a one-width
-  effect at the observed knees), and is the single deliberate deviation from a hypothetical
-  never-diverging estimator; on every cell the patched reference can evaluate, parity is exact
-  (see "Reference equivalence").
-- **Monotone search.** For fixed `(n, q, collision_l2_sq, rank)`, security bits are
+- **Pinned reference, not ambient checkout.** Regen uses `third_party/lattice-estimator` at
+  a recorded submodule commit. Generated table headers and golden metadata record that SHA.
+  Normal Rust CI and prover/verifier builds do **not** require Sage or an initialized
+  submodule.
+- **Single source of truth.** Security bits come from lattice-estimator
+  `SIS.lattice(..., norm=2, red_cost_model=BDGL16)` on the `cost_euclidean` path.
+  Akita does not maintain a parallel numeric core.
+- **Conservative degenerate policy (Akita generator only).** When upstream cannot produce a
+  finite cost in bounded time (historically: `_beta_find_root` bracket failure falling
+  through to diverging `_beta_simple` at `δ → 1`), `scripts/gen_sis_table.py` treats the
+  cell as **insecure** (`log2(rop) = −∞` for width-search purposes). That can only
+  under-report secure width (force slightly higher SIS rank), never over-report it.
+  After upstream lands a general bounded-time fix, the generator drops the interim
+  `SIGALRM` wall-clock guard and relies on the upstream behavior; golden refresh verifies
+  no drift on the Akita grid.
+- **Monotone width search.** For fixed `(n, q, collision_l2_sq, rank)`, security bits are
   non-increasing in commitment width `w` outside a possible degenerate `-inf` prefix at very
-  small `w`; the width search assumes this and Testing Strategy verifies it (a violation is a
-  blocker).
-- **Ladder truncation ordering.** Per-`d` all-zero bucket truncation (skip remaining larger
-  buckets once every rank is insecure at the current bucket) is valid only when collision
-  buckets are visited in strictly increasing order for that `d`. Both `scripts/gen_sis_table.py`
-  and the Rust `gen_sis_table` binary must sort work items by `(d, collision)` ascending before
-  truncating; an unsorted custom `--collisions` list must not mark a dimension dead and skip
-  smaller buckets that would still have nonzero secure widths.
-- **No runtime coupling.** Prover, verifier, and planner continue to read only
-  `generated_sis_table.rs`; they do not invoke the estimator at proof time. Normal Rust CI and
-  prover/verifier builds do not require the `lattice-estimator` submodule to be initialized.
-- **Single cost model.** Euclidean (`norm = 2`) + `BDGL16` asymptotic reduction cost only.
-  The `lgsa` shape model is **not** part of this estimator: verified against the pinned
-  reference, `SIS.lattice` calls `cost_euclidean(params, red_cost_model, log_level)` for
-  `norm == 2` and never forwards `red_shape_model` (`estimator/sis_lattice.py`, the
-  `tag == "euclidean"` branch), and `cost_euclidean` takes no shape-model parameter. The
-  `red_shape_model="lgsa"` argument in `scripts/gen_sis_table.py` and the "Shape model: lgsa"
-  lines in the current `generated_sis_table.rs` header are therefore **inert** on this path;
-  S5b should correct those comments when it regenerates the table.
-- **Parameter mapping unchanged** from the L2 parent spec and the updated Python script:
+  small `w`. The hybrid search in `gen_sis_table.py` assumes this; Akita golden checks
+  verify it on the committed grid.
+- **Ladder truncation ordering.** Per-`d` all-zero bucket truncation is valid only when
+  collision buckets are visited in strictly increasing order. `gen_sis_table.py` sorts work
+  items by `(d, collision)` ascending before truncating.
+- **No runtime coupling.** Prover, verifier, and planner read only `generated_sis_table.rs`.
+- **Single cost model.** Euclidean (`norm = 2`) + `BDGL16` only. The `lgsa` shape model is
+  **inert** on this path: `SIS.lattice` with `norm == 2` calls `cost_euclidean`, which
+  does not take `red_shape_model`. S5b should correct misleading "lgsa" comments in table
+  headers when regenerating.
+- **Parameter mapping** (unchanged from L2 parent spec):
 
   | Akita | Estimator |
   |-------|-----------|
@@ -121,266 +88,233 @@ rename cutover) and **S11** (schedule table regen under L2 pricing).
   | per-row `collision_l2_sq` | `length_bound = sqrt(w · collision_l2_sq)` |
   | `SisModulusFamily` | representative `q` (Q32/Q64/Q128) |
 
-- **Bucket ladder lockstep.** The power-of-two squared-collision ladder and the
-  `next_power_of_two` rounding currently live **only** in `scripts/gen_sis_table.py`
-  (`MIN_LOG_BUCKET = 1`, `MAX_LOG_BUCKET = 84`). On `main`, `crates/akita-types/src/sis/ajtai_key.rs`
-  still uses the legacy `2^k − 1` buckets and a `collision_inf` field, so this estimator only
-  **emits** power-of-two-keyed rows. Introducing `MIN_LOG_BUCKET` / `MAX_LOG_BUCKET` +
-  `u128::next_power_of_two` rounding into `ceil_supported_collision`, and keeping the two
-  ladders in lockstep, is the **S5b** deliverable (see Goal 3).
+- **Bucket ladder lockstep (S5b).** Power-of-two squared-collision buckets
+  (`MIN_LOG_BUCKET = 1`, `MAX_LOG_BUCKET = 84`) live in `scripts/gen_sis_table.py` today.
+  Wiring the same ladder into `ceil_supported_collision` in `ajtai_key.rs` is **S5b**, not
+  S5a.
 
 ### Non-Goals
 
-- Porting all of lattice-estimator (LWE, NTRU, infinity-norm SIS, LGSA/CN11 simulators,
-  gaussian sampling attacks, batch drivers).
-- Changing the 128-bit security target, BDGL16 model, or representative moduli without an
-  explicit spec amendment.
-- Runtime on-demand SIS estimation inside the planner DP (shipped tables remain static;
-  DP fallback uses the same precomputed table).
-- Replacing the parent L2 protocol spec or implementing S6–S13 (folded-witness certificate,
-  sumchecks, e2e) in this crate.
+- In-repo Rust port of `cost_euclidean` / `BDGL16` (`akita-sis-estimator` crate).
+- Akita-specific tests, golden grids, or documentation inside lattice-estimator.
+- Porting all of lattice-estimator (LWE, NTRU, infinity-norm SIS, full simulators).
+- Changing the 128-bit target, BDGL16 model, or representative moduli without a spec
+  amendment.
+- Runtime on-demand SIS estimation in the planner DP.
+- Replacing the parent L2 protocol spec or implementing S6–S13 in this slice.
 
 ## Evaluation
 
-### Acceptance Criteria
+### Acceptance Criteria (S5a)
 
-- [ ] `akita-sis-estimator` crate lands with unit tests and a `gen_sis_table` binary.
-- [ ] `.gitmodules` records `third_party/lattice-estimator` pointing at
-  `https://github.com/malb/lattice-estimator`, and the submodule commit is pinned in the
-  spec, crate README, and generated provenance output.
-- [ ] Akita-local reference patches are checked in under
-  `crates/akita-sis-estimator/reference/patches/`:
-  `0001-cost-euclidean-log-lb.patch` and `0002-bounded-beta-ceiling.patch`.
-  The README records the patch order and patch hashes. A golden generated against an
-  unrecorded submodule commit or unrecorded patch hash is not accepted.
-- [ ] Golden file (CSV or JSON) is checked in under
-  `crates/akita-sis-estimator/tests/data/` with ≥50 representative cells spanning all three
-  families, all `d ∈ {32,64,128,256}`, ranks `{1,5,20}`, and collision buckets including
-  known degenerate knees (`q32`, `d=32`, `r=1`, `collision_l2_sq=16384`, sampling widths
-  `3..6`, where small widths hit the degenerate `δ → 1` regime and must come back as
-  deterministic `-inf`).
-- [ ] A documented manual command initializes the submodule, applies the reference patches,
-  regenerates the golden export, and verifies byte equality with the checked-in golden data.
-  This command may require Sage; it is not part of normal CI.
-- [ ] `cargo test -p akita-sis-estimator` passes without Sage and without an initialized
-  submodule, using the committed golden data as the reference fixture.
-- [ ] Full Rust regen completes for all canonical `(family, d)` arms in <2h wall time on a
-  16-core laptop (parallelism via `rayon`; no Sage dependency). Canonical regen means
-  `family ∈ {q32,q64,q128}`, `d ∈ {32,64,128,256}`, ranks `1..=20`, buckets
-  `2^1..=2^84`, target `128` bits, default caps `10^10` for `D=32/64/256` and
-  `5·10^10` for `D=128`, and deterministic output order by `(family, d, collision, rank)`.
+- [ ] lattice-estimator general fixes merged upstream (see Execution; baseline pin moves
+  from `2bfb768` to the release containing them).
+- [ ] `.gitmodules` records `third_party/lattice-estimator` →
+  `https://github.com/malb/lattice-estimator`; submodule SHA recorded in this spec,
+  `scripts/README` or regen docs, and generated table provenance headers.
+- [ ] `scripts/gen_sis_table.py` hardened: deterministic output order, `--jobs` for parallel
+  regen via **subprocess** shards (not in-process Sage fork), provenance header with
+  submodule SHA; `SIGALRM` timeout removed once upstream fix is pinned.
+- [ ] Akita golden CSV checked in under `scripts/sis_golden/` (≥50 cells: three families,
+  `d ∈ {32,64,128,256}`, ranks `{1,5,20}`, buckets including known degenerate knees).
+  Metadata records submodule SHA used to produce it.
+- [ ] `scripts/sis_golden/check.py` (or equivalent) replays golden cells through the pinned
+  submodule + generator and fails on drift. Manual/Sage workflow documented; **not** on the
+  normal Rust CI path unless we add a hash-only gate on committed golden bytes.
+- [ ] Full canonical regen completes in bounded wall time on a 16-core machine using
+  `--jobs` (family × `d` shards). Target: overnight acceptable; no hung cells.
 
 ### S5b Handoff Criteria
 
-These are not required for the S5a crate to be complete, but the S5a output must make them
-mechanical:
-
-- [ ] Stitched `generated_sis_table.rs` uses only power-of-two keys and updated provenance
-  header; `cargo test -p akita-types` and `assert_schedule_stays_within_audited_sis_widths`
-  pass after S5b lands.
-- [ ] `scripts/gen_sis_table.py` is either removed or reduced to a thin wrapper that
-  delegates to the Rust binary (decision at implementation time; must not be the only
-  regen path after S5b).
+- [ ] Stitched `generated_sis_table.rs` uses power-of-two keys and updated provenance;
+  `cargo test -p akita-types` and `assert_schedule_stays_within_audited_sis_widths` pass.
+- [ ] `collision_l2_sq` rename and A-role L2 pricing wired per parent spec.
 
 ### Testing Strategy
 
-- **Golden tests:** `sis_euclidean_security_bits` vs the committed golden export generated
-  from the pinned patched submodule (exact `-inf` on degenerate cells; ≤ ±0.01 bits
-  elsewhere). These are normal Rust tests and do not invoke Sage.
-- **Manual reference refresh:** an ignored test, script, or documented command applies the
-  reference patches to `third_party/lattice-estimator`, runs the Sage export, and verifies
-  byte equality with `tests/data/golden.*`. This is the independent check used during
-  estimator review and any submodule bump.
-- **Monotonicity (required, not optional):** `max_secure_width` assumes security bits are
-  monotone non-increasing in `w` for fixed `(n, q, collision_l2_sq, rank)`. Because
-  `d = min(floor(_opt_sis_d), m)` introduces a kink (and the degenerate `-inf` ceiling can
-  create a non-monotone hole at very small `w`), assert that the hybrid width search agrees
-  with a brute-force linear scan on the full golden grid. During full canonical regen, also
-  record each returned boundary and verify a bounded window around it (for example
-  `max_width ± 8`, clamped to `[1, search_cap]`) plus every documented degenerate prefix. No
-  cell may violate monotonicity outside a documented degenerate prefix. A counterexample is a
-  blocker; if one exists, replace the affected search with a verified scan/bracket strategy
-  rather than assuming monotonicity.
-- **Regression:** pin the `d=32, r=1, c=16384` knee so `max_secure_width` completes in
-  deterministic bounded time (no wall-clock budget) and matches the reference width ±1.
-- **Parent tests unchanged** until S5b: `akita-types` tests on `main` keep passing on this
-  branch when only the estimator spec is present (no partial table renames).
+- **Akita golden (committed):** CSV of `(q, d, collision_l2_sq, rank, width, log2_rop,
+  max_width)` for the representative grid. Refresh after submodule bump; review diff in PR.
+- **Monotonicity:** On golden refresh, assert width-search monotonicity (hybrid search vs
+  brute force on golden cells, plus a bounded window around each returned `max_width`).
+- **Degenerate knees:** Golden includes cells where `δ` is just above 1; every cell must
+  finish in bounded time and match committed bits ±0.01 (exact `-inf` where documented).
+- **Parent tests unchanged until S5b:** `akita-types` on `main` keeps passing when only
+  S5a lands (no partial table renames).
 
 ### Performance
 
-- Per `estimate_bits` call: target **<1 ms** median on reference hardware (vs Sage path
-  which is fast except at hangs).
-- Full table regen: embarrassingly parallel over `(family, d)`; default concurrency capped
-  at `min(6, num_cpus)` to avoid memory spikes.
-- No proof-size or prover runtime change from this crate alone (offline only).
+- Per-cell `SIS.lattice` call: typically ≪1 s once upstream hang is fixed; large-`m` probes
+  dominate width search.
+- Parallelism: `--jobs` subprocess shards over `(family, d)`; cap default
+  `min(6, num_cpus)` to limit memory.
+- No proof-size or prover runtime change from S5a alone.
 
 ## Design
 
 ### Architecture
 
 ```text
-third_party/lattice-estimator   # pinned submodule; manual reference oracle only
+third_party/lattice-estimator/     pinned submodule (malb/lattice-estimator)
 
-akita-sis-estimator (lib)
-  ├── params.rs          # n, q, m, length_bound; trivial-easy check
-  ├── euclidean.rs       # cost_euclidean port (delta, beta, predicate, rop)
-  ├── reduction.rs       # BDGL16 asymptotic + delta(beta) piecewise table
-  └── search.rs          # max_secure_width monotone search
+scripts/gen_sis_table.py           canonical regen driver (Sage)
+scripts/sis_golden/
+  golden.csv                       committed reference grid (Akita-only)
+  check.py                         replay + drift gate (manual / optional CI hash)
 
-gen_sis_table (bin)      # CLI mirrors scripts/gen_sis_table.py flags
-  └── emit rust | csv
-
-akita-sis-estimator/reference/
-  ├── patches/
-  │   ├── 0001-cost-euclidean-log-lb.patch
-  │   └── 0002-bounded-beta-ceiling.patch
-  └── refresh_golden.py  # Sage/manual path; applies patches to the submodule checkout
-
-akita-sis-estimator/tests/data/golden.csv
-                         # committed fixture used by normal Rust tests
-
-akita-types/generated_sis_table.rs   # consumer (S5b, not this PR)
+crates/akita-types/src/sis/
+  generated_sis_table.rs           consumer (S5b stitch, not S5a)
 ```
 
-**Lattice-estimator surface actually used** (everything else ignored):
+**Estimator surface used** (everything else ignored):
 
 ```text
 SIS.lattice(SIS.Parameters(..., norm=2), red_cost_model=BDGL16)
   → SISLattice.cost_euclidean
       → _opt_sis_d, _solve_for_delta_euclidean
-      → ReductionCost.beta(delta) = _beta_find_root  # _beta_simple fallback diverges at δ→1
-      → log-space length-bound predicate
+      → ReductionCost.beta(delta)   # _beta_find_root today; see upstream fix
+      → length-bound predicate (lb)
       → BDGL16._asymptotic(beta, d)
   → log2(rop)
 ```
 
-### `cost_euclidean` contract (what the Rust core reproduces)
+### Known upstream defects (motivation for general fixes)
 
-For `params = (n = rank·d, q, m = width·d, length_bound, norm = 2)`:
+These are bugs or robustness gaps in lattice-estimator itself, observed while running
+large-parameter Euclidean SIS sweeps. Fixes should be justified in those terms.
 
-1. **Trivial-easy guard.** If `length_bound ≥ (q − 1) / 2`, lattice-estimator raises
-   `ValueError("SIS trivially easy")`; the core returns `-inf` (insecure), matching the
-   generator's `except ValueError` branch.
-2. **SIS dimension.** `d_lat = min(floor(_opt_sis_d(params)), m)` — `m` enters the estimate
-   only as a cap on the optimized lattice dimension.
-3. **Root-Hermite factor.** `δ = _solve_for_delta_euclidean(params, d_lat)` (closed form).
-4. **Block size.** If `δ ≥ 1` and `β(δ) ≤ d_lat`, set `β = β(δ)`, `reduction_possible = true`;
-   else `β = d_lat`, `reduction_possible = false`. `β(δ)` reproduces `_beta_find_root` as a
-   bounded, deterministic monotone bisection on `_delta` over `[40, 2^16]` returning
-   `ceil(root − 1e-8)`, with the `_delta(40) < δ → 40` short-circuit. If `δ < _delta(2^16)`
-   the root is unbracketable (`_beta_simple` would diverge) → return `-inf` (see
-   "Deterministic conservative ceiling").
-5. **Length-bound predicate.** Compute `lb` via the log-space `min(A², B²)` branch
-   (`A² = n·ln q`, `B² = d_lat·q^(2n/d_lat)`) for overflow safety; the attack succeeds iff
-   `length_bound > lb AND reduction_possible`. When the predicate is **false**,
-   `cost(..., predicate=False)` sets `rop = ∞`, i.e. the instance is **secure** (`+inf` bits)
-   — distinct from the degenerate `-inf` ceiling in step 4.
-6. **Cost.** `rop = BDGL16._asymptotic(β, d_lat) = LLL(d_lat) + 2^(0.292·β + 16.4 +
-   log2 svp_repeat(β, d_lat))`; return `log2(rop)`.
+1. **`_beta_find_root` bracket failure → `_beta_simple` divergence.**
+   When `find_root` on `[40, 2^16]` fails because `δ < _delta(2^16)` (root-Hermite factor
+   in the `δ → 1` regime), the fallback `_beta_simple` loop does not terminate.
+   Reproducible on small Euclidean instances with moderate `length_bound`, not specific to
+   any one consumer.
 
-`_delta(β)` is the standard root-Hermite factor: a fixed small-β table for `β ≤ 40` and the
-closed form `(β/(2πe)·(πβ)^{1/β})^{1/(2(β−1))}` for `β > 40`.
+2. **`cost_euclidean` length-bound overflow.**
+   Computing `sqrt(d) * q^(n/d)` overflows for large `q` and moderate `n/d`. The mathematically
+   equivalent `min(A, B)` comparison should be done in log space (same class of failures as
+   large-`q` MPFR overflows elsewhere in the estimator).
 
-The pinned reference is **the `third_party/lattice-estimator` submodule at `2bfb768`
-(`2bfb7682e73e814f31720d7c1d71f4367fa80712`) plus the Akita-local reference patch set**:
+3. **Sage + `fork` multiprocessing.**
+   `batch_estimate(..., jobs>1)` uses default `fork` on Linux; combined with Sage/cysignals
+   this is unsafe and can crash parallel sweeps. Using `spawn` (or documenting subprocess
+   isolation) is a general fix for parallel estimation.
 
-1. `0001-cost-euclidean-log-lb.patch`: reformulates the `cost_euclidean` length-bound
-   predicate in log space.
-2. `0002-bounded-beta-ceiling.patch`: replaces the unbounded `_beta_simple` bracket-failure
-   fallback with the deterministic `β_max = 2^16` ceiling / `-inf` convention.
+4. **Misleading `red_shape_model` on Euclidean path.**
+   Docs and call sites pass `red_shape_model="lgsa"` even though `norm=2` ignores it.
+   Clarify in upstream docs; optional runtime warning is upstream-only.
 
-The unrelated Gaussian-sampling additions are not part of the Euclidean path. Pinning the
-upstream SHA alone is insufficient: the actual reference is the submodule commit plus the
-ordered patch set. Record the submodule commit and patch hashes in the crate README,
-golden-data header, and generated-table header.
+### `cost_euclidean` contract (reference for golden refresh)
+
+For `params = (n, q, m, length_bound, norm=2)`:
+
+1. Trivial-easy: `length_bound ≥ (q−1)/2` → `ValueError`; generator maps to `-inf` bits.
+2. `d_lat = min(floor(_opt_sis_d(params)), m)`.
+3. `δ = _solve_for_delta_euclidean(params, d_lat)`.
+4. If `δ ≥ 1` and `β(δ) ≤ d_lat`: reduction possible; else `β = d_lat`, not possible.
+5. Length-bound predicate: attack succeeds iff `length_bound > lb` and reduction possible.
+6. `rop = BDGL16._asymptotic(β, d_lat)` when predicate true; else `rop = ∞`.
+
+After upstream fix (1), step 4 must complete in bounded time for all `δ` in the model range.
 
 ### Alternatives Considered
 
 | Alternative | Why not |
 |-------------|---------|
-| Keep ambient external checkout only | Reviewers cannot tell which upstream revision was used; stale or locally patched checkouts silently change golden data. |
-| Fix Python + `cysignals.alarm` only | Still requires Sage for regen; hangs remain possible; poor parallelism. |
-| Subprocess one Sage call per cell | Isolation helps crashes, still slow and operationally heavy. |
-| Vendor a full copy of lattice-estimator source | More churn than needed; a submodule keeps upstream history and staleness visible. |
-| Full lattice-estimator Rust port | Broader than the needed audit surface; Akita needs one function family. |
-| Different cost model (e.g. ADPS16) | Breaks continuity with existing audited table and parent spec. |
+| Rust port (`akita-sis-estimator`) | Duplicates upstream logic; two sources of drift; large review surface. |
+| Ambient checkout only | Unpinned; silent drift. |
+| `SIGALRM` timeout forever | Machine-dependent; masks upstream bug; no-op without `SIGALRM`. |
+| Akita-only patches in submodule | Fork maintenance; upstream fixes benefit all users. |
+| Akita-specific upstream PRs | Review burden on malb for non-general changes; rejected by policy. |
 
-**Chosen:** narrow Rust port with golden parity to a pinned patched `lattice-estimator`
-submodule on the Euclidean path.
+**Chosen:** general upstream fixes + pinned submodule + Akita golden in `scripts/sis_golden/`.
 
 ## Documentation
 
-- `crates/akita-sis-estimator/README.md`: Rust regen commands, normal Rust test command,
-  manual Sage/reference refresh command, submodule update procedure, equivalence statement,
-  pinned `lattice-estimator` submodule commit, and patch hashes for the log-space `lb` and
-  bounded-beta-ceiling patches.
-- Update `specs/l2-msis-opnorm-folded-witness.md` Open Question 1 → this spec (done in
-  the companion commit on the same branch).
-- `AGENTS.md` or `CONTRIBUTING.md`: one line pointing offline SIS regen to `cargo run -p
-  akita-sis-estimator --bin gen_sis_table` (implementation PR).
+- Regen runbook: submodule init, `sage -python scripts/gen_sis_table.py` flags, `--jobs`,
+  golden refresh command, submodule bump procedure.
+- Update parent spec cross-links (S5a description, Open Question 1).
+- `AGENTS.md` / `CONTRIBUTING.md`: one line pointing offline SIS regen to
+  `scripts/gen_sis_table.py` with pinned submodule (implementation PR).
 
 ## Execution
 
-### Slice ordering (this branch family)
+### PR plan (minimal count)
+
+**Principle:** At most **two** upstream PRs to `malb/lattice-estimator`, each a general
+improvement with upstream-native tests and release notes. **Zero** upstream PRs that mention
+Akita or exist only for our table. All Akita-specific verification stays in this repo.
+
+#### Upstream PR 1 — Euclidean SIS reliability (single PR)
+
+**Title (example):** `sis: fix cost_euclidean hangs and large-q overflow`
+
+**Scope (all general):**
+
+| File | Change |
+|------|--------|
+| `estimator/reduction.py` | On `_beta_find_root` bracket failure, do not call unbounded `_beta_simple`. Return a documented sentinel or raise a typed error; bounded time guaranteed. |
+| `estimator/sis_lattice.py` | Log-space `min(A², B²)` for the length-bound predicate; handle degenerate `β` from PR logic without hanging. |
+| `estimator/sis_lattice.py` + docs | Document Euclidean path ignores `red_shape_model`; optional one-time warning if passed. |
+| `estimator/tests/` | **General** regressions only: e.g. bracket-failure instance completes in <1 s; large-`q` Falcon-class parameter yields finite `rop`; existing doctests preserved. |
+
+**Not in scope:** Akita moduli, Akita ranks, Akita bucket ladder, filenames referencing Akita.
+
+**Review narrative:** Fixes infinite loop in reduction cost inversion; fixes float overflow
+in Euclidean SIS length bound (cf. existing large-`q` overflow issues elsewhere).
+
+#### Upstream PR 2 — Parallel estimation safety (optional follow-up, or fold into PR 1 if small)
+
+**Title (example):** `util: use spawn context for multiprocessing pool`
+
+**Scope:** `estimator/util.py` (`batch_estimate`), optionally `param_sweep.py`: default
+`get_context("spawn")` when `jobs > 1`; README note on Sage + fork.
+
+Defer if PR 1 is already large; Akita `--jobs` uses subprocess sharding and does not depend
+on this for correctness.
+
+#### Akita PR A — S5a implementation (after upstream PR 1 merges)
+
+- Add `third_party/lattice-estimator` submodule at merged release SHA.
+- Harden `scripts/gen_sis_table.py` (`--jobs`, provenance, drop `SIGALRM`).
+- Add `scripts/sis_golden/{golden.csv,check.py,README.md}`.
+- Docs / `AGENTS.md` pointer.
+
+#### Akita PR B — S5b (unchanged dependency)
+
+L2 table stitch, rename, A-role pricing (parent spec).
+
+### Slice ordering
 
 | Slice | Deliverable | Depends on |
 |-------|-------------|------------|
-| **Spec** (this PR) | `sis-euclidean-estimator.md` + parent cross-links | — |
-| **S5a** | `akita-sis-estimator` + pinned submodule reference + golden tests + `gen_sis_table` | Spec approved |
-| **S5b** | L2 collision rename, regen table, wire `norm_bound` A-role | S5a |
-| **S3** | `operator_norm_threshold`, rejection, descriptor | S1 (done); **not** `(31,11),T=16` until S2 |
-| **S11** | `gen_schedule_tables` regen + drift | S5b, S6 parameterization |
+| **Spec** (this PR) | revised `sis-euclidean-estimator.md` + parent cross-links | — |
+| **LE PR 1** | upstream reliability | — |
+| **LE PR 2** | spawn pool (optional) | — |
+| **S5a** | submodule + gen script + Akita golden | LE PR 1 merged |
+| **S5b** | L2 tables + rename + pricing | S5a, S4 |
+| **S11** | schedule regen + drift | S5b, S6 |
 
-### Implementation notes (S5a)
+### Baseline pin
 
-- Add `third_party/lattice-estimator` as a git submodule pinned to
-  `2bfb7682e73e814f31720d7c1d71f4367fa80712` initially. Do not put Sage or submodule
-  initialization on the normal CI path.
-- Store reference patches in `crates/akita-sis-estimator/reference/patches/` and make
-  `refresh_golden.py` apply them to a temporary worktree/copy of the submodule checkout, not
-  mutate the checked-out submodule in place.
-- Normal tests read committed golden data. The manual reference check regenerates that golden
-  data from the patched submodule and fails if bytes differ.
-- To keep up with upstream `lattice-estimator`, bump the submodule pointer in a dedicated
-  reviewable change, update patches if needed, run the manual refresh command, and review the
-  golden diff before accepting any estimator drift.
-- Port `cost_euclidean` and `BDGL16._asymptotic` using `f64` / `log2`; keep the log-space
-  `min(A², B²)` branch for overflow safety (see the contract above).
-- Reproduce `ReductionCost.beta` = `_beta_find_root` (the lattice-estimator default), **not**
-  `_beta_simple` (the two disagree by up to 1: `_beta_find_root(δ(500)) = 500` vs
-  `_beta_simple = 501`, ≈ 0.292 bits through `_asymptotic`). Implement it as a deterministic,
-  bounded monotone bisection on `_delta` over `[40, 2^16]` returning `ceil(root − 1e-8)`; a
-  root below the bracket (`δ < _delta(2^16)`) returns `-inf`. This matches the reference
-  integer-exactly and eliminates the unbounded `_beta_simple` divergence with no wall-clock
-  budget.
-- `@cached_function` behavior is unnecessary; optional memoization per process only.
-- Binary flags: `--family`, `--d`, `--collision`, `--max-rank`, `--target-bits`,
-  `--search-cap`, `--format {rust,csv}`, `--jobs`.
-  Defaults must reproduce the canonical regen grid in Acceptance Criteria, and the binary must
-  write generated rows deterministically while sending timing/progress diagnostics to stderr.
+Initial submodule pin: `2bfb768` (`2bfb7682e73e814f31720d7c1d71f4367fa80712`).
+S5a implementation moves the pin to the first upstream release containing PR 1.
+
+Interim (before upstream merge): `gen_sis_table.py` keeps `SIGALRM` / sorted entries /
+local fork of fixes in a **LayerZero fork branch** only for development; do not commit
+Akita-local patches into `third_party/` long term.
 
 ### Risks
 
-- Bit-level mismatch at `β(δ)` knees: resolved by reproducing `_beta_find_root` to integer
-  exactness (not `_beta_simple`) plus the deterministic `β_max = 2^16` ceiling; the golden grid
-  pins it, and degenerate `δ → 1` cells are exact `-inf` on both sides.
-- Reference drift: the estimator tracks a *patched* lattice-estimator; pin the submodule
-  commit + ordered patch hashes and fail the golden gate on an unrecorded revision. A
-  submodule bump is the intentional mechanism for noticing that upstream changed and deciding
-  whether Akita should track it.
-- Full regen wall time: mitigate with parallelism and ladder truncation (all-zero bucket stops
-  per-`d` sweep in strictly increasing bucket order, same as Python; see "Ladder truncation
-  ordering").
+- **Upstream review latency:** S5a implementation blocked until LE PR 1 merges; interim
+  SIGALRM + fork branch unblocks local golden work only.
+- **Numeric drift at knees:** Golden CSV in Akita catches drift on bump; conservative
+  `-inf` policy limits secure-width over-estimation.
+- **Regen wall time:** Subprocess `--jobs` + ladder truncation; no Rust speedup.
 
 ## References
 
 - Parent: [`specs/l2-msis-opnorm-folded-witness.md`](l2-msis-opnorm-folded-witness.md)
-- [`scripts/gen_sis_table.py`](../scripts/gen_sis_table.py) (current generator)
+- [`scripts/gen_sis_table.py`](../scripts/gen_sis_table.py)
 - [`crates/akita-types/src/sis/ajtai_key.rs`](../crates/akita-types/src/sis/ajtai_key.rs)
-- lattice-estimator pinned reference: `third_party/lattice-estimator` submodule at
-  `malb/lattice-estimator` `2bfb768` + Akita-local patches
-  `0001-cost-euclidean-log-lb.patch` and `0002-bounded-beta-ceiling.patch` —
-  `estimator/sis_lattice.py` (`cost_euclidean`, `_opt_sis_d`,
-  `_solve_for_delta_euclidean`), `estimator/reduction.py` (`BDGL16._asymptotic`, `beta` =
-  `_beta_find_root`, `_delta`)
-- [`specs/SPEC_REVIEW.md`](SPEC_REVIEW.md) (review workflow)
+- lattice-estimator: `malb/lattice-estimator` — `estimator/sis_lattice.py`
+  (`cost_euclidean`), `estimator/reduction.py` (`BDGL16`, `beta`, `_delta`)
+- [`specs/SPEC_REVIEW.md`](SPEC_REVIEW.md)

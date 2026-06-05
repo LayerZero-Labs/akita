@@ -1112,8 +1112,9 @@ pure, not-yet-wired building blocks on `main`.
 Follow-up implementation is split across branch `quang/s3-s5-sis-estimator-spec`
 (spec-first) and later PRs:
 
-- **S5a** ([`sis-euclidean-estimator.md`](sis-euclidean-estimator.md)): Rust offline
-  estimator + `gen_sis_table` (spec in flight; implementation after spec approval).
+- **S5a** ([`sis-euclidean-estimator.md`](sis-euclidean-estimator.md)): upstream
+  lattice-estimator reliability fixes + pinned submodule + hardened
+  `scripts/gen_sis_table.py` + Akita golden (spec in flight; implementation after LE PR 1).
 - **S5b**: L2 table regen, `collision_l2_sq` rename, wire A-role pricing (blocked on S5a).
 - **S3**: operator-norm threshold + transcript rejection (blocked on **S2** for the
   production D=64 shell/threshold; see below).
@@ -1154,7 +1155,7 @@ WAVE 0  (independent, start now, parallel)
   S2  D=64 support lower bound >= 128 bits   [research / certificate]
 
 WAVE 1
-  S5a Rust Euclidean SIS estimator + gen      (spec: sis-euclidean-estimator.md)
+  S5a lattice-estimator pin + gen_sis_table   (spec: sis-euclidean-estimator.md)
   S5b L2 SIS tables + collision_l2_sq rename  (S4, S5a)
   S3  threshold + transcript rejection       (S1, S2 for production policy)
   S6  proof shape / serialization / size     (parameterize B_l2 early)
@@ -1225,20 +1226,20 @@ Tests and non-production presets may use `(31, 11), T = 16` before S2 lands.
 **Do not** change `proof_optimized` D=64 production presets until S2 certifies the
 accepted-support lower bound.
 
-**S5a — Rust Euclidean SIS estimator.** *(spec-approved before code)*
-[`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md),
-future `crates/akita-sis-estimator/`.
-Offline crate reproducing lattice-estimator `SIS.lattice(..., norm=2, BDGL16)` on the
-`cost_euclidean` path; `gen_sis_table` binary emits regenerated rows. Golden tests pin
-equivalence. This slice does not change protocol code on its own.
+**S5a — Euclidean SIS table regen (lattice-estimator).** *(spec-approved before code)*
+[`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md).
+Land general reliability fixes in `malb/lattice-estimator`, pin
+`third_party/lattice-estimator`, harden `scripts/gen_sis_table.py`, and check in Akita-local
+golden CSV under `scripts/sis_golden/`. No Rust estimator crate. This slice does not change
+protocol code on its own.
 
 **S5b — L2 SIS tables + key rename.** *(S4, S5a)*
 `crates/akita-types/src/sis/{ajtai_key,generated_sis_table}.rs`.
 Regenerate L2 bucket ladders (`2^MIN_LOG_BUCKET .. 2^MAX_LOG_BUCKET`) + secure-rank floors;
 rename `collision_inf` to `collision_l2_sq` across `AjtaiKeyParams`, `min_secure_rank`,
 `ceil_supported_collision`, and descriptor bytes; wire A-role `8·Γ·ν·‖z‖₂` pricing from S4.
-Remove the old committed-fold L∞ rank-pricing paths. Deprecate Sage-only regen as the
-canonical path once the Rust binary is checked in.
+Remove the old committed-fold L∞ rank-pricing paths. Regen remains Sage +
+`scripts/gen_sis_table.py` against the pinned submodule.
 
 **S6 — Proof shape, serialization, proof size.** *(parameterizable early)*
 `crates/akita-types/src/proof/{levels,shapes}.rs`, `proof_size.rs`,
@@ -1302,8 +1303,8 @@ the ring-relation rows; ZK-path parity if the feature stays enabled.
 ## Open Questions
 
 1. Resolved: [`specs/sis-euclidean-estimator.md`](sis-euclidean-estimator.md) defines the
-   Rust `akita-sis-estimator` crate and `gen_sis_table` binary as the canonical offline
-   regen path, with golden parity to lattice-estimator `SIS.lattice(..., norm=2, BDGL16)`.
+   canonical offline regen path: general fixes in `malb/lattice-estimator`, pinned submodule,
+   `scripts/gen_sis_table.py`, and Akita-local golden checks (no in-repo Rust estimator).
 2. Should the certified bucket `B_l2` be a fixed worst-case-per-level value, or
    may the prover abort against a tighter `B_l2` with a separately proved
    acceptance probability?
