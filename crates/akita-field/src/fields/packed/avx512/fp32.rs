@@ -1,7 +1,7 @@
 use super::*;
 
 /// Number of `Fp32` lanes in an AVX-512 packed vector.
-pub const FP32_WIDTH: usize = 16;
+pub(crate) const FP32_WIDTH: usize = 16;
 
 /// AVX-512 packed arithmetic for `Fp32<P>`, processing 16 lanes.
 #[derive(Clone, Copy)]

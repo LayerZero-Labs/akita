@@ -699,8 +699,8 @@ pub(crate) mod test_helpers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::fields::{TowerBasisFpExt4, TwoNr, UnitNr};
     use akita_field::Prime128OffsetA7F7 as F;
+    use akita_field::{TowerBasisFpExt4, TwoNr, UnitNr};
     use akita_types::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
 
     fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {

@@ -4,10 +4,10 @@
 //! Use the short `label` strings below (≤ 12 chars before `_w{width}`) so groups are not
 //! truncated. **Ring-subfield is the default Akita fp_ext4 basis**; tower/power are secondary.
 
-use akita_field::fields::packed_ext::{PackedPowerBasisFpExt4, PackedTowerBasisFpExt4};
+use akita_field::packed::{HasPacking, PackedPowerBasisFpExt4, PackedTowerBasisFpExt4};
 use akita_field::{
-    HasPacking, PowerBasisFpExt4, Prime31Offset19, Prime32Offset99, RingSubfieldFpExt4,
-    TowerBasisFpExt4, TwoNr, UnitNr,
+    PowerBasisFpExt4, Prime31Offset19, Prime32Offset99, RingSubfieldFpExt4, TowerBasisFpExt4,
+    TwoNr, UnitNr,
 };
 use criterion::Criterion;
 

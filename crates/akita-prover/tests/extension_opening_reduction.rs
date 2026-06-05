@@ -888,8 +888,7 @@ fn proof_claim(witness_evals: &[F], factor_evals: &[F]) -> F {
 // assert the emitted round messages stay byte-identical to per-term `Mul`.
 mod delayed_product_sum_contract {
     use super::*;
-    use akita_field::fields::wide::HasOptimizedFold;
-    use akita_field::fields::HasUnreducedOps;
+    use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
     use akita_field::{AdditiveGroup, Invertible, One, RingCore, Zero};
     use std::fmt;
     use std::iter::{Product, Sum};

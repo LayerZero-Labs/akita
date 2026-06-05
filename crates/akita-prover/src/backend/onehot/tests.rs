@@ -1,11 +1,11 @@
 use super::test_helpers::inner_ajtai_multi_chunk_t_only;
 use super::*;
 use crate::DensePoly;
-use akita_field::fields::{
+use akita_field::RandomSampling;
+use akita_field::{
     Fp64, Prime128Offset275, Prime24Offset3, Prime32Offset99, RingSubfieldFpExt4, TowerBasisFpExt4,
     TwoNr, UnitNr,
 };
-use akita_field::RandomSampling;
 use akita_types::FlatMatrix;
 use rand::rngs::StdRng;
 use rand::SeedableRng;

@@ -3,7 +3,7 @@
 //! Requires AVX-512F + AVX-512DQ. Uses native unsigned comparisons and mask
 //! registers for branchless conditionals.
 
-use super::packed::{PackedField, PackedValue};
+use super::{PackedField, PackedValue};
 use crate::fields::ext::{FpExt2Config, PowerBasisFpExt4Config, TowerBasisFpExt4Config};
 use crate::fields::{Fp128, Fp32, Fp64};
 use crate::Invertible;
@@ -54,6 +54,6 @@ unsafe fn mul64_64_512(x: __m512i, y: __m512i) -> (__m512i, __m512i) {
 mod fp128;
 mod fp32;
 mod fp64;
-pub use fp128::*;
-pub use fp32::*;
-pub use fp64::*;
+pub(crate) use fp128::*;
+pub(crate) use fp32::*;
+pub(crate) use fp64::*;

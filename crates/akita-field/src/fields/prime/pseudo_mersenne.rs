@@ -57,48 +57,50 @@ pub const fn is_registered_prime_offset(bits: u32, offset: u128) -> bool {
 }
 
 /// `offset` for `k = 24`.
-pub const PRIME24_OFFSET3_OFFSET: u16 = 3;
+pub(crate) const PRIME24_OFFSET3_OFFSET: u16 = 3;
 /// `offset` for `k = 30`.
-pub const PRIME30_OFFSET35_OFFSET: u16 = 35;
+pub(crate) const PRIME30_OFFSET35_OFFSET: u16 = 35;
 /// `offset` for `k = 31`.
-pub const PRIME31_OFFSET19_OFFSET: u16 = 19;
+pub(crate) const PRIME31_OFFSET19_OFFSET: u16 = 19;
 /// `offset` for `k = 32`.
-pub const PRIME32_OFFSET99_OFFSET: u16 = 99;
+pub(crate) const PRIME32_OFFSET99_OFFSET: u16 = 99;
 /// `offset` for `k = 40`.
-pub const PRIME40_OFFSET195_OFFSET: u16 = 195;
+pub(crate) const PRIME40_OFFSET195_OFFSET: u16 = 195;
 /// `offset` for `k = 48`.
-pub const PRIME48_OFFSET59_OFFSET: u16 = 59;
+pub(crate) const PRIME48_OFFSET59_OFFSET: u16 = 59;
 /// `offset` for `k = 56`.
-pub const PRIME56_OFFSET27_OFFSET: u16 = 27;
+pub(crate) const PRIME56_OFFSET27_OFFSET: u16 = 27;
 /// `offset` for `k = 64`.
-pub const PRIME64_OFFSET59_OFFSET: u16 = 59;
+pub(crate) const PRIME64_OFFSET59_OFFSET: u16 = 59;
 /// `offset` for `k = 128`.
-pub const PRIME128_OFFSET275_OFFSET: u16 = 275;
+pub(crate) const PRIME128_OFFSET275_OFFSET: u16 = 275;
 
 /// `2^24 - 3`.
-pub const PRIME24_OFFSET3_MODULUS: u32 = ((1u128 << 24) - (PRIME24_OFFSET3_OFFSET as u128)) as u32;
+pub(crate) const PRIME24_OFFSET3_MODULUS: u32 =
+    ((1u128 << 24) - (PRIME24_OFFSET3_OFFSET as u128)) as u32;
 /// `2^30 - 35`.
-pub const PRIME30_OFFSET35_MODULUS: u32 =
+pub(crate) const PRIME30_OFFSET35_MODULUS: u32 =
     ((1u128 << 30) - (PRIME30_OFFSET35_OFFSET as u128)) as u32;
 /// `2^31 - 19`.
-pub const PRIME31_OFFSET19_MODULUS: u32 =
+pub(crate) const PRIME31_OFFSET19_MODULUS: u32 =
     ((1u128 << 31) - (PRIME31_OFFSET19_OFFSET as u128)) as u32;
 /// `2^32 - 99`.
-pub const PRIME32_OFFSET99_MODULUS: u32 =
+pub(crate) const PRIME32_OFFSET99_MODULUS: u32 =
     ((1u128 << 32) - (PRIME32_OFFSET99_OFFSET as u128)) as u32;
 /// `2^40 - 195`.
-pub const PRIME40_OFFSET195_MODULUS: u64 =
+pub(crate) const PRIME40_OFFSET195_MODULUS: u64 =
     ((1u128 << 40) - (PRIME40_OFFSET195_OFFSET as u128)) as u64;
 /// `2^48 - 59`.
-pub const PRIME48_OFFSET59_MODULUS: u64 =
+pub(crate) const PRIME48_OFFSET59_MODULUS: u64 =
     ((1u128 << 48) - (PRIME48_OFFSET59_OFFSET as u128)) as u64;
 /// `2^56 - 27`.
-pub const PRIME56_OFFSET27_MODULUS: u64 =
+pub(crate) const PRIME56_OFFSET27_MODULUS: u64 =
     ((1u128 << 56) - (PRIME56_OFFSET27_OFFSET as u128)) as u64;
 /// `2^64 - 59`.
-pub const PRIME64_OFFSET59_MODULUS: u64 = u64::MAX - ((PRIME64_OFFSET59_OFFSET as u64) - 1);
+pub(crate) const PRIME64_OFFSET59_MODULUS: u64 = u64::MAX - ((PRIME64_OFFSET59_OFFSET as u64) - 1);
 /// `2^128 - 275`.
-pub const PRIME128_OFFSET275_MODULUS: u128 = u128::MAX - (PRIME128_OFFSET275_OFFSET as u128 - 1);
+pub(crate) const PRIME128_OFFSET275_MODULUS: u128 =
+    u128::MAX - (PRIME128_OFFSET275_OFFSET as u128 - 1);
 
 /// Prime field for `2^24 - 3`.
 pub type Prime24Offset3 = Fp32<PRIME24_OFFSET3_MODULUS>;

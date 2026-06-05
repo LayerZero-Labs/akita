@@ -1,5 +1,5 @@
-use akita_field::fields::packed_ext::PackedFpExt2;
-use akita_field::{FpExt2, HasPacking, Prime31Offset19, Prime32Offset99, Prime64Offset59, TwoNr};
+use akita_field::packed::{HasPacking, PackedFpExt2};
+use akita_field::{FpExt2, Prime31Offset19, Prime32Offset99, Prime64Offset59, TwoNr};
 use criterion::Criterion;
 
 use super::arithmetic::bench_arithmetic_case;

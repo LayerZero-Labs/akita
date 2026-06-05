@@ -1,7 +1,7 @@
 use super::*;
 
 /// Number of `Fp128` lanes in an AVX-512 packed vector.
-pub const FP128_WIDTH: usize = 8;
+pub(crate) const FP128_WIDTH: usize = 8;
 
 /// AVX-512 packed arithmetic for `Fp128<P>`, 8 lanes in SoA layout.
 ///

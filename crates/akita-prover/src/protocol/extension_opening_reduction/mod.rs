@@ -7,8 +7,7 @@
 use akita_algebra::poly::fold_evals_in_place;
 use akita_algebra::uni_poly::UniPoly;
 use akita_algebra::EqPolynomial;
-use akita_field::fields::wide::HasOptimizedFold;
-use akita_field::fields::HasUnreducedOps;
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, ExtField, FieldCore, Zero};
 use akita_sumcheck::SumcheckInstanceProver;
 use akita_types::{

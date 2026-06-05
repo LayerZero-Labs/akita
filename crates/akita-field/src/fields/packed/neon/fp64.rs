@@ -1,7 +1,7 @@
 use super::*;
 
 /// Number of packed `Fp64` lanes.
-pub const FP64_WIDTH: usize = 2;
+pub(crate) const FP64_WIDTH: usize = 2;
 
 /// NEON packed `Fp64` backend: 2 lanes in `uint64x2_t`.
 #[derive(Clone, Copy)]

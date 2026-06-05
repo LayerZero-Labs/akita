@@ -1,6 +1,6 @@
 //! Tensor extension-opening packing helpers.
 
-use akita_field::fields::wide::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt};
 use akita_field::{AkitaError, ExtField, FieldCore};
 use akita_types::pack_tensor_base_lift_i8_digits;

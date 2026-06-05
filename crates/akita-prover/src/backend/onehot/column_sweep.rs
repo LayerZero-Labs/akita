@@ -42,7 +42,7 @@ fn column_sweep_core<E, F, const D: usize>(
 where
     E: Sync,
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_field::unreduced::ReduceTo<F>,
 {
     let num_blocks = blocks.len();
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
@@ -141,7 +141,7 @@ pub(crate) fn column_sweep_ajtai_single_chunk<F, const D: usize>(
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_field::unreduced::ReduceTo<F>,
 {
     let num_blocks = single_chunk_blocks.len();
     debug_assert!(
@@ -212,7 +212,7 @@ pub(crate) fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_field::unreduced::ReduceTo<F>,
 {
     let num_blocks = multi_chunk_blocks.len();
     debug_assert!(

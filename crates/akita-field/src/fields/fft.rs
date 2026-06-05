@@ -75,8 +75,9 @@ pub fn field_pow<F: FieldCore>(base: F, mut exp: u64) -> F {
     result
 }
 
-/// Compute `base^exp` for u128 exponents.
-pub fn field_pow_u128<F: FieldCore>(base: F, mut exp: u128) -> F {
+/// Compute `base^exp` for u128 exponents. Test-only scanner helper.
+#[cfg(test)]
+pub(crate) fn field_pow_u128<F: FieldCore>(base: F, mut exp: u128) -> F {
     let mut result = F::one();
     let mut b = base;
     while exp > 0 {
@@ -726,7 +727,11 @@ pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> F {
 /// # Panics
 /// If `n` does not divide `p − 1`, or if no base in `{2, 3, …, 47}`
 /// yields a primitive `n`-th root.
-pub fn find_primitive_nth_root<F: FieldCore + FromPrimitiveInt>(p_minus_1: u128, n: usize) -> F {
+#[cfg(test)]
+pub(crate) fn find_primitive_nth_root<F: FieldCore + FromPrimitiveInt>(
+    p_minus_1: u128,
+    n: usize,
+) -> F {
     assert_eq!(
         p_minus_1 % (n as u128),
         0,
@@ -907,7 +912,7 @@ mod prime_2355_tests {
 
     /// Drift guard: re-derive the primitive `SMOOTH_SUBGROUP_ORDER`-th
     /// root of unity from a base scan and assert it equals the literal
-    /// declared in [`crate::fields::fp128`]. Also validates the
+    /// declared in [`crate::fields::prime::fp128`]. Also validates the
     /// trait's structural invariant `SMOOTH_SUBGROUP_ORDER | (p − 1)`.
     #[test]
     fn smooth_omega_matches_search() {

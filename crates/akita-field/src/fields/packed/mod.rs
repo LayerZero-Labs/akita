@@ -1,5 +1,21 @@
 //! Packed field abstractions and architecture-specific SIMD backends.
 
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(all(target_feature = "avx512f", target_feature = "avx512dq"))
+))]
+pub(crate) mod avx2;
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512dq"
+))]
+pub(crate) mod avx512;
+pub(crate) mod ext;
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+pub(crate) mod neon;
+
 use crate::fields::ext::{
     power_basis_fp_ext4_mul_coeffs, ring_subfield_fp_ext8_mul_schedule,
     ring_subfield_fp_ext8_square_schedule, FpExt2Config, PowerBasisFpExt4Config,
@@ -350,7 +366,7 @@ pub trait HasPacking: FieldCore {
 
 /// Selected packed backend for `Fp128`.
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-pub type Fp128Packing<const P: u128> = super::packed_neon::PackedFp128Neon<P>;
+pub type Fp128Packing<const P: u128> = neon::PackedFp128Neon<P>;
 
 /// Selected packed backend for `Fp128`.
 #[cfg(all(
@@ -358,7 +374,7 @@ pub type Fp128Packing<const P: u128> = super::packed_neon::PackedFp128Neon<P>;
     target_feature = "avx512f",
     target_feature = "avx512dq"
 ))]
-pub type Fp128Packing<const P: u128> = super::packed_avx512::PackedFp128Avx512<P>;
+pub type Fp128Packing<const P: u128> = avx512::PackedFp128Avx512<P>;
 
 /// Selected packed backend for `Fp128`.
 #[cfg(all(
@@ -366,7 +382,7 @@ pub type Fp128Packing<const P: u128> = super::packed_avx512::PackedFp128Avx512<P
     target_feature = "avx2",
     not(all(target_feature = "avx512f", target_feature = "avx512dq"))
 ))]
-pub type Fp128Packing<const P: u128> = super::packed_avx2::PackedFp128Avx2<P>;
+pub type Fp128Packing<const P: u128> = avx2::PackedFp128Avx2<P>;
 
 /// Selected packed backend for `Fp128`.
 #[cfg(not(any(
@@ -381,7 +397,7 @@ impl<const P: u128> HasPacking for Fp128<P> {
 
 /// Selected packed backend for `Fp32`.
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-pub type Fp32Packing<const P: u32> = super::packed_neon::PackedFp32Neon<P>;
+pub type Fp32Packing<const P: u32> = neon::PackedFp32Neon<P>;
 
 /// Selected packed backend for `Fp32`.
 #[cfg(all(
@@ -389,7 +405,7 @@ pub type Fp32Packing<const P: u32> = super::packed_neon::PackedFp32Neon<P>;
     target_feature = "avx512f",
     target_feature = "avx512dq"
 ))]
-pub type Fp32Packing<const P: u32> = super::packed_avx512::PackedFp32Avx512<P>;
+pub type Fp32Packing<const P: u32> = avx512::PackedFp32Avx512<P>;
 
 /// Selected packed backend for `Fp32`.
 #[cfg(all(
@@ -397,7 +413,7 @@ pub type Fp32Packing<const P: u32> = super::packed_avx512::PackedFp32Avx512<P>;
     target_feature = "avx2",
     not(all(target_feature = "avx512f", target_feature = "avx512dq"))
 ))]
-pub type Fp32Packing<const P: u32> = super::packed_avx2::PackedFp32Avx2<P>;
+pub type Fp32Packing<const P: u32> = avx2::PackedFp32Avx2<P>;
 
 /// Selected packed backend for `Fp32`.
 #[cfg(not(any(
@@ -412,7 +428,7 @@ impl<const P: u32> HasPacking for Fp32<P> {
 
 /// Selected packed backend for `Fp64`.
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-pub type Fp64Packing<const P: u64> = super::packed_neon::PackedFp64Neon<P>;
+pub type Fp64Packing<const P: u64> = neon::PackedFp64Neon<P>;
 
 /// Selected packed backend for `Fp64`.
 #[cfg(all(
@@ -420,7 +436,7 @@ pub type Fp64Packing<const P: u64> = super::packed_neon::PackedFp64Neon<P>;
     target_feature = "avx512f",
     target_feature = "avx512dq"
 ))]
-pub type Fp64Packing<const P: u64> = super::packed_avx512::PackedFp64Avx512<P>;
+pub type Fp64Packing<const P: u64> = avx512::PackedFp64Avx512<P>;
 
 /// Selected packed backend for `Fp64`.
 #[cfg(all(
@@ -428,7 +444,7 @@ pub type Fp64Packing<const P: u64> = super::packed_avx512::PackedFp64Avx512<P>;
     target_feature = "avx2",
     not(all(target_feature = "avx512f", target_feature = "avx512dq"))
 ))]
-pub type Fp64Packing<const P: u64> = super::packed_avx2::PackedFp64Avx2<P>;
+pub type Fp64Packing<const P: u64> = avx2::PackedFp64Avx2<P>;
 
 /// Selected packed backend for `Fp64`.
 #[cfg(not(any(
@@ -642,7 +658,7 @@ mod tests {
         type F = Prime31Offset19;
         type PF = <F as HasPacking>::Packing;
         check_packed_fp32_edge_lanes::<
-            { crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
+            { crate::fields::prime::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
             PF,
         >();
     }
@@ -663,7 +679,7 @@ mod tests {
     fn packed_fp32_31b_mul_matches_scalar_stress() {
         type F = Prime31Offset19;
         type PF = <F as HasPacking>::Packing;
-        const P: u32 = crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS;
+        const P: u32 = crate::fields::prime::pseudo_mersenne::PRIME31_OFFSET19_MODULUS;
 
         let boundary = [
             0u32,

@@ -2,7 +2,7 @@
 //!
 //! Techniques adapted from plonky2 (Goldilocks) and plonky3 (Mersenne-31).
 
-use super::packed::{PackedField, PackedValue};
+use super::{PackedField, PackedValue};
 use crate::fields::ext::{FpExt2Config, PowerBasisFpExt4Config, TowerBasisFpExt4Config};
 use crate::fields::{Fp128, Fp32, Fp64};
 use crate::Invertible;
@@ -55,6 +55,6 @@ unsafe fn mul64_64_256(x: __m256i, y: __m256i) -> (__m256i, __m256i) {
 mod fp128;
 mod fp32;
 mod fp64;
-pub use fp128::*;
-pub use fp32::*;
-pub use fp64::*;
+pub(crate) use fp128::*;
+pub(crate) use fp32::*;
+pub(crate) use fp64::*;

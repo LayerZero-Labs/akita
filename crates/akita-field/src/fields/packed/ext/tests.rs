@@ -237,7 +237,7 @@ fn packed_power_basis_fp_ext4_mul() {
 #[test]
 fn packed_power_basis_fp_ext4_prime31_edge_lanes() {
     check_packed_power_basis_fp_ext4_edge::<
-        { crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
+        { crate::fields::prime::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
         PP4Prime31,
     >();
 }
@@ -399,7 +399,7 @@ fn packed_ring_subfield_fp_ext4_mul_prime32() {
 #[test]
 fn packed_ring_subfield_fp_ext4_prime31_edge_lanes() {
     check_packed_ring_subfield_fp_ext4_edge::<
-        { crate::fields::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
+        { crate::fields::prime::pseudo_mersenne::PRIME31_OFFSET19_MODULUS },
         PR4Prime31,
     >();
 }
@@ -415,7 +415,7 @@ fn packed_ring_subfield_fp_ext4_prime32_edge_lanes() {
     // overflow window: the edge values include `P - 1`, so the dot product
     // sees maximal `(P-1)^2` partial products where carry handling matters.
     check_packed_ring_subfield_fp_ext4_edge::<
-        { crate::fields::pseudo_mersenne::PRIME32_OFFSET99_MODULUS },
+        { crate::fields::prime::pseudo_mersenne::PRIME32_OFFSET99_MODULUS },
         PR4Prime32,
     >();
 }

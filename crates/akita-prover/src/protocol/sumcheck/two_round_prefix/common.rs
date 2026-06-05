@@ -1,4 +1,4 @@
-use akita_field::fields::HasUnreducedOps;
+use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredUniPoly, UniPoly};
 #[cfg(all(test, not(feature = "zk")))]

@@ -1,6 +1,8 @@
 //! Quadratic, quartic, and ring-subfield extension fields.
 
 mod fp_ext2;
+pub(crate) mod lift;
+mod native_algebra;
 mod power_fp_ext4;
 mod ring_subfield_fp_ext4;
 mod ring_subfield_fp_ext8;
@@ -8,11 +10,11 @@ mod ring_subfield_fp_ext8;
 mod tests;
 mod tower_fp_ext4;
 
-use super::wide::{
+use super::prime::{Fp128, Fp32, Fp64};
+use super::unreduced::{
     AccumPair, FoldMatrixFp32, FoldMatrixFp64, FpExt2Fp64ProductAccum, HasOptimizedFold,
     HasUnreducedOps, RingSubfieldFpExt4Fp32ProductAccum,
 };
-use super::{fp128::Fp128, fp32::Fp32, fp64::Fp64};
 use crate::{
     BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, Invertible,
     MulBaseUnreduced, RandomSampling, RingCore,

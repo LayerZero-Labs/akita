@@ -12,11 +12,10 @@ use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
 use crate::{AdditiveGroup, CanonicalField, FieldCore};
 
-use super::fp128::Fp128;
-use super::fp32::Fp32;
-use super::fp64::Fp64;
+use super::prime::{Fp128, Fp32, Fp64};
 
 mod accum;
+mod native_algebra;
 pub use accum::*;
 
 /// Wide unreduced accumulator for `Fp32`: 2 × i32 limbs (16-bit data each).

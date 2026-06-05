@@ -15,9 +15,8 @@
 
 use super::akita_stage1 as single_stage_backend;
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_field::fields::wide::HasOptimizedFold;
-use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 #[cfg(not(feature = "zk"))]

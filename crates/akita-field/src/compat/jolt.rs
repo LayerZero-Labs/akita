@@ -18,12 +18,13 @@
 use jolt_field as jf;
 use rand_core::RngCore;
 
+use crate::fields::unreduced::{
+    AccumPair, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32ProductAccum, Fp32x2i32,
+    Fp64ProductAccum, Fp64x4i32, FpExt2Fp64ProductAccum, RingSubfieldFpExt4Fp32ProductAccum,
+};
 use crate::fields::{
-    AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32ProductAccum,
-    Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32, FpExt2, FpExt2Config, FpExt2Fp64ProductAccum,
-    PowerBasisFpExt4, PowerBasisFpExt4Config, RingSubfieldFpExt4,
-    RingSubfieldFpExt4Fp32ProductAccum, RingSubfieldFpExt8, TowerBasisFpExt4,
-    TowerBasisFpExt4Config,
+    Fp128, Fp32, Fp64, FpExt2, FpExt2Config, PowerBasisFpExt4, PowerBasisFpExt4Config,
+    RingSubfieldFpExt4, RingSubfieldFpExt8, TowerBasisFpExt4, TowerBasisFpExt4Config,
 };
 
 macro_rules! impl_prime_jolt_traits {

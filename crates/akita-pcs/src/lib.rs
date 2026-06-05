@@ -42,14 +42,15 @@ mod scheme;
 
 pub use akita_algebra::Module;
 pub use akita_field::AkitaError;
+// Specialized field surfaces mirror akita-field's curated facades.
 pub use akita_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
+pub use akita_field::{fft, packed, unreduced};
 pub use akita_field::{
     is_registered_prime_offset, pseudo_mersenne_modulus, registered_prime_offset_spec,
-    AdditiveGroup, BalancedDigitLookup, CanonicalField, ExtField, FieldCore, Fp128, Fp128Packing,
-    Fp32, Fp32Packing, Fp64, Fp64Packing, FpExt2, FpExt2Config, FromPrimitiveInt, HalvingField,
-    HasPacking, Invertible, LiftBase, NoPacking, PackedField, PackedValue, PowerBasisFpExt4,
+    AdditiveGroup, BalancedDigitLookup, CanonicalField, ExtField, FieldCore, Fp128, Fp32, Fp64,
+    FpExt2, FpExt2Config, FromPrimitiveInt, HalvingField, Invertible, LiftBase, PowerBasisFpExt4,
     PowerBasisFpExt4Config, Prime128Offset159, Prime128Offset2355, Prime128Offset275,
     Prime128OffsetA7F7, Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99,
     Prime40Offset195, Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,

@@ -17,7 +17,7 @@ impl SmoothFftField for Prime128Offset2355 {
     const SMOOTH_SUBGROUP_ORDER: usize = 14_700;
     /// `2 ^ ((p − 1) / 14_700)` where `g = 2` is a primitive root of `p`.
     /// Verified by `prime_2355_tests::smooth_omega_matches_search` in
-    /// `src/algebra/fields/fft.rs`.
+    /// `src/fields/fft.rs`.
     const SMOOTH_OMEGA: u128 = 0x2ecd_18d0_8238_2c0c_818c_c05f_446a_8075;
 }
 
@@ -44,6 +44,6 @@ impl SmoothFftField for Prime128OffsetA7F7 {
     /// residue mod `p` and therefore *not* a primitive root, so the
     /// scanner falls through to the next candidate). Verified by
     /// `prime_a7f7_tests::smooth_omega_matches_search` in
-    /// `src/algebra/fields/fft.rs`.
+    /// `src/fields/fft.rs`.
     const SMOOTH_OMEGA: u128 = 0x4e9f_650b_7003_d201_9945_e1da_c47c_8b18;
 }

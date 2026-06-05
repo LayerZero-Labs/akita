@@ -1,103 +1,24 @@
 //! Native `num_traits`/`std` supertrait impls and core-algebra markers for the
-//! concrete field and accumulator types.
+//! extension field types (`FpExt2`, `TowerBasisFpExt4`, `PowerBasisFpExt4`,
+//! `RingSubfieldFpExt4`, `RingSubfieldFpExt8`).
 //!
-//! This is the consolidated, Jolt-free home for the boilerplate that the native
-//! [`AdditiveGroup`]/[`RingCore`]/[`FieldCore`] hierarchy requires:
-//! `Zero`/`One`/`Display`/`Hash`/`Sum`/`Product` plus the empty algebra markers.
-//! The non-trivial `RingCore::square` / `Invertible::inverse` impls stay
-//! co-located with each type (some rely on private helpers). When the `fields/`
-//! tree is split (see `specs/akita-field-jolt-decoupling.md`) these impls move
-//! next to their types; the `jolt-compat` forwarding lives in `compat/jolt.rs`.
+//! These are the Jolt-free supertrait obligations of the native
+//! [`AdditiveGroup`]/[`FieldCore`] hierarchy. The non-trivial `RingCore::square`
+//! / `Invertible::inverse` impls stay co-located with each extension type.
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::{Product, Sum};
-use std::ops::{Add, Sub};
 
 use akita_serialization::Valid;
 use num_traits::{One, Zero};
 
 use super::{
-    AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32ProductAccum,
-    Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32, FpExt2, FpExt2Config, FpExt2Fp64ProductAccum,
-    PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend, RingSubfieldFpExt4,
-    RingSubfieldFpExt4Fp32ProductAccum, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
+    FpExt2, FpExt2Config, PowerBasisFpExt4, PowerBasisFpExt4Config, PowerBasisFpExt4MulBackend,
+    RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
     RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config,
 };
-use crate::{AdditiveGroup, CanonicalField, FieldCore, RingCore};
-
-// --- Prime fields -----------------------------------------------------------
-
-macro_rules! impl_prime_native_algebra {
-    ($ty:ident<$p:ident: $p_ty:ty>, $canon:ident) => {
-        impl<const $p: $p_ty> Zero for $ty<$p> {
-            #[inline]
-            fn zero() -> Self {
-                Self::default()
-            }
-
-            #[inline]
-            fn is_zero(&self) -> bool {
-                self.to_canonical_u128() == 0
-            }
-        }
-
-        impl<const $p: $p_ty> One for $ty<$p> {
-            #[inline]
-            fn one() -> Self {
-                if $p > 1 {
-                    Self::$canon(1)
-                } else {
-                    Self::zero()
-                }
-            }
-        }
-
-        impl<const $p: $p_ty> fmt::Display for $ty<$p> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "{}", self.to_canonical_u128())
-            }
-        }
-
-        impl<const $p: $p_ty> Hash for $ty<$p> {
-            fn hash<H: Hasher>(&self, state: &mut H) {
-                self.to_canonical_u128().hash(state);
-            }
-        }
-
-        impl<const $p: $p_ty> Sum for $ty<$p> {
-            fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-                iter.fold(Self::zero(), |acc, x| acc + x)
-            }
-        }
-
-        impl<'a, const $p: $p_ty> Sum<&'a Self> for $ty<$p> {
-            fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-                iter.fold(Self::zero(), |acc, x| acc + *x)
-            }
-        }
-
-        impl<const $p: $p_ty> Product for $ty<$p> {
-            fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
-                iter.fold(Self::one(), |acc, x| acc * x)
-            }
-        }
-
-        impl<'a, const $p: $p_ty> Product<&'a Self> for $ty<$p> {
-            fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-                iter.fold(Self::one(), |acc, x| acc * *x)
-            }
-        }
-
-        impl<const $p: $p_ty> AdditiveGroup for $ty<$p> {}
-        impl<const $p: $p_ty> RingCore for $ty<$p> {}
-        impl<const $p: $p_ty> FieldCore for $ty<$p> {}
-    };
-}
-
-impl_prime_native_algebra!(Fp32<P: u32>, from_canonical_u32);
-impl_prime_native_algebra!(Fp64<P: u64>, from_canonical_u64);
-impl_prime_native_algebra!(Fp128<P: u128>, from_canonical_u128);
+use crate::{AdditiveGroup, FieldCore};
 
 // --- FpExt2 -----------------------------------------------------------------
 
@@ -482,86 +403,3 @@ impl<'a, F: FieldCore + RingSubfieldFpExt8MulBackend> Product<&'a Self> for Ring
 
 impl<F: FieldCore + RingSubfieldFpExt8MulBackend> AdditiveGroup for RingSubfieldFpExt8<F> {}
 impl<F: FieldCore + Valid + RingSubfieldFpExt8MulBackend> FieldCore for RingSubfieldFpExt8<F> {}
-
-// --- Wide accumulators ------------------------------------------------------
-
-macro_rules! impl_wide_native_additive {
-    ($ty:ty, $zero:expr) => {
-        impl Zero for $ty {
-            #[inline]
-            fn zero() -> Self {
-                $zero
-            }
-
-            #[inline]
-            fn is_zero(&self) -> bool {
-                *self == Self::zero()
-            }
-        }
-
-        impl<'a> Add<&'a Self> for $ty {
-            type Output = Self;
-
-            #[inline]
-            fn add(self, rhs: &'a Self) -> Self::Output {
-                self + *rhs
-            }
-        }
-
-        impl<'a> Sub<&'a Self> for $ty {
-            type Output = Self;
-
-            #[inline]
-            fn sub(self, rhs: &'a Self) -> Self::Output {
-                self - *rhs
-            }
-        }
-
-        impl AdditiveGroup for $ty {}
-    };
-}
-
-impl_wide_native_additive!(Fp32x2i32, Fp32x2i32([0; 2]));
-impl_wide_native_additive!(Fp64x4i32, Fp64x4i32([0; 4]));
-impl_wide_native_additive!(Fp128x8i32, Fp128x8i32([0; 8]));
-impl_wide_native_additive!(Fp32ProductAccum, Fp32ProductAccum([0; 2]));
-impl_wide_native_additive!(Fp64ProductAccum, Fp64ProductAccum([0; 2]));
-impl_wide_native_additive!(Fp128MulU64Accum, Fp128MulU64Accum([0; 3]));
-impl_wide_native_additive!(Fp128ProductAccum, Fp128ProductAccum([0; 4]));
-impl_wide_native_additive!(
-    RingSubfieldFpExt4Fp32ProductAccum,
-    RingSubfieldFpExt4Fp32ProductAccum([0; 4])
-);
-impl_wide_native_additive!(FpExt2Fp64ProductAccum, FpExt2Fp64ProductAccum([0; 4]));
-
-impl<A: AdditiveGroup> Zero for AccumPair<A> {
-    #[inline]
-    fn zero() -> Self {
-        Self(A::zero(), A::zero())
-    }
-
-    #[inline]
-    fn is_zero(&self) -> bool {
-        self.0.is_zero() && self.1.is_zero()
-    }
-}
-
-impl<'a, A: AdditiveGroup> Add<&'a Self> for AccumPair<A> {
-    type Output = Self;
-
-    #[inline]
-    fn add(self, rhs: &'a Self) -> Self::Output {
-        self + *rhs
-    }
-}
-
-impl<'a, A: AdditiveGroup> Sub<&'a Self> for AccumPair<A> {
-    type Output = Self;
-
-    #[inline]
-    fn sub(self, rhs: &'a Self) -> Self::Output {
-        self - *rhs
-    }
-}
-
-impl<A: AdditiveGroup> AdditiveGroup for AccumPair<A> {}

@@ -1,7 +1,7 @@
 use super::*;
 
 /// Number of packed `Fp128` lanes in this backend.
-pub const FP128_WIDTH: usize = 2;
+pub(crate) const FP128_WIDTH: usize = 2;
 
 /// True SoA layout for two packed `Fp128` lanes.
 ///
@@ -22,7 +22,7 @@ const fn modulus_hi<const P: u128>() -> u64 {
     (P >> 64) as u64
 }
 
-use crate::fields::util::{is_pow2_u64, log2_pow2_u64};
+use crate::fields::prime::util::{is_pow2_u64, log2_pow2_u64};
 impl<const P: u128> PackedFp128Neon<P> {
     const C: u128 = {
         let c = 0u128.wrapping_sub(P);

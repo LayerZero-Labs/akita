@@ -1,7 +1,7 @@
 use super::*;
 
 /// Number of packed `Fp32` lanes.
-pub const FP32_WIDTH: usize = 4;
+pub(crate) const FP32_WIDTH: usize = 4;
 
 /// NEON packed `Fp32` backend: 4 lanes in `uint32x4_t`.
 #[derive(Clone, Copy)]

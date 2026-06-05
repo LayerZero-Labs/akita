@@ -5,9 +5,9 @@ use crate::fields::ext::{
     RingSubfieldFpExt4, RingSubfieldFpExt4MulBackend, RingSubfieldFpExt8,
     RingSubfieldFpExt8MulBackend, TowerBasisFpExt4, TowerBasisFpExt4Config, UnitNr,
 };
+use crate::fields::unreduced::HasUnreducedOps;
 use crate::{
-    pseudo_mersenne_modulus, AkitaError, FieldCore, FromPrimitiveInt, HasUnreducedOps,
-    PseudoMersenneField,
+    pseudo_mersenne_modulus, AkitaError, FieldCore, FromPrimitiveInt, PseudoMersenneField,
 };
 use akita_serialization::Valid;
 

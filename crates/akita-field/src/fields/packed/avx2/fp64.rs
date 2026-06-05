@@ -1,7 +1,7 @@
 use super::*;
 
 /// Number of `Fp64` lanes in an AVX2 packed vector.
-pub const FP64_WIDTH: usize = 4;
+pub(crate) const FP64_WIDTH: usize = 4;
 
 /// AVX2 packed arithmetic for `Fp64<P>`, processing 4 lanes.
 #[derive(Clone, Copy)]
